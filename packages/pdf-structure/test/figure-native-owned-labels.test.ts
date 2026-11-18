@@ -9,6 +9,7 @@ const {
   nativeFigureMarginPageNumber,
   nativeRepeatedFigureHeader,
   nativeOwnedFigureLabels,
+  nativeOwnedFigureBottomLabels,
   nativeOwnedFigureGlyphTails,
   nativePanelTopHeading,
   nativeTableDividerGraphic
@@ -624,5 +625,48 @@ it.each(['existing-owner', 'caption', 'table', 'peer', 'font', 'partial-source',
         f.context.operators.fnArray.indexOf(f.OPS.paintFormXObjectBegin)
       ][1] = null
     expect(createNativeVectorFigureLabelCertificate(...vectorLabelArguments(f))).toBeUndefined()
+  }
+)
+
+it.each(['axis', 'unordered ticks', 'foreign table'])(
+  'completes a cut vector frame only below a proven numeric axis (%s)',
+  (kind) => {
+    const caption = { page: 1, lines: ['Figure 1. Response curves.'], rect: [300, 200, 550, 210] }
+    const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines: [
+        { text: caption.lines[0], x: 300, y: 200, width: 250, height: 10, fontSize: 10 },
+        {
+          text: kind === 'unordered ticks' ? '-10 -5 5 0 10' : '-10 -5 0 5 10',
+          x: 345,
+          y: 166,
+          width: 170,
+          height: 8,
+          fontSize: 8
+        }
+      ]
+    }
+    const title = {
+      text: 'x',
+      rect: [425, 178, 430, 186],
+      horizontal: true,
+      height: 8,
+      baseline: 186,
+      fontDescent: -0.2
+    }
+    const bounds = nativeOwnedFigureBottomLabels(
+      page,
+      caption,
+      [caption],
+      kind === 'foreign table' ? [[355, 175, 450, 188]] : [],
+      [325, 50, 515, 145],
+      [[350, 55, 510, 165]],
+      [title]
+    )
+    expect(bounds).toEqual(kind === 'axis' ? [[325, 145, 515, 187.6]] : [])
   }
 )

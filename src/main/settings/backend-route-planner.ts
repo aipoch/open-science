@@ -17,7 +17,7 @@ import {
   providerValidationRoute,
   shareProviderTransportFamily,
   usesAppProviderTransport
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,
@@ -286,6 +286,7 @@ class BackendRoutePlanner {
     return Object.freeze({
       frameworkId: input.frameworkId,
       providerId: input.target.providerId,
+      providerName: input.target.providerName,
       backendId: `${input.frameworkId}:${backendProviderId}`,
       route,
       model,

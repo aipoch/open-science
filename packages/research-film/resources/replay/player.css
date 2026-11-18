@@ -1,0 +1,47 @@
+/* Fit the reference workbench into the product's preview without changing its 16:9 stage. */
+body.preview {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  justify-content: center;
+}
+body.preview #root {
+  flex: none;
+  overflow: hidden;
+}
+#controls {
+  flex: none;
+}
+#controls .dv-scene-button {
+  display: none;
+}
+.dv-report {
+  overflow: auto;
+}
+.dv-application-event {
+  padding: 12px;
+  background: var(--bg-100);
+  border-radius: 8px;
+}
+.dv-application-event small {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-300);
+}
+.dv-application-event > div {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stage .osk-thread {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.dv-application-event {
+  min-width: 0;
+  max-width: 100%;
+}
+.dv-omissions {
+  margin-top: 4px;
+  color: var(--text-200);
+}

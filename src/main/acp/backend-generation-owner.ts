@@ -14,6 +14,7 @@ type AcpBackendGenerationAttemptIdentity = Readonly<{
 export type AcpBackendGenerationView = Readonly<{
   framework: AgentFramework
   providerId?: string
+  providerName?: string
   backendId?: string
   modelRoute?: AgentModelRoute
   providerContinuityToken?: string
@@ -82,6 +83,7 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
 
   return Object.freeze({
     framework: backend.framework,
+    ...(backend.providerName ? { providerName: backend.providerName } : {}),
     ...(backend.providerId ? { providerId: backend.providerId } : {}),
     ...(backend.backendId ? { backendId: backend.backendId } : {}),
     ...(backend.modelRoute ? { modelRoute: backend.modelRoute } : {}),
@@ -167,6 +169,7 @@ export class AcpBackendGenerationOwner {
     this.currentView = Object.freeze({
       ...this.currentView,
       providerId: target.providerId,
+      providerName: target.providerName,
       backendId: target.backendId,
       modelRoute: target.route,
       session: Object.freeze(session),

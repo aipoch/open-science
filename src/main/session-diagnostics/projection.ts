@@ -395,6 +395,38 @@ export function projectDiagnosticLog(
   const data = object(source.data)
   const diagnostic = fields(data, options)
   if (source.scope === 'research-video') {
+    if (identifier(data.invocationId))
+      diagnostic.invocationId = diagnosticText(data.invocationId, options, 200)
+    if (isAgentFrameworkId(data.frameworkId)) diagnostic.frameworkId = data.frameworkId
+    if (identifier(data.providerId))
+      diagnostic.providerId = diagnosticText(data.providerId, options, 200)
+    if (data.purpose === 'correction') diagnostic.purpose = data.purpose
+    if (['generation', 'speech'].includes(data.workerRole as string))
+      diagnostic.workerRole = data.workerRole
+    if (data.lane === 0 || data.lane === 1) diagnostic.lane = data.lane
+    if (typeof data.totalMs === 'number' && Number.isFinite(data.totalMs) && data.totalMs >= 0)
+      diagnostic.totalMs = data.totalMs
+    const stages = object(data.stagesMs)
+    const stagesMs: ObjectValue = {}
+    for (const phase of [
+      'preparing',
+      'images',
+      'readiness',
+      'narration-install',
+      'narration-acquire',
+      'writing',
+      'animations',
+      'loading',
+      'voice',
+      'alignment',
+      'mixing',
+      'build',
+      'publishing'
+    ]) {
+      const ms = stages[phase]
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) stagesMs[phase] = ms
+    }
+    if (Object.keys(stagesMs).length) diagnostic.stagesMs = stagesMs
     if (
       typeof data.totalUnits === 'number' &&
       Number.isInteger(data.totalUnits) &&

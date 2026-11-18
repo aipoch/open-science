@@ -138,6 +138,8 @@ function compiledPathBinding(a, b) {
     pathMethods.getFillType.call(actual) === fill
 }
 
+export { compiledPathBinding as nativeCompiledPathBinding }
+
 // An ordinary RGBA image is not an opaque-image snapshot claim. Bind its real
 // loaded object and complete bytes to the same live page, text and operator list.
 function liveRasterImages(context, scope, candidates) {

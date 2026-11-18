@@ -23,6 +23,17 @@ describe('app display branding', () => {
     expect(mainSource).toContain(`const APP_NAME = '${displayName}'`)
     expect(windowsSource).toContain(`title: '${displayName}'`)
     expect(rendererHtmlSource).toContain(`<title>${displayName}</title>`)
+    expect(rendererHtmlSource).toContain(
+      '<link rel="icon" type="image/png" href="./src/assets/logo.png" />'
+    )
+    for (const htmlFile of [
+      'src/renderer/web/index.html',
+      'src/renderer/installation-assistant.html',
+      'src/renderer/office-preview.html',
+      'src/renderer/reviewer-paged-preview.html'
+    ]) {
+      expect(readFileSync(resolve(projectRoot, htmlFile), 'utf8')).toContain('rel="icon"')
+    }
     expect(builderSource).toContain(`productName: ${displayName}`)
     expect(builderSource).toContain(`CFBundleName: ${displayName}`)
     // Finder uses the installation label; CFBundleName stays aligned with Electron Helpers.

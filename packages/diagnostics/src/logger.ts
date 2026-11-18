@@ -75,6 +75,8 @@ let sinkState = createSinkState()
 export type LogFlushResult = { failed: boolean }
 const diagnosticCorrelation = new AsyncLocalStorage<string>()
 
+const currentDiagnosticCorrelation = (): string | undefined => diagnosticCorrelation.getStore()
+
 const runWithDiagnosticCorrelation = <Result>(operation: () => Result): Result => {
   let correlationId: string
   try {
@@ -989,6 +991,7 @@ export {
   getLogFilePath,
   getLogFileStatus,
   initLogger,
+  currentDiagnosticCorrelation,
   runWithDiagnosticCorrelation,
   writeFatalLogSync
 }

@@ -1703,10 +1703,10 @@ describe('mandatory product glossary', () => {
     for (const heading of [
       '🚀 Schnellstart',
       'Benchmark-Ergebnisse',
-      'Warum AIPOCH Open-Science verwenden?',
-      'Modellanbieter',
+      'Was können Sie mit AIPOCH Open-Science tun?',
+      'Ein Forschungsprotokoll zum Teilen, ein Film zum Anschauen',
       'Daten, Berechtigungen und Vertrauen',
-      'Entwicklung & Verpackung',
+      'Entwicklerleitfäden',
       'Häufig gestellte Fragen'
     ]) {
       expect(readme).toContain(`## ${heading}`)

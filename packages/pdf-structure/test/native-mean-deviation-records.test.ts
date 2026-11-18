@@ -1,11 +1,117 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
+import { wholeDeviationColumnsFixture } from './fixtures/whole-deviation-columns.mjs'
 const { recoverNativeMeanDeviationRecords } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-mean-deviation-records.mjs')).href
 )
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
+)
+
+it.each(['base', 'equivalent-double-closing'])(
+  'keeps genuine whole mean/deviation records in nine semantic columns: %s',
+  async (mode) => {
+    const f = await wholeDeviationColumnsFixture(mode)
+    try {
+      const result = refineTable(
+        f.table,
+        f.tokens,
+        f.captions,
+        [],
+        f.rules,
+        [],
+        undefined,
+        undefined,
+        f.context
+      )
+      expect(result.grid).toHaveLength(4)
+      expect(result.grid[0]).toHaveLength(9)
+      const values = result.cells.filter(
+        (cell: { row: number; column: number }) => cell.row > 0 && cell.column >= 5
+      )
+      expect(values).toHaveLength(12)
+      expect(values.map((cell: { text: string }) => cell.text)).toEqual(
+        Array(12).fill('1.20 ± 0.03')
+      )
+      const sources = result.cells.flatMap(
+        (cell: { sourceItems?: { index: number }[] }) => cell.sourceItems ?? []
+      )
+      expect(sources).toHaveLength(31)
+      expect(new Set(sources.map((source: { index: number }) => source.index)).size).toBe(31)
+      expect(
+        sources.map((source: { index: number }) => source.index).sort((a, b) => a - b)
+      ).toEqual(
+        f.tokens
+          .filter((token: { text: string }) => !token.text.startsWith('Table'))
+          .map((token: { sourceItem: { index: number } }) => token.sourceItem.index)
+          .sort((a: number, b: number) => a - b)
+      )
+      expect(
+        result.cells.flatMap((cell: { sourceSegments?: unknown[] }) => cell.sourceSegments ?? [])
+      ).toEqual([])
+    } finally {
+      await f.dispose()
+    }
+  }
+)
+
+it.each([
+  'foreign-native-omission',
+  'independent-sd-heading',
+  'competing-closings',
+  'missing-context',
+  'partial-singular',
+  'partial-plural',
+  'duplicate-source',
+  'changed-geometry',
+  'changed-whole-literal'
+])(
+  'does not replace mean/deviation cuts without a closed original native packet: %s',
+  async (mode) => {
+    const fixtureMode = [
+      'foreign-native-omission',
+      'independent-sd-heading',
+      'competing-closings'
+    ].includes(mode)
+      ? mode
+      : 'base'
+    const f = await wholeDeviationColumnsFixture(fixtureMode)
+    try {
+      const token = f.tokens.find((item: { text: string }) => item.text.includes('±'))!
+      if (mode === 'partial-singular') token.sourceSegment = { start: 0, end: 4 }
+      if (mode === 'partial-plural') token.sourceSegments = [{ start: 0, end: 4 }]
+      if (mode === 'duplicate-source')
+        token.sourceItem = {
+          ...token.sourceItem,
+          index: f.tokens.find(
+            (item: { text: string }) => item !== token && item.text.includes('±')
+          )!.sourceItem.index
+        }
+      if (mode === 'changed-geometry') {
+        token.rect[0] += 0.1
+        token.rect[2] += 0.1
+      }
+      if (mode === 'changed-whole-literal') {
+        token.text = '1.22 ± 0.03'
+        token.sourceItem = { ...token.sourceItem, text: token.text }
+      }
+      const result = refineTable(
+        f.table,
+        f.tokens,
+        f.captions,
+        [],
+        f.rules,
+        [],
+        undefined,
+        undefined,
+        mode === 'missing-context' ? undefined : f.context
+      )
+      expect(result.grid[0]).toHaveLength(11)
+    } finally {
+      await f.dispose()
+    }
+  }
 )
 type Token = { text: string; rect: number[]; height: number; baseline: number; horizontal: boolean }
 type Model = {

@@ -11,7 +11,7 @@ export const recognizeProvider: Recognizer = ({ origin, status, code, text = '' 
       return { category: 'service', reason: 'service/rate-limited', diagnostics: {} }
     if (status !== undefined && status >= 500 && status <= 599)
       return { category: 'service', reason: 'service/unavailable', diagnostics: {} }
-    if (status === 404)
+    if (status === 404 || (status === undefined && diagnosticCode === 'resource_not_found_error'))
       return {
         category: 'configuration',
         reason: 'configuration/model-unavailable',

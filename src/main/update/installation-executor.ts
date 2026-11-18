@@ -45,7 +45,12 @@ const digest = crypto.createHash('sha256').update(requestBytes).digest('hex');
 const database = new DatabaseSync(path.join(directory, 'executor.sqlite'));
 try { database.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=MEMORY; BEGIN EXCLUSIVE'); } catch { process.exit(2); }
 function atomic(name, value) { const file = path.join(directory, name), temp = file + '.tmp'; const fd = fs.openSync(temp, 'w', 0o600); try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); } fs.renameSync(temp, file); if (process.platform !== 'win32') { const d=fs.openSync(directory,'r'); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } }
-function alive(pid) { try { process.kill(pid,0); return true; } catch(e) { return e.code !== 'ESRCH'; } }
+let desktopDisconnected = process.argv.includes('--observe-only');
+if (!desktopDisconnected) {
+ process.stdin.on('end',()=>{ desktopDisconnected=true; });
+ process.stdin.on('error',()=>{ desktopDisconnected=true; });
+ process.stdin.resume();
+}
 const marker=JSON.parse(fs.readFileSync(request.recordPath,'utf8'));
 if(marker.operationId!==request.operationId || marker.installationRoot!==request.installationRoot || marker.executor?.directory!==directory || marker.executor?.requestSha256!==digest) process.exit(3);
 const resultPath = path.join(directory, 'result.json');
@@ -56,7 +61,7 @@ if (fs.existsSync(resultPath)) {
 }
 atomic('ready.json', { operationId:request.operationId, requestSha256:digest, pid:process.pid });
 async function main() {
-  while (!process.argv.includes('--observe-only') && alive(request.desktopPid)) {if(request.debGate && fs.existsSync(path.join(directory,'cancel-'+request.debGate.nonce))) break;await new Promise(r=>setTimeout(r,25));}
+  while (!process.argv.includes('--observe-only') && !desktopDisconnected) {if(request.debGate && fs.existsSync(path.join(directory,'cancel-'+request.debGate.nonce))) break;await new Promise(r=>setTimeout(r,25));}
   let outcome='failed', error;
   try {
     // Restart after a killed executor rolls back its own partial transaction; it never guesses
@@ -267,7 +272,7 @@ export async function launchPreparedMacInstaller(
   })
   const child = spawn(prepared.nodePath, [prepared.executorPath, requestPath], {
     detached: true,
-    stdio: 'ignore'
+    stdio: ['pipe', 'ignore', 'ignore']
   })
   const failed = new Promise<never>((_resolve, reject) => {
     child.once('error', reject)
@@ -290,6 +295,8 @@ export async function launchPreparedMacInstaller(
           receipt.requestSha256 === requestSha256 &&
           receipt.pid === child.pid
         ) {
+          const stdin = child.stdin as unknown as { unref?: () => void } | null
+          stdin?.unref?.()
           child.unref()
           return
         }
@@ -303,7 +310,28 @@ export async function launchPreparedMacInstaller(
       'The installation executor has not acknowledged this operation.'
     )
   })()
-  await Promise.race([failed, ready])
+  try {
+    await Promise.race([failed, ready])
+  } catch (error) {
+    // Kill before closing stdin: EOF is the executor's normal handoff signal and can start a
+    // replacement transaction after the readiness handshake has already failed.
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill()
+      } catch {
+        // The exit/error path below remains authoritative if the child already disappeared.
+      }
+      child.stdin?.destroy()
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1_000)
+        child.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+      })
+    } else child.stdin?.destroy()
+    throw error
+  }
 }
 
 export async function discardPreparedMacInstallation(

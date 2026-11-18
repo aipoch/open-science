@@ -102,6 +102,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.setPreference',
   'managedFileVersions.cancelDiff',
   'managedFileVersions.diffText',
+  'managedFileVersions.saveBinaryEdit',
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
@@ -128,6 +129,13 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.onState',
   'officePreview.open',
   'officePreview.reportState',
+  'pptxDraft.accept',
+  'pptxDraft.get',
+  'pptxDraft.reject',
+  'pptxEdit.apply',
+  'pptxEdit.close',
+  'pptxEdit.open',
+  'pptxEdit.save',
   'previewContextMenu.onRequested',
   'remoteAccess.detect',
   'remoteAccess.disable',
@@ -203,6 +211,7 @@ const GENERATED_SOURCE_OMISSIONS = [
 ] as const
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'artifacts.openInBrowser',
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
@@ -210,6 +219,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
+  'artifacts:open-in-browser',
   'file:artifact-save-progress',
   'file:cancel-artifact-save',
   'file:save-blob',
@@ -220,7 +230,6 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:export-conversation',
-  'sessions:fork',
   'sessions:open-recovery-folder',
   'settings:import-agent-home-skills',
   'settings:list-agent-home-skills',
@@ -266,15 +275,17 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'granted-roots:set-access',
     'list-dir',
     'list-drives',
+    'open-in-browser',
     'open-path',
     'read-preview',
     'reveal'
   ],
   logs: ['get-status', 'open-file', 'reveal-in-folder'],
   'notebook-env': ['cancel', 'provision', 'repair'],
-  notebook: ['export-ipynb', 'export-ipynb-all'],
+  notebook: ['export-ipynb', 'export-ipynb-all', 'process-monitor', 'terminate-monitored-process'],
   'remote-access': ['probe'],
   sessions: [
+    'fork',
     'export-package',
     'import-package',
     'package-operation',

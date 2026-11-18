@@ -593,3 +593,46 @@ it.each([
   ).toBeUndefined()
   expect(JSON.stringify(f)).toBe(before)
 })
+
+it.each(['closed unit', 'detached unit', 'divider', 'wrong symbol'] as const)(
+  'keeps signed uncertainty rows separate before a solar unit (%s)',
+  (variant) => {
+    const token = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number
+    ): { text: string; rect: number[]; baseline: number; height: number; horizontal: boolean } => ({
+      text,
+      rect: [x, y - height, x + width, y],
+      baseline: y,
+      height,
+      horizontal: true
+    })
+    const unitX = variant === 'detached unit' ? 75 : 60
+    const items = [
+      token('0.174', 10, 40, 23, 12),
+      token('+0.011', 33, 35, 22, 9),
+      token('−0.015', 33, 44, 22, 9),
+      token('R', unitX, 40, 7, 12),
+      token(variant === 'wrong symbol' ? 'x' : '⊙', unitX + 7, 42, 5, 9)
+    ]
+    const proof = recoverNativeStackedUncertainty(
+      items,
+      variant === 'divider' ? [[58, 25, 58, 50]] : []
+    )
+    if (variant !== 'closed unit') {
+      expect(proof).toBeUndefined()
+      return
+    }
+    expect(proof?.runs).toEqual([
+      { text: '0.174', position: 'normal' },
+      { text: '+0.011', position: 'superscript' },
+      { text: '−0.015', position: 'subscript' },
+      { text: ' R', position: 'normal' },
+      { text: '⊙', position: 'subscript' }
+    ])
+    expect(proof?.ownedTokens).toEqual(new Set(items))
+  }
+)

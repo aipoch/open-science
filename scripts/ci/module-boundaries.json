@@ -268,6 +268,7 @@
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
         "src/main/compute/compute-service.ts",
+        "src/main/compute/external-compute-provider.ts",
         "src/main/compute/application-commands.ts",
         "src/main/compute/authentication-runtime.ts",
         "src/main/compute/compute-host-deletion-owner.ts",
@@ -354,6 +355,8 @@
       "externalImports": [
         "@aipoch/compute",
         "@aipoch/compute/node",
+        "@aipoch/compute/ray",
+        "@aipoch/compute/ray-endpoint",
         "@aipoch/diagnostics",
         "@aipoch/diagnostics/node",
         "node:crypto",
@@ -1678,7 +1681,8 @@
         "src/main/database/migrations/0048-pdf-annotation-sharing.ts",
         "src/main/database/migrations/0049-pascalcase-table-names.ts",
         "test/fixtures/application-database.ts",
-        "src/main/database/migrations/0050-literature-translation.ts"
+        "src/main/database/migrations/0050-literature-translation.ts",
+        "src/main/database/migrations/0059-session-history.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -5619,7 +5623,10 @@
         "src/main/session-persistence/turn-outcome-authority.ts",
         "src/main/session-persistence/record-facts.ts",
         "src/main/session-persistence/flush-protocol.ts",
-        "src/main/session-persistence/conversation-pdf-electron.ts"
+        "src/main/session-persistence/conversation-pdf-electron.ts",
+        "src/main/session-persistence/history-projection.ts",
+        "src/main/session-persistence/runtime-session-file.ts",
+        "src/main/session-persistence/runtime-session-mutation.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -6556,7 +6563,11 @@
       ]
     },
     "skill_runtime_transport": {
-      "sources": ["src/main/skills/runtime-mcp-server.ts"],
+      "sources": [
+        "src/main/skills/runtime-mcp-config.ts",
+        "src/main/skills/runtime-mcp-constants.ts",
+        "src/main/skills/runtime-mcp-server.ts"
+      ],
       "layer": "host-owner",
       "sourceLayers": {},
       "consumerModules": ["settings_service_facade"],
@@ -6569,9 +6580,11 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
+        "@agentclientprotocol/sdk",
         "@aipoch/skills/projection",
         "@modelcontextprotocol/sdk/server/mcp.js",
         "@modelcontextprotocol/sdk/server/stdio.js",
+        "node:crypto",
         "node:path",
         "zod"
       ]
@@ -7000,7 +7013,8 @@
         "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx",
         "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx",
         "src/renderer/src/pages/workspace/agent-authentication-error.ts",
-        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts"
+        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts",
+        "src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -7044,7 +7058,8 @@
         "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/agent-authentication-error.ts": "presentation-adapter",
-        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts": "presentation-adapter"
+        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts": "presentation-adapter",
+        "src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -8168,6 +8183,7 @@
       "externalImports": [
         "@aipoch/diagnostics/node",
         "@aipoch/durable-files",
+        "node:crypto",
         "node:fs/promises",
         "node:path",
         "node:url"
@@ -9196,7 +9212,8 @@
       "sources": [
         "src/renderer/src/lib/session-persistence/session-persistence.ts",
         "src/renderer/src/lib/session-persistence/session-write-recovery.ts",
-        "src/renderer/src/lib/acp/runtime-writer-client.ts"
+        "src/renderer/src/lib/acp/runtime-writer-client.ts",
+        "src/renderer/src/lib/session-persistence/session-history.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {},
@@ -10381,6 +10398,7 @@
         "src/main/connectors/custom-mcp-config.ts",
         "src/main/connectors/mcp-host-dependencies.ts",
         "src/main/connectors/molecule-artifact-adapter.ts",
+        "src/main/connectors/molecule-preview-tool.ts",
         "src/main/connectors/catalog.ts",
         "src/main/connector-reload.ts"
       ],
@@ -11597,6 +11615,35 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": ["node:crypto", "node:util"]
+    },
+    "session_journal": {
+      "sources": [
+        "src/main/session-persistence/journal.ts",
+        "src/main/session-persistence/journal-codec.ts",
+        "src/main/session-persistence/session-record-codec.ts"
+      ],
+      "layer": "repository",
+      "sourceLayers": {
+        "src/main/session-persistence/journal-codec.ts": "record-codec",
+        "src/main/session-persistence/session-record-codec.ts": "record-codec"
+      },
+      "consumerModules": [],
+      "requiredTests": [
+        "src/main/session-persistence/journal-codec.test.ts",
+        "src/main/session-persistence/journal-history.test.ts",
+        "src/main/session-persistence/journal-prepared-write.test.ts",
+        "src/main/session-persistence/journal-text-events.test.ts",
+        "src/main/session-persistence/journal.test.ts",
+        "src/main/session-persistence/session-record-codec.test.ts",
+        "src/main/session-persistence/session-record-text-events.test.ts"
+      ],
+      "externalImports": [
+        "@aipoch/durable-files",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+        "node:util"
+      ]
     },
     "harness_acp": {
       "sources": [

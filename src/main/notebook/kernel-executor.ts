@@ -1,3 +1,7 @@
+import {
+  createNotebookCellPreview,
+  type NotebookCellPreview
+} from '../../shared/notebook-process-monitor'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { observeResourceProcess, recordResourceEvent } from '../resource-diagnostics/recorder'
@@ -54,6 +58,7 @@ import {
   registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
+  capturePosixProcessTreeIdentity,
   type ProcessTreeKillResult
 } from '../process-tree'
 import {
@@ -294,6 +299,9 @@ type PendingRequest = {
 
 // One persistent loop process for a (kind, env), reused across cells until it exits or is killed.
 type ProcState = {
+  lastCell?: NotebookCellPreview
+  startedAt: number
+  cleanupPending?: boolean
   kind: KernelProcessKind
   // Resolved env name backing this proc (DEFAULT_PY_ENV / DEFAULT_R_ENV or a named env); '' for the
   // env-agnostic repl. Reported to the idle/terminated callbacks so the caller keys per-env status.
@@ -541,6 +549,34 @@ const helperInitializationError = (
 // NotebookExecutionResult (mapLoopOutputs). The python/r data loops and the repl control loop coexist
 // as independent processes; the requested kind never triggers a restart of another.
 class NotebookKernelExecutor implements NotebookExecutor {
+  monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
+    const live = [...this.procs.values()]
+    const pending = [...this.pendingTeardowns.values()].map(({ owner }) => owner)
+    return [...new Set([...live, ...pending])].map((proc) => ({
+      identity: proc,
+      processKey: proc.key,
+      pid: proc.child.pid,
+      startedAt: proc.startedAt,
+      lastCell: proc.lastCell,
+      status:
+        this.procs.get(proc.key) === proc
+          ? proc.pending
+            ? 'running'
+            : 'idle'
+          : proc.cleanupPending
+            ? 'cleaning'
+            : 'cleanup-failed',
+      terminate: async () => {
+        if (this.procs.get(proc.key) === proc) {
+          await this.terminate(proc.kind, proc.env)
+        } else if (this.pendingTeardowns.get(proc.key)?.owner === proc) {
+          const result = await this.reconcilePendingTeardown(proc.key)
+          if (!result?.reaped) throw new Error('Notebook process-tree cleanup remains incomplete.')
+        } else throw new Error('Notebook process changed. Refresh the list.')
+      }
+    }))
+  }
+
   idleProcesses(): ReturnType<NonNullable<NotebookExecutor['idleProcesses']>> {
     return Array.from(this.procs.values(), (proc) => ({
       identity: proc,
@@ -970,6 +1006,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     })
     const readline = createInterface({ input: boundedOutput })
     const proc: ProcState = {
+      startedAt: Date.now(),
       kind,
       env,
       key,
@@ -1583,9 +1620,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
     const recordOwnership = (): void => {
       if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
+      const birthToken = capturePosixProcessTreeIdentity(child)?.birthToken
       ownershipReceipt = this.processLifecycle?.recordSpawned(ownershipIntent, {
         pid: child.pid,
         processStartToken: readProcessStartToken(child.pid),
+        ...(birthToken ? { posixBirthToken: birthToken } : {}),
         commandIdentityMarker: ownershipIntent.record.receiptId
       })
     }
@@ -1894,6 +1933,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           )
           for (const directory of protectedDirAdditions) proc.protectedDirs.add(directory)
         }
+        proc.lastCell = createNotebookCellPreview(request.code)
         onDispatch()
       } catch (error) {
         this.clearPendingResources(pending)
@@ -2122,7 +2162,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     proc: ProcState,
     reason: NotebookSandboxCleanupReason = 'cancel'
   ): Promise<ProcessTreeKillResult> {
-    const done = this.teardownProc(proc, reason)
+    proc.cleanupPending = true
+    const done = this.teardownProc(proc, reason).finally(() => {
+      proc.cleanupPending = false
+    })
     this.pendingTeardowns.set(proc.key, {
       completion: done,
       retry: () => this.killChildTracked(proc, reason),

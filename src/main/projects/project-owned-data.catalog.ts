@@ -24,6 +24,7 @@ type PrismaOwnerModel = Readonly<{
 
 type ProjectDeletionPath =
   | 'background-result-delivery-target-delete'
+  | 'schedule-target-delete'
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
@@ -290,6 +291,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'session-history-index',
+    medium: 'sqlite',
+    resources: ['SessionHistoryIndex', 'SessionHistoryItem'],
+    prismaModels: [
+      {
+        name: 'SessionHistoryIndex',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-session-json-delete',
+      operation: 'SessionHistoryProjectionRepository.delete and deleteProjectHistory',
+      note: 'Explicit Session deletion removes the derived index and cascades its item bodies. Project deletion removes every index for the Project before the Session JSON tombstone is collected.'
+    }
+  },
+  {
     id: 'vision-evidence',
     medium: 'sqlite',
     resources: ['VisionEvidence'],
@@ -361,6 +380,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       retention: 'Retained with the soft-deleted Project row.',
       reason:
         'Project metadata and Session Usage facts remain queryable for per-Project and global historical totals.'
+    }
+  },
+  {
+    id: 'session-schedules',
+    medium: 'sqlite',
+    resources: ['SessionSchedule', 'ScheduleOccurrence'],
+    prismaModels: [
+      {
+        name: 'SessionSchedule',
+        ownerFields: [requiredOwner('projectId'), optionalOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'schedule-target-delete',
+      operation: 'ScheduleRepository.deleteTarget',
+      note: 'Scheduling definitions and occurrences are removed on committed project deletion.'
     }
   },
   {

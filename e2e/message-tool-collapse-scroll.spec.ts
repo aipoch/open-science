@@ -35,7 +35,9 @@ for (const scenario of scenarios) {
     test.setTimeout(180_000)
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
-    await page.setViewportSize({ width: 1100, height: 1100 })
+    // This is a real Electron window. Resize the native window so screenshots and titlebar-aware
+    // CSS use the same width and height as the Playwright page.
+    await app.setMainWindowSize(1100, 1100)
     await page.emulateMedia({
       reducedMotion: 'reducedMotion' in scenario ? 'reduce' : 'no-preference'
     })

@@ -81,6 +81,15 @@ export const noticeCatalog = {
 
 // Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'configuration/vision-model': {
+    level: 'warning',
+    titleKey: 'Image support is not configured',
+    descriptionKey:
+      "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.",
+    primaryAction: 'open-provider-settings',
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'service/prompt-optimization': {
     level: 'warning',
     titleKey: 'Optimize question',
@@ -128,8 +137,11 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation =>
-  (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
+export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+  const presentation =
+    (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
+  return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation
+}
 
 export type ComposerNotice = Readonly<{
   id: string
@@ -168,7 +180,7 @@ export const formatNoticeDiagnostics = (
 ): string =>
   [
     title,
-    description,
+    ...(description ? [description] : []),
     ...Object.entries(notice.failure.diagnostics)
       .filter(
         ([key, value]) =>

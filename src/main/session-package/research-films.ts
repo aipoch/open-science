@@ -20,7 +20,10 @@ import { assertPackageCapacity } from './capacity'
 import {
   packageResearchFilmsSchema,
   researchFilmStorageKeys,
-  type PackageResearchFilms
+  packageFilms,
+  packageFilmRecord,
+  packageFilmNamespace,
+  type PackageModeFilms as PackageResearchFilms
 } from './research-films-contract'
 import type { PackageRecords } from './records-contract'
 
@@ -62,17 +65,24 @@ export async function captureResearchFilms(
   signal?: AbortSignal,
   inheritedChecksums: ReadonlyMap<string, string> = new Map()
 ): Promise<CapturedResearchFilms> {
-  const films = new Map(inherited.map((film) => [film.branchId ?? '', film]))
+  const identity = (film: { branchId?: string; mode?: string }): string =>
+    JSON.stringify([film.branchId ?? null, film.mode ?? 'research-explanation'])
+  const films = new Map(inherited.map((film) => [identity(film), film]))
   const sources = new Map(researchFilmStorageKeys(inherited).map((key) => [key, key]))
   const localUpdated = new Map<string, number>()
   const branches = new Set(session.conversationGraph?.branches.map((branch) => branch.id) ?? [])
-  for (const branchId of [undefined, ...branches]) {
+  for (const scope of [undefined, ...branches].flatMap((branchId) => [
+    { branchId, mode: 'research-explanation' as const },
+    { branchId, mode: 'operation-replay' as const }
+  ])) {
+    const { branchId, mode } = scope
     signal?.throwIfAborted()
     try {
       const film = await readStoredResearchFilm(root, {
         projectId: session.projectId,
         sessionId: session.id,
-        branchId
+        branchId,
+        mode
       })
       if (!film) continue
       const sourcePath = join(dirname(dirname(film.playerPath)), 'session.json')
@@ -82,7 +92,8 @@ export async function captureResearchFilms(
           provenance: z.object({
             projectId: z.string(),
             sessionId: z.string(),
-            branchId: z.string().optional()
+            branchId: z.string().optional(),
+            mode: z.enum(['research-explanation', 'operation-replay']).optional()
           })
         })
         .parse(
@@ -92,18 +103,20 @@ export async function captureResearchFilms(
       if (
         owner.projectId !== session.projectId ||
         owner.sessionId !== session.id ||
-        (owner.branchId && !branches.has(owner.branchId))
+        (owner.branchId && !branches.has(owner.branchId)) ||
+        (owner.mode ?? 'research-explanation') !== mode
       )
         continue
       const updatedAt = (
         await lstat(join(dirname(dirname(dirname(film.playerPath))), 'latest.json'))
       ).mtimeMs
-      if (updatedAt < (localUpdated.get(owner.branchId ?? '') ?? -Infinity)) continue
-      localUpdated.set(owner.branchId ?? '', updatedAt)
-      const prefix = `artifacts/${session.projectId}/${session.id}/.research-films/${film.id}`
+      if (updatedAt < (localUpdated.get(identity(owner)) ?? -Infinity)) continue
+      localUpdated.set(identity(owner), updatedAt)
+      const prefix = `artifacts/${session.projectId}/${session.id}/${packageFilmNamespace(scope)}/${film.id}`
       const playerStorageKey = `${prefix}/player.html`,
         sourceStorageKey = `${prefix}/sources.zip`
-      films.set(owner.branchId ?? '', {
+      films.set(identity(owner), {
+        ...(mode === 'operation-replay' ? { mode } : {}),
         id: film.id,
         title: film.title,
         duration: film.duration,
@@ -122,7 +135,7 @@ export async function captureResearchFilms(
   const files: CapturedResearchFilms['files'] = new Map()
   for (const film of films.values()) {
     try {
-      packageResearchFilmsSchema.parse([film])
+      packageResearchFilmsSchema.parse([packageFilmRecord(film)])
       const filmFiles: CapturedResearchFilms['files'] = new Map()
       for (const key of researchFilmStorageKeys([film])) {
         signal?.throwIfAborted()
@@ -150,7 +163,7 @@ export async function captureResearchFilms(
       skippedFilm(error)
     }
   }
-  if (selected.length) packageResearchFilmsSchema.parse(selected)
+  if (selected.length) packageResearchFilmsSchema.parse(selected.map(packageFilmRecord))
   return { films: selected, files }
 }
 
@@ -159,18 +172,21 @@ export function validateResearchFilms(
   manifest: SessionPackageManifest,
   session?: PersistedChatSession
 ): void {
-  const films = records.researchFilms
-  if (Boolean(films?.length) !== Boolean(manifest.requiredFeatures?.includes('research-film')))
+  const films = packageFilms(records)
+  if (
+    Boolean(records.researchFilms?.length) !==
+    Boolean(manifest.requiredFeatures?.includes('research-film'))
+  )
     throw new Error('Research film package capability declaration is invalid.')
   const keys = new Set(researchFilmStorageKeys(films)),
     branches = new Set<string>(),
     ids = new Set<string>()
   for (const film of films ?? []) {
-    const prefix = `artifacts/${manifest.source.projectId}/${manifest.source.sessionId}/.research-films/${film.id}`
+    const prefix = `artifacts/${manifest.source.projectId}/${manifest.source.sessionId}/${packageFilmNamespace(film)}/${film.id}`
     if (
       film.playerStorageKey !== `${prefix}/player.html` ||
       film.sourceStorageKey !== `${prefix}/sources.zip` ||
-      branches.has(film.branchId ?? '') ||
+      branches.has(JSON.stringify([film.branchId ?? null, film.mode ?? 'research-explanation'])) ||
       ids.has(film.id)
     )
       throw new Error('Invalid research film ownership or duplicate branch.')
@@ -180,7 +196,7 @@ export function validateResearchFilms(
       !session.conversationGraph?.branches.some((branch) => branch.id === film.branchId)
     )
       throw new Error('Research film branch is unavailable.')
-    branches.add(film.branchId ?? '')
+    branches.add(JSON.stringify([film.branchId ?? null, film.mode ?? 'research-explanation']))
     ids.add(film.id)
     for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
       const entry = manifest.inventory.find((entry) => entry.storageKey === key)
@@ -188,7 +204,12 @@ export function validateResearchFilms(
     }
   }
   for (const entry of manifest.inventory) {
-    if (entry.storageKey?.split('/')[3] === '.research-films' && !keys.has(entry.storageKey))
+    if (
+      ['.research-films', '.operation-replay-films'].includes(
+        entry.storageKey?.split('/')[3] ?? ''
+      ) &&
+      !keys.has(entry.storageKey ?? '')
+    )
       throw new Error('Unlisted research film content.')
   }
 }
@@ -303,9 +324,19 @@ export async function appendResearchFilms(options: {
     included.push(film)
   }
   if (!included.length) return
-  records.researchFilms = included
+  const explanation = included
+    .filter((film) => film.mode !== 'operation-replay')
+    .map(packageFilmRecord)
+  const replay = included.filter((film) => film.mode === 'operation-replay').map(packageFilmRecord)
+  if (explanation.length) records.researchFilms = explanation
+  else delete records.researchFilms
+  if (replay.length) records.operationReplayFilms = { schemaVersion: 1, films: replay }
+  else delete records.operationReplayFilms
   manifest.requiredFeatures = [
-    ...new Set([...(manifest.requiredFeatures ?? []), 'research-film' as const])
+    ...new Set([
+      ...(manifest.requiredFeatures ?? []).filter((feature) => feature !== 'research-film'),
+      ...(explanation.length ? ['research-film' as const] : [])
+    ])
   ]
   await writeFile(join(directory, 'records.json'), JSON.stringify(records))
   const recordEntry = await packageEntry(directory, 'records.json', 'records')

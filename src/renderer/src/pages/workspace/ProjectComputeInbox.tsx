@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow'
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -9,12 +10,14 @@ import {
   isComputeProviderId,
   type JobSummary
 } from '../../../../shared/compute'
-import { ComputeJobOutputs } from '@/components/ComputeJobOutputs'
 import type {
   NotebookProjectActivity,
   NotebookProjectBackgroundRunActivity,
   NotebookProjectKernelActivity
 } from '../../../../shared/notebook'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
+import { ComputePanel } from './ComputePanel'
+import { ComputeProcessMonitor } from './ComputeProcessMonitor'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -156,17 +159,39 @@ function jobTargetLabel(job: JobSummary, t: ReturnType<typeof useTranslation>['t
   return name === backend ? name : `${backend} · ${name}`
 }
 
-const ProjectComputeInbox = (): React.JSX.Element => {
+const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
   const formatRelativeTime = useRelativeTimeFormat()
-  const projectId = useNavigationStore((state) => state.activeProjectId)
-  const openSession = useNavigationStore((state) => state.openSession)
-  const sessions = useSessionStore((state) => state.sessions)
+  const isRemote = document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) === 'remote'
   const currentSessionId = useSessionStore((state) => state.selectedSessionId)
   const [notebookSnapshot, setNotebookSnapshot] = useState<{
     projectId: string
     activity: NotebookProjectActivity
   }>()
+  const projectId = useNavigationStore((state) => state.activeProjectId)
+  const openSession = useNavigationStore((state) => state.openSession)
+  const liveTitles = useSessionStore(
+    useShallow((state) =>
+      Object.fromEntries(state.sessions.map((session) => [session.id, session.title]))
+    )
+  )
+  const [indexedTitles, setIndexedTitles] = useState<ReadonlyMap<string, string>>(new Map())
+  useEffect(() => {
+    let disposed = false
+    const loadTitles = async (): Promise<void> => {
+      try {
+        const result = await window.api.sessions.list()
+        if (!disposed)
+          setIndexedTitles(new Map(result.sessions.map((session) => [session.id, session.title])))
+      } catch {
+        // Live session titles remain available when the index cannot be read.
+      }
+    }
+    void loadTitles()
+    return () => {
+      disposed = true
+    }
+  }, [projectId])
   const [jobsSnapshot, setJobsSnapshot] = useState<{ projectId: string; jobs: JobSummary[] }>()
   const [recentSince, setRecentSince] = useState(() => Date.now() - RECENT_COMPUTE_WINDOW_MS)
   const notebookActivity =
@@ -176,7 +201,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
   const jobs = projectId && jobsSnapshot?.projectId === projectId ? jobsSnapshot.jobs : EMPTY_JOBS
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isRemote || !isActive) return
     const refresh = createActivityRefresh(
       () => window.api.notebook.getProjectActivity({ projectId }),
       (activity) => setNotebookSnapshot({ projectId, activity })
@@ -189,7 +214,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
       refresh.dispose()
       stop()
     }
-  }, [projectId])
+  }, [projectId, isRemote, isActive])
 
   useEffect(() => {
     if (!projectId) return
@@ -224,9 +249,9 @@ const ProjectComputeInbox = (): React.JSX.Element => {
     return () => window.clearTimeout(timer)
   }, [jobs])
 
-  const sessionById = useMemo(
-    () => new Map(sessions.map((session) => [session.id, session] as const)),
-    [sessions]
+  const sessionTitles = useMemo(
+    () => new Map([...indexedTitles, ...Object.entries(liveTitles)]),
+    [indexedTitles, liveTitles]
   )
   const kernels = useMemo(() => {
     const latestBySession = new Map<string, NotebookProjectKernelActivity>()
@@ -264,9 +289,8 @@ const ProjectComputeInbox = (): React.JSX.Element => {
   }, [notebookActivity.backgroundRuns])
 
   const goToSession = (sessionId: string): void => {
-    if (projectId && sessionById.has(sessionId)) openSession(projectId, sessionId, 'user')
+    if (projectId && sessionTitles.has(sessionId)) openSession(projectId, sessionId, 'user')
   }
-
   return (
     <section
       className="@container/compute flex h-full min-h-0 flex-col bg-bg-10"
@@ -276,169 +300,167 @@ const ProjectComputeInbox = (): React.JSX.Element => {
         <h1 id="project-compute-title" className="text-lg font-semibold">
           {t('Compute')}
         </h1>
-        <p className="mt-1 text-xs text-text-100">
-          {t(
-            'Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.'
-          )}
-        </p>
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-5 px-6 py-4">
-          <section aria-labelledby="active-kernels-title">
-            {kernels.length === 0 ? (
-              <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
-                <h2
-                  id="active-kernels-title"
-                  className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
-                >
-                  {t('Active kernels')} · {kernels.length}
-                </h2>
-                <div className="px-3 py-6 text-center text-xs text-text-100">
-                  {t('No active kernels')}
+        <div className="space-y-6 px-6 py-6">
+          {isRemote ? (
+            <section aria-labelledby="active-kernels-title">
+              {kernels.length === 0 ? (
+                <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
+                  <h2
+                    id="active-kernels-title"
+                    className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
+                  >
+                    {t('Active kernels')} · {kernels.length}
+                  </h2>
+                  <div className="px-3 py-6 text-center text-xs text-text-100">
+                    {t('No active kernels')}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
-                <h2
-                  id="active-kernels-title"
-                  className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
-                >
-                  {t('Active kernels')} · {kernels.length}
-                </h2>
-                <div
-                  role="row"
-                  className="hidden grid-cols-[minmax(180px,1.15fr)_minmax(220px,1.4fr)_100px_28px] gap-4 border-b border-border-200 bg-bg-10 px-3.5 py-2 text-[10px] font-semibold tracking-wide text-text-100 uppercase @3xl/compute:grid"
-                >
-                  <span role="columnheader">{t('Session')}</span>
-                  <span role="columnheader">{t('Kernel')}</span>
-                  <span role="columnheader">{t('Status')}</span>
-                  <span aria-hidden="true" />
-                </div>
-                {kernels.map((kernel) => {
-                  const workload = latestBackgroundRunBySessionAndKernel
-                    .get(kernel.sessionId)
-                    ?.get(kernel.processKey)
-                  const session = sessionById.get(kernel.sessionId)
-                  return (
-                    <div
-                      key={`${kernel.sessionId}:${kernel.processKey}`}
-                      className="relative border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
-                    >
-                      <div className="flex min-w-0 items-center gap-2 pr-8 @3xl/compute:hidden">
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
-                          <Cpu className="size-3.5" aria-hidden="true" />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="truncate font-medium">
-                              {session?.title ?? t('Deleted Session')}
-                            </span>
-                            <span className={kernelStatusClassName(kernel.status)}>
-                              {kernelStatusLabel(kernel.status, t)}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-text-100">
-                            <span className="shrink-0">{kernelLabel(kernel, t)}</span>
-                            {workload ? (
-                              <>
-                                <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
-                                  {t('Background')}
-                                </span>
-                                <span className="truncate" title={workload.title}>
-                                  {workload.title}
-                                </span>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                      <dl className="hidden grid-cols-[minmax(180px,1.15fr)_minmax(220px,1.4fr)_100px_28px] items-center gap-4 @3xl/compute:grid">
-                        <div>
-                          <dt className="sr-only">{t('Session')}</dt>
-                          <dd className="flex min-w-0 items-center gap-2 font-medium">
-                            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
-                              <Cpu className="size-3.5" aria-hidden="true" />
-                            </span>
-                            <span className="truncate">
-                              {session?.title ?? t('Deleted Session')}
-                            </span>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="sr-only">{t('Kernel')}</dt>
-                          <dd className="min-w-0">
-                            <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-medium">
-                              <span className="truncate">{kernelLabel(kernel, t)}</span>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
+                  <h2
+                    id="active-kernels-title"
+                    className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
+                  >
+                    {t('Active kernels')} · {kernels.length}
+                  </h2>
+                  <div
+                    role="row"
+                    className="hidden grid-cols-[minmax(180px,1.15fr)_minmax(220px,1.4fr)_100px_28px] gap-4 border-b border-border-200 bg-bg-10 px-3.5 py-2 text-[10px] font-semibold tracking-wide text-text-100 uppercase @3xl/compute:grid"
+                  >
+                    <span role="columnheader">{t('Session')}</span>
+                    <span role="columnheader">{t('Kernel')}</span>
+                    <span role="columnheader">{t('Status')}</span>
+                    <span aria-hidden="true" />
+                  </div>
+                  {kernels.map((kernel) => {
+                    const workload = latestBackgroundRunBySessionAndKernel
+                      .get(kernel.sessionId)
+                      ?.get(kernel.processKey)
+                    const sessionTitle = sessionTitles.get(kernel.sessionId)
+                    return (
+                      <div
+                        key={`${kernel.sessionId}:${kernel.processKey}`}
+                        className="relative border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
+                      >
+                        <div className="flex min-w-0 items-center gap-2 pr-8 @3xl/compute:hidden">
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
+                            <Cpu className="size-3.5" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate font-medium">
+                                {sessionTitle ?? t('Deleted Session')}
+                              </span>
+                              <span className={kernelStatusClassName(kernel.status)}>
+                                {kernelStatusLabel(kernel.status, t)}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-text-100">
+                              <span className="shrink-0">{kernelLabel(kernel, t)}</span>
                               {workload ? (
-                                <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
-                                  {t('Background')}
-                                </span>
+                                <>
+                                  <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
+                                    {t('Background')}
+                                  </span>
+                                  <span className="truncate" title={workload.title}>
+                                    {workload.title}
+                                  </span>
+                                </>
                               ) : null}
                             </div>
-                            {workload ? (
-                              <div
-                                className="mt-1 min-w-0 truncate text-[11px] font-normal text-text-100"
-                                title={workload.title}
-                              >
-                                {workload.title}
+                          </div>
+                        </div>
+                        <dl className="hidden grid-cols-[minmax(180px,1.15fr)_minmax(220px,1.4fr)_100px_28px] items-center gap-4 @3xl/compute:grid">
+                          <div>
+                            <dt className="sr-only">{t('Session')}</dt>
+                            <dd className="flex min-w-0 items-center gap-2 font-medium">
+                              <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
+                                <Cpu className="size-3.5" aria-hidden="true" />
+                              </span>
+                              <span className="truncate">
+                                {sessionTitle ?? t('Deleted Session')}
+                              </span>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="sr-only">{t('Kernel')}</dt>
+                            <dd className="min-w-0">
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-medium">
+                                <span className="truncate">{kernelLabel(kernel, t)}</span>
+                                {workload ? (
+                                  <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
+                                    {t('Background')}
+                                  </span>
+                                ) : null}
                               </div>
-                            ) : null}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="sr-only">{t('Status')}</dt>
-                          <dd>
-                            <span className={kernelStatusClassName(kernel.status)}>
-                              {kernelStatusLabel(kernel.status, t)}
-                            </span>
-                          </dd>
-                        </div>
-                        <div aria-hidden="true" />
-                      </dl>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
-                        disabled={!session}
-                        aria-label={t('Go to Session')}
-                        title={t('Go to Session')}
-                        onClick={() => goToSession(kernel.sessionId)}
-                      >
-                        <ArrowUpRight aria-hidden="true" />
-                      </Button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </section>
-
-          <section aria-labelledby="compute-jobs-title">
-            {jobs.length === 0 ? (
-              <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
-                <h2
-                  id="compute-jobs-title"
-                  className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
-                >
-                  {t('Compute jobs')} · {jobs.length}
-                </h2>
-                <div className="px-3 py-6 text-center text-xs text-text-100">
-                  {t('No active or recently completed Compute Jobs.')}
+                              {workload ? (
+                                <div
+                                  className="mt-1 min-w-0 truncate text-[11px] font-normal text-text-100"
+                                  title={workload.title}
+                                >
+                                  {workload.title}
+                                </div>
+                              ) : null}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="sr-only">{t('Status')}</dt>
+                            <dd>
+                              <span className={kernelStatusClassName(kernel.status)}>
+                                {kernelStatusLabel(kernel.status, t)}
+                              </span>
+                            </dd>
+                          </div>
+                          <div aria-hidden="true" />
+                        </dl>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
+                          disabled={!sessionTitle}
+                          aria-label={t('Go to Session')}
+                          title={t('Go to Session')}
+                          onClick={() => goToSession(kernel.sessionId)}
+                        >
+                          <ArrowUpRight aria-hidden="true" />
+                        </Button>
+                      </div>
+                    )
+                  })}
                 </div>
+              )}
+            </section>
+          ) : (
+            <ComputeProcessMonitor
+              isActive={isActive}
+              projectId={projectId ?? undefined}
+              sessionTitles={sessionTitles}
+              openSession={(targetProjectId, sessionId) =>
+                openSession(targetProjectId, sessionId, 'user')
+              }
+            />
+          )}
+
+          <ComputePanel
+            title={t('Compute jobs')}
+            icon={RadioTower}
+            collapsible={jobs.length === 0}
+            count={jobs.length}
+            description={t('Current project · Active and completed in the last 48 hours.')}
+          >
+            {jobs.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t('No active or recently completed Compute Jobs.')}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
-                <h2
-                  id="compute-jobs-title"
-                  className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
-                >
-                  {t('Compute jobs')} · {jobs.length}
-                </h2>
+              <div>
                 <div
                   role="row"
-                  className="hidden grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_100px_110px_28px] gap-4 border-b border-border-200 bg-bg-10 px-3.5 py-2 text-[10px] font-semibold tracking-wide text-text-100 uppercase @3xl/compute:grid"
+                  className="hidden grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_100px_110px_28px] gap-4 border-b border-border bg-muted/30 px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase @3xl/compute:grid"
                 >
                   <span role="columnheader">{t('Task')}</span>
                   <span role="columnheader">{t('Session')}</span>
@@ -448,28 +470,28 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                   <span aria-hidden="true" />
                 </div>
                 {jobs.map((job) => {
-                  const session = sessionById.get(job.session_id)
+                  const sessionTitle = sessionTitles.get(job.session_id)
                   const target = jobTargetLabel(job, t)
                   const updatedAt = job.finished_at ?? job.started_at ?? job.created_at
                   return (
                     <div
                       key={job.job_id}
-                      className="relative border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
+                      className="relative border-t border-border px-4 py-3 text-sm first:border-t-0"
                     >
                       <details className="group pr-8 @3xl/compute:hidden">
-                        <summary className="flex cursor-pointer list-none items-center gap-2 pr-1 [&::-webkit-details-marker]:hidden">
+                        <summary className="flex cursor-pointer list-none items-start gap-2 rounded-md outline-none focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
                           <RadioTower
-                            className="size-3.5 shrink-0 text-text-100"
+                            className="mt-px size-3.5 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium" title={job.intent}>
                               {job.intent}
                             </span>
-                            <span className="block wrap-anywhere text-[11px] text-text-100">
+                            <span className="block wrap-anywhere text-xs text-muted-foreground">
                               {target}
                             </span>
-                            <span className="mt-1 flex items-center gap-1.5 text-[11px] text-text-100">
+                            <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                               <span>{jobStatusLabel(job, t)}</span>
                               <span aria-hidden="true">·</span>
                               <time dateTime={new Date(updatedAt).toISOString()}>
@@ -477,18 +499,21 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                               </time>
                             </span>
                           </span>
-                          <ChevronDown
-                            className="size-3.5 shrink-0 transition-transform group-open:rotate-180"
-                            aria-hidden="true"
-                          />
+                          <span className="-mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors group-hover:bg-bg-100 group-hover:text-text-000">
+                            <ChevronDown
+                              className="size-4 transition-transform motion-reduce:transition-none group-open:rotate-180"
+                              strokeWidth={1.75}
+                              aria-hidden="true"
+                            />
+                          </span>
                         </summary>
-                        <dl className="mt-3 grid gap-2 border-t border-border-200 pt-3">
+                        <dl className="mt-3 grid gap-2 border-t border-border pt-3">
                           <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
-                            <dt className="text-[10px] font-semibold tracking-wide text-text-100 uppercase">
+                            <dt className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
                               {t('Session')}
                             </dt>
-                            <dd className="truncate text-text-100">
-                              {session?.title ?? t('Deleted Session')}
+                            <dd className="truncate text-muted-foreground">
+                              {sessionTitle ?? t('Deleted Session')}
                             </dd>
                           </div>
                         </dl>
@@ -498,7 +523,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                           <dt className="sr-only">{t('Task')}</dt>
                           <dd className="flex min-w-0 items-center gap-2 font-medium">
                             <RadioTower
-                              className="size-3.5 shrink-0 text-text-100"
+                              className="size-3.5 shrink-0 text-muted-foreground"
                               aria-hidden="true"
                             />
                             <span className="truncate" title={job.intent}>
@@ -508,24 +533,24 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                         </div>
                         <div>
                           <dt className="sr-only">{t('Session')}</dt>
-                          <dd className="truncate text-text-100">
-                            {session?.title ?? t('Deleted Session')}
+                          <dd className="truncate text-muted-foreground">
+                            {sessionTitle ?? t('Deleted Session')}
                           </dd>
                         </div>
                         <div>
                           <dt className="sr-only">{t('Target')}</dt>
-                          <dd className="wrap-anywhere text-text-100">{target}</dd>
+                          <dd className="wrap-anywhere text-muted-foreground">{target}</dd>
                         </div>
                         <div>
                           <dt className="sr-only">{t('Status')}</dt>
-                          <dd className="text-text-100">{jobStatusLabel(job, t)}</dd>
+                          <dd className="text-muted-foreground">{jobStatusLabel(job, t)}</dd>
                         </div>
                         <div>
                           <dt className="sr-only">{t('Updated')}</dt>
                           <dd>
                             <time
                               dateTime={new Date(updatedAt).toISOString()}
-                              className="text-text-100"
+                              className="text-muted-foreground"
                             >
                               {formatRelativeTime(updatedAt)}
                             </time>
@@ -536,22 +561,21 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       <Button
                         type="button"
                         variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000"
-                        disabled={!session}
+                        size="icon-sm"
+                        className="absolute top-2 right-2.5 text-muted-foreground hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
+                        disabled={!sessionTitles.has(job.session_id)}
                         aria-label={t('Go to Session')}
                         title={t('Go to Session')}
                         onClick={() => goToSession(job.session_id)}
                       >
-                        <ArrowUpRight aria-hidden="true" />
+                        <ArrowUpRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                       </Button>
-                      <ComputeJobOutputs job={job} />
                     </div>
                   )
                 })}
               </div>
             )}
-          </section>
+          </ComputePanel>
         </div>
       </ScrollArea>
     </section>

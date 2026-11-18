@@ -102,7 +102,7 @@ export class AcpOpenCodeTurnAdapter implements AcpProviderTurnAdapter {
           }
         }
       },
-      finalize: async () => {
+      finalize: async (): Promise<AcpProviderTurnResult> => {
         if (closed || !reader) return EMPTY_RESULT
         const baseline = before
         const finalReader = reader
@@ -116,7 +116,14 @@ export class AcpOpenCodeTurnAdapter implements AcpProviderTurnAdapter {
                 .filter(([id]) => !baseline.assistantMessageIds.has(id))
                 .at(-1)?.[1]
             : undefined)
-        return { ...normalizeTurnUsage(baseline, after), ...(compaction ? { compaction } : {}) }
+        const truncatedId = after?.lastTruncatedAssistantId
+        return {
+          ...normalizeTurnUsage(baseline, after),
+          ...(compaction ? { compaction } : {}),
+          ...(truncatedId && baseline && !baseline.assistantMessageIds.has(truncatedId)
+            ? { outputTruncated: true }
+            : {})
+        }
       },
       cancel: close
     })

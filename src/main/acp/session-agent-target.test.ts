@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
+import type { ProviderView, SettingsSnapshot } from '../../shared/settings'
 import {
   CODEX_ISOLATED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID,
-  type ProviderView,
-  type SettingsSnapshot
-} from '../../shared/settings'
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import {
   materializeSessionAgentConfiguration,
   resolveValidatedSessionAgentTarget,

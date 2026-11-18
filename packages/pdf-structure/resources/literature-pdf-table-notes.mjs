@@ -39,6 +39,8 @@ const boldGroupDefinition = (text) =>
 const singleEquationKey = (text) =>
   /^(?:Legend:\s*)?([A-Z][A-Z0-9-]{1,11})\s*=\s*\p{Ll}[\p{L} -]{3,79}\.$/u.exec(text.trim())?.[1]
 const statisticDefinition = (text) =>
+  /^Failures are retained as score \d+(?:\.\d+)?\.\s+\p{L}/u.test(text.trim()) ||
+  /^Positive values favou?r [AB]\.\s+\p{L}/iu.test(text.trim()) ||
   doseDefinition(text) ||
   doseTargetDefinition(text) ||
   medianProportionDefinition(text) ||
@@ -186,6 +188,9 @@ const substantiveStarNote = (text) =>
   (significanceLegend(text) || (text.match(/\p{L}{2,}/gu) ?? []).length >= 2)
 
 const startsNote = (text) =>
+  /^Notes?\.\s+[a-z]\s+(?:is|denotes|represents)\s+(?:the\s+)?(?:standardized\s+)?correlation\b/u.test(
+    text.trim()
+  ) ||
   /^Notes?(?:\s*[—–]\s*\p{L}|\.\s*\([a-z]\)\s*\p{L})/iu.test(text.trim()) ||
   /^Notes?\.\s*[+–−-]{1,3}\s*=\s*\p{L}/iu.test(text.trim()) ||
   /^(?:Values are r coefficients from correlation analyses\.|Generalized estimating equations? \(GEE\)|Multivariable analysis performed controlling for|Presented as mean\s*±\s*standard error\b)/i.test(
@@ -1107,8 +1112,8 @@ function recoverCitedRaisedParagraphs(page, tables, rules, lines) {
   })
 }
 
-// Complete only already-owned notes. A shared page center, native closing
-// rule, uniform prose leading and a short terminal line prove the paragraph;
+// Complete only already-owned notes. A shared page or bounded rule center,
+// native closing rule, uniform leading and a short terminal line close the paragraph;
 // the normal indentation gates remain unchanged for other continuations.
 function completeCenteredRuledNotes(page, tables, rules, lines, notes) {
   if (!Number.isFinite(page.width)) return
@@ -1122,25 +1127,24 @@ function completeCenteredRuledNotes(page, tables, rules, lines, notes) {
         center = (first.x + first.right) / 2,
         key = /^([a-z])\s+\p{L}/u.exec(first.text)?.[1]
       if (
-        Math.abs(center - page.width / 2) > h * 0.2 ||
-        (!startsNote(first.text) &&
-          (!key ||
-            !page.lines.some(
-              (l) =>
-                l.text === key &&
-                l.y >= rect[1] - 0.02 &&
-                l.y + l.height <= rect[3] + 0.02 &&
-                l.x >= rect[0] &&
-                l.x + l.width <= rect[2] &&
-                page.lines.some(
-                  (body) =>
-                    body !== l &&
-                    body.fontSize > l.fontSize * 1.2 &&
-                    Math.abs(body.x + body.width - l.x) < body.fontSize * 0.4 &&
-                    body.y + body.height - l.y - l.height > body.fontSize * 0.15 &&
-                    body.y + body.height - l.y - l.height < body.fontSize * 0.8
-                )
-            )))
+        !startsNote(first.text) &&
+        (!key ||
+          !page.lines.some(
+            (l) =>
+              l.text === key &&
+              l.y >= rect[1] - 0.02 &&
+              l.y + l.height <= rect[3] + 0.02 &&
+              l.x >= rect[0] &&
+              l.x + l.width <= rect[2] &&
+              page.lines.some(
+                (body) =>
+                  body !== l &&
+                  body.fontSize > l.fontSize * 1.2 &&
+                  Math.abs(body.x + body.width - l.x) < body.fontSize * 0.4 &&
+                  body.y + body.height - l.y - l.height > body.fontSize * 0.15 &&
+                  body.y + body.height - l.y - l.height < body.fontSize * 0.8
+              )
+          ))
       )
         continue
       const closing = rules.filter(
@@ -1153,6 +1157,15 @@ function completeCenteredRuledNotes(page, tables, rules, lines, notes) {
           Math.abs(r[2] - rect[2]) < h * 2
       )
       if (closing.length !== 1) continue
+      const pageCentered = Math.abs(center - page.width / 2) <= h * 0.2
+      const ruleCentered =
+        statisticDefinition(first.text) &&
+        closing[0][1] >= rect[3] &&
+        first.y - closing[0][1] < h &&
+        Math.abs(center - (closing[0][0] + closing[0][2]) / 2) <= h * 0.05 &&
+        first.x >= closing[0][0] &&
+        first.right <= closing[0][2]
+      if (!pageCentered && !ruleCentered) continue
       const block = [first]
       let spacing
       for (const next of lines.filter((l) => l.y > first.y + 2)) {
@@ -1181,6 +1194,7 @@ function completeCenteredRuledNotes(page, tables, rules, lines, notes) {
         bounds = union(block.map(lineRect))
       if (
         block.length < 3 ||
+        (!pageCentered && block.some((l) => l.x < closing[0][0] || l.right > closing[0][2])) ||
         last.width >= first.width * 0.6 ||
         !/[.!?]$/.test(last.text) ||
         !text.startsWith(note.text) ||

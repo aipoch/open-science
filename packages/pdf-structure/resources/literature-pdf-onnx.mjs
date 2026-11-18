@@ -3,6 +3,7 @@
 // Usage: node resources/pdf-structure/literature-pdf-onnx.mjs PDF ASSET_DIR ORT_PACKAGE_OR_ENTRY PAGES OUT_DIR
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { cpus, platform, arch } from 'node:os'
@@ -15,6 +16,8 @@ import { collectTableRules, findCaptionedNumericTableRegions } from './literatur
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation, isUprightText } from './literature-pdf-orientation.mjs'
 import { deduplicateTableDetections } from './literature-pdf-onnx-postprocess.mjs'
+import { createOnnxSessionLifecycle } from './literature-pdf-onnx-sessions.mjs'
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
 
 const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory, mode] =
   process.argv.slice(2)
@@ -54,13 +57,39 @@ const models = {
     ]
   }
 }
-const sessions = {}
 const modelEvidence = {}
+const phase = (name, action) =>
+  console.log(JSON.stringify({ phase: `onnx:${name}:${action}`, memory: process.memoryUsage() }))
+const verifiedModelBytes = async (name) => {
+  const bytes = await readFile(join(assetDirectory, `${name}.onnx`))
+  assert.equal(
+    createHash('sha256').update(bytes).digest('hex'),
+    models[name].sha256,
+    'Model checksum mismatch.'
+  )
+  return bytes
+}
+const sessions = createOnnxSessionLifecycle(async (name) => {
+  phase(name, 'create')
+  const bytes = await verifiedModelBytes(name),
+    start = performance.now(),
+    session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] })
+  try {
+    assert.deepEqual(session.inputNames, ['pixel_values'])
+  } catch (error) {
+    await session.release()
+    throw error
+  }
+  modelEvidence[name].loadMs = Math.round(performance.now() - start)
+  phase(name, 'created')
+  return session
+}, pages.length === 1)
 const started = performance.now()
-const pdfBytes = await readFile(pdfPath)
+let pdfBytes = await readFile(pdfPath)
+const sourceSha256 = createHash('sha256').update(pdfBytes).digest('hex')
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
-  data: new Uint8Array(pdfBytes),
+  data: new Uint8Array(pdfBytes.buffer, pdfBytes.byteOffset, pdfBytes.byteLength),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   wasmUrl: `${join(assetRoot, 'wasm')}/`,
@@ -70,8 +99,11 @@ const task = getDocument({
   useSystemFonts: false,
   verbosity: 0
 })
+pdfBytes = undefined
 
 async function infer(name, png, width, height) {
+  const session = await sessions.get(name)
+  phase(name, 'preprocess')
   const start = performance.now()
   const model = models[name]
   // Pinned conversion's shortest-edge 800 / longest-edge bound; bilinear via existing Sharp.
@@ -94,8 +126,10 @@ async function infer(name, png, width, height) {
       input[channel * area + i] = (pixels[3 * i + channel] / 255 - mean[channel]) / std[channel]
   const tensor = new ort.Tensor('float32', input, [1, 3, resizedHeight, resizedWidth])
   const preprocessMs = performance.now() - start
-  const output = await sessions[name].run({ pixel_values: tensor })
+  let output
   try {
+    phase(name, 'run')
+    output = await session.run({ pixel_values: tensor })
     const classes = model.labels.length + 1
     assert.equal(output.logits.dims[2], classes)
     assert.equal(output.pred_boxes.dims[2], 4)
@@ -125,7 +159,8 @@ async function infer(name, png, width, height) {
     }
   } finally {
     tensor.dispose()
-    for (const value of Object.values(output)) value.dispose()
+    for (const value of Object.values(output ?? {})) value.dispose()
+    phase(name, 'disposed-tensors')
   }
 }
 
@@ -133,57 +168,103 @@ function inside(rect, x, y) {
   return x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]
 }
 
+let destroyingPdf
+const destroyPdf = () =>
+  (destroyingPdf ??= (async () => {
+    await task.destroy()
+    phase('pdf', 'released')
+  })())
+
+// Return detached raster/scalar inputs and release PDF owners before any model allocation.
+async function preparePage(document, pageNumber) {
+  assert(pageNumber <= document.numPages)
+  const page = await document.getPage(pageNumber)
+  let canvas
+  let prepared = false
+  try {
+    const content = await repairPdfSymbolText(page, await page.getTextContent())
+    const rotation = readingRotation(page, content)
+    const viewport = page.getViewport({ scale: 1.5, rotation })
+    assert(viewport.width * viewport.height <= 4_000_000)
+    canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+    const context = canvas.getContext('2d')
+    await page.render({ canvas, canvasContext: context, viewport }).promise
+    const png = await canvas.encode('png')
+    const textItems = content.items
+      .filter((item) => 'str' in item && item.str.trim())
+      .map((item) => {
+        const [x, baseline] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+        return {
+          text: item.str,
+          x,
+          baseline,
+          width: item.width * 1.5,
+          height: item.height * 1.5,
+          horizontal: isUprightText(item, rotation)
+        }
+      })
+    const rules = collectTableRules(await page.getOperatorList(), viewport).map((rect) =>
+      rect.slice()
+    )
+    const value = {
+      png,
+      width: canvas.width,
+      height: canvas.height,
+      rotation,
+      rules,
+      textItems,
+      ...(mode !== 'production' ? { canvas } : {})
+    }
+    prepared = true
+    return value
+  } finally {
+    if (canvas && (mode === 'production' || !prepared)) canvas.width = canvas.height = 1
+    let cleanupComplete = false
+    try {
+      try {
+        page.cleanup()
+        await document.cleanup()
+      } finally {
+        if (pages.length === 1) await destroyPdf()
+      }
+      cleanupComplete = true
+    } finally {
+      if (canvas && !cleanupComplete) canvas.width = canvas.height = 1
+    }
+  }
+}
+
 try {
   await mkdir(outputDirectory, { recursive: true })
   for (const [name, model] of Object.entries(models)) {
-    const bytes = await readFile(join(assetDirectory, `${name}.onnx`))
-    assert.equal(
-      createHash('sha256').update(bytes).digest('hex'),
-      model.sha256,
-      'Model checksum mismatch.'
-    )
-    const start = performance.now()
-    sessions[name] = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] })
-    assert.deepEqual(sessions[name].inputNames, ['pixel_values'])
+    // Keep full pinned-asset verification without retaining unused model buffers.
+    const hash = createHash('sha256')
+    let bytes = 0
+    for await (const chunk of createReadStream(join(assetDirectory, `${name}.onnx`))) {
+      hash.update(chunk)
+      bytes += chunk.length
+    }
+    assert.equal(hash.digest('hex'), model.sha256, 'Model checksum mismatch.')
     modelEvidence[name] = {
       ...model,
-      bytes: bytes.length,
-      loadMs: Math.round(performance.now() - start)
+      bytes,
+      // Zero denotes no session creation; pinned asset evidence remains complete.
+      loadMs: 0
     }
   }
   const document = await task.promise
+  installPdfCanvasReset(document.canvasFactory)
   const results = []
   for (const pageNumber of pages) {
-    assert(pageNumber <= document.numPages)
-    const page = await document.getPage(pageNumber)
+    const { png, width, height, rotation, rules, textItems, canvas } = await preparePage(
+      document,
+      pageNumber
+    )
     try {
-      const content = await repairPdfSymbolText(page, await page.getTextContent())
-      const rotation = readingRotation(page, content)
-      const viewport = page.getViewport({ scale: 1.5, rotation })
-      assert(viewport.width * viewport.height <= 4_000_000)
-      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
-      const context = canvas.getContext('2d')
-      await page.render({ canvas, canvasContext: context, viewport }).promise
-      const png = await canvas.encode('png')
-      const detection = await infer('detection', png, canvas.width, canvas.height)
+      const detection = await infer('detection', png, width, height)
+      await sessions.afterDetection()
+      if (pages.length === 1) phase('detection', 'released')
       detection.objects = deduplicateTableDetections(detection.objects)
-      const textItems = content.items
-        .filter((item) => 'str' in item && item.str.trim())
-        .map((item) => {
-          const [x, baseline] = viewport.convertToViewportPoint(
-            item.transform[4],
-            item.transform[5]
-          )
-          return {
-            text: item.str,
-            x,
-            baseline,
-            width: item.width * 1.5,
-            height: item.height * 1.5,
-            horizontal: isUprightText(item, rotation)
-          }
-        })
-      const rules = collectTableRules(await page.getOperatorList(), viewport)
       for (const rect of findCaptionedNumericTableRegions(
         textItems,
         rules,
@@ -191,14 +272,15 @@ try {
       )) {
         detection.objects.push({ label: 'table', rect, origin: 'captioned-numeric-region' })
       }
+      const context = canvas?.getContext('2d')
       const tables = []
       for (const [index, object] of detection.objects.entries()) {
         if (object.label !== 'table') continue
         const id = `page-${pageNumber}-table-${index + 1}`
         const left = Math.max(0, Math.floor(object.rect[0]) - 10)
         const top = Math.max(0, Math.floor(object.rect[1]) - 10)
-        const right = Math.min(canvas.width, Math.ceil(object.rect[2]) + 10)
-        const bottom = Math.min(canvas.height, Math.ceil(object.rect[3]) + 10)
+        const right = Math.min(width, Math.ceil(object.rect[2]) + 10)
+        const bottom = Math.min(height, Math.ceil(object.rect[3]) + 10)
         assert(right > left && bottom > top)
         const crop = await sharp(png)
           .extract({ left, top, width: right - left, height: bottom - top })
@@ -309,7 +391,7 @@ try {
           })
         )
     } finally {
-      page.cleanup()
+      if (canvas) canvas.width = canvas.height = 1
     }
   }
   const report = {
@@ -324,7 +406,7 @@ try {
       cpu: cpus()[0]?.model
     },
     modelEvidence,
-    sourceSha256: createHash('sha256').update(pdfBytes).digest('hex'),
+    sourceSha256,
     elapsedMs: Math.round(performance.now() - started),
     memory: process.memoryUsage(),
     maxRssKiB: process.resourceUsage().maxRSS,
@@ -332,6 +414,9 @@ try {
   }
   await writeFile(join(outputDirectory, 'onnx-probe.json'), JSON.stringify(report, null, 2) + '\n')
 } finally {
-  await task.destroy()
-  for (const session of Object.values(sessions)) await session.release()
+  try {
+    await destroyPdf()
+  } finally {
+    await sessions.close()
+  }
 }

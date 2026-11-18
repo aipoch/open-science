@@ -1158,6 +1158,38 @@ describe('ConversationPanel header spacing', () => {
     expect(exportDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
   })
 
+  it('keeps a failed Session body error inside the conversation region', () => {
+    const session: ChatSession = {
+      id: 'broken-session',
+      projectId: 'project-1',
+      title: 'Broken history',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      contentLoaded: false
+    }
+    const retry = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: session,
+        sessionLoadError:
+          'Could not reload the saved conversation. Retained changes were kept. Please try again.',
+        onRetrySessionLoad: retry
+      }
+    })
+
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(button).not.toBeNull()
+    act(() => button?.click())
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
   it('opens an empty side chat from the persistent header menu without sending the main draft', async () => {
     const createDraft = vi.fn(() => 'empty-side-chat')
     const start = vi.fn()
@@ -1775,6 +1807,25 @@ describe('ConversationPanel whole-window find', () => {
 })
 
 describe('ConversationPanel session loading presentation', () => {
+  it('shows a history page while retaining its incomplete-authority marker', () => {
+    const partial: ChatSession = {
+      id: 'paged-session',
+      projectId: 'project-a',
+      title: 'Paged',
+      cwd: '/workspace',
+      status: 'idle',
+      contentLoaded: false,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      historyPage: { revision: 1, hasMore: true, beforeCursor: 'older', totalItems: 180 }
+    }
+    renderPanel({ view: { activeSession: partial } })
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
+    expect(partial.contentLoaded).toBe(false)
+  })
+
   it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
     const loadingSession: ChatSession = {
       id: 'session-loading',
@@ -10062,6 +10113,72 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
       .getState()
       .items.filter((item) => item.type === 'tool' && item.toolKind === 'replay')
   ).toHaveLength(1)
+})
+
+it('opens an imported replay-only film from the history footer', async () => {
+  window.api.researchVideo = {
+    status: vi.fn(async (scope: { mode?: string }) =>
+      scope.mode === 'operation-replay'
+        ? {
+            result: {
+              id: 'film-1',
+              title: 'Imported film',
+              playerPath: '/imported/player.html',
+              sourcePath: '/imported/sources.zip',
+              duration: 12
+            }
+          }
+        : {}
+    ),
+    start: vi.fn()
+  } as unknown as typeof window.api.researchVideo
+  const activeSession: ChatSession = {
+    id: 'imported-session',
+    projectId: 'project-a',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  renderPanel({ view: { activeSession } })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  const footer = container.querySelector('[aria-label="Imported research history"]')!
+  const open = [...footer.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('View research film')
+  )
+  expect(open).toBeDefined()
+  await act(async () => {
+    open!.click()
+  })
+  const dialog = document.querySelector('[role="dialog"]')!
+  const play = [...dialog.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Play research film')
+  )
+  expect(play).toBeDefined()
+  expect(dialog.textContent).toContain('Generate again')
+  await act(async () => {
+    play!.click()
+  })
+  expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+    expect.objectContaining({
+      id: 'research-video-film-1-player',
+      path: '/imported/player.html',
+      title: 'Imported film'
+    })
+  )
+  expect(window.api.researchVideo.start).not.toHaveBeenCalled()
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
 })
 
 it('shows the branch source chat number and opens that source session', () => {

@@ -75,9 +75,7 @@ describe('ArtifactRepository pending-file rollback', () => {
       }
 
       const directory = dirname(original.path)
-      const backup = (await readdir(directory)).find(
-        (entry) => entry.startsWith('result.txt.') && entry.endsWith('.backup')
-      )
+      const backup = (await readdir(directory)).find((entry) => entry.endsWith('.backup'))
       expect(backup).toBeDefined()
       expect(failure.message).toContain(join(directory, backup!))
       if (long) {

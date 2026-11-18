@@ -451,13 +451,13 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               ) : null}
               {replayStepFailure(selected) ? (
                 <p className="flex gap-2">
-                  <CircleX className="size-4 shrink-0 text-status-failure-foreground" />
+                  <CircleX className="size-4 shrink-0 text-status-failure-foreground dark:text-status-failure-dark-foreground" />
                   {failureLabel(selected)}
                 </p>
               ) : null}
               {selected.issues.length ? (
                 <p className="flex gap-2">
-                  <TriangleAlert className="size-4 shrink-0 text-status-warning-foreground" />
+                  <TriangleAlert className="size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
                   {t('Some source material is incomplete or unavailable.')}
                 </p>
               ) : null}
@@ -544,11 +544,14 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
                               }}
                             >
                               {replayStepFailure(step) ? (
-                                <CircleX size={14} className="text-status-failure-foreground" />
+                                <CircleX
+                                  size={14}
+                                  className="text-status-failure-foreground dark:text-status-failure-dark-foreground"
+                                />
                               ) : step.issues.length ? (
                                 <TriangleAlert
                                   size={14}
-                                  className="text-status-warning-foreground"
+                                  className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
                                 />
                               ) : (
                                 <Info size={14} />

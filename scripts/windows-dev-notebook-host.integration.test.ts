@@ -107,7 +107,8 @@ it.skipIf(process.platform !== 'win32').each(['stale', 'missing', 'compiler-fail
       expect(result.status, result.stdout + result.stderr).toBe(0)
       expect(readFileSync(join(fixture, helper), 'utf8')).toBe('current AppContainer host')
     } finally {
-      rmSync(fixture, { recursive: true, force: true })
+      // Windows can briefly retain a lock on the compiler fixture after its process exits.
+      rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   },
   45_000

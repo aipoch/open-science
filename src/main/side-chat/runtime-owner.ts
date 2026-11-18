@@ -11,7 +11,7 @@ import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import { sessionAgentConfigurationSchema } from '../../shared/session-configuration'
 import type { PersistedSideChat } from '../../shared/session-persistence'
-import { isCodexSubscriptionProviderId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 import {
   SIDE_CHAT_MESSAGE_LIMIT,
   type SideChatModelSelection,

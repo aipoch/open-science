@@ -69,6 +69,8 @@ describe('contextUsageMcpSections', () => {
       // Shell runtime binding and recovery guidance adds ~31 tokens so retries preserve the selected
       // dialect and recovery prerequisite instead of guessing from the host platform.
       // Scoped recovery keeps selectors and tool behavior here; failure-specific advice is dynamic.
+      // Optional option pros/cons, their bounds and meaningful-trade-off guidance add ~130 tokens.
+      // Retain the existing guidance and bound the complete largest platform/framework variant.
       for (const { frameworkId, codexBridgeAliases } of frameworks) {
         const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
           artifacts: false,
@@ -88,7 +90,7 @@ describe('contextUsageMcpSections', () => {
             tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${JSON.stringify(tools)}`),
             `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
           )
-          .toBeLessThanOrEqual(4_800)
+          .toBeLessThanOrEqual(4_950)
       }
     }
   )

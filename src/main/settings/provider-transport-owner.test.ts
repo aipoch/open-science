@@ -1,3 +1,6 @@
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { describe, expect, it, vi } from 'vitest'
 import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
@@ -12,7 +15,10 @@ import {
   type ProtocolForwardingBridgeTarget
 } from './protocol-forwarding-bridge'
 import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
-import type { ChatCompletionsCompatibilityTarget } from './chat-completions-compatibility'
+import {
+  ChatCompletionsCompatibilityBridge,
+  type ChatCompletionsCompatibilityTarget
+} from './chat-completions-compatibility'
 
 type ResponsesToChatCompletionsBridgeStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createResponsesToChatCompletionsBridge']>
@@ -761,6 +767,67 @@ describe('ProviderTransportOwner harness leases', () => {
 })
 
 describe('ProviderTransportOwner generations', () => {
+  it.each(['headers', 'body'] as const)(
+    'releases a real CodeBuddy selector still waiting for upstream %s',
+    async (phase) => {
+      const active = new Set<ServerResponse>()
+      const upstream = createServer((request, response) => {
+        request.resume()
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        if (phase === 'body') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.write('{')
+        }
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const baseUrl = `http://127.0.0.1:${port}/v1`
+      const target = makeTarget()
+      const caller = new AbortController()
+      const owner = new ProviderTransportOwner({
+        // Use actual Node fetch; Electron net is unavailable in this Node-only test process.
+        createResponsesToChatCompletionsBridge: (target, options) =>
+          new ResponsesToChatCompletionsBridge(target, fetch, options)
+      })
+      const generation = await owner.acquire({
+        activeTarget: {
+          ...target,
+          provider: { ...target.provider, baseUrl, chatCompletionsBaseUrl: baseUrl, key: '' }
+        },
+        plan: { ...makePlan({ kind: 'direct' }), modelRoute: 'codebuddy-openai' }
+      })
+      let settled = false
+      const selecting = generation.providerTransportLease!.selectSkills!(
+        'analyze numerical data',
+        [{ name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }],
+        caller.signal
+      ).finally(() => {
+        settled = true
+      })
+      // Observe rejection immediately, including on the pre-fix cleanup path.
+      const outcome = selecting.catch(() => undefined)
+      try {
+        await vi.waitFor(() => expect(active.size).toBe(1), { timeout: 1_000 })
+        await generation.release()
+        await vi.waitFor(
+          () => {
+            expect(active.size).toBe(0)
+            expect(settled).toBe(true)
+          },
+          { timeout: 1_000 }
+        )
+        await expect(selecting).resolves.toEqual([])
+      } finally {
+        caller.abort()
+        await outcome
+        await generation.release()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
   it('routes only CodeBuddy model traffic through its image-normalizing bridge', async () => {
     const selector = makeResponsesToChatCompletionsBridge(0)
     const bridge = makeOpenAiBridge(0)
@@ -948,6 +1015,73 @@ describe('ProviderTransportOwner generations', () => {
     await generation.release()
     expect(bridge.close).toHaveBeenCalledOnce()
     expect(selector.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { name: 'user configuration', configured: 12_000, expected: 12_000 },
+    { name: 'catalog model', official: true, expected: 64_000 },
+    { name: 'smaller user configuration', official: true, configured: 12_000, expected: 12_000 },
+    { name: 'smaller request', configured: 12_000, request: { max_tokens: 1000 }, expected: 1000 },
+    {
+      name: 'model ceiling',
+      official: true,
+      configured: 100_000,
+      request: { max_completion_tokens: 90_000 },
+      expected: 64_000
+    },
+    { name: 'unknown model', expected: 4096 }
+  ])('uses the $name for the CodeBuddy Messages output budget', async (scenario) => {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ content: [{ type: 'text', text: 'result' }], stop_reason: 'end_turn' })
+    )
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge: () => makeResponsesToChatCompletionsBridge(0),
+      createChatCompletionsCompatibilityBridge: (target) =>
+        new ChatCompletionsCompatibilityBridge(target, upstream)
+    })
+    const model = scenario.official ? 'claude-haiku-4-5-20251001' : 'custom-model'
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerType: scenario.official ? 'official' : 'custom',
+      effectiveModel: model,
+      apiEndpoints: ['messages'],
+      provider: {
+        ...makeTarget().provider,
+        ...(scenario.official ? { vendorId: 'anthropic' as const } : {}),
+        model,
+        apiEndpoints: ['messages'],
+        maxOutputTokens: scenario.configured
+      }
+    }
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'codebuddy-provider-compatibility', wire: 'messages' }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+    try {
+      const response = await fetch(`${generation.provider?.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${generation.provider?.key}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'Write the Film screenplay.' }],
+          ...scenario.request
+        })
+      })
+      expect(response.status).toBe(200)
+      await response.json()
+      expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({
+        model,
+        max_tokens: scenario.expected,
+        stream: false
+      })
+    } finally {
+      await generation.release()
+    }
   })
 
   it('creates independent Responses generations and releases each idempotently', async () => {

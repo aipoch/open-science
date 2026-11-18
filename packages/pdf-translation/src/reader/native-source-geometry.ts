@@ -248,6 +248,41 @@ export function nativeLabelRegion(
 
 type Box = [number, number, number, number]
 type Point = [number, number]
+
+/** Decode exactly one closed axis-aligned rectangular path. */
+export function nativeRectangularPath(paths: ArrayLike<number>[]): Box | undefined {
+  if (paths.length !== 1) return
+  const p = Array.from(paths[0])
+  if (
+    p.length !== 13 ||
+    !p.every(Number.isFinite) ||
+    p[0] !== 0 ||
+    p[3] !== 1 ||
+    p[6] !== 1 ||
+    p[9] !== 1 ||
+    p[12] !== 4
+  )
+    return
+  const points = [
+    [p[1], p[2]],
+    [p[4], p[5]],
+    [p[7], p[8]],
+    [p[10], p[11]]
+  ]
+  const xs = [...new Set(points.map((v) => v[0]))],
+    ys = [...new Set(points.map((v) => v[1]))]
+  if (xs.length !== 2 || ys.length !== 2 || new Set(points.map((v) => v.join(','))).size !== 4)
+    return
+  if (
+    points.some((a, i) => {
+      const b = points[(i + 1) % 4]
+      return (a[0] === b[0]) === (a[1] === b[1])
+    })
+  )
+    return
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
 // Control-point bounds contain the complete glyph, including Bezier curves.
 export function nativeOutlineBox(path: ArrayLike<number> | undefined): Box | undefined {
   if (!path || !Number.isSafeInteger(path.length) || path.length > 10000) return

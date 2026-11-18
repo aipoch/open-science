@@ -34,11 +34,19 @@ const registrations: Record<
   "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
   "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
   "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',
+  // PPTX tools never save: propose only stages a draft that the user must accept in the preview.
+  "pptx-edit/mcp-server.ts:'read_pptx_outline'": 'allow_once',
+  "pptx-edit/mcp-server.ts:'propose_pptx_operations'": 'allow_once',
   'notebook/mcp-server.ts:definition.name': 'operations',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readTurn': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readArtifact': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.submitFindings': 'legacy',
+  "schedules/mcp.ts:'list_schedules'": 'allow_once',
+  "schedules/mcp.ts:'create_schedule'": 'allow_once',
+  "schedules/mcp.ts:'update_schedule'": 'allow_once',
+  "schedules/mcp.ts:'close_schedule'": 'allow_once',
+  "schedules/mcp.ts:'manage_current_schedule'": 'allow_once',
   "session-plan/plan-mcp-server.ts:'generate_plan'": 'operations',
   "session-plan/plan-mcp-server.ts:'update_step_status'": 'legacy',
   'side-chat/host-message-mcp-server.ts:HOST_SEND_MESSAGE_TOOL_NAME': 'legacy',
@@ -173,10 +181,20 @@ describe('Auto operation completeness against real tool registrations', () => {
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
+        // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
+        // originating conversation, and unattended mutations are limited to the task's own trigger.
+        'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
+
+        // Reviewed: propose_pptx_operations only stages a draft; saving needs a user accept in the preview.
+        'pptx-edit/mcp-server.ts':
+          '3bd949c59a19ad322a31d9c3274600e5d4c46023ffe5190115952c8029bda4bb',
         // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
+        // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
+        // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '40c4edee0775cde34095c02aee02764a465792fb657ed62a40b64dcf666b1718',
+          '5dd96acc425304cc6c75989dc99420e61899733b2ad1423a0df547ea9a5868a6',
+
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
@@ -185,8 +203,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da'
       },
       notebookSchemas: {
-        // Reviewed: required question and option label strings must contain non-whitespace.
-        ask_user_question: 'eaf58cc178cc28d01fd208393f67dc394f374b4dd80f822158942db8a3c48afb',
+        // Reviewed: pros/cons are optional trimmed strings capped at 4000 characters; they only
+        // annotate choices and do not affect option identities, answers or authorization.
+        ask_user_question: '7c4a9484087130798fec4a767b43804bed689aceceaa250db53ef79d6c09f003',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
         request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf'

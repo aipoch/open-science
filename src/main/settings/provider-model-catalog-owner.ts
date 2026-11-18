@@ -2,7 +2,7 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult
 } from '../../shared/settings'
-import { isXaiSubscriptionProvider } from '../../shared/settings'
+import { isXaiSubscriptionProvider } from '../../shared/settings-runtime'
 import { netFetchStandard } from '../network-fetch'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { createProvider } from '@aipoch/providers/client'

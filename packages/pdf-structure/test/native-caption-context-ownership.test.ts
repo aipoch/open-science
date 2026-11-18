@@ -558,6 +558,73 @@ it.each([0.73, 1.7])(
   }
 )
 
+it.each(['complete', 'reordered', 'different rail gap', 'ink between rails'])(
+  'associates each caption below a double-rule table with its own body (%s)',
+  (variant) => {
+    const left = 55,
+      right = 295
+    const line = (
+      text: string,
+      y: number,
+      width: number,
+      x = left + 2
+    ): { text: string; x: number; y: number; width: number; height: number; fontSize: number } => ({
+      text,
+      x,
+      y,
+      width,
+      height: 9,
+      fontSize: 9
+    })
+    const inputs = [60, 175].map((top, index) => {
+      const bottom = top + 78
+      const title = [
+        `TABLE ${index === 0 ? 'I' : 'II'}. Comparison of the measured results.`,
+        'Each value came from the selected interval.'
+      ]
+      return {
+        rect: [left - 4, top, right, bottom - 9],
+        caption: { page: 1, rect: [left, bottom + 12, right, bottom + 32], lines: title },
+        lines: [
+          line('Source                Error (%)', top + 5, 170),
+          ...[21, 34, 47, 60].map((offset, n) =>
+            line(`Measure       ${n + 3}.2`, top + offset, 190)
+          ),
+          ...title.map((value, n) => line(value, bottom + 12 + n * 11, 240, left))
+        ],
+        rules: [top, top + 2.2, top + 18, bottom - 2.2, bottom].map((y) => [left, y, right, y])
+      }
+    })
+    const first = inputs[0]
+    if (variant === 'different rail gap') {
+      first.rules[1][1] = first.rect[1] + 0.5
+      first.rules[1][3] = first.rules[1][1]
+    }
+    if (variant === 'ink between rails') first.lines.push(line('Other', first.rect[3] + 5, 30))
+    if (variant === 'reordered') inputs.reverse()
+    const page = {
+      pageNumber: 1,
+      width: 612,
+      height: 792,
+      lines: inputs.flatMap((entry) => entry.lines),
+      graphicsBounds: [],
+      invalidGraphicsBounds: 0
+    }
+    const results = associateTableCaptions(
+      page,
+      inputs.map(({ rect }) => ({ rect })),
+      inputs.map(({ caption }) => caption),
+      inputs.flatMap(({ rules }) => rules)
+    )
+    expect(
+      results.map(
+        (result: { caption?: { lines: string[] } }, n: number) =>
+          result.caption?.lines[0] === inputs[n].caption.lines[0]
+      )
+    ).toEqual([variant === 'complete' || variant === 'reordered', true])
+  }
+)
+
 it('keeps each complete native below-caption with its preceding table despite shuffled detections', () => {
   const page = fixture()[7]
   const order = [2, 0, 3, 1]

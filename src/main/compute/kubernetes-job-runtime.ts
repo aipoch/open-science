@@ -9,6 +9,12 @@ import type { ComputeJobOperationRepository } from './compute-job-operation-repo
 import type { ComputeJobRepository } from './job-repository'
 import { uploadKubernetesJobInputs, withKubernetesArchiveConnection } from './kubernetes-job-files'
 import type { WorkspaceOwner } from './kubernetes-job-workspace'
+import { createComputeRuntimeLoop, type ComputeRuntimePassResult } from './compute-runtime-loop'
+import {
+  nextComputeRuntimeBackoff,
+  nextComputeRuntimeWakeAfter,
+  type ComputeRuntimeBackoffState
+} from './compute-runtime-backoff'
 
 const log = createLogger('compute:kubernetes')
 class KubernetesLaunchUncertainError extends Error {
@@ -48,16 +54,14 @@ type Dependencies = {
 }
 export function createKubernetesJobRuntime(deps: Dependencies): {
   start(): void
+  wake(): Promise<void>
   resume(): void
   pause(): Promise<void>
   stop(): Promise<void>
   tick(): Promise<void>
+  retry(jobId: string): Promise<void>
 } {
   const repo = deps.jobRepository
-  let controller: AbortController | undefined
-  let interval: ReturnType<typeof setInterval> | undefined
-  let active: Promise<void> | undefined
-  let stopped = false
 
   const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<void> => {
     if (
@@ -170,9 +174,9 @@ export function createKubernetesJobRuntime(deps: Dependencies): {
     }
   }
 
-  const cancelOne = async (signal: AbortSignal): Promise<void> => {
+  const cancelOne = async (signal: AbortSignal): Promise<boolean> => {
     const operations = deps.operationRepository
-    if (!operations) return
+    if (!operations) return false
     const claim = await operations.claimNext(
       'cancel',
       new Date(),
@@ -180,7 +184,7 @@ export function createKubernetesJobRuntime(deps: Dependencies): {
       randomUUID(),
       'kubernetes'
     )
-    if (!claim) return
+    if (!claim) return false
     try {
       const job = await repo.get(claim.jobId)
       if (!job || job.execution_mode !== 'kubernetes')
@@ -199,7 +203,7 @@ export function createKubernetesJobRuntime(deps: Dependencies): {
       }
       if (handle && (await adapter.cancel(handle, signal)).outcome !== 'confirmed') {
         await operations.retry(claim, new Date(), new Date(Date.now() + 5000))
-        return
+        return true
       }
       if (await operations.fulfill(claim, new Date())) {
         const updated = await repo.get(job.job_id)
@@ -207,16 +211,30 @@ export function createKubernetesJobRuntime(deps: Dependencies): {
       }
     } catch {
       await operations.retry(claim, new Date(), new Date(Date.now() + 5000))
+      return true
     }
+    return true
   }
-  const pass = async (signal: AbortSignal): Promise<void> => {
-    await cancelOne(signal)
-    for (const job of await repo.findKubernetesWork()) {
+  const failures = new Map<string, ComputeRuntimeBackoffState>()
+  const keepsActiveCadence = (job: ComputeJob): boolean =>
+    job.status === 'submitted' || job.status === 'running' || !job.harvested_at
+  const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
+    const cancelled = await cancelOne(signal)
+    const jobs = await repo.findKubernetesWork()
+    const ids = new Set(jobs.map((job) => job.job_id))
+    for (const id of failures.keys()) if (!ids.has(id)) failures.delete(id)
+    let ready = false
+    for (const job of jobs) {
       signal.throwIfAborted()
+      const previous = failures.get(job.job_id)
+      if (previous && previous.retryAt > Date.now()) continue
       try {
         await reconcile(job, signal)
+        failures.delete(job.job_id)
+        ready ||= keepsActiveCadence(job)
       } catch (error) {
         signal.throwIfAborted()
+        failures.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           error instanceof KubernetesLaunchUncertainError
             ? error.message
@@ -229,39 +247,21 @@ export function createKubernetesJobRuntime(deps: Dependencies): {
         }
       }
     }
+    const nextWakeAfterMs = nextComputeRuntimeWakeAfter(failures.values(), Date.now())
+    return {
+      hasWork: cancelled || ready,
+      ...(nextWakeAfterMs === undefined ? {} : { nextWakeAfterMs })
+    }
   }
-  const tick = (): Promise<void> => {
-    if (!controller) return Promise.resolve()
-    return (active ??= pass(controller.signal)
-      .catch(() => {
-        if (!controller?.signal.aborted && controller)
-          log.warn('Kubernetes job recovery pass failed.')
-      })
-      .finally(() => {
-        active = undefined
-      }))
-  }
-  const start = (): void => {
-    if (stopped || controller) return
-    controller = new AbortController()
-    interval = setInterval(() => void tick(), 5000)
-    interval.unref()
-    void tick()
-  }
-  const pause = async (): Promise<void> => {
-    clearInterval(interval)
-    controller?.abort()
-    controller = undefined
-    await active
-  }
+  const loop = createComputeRuntimeLoop({
+    run: pass,
+    activeIntervalMs: 5000,
+    onError: () => log.warn('Kubernetes job recovery pass failed.')
+  })
   return {
-    start,
-    resume: start,
-    pause,
-    stop: async () => {
-      stopped = true
-      await pause()
-    },
-    tick
+    ...loop,
+    retry: async (jobId: string) => {
+      await loop.wake(() => failures.delete(jobId))
+    }
   }
 }

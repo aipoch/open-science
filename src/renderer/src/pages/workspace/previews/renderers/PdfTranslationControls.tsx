@@ -1133,12 +1133,12 @@ export function PdfTranslationControls({
                   {state.status === 'completed' && state.results?.failedUnitIds?.length ? (
                     <TriangleAlert
                       aria-label={t('Translation failed')}
-                      className="size-4 text-status-warning-foreground"
+                      className="size-4 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                     />
                   ) : state.status === 'completed' ? (
                     <Check
                       aria-label={t('Text translation complete')}
-                      className="size-4 text-status-success-foreground"
+                      className="size-4 text-status-success-foreground dark:text-status-success-dark-foreground"
                     />
                   ) : null}
                 </Button>

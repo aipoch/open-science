@@ -75,3 +75,31 @@ it.each(['side', 'stacked'])('bounds geometry work across %s captions', (mode) =
   // Tiny marks do not establish a crop. Their count must not multiply full-page scans.
   expect(reads).toBeLessThan(count * 64)
 })
+
+it('abstains for a vector chart without a unique adjacent graphic', () => {
+  const chart = [
+    { kind: 'path', normalizedRect: [0.12, 0.16, 0.46, 0.165] },
+    { kind: 'path', normalizedRect: [0.12, 0.16, 0.125, 0.48] },
+    { kind: 'path', normalizedRect: [0.12, 0.48, 0.46, 0.485] },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      kind: 'path',
+      normalizedRect: [0.16 + index * 0.027, 0.22, 0.17 + index * 0.027, 0.42]
+    }))
+  ]
+  const caption = {
+    page: 1,
+    lines: ['Figure 7. Training and validation metrics.'],
+    rect: [60, 420, 540, 438]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: chart
+  }
+  expect(associateFigures(page, [caption])).toEqual([
+    { caption, reason: 'no-unambiguous-adjacent-graphics' }
+  ])
+})

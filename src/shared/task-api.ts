@@ -47,6 +47,14 @@ export type TaskDoctorReport = Readonly<{
 
 export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
+export type TaskSubmission = {
+  requestId: string
+  status: 'pending' | 'accepted' | 'failed' | 'interrupted'
+  createdAt: number
+  runId?: string
+  error?: { code: string; message: string }
+}
+
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type TaskRunFailureCode = 'process_restarted'
@@ -117,6 +125,7 @@ export type TaskPlanResponseRequest =
   | { feedback: string; decision?: never; artifactVersionId?: never; expectedRevision?: never }
 
 export type TaskRun = {
+  requestId?: string
   id: string
   sessionId: string
   projectId: string
@@ -257,6 +266,10 @@ export type AcquiredTaskArtifact = {
 }
 
 export type TaskApiErrorCode =
+  | 'submission_conflict'
+  | 'submission_unavailable'
+  | 'submission_not_found'
+  | 'session_read_only'
   | 'invalid_request'
   | 'project_not_found'
   | 'project_conflict'

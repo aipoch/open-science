@@ -1,8 +1,5 @@
-import {
-  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
-  type ProviderView,
-  type SettingsSnapshot
-} from '../../shared/settings'
+import type { ProviderView, SettingsSnapshot } from '../../shared/settings'
+import { DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION } from '../../shared/settings-runtime'
 import { resolveNetworkProxySettings } from '../../shared/network-proxy'
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS,

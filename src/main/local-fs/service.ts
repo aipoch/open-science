@@ -4,6 +4,7 @@ import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -38,6 +39,12 @@ export type GrantedLocalRootsStore = {
   setAccess: (id: string, access: GrantedLocalRootAccess) => Promise<void>
   remove: (id: string) => Promise<void>
 }
+
+export type PreflightGrantedLocalRoot = (
+  path: string,
+  access: GrantedLocalRootAccess,
+  requestedPath?: string
+) => Promise<void>
 
 type PolicyChangeShutdownResult = { reaped: boolean }
 
@@ -78,7 +85,8 @@ export class LocalFsService {
   constructor(
     private readonly grantedRootsStore?: GrantedLocalRootsStore,
     private readonly beforeGrantedRootsChange: () => Promise<PolicyChangeShutdownResult | void> = async () =>
-      undefined
+      undefined,
+    private readonly preflightGrantedRoot: PreflightGrantedLocalRoot = async () => undefined
   ) {}
 
   // Keep the existence check and write atomic with respect to other service mutations.
@@ -188,6 +196,7 @@ export class LocalFsService {
       throw new Error('Local path must be absolute.')
     }
     if (!(await stat(resolvedPath)).isDirectory()) throw new Error('Grant path is not a directory.')
+    await this.preflightGrantedRoot(resolvedPath, request.access, request.path)
     return this.changeGrantedRoots(async () => {
       const roots = await store.list()
       if (roots.some((root) => root.path === resolvedPath))
@@ -211,8 +220,9 @@ export class LocalFsService {
     assertValidAccess(request.access)
     return this.changeGrantedRoots(async () => {
       const roots = await store.list()
-      if (!roots.some((root) => root.id === request.id))
-        throw new Error(`Unknown granted root: ${request.id}`)
+      const root = roots.find((entry) => entry.id === request.id)
+      if (!root) throw new Error(`Unknown granted root: ${request.id}`)
+      await this.preflightGrantedRoot(root.path, request.access)
       await this.ensureGrantedRootsChangeAllowed()
       await store.setAccess(request.id, request.access)
       return store.list()
@@ -298,5 +308,11 @@ export class LocalFsService {
   async openPath(path: string): Promise<string> {
     assertValidLocalPath(path)
     return desktopShellInteraction().openPath(path)
+  }
+
+  // Opens a local file URL through the system's default browser.
+  async openInBrowser(path: string): Promise<void> {
+    assertValidLocalPath(path)
+    await desktopShellInteraction().openExternal(pathToFileURL(path).href)
   }
 }

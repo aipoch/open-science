@@ -370,7 +370,7 @@ function hasClosedNumberedBody(page, title, titles, lines, aligned, top, bottom,
 // Complete labelled native rules own the pseudocode; keep its original image.
 export function findAlgorithmCandidates(page, nativeRules = []) {
   const lines = groupPageLines(page)
-  const titles = lines.filter((line) => /^Algorithm\s+(?:[A-Z]\.)?\d+\b/i.test(line.text))
+  const titles = lines.filter((line) => /^Algorithm\s+(?:[A-Z]\.?)?\d+\b/i.test(line.text))
   const rules = (page.graphicsBounds ?? [])
     .filter((graphic) => graphic.kind === 'path')
     .map((graphic) => graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))

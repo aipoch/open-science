@@ -1,8 +1,13 @@
-import { posix, win32 } from 'node:path'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import { detectNpmAvailable, isNpmGlobalPrefixWritable, runInstall } from './claude-install'
+
 import {
-  collectCandidateDirs,
+  candidateDirs,
+  createDefaultDetectDeps,
   detectClaude,
   parseVersion,
   type ClaudeDetectDeps
@@ -24,6 +29,62 @@ const createDeps = (
 })
 
 describe('claude-detect', () => {
+  it
+    .skipIf(process.platform === 'win32')
+    .each([
+      'version',
+      'npm discovery',
+      'npm availability',
+      'npm prefix',
+      'legacy installer'
+    ] as const)('releases real Claude %s descendants before returning', async (scenario) => {
+    const directory = await mkdtemp(join(tmpdir(), 'claude-resource-probe-'))
+    const executable = join(directory, scenario === 'version' ? 'claude' : 'npm')
+    const pidFile = join(directory, 'pids.json')
+    let pids: number[] = []
+    try {
+      await writeFile(
+        executable,
+        `#!${process.execPath}\n` +
+          "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+          "child.unref(); console.log('2.1.3');\n"
+      )
+      await chmod(executable, 0o755)
+      vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`)
+      if (scenario === 'version')
+        expect(await createDefaultDetectDeps().getVersion(executable)).toBe('2.1.3')
+      else if (scenario === 'npm discovery') await createDefaultDetectDeps().resolveNpmBinDirs()
+      else if (scenario === 'npm availability')
+        expect(await detectNpmAvailable()).toEqual({ available: true })
+      else if (scenario === 'npm prefix') await isNpmGlobalPrefixWritable()
+      else
+        expect(
+          await runInstall({
+            source: 'npm',
+            installId: 'resource-probe',
+            onEvent: () => {},
+            npmPrefixWritable: async () => true
+          })
+        ).toMatchObject({ ok: true })
+      pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* Already reaped. */
+        }
+      }
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('parses a version string out of --version output', () => {
     expect(parseVersion('2.1.3 (Claude Code)')).toBe('2.1.3')
     expect(parseVersion('claude 1.0.0-beta.2')).toBe('1.0.0-beta.2')
@@ -36,23 +97,27 @@ describe('claude-detect', () => {
   })
 
   it('finds claude on PATH and records its absolute path and version', async () => {
-    const result = await detectClaude(createDeps({ '/usr/local/bin/claude': '2.1.0' }))
+    const resolveNpmBinDirs = vi.fn(async () => [])
+    const result = await detectClaude(
+      createDeps({ '/usr/local/bin/claude': '2.1.0' }, { resolveNpmBinDirs })
+    )
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
 
     expect(result).toEqual({ found: true, path: '/usr/local/bin/claude', version: '2.1.0' })
   })
 
   it('passes cancellation through npm discovery and version probing', async () => {
     const controller = new AbortController()
-    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue(['/npm/bin'])
     const getVersion = vi.fn().mockResolvedValue('2.1.0')
 
     await detectClaude(
-      createDeps({ '/usr/local/bin/claude': '2.1.0' }, { resolveNpmBinDirs, getVersion }),
+      createDeps({ '/npm/bin/claude': '2.1.0' }, { resolveNpmBinDirs, getVersion }),
       controller.signal
     )
 
     expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
-    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/claude', controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/npm/bin/claude', controller.signal)
   })
 
   it('falls back to ~/.local/bin and npm bin dirs when PATH misses', async () => {
@@ -78,8 +143,10 @@ describe('claude-detect', () => {
   })
 
   it('probes PATH, ~/.local/bin, homebrew, then npm dirs without duplicates', async () => {
-    const dirs = await collectCandidateDirs(
-      createDeps({}, { resolveNpmBinDirs: () => Promise.resolve(['/usr/local/bin']) })
+    const dirs = await Array.fromAsync(
+      candidateDirs(
+        createDeps({}, { resolveNpmBinDirs: () => Promise.resolve(['/usr/local/bin']) })
+      )
     )
 
     expect(dirs).toContain('/usr/bin')
@@ -91,12 +158,12 @@ describe('claude-detect', () => {
 
   it('tolerates a failing npm bin resolution', async () => {
     const deps = createDeps(
-      { '/usr/local/bin/claude': '2.0.0' },
+      {},
       { resolveNpmBinDirs: () => Promise.reject(new Error('npm missing')) }
     )
     const result = await detectClaude(deps)
 
-    expect(result.found).toBe(true)
+    expect(result.found).toBe(false)
   })
 
   describe('windows', () => {
@@ -118,7 +185,7 @@ describe('claude-detect', () => {
       })
 
     it('probes %APPDATA%\\npm and %LOCALAPPDATA%\\Programs\\claude, not the Unix dirs', async () => {
-      const dirs = await collectCandidateDirs(winDeps({}))
+      const dirs = await Array.fromAsync(candidateDirs(winDeps({})))
 
       expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
       expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude'))
@@ -181,7 +248,7 @@ describe('claude-detect', () => {
 
     it('still probes the extensionless catch-all name', async () => {
       // Place it in a well-known dir (not PATH) so the assertion does not depend on how PATH is
-      // split; the win32 delimiter is exercised by the collectCandidateDirs case above.
+      // split; the win32 delimiter is exercised by the candidateDirs case above.
       const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
       const result = await detectClaude(winDeps({ [win32.join(npmDir, 'claude')]: '2.5.0' }))
 

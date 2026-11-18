@@ -1,6 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 
@@ -17,7 +24,17 @@ beforeAll(async () => {
 function prepareExtraction(archive: string, destination: string): unknown {
   return prepare(archive, destination, sevenZip)
 }
-const helper = resolve('build/windows-extract-payload.ps1')
+let helper: string
+beforeAll(() => {
+  if (process.platform !== 'win32') return
+  // Test seams inject a process-wait failure. The shipped helper is built without
+  // OPEN_SCIENCE_HELPER_TEST_SEAMS and has none.
+  helper = join(fixture(), 'windows-install-helper.exe')
+  require('../build/compile-windows-install-publication.cjs').installHelper(helper, [
+    'OPEN_SCIENCE_HELPER_TEST_SEAMS'
+  ])
+}, 30_000)
+// The diagnostics script stays PowerShell; it runs only on failure paths.
 const powershell = join(
   process.env.SystemRoot || 'C:\\Windows',
   'System32/WindowsPowerShell/v1.0/powershell.exe'
@@ -55,29 +72,24 @@ function payload(): { root: string; archive: string; lists: string; output: stri
 function extract(
   f: ReturnType<typeof payload>,
   extractor = sevenZip,
-  script = helper
+  env: NodeJS.ProcessEnv = process.env
 ): ReturnType<typeof spawnSync> {
   return spawnSync(
-    powershell,
+    helper,
     [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      script,
-      '-Extractor',
+      'extract',
+      '--extractor',
       extractor,
-      '-Archive',
+      '--archive',
       f.archive,
-      '-Target',
+      '--target',
       f.output,
-      '-ListDirectory',
+      '--lists',
       f.lists,
-      '-ReportPath',
+      '--report',
       join(f.root, 'extraction-report.json')
     ],
-    { windowsHide: true, encoding: 'utf8', timeout: 30_000 }
+    { windowsHide: true, encoding: 'utf16le', timeout: 30_000, env }
   )
 }
 
@@ -229,6 +241,14 @@ describe.skipIf(process.platform !== 'win32')('real Windows partition extraction
         expect(report.toolFailures.length).toBeGreaterThan(0)
         expect(report.toolFailures[0]).toMatchObject({ errorSource: '7za' })
         expect(report.toolFailures[0].toolExitCode).not.toBe(0)
+        if (mode === 'blocked-path') {
+          expect(report.toolFailures[0].stdout).toContain(join(f.output, 'app.exe'))
+          expect(report.toolFailures[0].stdout).toContain('ERROR:')
+          expect(report.toolFailures[0].stdoutTruncated).toBe(false)
+        }
+        if (mode === 'corrupt' || mode === 'truncated') {
+          expect(report.toolFailures[0].stdout + report.toolFailures[0].stderr).toContain('ERROR:')
+        }
       }
     },
     30_000
@@ -243,9 +263,12 @@ describe.skipIf(process.platform !== 'win32')('real Windows partition extraction
         source,
         `using System; using System.IO; using System.Threading;
 class Extractor { static int Main(string[] args) {
+  Console.OutputEncoding = new System.Text.UTF8Encoding(false);
   foreach (string arg in args) if (arg.StartsWith("-x@")) return 0;
   foreach (string arg in args) if (arg.StartsWith("-i@")) {
     string list = arg.Substring(3); Thread.Sleep(list.EndsWith("files-2-0.txt") ? 300 : 1200);
+    Console.WriteLine("failure \\u4e2d\\u6587 " + Path.GetFileName(list));
+    Console.Write(new string('o', 100000)); Console.Error.Write(new string('e', 100000));
     File.WriteAllText(list + ".finished", "exited");
     return list.EndsWith("files-2-0.txt") ? 1 : 0;
   } return 2;
@@ -270,13 +293,21 @@ class Extractor { static int Main(string[] args) {
         mode === 'missing-second-list' ? 'powershell-extractor' : '7za'
       )
       expect(report.toolFailures).toEqual([
-        expect.objectContaining({ errorSource: '7za', toolExitCode: 1 })
+        expect.objectContaining({
+          errorSource: '7za',
+          toolExitCode: 1,
+          stdout: expect.stringContaining('failure 中文 files-2-0.txt'),
+          stdoutTruncated: true,
+          stderrTruncated: true
+        })
       ])
+      expect(report.toolFailures[0].stdout.length).toBeLessThanOrEqual(16384)
+      expect(report.toolFailures[0].stderr.length).toBeLessThanOrEqual(16384)
       if (mode === 'missing-second-list') {
         expect(report.errors[0]).toMatchObject({
           operation: 'read-extraction-list',
           path: join(f.lists, 'files-2-1.txt'),
-          exceptionType: 'System.Management.Automation.ItemNotFoundException'
+          exceptionType: 'System.IO.FileNotFoundException'
         })
         const notice = join(f.root, 'notice.txt')
         for (const action of ['record', 'finalize']) {
@@ -316,6 +347,11 @@ class Extractor { static int Main(string[] args) {
         expect(message).toContain(`Error source: powershell-extractor; result: ${result.status}.`)
         expect(message).not.toContain('Error source: 7za;')
         expect(message).toContain('files-2-1.txt')
+        const logs = readdirSync(join(f.root, 'logs')).filter((name) => name.endsWith('.log'))
+        expect(logs).toHaveLength(1)
+        expect(readFileSync(join(f.root, 'logs', logs[0]), 'utf8')).toContain(
+          'failure 中文 files-2-0.txt'
+        )
       }
       expect(readFileSync(join(f.lists, 'files-2-0.txt.finished'), 'utf8')).toBe('exited')
       if (mode === 'nonzero-child')
@@ -325,16 +361,8 @@ class Extractor { static int Main(string[] args) {
   )
   it('preserves native exception evidence when waiting for an extractor fails', () => {
     const f = payload()
-    const script = join(f.root, 'wait-failure.ps1')
     // Inject at the existing process-wait boundary after the real child has safely exited.
-    writeFileSync(
-      script,
-      readFileSync(helper, 'utf8').replace(
-        '$child.WaitForExit()',
-        '$child.WaitForExit(); throw [ComponentModel.Win32Exception]::new(6)'
-      )
-    )
-    const result = extract(f, sevenZip, script)
+    const result = extract(f, sevenZip, { ...process.env, OPEN_SCIENCE_EXTRACT_WAIT_FAILURE: '1' })
     expect(result.error).toBeUndefined()
     expect(result.status).not.toBe(0)
     const report = JSON.parse(readFileSync(join(f.root, 'extraction-report.json'), 'utf8'))

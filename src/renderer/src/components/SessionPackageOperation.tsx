@@ -171,6 +171,22 @@ const operationStatus = (
   return { phase, status, waiting, busy, description }
 }
 
+const importStageLabel = (
+  stage: NonNullable<PackageOperationSnapshot['progress']['importStage']>,
+  t: TFunction
+): string =>
+  ({
+    'read-archive': t('Reading package…'),
+    'verify-archive': t('Verifying package files…'),
+    'prepare-preview': t('Preparing package preview…'),
+    'validate-preview': t('Checking package relationships…'),
+    'import-files': t('Importing files…'),
+    'verify-files': t('Verifying imported files…'),
+    'prepare-validation': t('Preparing final validation…'),
+    'validate-import': t('Checking imported relationships…'),
+    publish: t('Finishing import…')
+  })[stage]
+
 const PackageProgressMeter = ({
   operation,
   compact = false
@@ -188,22 +204,12 @@ const PackageProgressMeter = ({
   const { completedBytes, totalBytes, completedFiles, totalFiles, importStage } = operation.progress
   if (importPercent !== undefined && operation.progress.phase !== 'cleaning') {
     const percent = operation.state === 'succeeded' ? 100 : Math.min(99, Math.floor(importPercent))
-    const labels = {
-      'read-archive': t('Reading package…'),
-      'verify-archive': t('Verifying package files…'),
-      'prepare-preview': t('Preparing package preview…'),
-      'validate-preview': t('Checking package relationships…'),
-      'import-files': t('Importing files…'),
-      'verify-files': t('Verifying imported files…'),
-      'prepare-validation': t('Preparing final validation…'),
-      'validate-import': t('Checking imported relationships…'),
-      publish: t('Finishing import…')
-    }
+
     const stageLabel =
       operation.state === 'succeeded'
         ? t('Session imported')
         : importStage
-          ? labels[importStage]
+          ? importStageLabel(importStage, t)
           : phase
     return (
       <div className="space-y-2">
@@ -441,7 +447,7 @@ export const PackageExportProgressButton = ({
       onClick={() => setOpen(true)}
     >
       <Icon
-        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
+        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
         aria-hidden="true"
       />
       {!iconOnly ? <span className="hidden truncate lg:inline">{status}</span> : null}
@@ -518,7 +524,7 @@ export const PackageOperationIndicator = ({
           className={cn(
             'size-4 shrink-0',
             operation.state === 'failed'
-              ? 'text-status-failure-foreground'
+              ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
               : needsAttention
                 ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                 : 'text-primary',
@@ -1074,7 +1080,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                                   {t('Details')}
                                 </summary>
                                 <p className="mt-2">
-                                  {t('Last stage: {{stage}}', { stage: phase })}
+                                  {t('Last stage: {{stage}}', {
+                                    stage: operation.progress.importStage
+                                      ? importStageLabel(operation.progress.importStage, t)
+                                      : phase
+                                  })}
                                 </p>
                               </details>
                             ) : null}

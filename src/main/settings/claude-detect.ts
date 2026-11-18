@@ -2,14 +2,11 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 
+import { runVerificationProcess } from '../update/verification-process'
 import type { ClaudeDetectResult } from '../../shared/settings'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { augmentedPathEnv } from './shell-path'
-
-const execFileAsync = promisify(execFile)
+import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
 
 // Detects a runnable claude executable across the locations a GUI app might miss because its PATH
 // differs from the user's login shell. Injectable deps (including the host platform) keep the probe
@@ -50,7 +47,7 @@ const claudeBinaryNames = (platform: NodeJS.Platform): string[] =>
 
 // Common non-PATH install locations by platform. Unix: Homebrew + /usr/local. Windows: npm's global
 // bin (%APPDATA%\npm) and the native installer's Programs dir. `~/.local/bin` (the install script's
-// target on every OS) is added separately by collectCandidateDirs.
+// target on every OS) is added separately by candidateDirs.
 const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] => {
   if (platform === 'win32') {
     const p = pathFor(platform)
@@ -66,30 +63,18 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the claude binary.
-const collectCandidateDirs = async (
-  deps: ClaudeDetectDeps,
-  signal?: AbortSignal
-): Promise<string[]> => {
+const candidateDirs = (deps: ClaudeDetectDeps, signal?: AbortSignal): AsyncGenerator<string> => {
   const p = pathFor(deps.platform)
-  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  let npmBinDirs: string[] = []
-  try {
-    npmBinDirs = await deps.resolveNpmBinDirs(signal)
-  } catch {
-    signal?.throwIfAborted()
-  }
-  signal?.throwIfAborted()
-  const localBin = p.join(deps.homePath, '.local', 'bin')
-
-  // De-duplicate while preserving first-seen order so the first real hit wins.
-  return Array.from(
-    new Set([
+  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
+  return withNpmBinFallback(
+    [
       ...pathDirs,
-      localBin,
+      p.join(deps.homePath, '.local', 'bin'),
       ...(deps.extraDirs ?? []),
-      ...wellKnownDirs(deps.platform, deps.env),
-      ...npmBinDirs
-    ])
+      ...wellKnownDirs(deps.platform, deps.env)
+    ],
+    deps,
+    signal
   )
 }
 
@@ -111,11 +96,10 @@ const detectClaude = async (
 ): Promise<ClaudeDetectResult> => {
   const p = pathFor(deps.platform)
   signal?.throwIfAborted()
-  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = claudeBinaryNames(deps.platform)
   const resolveSpawnTarget = deps.resolveSpawnTarget ?? ((candidate: string) => candidate)
 
-  for (const dir of candidateDirs) {
+  for await (const dir of candidateDirs(deps, signal)) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
@@ -170,15 +154,11 @@ const runClaudeVersion =
   (platform: NodeJS.Platform) =>
   async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync(`"${path}"`, ['--version'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              signal
-            })
-          : await execFileAsync(path, ['--version'], { timeout: 10_000, signal })
+      const { stdout } = await runVerificationProcess(
+        platform === 'win32' ? `"${path}"` : path,
+        ['--version'],
+        { timeoutMs: 10_000, maxBytes: 1024 * 1024, shell: platform === 'win32', signal }
+      )
 
       return parseVersion(stdout)
     } catch {
@@ -194,20 +174,13 @@ const resolveNpmBinDirs =
   (platform: NodeJS.Platform) =>
   async (signal?: AbortSignal): Promise<string[]> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(),
-              signal
-            })
-          : await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              env: augmentedPathEnv(),
-              signal
-            })
+      const { stdout } = await runVerificationProcess('npm', ['prefix', '-g'], {
+        timeoutMs: 10_000,
+        maxBytes: 1024 * 1024,
+        shell: platform === 'win32',
+        env: augmentedPathEnv(),
+        signal
+      })
       const prefix = stdout.trim()
 
       if (!prefix) return []
@@ -234,4 +207,4 @@ const createDefaultDetectDeps = (): ClaudeDetectDeps => {
   }
 }
 
-export { collectCandidateDirs, createDefaultDetectDeps, detectClaude, parseVersion }
+export { candidateDirs, createDefaultDetectDeps, detectClaude, parseVersion }

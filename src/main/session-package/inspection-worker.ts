@@ -19,6 +19,7 @@ export type InspectionWorkerMessage =
   | {
       kind: 'error'
       message: string
+      tarCode?: 'TAR_BAD_ARCHIVE'
       capacity?: { directory: string; requiredBytes: number; freeBytes: number }
     }
 
@@ -61,7 +62,10 @@ export const createPackageInspector =
                             capacity.freeBytes,
                             new Error(value.message)
                           )
-                        : new Error(value.message)
+                        : Object.assign(
+                            new Error(value.message),
+                            value.tarCode ? { tarCode: value.tarCode } : {}
+                          )
                     )
                   } else if (value.kind === 'pace') {
                     // Use the parent's live rate, speed meter and inactivity budget. AsyncLocalStorage

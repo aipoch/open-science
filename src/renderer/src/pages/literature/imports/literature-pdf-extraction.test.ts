@@ -67,6 +67,7 @@ describe('PDF terminal publication DOI fallback', () => {
   it.each([
     'References\n10.1234/reference',
     `Published 19 March 2025\n${doi}`,
+    publication.replace(doi, '10.1234/journal.XX.XXXXXX'),
     `Accepted 11 February 2025\nPublished 19 March 2025\n${doi}\n10.1234/other`,
     `Accepted 11 February 2025\nPublished 19 March 2025\nReferences\n${doi}`
   ])('does not query an ambiguous or reference-only tail: %s', async (last) => {

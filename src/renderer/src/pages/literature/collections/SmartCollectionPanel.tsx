@@ -383,7 +383,7 @@ export function SmartCollectionPanel({
                 variant="ghost"
                 size="sm"
                 aria-label={t('Analysis failed')}
-                className="min-w-0 flex-1 px-1 text-status-failure-foreground"
+                className="min-w-0 flex-1 px-1 text-status-failure-foreground dark:text-status-failure-dark-foreground"
               >
                 <Info className="size-3.5" aria-hidden="true" />
                 <span className="truncate">{t('Analysis failed')}</span>

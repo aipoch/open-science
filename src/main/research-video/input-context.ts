@@ -1,12 +1,12 @@
 import { getTokenizer } from '@anthropic-ai/tokenizer'
 import { get_encoding, type Tiktoken } from 'tiktoken'
 import type { ResearchVideoSessionSource } from '@aipoch/research-film'
+import type { ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
-  isXaiSubscriptionProvider,
-  type ProviderView
-} from '../../shared/settings'
+  isXaiSubscriptionProvider
+} from '../../shared/settings-runtime'
 import {
   DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
   resolveCustomModelContextWindow,
@@ -70,10 +70,11 @@ export function researchFilmInputBudget(provider: ProviderView, model?: string):
         ? 1_000_000
         : (vendor && resolveModelContextWindow(vendor, model)) ||
           DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW
-  const available = Math.min(
-    provider.maxInputTokens ?? context,
-    context - (provider.maxOutputTokens ?? 8192)
-  )
+  // Like the built-in agent, reserve at most a quarter of the context for generation.
+  // A model's maximum output can equal the entire window. This reserve only shapes the input;
+  // the selected runtime and provider still decide how much output the request can generate.
+  const outputReserve = Math.min(provider.maxOutputTokens ?? 8192, Math.floor(context / 4))
+  const available = Math.min(provider.maxInputTokens ?? context, context - outputReserve)
   // Provider tokenizers and adapter-added messages differ. This is a preparation estimate, not a
   // claim to exactly predict provider token accounting.
   return Math.max(0, Math.floor(available * 0.85) - 2048)
@@ -117,6 +118,65 @@ export function prepareResearchFilmPrompt(
     correction?: { draft: string; error: string }
   }
   const source = envelope.source ?? (payload as ResearchVideoSessionSource)
+  if (source.replay) {
+    const formatReplay = (events: typeof source.replay.events): string =>
+      JSON.stringify({
+        ...envelope,
+        ...(envelope.correction
+          ? {
+              correction: {
+                ...envelope.correction,
+                draft: excerpt(
+                  envelope.correction.draft,
+                  Math.max(64, Math.floor(budget / 8)),
+                  count
+                )
+              }
+            }
+          : {}),
+        source: { ...source, messages: [], replay: { ...source.replay, events }, contextNote }
+      })
+    const events = source.replay.events.map((event) => ({
+      ...event,
+      text: excerpt(event.text, 256, count),
+      ...(event.previewText === undefined
+        ? {}
+        : { previewText: excerpt(event.previewText, 256, count) }),
+      ...(event.execution
+        ? {
+            execution: {
+              ...event.execution,
+              code: excerpt(event.execution.code, 256, count),
+              output: excerpt(event.execution.output, 256, count)
+            }
+          }
+        : {})
+    }))
+    // Prefer the question, a real execution, the final answer and a result over incidental snapshots.
+    const essential = new Set([
+      events.at(-1)?.id,
+      events.find((event) => event.kind === 'human-input')?.id,
+      events.find((event) => event.execution)?.id,
+      events.findLast((event) => event.kind === 'agent-message')?.id,
+      events.findLast((event) => event.kind === 'result')?.id
+    ])
+    const costs = new Map(events.map((event) => [event.id, count(JSON.stringify(event)) + 1]))
+    let estimated =
+      count(formatReplay([])) + [...costs.values()].reduce((sum, cost) => sum + cost, 0)
+    while (events.length > 1 && (estimated > budget || count(formatReplay(events)) > budget)) {
+      const expendable = events.findIndex((event) => !essential.has(event.id))
+      const [removed] = events.splice(
+        expendable < 0 ? Math.floor(events.length / 2) : expendable,
+        1
+      )
+      estimated -= costs.get(removed.id)!
+    }
+    if (count(formatReplay(events)) > budget)
+      throw new Error(
+        'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
+      )
+    return formatReplay(events)
+  }
   const wrapper = envelope.source
     ? {
         ...envelope,

@@ -1261,3 +1261,335 @@ it('requires ordinary content for a new Unicode-star footer without changing leg
       { text, rect: [20, 104, 260, 112] }
     ])
 })
+
+type DirectionNoteLine = {
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+  fontSize: number
+}
+type DirectionNoteFixture = {
+  page: {
+    pageNumber: number
+    width: number
+    height: number
+    rotation: number
+    invalidGraphicsBounds: number
+    graphicsBounds: object[]
+    lines: DirectionNoteLine[]
+  }
+  tables: { rect: number[] }[]
+  rules: number[][]
+}
+
+const pairedDirectionNote = (opening: string): DirectionNoteFixture => {
+  const line = (text: string, x: number, y: number, width: number): DirectionNoteLine => ({
+    text,
+    x,
+    y,
+    width,
+    height: 8,
+    fontSize: 8
+  })
+  return {
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines: [
+        line('A vs. B Change p', 70, 70, 460),
+        line('Category 0.12 0.03', 70, 82, 460),
+        line(opening, 55, 105, 490),
+        line('the paired comparison is adjusted within the stated family.', 50, 114, 500)
+      ]
+    },
+    tables: [{ rect: [50, 60, 550, 100] }],
+    rules: [
+      [50, 62, 550, 62],
+      [50, 100, 550, 100]
+    ]
+  }
+}
+
+it.each([
+  'Positive values favor A. The interval uses paired measurements; p:',
+  'Positive values favour B. The interval uses paired measurements; p:',
+  'Data are presented as mean (SD). The paired interval is summarized as follows:',
+  'Notes: Positive values favor C. The paired interval is summarized as follows:'
+])(
+  'keeps a complete paired-comparison direction note and existing note families: %s',
+  (opening) => {
+    const { page, tables, rules } = pairedDirectionNote(opening)
+    expect(associateTableNotes(page, tables, rules)[0][0]?.text).toBe(
+      page.lines
+        .slice(2)
+        .map((line) => line.text)
+        .join(' ')
+    )
+  }
+)
+
+it.each([
+  'different direction',
+  'missing punctuation',
+  'missing explanatory text',
+  'different phrase',
+  'detached block',
+  'nonoverlapping column',
+  'competing recipient'
+])('keeps the paired-comparison direction note bounded: %s', (fault) => {
+  const { page, tables, rules } = pairedDirectionNote(
+    'Positive values favor A. The interval uses paired measurements; p:'
+  )
+  if (fault === 'different direction')
+    page.lines[2].text = 'Positive values favor Z. The interval uses paired measurements; p:'
+  if (fault === 'missing punctuation')
+    page.lines[2].text = 'Positive values favor A The interval uses paired measurements; p:'
+  if (fault === 'missing explanatory text') page.lines[2].text = 'Positive values favor A.'
+  if (fault === 'different phrase')
+    page.lines[2].text = 'The results favor A. The interval uses paired measurements; p:'
+  if (fault === 'detached block') for (const line of page.lines.slice(2)) line.y += 100
+  if (fault === 'nonoverlapping column') for (const line of page.lines.slice(2)) line.x += 600
+  if (fault === 'competing recipient') tables.push(structuredClone(tables[0]))
+  expect(associateTableNotes(page, tables, rules)).toEqual(tables.map(() => []))
+})
+
+const explanatoryNoteLine = (
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  height = 7
+): DirectionNoteLine => ({ text, x, y, width, height, fontSize: height })
+
+type ExplanatoryNoteFixture = Pick<DirectionNoteFixture, 'tables' | 'rules'> & {
+  page: Pick<DirectionNoteFixture['page'], 'width' | 'height' | 'lines'>
+}
+
+const boundedExplanatoryNote = (kind: 'qc' | 'correlation'): ExplanatoryNoteFixture => {
+  const qc = kind === 'qc'
+  return {
+    page: {
+      width: qc ? 595 : 612,
+      height: 800,
+      lines: qc
+        ? [
+            explanatoryNoteLine('A 12 23 34', 110, 326, 320, 6),
+            explanatoryNoteLine(
+              'Failures are retained as score 0. These flags describe the recorded samples and',
+              110,
+              340,
+              350
+            ),
+            explanatoryNoteLine(
+              'do not remove observations from the denominator. Independent batches use',
+              100,
+              348,
+              370
+            ),
+            explanatoryNoteLine('distinct identifiers; complete sample records are', 115, 356, 340),
+            explanatoryNoteLine('provided with the data.', 238, 364, 94),
+            explanatoryNoteLine('Next section', 100, 400, 180, 12)
+          ]
+        : [
+            explanatoryNoteLine('A 1 2 3', 60, 90, 480, 9),
+            explanatoryNoteLine(
+              'Note. r is the standardized correlation between the two factors. Average estimates retain one',
+              62,
+              112,
+              488,
+              9
+            ),
+            explanatoryNoteLine(
+              'observation per group; panel models retain each observed period. Robust fit',
+              62,
+              123,
+              488,
+              9
+            ),
+            explanatoryNoteLine(
+              'indices summarize the paired records. The residual variances were fixed',
+              62,
+              134,
+              488,
+              9
+            ),
+            explanatoryNoteLine(
+              'to zero after unconstrained estimation produced negative values. Loadings',
+              62,
+              145,
+              488,
+              9
+            ),
+            explanatoryNoteLine(
+              'within each source were constrained equally. Inference accounts for',
+              62,
+              156,
+              488,
+              9
+            ),
+            explanatoryNoteLine('clustering by group.', 62, 167, 90, 9),
+            explanatoryNoteLine('The next section discusses other results.', 58, 205, 480, 11)
+          ]
+    },
+    tables: [{ rect: qc ? [100, 240, 470, 334] : [57, 50, 555, 104] }],
+    rules: qc
+      ? [
+          [100, 240, 470, 240],
+          [100, 336, 470, 336]
+        ]
+      : [
+          [57, 50, 555, 50],
+          [57, 110, 555, 110]
+        ]
+  }
+}
+
+it('keeps the complete QC paragraph centered within its closing rule through its final data sentence', () => {
+  const f = boundedExplanatoryNote('qc'),
+    before = structuredClone(f)
+  expect(
+    associateTableNotes(f.page, f.tables, f.rules)[0].map((n: { text: string }) => n.text)
+  ).toEqual([
+    f.page.lines
+      .slice(1, 5)
+      .map((line) => line.text)
+      .join(' ')
+  ])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'missing closing rule',
+  'competing closing rules',
+  'off-center paragraph',
+  'unfinished final sentence',
+  'different terminal font',
+  'broken cadence',
+  'rule inside the body',
+  'foreign closing-corridor text',
+  'competing table',
+  'ordinary prose opening',
+  'terminal line outside the frame'
+])('does not complete a QC paragraph without bounded native geometry: %s', (fault) => {
+  const f = boundedExplanatoryNote('qc')
+  if (fault === 'missing closing rule') f.rules.pop()
+  if (fault === 'competing closing rules') f.rules.push([100, 335.5, 470, 335.5])
+  if (fault === 'off-center paragraph') for (const line of f.page.lines.slice(1, 5)) line.x += 4
+  if (fault === 'unfinished final sentence') f.page.lines[4].text = 'provided with the data'
+  if (fault === 'different terminal font') f.page.lines[4].fontSize = f.page.lines[4].height = 8
+  if (fault === 'broken cadence') f.page.lines[4].y += 4
+  if (fault === 'rule inside the body') f.tables[0].rect[3] = 337
+  if (fault === 'foreign closing-corridor text')
+    f.page.lines.push(explanatoryNoteLine('foreign', 200, 337.4, 100, 1))
+  if (fault === 'competing table') f.tables.push({ rect: [150, 270, 450, 333] })
+  if (fault === 'ordinary prose opening')
+    f.page.lines[1].text = 'The samples are compared in this section and the report continues'
+  if (fault === 'terminal line outside the frame')
+    Object.assign(f.page.lines[4], { x: 80, width: 410 })
+  expect(
+    associateTableNotes(f.page, f.tables, f.rules)
+      .flat()
+      .some((note: { text: string }) => note.text.includes('provided with the data.'))
+  ).toBe(false)
+})
+
+it.each([
+  'Note. r is the standardized correlation between the two factors. Average estimates retain one',
+  'Note. x denotes the correlation between the two factors. Average estimates retain one',
+  'Notes. r represents standardized correlation between the two factors. Average estimates retain one'
+])('retains all six lines of an explicit lowercase correlation definition: %s', (opening) => {
+  const f = boundedExplanatoryNote('correlation')
+  f.page.lines[1].text = opening
+  const before = structuredClone(f)
+  expect(
+    associateTableNotes(f.page, f.tables, f.rules)[0].map((n: { text: string }) => n.text)
+  ).toEqual([
+    f.page.lines
+      .slice(1, 7)
+      .map((line) => line.text)
+      .join(' ')
+  ])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'Note. r explains the observed correlation in a later section.',
+  'Note. rs is the standardized correlation between factors.',
+  'Note. r is an ordinary observation about the experiment.',
+  'Note. r is the standardized covariance between factors.',
+  'Note. r and s are correlations between factors.',
+  'Note. δ is the standardized correlation between factors.',
+  'Note. we discuss standardized correlation between factors.'
+])('does not treat ordinary lowercase Note prose as a correlation definition: %s', (opening) => {
+  const f = boundedExplanatoryNote('correlation')
+  f.page.lines[1].text = opening
+  expect(associateTableNotes(f.page, f.tables, f.rules)).toEqual([[]])
+})
+
+it('preserves the existing page-centered note family even when its paragraph exceeds the table width', () => {
+  const line = (text: string, x: number, y: number, width: number): DirectionNoteLine =>
+    explanatoryNoteLine(text, x, y, width, 9)
+  const page = {
+    width: 340,
+    height: 200,
+    lines: [
+      line('Note—All displayed fields use the same reporting convention. The', 20, 68, 300),
+      line('source rows have complete printed values in each independent field.', 25, 80, 290),
+      line('Remaining text belongs to this explicitly marked source note and', 30, 92, 280),
+      line('describes the records before the complete final source words', 25, 104, 290),
+      line('field values.', 140, 116, 60),
+      line('A separate paragraph begins after its own visible source gap.', 20, 148, 300)
+    ]
+  }
+  expect(
+    associateTableNotes(page, [{ rect: [75, 20, 270, 65] }], [[75, 64, 270, 64]])[0].map(
+      (note: { text: string }) => note.text
+    )
+  ).toEqual([
+    page.lines
+      .slice(0, 5)
+      .map((line) => line.text)
+      .join(' ')
+  ])
+})
+
+it('does not admit a wide centered bootstrap paragraph through the within-frame QC note family', () => {
+  const line = (text: string, x: number, y: number, width: number): DirectionNoteLine =>
+    explanatoryNoteLine(text, x, y, width)
+  const page = {
+    width: 600,
+    height: 800,
+    lines: [
+      line('A 1 2 3', 100, 326, 400),
+      line(
+        'Primary analysis: empirical bootstrap p and Holm within family are reported.',
+        60,
+        340,
+        480
+      ),
+      line(
+        'Approximate sensitivity analysis uses the bootstrap standard error only;',
+        45,
+        349,
+        510
+      ),
+      line(
+        'the finite-sample validity for clustered differences is not established.',
+        48,
+        358,
+        504
+      ),
+      line('All systems use the same recorded input conditions and source records;', 42, 367, 516),
+      line('additional comparisons were exploratory.', 105, 376, 390)
+    ]
+  }
+  expect(associateTableNotes(page, [{ rect: [90, 240, 520, 334] }], [[94, 338, 518, 338]])).toEqual(
+    [[]]
+  )
+})

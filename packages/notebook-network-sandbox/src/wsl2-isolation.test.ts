@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import {
   mapWslUncPath,
   wsl2Launch,
+  wslUncDistro,
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
 import { cacheEnvironmentFixture } from '../test/cache-environment.js'
@@ -868,6 +869,22 @@ describe('WSL2 sandbox adapter', () => {
   })
 })
 
+describe('wslUncDistro', () => {
+  it('classifies modern, legacy, case-insensitive and extended WSL UNC paths', () => {
+    expect(wslUncDistro('\\\\wsl.localhost\\Ubuntu\\home')).toBe('Ubuntu')
+    expect(wslUncDistro('\\\\wsl$\\Ubuntu\\home')).toBe('Ubuntu')
+    expect(wslUncDistro('\\\\WSL.LOCALHOST\\UBUNTU\\home')).toBe('UBUNTU')
+    expect(wslUncDistro('\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home')).toBe('Ubuntu')
+    expect(wslUncDistro('\\\\?\\UNC\\wsl$\\Ubuntu\\home')).toBe('Ubuntu')
+  })
+
+  it('rejects SMB shares and lookalike hosts', () => {
+    expect(wslUncDistro('\\\\server\\share\\data')).toBeUndefined()
+    expect(wslUncDistro('\\\\wsl.localhost.evil\\Ubuntu\\home')).toBeUndefined()
+    expect(wslUncDistro('\\\\?\\UNC\\server\\share\\data')).toBeUndefined()
+  })
+})
+
 describe('mapWslUncPath', () => {
   it('maps Explorer-style distro paths straight to the guest', () => {
     expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu\\home\\researcher\\project', 'Ubuntu')).toBe(
@@ -875,6 +892,12 @@ describe('mapWslUncPath', () => {
     )
     expect(mapWslUncPath('\\\\wsl$\\Ubuntu\\home\\researcher\\Documents\\archive', 'Ubuntu')).toBe(
       '/home/researcher/Documents/archive'
+    )
+    expect(mapWslUncPath('\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\researcher', 'Ubuntu')).toBe(
+      '/home/researcher'
+    )
+    expect(mapWslUncPath('\\\\?\\UNC\\wsl$\\Ubuntu\\home\\researcher', 'Ubuntu')).toBe(
+      '/home/researcher'
     )
   })
 
@@ -892,8 +915,10 @@ describe('mapWslUncPath', () => {
     expect(mapWslUncPath('/home/researcher', 'Ubuntu')).toBeUndefined()
   })
 
-  it('authorizes same-distro UNC path environment values before mapping them', async () => {
-    const unc = '\\\\wsl.localhost\\Ubuntu\\home\\researcher\\data'
+  it.each([
+    '\\\\wsl.localhost\\Ubuntu\\home\\researcher\\data',
+    '\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\researcher\\data'
+  ])('authorizes same-distro UNC path environment values before mapping them: %s', async (unc) => {
     const mapPath = vi.fn(async (path: string) => mapWslUncPath(path, 'Ubuntu') ?? path)
     const launch = await wsl2Launch({
       target: {

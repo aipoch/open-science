@@ -32,7 +32,7 @@ export async function recoverInstallationAfterSystemRestart(
   operationId: string,
   options: {
     version: string
-    allowedProcessIds?: () => number[]
+    allowedProcessIds?: (signal?: AbortSignal) => number[] | Promise<number[]>
     readBootIdentity?: () => string
     inspectProcesses?: Parameters<typeof inspectInstallationAvailability>[0]['inspectProcesses']
     signal?: AbortSignal

@@ -2680,3 +2680,96 @@ it('retains exact legitimate native whitespace and rejects a later literal chang
   expect(nativeTableFontRoleWitnessCurrent(witness)).toBe(false)
   expect(fontRoleKinds(x, witness)).not.toContain('native-repeated-category-records')
 })
+
+function splitNativeCitationStubs(): Data {
+  const f = evidence(6, 4)
+  f.table.cropRect = [0, 0, 240, 105]
+  f.cell(0, 0, [f.font('Source', 5, 10, 40)], 1, 2)
+  f.cell(0, 1, [f.font('Counts', 110, 5, 40)], 3)
+  for (let c = 1; c < 4; c++) f.cell(1, c, [f.font('Metric ' + c, c * 60 + 5, 22, 40)])
+  for (let n = 0; n < 2; n++) {
+    const row = 2 + n * 2,
+      top = 45 + n * 30,
+      name = f.font('Dataset ' + String.fromCharCode(65 + n), 5, top, 45),
+      citation = f.font('(2031) [' + (7 + n) + ']', 5, top + 10, 45)
+    f.cell(row, 0, [name])
+    f.cell(row + 1, 0, [citation])
+    for (let c = 1; c < 4; c++) {
+      f.cell(row, c, [f.font(String(10 + n + c), c * 60 + 5, top, 12)])
+      f.cell(row + 1, c, [])
+    }
+  }
+  f.rules = [
+    [0, 0, 240, 0],
+    [0, 36, 240, 36],
+    [0, 105, 240, 105]
+  ]
+  return f
+}
+
+it('reviews repeated citation-only model rows after native wrapped stubs without rebuilding cells', () => {
+  expect(reviewedKinds(splitNativeCitationStubs())).toContain('split-native-stub-citations')
+})
+it.each([
+  'one',
+  'separate fence',
+  'numeric row',
+  'far baseline',
+  'source order',
+  'alias',
+  'foreign font',
+  'non-numeric'
+])('requires complete repeated native citation-stub contradiction: %s', (mode) => {
+  const f = splitNativeCitationStubs(),
+    tail = f.proved.find((p: Data) => p.cell.row === 3 && p.cell.column === 0)
+  if (mode === 'one') tail.fonts[0].text = tail.fonts[0].sourceItem.text = 'Separate record'
+  if (mode === 'separate fence') f.rules.push([0, 54, 60, 54])
+  if (mode === 'numeric row')
+    f.proved.find((p: Data) => p.cell.row === 3 && p.cell.column === 1).cell.text = '8'
+  if (mode === 'far baseline')
+    for (const n of [1, 3]) {
+      const p = f.proved.find((p: Data) => p.cell.row === n + 2 && p.cell.column === 0)
+      p.fonts[0].rect[1] += 10
+      p.fonts[0].rect[3] += 10
+      p.fonts[0].baseline += 10
+    }
+  if (mode === 'source order') tail.fonts[0].sourceItem.index = 1000
+  if (mode === 'alias') f.inventory.push({ ...tail.fonts[0], rect: [300, 200, 345, 208] })
+  if (mode === 'foreign font') f.font('Independent', 30, 60, 60)
+  if (mode === 'non-numeric')
+    for (const p of f.proved.filter(
+      (p: Data) => p.cell.row > 1 && p.cell.column > 0 && p.fonts.length
+    ))
+      p.fonts[0].text = p.fonts[0].sourceItem.text = 'word'
+  expect(reviewedKinds(f)).not.toContain('split-native-stub-citations')
+})
+
+it('marks the native split citation model as ambiguous in ordinary table refinement', () => {
+  const f = splitNativeCitationStubs(),
+    edges = [0, 20, 36, 54, 66, 84, 105]
+  const table = {
+    id: 'anonymous-wrapped-stubs',
+    cropRect: f.table.cropRect,
+    structure: {
+      objects: [
+        ...Array.from({ length: 4 }, (_, c) => ({
+          label: 'table column',
+          rect: [c * 60, 0, (c + 1) * 60, 105]
+        })),
+        ...edges
+          .slice(0, -1)
+          .map((top, r) => ({ label: 'table row', rect: [0, top, 240, edges[r + 1]] })),
+        { label: 'table column header', rect: [0, 0, 240, 36] },
+        { label: 'table spanning cell', rect: [0, 0, 60, 36] },
+        { label: 'table spanning cell', rect: [60, 0, 240, 20] }
+      ]
+    }
+  }
+  const result = refineTable(table, f.inventory, [], [], f.rules)
+  expect(result.issues).toContain('native-table-structure-ambiguous')
+  const sources = result.cells.flatMap((cell: Data) => cell.sourceItems ?? [])
+  expect(sources.map((s: Data) => s.index).sort((a: number, b: number) => a - b)).toEqual(
+    f.inventory.map((f: Data) => f.sourceItem.index).sort((a: number, b: number) => a - b)
+  )
+  expect(new Set(sources.map((s: Data) => s.index)).size).toBe(sources.length)
+})

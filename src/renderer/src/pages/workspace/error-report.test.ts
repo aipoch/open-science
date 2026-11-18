@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CODEX_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 import {
   buildEnvironmentBlock,
   buildErrorReportText,

@@ -116,7 +116,10 @@ export class UseCaseCatalog {
       ...(force ? { cache: 'no-store' as const } : {}),
       redirect: 'error'
     })
-    if (!response.ok || !response.body) throw new Error('Could not load introduction.')
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('Could not load introduction.')
+    }
     // Bound the streamed body as well as the request; optional content must not exhaust memory.
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
@@ -235,7 +238,10 @@ export class UseCaseCatalog {
       signal: AbortSignal.timeout(15000),
       ...(force ? { cache: 'no-store' as const } : {})
     })
-    if (!response.ok) throw new Error('Could not refresh use case catalog.')
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('Could not refresh use case catalog.')
+    }
     const manifest: unknown = await response.json()
     const next = parseUseCases(manifest)
     const previous = this.items

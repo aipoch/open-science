@@ -1,5 +1,6 @@
 import { Redo2, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
@@ -7,8 +8,10 @@ import { usePdfAnnotations } from './pdf-annotations-context'
 
 export const PdfAnnotationHistoryControls = ({
   source,
-  onError
+  onError,
+  orientation = 'horizontal'
 }: {
+  orientation?: 'horizontal' | 'vertical'
   source: PdfAnnotationSource
   onError: () => void
 }): React.JSX.Element => {
@@ -17,7 +20,14 @@ export const PdfAnnotationHistoryControls = ({
   const history = annotations.history(source)
   return (
     <TooltipProvider>
-      <div role="group" aria-label={t('Annotation history')} className="flex items-center gap-0.5">
+      <div
+        role="group"
+        aria-label={t('Annotation history')}
+        className={cn(
+          'flex items-center gap-0.5',
+          orientation === 'vertical' && 'flex-col border-t border-border mt-1 pt-1.5'
+        )}
+      >
         {(
           [
             {
@@ -57,7 +67,10 @@ export const PdfAnnotationHistoryControls = ({
                 <Icon className="size-3.5" aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="z-[120]">
+            <TooltipContent
+              side={orientation === 'vertical' ? 'left' : 'top'}
+              className="pdf-toolbar-tooltip z-[120] border border-border bg-popover text-popover-foreground shadow-menu"
+            >
               {!annotations.available
                 ? t('PDF annotations are unavailable for this source.')
                 : history.busy

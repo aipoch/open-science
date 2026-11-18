@@ -31,9 +31,12 @@ import {
 } from './runtime-control.mjs'
 
 const DEFAULT_PORT = 44100
-const START_TIMEOUT_MS = 30_000
+const START_TIMEOUT_MS = 120_000
 // Cover the service's 40s authentication-aware stop budget plus exit-record observation.
 const STOP_TIMEOUT_MS = 42_000
+// Artifact content may be produced after a long-running task completes. Keep the CLI's
+// default transfer budget separate from the short control-request timeout used by the SDK.
+const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1_000
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -66,11 +69,13 @@ Commands:
   project session-defaults show <id-or-name>  Automation new-session defaults
   project session-defaults update <id-or-name> [session options]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--compute-host <provider-id>] [--wait]
-  run status <run-id>
+  run status <run-id> | --request-id <request-id>
+  run wait <run-id> | --request-id <request-id> [--timeout-ms <ms>]
   run cancel <run-id>
   session status <session-id>
   session config show <session-id>
   session config update <session-id> --revision <number> [session options]
+  session fork <session-id> --project <id-or-name>
   session export <session-id> --project <id-or-name> --output <path>
   session import <path> [--project <id-or-name> | --new-project <name>] --non-interactive
   settings agent-routing show
@@ -129,9 +134,10 @@ Options:
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
   --clear-delegation | --clear-specialist  Clear one automation new-session default
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
+  --request-id <id>      Stable submission identity for lookup and safe retries
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
-  --timeout-ms <ms>      Stop waiting after this many milliseconds
+  --timeout-ms <ms>      Bound startup, run waiting, or package transfer time
   --output <path>        Destination path (session export, artifacts download)
   --style <style-id>     Citation style (literature format)
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
@@ -189,6 +195,7 @@ const VALUE_OPTIONS = {
   '--revision': 'revision',
   '--feedback': 'feedback',
   '--timeout-ms': 'timeoutMs',
+  '--request-id': 'requestId',
   '--name': 'name',
   '--description': 'description',
   '--agent-context': 'agentContext',
@@ -269,10 +276,12 @@ const POSITIONAL_LIMITS = new Map([
   ['project list', 0],
   ['run', 0],
   ['run status', 1],
+  ['run wait', 1],
   ['run cancel', 1],
   ['session status', 1],
   ['session config', 2],
   ['session export', 1],
+  ['session fork', 1],
   ['session import', 1],
   ['settings agent-routing', 1],
   ['plan show', 1],
@@ -333,14 +342,14 @@ export const parseCliArgs = (argv) => {
             : undefined
   const subcommand =
     (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
-    (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
+    (command === 'run' && ['status', 'cancel', 'wait'].includes(args[0]))
       ? args.shift()
       : undefined
   const options = {
     open: true,
     json: false,
     ...(TASK_COMMANDS.has(command) ? { jsonl: false } : {}),
-    ...(command === 'run' ? { wait: false } : {})
+    ...(command === 'run' ? { wait: subcommand === 'wait' } : {})
   }
   const positionals = []
   while (args.length > 0) {
@@ -500,6 +509,16 @@ export const parseCliArgs = (argv) => {
       'Use only one of Compute Host selection options or --clear-compute-hosts.'
     )
   }
+  if (options.requestId !== undefined) {
+    if (command !== 'run' || (subcommand && !['status', 'wait'].includes(subcommand)))
+      throw new CliUsageError('--request-id requires run, run status, or run wait.')
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(options.requestId))
+      throw new CliUsageError(
+        'Request ID must contain 1–128 letters, digits, underscores or hyphens.'
+      )
+    if (subcommand && positionals.length)
+      throw new CliUsageError('Use a Run ID or --request-id, not both.')
+  }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
@@ -518,24 +537,40 @@ export const parseCliArgs = (argv) => {
   if (options.cwd && (command !== 'run' || subcommand)) {
     throw new CliUsageError('--cwd requires run.')
   }
-  if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
+  if (
+    options.jsonl &&
+    (command !== 'run' || (subcommand && subcommand !== 'wait') || !options.wait)
+  ) {
     throw new CliUsageError('--jsonl requires run --wait.')
   }
-  const isPackageTransfer = command === 'session' && ['export', 'import'].includes(subcommand)
+  const isPackageTransfer =
+    command === 'session' && ['export', 'import', 'fork'].includes(subcommand)
   if (
     options.timeoutMs !== undefined &&
     !isPackageTransfer &&
-    (command !== 'run' || subcommand || !options.wait)
+    command !== 'start' &&
+    (command !== 'run' || (subcommand && subcommand !== 'wait') || !options.wait)
   ) {
-    throw new CliUsageError('--timeout-ms requires run --wait or session export/import.')
+    throw new CliUsageError(
+      '--timeout-ms requires start, run --wait, run wait or session export/import/fork.'
+    )
   }
   if (command === 'session' && subcommand === 'import') {
     if (!options.nonInteractive) throw new CliUsageError('--non-interactive is required.')
     if (options.project && options.newProject)
       throw new CliUsageError('Use only one of --project and --new-project.')
   }
-  if (options.returnOnAttention && (command !== 'run' || subcommand || !options.wait)) {
+  if (
+    options.returnOnAttention &&
+    (command !== 'run' || (subcommand && subcommand !== 'wait') || !options.wait)
+  ) {
     throw new CliUsageError('--return-on-attention requires run --wait.')
+  }
+  if (
+    options.cancelOnTimeout &&
+    (command !== 'run' || (subcommand && subcommand !== 'wait') || !options.wait)
+  ) {
+    throw new CliUsageError('--cancel-on-timeout requires run --wait.')
   }
   if (options.cancelOnTimeout && options.timeoutMs === undefined) {
     throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
@@ -1022,6 +1057,8 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const logFd = openLaunchLog(logPath)
   let capture
   let startup
+  let launcherPid
+  const startupTimeoutMs = options.timeoutMs ?? START_TIMEOUT_MS
   try {
     installationLease = protectInstallationStartup(backend.entry, configRoot)
     capture = await startLaunchLogReader(backend.command, logFd)
@@ -1031,7 +1068,8 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       windowsHide: true,
       env: childEnv
     })
-    const startupPromise = waitForStartup(configRoot, child, deps)
+    launcherPid = child.pid
+    const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs)
     child.unref()
     capture.input.destroy()
 
@@ -1060,8 +1098,17 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     if (startup.kind !== 'timeout') {
       throw new Error(formatStartupFailure(startup, logTail, options))
     }
-    throw new Error(
-      `Open-Science did not become healthy within ${START_TIMEOUT_MS / 1000}s.${logTail ? `\n\n${logTail}` : ''}`
+    throw Object.assign(
+      new Error(
+        `Open-Science startup is unconfirmed after ${startupTimeoutMs / 1000}s. The service may still become ready. Check: open-science status --config-root ${JSON.stringify(configRoot)}. Log: ${logPath}${logTail ? `\n\n${logTail}` : ''}`
+      ),
+      {
+        code: 'startup_unconfirmed',
+        configRoot,
+        launcherPid,
+        logPath,
+        next: ['status', '--config-root', configRoot, '--json']
+      }
     )
   }
   const state = startup.state
@@ -1289,7 +1336,7 @@ const writeDownload = async (response, output) => {
       throw error
     }
   )
-  const temporaryOutput = `${destination}.${process.pid}-${randomUUID()}.tmp`
+  const temporaryOutput = join(dirname(destination), `.open-science-${randomUUID()}.tmp`)
   try {
     await pipeline(
       Readable.fromWeb(response.body),
@@ -1820,6 +1867,26 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     )
     return
   }
+  if (command === 'session' && subcommand === 'fork') {
+    const sessionId = positionals[0]
+    if (!sessionId) throw new CliUsageError('Session id is required.')
+    if (!options.project) throw new CliUsageError('--project is required.')
+    const projectId = await resolveCliProjectId(client, options.project)
+    try {
+      outputValue(
+        await client.forkSession(projectId, sessionId, { timeoutMs: options.timeoutMs }),
+        options,
+        deps
+      )
+    } catch (error) {
+      if (error?.code === 'timeout')
+        error.message +=
+          ' Fork outcome is unconfirmed. Inspect the package operation and Session list before forking again.'
+      throw error
+    }
+    return
+  }
+
   if (command === 'session' && subcommand === 'export') {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
@@ -1842,16 +1909,24 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const target = {}
     if (options.project) target.projectId = await resolveCliProjectId(client, options.project)
     else if (options.newProject) target.projectName = options.newProject
-    outputValue(
-      await client.importSessionPackage(
+    let imported
+    try {
+      imported = await client.importSessionPackage(
         target,
         resolvedPath,
         { nonInteractive: true },
         { timeoutMs: options.timeoutMs }
-      ),
-      options,
-      deps
-    )
+      )
+    } catch (error) {
+      if (error?.code === 'timeout') {
+        error.completionStatus = 'unconfirmed'
+        error.message += ' The import may still complete. Check the destination before retrying.'
+      }
+      throw error
+    }
+    if (imported === null)
+      throw new OpenScienceApiError('Session import was cancelled.', { code: 'cancelled' })
+    outputValue(imported, options, deps)
     return
   }
   if (command === 'settings' && subcommand === 'agent-routing') {
@@ -1921,7 +1996,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const artifactId = positionals[0]
     if (!artifactId) throw new CliUsageError('Artifact id is required.')
     if (!options.output) throw new CliUsageError('--output is required.')
-    const response = await client.downloadArtifact(artifactId)
+    const response = await client.downloadArtifact(artifactId, {
+      timeoutMs: options.timeoutMs ?? ARTIFACT_DOWNLOAD_TIMEOUT_MS
+    })
     await deps.writeDownload(response, options.output)
     outputValue({ artifactId, output: resolve(options.output) }, options, deps)
     return
@@ -2065,8 +2142,14 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   }
   if (command === 'run' && subcommand === 'status') {
     const runId = positionals[0]
-    if (!runId) throw new CliUsageError('Run id is required.')
-    outputValue(await client.getRun(runId), options, deps)
+    if (!runId && !options.requestId) throw new CliUsageError('Run id is required.')
+    outputValue(
+      options.requestId
+        ? await client.getSubmission(options.requestId)
+        : await client.getRun(runId),
+      options,
+      deps
+    )
     return
   }
   if (command === 'run' && subcommand === 'cancel') {
@@ -2076,10 +2159,22 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     return
   }
   if (command === 'run') {
-    if (!options.project) throw new CliUsageError('--project is required.')
-    const projectId = await resolveCliProjectId(client, options.project)
-    const prompt = await readPrompt(options, deps)
-    if (!prompt) throw new CliUsageError('Prompt is required.')
+    const waiting = subcommand === 'wait'
+    if (waiting && !positionals[0] && !options.requestId)
+      throw new CliUsageError('Run id or --request-id is required.')
+    if (!waiting && !options.project) throw new CliUsageError('--project is required.')
+    const projectId = waiting ? undefined : await resolveCliProjectId(client, options.project)
+    const prompt = waiting ? undefined : await readPrompt(options, deps)
+    if (!waiting && !prompt) throw new CliUsageError('Prompt is required.')
+    const requestId = options.requestId ?? (waiting ? undefined : randomUUID())
+    const waitStartedAt = Date.now()
+    const remainingTimeout = () => {
+      if (options.timeoutMs === undefined) return undefined
+      const remaining = options.timeoutMs - (Date.now() - waitStartedAt)
+      if (remaining <= 0)
+        throw new OpenScienceApiError('Timed out waiting for the Run.', { code: 'timeout' })
+      return remaining
+    }
     const runRef = { current: undefined, pending: [] }
     const abortController = new AbortController()
     let eventStream
@@ -2102,7 +2197,27 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         options.wait && !options.json && typeof client.events === 'function'
           ? client.events({ signal: abortController.signal })
           : undefined
-      await eventStream?.ready
+      let readyTimer
+      try {
+        await (eventStream && options.timeoutMs !== undefined
+          ? Promise.race([
+              eventStream.ready,
+              new Promise((_, reject) => {
+                readyTimer = setTimeout(
+                  () =>
+                    reject(
+                      new OpenScienceApiError('Timed out waiting for the Run event stream.', {
+                        code: 'timeout'
+                      })
+                    ),
+                  remainingTimeout()
+                )
+              })
+            ])
+          : eventStream?.ready)
+      } finally {
+        clearTimeout(readyTimer)
+      }
       eventTask = eventStream
         ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal).catch(
             (error) => {
@@ -2110,43 +2225,60 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
             }
           )
         : undefined
-      submissionAttempted = true
-      const started = await client.startRun({
-        project: projectId,
-        prompt,
-        ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
-        ...(options.session ? { sessionId: options.session } : {}),
-        ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
-        ...(options.skills?.length ? { skillIds: options.skills } : {}),
-        ...(options.permissionPrompts ? { permissionPrompts: options.permissionPrompts } : {}),
-        ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
-        ...(options.autoReviewEnabled !== undefined
-          ? { autoReviewEnabled: options.autoReviewEnabled }
-          : {}),
-        ...(options.specialist ? { specialist: options.specialist } : {}),
-        ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
-        ...(agentConfigurationPatch(options)
-          ? { agentConfiguration: agentConfigurationPatch(options) }
-          : {}),
-        ...(options.memoryEnabled !== undefined ? { memoryEnabled: options.memoryEnabled } : {}),
-        ...(options.clearComputeHosts
-          ? { enabledComputeHostIds: [], computeHostIds: [] }
-          : {
-              ...(options.enabledComputeHosts !== undefined
-                ? { enabledComputeHostIds: options.enabledComputeHosts }
+      submissionAttempted = !waiting
+      const started = waiting
+        ? requestId
+          ? await client.waitForSubmission(requestId, { timeoutMs: remainingTimeout() })
+          : await client.getRun(
+              positionals[0],
+              options.timeoutMs === undefined ? undefined : { timeoutMs: remainingTimeout() }
+            )
+        : await client.startRun(
+            {
+              project: projectId,
+              prompt,
+              ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
+              ...(options.session ? { sessionId: options.session } : {}),
+              ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
+              ...(options.skills?.length ? { skillIds: options.skills } : {}),
+              ...(options.permissionPrompts
+                ? { permissionPrompts: options.permissionPrompts }
                 : {}),
-              ...(options.computeHosts !== undefined
-                ? { computeHostIds: options.computeHosts }
-                : {})
-            })
-      })
+              ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
+              ...(options.autoReviewEnabled !== undefined
+                ? { autoReviewEnabled: options.autoReviewEnabled }
+                : {}),
+              ...(options.specialist ? { specialist: options.specialist } : {}),
+              ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
+              ...(agentConfigurationPatch(options)
+                ? { agentConfiguration: agentConfigurationPatch(options) }
+                : {}),
+              ...(options.memoryEnabled !== undefined
+                ? { memoryEnabled: options.memoryEnabled }
+                : {}),
+              ...(options.clearComputeHosts
+                ? { enabledComputeHostIds: [], computeHostIds: [] }
+                : {
+                    ...(options.enabledComputeHosts !== undefined
+                      ? { enabledComputeHostIds: options.enabledComputeHosts }
+                      : {}),
+                    ...(options.computeHosts !== undefined
+                      ? { computeHostIds: options.computeHosts }
+                      : {})
+                  })
+            },
+            {
+              requestId,
+              ...(options.timeoutMs === undefined ? {} : { timeoutMs: remainingTimeout() })
+            }
+          )
       runRef.current = { runId: started.id, sessionId: started.sessionId }
       for (const event of runRef.pending.splice(0)) {
         if (isEventForRun(event, runRef.current)) emitRunEvent(event, options, deps)
       }
       try {
         const waitOptions = {
-          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: remainingTimeout() }),
           ...(options.returnOnAttention ? { returnOnAttention: true } : {})
         }
         result = options.wait
@@ -2170,6 +2302,10 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         throw error
       }
     } catch (error) {
+      if (error && typeof error === 'object' && requestId) {
+        error.requestId = requestId
+        error.message += ` Request: ${requestId}. Query: open-science run status --request-id ${requestId}.`
+      }
       if (
         error &&
         typeof error === 'object' &&
@@ -2186,7 +2322,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         if (runRef.current) error.runId = runRef.current.runId
         error.message += runRef.current
           ? ` Completion status unconfirmed for run ${runRef.current.runId}. Query: open-science run status ${runRef.current.runId}. The run was not retried.`
-          : ' Submission result unconfirmed. No task ID was received; the request was not retried.'
+          : ' Submission result unconfirmed. Query the request receipt before retrying; the request was not retried.'
       }
       throw error
     } finally {
@@ -2267,8 +2403,18 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
         error: {
           code,
           message,
+          ...(error?.correlationId ? { correlationId: error.correlationId } : {}),
+          ...(error?.requestId ? { requestId: error.requestId } : {}),
           ...(error?.completionStatus ? { completionStatus: error.completionStatus } : {}),
-          ...(error?.runId ? { runId: error.runId } : {})
+          ...(error?.runId ? { runId: error.runId } : {}),
+          ...(error?.code === 'startup_unconfirmed'
+            ? {
+                configRoot: error.configRoot,
+                launcherPid: error.launcherPid,
+                logPath: error.logPath,
+                next: error.next
+              }
+            : {})
         },
         exitCode
       })

@@ -91,6 +91,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   await page.screenshot({ path: testInfo.outputPath('optimized-draft.png') })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const desktopSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   await page.setViewportSize({ width: 430, height: 900 })
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({
@@ -100,7 +101,7 @@ test('optimizes drafts without sending and persists project-specific templates',
     true
   )
   await page.screenshot({ path: testInfo.outputPath('optimized-draft-narrow.png') })
-  await page.setViewportSize({ width: 1280, height: 928 })
+  await page.setViewportSize(desktopSize)
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(editor).toHaveText('')
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)

@@ -19,28 +19,28 @@ datasource db {
 }
 
 model Project {
-  id                   String                @id @default(cuid())
-  name                 String
-  description          String                @default("")
-  agentContext         String                @default("")
-  optimizationPrompt   String                @default("")
-  sessionDefaults      String                @default("{}")
-  isExample            Boolean               @default(false)
-  pinned               Boolean               @default(false)
-  archivedAt           DateTime?
-  archiveRevision      Int                   @default(0)
-  deletedAt            DateTime?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  permissionGrants     PermissionGrant[]
-  previewState         ProjectPreviewState?
-  sessionReplayProgress   SessionReplayProgress[]
+  id                         String                      @id @default(cuid())
+  name                       String
+  description                String                      @default("")
+  agentContext               String                      @default("")
+  optimizationPrompt         String                      @default("")
+  sessionDefaults            String                      @default("{}")
+  isExample                  Boolean                     @default(false)
+  pinned                     Boolean                     @default(false)
+  archivedAt                 DateTime?
+  archiveRevision            Int                         @default(0)
+  deletedAt                  DateTime?
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  permissionGrants           PermissionGrant[]
+  previewState               ProjectPreviewState?
+  sessionReplayProgress      SessionReplayProgress[]
   sessionDiscussionSnapshots SessionDiscussionSnapshot[]
-  visionEvidence       VisionEvidence[]
-  sessions             Session[]
-  memoryEntries        MemoryEntry[]
-  literatureItems      ProjectLiterature[]
-  bookmarks            Bookmark[]
+  visionEvidence             VisionEvidence[]
+  sessions                   Session[]
+  memoryEntries              MemoryEntry[]
+  literatureItems            ProjectLiterature[]
+  bookmarks                  Bookmark[]
 }
 
 // A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
@@ -81,16 +81,16 @@ model PdfDocument {
 // Legacy groups remain separate until conflicting native edits have been reconciled.
 // New sources of one verified PdfDocument use its canonical annotation group.
 model PdfAnnotationDocument {
-  id          String                       @id
+  id            String                       @id
   pdfDocumentId String?
-  pdfDocument PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
-  checksum    String
-  sizeBytes   BigInt?
-  revision    Int                          @default(0)
-  sources     PdfAnnotationSourceBinding[]
-  annotations PdfAnnotation[]
-  imports     PdfAnnotationImport[]
-  aliases     PdfAnnotationAlias[]
+  pdfDocument   PdfDocument?                 @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
+  checksum      String
+  sizeBytes     BigInt?
+  revision      Int                          @default(0)
+  sources       PdfAnnotationSourceBinding[]
+  annotations   PdfAnnotation[]
+  imports       PdfAnnotationImport[]
+  aliases       PdfAnnotationAlias[]
 
   @@index([pdfDocumentId])
 }
@@ -221,6 +221,37 @@ model SessionProjectionState {
   id                String   @id
   projectionVersion Int
   completedAt       DateTime
+}
+
+// Rebuildable display history. File identity invalidates this index after external changes.
+// No Session FK: lazy indexing also works before the summary projection is repaired.
+model SessionHistoryIndex {
+  sessionId         String               @id
+  projectId         String
+  revision          BigInt
+  sourceFingerprint String
+  scopeKey          String
+  headerJson        String
+  totalItems        Int
+  items             SessionHistoryItem[]
+
+  @@index([projectId])
+}
+
+// Messages and complete tools share one chronological ordinal. Groups/artifact references have
+// no ordinal and are fetched only when the requested page refers to them.
+model SessionHistoryItem {
+  sessionId       String
+  kind            String
+  itemId          String
+  ordinal         Int?
+  promptMessageId String?
+  groupId         String?
+  payloadJson     String
+  history         SessionHistoryIndex @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  @@id([sessionId, kind, itemId])
+  @@index([sessionId, ordinal])
 }
 
 // Durable cross-store write intent. Deliberately has no foreign key: it must survive a missing or
@@ -578,7 +609,7 @@ model UploadFile {
 model ContentBlob {
   id                           String                        @id
   pdfDocumentId                String?
-  pdfDocument                  PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Restrict)
+  pdfDocument                  PdfDocument?                  @relation(fields: [pdfDocumentId], references: [id], onDelete: Restrict)
   checksum                     String
   storageKey                   String                        @unique
   sizeBytes                    BigInt
@@ -664,7 +695,7 @@ model LiteratureAttachment {
 }
 
 model LiteratureAttachmentVersion {
-  id             String                 @id @default(cuid())
+  id             String               @id @default(cuid())
   attachmentId   String
   contentBlobId  String
   versionNumber  Int
@@ -674,9 +705,9 @@ model LiteratureAttachmentVersion {
   provenanceJson String?
   checksum       String
   pageCount      Int?
-  createdAt      DateTime               @default(now())
-  attachment     LiteratureAttachment   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  contentBlob    ContentBlob            @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+  createdAt      DateTime             @default(now())
+  attachment     LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  contentBlob    ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
 
   @@unique([attachmentId, versionNumber])
   @@unique([attachmentId, checksum])
@@ -1484,38 +1515,38 @@ model LiteratureSmartRunItem {
 
 // User-owned journal identity and annual attribute datasets. Bibliographic Items stay unchanged.
 model Journal {
-  id             String @id
-  name           String
-  normalizedName String
-  aliasesJson    String @default("[]")
-  issnsJson      String @default("[]")
-  externalIdsJson String @default("[]")
-  entries        JournalDatasetEntry[]
-  itemBindings   JournalItemBinding[]
+  id              String                @id
+  name            String
+  normalizedName  String
+  aliasesJson     String                @default("[]")
+  issnsJson       String                @default("[]")
+  externalIdsJson String                @default("[]")
+  entries         JournalDatasetEntry[]
+  itemBindings    JournalItemBinding[]
 
   @@index([normalizedName])
 }
 
 model JournalDataset {
-  id         String @id
+  id         String                @id
   name       String?
   source     String
   year       Int
-  revision   Int @default(1)
+  revision   Int                   @default(1)
   fieldsJson String
-  importedAt DateTime @default(now())
+  importedAt DateTime              @default(now())
   entries    JournalDatasetEntry[]
 
   @@unique([source, year])
 }
 
 model JournalDatasetEntry {
-  datasetId String
-  journalId String
+  datasetId  String
+  journalId  String
   valuesJson String
-  sourceRow Int
-  dataset JournalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
-  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  sourceRow  Int
+  dataset    JournalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  journal    Journal        @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
   @@id([datasetId, journalId])
   @@index([journalId])
@@ -1523,19 +1554,19 @@ model JournalDatasetEntry {
 
 // Explicit confirmation applies only to this reference and this journal identity.
 model JournalItemBinding {
-  itemId String @id
-  journalId String
+  itemId              String         @id
+  journalId           String
   identityFingerprint String
-  revision String
-  item LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  revision            String
+  item                LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  journal             Journal        @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
   @@index([journalId])
 }
 
 // Provider attempts remain accountable independently of the document or its saved translation.
 model PdfTranslationUsage {
-  eventId             String   @id
+  eventId             String    @id
   runId               String
   attachmentVersionId String?
   sourceIndex         Int
@@ -1550,7 +1581,7 @@ model PdfTranslationUsage {
   cachedReadTokens    BigInt?
   cachedWriteTokens   BigInt?
   outputTokens        BigInt?
-  usageIncomplete     Boolean  @default(true)
+  usageIncomplete     Boolean   @default(true)
 
   @@index([occurredAt])
   @@index([runId])
@@ -1559,16 +1590,16 @@ model PdfTranslationUsage {
 
 // A translation owns its immutable layout and ordered block deltas independently of its entry point.
 model PdfTranslation {
-  id                 String @id
+  id                 String                @id
   pdfDocumentId      String
-  pdfDocument        PdfDocument @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
+  pdfDocument        PdfDocument           @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
   checksum           String
   sizeBytes          BigInt
   revision           Int
   layoutSnapshotJson String?
   payloadJson        String
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
   blocks             PdfTranslationBlock[]
 
   @@index([pdfDocumentId, createdAt, id])
@@ -1582,4 +1613,64 @@ model PdfTranslationBlock {
   checkpoint    PdfTranslation @relation(fields: [translationId], references: [id], onDelete: Cascade)
 
   @@id([translationId, sourceIndex])
+}
+
+model SessionSchedule {
+  originPromptId    String?
+  id                String               @id
+  projectId         String
+  sessionId         String?
+  agentFrameId      String?
+  messageBranchId   String?
+  name              String
+  actionJson        String
+  permissionProfile String?
+  ruleJson          String
+  nextDueAt         DateTime?
+  revision          Int                  @default(1)
+  pausedAt          DateTime?
+  pauseReason       String?
+  finishedAt        DateTime?
+  finishReason      String?
+  endAt             DateTime?
+  maxRuns           Int?
+  admittedCount     Int                  @default(0)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  occurrences       ScheduleOccurrence[]
+
+  @@index([projectId, sessionId])
+  @@index([nextDueAt])
+}
+
+model ScheduleOccurrence {
+  id                   String          @id
+  scheduleId           String
+  scheduleRevision     Int
+  scheduledAt          DateTime
+  actionSnapshot       String
+  phase                String
+  dispatchAuthorizedAt DateTime?
+  nextAttemptAt        DateTime?
+  attemptCount         Int             @default(1)
+  promptMessageId      String?         @unique
+  runSessionId         String?
+  scriptRunId          String?
+  reason               String?
+  outcome              String?
+  admittedAt           DateTime?
+  settledAt            DateTime?
+  schedule             SessionSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, scheduledAt])
+  @@index([phase, nextAttemptAt])
+}
+
+model ScheduleMutationReceipt {
+  requestKey String   @id
+  scheduleId String
+  inputHash  String
+  expiresAt  DateTime
+
+  @@index([expiresAt])
 }

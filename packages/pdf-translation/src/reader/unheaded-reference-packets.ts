@@ -1,3 +1,7 @@
+import {
+  isRaisedReferenceOrdinal,
+  isTightRaisedReferenceOrdinal
+} from './native-reference-evidence.js'
 import type { PdfLayoutPage, PdfLayoutTextItem, PdfTranslationLayout } from './layout.js'
 import {
   nativeReferenceRolePageFonts,
@@ -359,12 +363,136 @@ const text = (es: Entry[]): string =>
     .replace(/\s+/gu, ' ')
     .trim()
 
+// A final right column can hold a complete superscript bibliography while a graphic
+// in the other column prevents the whole-page native rule proof. This is a
+// source role only; never use it to admit a replacement crop or erase paint.
+function terminalRightSuperscriptRoles(
+  p: PdfLayoutPage,
+  entries: Entry[],
+  author: (text: string) => boolean,
+  terminal: (text: string) => boolean
+): Entry[] {
+  const raised = isTightRaisedReferenceOrdinal
+  const starts = entries.flatMap(({ item }, i) =>
+    item.str === '1' && item.transform[4] > p.width / 2 && raised(item, entries[i + 1]?.item)
+      ? [i]
+      : []
+  )
+  if (starts.length !== 1) return []
+  const at = starts[0],
+    prior = entries[at - 1]?.item,
+    first = entries[at + 1].item,
+    start = entries[at].item,
+    font = first.height,
+    left = first.transform[4],
+    selected = entries.slice(at)
+  if (
+    !prior ||
+    !valid(prior) ||
+    !/[.!?]\s*$/u.test(prior.str) ||
+    prior.transform[4] <= p.width / 2 ||
+    prior.height < font * 1.05 ||
+    prior.transform[5] - start.transform[5] < font ||
+    prior.transform[5] - start.transform[5] > font * 6 ||
+    entries
+      .slice(0, at)
+      .some(({ item }) =>
+        /\b(?:reference|citation|bibliograph\w*)\s+examples?\b/iu.test(item.str)
+      ) ||
+    selected.some(({ item }) => !valid(item) || item.transform[4] <= p.width / 2)
+  )
+    return []
+  const markers = selected.flatMap(({ item }, index) =>
+    raised(item, selected[index + 1]?.item) ? [index] : []
+  )
+  if (
+    markers.length < 5 ||
+    markers.length > 256 ||
+    markers[0] !== 0 ||
+    markers.some((index, i) => Number(selected[index].item.str) !== i + 1)
+  )
+    return []
+  const closedRow = (row: Entry[]): boolean =>
+    nativeReferenceRoleRowClosed(
+      p,
+      row.map((e) => e.index)
+    )
+  let previousBaseline: number | undefined
+  for (const [i, index] of markers.entries()) {
+    const record = selected.slice(index + 1, markers[i + 1] ?? Infinity),
+      marker = selected[index]
+    if (!record.length || record.length > 600 || !terminal(text(record))) return []
+    const rows: Entry[][] = []
+    for (const entry of record) {
+      const previous = rows.at(-1)
+      if (
+        previous &&
+        Math.abs(entry.item.transform[5] - previous[0].item.transform[5]) <= font * 0.02
+      )
+        previous.push(entry)
+      else rows.push([entry])
+    }
+    if (
+      rows.some(
+        (row, n) =>
+          Math.abs(row[0].item.transform[4] - left) > font * 0.03 ||
+          !closedRow(n ? row : [marker, ...row]) ||
+          row.some(
+            (e, j) =>
+              Math.abs(e.item.height - font) > font * 0.02 ||
+              (j > 0 && e.item.transform[4] < row[j - 1].item.transform[4])
+          ) ||
+          (n > 0 &&
+            (rows[n - 1][0].item.transform[5] - row[0].item.transform[5] < font * 0.8 ||
+              rows[n - 1][0].item.transform[5] - row[0].item.transform[5] > font * 1.5))
+      )
+    )
+      return []
+    const baseline = rows[0][0].item.transform[5]
+    if (
+      previousBaseline !== undefined &&
+      (previousBaseline - baseline < font * 0.8 || previousBaseline - baseline > font * 1.5)
+    )
+      return []
+    previousBaseline = rows.at(-1)![0].item.transform[5]
+    const head = rows[0]
+      .map(({ item }, j, row) => {
+        const previous = row[j - 1]?.item
+        const join =
+          previous && item.transform[4] - previous.transform[4] - previous.width > font * 0.1
+            ? ' '
+            : ''
+        return join + item.str
+      })
+      .join('')
+      .replace(/[¯´]/gu, '')
+      .trim()
+    if (!author(head)) return []
+  }
+  const keys = new Set(selected.map((e) => e.key)),
+    bounds = union(selected.map((e) => box(p, e.item)))
+  if (
+    bounds.x <= p.width / 2 ||
+    bounds.y < 0 ||
+    bounds.right > p.width ||
+    bounds.bottom > p.height ||
+    entries.some((e) => !keys.has(e.key) && valid(e.item) && overlaps(box(p, e.item), bounds))
+  )
+    return []
+  const witness = nativeReferenceRolePageFonts(
+    p,
+    selected.map((e) => e.index)
+  )
+  return witness && nativeReferenceRoleFontsCurrent(witness) ? selected : []
+}
+
 /** Superscript ordinals are a separate contract from bracketed bibliography
  * markers. Complete same-page entries and disjoint native column domains are
  * required; partial page-start/end entries and existing readonly types remain. */
 export function nativeSuperscriptReferencePackets(
   units: Unit[],
-  pages: PdfLayoutPage[]
+  pages: PdfLayoutPage[],
+  pageCount: number | undefined
 ): ReadonlySet<string> {
   const result = new Set<string>(),
     owners = new Map<string, Unit>(),
@@ -380,12 +508,36 @@ export function nativeSuperscriptReferencePackets(
     /\((?:[^()[\]]{1,80},\s*)?(?:18|19|20)\d{2}\)(?:\s+p\.\s+\d+)?\.$/u.test(s)
   for (const p of pages) {
     const evidence = p.nativeNumberedPacketEvidence
-    if (!evidence?.complete || p.rotation !== 0 || p.items.length > 10000) continue
+    if (p.rotation !== 0 || p.items.length > 10000) continue
     const entries: Entry[] = p.items.flatMap((item, index) =>
       item.str.trim()
         ? [{ item, index, key: `${p.page}:${index}`, owner: owners.get(`${p.page}:${index}`)! }]
         : []
     )
+    if (!evidence?.complete) {
+      if (p !== pages.at(-1) || p.page !== pageCount) continue
+      const selected = terminalRightSuperscriptRoles(p, entries, author, terminal)
+      const keys = new Set(selected.map((e) => e.key)),
+        selectedOwners = new Set(selected.map((e) => e.owner))
+      if (
+        selected.some(
+          (e) =>
+            !e.owner ||
+            repeated.has(e.key) ||
+            e.owner.originalStrings[e.owner.items.indexOf(e.key)] !== e.item.str
+        ) ||
+        [...selectedOwners].some((owner) => owner.items.some((key) => !keys.has(key)))
+      )
+        continue
+      for (const owner of selectedOwners)
+        if (
+          !owner.sourceOnly &&
+          !owner.preserve &&
+          owner.risks.every((r) => r === 'possible-continuation' || r === 'ambiguous-line-hyphen')
+        )
+          result.add(owner.items.join('|'))
+      continue
+    }
     if (
       !entries.length ||
       entries.some((e) => {
@@ -402,6 +554,15 @@ export function nativeSuperscriptReferencePackets(
       })
     )
       continue
+    const centeredRule = evidence.rules.length === 1 ? evidence.rules[0] : undefined
+    const separated =
+      centeredRule !== undefined &&
+      centeredRule.right - centeredRule.left > p.width * 0.3 &&
+      centeredRule.right - centeredRule.left < p.width * 0.5 &&
+      entries.filter(({ item }, at) => isRaisedReferenceOrdinal(item, entries[at + 1]?.item))
+        .length >= 4
+    const fullAuthor = (s: string): boolean =>
+      author(s) || /^\p{Lu}[\p{L}\p{M}-]+(?: \p{Lu}[\p{L}\p{M}.'’–-]+){1,4}(?:,| and |$)/u.test(s)
     const markers = entries.filter((e, at) => {
       const i = e.item,
         next = entries[at + 1]?.item
@@ -419,6 +580,12 @@ export function nativeSuperscriptReferencePackets(
             break
           row.push(part)
         }
+      if (separated)
+        return (
+          i.transform[5] < centeredRule.baseline - i.height &&
+          isRaisedReferenceOrdinal(i, next) &&
+          fullAuthor(text(row))
+        )
       return (
         /^\d{1,3}$/u.test(i.str) &&
         next &&
@@ -432,7 +599,15 @@ export function nativeSuperscriptReferencePackets(
       )
     })
     if (
-      markers.length < 3 ||
+      markers.length < (separated ? 5 : 3) ||
+      (separated &&
+        (markers[0].item.str !== '1' ||
+          centeredRule.baseline - markers[0].item.transform[5] > markers[0].item.height * 6 ||
+          entries.some(
+            (e) =>
+              e.index < markers[0].index &&
+              e.item.transform[5] - e.item.height < centeredRule.baseline
+          ))) ||
       markers.length > 256 ||
       markers.some((e, at) => at > 0 && Number(e.item.str) !== Number(markers[at - 1].item.str) + 1)
     )
@@ -451,7 +626,11 @@ export function nativeSuperscriptReferencePackets(
         s = text(items.slice(1))
       return {
         items,
-        complete: items.length <= 600 && s.length <= 4000 && author(s) && terminal(s)
+        complete:
+          items.length <= 600 &&
+          s.length <= 4000 &&
+          (separated ? fullAuthor(s) : author(s)) &&
+          terminal(s)
       }
     })
     if (records.slice(0, -1).some((r) => !r.complete)) continue
@@ -466,7 +645,19 @@ export function nativeSuperscriptReferencePackets(
     const columns: number[] = []
     for (const start of starts)
       if (!columns.some((x) => Math.abs(x - start) < height * 0.1)) columns.push(start)
-    if (columns.length > 2) continue
+    if (columns.length > 2 || (separated && columns.length !== 2)) continue
+    if (
+      separated &&
+      closed.some(({ items: record }) =>
+        record
+          .slice(1)
+          .some(
+            ({ item }) =>
+              Math.abs(item.height - record[1].item.height) > record[1].item.height * 0.02
+          )
+      )
+    )
+      continue
     const boxes = columns.map((start, at) =>
       selected
         .filter(
@@ -481,6 +672,9 @@ export function nativeSuperscriptReferencePackets(
     if (
       domains.some((b) => b.x < 0 || b.y < 0 || b.right > p.width || b.bottom > p.height) ||
       (domains.length === 2 && overlaps(domains[0], domains[1])) ||
+      (separated &&
+        ((centeredRule.left + centeredRule.right) / 2 < domains[0].right ||
+          (centeredRule.left + centeredRule.right) / 2 > domains[1].x)) ||
       entries.some((e) => !keys.has(e.key) && domains.some((b) => overlaps(box(p, e.item), b))) ||
       evidence.rules.some((r) =>
         domains.some((b) =>

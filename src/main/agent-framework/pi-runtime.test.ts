@@ -1,9 +1,11 @@
+import * as processTree from '../process-tree'
+import * as windowsOwnedProcess from '../process-tree-windows'
 import * as childProcess from 'node:child_process'
 import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, copyFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
@@ -14,9 +16,15 @@ import {
   piBootstrapPath,
   resolvePiExecutable
 } from './pi-runtime'
+import { getAgentFramework } from './registry'
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>())
+}))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
 }))
 vi.mock('node:crypto', async (original) => ({
   ...(await original<typeof import('node:crypto')>())
@@ -80,7 +88,7 @@ it('rejects an external or altered adapter before starting a process', async () 
   }
 })
 
-it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout'] as const)(
+it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout', 'cleanup-failed'] as const)(
   'probes ACP readiness and cleans its temporary profile: %s',
   async (scenario) => {
     // Isolate the process protocol from upstream package bytes. The rejection test above
@@ -95,24 +103,41 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout'] as const)(
       vi.spyOn(hash, 'digest').mockReturnValue(digest)
       return hash
     })
-    vi.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('validated fixture'))
+    const readFileSync = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementation((...args) => {
+      // Only replace adapter integrity bytes; Linux ownership reads must see real procfs identity.
+      if (String(args[0]).startsWith('/proc/')) return readFileSync(...args)
+      return Buffer.from('validated fixture')
+    })
     let hashIndex = 0
     vi.spyOn(crypto, 'createHash').mockImplementation(() => hashes[hashIndex++ % hashes.length])
+    if (scenario === 'cleanup-failed')
+      vi.spyOn(processTree, 'terminateProcessTree').mockResolvedValue({ reaped: false })
     const child = Object.assign(new childProcess.ChildProcess(), {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
       stderr: new PassThrough()
     })
-    const kill = vi.spyOn(child, 'kill').mockReturnValue(true)
-    const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue(child)
+    const spawn =
+      process.platform === 'win32'
+        ? vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockReturnValue(child as never)
+        : vi.spyOn(childProcess, 'spawn').mockReturnValue(child)
+    spawn.mockClear()
     const options = { configRoot: join(tmpdir(), 'pi-probe-fixture') }
     expect(isPiAdapterAvailable(options)).toBe(true)
     vi.useFakeTimers()
     const result = resolvePiExecutable(options).catch((error: Error) => error.message)
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
-    const [, args, spawnOptions] = spawn.mock.calls[0]
+    const call = spawn.mock.calls[0] as readonly unknown[]
+    const args = (process.platform === 'win32' ? call[2] : call[1]) as string[]
+    const spawnOptions = (process.platform === 'win32' ? call[3] : call[2]) as {
+      env?: NodeJS.ProcessEnv
+    }
     const temporary = spawnOptions?.env?.HOME
     expect(spawnOptions?.env).toMatchObject({ PI_OFFLINE: '1', HOME: temporary })
+    // The probe stays offline and minimal; the owned Windows launcher supplies libuv's required
+    // variables instead of inheriting credentials from the main process.
+    expect(spawnOptions?.env).not.toHaveProperty('SystemRoot')
     expect(args).toContain('--no-delegation')
     expect(JSON.parse(child.stdin.read().toString())).toMatchObject({
       id: 1,
@@ -122,7 +147,9 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout'] as const)(
     if (scenario === 'timeout') {
       await vi.advanceTimersByTimeAsync(10_000)
       expect(await result).toBe('Pi ACP initialization timed out.')
-      expect(kill).toHaveBeenCalledOnce()
+      expect(child.stdin.destroyed).toBe(true)
+      expect(child.stdout.destroyed).toBe(true)
+      expect(child.stderr.destroyed).toBe(true)
     } else {
       const response =
         scenario === 'invalid-json'
@@ -145,11 +172,149 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout'] as const)(
       expect(await result).toBe(
         scenario === 'compatible'
           ? piAdapterPath(options)
-          : scenario === 'invalid-json'
-            ? 'Pi ACP returned an invalid initialization response.'
-            : 'Pi ACP initialization failed.'
+          : scenario === 'cleanup-failed'
+            ? 'Pi ACP process tree cleanup was not confirmed.'
+            : scenario === 'invalid-json'
+              ? 'Pi ACP returned an invalid initialization response.'
+              : 'Pi ACP initialization failed.'
       )
     }
-    await expect(stat(temporary!)).rejects.toMatchObject({ code: 'ENOENT' })
+    if (scenario === 'cleanup-failed') {
+      expect((await stat(temporary!)).isDirectory()).toBe(true)
+      await rm(temporary!, { recursive: true, force: true })
+    } else await expect(stat(temporary!)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)
+
+it.each(['messages', 'chat-completions', 'responses'] as const)(
+  'keeps known and user-configured output budgets in the Pi %s catalog',
+  (wire) => {
+    const provider = {
+      type: 'custom' as const,
+      vendorId: 'anthropic' as const,
+      model: 'claude-haiku-4-5-20251001',
+      agentProviderId: 'catalog-model',
+      baseUrl: 'http://127.0.0.1:12345',
+      apiEndpoints: [wire]
+    }
+    const config = getAgentFramework('pi').prepareModelConfig(provider, {
+      storageRoot: resolve('data'),
+      executablePath: resolve('bin.js'),
+      piModelBridge: { token: 'test-key' },
+      providerModelCatalog: [
+        { provider },
+        { provider: { ...provider, agentProviderId: 'configured-model', maxOutputTokens: 12_000 } },
+        { provider: { ...provider, agentProviderId: 'unknown-model', model: 'unknown-model' } }
+      ]
+    })
+    const models = JSON.parse(config.configFiles![0].content).providers['open-science'].models
+    expect(models.map((model: { maxTokens?: number }) => model.maxTokens)).toEqual([
+      64_000,
+      12_000,
+      undefined
+    ])
+  }
+)
+
+it
+  .skipIf(process.platform === 'win32')
+  .each(['invalid-json', 'output-limit', 'compatible'] as const)(
+  'releases a real Pi smoke process tree after %s',
+  async (scenario) => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-resource-probe-'))
+    const options = { configRoot: root }
+    const executable = piAdapterPath(options)
+    const pidFile = join(root, 'pids.json')
+    // Real pipes and PIDs after the independently tested integrity boundary; synthetic adapter bytes.
+    const hashes = [
+      '066e83d7f9b4ccbd475691af05a5be365aec0927574769dcacd21e22abe49382',
+      'ebf054246cc32ef65364e4b0da8ce8b6d3b9082f8189c2bdadae27be4cf698e6',
+      '6498f4b2bf603ff91e9455dfbabc15af7f10e443119a00d9b9c7f685d3242336',
+      '7b7bd311e494ae6813fb8fb036f4bd75cd37c43e011f7670e753d6ffa723fc9d'
+    ].map((digest) => {
+      const hash = crypto.createHash('sha256')
+      vi.spyOn(hash, 'digest').mockReturnValue(digest)
+      return hash
+    })
+    let index = 0
+    const readFileSync = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementation((...args) => {
+      // Only replace adapter integrity bytes; Linux ownership reads must see real procfs identity.
+      if (String(args[0]).startsWith('/proc/')) return readFileSync(...args)
+      return Buffer.from('validated fixture')
+    })
+    vi.spyOn(crypto, 'createHash').mockImplementation(() => hashes[index++ % hashes.length])
+    let pids: number[] = []
+    try {
+      await mkdir(dirname(executable), { recursive: true })
+      await writeFile(
+        executable,
+        "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+          (scenario === 'compatible'
+            ? 'child.unref(); process.stdin.once("data", () => { console.log(JSON.stringify({ id: 1, result: { protocolVersion: 1, agentInfo: { name: "openma-pi-acp", version: "0.1.8" } } })); process.stdin.resume(); });\n'
+            : `process.stdout.write(${JSON.stringify(scenario === 'invalid-json' ? 'invalid json\n' : 'x'.repeat(257 * 1024))}); setInterval(() => {}, 1000);\n`)
+      )
+      const result = await resolvePiExecutable(options).catch((error: Error) => error)
+      pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      if (scenario === 'compatible') expect(result).toBe(executable)
+      else
+        expect(result).toMatchObject({
+          message:
+            scenario === 'invalid-json'
+              ? 'Pi ACP returned an invalid initialization response.'
+              : 'Pi ACP initialization response exceeded the limit.'
+        })
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      if (!pids.length) {
+        try {
+          pids = JSON.parse(await readFile(pidFile, 'utf8'))
+        } catch {
+          /* No spawn. */
+        }
+      }
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* Already reaped. */
+        }
+      }
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.skipIf(process.platform !== 'win32')(
+  'starts Node from the minimal Pi smoke environment through the owned Windows launcher',
+  async () => {
+    const actual =
+      await vi.importActual<typeof import('../process-tree-windows')>('../process-tree-windows')
+    const jobName = `Local\\OpenScience.Delegation.${crypto.randomUUID()}`
+    // Node aborts at startup without SYSTEMROOT, which this environment deliberately omits.
+    const child = actual.spawnWindowsOwnedProcess(
+      jobName,
+      process.execPath,
+      ['-e', 'require("node:crypto").randomUUID()'],
+      {
+        cwd: tmpdir(),
+        env: { PATH: process.env.PATH, HOME: tmpdir(), PI_OFFLINE: '1' },
+        stdio: 'pipe'
+      }
+    )
+    try {
+      await expect(
+        new Promise((resolve, reject) => {
+          child.once('error', reject)
+          child.once('exit', resolve)
+        })
+      ).resolves.toBe(0)
+    } finally {
+      await actual.reapWindowsOwnedJob(jobName)
+    }
   }
 )

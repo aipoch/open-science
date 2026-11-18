@@ -1,16 +1,28 @@
-import { FileText, FlaskConical, Info } from 'lucide-react'
+import { Clock, FileText, FlaskConical, Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ToolSummary } from './notebook-tool-presentation'
 
 const WorkspaceToolSummaryCard = ({
   summary,
+  schedule = false,
+  hideHeader = false,
   file = false
 }: {
   summary: ToolSummary
+  schedule?: boolean
+  hideHeader?: boolean
   file?: boolean
-}): React.JSX.Element => {
-  const Icon = file ? FileText : FlaskConical
+}): React.JSX.Element | null => {
+  const Icon = schedule ? Clock : file ? FileText : FlaskConical
   const { t } = useTranslation()
+  if (
+    hideHeader &&
+    !summary.fields.length &&
+    !summary.rows?.length &&
+    !summary.error &&
+    !summary.note
+  )
+    return null
   const renderError = (error: string): React.JSX.Element => (
     <div
       role="status"
@@ -28,24 +40,46 @@ const WorkspaceToolSummaryCard = ({
       aria-label={summary.title}
       className="min-w-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000"
     >
-      <div className="flex items-center gap-2 border-b border-border-200/70 px-2.5 py-2">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="size-4" aria-hidden="true" />
-        </span>
-        <div className="min-w-0">
-          <h4 className="text-[13px] font-medium text-text-000">{summary.title}</h4>
-          {summary.subtitle ? (
-            <p className="break-words text-xs text-text-200">{summary.subtitle}</p>
-          ) : null}
+      {!hideHeader && (
+        <div className="flex items-center gap-2 border-b border-border-200/70 px-2.5 py-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Icon className="size-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h4 className="text-[13px] font-medium text-text-000">
+              {schedule ? (summary.subtitle ?? summary.title) : summary.title}
+            </h4>
+            {!schedule && summary.subtitle ? (
+              <p className="break-words text-xs text-text-200">{summary.subtitle}</p>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
       {summary.fields.length ? (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 px-2.5 py-2 text-xs">
           {summary.fields.map((field, index) => (
-            <div key={index} className="contents">
-              <dt className="text-text-300">{field.label}</dt>
-              <dd className="min-w-0 break-all text-text-100">
-                {field.expandable ? (
+            <div
+              key={index}
+              className={
+                field.multiline
+                  ? 'col-span-2 mt-1 border-t border-border-200/70 pt-3 pb-1'
+                  : 'contents'
+              }
+            >
+              <dt className={field.multiline ? 'sr-only' : 'text-text-300'}>{field.label}</dt>
+              <dd
+                className={
+                  field.multiline
+                    ? `min-w-0 whitespace-pre-wrap break-words ${schedule ? 'text-xs' : 'text-sm'} leading-relaxed text-text-000`
+                    : 'min-w-0 break-all text-text-100'
+                }
+              >
+                {schedule && field.multiline ? (
+                  <details>
+                    <summary className="cursor-pointer text-text-300">{field.label}</summary>
+                    <p className="mt-2">{field.value}</p>
+                  </details>
+                ) : field.expandable ? (
                   <details>
                     <summary className="cursor-pointer">
                       {field.value.split(/[\\/]/u).filter(Boolean).slice(-2).join('/')}

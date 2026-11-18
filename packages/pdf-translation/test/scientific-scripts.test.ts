@@ -15,6 +15,104 @@ import {
   type ScientificScriptMarker
 } from '../resources/scientific-scripts.mjs'
 
+it.each(['native', 'flat', 'missing base', 'different target'] as const)(
+  'keeps a lowered index on a native difference symbol (%s)',
+  (variant) => {
+    const source = 'Estimate ∆z.',
+      target = variant === 'different target' ? '估计∆k。' : '估计∆z。',
+      offset = source.indexOf('∆'),
+      index: ScientificScriptMarker = {
+        label: 'z',
+        sourceOffset: offset + 1,
+        scale: 0.7,
+        rise: variant === 'flat' ? 0 : -1.5,
+        sourceIndices: [4],
+        bounds: [108, 699, 112, 704]
+      },
+      markers: ScientificScriptMarker[] = [index]
+    if (variant !== 'missing base') {
+      markers.push({
+        label: '∆',
+        sourceOffset: offset,
+        scale: 1,
+        rise: 0,
+        sourceIndices: [3],
+        bounds: [100, 700, 108, 708]
+      })
+    }
+    expect(resolveScientificScriptSpans(source, target, markers)).toEqual(
+      variant === 'native'
+        ? [
+            {
+              start: 3,
+              end: 4,
+              scale: 0.7,
+              rise: -1.5,
+              sourceIndices: [4],
+              sourceOffsets: [offset + 1]
+            }
+          ]
+        : []
+    )
+  }
+)
+
+it.each([
+  'valid',
+  'missing-body',
+  'foreign-body',
+  'nonadjacent',
+  'raised',
+  'changed-call',
+  'distant',
+  'missing-bounds'
+] as const)('keeps native lowered callee scripts before repeated arguments: %s', (fault) => {
+  const source = 'Use Qr(t) and Qr(t).',
+    target = '使用Qr(t)与Qr(t)。',
+    markers: ScientificScriptMarker[] = [...source.matchAll(/Qr\(t\)/gu)].flatMap((m, n) => [
+      {
+        label: 'Q',
+        sourceOffset: m.index,
+        scale: 1,
+        rise: 0,
+        sourceIndices: [10 + n * 5],
+        bounds: [100 + n * 40, 700, 108 + n * 40, 708]
+      },
+      {
+        label: 'r',
+        sourceOffset: m.index + 1,
+        scale: 2 / 3,
+        rise: -1.8,
+        sourceIndices: [11 + n * 5],
+        bounds: [108 + n * 40, 698.5, 112 + n * 40, 704]
+      }
+    ])
+  for (const marker of markers) {
+    if (fault === 'foreign-body' && marker.label === 'Q') marker.label = 'R'
+    if (fault === 'nonadjacent' && marker.label === 'r') marker.sourceIndices[0]++
+    if (fault === 'raised' && marker.label === 'r') marker.rise = 1.8
+    if (fault === 'distant' && marker.label === 'r') marker.bounds = [130, 698.5, 134, 704]
+    if (fault === 'missing-bounds') delete marker.bounds
+  }
+  const spans = resolveScientificScriptSpans(
+    source,
+    fault === 'changed-call' ? target.replaceAll('(t)', '(u)') : target,
+    fault === 'missing-body' ? markers.filter((m) => m.label !== 'Q') : markers
+  )
+  expect(spans).toEqual(
+    fault === 'valid'
+      ? [...target.matchAll(/Qr\(t\)/gu)].map((m, n) => ({
+          start: m.index + 1,
+          end: m.index + 2,
+          scale: 2 / 3,
+          rise: -1.8,
+          sourceIndices: [11 + n * 5],
+          sourceOffsets: [[...source.matchAll(/Qr\(t\)/gu)][n].index + 1]
+        }))
+      : []
+  )
+})
+
 it.each([
   'valid',
   'flat',
@@ -876,6 +974,11 @@ it.each([
   ['σ', 17, 100, 10, false],
   [', σ', 17, 100, 10, false],
   ['; x', 17, 100, 10, false],
+  [', . . . , q', 17, 100, 10, false],
+  [', . . . , σ', 17, 100, 10, false],
+  [', . . , q', 17, 100, 10, true],
+  ['text q', 17, 100, 10, true],
+  [', . . . , q', 5, 100, 10, true],
   [', word', 17, 100, 10, true],
   [', σ', 5, 100, 10, true],
   [', σ', 17, 110, 10, true],
@@ -893,6 +996,46 @@ it.each([
     if (fraction) expect(fractions[0].indices).toEqual([2, 3])
   }
 )
+
+it('keeps native paired scripts after an ellipsis-prefixed variable out of division', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([160, 140]),
+    base = ', . . . , q',
+    right = 20 + font.widthOfTextAtSize(base, 10)
+  page.drawText(base, { x: 20, y: 100, size: 10, font })
+  page.drawText('U', { x: right, y: 103.6, size: 7, font })
+  page.drawText('k', { x: right, y: 97.5, size: 7, font })
+  const task = getDocument({ data: await pdf.save(), useSystemFonts: true })
+  try {
+    const content = await (await (await task.promise).getPage(1)).getTextContent(),
+      items: FractionItem[] = content.items.flatMap((item, i) =>
+        'str' in item && item.str.trim()
+          ? [
+              {
+                i,
+                text: item.str,
+                fontSize: item.height,
+                baseline: item.transform[5],
+                bounds: [
+                  item.transform[4],
+                  item.transform[5],
+                  item.transform[4] + item.width,
+                  item.transform[5] + item.height
+                ] as [number, number, number, number]
+              }
+            ]
+          : []
+      )
+    expect(items.map((item) => item.text)).toEqual([base, 'U', 'k'])
+    expect(resolveInlineFractions(items, 100, 10)).toEqual([])
+    expect(resolveInlineFractions(items.slice(1), 100, 10).map((value) => value.label)).toEqual([
+      'U/k'
+    ])
+  } finally {
+    await task.destroy()
+  }
+})
 
 it.each(
   readPdfTranslationCases<{
@@ -2874,3 +3017,153 @@ it.each([
       : []
   )
 })
+
+it.each([
+  'complete',
+  'flat order',
+  'foreign glyph',
+  'wrong index position',
+  'changed order'
+] as const)('retains a complete native raised order and lowered index (%s)', (shape) => {
+  const source = 'The coefficient is σ(4)234 = 2.4.',
+    target = shape === 'changed order' ? '系数为 σ(5)234 = 2.4。' : '系数为 σ(4)234 = 2.4。',
+    label = 'σ(4)234',
+    start = source.indexOf(label)
+  const markers: ScientificScriptMarker[] = [
+    {
+      label: 'σ',
+      sourceOffset: start,
+      sourceIndices: [10],
+      scale: 1,
+      rise: 0,
+      bounds: [20, 40, 26, 47]
+    },
+    {
+      label: '(',
+      sourceOffset: start + 1,
+      sourceIndices: [11],
+      scale: 0.8,
+      rise: 5,
+      bounds: [27, 46, 29, 52]
+    },
+    {
+      label: '4',
+      sourceOffset: start + 2,
+      sourceIndices: [12],
+      scale: 0.75,
+      rise: shape === 'flat order' ? 0 : 5,
+      bounds: [29.5, 46, 32.5, 52]
+    },
+    {
+      label: ')',
+      sourceOffset: start + 3,
+      sourceIndices: [shape === 'foreign glyph' ? 24 : 13],
+      scale: 0.8,
+      rise: 5,
+      bounds: [33, 46, 35, 52]
+    },
+    {
+      label: '234',
+      sourceOffset: start + 4,
+      sourceIndices: [14],
+      scale: 0.75,
+      rise: -3,
+      bounds: shape === 'wrong index position' ? [30, 36, 40, 41] : [27, 36, 37, 41]
+    }
+  ]
+  expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+    shape === 'complete'
+      ? [
+          {
+            sourceOffset: start,
+            targetOffset: target.indexOf(label),
+            label,
+            sourceIndices: [10, 11, 12, 13, 14],
+            baselineIndex: 10,
+            nativeScriptGroup: true
+          }
+        ]
+      : []
+  )
+})
+
+it.each([10, 11, 13])(
+  'fits the native terminal operator advance at the column edge (%i)',
+  async (length) => {
+    const pdf = await PDFDocument.create(),
+      text = await pdf.embedFont(StandardFonts.TimesRoman),
+      symbols = await pdf.embedFont(StandardFonts.Symbol),
+      page = pdf.addPage([612, 792]),
+      left = 315,
+      baseline = 435
+    let x = left
+    const draw = (value: string, size: number, rise: number, font = text, gap = 0): void => {
+      page.drawText(value, { x, y: baseline + rise, size, font })
+      x += font.widthOfTextAtSize(value, size) + gap
+    }
+    draw('For both configurations, the measured response is ', 9, 0, text, 0.12)
+    draw('χ', 9, 0, symbols, 0.12)
+    const scriptLeft = x
+    draw('(', 7.2, 4.9, text, 0.12)
+    draw('3', 7, 4.9, text, 0.12)
+    draw(')', 7.2, 4.9, text, 0.12)
+    page.drawText('1111', { x: scriptLeft, y: baseline - 3.2, font: text, size: 7 })
+    x = Math.max(x, scriptLeft + text.widthOfTextAtSize('1111', 7)) + 3
+    for (const value of ['= (', '2', ' ± ', '1', ') ', '×']) draw(value, 9.34, 0)
+
+    const right = x,
+      source = 'For both configurations, the measured response is χ(3)1111 = (2 ± 1) ×',
+      translation = '配置不同条件下测得的响应值为' + '量'.repeat(length) + 'χ(3)1111=(2±1)×',
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'terminal-advance', surface: 'electron' })
+    let target: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await new PdfTranslationWriter(() =>
+        resolve('resources/worker.mjs')
+      ).generateDetailed(
+        {
+          id: 'terminal-advance',
+          data: await pdf.save(),
+          pages: [{ width: 612, height: 792 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: {
+                    x: left / 612,
+                    y: 345 / 792,
+                    width: (right - left) / 612,
+                    height: 16 / 792
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(result).toBeDefined()
+      const overflow = length === 13
+      expect(result!.layoutFailures.map(({ code }) => code)).toEqual(overflow ? ['overflow'] : [])
+      target = getDocument({ data: result!.data, useSystemFonts: true })
+      const content = await (await (await target.promise).getPage(1)).getTextContent(),
+        items = content.items.filter((item) => 'str' in item)
+      expect(
+        items
+          .map((item) => item.str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe((overflow ? source : translation).replace(/\s/gu, ''))
+      const operator = items.find((item) => item.str.trim() === '×')!
+      expect(operator.transform[4] + operator.width).toBeLessThanOrEqual(right + 0.001)
+    } finally {
+      await target?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)

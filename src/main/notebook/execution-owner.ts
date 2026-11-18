@@ -4,6 +4,10 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  readTrustedNotebookBindingPermissionPrompts
+} from './runtime-binding-admission'
 
 import type { Logger } from '@aipoch/diagnostics/node'
 import {
@@ -155,7 +159,8 @@ type NotebookExecutionOwnerOptions = {
     session: NotebookSessionAggregate,
     run: NotebookRunRecord,
     context: NotebookSourceFileAccessContext | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    permissionPrompts?: 'none'
   ) => Promise<void>
   prepareRuntimeSelection?: (
     session: NotebookSessionAggregate,
@@ -618,7 +623,10 @@ class NotebookExecutionOwner {
     // Snapshot caller-owned inputs before the first queue/preparation/persistence wait.
     // The host-owned input lease stays live so resolver access reaches the completed run.
     const { registeredInputFiles, ...submittedRequest } = request
-    const executionRequest = { ...structuredClone(submittedRequest), registeredInputFiles }
+    const executionRequest = markTrustedNotebookBindingPermissionPrompts(
+      { ...structuredClone(submittedRequest), registeredInputFiles },
+      readTrustedNotebookBindingPermissionPrompts(request)
+    )
     const executionHelperIds = helperModuleIds?.slice()
     return session.withCellExecution(executionRequest.cellId, async (cell) => {
       const submissionFingerprint = dataRunFingerprint(
@@ -887,7 +895,8 @@ class NotebookExecutionOwner {
                     session,
                     executionRun,
                     sourceFileAccessContext,
-                    signal
+                    signal,
+                    readTrustedNotebookBindingPermissionPrompts(request)
                   )
                   signal?.throwIfAborted()
                   if (
@@ -1360,7 +1369,13 @@ class NotebookExecutionOwner {
               const sourceFileAccessContext = await this.options
                 .sourceFileAccessContext?.(session, queuedRun)
                 .catch(() => undefined)
-              await this.options.reviewCode?.(session, queuedRun, sourceFileAccessContext, signal)
+              await this.options.reviewCode?.(
+                session,
+                queuedRun,
+                sourceFileAccessContext,
+                signal,
+                readTrustedNotebookBindingPermissionPrompts(request)
+              )
               signal?.throwIfAborted()
               if (session.currentKernelEpochId('repl') !== epoch.id) {
                 throw new Error('Notebook REPL epoch retired before dispatch.')
@@ -1774,7 +1789,8 @@ class NotebookExecutionOwner {
                 session,
                 durableAdmission.run,
                 undefined,
-                lifecycleSignal
+                lifecycleSignal,
+                readTrustedNotebookBindingPermissionPrompts(request)
               )
               lifecycleSignal.throwIfAborted()
               const workingFileObservation = await startWorkingFileObservation({

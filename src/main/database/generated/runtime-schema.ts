@@ -148,6 +148,27 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "completedAt" DATETIME NOT NULL,
     CONSTRAINT "SessionProjectionState_identity_check" CHECK ("id" = 'session-projection' AND "projectionVersion" >= 1)
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryIndex" (
+    "sessionId" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "revision" BIGINT NOT NULL,
+    "sourceFingerprint" TEXT NOT NULL,
+    "scopeKey" TEXT NOT NULL,
+    "headerJson" TEXT NOT NULL,
+    "totalItems" INTEGER NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryItem" (
+    "sessionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "ordinal" INTEGER,
+    "promptMessageId" TEXT,
+    "groupId" TEXT,
+    "payloadJson" TEXT NOT NULL,
+
+    PRIMARY KEY ("sessionId", "kind", "itemId"),
+    CONSTRAINT "SessionHistoryItem_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "SessionHistoryIndex" ("sessionId") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "PendingSessionReconciliation" (
     "sessionId" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -1288,6 +1309,56 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("translationId", "sourceIndex"),
     CONSTRAINT "PdfTranslationBlock_translationId_fkey" FOREIGN KEY ("translationId") REFERENCES "PdfTranslation" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "PdfTranslationBlock_values_check" CHECK ("sourceIndex" >= -1 AND "sourceIndex" < 10000 AND "revision" > 0 AND (("sourceIndex" = -1 AND "translation" IS NULL) OR ("sourceIndex" >= 0 AND ("translation" IS NULL OR (length(trim("translation")) > 0 AND length("translation") <= 100000)))))
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionSchedule" (
+    "originPromptId" TEXT,
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT,
+    "agentFrameId" TEXT,
+    "messageBranchId" TEXT,
+    "name" TEXT NOT NULL,
+    "actionJson" TEXT NOT NULL,
+    "permissionProfile" TEXT,
+    "ruleJson" TEXT NOT NULL,
+    "nextDueAt" DATETIME,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "pausedAt" DATETIME,
+    "pauseReason" TEXT,
+    "finishedAt" DATETIME,
+    "finishReason" TEXT,
+    "endAt" DATETIME,
+    "maxRuns" INTEGER,
+    "admittedCount" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "SessionSchedule_values_check" CHECK (("finishReason" IS NULL OR ("finishedAt" IS NOT NULL AND "finishReason" IN ('completed', 'cancelled'))) AND "revision" >= 1 AND "admittedCount" >= 0 AND ("maxRuns" IS NULL OR "maxRuns" > 0) AND ("permissionProfile" IS NULL OR ("sessionId" IS NULL AND "permissionProfile" IN ('ask', 'auto', 'full'))) AND json_valid("actionJson") AND json_valid("ruleJson") AND (("sessionId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL) OR ("sessionId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND json_extract("actionJson", '$.kind') IS 'send_session_message')))
+);`,
+  `CREATE TABLE IF NOT EXISTS "ScheduleOccurrence" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "scheduleId" TEXT NOT NULL,
+    "scheduleRevision" INTEGER NOT NULL,
+    "scheduledAt" DATETIME NOT NULL,
+    "actionSnapshot" TEXT NOT NULL,
+    "phase" TEXT NOT NULL,
+    "dispatchAuthorizedAt" DATETIME,
+    "nextAttemptAt" DATETIME,
+    "attemptCount" INTEGER NOT NULL DEFAULT 1,
+    "promptMessageId" TEXT,
+    "runSessionId" TEXT,
+    "scriptRunId" TEXT,
+    "reason" TEXT,
+    "outcome" TEXT,
+    "admittedAt" DATETIME,
+    "settledAt" DATETIME,
+    CONSTRAINT "ScheduleOccurrence_scheduleId_fkey" FOREIGN KEY ("scheduleId") REFERENCES "SessionSchedule" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ScheduleOccurrence_values_check" CHECK ("phase" IN ('dispatching', 'admitted', 'settled') AND "attemptCount" > 0 AND "scheduleRevision" > 0 AND json_valid("actionSnapshot") AND (("phase" = 'settled') = ("settledAt" IS NOT NULL)))
+);`,
+  `CREATE TABLE IF NOT EXISTS "ScheduleMutationReceipt" (
+    "requestKey" TEXT NOT NULL PRIMARY KEY,
+    "scheduleId" TEXT NOT NULL,
+    "inputHash" TEXT NOT NULL,
+    "expiresAt" DATETIME NOT NULL
 );`
 ] as const
 
@@ -1312,6 +1383,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_createdAtMs_idx" ON "Session"("createdAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryIndex_projectId_idx" ON "SessionHistoryIndex"("projectId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryItem_sessionId_ordinal_idx" ON "SessionHistoryItem"("sessionId", "ordinal");`,
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SessionModelCallUsage_sessionId_messageId_callIndex_key" ON "SessionModelCallUsage"("sessionId", "messageId", "callIndex");`,
@@ -1458,10 +1531,17 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "PdfTranslationUsage_runId_idx" ON "PdfTranslationUsage"("runId");`,
   `CREATE INDEX IF NOT EXISTS "PdfTranslationUsage_attachmentVersionId_idx" ON "PdfTranslationUsage"("attachmentVersionId");`,
   `CREATE INDEX IF NOT EXISTS "PdfTranslation_pdfDocumentId_createdAt_id_idx" ON "PdfTranslation"("pdfDocumentId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "SessionSchedule_projectId_sessionId_idx" ON "SessionSchedule"("projectId", "sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionSchedule_nextDueAt_idx" ON "SessionSchedule"("nextDueAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ScheduleOccurrence_promptMessageId_key" ON "ScheduleOccurrence"("promptMessageId");`,
+  `CREATE INDEX IF NOT EXISTS "ScheduleOccurrence_phase_nextAttemptAt_idx" ON "ScheduleOccurrence"("phase", "nextAttemptAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ScheduleOccurrence_scheduleId_scheduledAt_key" ON "ScheduleOccurrence"("scheduleId", "scheduledAt");`,
+  `CREATE INDEX IF NOT EXISTS "ScheduleMutationReceipt_expiresAt_idx" ON "ScheduleMutationReceipt"("expiresAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
-  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_recoverable_claim_idx" ON "BackgroundResultDelivery"("claimExpiresAt", "id") WHERE "state" IN ('claimed', 'dispatching')`
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_recoverable_claim_idx" ON "BackgroundResultDelivery"("claimExpiresAt", "id") WHERE "state" IN ('claimed', 'dispatching')`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ScheduleOccurrence_unresolved_key" ON "ScheduleOccurrence"("scheduleId") WHERE "phase" <> 'settled'`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -1481,6 +1561,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'SessionNumberSequence',
   'Session',
   'SessionProjectionState',
+  'SessionHistoryIndex',
+  'SessionHistoryItem',
   'PendingSessionReconciliation',
   'SessionTurnUsage',
   'SessionModelCallUsage',
@@ -1551,7 +1633,10 @@ const RUNTIME_SCHEMA_TABLES = [
   'JournalItemBinding',
   'PdfTranslationUsage',
   'PdfTranslation',
-  'PdfTranslationBlock'
+  'PdfTranslationBlock',
+  'SessionSchedule',
+  'ScheduleOccurrence',
+  'ScheduleMutationReceipt'
 ] as const
 
 export {

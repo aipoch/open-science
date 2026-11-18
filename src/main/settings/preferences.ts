@@ -4,15 +4,14 @@ import {
   getDefaultPermissionProfile,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
+import type { AppIconVariant, ProjectFilesFilterPreference } from '../../shared/settings'
 import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
-  DEFAULT_SHOW_NOTIFICATION_CONTENT,
-  type AppIconVariant,
-  type ProjectFilesFilterPreference
-} from '../../shared/settings'
+  DEFAULT_SHOW_NOTIFICATION_CONTENT
+} from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import { resolveDataRoot, samePath } from '../storage-root'
 import type {

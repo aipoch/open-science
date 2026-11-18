@@ -9,6 +9,10 @@ import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
+import type {
+  ManagedFileVersionInspectResult,
+  ManagedFileVersionIpcResult
+} from '../../shared/managed-file-versions'
 import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type {
@@ -33,7 +37,6 @@ import type {
   UpdateDeviceCredentialRequest
 } from '../../shared/settings'
 import type {
-  AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskAgentRouting,
@@ -55,6 +58,7 @@ import type { ApplicationCommandByNameDispatcher } from '../application-command-
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
+import { TaskSubmissions } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
@@ -80,12 +84,19 @@ type TaskApiDependencies = {
   now: () => number
   subscribeEvents: (listener: (event: AcpRuntimeEvent) => void) => () => void
   runJournal: TaskRunJournal
+  submissionRoot: string
+}
+
+type ArtifactBrowserSelection = {
+  projectId?: string
+  versionNumber?: number
 }
 
 class HeadlessTaskApi {
   private readonly callerContexts = new AsyncLocalStorage<CallerContext>()
   private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
+  private readonly submissions?: TaskSubmissions
 
   constructor(
     private readonly ports: TaskApiPorts,
@@ -168,25 +179,7 @@ class HeadlessTaskApi {
           this.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>
       },
       previewResources: {
-        acquire: (request) =>
-          this.invoke('preview-resources:acquire', request) as Promise<{
-            id: string
-            url: string
-            size: number
-            mimeType?: string
-            width?: number
-            height?: number
-          }>,
-        // Capability cleanup must remain available if request authorization is revoked while a
-        // response stream drains. The fixed local automation context grants no new access.
-        release: async (resourceId) => {
-          await this.commandClient.invoke(
-            this.ports.commands,
-            'preview-resources:release',
-            TASK_CALLER_CONTEXT,
-            [{ resourceId }]
-          )
-        }
+        acquire: (request) => this.acquirePreviewResource(request)
       },
       runtimeEvents: { subscribe: subscribeEvents },
       specialists: {
@@ -225,15 +218,28 @@ class HeadlessTaskApi {
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
+    if (dependencies.submissionRoot && dependencies.runJournal) {
+      const journal = dependencies.runJournal
+      this.submissions = new TaskSubmissions(dependencies.submissionRoot, {
+        loadRuns: () => journal.load(),
+        startRun: (request, requestId) =>
+          this.callerContexts.run(TASK_CALLER_CONTEXT, () =>
+            this.runner.startRun(request, requestId)
+          ),
+        now: dependencies.now
+      })
+    }
   }
 
-  initialize(): Promise<void> {
-    return this.runner.initialize()
+  async initialize(): Promise<void> {
+    // Recover receipt links before Run restoration prunes old terminal history.
+    await this.submissions?.initialize()
+    await this.runner.initialize()
   }
 
   async dispose(): Promise<void> {
     try {
-      await this.runner.dispose()
+      await Promise.all([this.submissions?.dispose(), this.runner.dispose()])
     } finally {
       this.commandClient.dispose()
     }
@@ -541,6 +547,25 @@ class HeadlessTaskApi {
     return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
   }
 
+  supportsSubmissions(): boolean {
+    return this.submissions !== undefined
+  }
+
+  submitRun(
+    requestId: string,
+    request: StartTaskRunRequest
+  ): Promise<import('../../shared/task-api').TaskSubmission> {
+    if (!this.submissions)
+      throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
+    return this.submissions.submit(requestId, request)
+  }
+
+  getSubmission(requestId: string): Promise<import('../../shared/task-api').TaskSubmission> {
+    if (!this.submissions)
+      throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
+    return this.submissions.get(requestId)
+  }
+
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
     return this.runner.startRun(request)
   }
@@ -572,20 +597,91 @@ class HeadlessTaskApi {
     return this.runner.listArtifacts(sessionId)
   }
 
-  acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
-    return this.runner.acquireArtifact(artifactId)
+  async acquireArtifact(
+    artifactId: string,
+    selection?: ArtifactBrowserSelection
+  ): ReturnType<TaskRunner['acquireArtifact']> {
+    if (!selection) return this.runner.acquireArtifact(artifactId)
+    // Browser previews can include Versions absent from the Task completion projection.
+    // Resolve metadata and bytes through the same Project/File/Version authority as the preview.
+    const identity = {
+      source: 'artifact' as const,
+      fileId: artifactId,
+      ...(selection.projectId ? { projectId: selection.projectId } : {}),
+      ...(selection.versionNumber !== undefined ? { versionNumber: selection.versionNumber } : {})
+    }
+    const inspection = (await this.invoke(
+      'managed-file-versions:inspect',
+      identity
+    )) as ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>
+    if (!inspection.ok) {
+      throw new TaskRunnerError('artifact_not_found', inspection.error.message)
+    }
+    const version = inspection.value.selectedVersion
+    if (
+      !version ||
+      version.fileId !== artifactId ||
+      (selection.versionNumber !== undefined && version.versionNumber !== selection.versionNumber)
+    ) {
+      throw new TaskRunnerError('artifact_not_found', 'Artifact Version not found.')
+    }
+    const resource = await this.acquirePreviewResource({
+      source: 'artifact',
+      projectId: inspection.value.projectId,
+      fileId: artifactId,
+      versionId: version.id,
+      ...(version.contentType ? { mimeType: version.contentType } : {})
+    })
+    return {
+      release: resource.release,
+      resourceId: resource.id,
+      url: resource.url,
+      name: version.displayName,
+      mimeType: resource.mimeType,
+      size: resource.size
+    }
   }
 
-  releaseArtifact(resourceId: string): Promise<void> {
-    return this.runner.releaseArtifact(resourceId)
+  releaseRemoteClient(clientId: string): void {
+    this.commandClient.releaseClient('task', clientId)
+  }
+
+  // Both downloads and inline previews retain the original caller generation for cleanup.
+  private acquirePreviewResource(
+    request: Parameters<TaskRunnerDependencies['previewResources']['acquire']>[0]
+  ): ReturnType<TaskRunnerDependencies['previewResources']['acquire']> {
+    return this.withCurrentCaller(async () => {
+      const callerContext = this.currentCallerContext()
+      const callerLease = this.commandClient.leaseFor(callerContext)
+      const resource = (await this.ports.commands.invoke('preview-resources:acquire', {
+        callerContext,
+        callerLease,
+        args: [request]
+      })) as { id: string; url: string; size: number; mimeType?: string }
+      let released = false
+      return {
+        ...resource,
+        release: async () => {
+          // Cleanup is limited to this resource on the original generation. If the
+          // owner has already gone away, its abort listener has done the cleanup.
+          if (released || !callerLease.isCurrent()) return
+          released = true
+          await this.ports.commands.invoke('preview-resources:release', {
+            callerContext: {
+              ...callerContext,
+              isAuthorizationCurrent: callerLease.isCurrent
+            },
+            callerLease,
+            args: [{ resourceId: resource.id }]
+          })
+        }
+      }
+    })
   }
 
   private invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-    return this.commandClient.invoke(
-      this.ports.commands,
-      channel,
-      this.currentCallerContext(),
-      args
+    return this.withCurrentCaller(() =>
+      this.commandClient.invoke(this.ports.commands, channel, this.currentCallerContext(), args)
     )
   }
 

@@ -23,12 +23,17 @@ const draftTitles = new WeakMap<LiteratureItemInput, string>()
 const PUBLICATION_DOI_PATTERN =
   /(?:^|\n)Accepted[^\n]*\b\d{4}\s*\nPublished[^\n]*\b\d{4}\s*\n(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\s*$/iu
 
+// Publisher templates can supply the same placeholder DOI to unrelated documents.
+const isPlaceholderDoi = (value: string): boolean => /\.xx\.xxxxxx$/iu.test(value)
+
 // These prose heuristics belong to extraction, never to explicit identifier normalization.
-const extractedDoi = (value: string): string =>
-  normalizeLiteratureIdentifierValue('doi', value)
+const extractedDoi = (value: string): string => {
+  const doi = normalizeLiteratureIdentifierValue('doi', value)
     .replace(/Copyright(?:\s.*)?$/iu, '')
     .replace(/[.,;:)}\]]+$/gu, '')
     .trim()
+  return isPlaceholderDoi(doi) ? '' : doi
+}
 
 const comparableTitle = (text: string): string =>
   text
@@ -283,7 +288,7 @@ const parseLiteraturePdfMetadata = (
     .join('\n')}\n${text.split(/(?:^|\n)\s*(?:references|bibliography)\s*(?:\n|$)/iu)[0]}`
   const embeddedDoi = [info.DOI, custom.DOI]
     .map((value) => normalizeLiteratureIdentifierValue('doi', textValue(value)))
-    .find((value) => /^10\.\d{4,9}\/\S+$/u.test(value))
+    .find((value) => /^10\.\d{4,9}\/\S+$/u.test(value) && !isPlaceholderDoi(value))
   const doi = embeddedDoi ?? searchableText.match(DOI_PATTERN)?.map(extractedDoi).find(Boolean)
   const pmid = PMID_PATTERN.exec(searchableText)?.[1]
   const embeddedTitle = pdfInfoValue(info, 'Title')
@@ -405,18 +410,18 @@ const extractLiteraturePdfDraft = async (
           } finally {
             page.cleanup()
           }
-          const doi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
+          const rawDoi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
+          const doi = rawDoi ? extractedDoi(rawDoi) : ''
           if (doi && firstPageTitle.length >= 20) {
-            const normalized = extractedDoi(doi)
-            const resolved = await lookupPdfDoi(api, normalized)
+            const resolved = await lookupPdfDoi(api, doi)
             // A valid DOI may belong to a cited paper. Require the complete prominent title,
             // not the embedded Title, a substring in the abstract, or a fuzzy title match.
             if (comparableTitle(resolved.title) === comparableTitle(firstPageTitle)) {
               return {
                 ...draft,
-                url: createLiteratureIdentifierUrl('doi', normalized) ?? '',
+                url: createLiteratureIdentifierUrl('doi', doi) ?? '',
                 identifiers: [
-                  { scheme: 'doi', value: normalized, isPrimary: true },
+                  { scheme: 'doi', value: doi, isPrimary: true },
                   ...draft.identifiers.map((identifier) => ({ ...identifier, isPrimary: false }))
                 ]
               }

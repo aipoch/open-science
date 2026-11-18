@@ -1,4 +1,8 @@
 import { openComputeOutputPreview } from '../compute/job-output-preview'
+import { PptxAgentHandler } from '../pptx-edit/agent-handler'
+import { PptxDraftReview } from '../pptx-edit/draft-review'
+import { PptxDraftStore } from '../pptx-edit/draft-store'
+import { PptxEditSessions } from '../pptx-edit/edit-sessions'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
@@ -20,6 +24,7 @@ import { createManagedPreviewOwnerRegistry } from '../managed-preview-owner-regi
 import { ManagedPreviewResources } from '../managed-preview-resources'
 
 import { NotebookInputRegistry } from '../notebook/input-registry'
+import type { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
 import { NotebookRunRepository } from '../notebook/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { PackageLiteratureReader } from '../session-package/literature-reader'
@@ -34,6 +39,7 @@ export function composeManagedFiles({
   settingsService,
   managedFileVersionService,
   sessionRepository,
+  notebookNetworkSandbox,
   getNotebookInputRegistry,
   readLiteratureItems
 }: {
@@ -44,6 +50,7 @@ export function composeManagedFiles({
   settingsService: SettingsService
   managedFileVersionService: ManagedFileVersionService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
+  notebookNetworkSandbox: NotebookNetworkSandboxOwner
   getNotebookInputRegistry: () => NotebookInputRegistry
   readLiteratureItems: ReadArtifactLiteratureItems
 }): {
@@ -72,6 +79,10 @@ export function composeManagedFiles({
   ) => Promise<string>
   previewResources: ManagedPreviewResources
   managedPreviewOwners: ReturnType<typeof createManagedPreviewOwnerRegistry>
+  pptxEditSessions: PptxEditSessions
+  pptxDrafts: PptxDraftStore
+  pptxAgent: PptxAgentHandler
+  pptxDraftReview: PptxDraftReview
 } {
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
@@ -131,8 +142,11 @@ export function composeManagedFiles({
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository, () =>
-    shutdownNotebooksBeforePolicyChange('granted-roots')
+  const localFsService = new LocalFsService(
+    grantedRootsRepository,
+    () => shutdownNotebooksBeforePolicyChange('granted-roots'),
+    (path, access, requestedPath) =>
+      notebookNetworkSandbox.preflightGrantedRoot(path, access, requestedPath)
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
@@ -155,8 +169,13 @@ export function composeManagedFiles({
     }
     return localFsService.resolveFilePath(request)
   }
+  const pptxEditSessions = new PptxEditSessions(managedFileVersionService)
+  const pptxDrafts = new PptxDraftStore()
+  const pptxAgent = new PptxAgentHandler(managedFileVersionService, pptxDrafts)
+  const pptxDraftReview = new PptxDraftReview(managedFileVersionService, pptxDrafts)
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
+    openStagedEdit: async (key) => pptxEditSessions.openStaged(key),
     resolvePath: resolveManagedFilePath,
     openComputeOutput: openComputeOutputPreview,
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
@@ -186,6 +205,10 @@ export function composeManagedFiles({
     localFsService,
     resolveManagedFilePath,
     previewResources,
-    managedPreviewOwners
+    managedPreviewOwners,
+    pptxEditSessions,
+    pptxDrafts,
+    pptxAgent,
+    pptxDraftReview
   }
 }

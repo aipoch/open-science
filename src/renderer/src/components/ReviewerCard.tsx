@@ -49,9 +49,9 @@ type ReviewerCardProps = {
 
 // Status badge styles (pass/warn/fail).
 const STATUS_BADGE_STYLES: Record<string, string> = {
-  fail: 'bg-bg-200 text-red-700 dark:text-red-300',
-  warn: 'bg-bg-200 text-yellow-700 dark:text-yellow-300',
-  pass: 'bg-bg-200 text-green-700 dark:text-green-300'
+  fail: 'bg-bg-200 text-status-failure-foreground dark:text-status-failure-dark-foreground',
+  warn: 'bg-bg-200 text-status-warning-foreground dark:text-status-warning-dark-foreground',
+  pass: 'bg-bg-200 text-status-success-foreground dark:text-status-success-dark-foreground'
 }
 
 // ── Shared item card layout ──────────────────────────────────────────────────
@@ -123,7 +123,7 @@ const ItemCard = ({
         {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
         {reflagCount != null && reflagCount > 0 && (
           <span
-            className="shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] text-yellow-600 dark:text-yellow-400"
+            className="shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] text-status-warning-foreground dark:text-status-warning-dark-foreground"
             data-testid="reviewer-reflag-marker"
           >
             {t('re-flagged ×{{count}}', { count: reflagCount })}
@@ -374,8 +374,14 @@ export const ReviewerCard = ({
       return (
         <AlertTriangle className="h-3 w-3 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
       )
-    if (isFlagged) return <AlertTriangle className="h-3 w-3 text-red-500" />
-    if (isComplete) return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
+    if (isFlagged)
+      return (
+        <AlertTriangle className="h-3 w-3 text-status-failure-foreground dark:text-status-failure-dark-foreground" />
+      )
+    if (isComplete)
+      return (
+        <ShieldCheck className="h-3 w-3 text-status-success-foreground dark:text-status-success-dark-foreground" />
+      )
     return <Loader className="h-3 w-3 text-text-400" />
   })()
 
@@ -399,7 +405,12 @@ export const ReviewerCard = ({
         {statusIcon}
         <span className="font-medium text-text-200">{t('Reviewer')}</span>
         <span className="mx-1 text-text-400">&middot;</span>
-        <span className={cn('text-text-300', isFlagged && 'text-red-600 dark:text-red-400')}>
+        <span
+          className={cn(
+            'text-text-300',
+            isFlagged && 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+          )}
+        >
           {summaryText()}
         </span>
         {/* Total check count — shown for any completed review (pass or flagged), never for zero checks. */}
@@ -418,19 +429,25 @@ export const ReviewerCard = ({
         {isCapReached && (
           <>
             <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-yellow-600 dark:text-yellow-400">{t('fix limit reached')}</span>
+            <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+              {t('fix limit reached')}
+            </span>
           </>
         )}
         {isCorrectionFailed && (
           <>
             <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-yellow-600 dark:text-yellow-400">{t('correction failed')}</span>
+            <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+              {t('correction failed')}
+            </span>
           </>
         )}
         {isInterrupted && (
           <>
             <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-yellow-600 dark:text-yellow-400">{t('interrupted')}</span>
+            <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+              {t('interrupted')}
+            </span>
           </>
         )}
         {canExpand && (

@@ -2,6 +2,7 @@
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { retainNativeRecoveryInputs } from './literature-pdf-native-figure-recovery-profile.mjs'
 const inside = (a, b) => b.every((v, i) => (i < 2 ? v >= a[i] - 1e-6 : v <= a[i] + 1e-6)),
   hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
   expand = (r, d) => r.map((v, i) => v + (i < 2 ? -d : d)),
@@ -11,6 +12,153 @@ const inside = (a, b) => b.every((v, i) => (i < 2 ? v >= a[i] - 1e-6 : v <= a[i]
     Math.max(...rs.map((r) => r[2])),
     Math.max(...rs.map((r) => r[3]))
   ]
+const vectorTails = new WeakMap()
+export function nativeVectorPairTailCurrent(proof, page) {
+  if (!Array.isArray(proof?.foreignPaints)) return false
+  const state = vectorTails.get(proof?.vectorTail),
+    foreign = new Set(proof?.foreignPaints)
+  return (
+    !!state &&
+    state.page === page &&
+    state.proof.ownedRects === proof.ownedRects &&
+    state.proof.foreignPaints.every((p) => foreign.has(p)) &&
+    state.current()
+  )
+}
+
+// Original-pixel completion only: two complete closed drawing programs followed
+// by their own literal subcaption. Every unclaimed paint remains foreign.
+function vectorPairTail(page, f, captions, tables, tokens, ctx, p, roots, paints, pathPaint) {
+  const keep = retainNativeRecoveryInputs([page, f, captions, tables, tokens, ctx], ctx.viewport)
+  if (!keep || f.sourceItems?.length || f.parts || f.cropRects) return
+  const caption = p.records.filter(
+    (r) => r.r.str === f.caption.lines?.join(' ') && inside(f.caption.rect, r.rect)
+  )
+  if (caption.length !== 1) return
+  const captionOp = Math.min(...caption[0].part.map((z) => z.g.i)),
+    keys = p.records.filter(
+      (r) =>
+        /^\([ab]\)\s+\S/.test(r.r.str) &&
+        r.rect[1] < f.caption.rect[1] &&
+        r.rect[1] > f.rect[3] - r.r.height * 2 &&
+        r.part.every((z) => z.g.i < captionOp)
+    )
+  if (keys.length !== 2 || !keys[0].r.str.startsWith('(a) ') || !keys[1].r.str.startsWith('(b) '))
+    return
+  const em = keys[0].r.height,
+    visible = (r) =>
+      r.part.length > 0 &&
+      r.part.every(({ g }) => {
+        const s = paints.get(g.i)
+        return (
+          s?.alpha === 1 && /^#[0-9a-f]{6}$/i.test(s.color) && s.color.toLowerCase() !== '#ffffff'
+        )
+      }),
+    selected = [],
+    old = expand(f.rect, 2 / 1.5)
+  if (
+    !(em > 0) ||
+    keys.some(
+      (r) =>
+        !visible(r) ||
+        r.r.height !== em ||
+        r.r.fontName !== keys[0].r.fontName ||
+        Math.abs(r.rect[1] - keys[0].rect[1]) > em / 32
+    )
+  )
+    return
+  for (const key of keys) {
+    const first = Math.min(...key.part.map((z) => z.g.i)),
+      last = Math.max(...key.part.map((z) => z.g.i)),
+      preceding = roots.filter((s) => s.end < first).at(-1),
+      next = roots.find((s) => s.start > preceding?.end)?.start ?? captionOp
+    if (!preceding || !key.part.every((z) => z.g.i < next) || last >= captionOp) return
+    const members = p.records.filter((r) =>
+        r.part.some((z) => z.g.i > preceding.start && z.g.i < preceding.end)
+      ),
+      paths = [...p.evidence.paths].filter(([i]) => i > preceding.start && i < preceding.end),
+      between = p.records.filter((r) =>
+        r.part.some((z) => z.g.i > preceding.end && z.g.i < Math.min(next, captionOp))
+      )
+    if (
+      !members.length ||
+      between.length !== 1 ||
+      between[0] !== key ||
+      !paths.length ||
+      members.some(
+        (r) => !visible(r) || !r.part.every((z) => z.g.i > preceding.start && z.g.i < preceding.end)
+      )
+    )
+      return
+    const bodyRects = members.flatMap((r) => [
+      r.rect,
+      ...r.part.flatMap((z) => [z.g.ink, z.g.advance])
+    ])
+    for (const [i, s] of paths) {
+      if (p.o.argsArray[i][0] === OPS.endPath) continue
+      const paint = pathPaint(p, i, s)
+      if (!paint || !inside(old, paint.rect)) return
+      bodyRects.push(paint.rect)
+    }
+    const body = union(bodyRects),
+      label = union([key.rect, ...key.part.flatMap((z) => [z.g.ink, z.g.advance])])
+    if (
+      !inside(old, body) ||
+      label[1] <= body[3] ||
+      label[1] - body[3] > em * 3 ||
+      Math.abs((label[0] + label[2] - body[0] - body[2]) / 2) > em * 3 ||
+      label[3] >= f.caption.rect[1]
+    )
+      return
+    selected.push({ scope: preceding, members, paths, body, label, key })
+  }
+  if (
+    selected[0].scope.end >= selected[1].scope.start ||
+    selected[0].body[2] >= selected[1].body[0] ||
+    Math.abs(selected[0].body[1] - selected[1].body[1]) > em ||
+    Math.abs(selected[0].body[3] - selected[1].body[3]) > em
+  )
+    return
+  const rect = union([f.rect, ...selected.map((s) => s.label)]),
+    padded = expand(rect, 2 / 1.5)
+  if (
+    rect.every((n, i) => n === f.rect[i]) ||
+    !inside([0, 0, page.width, page.height], padded) ||
+    captions.some((c) => c.page === page.pageNumber && hit(c.rect, padded)) ||
+    tables.some((t) => hit(t, padded))
+  )
+    return
+  const ownRecords = new Set(selected.flatMap((s) => [...s.members, s.key])),
+    ownPaths = new Set(selected.flatMap((s) => s.paths.map(([i]) => i))),
+    foreignPaints = []
+  for (const r of p.records) {
+    if (ownRecords.has(r)) continue
+    for (const b of [r.rect, ...r.part.flatMap((z) => [z.g.ink, z.g.advance])]) {
+      if (hit(padded, expand(b, 2 / 1.5))) return
+      foreignPaints.push({ rect: b, floor: 0 })
+    }
+  }
+  for (const [i, s] of p.evidence.paths) {
+    if (p.o.argsArray[i][0] === OPS.endPath) continue
+    const a = p.o.argsArray[i]
+    if (a[0] === OPS.stroke && a[1]?.length === 1 && a[1][0] === null && a[2] === null) continue
+    const paint = pathPaint(p, i, s)
+    if (!paint) return
+    if (!ownPaths.has(i)) {
+      if (hit(padded, expand(paint.rect, (paint.floor + 2) / 1.5))) return
+      foreignPaints.push(paint)
+    }
+  }
+  const proof = {
+      ownedRects: [f.rect, ...selected.map((s) => s.label)],
+      foreignPaints,
+      vectorTail: Object.freeze({})
+    },
+    output = retainNativeRecoveryInputs([rect, proof])
+  if (!output || !keep()) return
+  vectorTails.set(proof.vectorTail, { page, proof, current: () => keep() && output() })
+  return { rect, formCropRaster: proof }
+}
 export function nativePairedScopedSubcaptions(page, f, captions, tables, tokens, ctx, pathPaint) {
   try {
     if (!f?.rect || !f.caption?.rect || f.fallbackFigure) return
@@ -89,16 +237,29 @@ export function nativePairedScopedSubcaptions(page, f, captions, tables, tokens,
       frames: new Map()
     }
     collectClosedFigureFrames({ ...o, argsArray: args }, v, frameProof)
-    const roots = scopes.filter((s) => !s.parent),
-      keys = p.records
-        .filter(
-          (r) =>
-            /^\([ab]\)\s+\S/.test(r.r.str) &&
-            r.rect[1] > f.rect[3] &&
-            r.rect[3] < f.caption.rect[1] &&
-            inside([f.rect[0], 0, f.rect[2], page.height], r.rect)
-        )
-        .sort((a, b) => a.rect[0] - b.rect[0])
+    const roots = scopes.filter((s) => !s.parent)
+    const vector = vectorPairTail(
+      page,
+      f,
+      captions,
+      tables,
+      tokens,
+      ctx,
+      p,
+      roots,
+      paints,
+      pathPaint
+    )
+    if (vector) return vector
+    const keys = p.records
+      .filter(
+        (r) =>
+          /^\([ab]\)\s+\S/.test(r.r.str) &&
+          r.rect[1] > f.rect[3] &&
+          r.rect[3] < f.caption.rect[1] &&
+          inside([f.rect[0], 0, f.rect[2], page.height], r.rect)
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
     if (
       keys.length !== 2 ||
       !keys[0].r.str.startsWith('(a) ') ||

@@ -21,6 +21,7 @@ import type {
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult,
+  ManagedFileVersionSaveBinaryEditRequest,
   ManagedFileVersionSaveTextEditRequest,
   SaveTextEditResult
 } from '../managed-file-versions'
@@ -115,6 +116,10 @@ export const localFsGetRootsContracts = {
     'local-fs:open-path',
     LOCAL
   ]),
+  'localFs.openInBrowser': callable<(path: string) => Promise<void>>()('local-fs', [
+    'local-fs:open-in-browser',
+    LOCAL
+  ]),
   'localFs.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('local-fs', ['local-fs:read-preview', LOCAL]),
@@ -150,7 +155,12 @@ export const managedFileVersionsCancelDiffContracts = {
     (
       request: ManagedFileVersionSaveTextEditRequest
     ) => Promise<ManagedFileVersionIpcResult<SaveTextEditResult>>
-  >()('managed-file-versions', ['managed-file-versions:save-text-edit', ELECTRON])
+  >()('managed-file-versions', ['managed-file-versions:save-text-edit', ELECTRON]),
+  'managedFileVersions.saveBinaryEdit': callable<
+    (
+      request: ManagedFileVersionSaveBinaryEditRequest
+    ) => Promise<ManagedFileVersionIpcResult<SaveTextEditResult>>
+  >()('managed-file-versions', ['managed-file-versions:save-binary-edit', ELECTRON])
 } as const
 
 export const platformContracts = {

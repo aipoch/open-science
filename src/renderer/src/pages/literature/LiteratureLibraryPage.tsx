@@ -1576,7 +1576,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-300 bg-bg-000 data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Checkbox.Indicator>
-                    <Check className="size-3 text-white" aria-hidden="true" />
+                    <Check className="size-3 text-primary-foreground" aria-hidden="true" />
                   </Checkbox.Indicator>
                 </Checkbox.Root>
                 {t("Don't ask again")}
@@ -2930,7 +2930,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </AlertDialog.Cancel>
                 <Button
                   type="button"
-                  className="border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white"
+                  className="border-transparent bg-danger-000 text-danger-foreground hover:bg-danger-000/90 hover:text-danger-foreground"
                   disabled={isBatching || permanentDeleteFailed}
                   onClick={() => void deleteItemsPermanently()}
                 >

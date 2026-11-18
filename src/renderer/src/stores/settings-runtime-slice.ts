@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings-runtime'
 import type { StoreApi } from 'zustand'
 
 import type {

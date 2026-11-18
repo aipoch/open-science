@@ -49,6 +49,17 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     tools: ['request_skill_import']
   },
   {
+    canonicalName: 'open-science-schedule',
+    openCodeName: 'open_science_schedule',
+    tools: [
+      'list_schedules',
+      'create_schedule',
+      'update_schedule',
+      'close_schedule',
+      'manage_current_schedule'
+    ]
+  },
+  {
     canonicalName: 'open-science-plan',
     openCodeName: 'open_science_plan',
     tools: ['generate_plan', 'update_step_status']
@@ -78,6 +89,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'save_to_inbox',
       'acquire_pdf'
     ]
+  },
+  {
+    canonicalName: 'open-science-pptx',
+    openCodeName: 'open_science_pptx',
+    tools: ['read_pptx_outline', 'propose_pptx_operations']
   },
   {
     canonicalName: 'open-science-host-message',

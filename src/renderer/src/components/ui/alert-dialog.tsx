@@ -2,10 +2,13 @@ import * as React from 'react'
 import { AlertDialog as Primitive } from 'radix-ui'
 import { OverlayLayerProvider, useOverlayLayer } from './overlay-layer'
 
-function Root(props: React.ComponentProps<typeof Primitive.Root>): React.JSX.Element {
+function Root({
+  layer,
+  ...props
+}: React.ComponentProps<typeof Primitive.Root> & { layer?: number }): React.JSX.Element {
   const parentLayer = useOverlayLayer()
   return (
-    <OverlayLayerProvider value={parentLayer + 20}>
+    <OverlayLayerProvider value={layer ?? parentLayer + 20}>
       <Primitive.Root {...props} />
     </OverlayLayerProvider>
   )

@@ -1,4 +1,6 @@
+import { sessionMetadataReceipt } from '../../shared/session-persistence'
 import { hasCallerAuthority } from '../caller-context'
+import type { ScheduleManagement } from '../schedules/management'
 import type { composeResearchFilm } from './research-film'
 import type { LocalModelApi } from '../../shared/local-models'
 import { UseCaseCatalog } from '../session-package/use-case-catalog'
@@ -28,6 +30,9 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createRuntimeWorkflows } from '../notebook/runtime-workflows'
 import { TaskNotificationService } from '../notifications/task-notifications'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import { createPptxEditCommands } from '../pptx-edit/application-commands'
+import { createPptxDraftCommands } from '../pptx-edit/draft-commands'
 import { linkPdfContextWithCapability } from '../session-persistence/pdf-context-link-workflow'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from '../settings/ipc'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -54,6 +59,7 @@ import type { composeSettingsEffects } from './settings-effects'
 import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
+  schedules,
   localeOwner,
   reportUploadProgress,
   sideChatCommands,
@@ -110,6 +116,7 @@ export function composeCommandDependencies({
   sessionFoundation: Awaited<ReturnType<typeof composeSessionFoundation>>
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
   managedFiles: ReturnType<typeof composeManagedFiles>
+  schedules: ScheduleManagement
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
   researchFilm: Awaited<ReturnType<typeof composeResearchFilm>>
   localModels: LocalModelApi
@@ -166,6 +173,7 @@ export function composeCommandDependencies({
     pdfTranslation: documentReading.pdfTranslationOwner,
     sessionReplay,
     specialist: sessionSurfaces.specialistApplicationOwner,
+    schedules,
     bookmarks: documentReading.bookmarkService,
     pdfAnnotations: documentReading.pdfAnnotationService,
     acp: {
@@ -267,6 +275,31 @@ export function composeCommandDependencies({
     dataContent: {
       useCaseCatalog,
       officePreviewCommands,
+      pptxEditCommands: createPptxEditCommands({
+        sessions: managedFiles.pptxEditSessions,
+        withDataRootWrite,
+        onSaved: (request, result) => {
+          if (result.kind !== 'created' || result.replayed) return
+          const identity = managedFiles.pptxEditSessions.identityOf(request.sessionId)
+          if (!identity) return
+          broadcastToRenderers('project-files:changed', {
+            projectId: identity.projectId,
+            sources: [identity.source],
+            kind: 'upsert'
+          })
+        }
+      }),
+      pptxDraftCommands: createPptxDraftCommands({
+        drafts: managedFiles.pptxDrafts,
+        review: managedFiles.pptxDraftReview,
+        withDataRootWrite,
+        onSaved: (identity) =>
+          broadcastToRenderers('project-files:changed', {
+            projectId: identity.projectId,
+            sources: [identity.source],
+            kind: 'upsert'
+          })
+      }),
       fileSaveCommands,
       reproducibility: artifactSurfaces.reproducibilityCommands,
       managedFileVersions: projectLifecycle.managedFileVersionHandlers,
@@ -425,6 +458,21 @@ export function composeCommandDependencies({
           return context
         },
         editDetails: (request) => sessionSurfaces.sessionDetailsOwner.edit(request),
+        rename: async (request) =>
+          sessionMetadataReceipt(await sessionSurfaces.sessionDetailsOwner.rename(request)),
+        setPinned: async (request) => {
+          const session =
+            await sessionAuthority.sessionPersistenceCoordinator.setSessionPinned(request)
+          try {
+            applicationEvents.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId: 'main:session-pin'
+            })
+          } catch {
+            // A derived notification cannot turn a durable metadata commit into a failed write.
+          }
+          return sessionMetadataReceipt(session)
+        },
         bindTaskSession: (request) =>
           sessionAuthority.sessionPersistenceCoordinator.bindTaskSession(request),
         admitTaskTurn: (request) =>

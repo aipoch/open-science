@@ -324,12 +324,22 @@ const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-literature/read_pdf_element',
   'open-science-literature/list_pdf_annotations',
   'open-science-literature/locate_pdf_annotation_target',
-  'open-science-literature/create_pdf_annotation'
+  'open-science-literature/create_pdf_annotation',
+  'open-science-pptx/read_pptx_outline',
+  'open-science-pptx/propose_pptx_operations'
 ])
+
+export const isSchedulePermissionTool = (identity: string | undefined): boolean =>
+  identity === 'open-science-schedule/list_schedules' ||
+  identity === 'open-science-schedule/create_schedule' ||
+  identity === 'open-science-schedule/manage_current_schedule' ||
+  identity === 'open-science-schedule/update_schedule' ||
+  identity === 'open-science-schedule/close_schedule'
 
 const LIBRARY_READ_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-literature/list_pdf_annotations',
-  'open-science-literature/locate_pdf_annotation_target'
+  'open-science-literature/locate_pdf_annotation_target',
+  'open-science-pptx/read_pptx_outline'
 ])
 
 const APP_INTERACTION_TOOLS = new Set([
@@ -369,6 +379,19 @@ const resolveLegacyAutomaticPermissionReason = (
   }
 
   const libraryIdentity = trustedMcpToolIdentity(params)
+  if (
+    isSchedulePermissionTool(libraryIdentity) &&
+    context?.mcpServerNames?.map(canonicalAppMcpServerName).includes('open-science-schedule')
+  ) {
+    if (
+      libraryIdentity === 'open-science-schedule/list_schedules' ||
+      libraryIdentity === 'open-science-schedule/manage_current_schedule'
+    )
+      return 'schedule_scoped'
+    if (context.permissionPrompts === 'none') return undefined
+    if (context.profile === 'auto' || libraryIdentity === 'open-science-schedule/update_schedule')
+      return 'schedule_scoped'
+  }
   if (
     libraryIdentity &&
     LIBRARY_READ_TOOL_IDENTITIES.has(libraryIdentity) &&

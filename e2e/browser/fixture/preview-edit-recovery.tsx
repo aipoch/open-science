@@ -7,7 +7,11 @@ import { createManagedPreviewTestTransport } from '@/pages/workspace/previews/ma
 import type { ManagedFileVersionSaveTextEditRequest } from '../../../src/shared/managed-file-versions'
 
 initI18n('en')
-const text = '# Current\n'
+const text = new URLSearchParams(location.search).has('footnotes')
+  ? '# Scroll preview\n\n' +
+    'A paragraph before the end.\n\n'.repeat(100) +
+    'Document end[^1]\n\n[^1]: Final footnote.\n'
+  : '# Current\n'
 const version = {
   id: 'v1',
   source: 'upload' as const,

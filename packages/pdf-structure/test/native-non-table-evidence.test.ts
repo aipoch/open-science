@@ -232,3 +232,94 @@ it('rejects prose with a display equation when a coarse model crop overlaps the 
     hasTableEvidence({ ...t, grid: [['Label'], ['1'], ['2'], ['3']] }, caption, tokens, [])
   ).toBe(true)
 })
+
+it('rejects independently numbered equivalence displays with letter-suffixed ordinals', () => {
+  const t = table([
+    ['f(u)', '↔', 'g(u)', '(12a)'],
+    ['h(u)', '↔', 'p(u) = q(u)', '(12b)']
+  ])
+  const tokens = [
+    item('f(u)', 100, 100, 35),
+    item('↔', 180, 100, 10),
+    item('g(u)', 220, 100, 35),
+    item('(12a)', 500, 100, 35),
+    item('h(u)', 100, 120, 35),
+    item('↔', 180, 120, 10),
+    item('p(u)', 220, 120, 35),
+    item('=', 270, 120, 10),
+    item('q(u)', 290, 120, 35),
+    item('(12b)', 500, 120, 35)
+  ]
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(false)
+  expect(
+    hasTableEvidence(t, { lines: ['Table 1: Defined mathematical records.'] }, tokens, [])
+  ).toBe(true)
+  expect(hasTableEvidence(t, undefined, tokens, [[50, 95, 550, 95]])).toBe(true)
+  const unaligned = tokens.map((i) => (i.text === '(12b)' ? { ...i, baseline: 180 } : i))
+  expect(hasTableEvidence(t, undefined, unaligned, [])).toBe(true)
+})
+
+function proseDisplayFolio(): {
+  t: ReturnType<typeof table> & { page: number }
+  tokens: (ReturnType<typeof item> & {
+    sourceItem: { pageNumber: number; index: number; text: string }
+  })[]
+} {
+  const t = {
+    ...table([
+      ['provides an equivalence between', 'native categories', ''],
+      ['a(u) : P(u)', '≃', 'Q(u).'],
+      ['', '', ''],
+      ['', '6', '']
+    ]),
+    page: 6,
+    cropRect: [50, 90, 550, 190]
+  }
+  const raw = [
+    item('Corollary 2.3. A native construction', 60, 65, 230),
+    item('provides an equivalence between', 60, 100, 160),
+    item('native categories', 225, 100, 95),
+    item('a(u)', 150, 130, 25),
+    item(':', 180, 130, 5),
+    item('P(u)', 200, 130, 25),
+    item('≃', 240, 130, 10),
+    item('Q(u)', 265, 130, 25),
+    item('.', 290, 130, 3),
+    item('6', 295, 165, 10)
+  ]
+  const tokens = raw.map((i, index) => ({
+    ...i,
+    sourceItem: { pageNumber: 6, index, text: i.text }
+  }))
+  return { t, tokens }
+}
+it('rejects a theorem prose tail, one display and the terminal native folio', () => {
+  const { t, tokens } = proseDisplayFolio()
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(false)
+  expect(hasTableEvidence({ ...t, page: undefined }, undefined, tokens, [])).toBe(false)
+  expect(hasTableEvidence(t, { lines: ['Table 1: Formula records.'] }, tokens, [])).toBe(true)
+  expect(hasTableEvidence(t, undefined, tokens, [[50, 95, 550, 95]])).toBe(true)
+})
+it.each([
+  'different folio',
+  'missing theorem',
+  'missing source',
+  'another record',
+  'incomplete display'
+])('does not infer a theorem tail with %s', (name) => {
+  const { t, tokens } = proseDisplayFolio()
+  if (name === 'different folio') tokens.at(-1)!.text = '7'
+  if (name === 'missing theorem') tokens.shift()
+  if (name === 'missing source') tokens[1].sourceItem.pageNumber = 7
+  if (name === 'another record')
+    tokens.push({
+      ...item('Another native record', 60, 180, 160),
+      sourceItem: { pageNumber: 6, index: 20, text: 'Another native record' }
+    })
+  if (name === 'incomplete display')
+    tokens.splice(
+      tokens.findIndex((i) => i.text === '.'),
+      1
+    )
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(true)
+})

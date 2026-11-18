@@ -13,6 +13,11 @@ import {
   HARNESS_RECEIPT_METHOD,
   receiptResponseSchema
 } from './tool-receipts'
+import {
+  SCHEDULE_MCP_NAME,
+  SCHEDULE_TURN_META,
+  SCHEDULE_INVOCATION_META
+} from '../../shared/session-schedules'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 
 /** Connection ownership and permission UX are host policy, not package loop policy. */
@@ -23,11 +28,14 @@ export async function connectHarnessMcp(input: {
   signal: AbortSignal
   beforePermission(): Promise<void>
 }): Promise<{
+  setScheduleTurn(ref: string | undefined): void
   tools: AgentTool[]
   toolNames: ReadonlyMap<string, string>
   close(): Promise<void>
   reconcile(session: AgentSession): Promise<void>
 }> {
+  let scheduleTurn: string | undefined
+  const scheduleInvocations = new Map<string, string>()
   const clients: Client[] = []
   const tools: AgentTool[] = []
   const toolNames = new Map<string, string>()
@@ -69,33 +77,62 @@ export async function connectHarnessMcp(input: {
       )
       const receipts =
         client.getServerCapabilities()?.experimental?.[HARNESS_RECEIPTS] !== undefined
+      const schedule = server.name.replace(/_/g, '-') === SCHEDULE_MCP_NAME
       const validator = new AjvJsonSchemaValidator()
       const outputValidators = new Map<string, (value: Json) => void>()
       const discovered = await loadMcpTools({
         signal: input.signal,
         client: {
           listTools: (cursor, signal) => client.listTools(cursor ? { cursor } : {}, { signal }),
-          callTool: (name, args, context) =>
-            client.callTool(
-              {
-                name,
-                arguments: args,
-                ...(receipts ? { _meta: { [HARNESS_INVOCATION]: context.invocationId } } : {})
-              },
-              undefined,
-              {
-                signal: context.signal,
-                resetTimeoutOnProgress: true,
-                onprogress: (progress) => {
-                  if (progress.message) context.update([{ type: 'text', text: progress.message }])
+          callTool: async (name, args, context) => {
+            const captured = scheduleInvocations.get(context.invocationId)
+            if (schedule && !captured)
+              throw new Error('Schedule invocation has no authorized turn.')
+            try {
+              return await client.callTool(
+                {
+                  name,
+                  arguments: args,
+                  ...(receipts || schedule
+                    ? {
+                        _meta: {
+                          ...(receipts ? { [HARNESS_INVOCATION]: context.invocationId } : {}),
+                          ...(schedule
+                            ? {
+                                [SCHEDULE_TURN_META]: captured,
+                                [SCHEDULE_INVOCATION_META]: context.invocationId
+                              }
+                            : {})
+                        }
+                      }
+                    : {})
+                },
+                undefined,
+                {
+                  signal: context.signal,
+                  resetTimeoutOnProgress: true,
+                  onprogress: (progress) => {
+                    if (progress.message) context.update([{ type: 'text', text: progress.message }])
+                  }
                 }
-              }
-            )
+              )
+            } finally {
+              if (schedule) scheduleInvocations.delete(context.invocationId)
+            }
+          }
         },
         bind(definition) {
-          const validate = validator.getValidator<Json>(
-            definition.inputSchema as Record<string, unknown>
-          )
+          const parameters = structuredClone(definition.inputSchema) as Record<string, Json>
+          if (schedule) {
+            const properties = parameters.properties as Record<string, Json>
+            delete properties.turnRef
+            delete properties.requestId
+            if (Array.isArray(parameters.required))
+              parameters.required = parameters.required.filter(
+                (key) => key !== 'turnRef' && key !== 'requestId'
+              )
+          }
+          const validate = validator.getValidator<Json>(parameters)
           const output =
             definition.outputSchema === undefined
               ? undefined
@@ -105,24 +142,58 @@ export async function connectHarnessMcp(input: {
               if (!output(value).valid) throw new Error('Invalid MCP tool output')
             })
           return {
+            parameters,
+            ...(schedule
+              ? {
+                  description:
+                    definition.description +
+                    ' This host supplies turnRef and requestId automatically; do not include them.'
+                }
+              : {}),
             validate(value) {
               const result = validate(value)
               if (!result.valid) {
                 // Expose schema-owned field names only, never raw validator text or argument values.
-                const schema = definition.inputSchema as Record<string, Json>
-                const missing = Array.isArray(schema.required)
-                  ? schema.required.filter(
-                      (key): key is string =>
+                const missing: { path: string; expected: string }[] = []
+                const collectMissing = (
+                  schema: Json,
+                  input: Json,
+                  path: string,
+                  depth: number
+                ): void => {
+                  if (
+                    depth > 16 ||
+                    missing.length >= 8 ||
+                    !schema ||
+                    typeof schema !== 'object' ||
+                    Array.isArray(schema) ||
+                    !input ||
+                    typeof input !== 'object' ||
+                    Array.isArray(input)
+                  )
+                    return
+                  if (Array.isArray(schema.required)) {
+                    for (const key of schema.required) {
+                      if (
                         typeof key === 'string' &&
-                        !!value &&
-                        typeof value === 'object' &&
-                        !Array.isArray(value) &&
-                        !Object.hasOwn(value, key)
-                    )
-                  : []
+                        !Object.hasOwn(input, key) &&
+                        missing.length < 8
+                      )
+                        missing.push({ path: `${path}.${key}`, expected: 'required field' })
+                    }
+                  }
+                  const properties = schema.properties
+                  if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+                    for (const [key, child] of Object.entries(properties)) {
+                      if (Object.hasOwn(input, key))
+                        collectMissing(child, input[key], `${path}.${key}`, depth + 1)
+                    }
+                  }
+                }
+                collectMissing(parameters, value, '$', 0)
                 throw new ToolValidationError(
                   missing.length
-                    ? missing.map((key) => ({ path: `$.${key}`, expected: 'required field' }))
+                    ? missing
                     : [{ path: '$', expected: 'arguments matching the tool schema' }]
                 )
               }
@@ -136,6 +207,8 @@ export async function connectHarnessMcp(input: {
                 }
               : {}),
             async authorize(args, context) {
+              const captured = scheduleTurn
+              if (schedule && !captured) return false
               // The broker correlates this request with the preceding tool-call notification.
               await input.beforePermission()
               context.signal.throwIfAborted()
@@ -169,7 +242,11 @@ export async function connectHarnessMcp(input: {
                 { cancellationSignal: context.signal }
               )
               context.signal.throwIfAborted()
-              return result.outcome.outcome === 'selected' && result.outcome.optionId === 'allow'
+              const allowed =
+                result.outcome.outcome === 'selected' && result.outcome.optionId === 'allow'
+              if (schedule && allowed && captured)
+                scheduleInvocations.set(context.invocationId, captured)
+              return allowed
             }
           }
         }
@@ -212,6 +289,10 @@ export async function connectHarnessMcp(input: {
       }
     }
     return {
+      setScheduleTurn(ref) {
+        scheduleTurn = ref
+        scheduleInvocations.clear()
+      },
       tools,
       toolNames,
       close,

@@ -412,6 +412,8 @@ async function startDesktop(): Promise<void> {
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
   browserImports.receiveArgv(process.argv)
   let client: DesktopRuntimeClient | undefined = undefined
+  let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
+  let initialBackendLaunch: Promise<void> | undefined
   const reportError = (error: unknown): void => {
     bootstrapLog.error('desktop operation failed', {
       error: projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
@@ -483,6 +485,49 @@ async function startDesktop(): Promise<void> {
         globalExtra: { openScienceInstance: crashReporterInstance }
       })
   })
+  const { installSystemLifecycleAdapters, installResourceActivityRelay } =
+    await import('./system-lifecycle-adapters')
+  let requestSystemShutdown = (): void => app.quit()
+  const system = installSystemLifecycleAdapters({
+    windowSessionEndEvents: process.platform === 'win32',
+    powerShutdownEvent: process.platform !== 'win32',
+    headless: true,
+    signalSource: process,
+    powerMonitor,
+    getWindows: () => BrowserWindow.getAllWindows(),
+    requestSystemShutdown: () => requestSystemShutdown()
+  })
+  system.installPowerMonitorListeners()
+  // Backend bootstrap can overlap asset and native shell module reads after credential, profile,
+  // and single-instance boundaries have been established. The startup loop still owns failures.
+  const launchInitialBackend = async (): Promise<void> => {
+    launch = await startOrAttachDesktopBackend({
+      onStatus: (status) => bootstrapLog.info('backend startup status', status),
+      configRoot,
+      profilePath,
+      version: app.getVersion(),
+      ...initialBackendPaths,
+      packaged: app.isPackaged,
+      credentialInventory: startupCredentialCiphertexts,
+      credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
+      args: [
+        ...credentialArgs,
+        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
+      ]
+    })
+    startedBackend = launch.startedProcess
+  }
+  if (!initialRecoveryError) {
+    startupDiagnostics?.phase('launch-node-runtime')
+    initialBackendLaunch = (async () => {
+      await installationStartup?.completeBeforeLaunch()
+      installationStartup = undefined
+      await launchInitialBackend()
+    })()
+    // The startup loop below owns error handling and retry UI. Attach a sink now so a failure
+    // arriving while native modules load cannot become an unhandled rejection.
+    void initialBackendLaunch.catch(() => undefined)
+  }
   const [
     { electronApp },
     { default: icon },
@@ -549,8 +594,6 @@ async function startDesktop(): Promise<void> {
     notifyRendererSessionPersistenceFlushAborted,
     rendererSessionPersistenceFlushBlocksShutdown
   } = await import('./session-persistence/renderer-flush')
-  const { installSystemLifecycleAdapters, installResourceActivityRelay } =
-    await import('./system-lifecycle-adapters')
   const resourceActivityRelay = installResourceActivityRelay({
     app,
     powerMonitor,
@@ -584,17 +627,6 @@ async function startDesktop(): Promise<void> {
   registerWindowFindIpcHandlers()
   ipcMainHandle('window:open-connect-mobile', () => openConnectMobileWindow())
   startupDiagnostics?.phase('native-shell-configured')
-  let requestSystemShutdown = (): void => app.quit()
-  const system = installSystemLifecycleAdapters({
-    windowSessionEndEvents: process.platform === 'win32',
-    powerShutdownEvent: process.platform !== 'win32',
-    headless: true,
-    signalSource: process,
-    powerMonitor,
-    getWindows: () => BrowserWindow.getAllWindows(),
-    requestSystemShutdown: () => requestSystemShutdown()
-  })
-  system.installPowerMonitorListeners()
   const isApplicationWindow = (sender: WebContents): boolean => {
     const window = BrowserWindow.fromWebContents(sender)
     return Boolean(window && isMainWindow(window))
@@ -1005,33 +1037,20 @@ async function startDesktop(): Promise<void> {
     requireStartupFrame(event)
     app.exit(0)
   })
-  startupDiagnostics?.phase('launch-node-runtime')
-  let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
   // Shared by the first launch and the startup replacement of a stopping Runtime, so a replacement
   // keeps the preserved service port and credential arguments of the original launch.
-  const launchInitialBackend = async (): Promise<void> => {
-    launch = await startOrAttachDesktopBackend({
-      onStatus: (status) => bootstrapLog.info('backend startup status', status),
-      configRoot,
-      profilePath,
-      version: app.getVersion(),
-      ...initialBackendPaths,
-      packaged: app.isPackaged,
-      credentialInventory: startupCredentialCiphertexts,
-      credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
-      args: [
-        ...credentialArgs,
-        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
-      ]
-    })
-    startedBackend = launch.startedProcess
-  }
   while (true) {
     try {
       if (initialRecoveryError) throw initialRecoveryError
-      await installationStartup?.completeBeforeLaunch()
-      installationStartup = undefined
-      await launchInitialBackend()
+      if (initialBackendLaunch) {
+        const pendingLaunch = initialBackendLaunch
+        initialBackendLaunch = undefined
+        await pendingLaunch
+      } else {
+        await installationStartup?.completeBeforeLaunch()
+        installationStartup = undefined
+        await launchInitialBackend()
+      }
       startupBlocked = false
       break
     } catch (error) {
@@ -1591,8 +1610,8 @@ async function startDesktop(): Promise<void> {
     allowedProcessIds: allowedInstallationProcessIds,
     ...(process.platform === 'win32'
       ? {
-          ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
-            const pids = await runtime.invokeHost('desktop:update-owned-processes')
+          ownedRuntimeProcessIds: async (runtime, signal): Promise<number[]> => {
+            const pids = await runtime.invokeHost('desktop:update-owned-processes', [], signal)
             if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
               throw new Error('The service returned invalid process ownership evidence.')
             return pids as number[]

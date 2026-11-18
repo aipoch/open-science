@@ -5,7 +5,7 @@ import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS as LEGACY_DEFAULTS,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import { NotebookNetworkSettingsOwner } from './notebook-network-settings-owner'
 import type { StoredSettings } from './types'
 

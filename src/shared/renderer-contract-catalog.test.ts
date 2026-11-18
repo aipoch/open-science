@@ -67,6 +67,7 @@ describe('renderer contract catalog', () => {
     })
     for (const publicPath of [
       'managedFileVersions.saveTextEdit',
+      'managedFileVersions.saveBinaryEdit',
       'managedFileVersions.diffText',
       'managedFileVersions.cancelDiff'
     ]) {
@@ -74,6 +75,9 @@ describe('renderer contract catalog', () => {
     }
     expect(WEB_INVOKE_CHANNELS['managedFileVersions.inspect']).toBe('managed-file-versions:inspect')
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:save-text-edit')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain(
+      'managed-file-versions:save-binary-edit'
+    )
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:diff-text')
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:cancel-diff')
   })
@@ -182,7 +186,13 @@ describe('renderer contract catalog', () => {
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
-    ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
+    ).toEqual([
+      'artifacts.openInBrowser',
+      'getRuntimeVersions',
+      'saveBlobFile',
+      'saveManagedFile',
+      'window.close'
+    ])
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
         ['saveBlobFile', 'window.close'].includes(publicPath)
@@ -600,6 +610,12 @@ describe('renderer contract catalog', () => {
       'resourceRecording.getState',
       'resourceRecording.start',
       'resourceRecording.stop',
+      'schedules.create',
+      'schedules.delete',
+      'schedules.edit',
+      'schedules.get',
+      'schedules.history',
+      'schedules.list',
       'sessionReplay.get',
       'sessionReplay.getSelectionSnapshot',
       'sessionReplay.list',
@@ -619,8 +635,10 @@ describe('renderer contract catalog', () => {
       'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.packageOperation',
+      'sessions.rename',
       'sessions.retryRuntimeTerminalCommit',
       'sessions.setDelegationPolicy',
+      'sessions.setPinned',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'sessions.useCaseCatalog',
@@ -707,6 +725,12 @@ describe('renderer contract catalog', () => {
       'resource-recording:get-state',
       'resource-recording:start',
       'resource-recording:stop',
+      'schedules:create',
+      'schedules:delete',
+      'schedules:edit',
+      'schedules:get',
+      'schedules:history',
+      'schedules:list',
       'session-replay:get',
       'session-replay:get-selection-snapshot',
       'session-replay:list',
@@ -726,8 +750,10 @@ describe('renderer contract catalog', () => {
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:rename',
       'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
+      'sessions:set-pinned',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',

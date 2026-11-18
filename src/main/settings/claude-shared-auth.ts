@@ -1,5 +1,5 @@
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
+import { runClaudeCli } from './claude-cli-process'
 import { getUserClaudeConfigDir } from './provider-env'
 import { augmentedPathEnv } from './shell-path'
 
@@ -35,48 +35,24 @@ const checkAuthStatus = async (
   const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
 
   try {
-    const result = await waitForAbortableOperation(
-      new Promise<{ authenticated: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaudeCli(
-          resolveClaudeExecutableForSpawn(claudePath),
-          ['auth', 'status', '--json'],
-          {
-            env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: configDir },
-            signal: abort.signal as AbortSignal
-          }
-        )
-
-        let stdout = ''
-        let stderr = ''
-
-        proc.stdout?.on('data', (chunk) => {
-          stdout += chunk.toString()
-        })
-        proc.stderr?.on('data', (chunk) => {
-          stderr += chunk.toString()
-        })
-
-        proc.on('error', reject)
-        proc.on('close', (code) => {
-          if (code === 0) {
-            try {
-              const status = JSON.parse(stdout)
-              // `claude auth status --json` outputs {"loggedIn":true,"authMethod":...}.
-              // The field is `loggedIn`, not `authenticated`.
-              resolve({
-                authenticated: status.loggedIn === true,
-                message: status.message
-              })
-            } catch {
-              resolve({ authenticated: false, message: 'Could not parse auth status' })
-            }
-          } else {
-            resolve({ authenticated: false, message: stderr || 'Auth status check failed' })
-          }
-        })
-      }),
-      abort.signal
+    const { stdout, stderr, code } = await runClaudeCli(
+      resolveClaudeExecutableForSpawn(claudePath),
+      ['auth', 'status', '--json'],
+      {
+        env: { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: configDir },
+        signal: abort.signal,
+        timeoutMs
+      }
     )
+    let result: { authenticated: boolean; message?: string }
+    if (code === 0) {
+      try {
+        const status = JSON.parse(stdout)
+        result = { authenticated: status.loggedIn === true, message: status.message }
+      } catch {
+        result = { authenticated: false, message: 'Could not parse auth status' }
+      }
+    } else result = { authenticated: false, message: stderr || 'Auth status check failed' }
 
     return { supported: true, ...result }
   } catch (error) {
@@ -101,51 +77,26 @@ const checkAuthStatus = async (
 const runBrowserLogin = async (
   claudePath: string,
   configDir: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  timeoutMs: number
 ): Promise<ClaudeSharedAuthStatus> => {
   try {
-    const result = await waitForAbortableOperation(
-      new Promise<{ success: boolean; message?: string }>((resolve, reject) => {
-        const proc = spawnClaudeCli(
-          resolveClaudeExecutableForSpawn(claudePath),
-          ['auth', 'login', '--claudeai'],
-          {
-            env: (() => {
-              const env: NodeJS.ProcessEnv = {
-                ...augmentedPathEnv(process.env),
-                CLAUDE_CONFIG_DIR: configDir
-              }
-              // Suppress flags that prevent browser OAuth from opening; same pattern as claude-isolated-auth.
-              delete env.NO_BROWSER
-              delete env.CI
-              return env
-            })(),
-            signal: signal as AbortSignal
-          }
-        )
-
-        let stderr = ''
-
-        proc.stderr?.on('data', (chunk) => {
-          stderr += chunk.toString()
-        })
-
-        proc.on('error', reject)
-        proc.on('close', (code) => {
-          if (code === 0) {
-            resolve({ success: true })
-          } else {
-            resolve({ success: false, message: stderr || 'Browser login failed' })
-          }
-        })
-      }),
-      signal
-    )
-
-    if (result.success) {
-      return { supported: true, authenticated: true }
+    const env: NodeJS.ProcessEnv = {
+      ...augmentedPathEnv(process.env),
+      CLAUDE_CONFIG_DIR: configDir
     }
-    return { supported: true, authenticated: false, message: result.message }
+    delete env.NO_BROWSER
+    delete env.CI
+    const { code, stderr } = await runClaudeCli(
+      resolveClaudeExecutableForSpawn(claudePath),
+      ['auth', 'login', '--claudeai'],
+      { env, signal, timeoutMs, preserveChildrenOnExit: true }
+    )
+    return {
+      supported: true,
+      authenticated: code === 0,
+      ...(code === 0 ? {} : { message: stderr || 'Browser login failed' })
+    }
   } catch (error) {
     if (signal.aborted) {
       return {
@@ -209,7 +160,7 @@ export class ClaudeSharedAuthController {
 
     try {
       const claudePath = await this.resolveClaude()
-      return await runBrowserLogin(claudePath, this.configDir, abort.signal)
+      return await runBrowserLogin(claudePath, this.configDir, abort.signal, this.loginTimeoutMs)
     } catch (error) {
       if (abort.signal.aborted) {
         return {

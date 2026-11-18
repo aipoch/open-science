@@ -71,6 +71,51 @@ describe('turn outcome notice action ownership', () => {
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 
+  it('shows the provider response directly without an application report action', () => {
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category: 'service',
+        responseMessage: 'Example service is unavailable',
+        diagnostics: { status: 503, provider: 'Example Provider', model: 'example-model' }
+      }
+    })
+    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Example service is unavailable'
+    )
+    expect(container.textContent).toContain('status: 503')
+    expect(container.textContent).toContain('provider: Example Provider')
+    expect(container.textContent).toContain('model: example-model')
+    expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+    expect(container.textContent).not.toContain('Report this error')
+  })
+
+  it('opens model settings for a provider configuration failure while showing its response', () => {
+    const openSettings = vi.fn()
+    actions.settingsAction = () => ({ label: 'Model settings', onClick: openSettings })
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category: 'configuration',
+        reason: 'configuration/model-unavailable',
+        responseMessage: 'Example model unavailable',
+        diagnostics: { status: 404 }
+      }
+    })
+    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+    expect(container.textContent).toContain('Example model unavailable')
+    expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-notice-action="open-provider-settings"]')
+        ?.click()
+    )
+    expect(openSettings).toHaveBeenCalledOnce()
+  })
+
   it('captures the failed prompt for native Artifact publication retry', () => {
     render({
       kind: 'failed',

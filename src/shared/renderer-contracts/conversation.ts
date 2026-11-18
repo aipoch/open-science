@@ -7,6 +7,7 @@ import type {
 } from '../session-diagnostics'
 
 import type { MessageSearchRequest, MessageSearchPage } from '../message-search'
+import type { LoadSessionHistoryPageRequest, SessionHistoryPage } from '../session-history'
 
 import type {
   SideChatCloseRequest,
@@ -41,6 +42,9 @@ import type {
   DeleteSessionRecoveryFileRequest,
   DelegationPolicy,
   EditSessionDetailsRequest,
+  RenameSessionRequest,
+  SetSessionPinnedRequest,
+  SessionMetadataReceipt,
   FilterSessionPdfContextCandidatesRequest,
   FilterSessionPdfContextCandidatesResult,
   LinkSessionPdfContextRequest,
@@ -122,6 +126,13 @@ export const sessionsDeleteSessionContracts = {
   'sessions.editDetails': callable<
     (request: EditSessionDetailsRequest) => Promise<PersistedChatSession>
   >()('sessions', ['sessions:edit-details', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.rename': callable<(request: RenameSessionRequest) => Promise<SessionMetadataReceipt>>()(
+    'sessions',
+    ['sessions:rename', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'sessions.setPinned': callable<
+    (request: SetSessionPinnedRequest) => Promise<SessionMetadataReceipt>
+  >()('sessions', ['sessions:set-pinned', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
@@ -149,7 +160,7 @@ export const sessionsDeleteSessionContracts = {
   ),
   'sessions.fork': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
-  >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('sessions', ['sessions:fork', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportPackage': callable<
     (
       request: SessionPackageRequest,
@@ -215,6 +226,9 @@ export const sessionsDeleteSessionContracts = {
   'sessions.loadOne': callable<
     (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   >()('sessions', ['sessions:load-one']),
+  'sessions.loadHistoryPage': callable<
+    (request: LoadSessionHistoryPageRequest) => Promise<SessionHistoryPage | undefined>
+  >()('sessions', ['sessions:load-history-page']),
   'sessions.listRuntimeTerminalFailures': callable<
     () => Promise<import('../acp').AcpRuntimeEvent[]>
   >()('sessions', ['sessions:list-runtime-terminal-failures']),

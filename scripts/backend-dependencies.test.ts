@@ -22,6 +22,7 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  desktopExternalClosure,
   generatedPrismaIncludes,
   isElectronPackage,
   isBackendRuntimeDependency,
@@ -29,6 +30,11 @@ import {
   inlineDesktopDependencyMaps,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
+
+it('stages dynamically loaded connector providers in the desktop backend', () => {
+  expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
+  expect(desktopExternalClosure(process.cwd())).toContain('diff')
+})
 
 describe('generated native Prisma payload', () => {
   it.each(['/', '\\'])('preserves native runtime and SDK types (%s)', (separator) => {
@@ -342,13 +348,21 @@ describe('desktop-only dependency contents', () => {
       for (const file of [
         'scripts/stage-backend.mjs',
         'scripts/backend-dependencies.mjs',
+        'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
-        'scripts/desktop-dependency-chains.mjs'
+        'scripts/desktop-dependency-chains.mjs',
+        'scripts/sync-file-evidence-codec.mjs',
+        'src/main/artifacts/file-evidence-codec.mjs'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
       await put('out/backend/dependencies.json', '[]')
+      if (process.platform === 'win32')
+        await put(
+          'packages/notebook-network-sandbox/vendor/windows/build.mjs',
+          '// Native compilation is covered separately; this fixture stages synthetic helper assets.\n'
+        )
       const stage = (): Promise<unknown> =>
         promisify(execFile)(
           process.execPath,
@@ -450,15 +464,27 @@ describe('desktop-only dependency contents', () => {
     const manifest = {
       name: '@anthropic-ai/claude-agent-sdk',
       version: '0.3.232',
-      peerDependencies: { '@anthropic-ai/sdk': '>=0.93.0', zod: '^4.0.0' }
+      peerDependencies: {
+        '@anthropic-ai/sdk': '>=0.93.0',
+        '@modelcontextprotocol/sdk': '^1.29.0',
+        zod: '^4.0.0'
+      }
     }
     expect(desktopBackendPeerDependencies(manifest)).toEqual(['zod'])
     for (const other of [
       { ...manifest, version: '0.3.233' },
       { ...manifest, name: 'another-consumer' }
     ])
-      expect(desktopBackendPeerDependencies(other)).toEqual(['@anthropic-ai/sdk', 'zod'])
-    expect(Object.keys(manifest.peerDependencies)).toEqual(['@anthropic-ai/sdk', 'zod'])
+      expect(desktopBackendPeerDependencies(other)).toEqual([
+        '@anthropic-ai/sdk',
+        '@modelcontextprotocol/sdk',
+        'zod'
+      ])
+    expect(Object.keys(manifest.peerDependencies)).toEqual([
+      '@anthropic-ai/sdk',
+      '@modelcontextprotocol/sdk',
+      'zod'
+    ])
     expect(isBackendRuntimeDependency('@anthropic-ai/sdk', manifest.name)).toBe(true)
     expect(
       desktopBackendDependencies({ '@anthropic-ai/sdk': '1' }, [{ inputs: {}, outputs: {} }])

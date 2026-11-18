@@ -1,0 +1,245 @@
+{
+  "page": {
+    "view": [0, 0, 595.276, 841.89]
+  },
+  "styles": {
+    "NativeFace0": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "NativeFace1": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "NativeFace2": {
+      "fontFamily": "monospace",
+      "ascent": 0.611,
+      "descent": -0.222,
+      "vertical": false
+    }
+  },
+  "items": [
+    {
+      "str": "[1] Alice Writer and Bobby Reader.",
+      "dir": "ltr",
+      "width": 194.31834375000005,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 72, 758.931],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 7.930915700000014,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 266.31834374999994, 758.931],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "Generic native text and layout in reference:",
+      "dir": "ltr",
+      "width": 194.52452573999983,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 274.24925944999995, 758.931],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 6.9272785,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 468.77378518999944, 758.931],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "examples",
+      "dir": "ltr",
+      "width": 47.577857830000006,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 475.70106368999944, 758.931],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "generic text.",
+      "dir": "ltr",
+      "width": 65.76441844,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 99.879, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 10.189099400000003,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 165.64341844, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "In",
+      "dir": "ltr",
+      "width": 10.000371970000002,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 175.83251784, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 5.432731799999999,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 185.83288981, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "Anonymous Conference on Sample Representations",
+      "dir": "ltr",
+      "width": 265.36931205000025,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 191.26562161, 745.3820000000001],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": ", 2030.",
+      "dir": "ltr",
+      "width": 33.759300860000025,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 456.6349336600001, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 10.189099399999975,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 490.39423452000005, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "URL",
+      "dir": "ltr",
+      "width": 23.030201010000006,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 500.58333392000003, 745.3820000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "",
+      "dir": "ltr",
+      "width": 0,
+      "height": 0,
+      "transform": [10.9091, 0, 0, 10.9091, 99.879, 731.8320000000001],
+      "fontName": "NativeFace2",
+      "hasEOL": true
+    },
+    {
+      "str": "https://demo.test/abs/0000.00000",
+      "dir": "ltr",
+      "width": 183.27288000000013,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 99.879, 731.8320000000001],
+      "fontName": "NativeFace2",
+      "hasEOL": false
+    },
+    {
+      "str": ".",
+      "dir": "ltr",
+      "width": 3.0305479800000006,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 283.15188000000035, 731.8320000000001],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "[2] Alice Writer, Bobby Reader, and Carol Author. Anonymous notes",
+      "dir": "ltr",
+      "width": 300.33625027999994,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 72, 661.9200000000002],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "2031. URL",
+      "dir": "ltr",
+      "width": 52.71168029000002,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 99.606, 648.3710000000002],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "https://demo.test/abs/0000.00001",
+      "dir": "ltr",
+      "width": 183.27288000000013,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 155.96131968999998, 648.3710000000002],
+      "fontName": "NativeFace2",
+      "hasEOL": false
+    },
+    {
+      "str": "proceedings",
+      "dir": "ltr",
+      "width": 57.01313842000001,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 99.16499999999999, 432.9430000000002],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": ", 2032.",
+      "dir": "ltr",
+      "width": 31.51202626,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 156.17813842, 432.9430000000002],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "[3] Alice Writer, Bobby Reader, Carol Author, David Editor, and Erin Contributor.",
+      "dir": "ltr",
+      "width": 361.1010281900001,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 72, 411.5370000000002],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "notes. In",
+      "dir": "ltr",
+      "width": 50.956406100000024,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 99.87900000000006, 155.4610000000003],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "Anonymous Conference on Sample Representations",
+      "dir": "ltr",
+      "width": 258.7693065500002,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 154.46813640000008, 155.4610000000003],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    }
+  ],
+  "expectedBefore": "In Anonymous Conference on Sample Representations, 2030.",
+  "expectedAfter": "https://demo.test/abs/0000.00000"
+}

@@ -15,6 +15,204 @@ const inside = (a: Box, b: Box): boolean =>
 const overlap = (a: Box, b: Box): boolean =>
   a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 
+// A compact numbered loop uses a single indented body between initialization
+// and output. Baseline rows establish the words; smaller native scripts stay
+// in the bounded packet without turning into independent prose.
+function compactAlgorithmBody(body: Entry[], height: number, left: number): boolean {
+  const rows: Entry[][] = []
+  for (const entry of body.filter(({ item }) => item.height >= height * 0.85)) {
+    const tail = rows.at(-1)
+    const gap = tail ? tail[0].item.transform[5] - entry.item.transform[5] : Infinity
+    if (gap < -height * 0.05) return false
+    if (tail && gap <= height * 0.05) tail.push(entry)
+    else rows.push([entry])
+  }
+  const strings = rows.map(text)
+  const loop = strings.findIndex((row) => /^for\s+.+\s+do:$/u.test(row))
+  if (
+    !/^Initialization:\s+.+[=]/u.test(strings[0] ?? '') ||
+    loop < 1 ||
+    loop > 2 ||
+    (loop === 2 && /[a-z]{3,}/iu.test(strings[1])) ||
+    !/^end\.?$/u.test(strings.at(-2) ?? '') ||
+    !/^Output:\s+\S/u.test(strings.at(-1) ?? '')
+  )
+    return false
+  const numbered = rows.slice(loop + 1, -2)
+  const indentation = numbered[0]?.[0].item.transform[4] ?? 0
+  const start = rows[0][0].item.transform[4]
+  return (
+    start >= left &&
+    start - left <= height * 2 &&
+    indentation - start >= height &&
+    indentation - start <= height * 4 &&
+    [rows[loop], rows.at(-2)!, rows.at(-1)!].every(
+      ([entry]) => Math.abs(entry.item.transform[4] - start) <= height * 0.15
+    ) &&
+    numbered.length >= 4 &&
+    numbered.length <= 16 &&
+    numbered.every(
+      (row, n) =>
+        Math.abs(row[0].item.transform[4] - indentation) <= height * 0.15 &&
+        text(row).startsWith(n + 1 + '. ') &&
+        /^\d+\.\s+\p{L}+/u.test(text(row)) &&
+        (n === numbered.length - 1
+          ? /^\d+\.\s+Stopping criterion:\s+.*[≤≥<>]/u.test(text(row))
+          : text(row).includes('='))
+    )
+  )
+}
+
+// Numbered loop lines can continue below a native math display. Mark only the
+// complete native closing owners that match already-protected opening rows.
+function nestedAlgorithmClosers(
+  page: PdfLayoutPage,
+  entries: Entry[],
+  repeated: ReadonlySet<string>
+): Unit[] {
+  const selected: Unit[] = []
+  const headings = entries.filter(({ item }) => /^Algorithm\s+[1-9]\d*\b/u.test(item.str))
+  const comparable = (first: PdfLayoutTextItem, next: PdfLayoutTextItem): boolean =>
+    !!first.fontName &&
+    first.fontName === next.fontName &&
+    first.height === next.height &&
+    [first, next].every(
+      (i) =>
+        i.dir === 'ltr' &&
+        i.fontVertical === false &&
+        i.width > 0 &&
+        i.height > 0 &&
+        i.transform.every(Number.isFinite) &&
+        i.transform[0] > 0 &&
+        i.transform[3] === i.height &&
+        i.transform[1] === 0 &&
+        i.transform[2] === 0 &&
+        i.transform[4] >= 0 &&
+        i.transform[4] + i.width <= page.width &&
+        i.transform[5] > 0 &&
+        i.transform[5] <= page.height
+    )
+  const ordinal = /^([1-9]\d{0,2}):$/u
+  for (const title of headings) {
+    const [left, top] = title.item.transform.slice(4)
+    const em = title.item.height
+    if (!comparable(title.item, title.item) || left < 0 || top > page.height) continue
+    const gutter = entries.filter(
+      ({ index, item }) =>
+        index > title.index &&
+        item.str === '1:' &&
+        item.transform[4] >= left - em * 0.15 &&
+        item.transform[4] < left + em &&
+        top - item.transform[5] > em &&
+        top - item.transform[5] < em * 4
+    )
+    if (gutter.length !== 1) continue
+    const first = gutter[0].item
+    const right = first.transform[4] + first.width
+    const limit =
+      headings.find(
+        ({ index, item }) => index > title.index && Math.abs(item.transform[4] - left) < em
+      )?.index ?? Infinity
+    const marks = entries.flatMap((entry, i) => {
+      const item = entry.item
+      const tag = ordinal.exec(item.str)
+      const word = entries[i + 1]
+      const rightShift = item.transform[4] + item.width - right
+      // A right edge can move with the first two-digit closing mark; the
+      // corresponding keyword must move by the same amount.
+      const widerFinalGutter =
+        tag?.[1] === '10' &&
+        word?.item.str === 'end for' &&
+        item.width > first.width &&
+        Math.abs(item.transform[4] - left) < em * 0.02 &&
+        rightShift > em * 0.05 &&
+        rightShift < em * 0.08
+      if (
+        !tag ||
+        entry.index < gutter[0].index ||
+        entry.index >= limit ||
+        !comparable(item, first) ||
+        (Math.abs(rightShift) > em * 0.05 && !widerFinalGutter)
+      )
+        return []
+      return [
+        {
+          ...entry,
+          ordinal: Number(tag[1]),
+          widerGutterShift: widerFinalGutter ? rightShift : 0,
+          following: entries[i + 2]?.item,
+          word:
+            word &&
+            word.item.transform[4] >= right &&
+            word.item.transform[4] < right + em * 4 &&
+            Math.abs(word.item.transform[5] - item.transform[5]) < em * 0.02
+              ? word
+              : undefined
+        }
+      ]
+    })
+    if (
+      marks.length < 6 ||
+      marks.length > 256 ||
+      marks.some(
+        (mark, i) =>
+          mark.ordinal !== i + 1 ||
+          (i > 0 &&
+            (marks[i - 1].item.transform[5] <= mark.item.transform[5] ||
+              marks[i - 1].item.transform[5] - mark.item.transform[5] > em * 4))
+      )
+    )
+      continue
+    const tailStart = marks.findLastIndex(({ word }) => word?.item.str !== 'end for') + 1
+    const tail = marks.slice(tailStart)
+    const body = marks.slice(0, tailStart)
+    const opens = body.filter(({ word }) => word?.item.str === 'for')
+    if (
+      opens.length < 2 ||
+      opens.length > 3 ||
+      tail.length !== opens.length ||
+      marks.some(
+        (mark, index) => mark.widerGutterShift && (opens.length !== 2 || index !== marks.length - 1)
+      ) ||
+      body.some(({ word }) => word?.item.str === 'end for') ||
+      opens.some(
+        (mark, i) =>
+          !mark.owner?.sourceOnly ||
+          mark.owner.preserve !== 'code' ||
+          mark.word!.owner !== mark.owner ||
+          [mark.key, mark.word!.key].some((key) => repeated.has(key)) ||
+          (i > 0 && mark.word!.item.transform[4] - opens[i - 1].word!.item.transform[4] < em * 0.5)
+      )
+    )
+      continue
+    if (
+      tail.every((mark, i) => {
+        const close = mark.word,
+          open = opens[opens.length - 1 - i].word!
+        return (
+          close?.item.str === 'end for' &&
+          (!mark.following ||
+            mark.following.transform[4] < left ||
+            Math.abs(mark.following.transform[5] - mark.item.transform[5]) >= em * 0.02) &&
+          comparable(open.item, close.item) &&
+          Math.abs(close.item.transform[4] - open.item.transform[4] - mark.widerGutterShift) <
+            em * 0.02 &&
+          mark.owner &&
+          mark.owner === close.owner &&
+          !mark.owner.sourceOnly &&
+          !mark.owner.preserve &&
+          mark.owner.source === `${mark.ordinal}: end for` &&
+          mark.owner.items.length === 2 &&
+          ![mark.key, close.key].some((key) => repeated.has(key)) &&
+          (i === 0 || tail[i - 1].item.transform[5] - mark.item.transform[5] < em * 1.4)
+        )
+      })
+    )
+      selected.push(...tail.map(({ owner }) => owner))
+  }
+  return selected
+}
+
 /** Source classification only. The native rule frame and numbered executable
  * flow select whole owners; neither this frame nor its caption is a crop or
  * glyph repaint certificate. Existing readonly owners keep their classification. */
@@ -31,8 +229,9 @@ export function nativeRuledAlgorithmOwners(
       owners.set(key, owner)
     }
   for (const page of pages) {
-    const evidence = page.nativeNumberedPacketEvidence
-    if (!evidence?.complete || page.rotation !== 0 || page.items.length > 10000) continue
+    const compact = page.nativeCompactAlgorithmEvidence
+    const evidence = compact?.complete ? compact : page.nativeNumberedPacketEvidence
+    if (page.rotation !== 0 || page.items.length > 10000) continue
     const entries: Entry[] = page.items.flatMap((item, index) =>
       item.str.trim()
         ? [
@@ -45,6 +244,9 @@ export function nativeRuledAlgorithmOwners(
           ]
         : []
     )
+    for (const owner of nestedAlgorithmClosers(page, entries, repeated))
+      result.add(owner.items.join('|'))
+    if (!evidence?.complete) continue
     if (
       !entries.length ||
       entries.some((entry) => {
@@ -84,7 +286,11 @@ export function nativeRuledAlgorithmOwners(
     }
     if (entries.some((entry) => !inside(box(entry), [0, 0, page.width, page.height]))) continue
     const width = Math.max(0, ...evidence.rules.map((rule) => rule.right - rule.left))
-    if (width < page.width * 0.5 || width > page.width * 0.95) continue
+    if (
+      width < page.width * (compact?.complete ? 0.32 : 0.5) ||
+      width > page.width * (compact?.complete ? 0.49 : 0.95)
+    )
+      continue
     const rails = evidence.rules
       .filter((rule) => rule.right - rule.left === width)
       .toSorted((a, b) => a.baseline - b.baseline)
@@ -127,6 +333,13 @@ export function nativeRuledAlgorithmOwners(
       bodyOwners.some((owner) => owner.items.some((key) => !selected.has(key)))
     )
       continue
+    if (compact?.complete) {
+      if (compactAlgorithmBody(body, height, bounds[0]))
+        for (const owner of bodyOwners)
+          if (!owner.sourceOnly && !owner.preserve && !owner.risks.length)
+            result.add(owner.items.join('|'))
+      continue
+    }
     const markers = body
       .filter(
         ({ item: i }) =>

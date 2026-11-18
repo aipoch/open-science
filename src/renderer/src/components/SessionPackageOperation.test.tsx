@@ -787,7 +787,10 @@ it('shows a matching renamed version beyond the initial version page without cha
   expect(document.body.textContent).toContain('Optional files: 0 / 60 selected')
 })
 
-it('retains the failed processing stage in the result', async () => {
+it.each([
+  [{ phase: 'saving' }, 'Saving package…'],
+  [{ phase: 'importing', importStage: 'publish' }, 'Finishing import…']
+])('retains the failed processing stage %s in the result', async (progress, label) => {
   usePackageOperationStore.setState({ open: true })
   vi.stubGlobal('api', {
     sessions: {
@@ -795,7 +798,7 @@ it('retains the failed processing stage in the result', async () => {
       packageOperation: vi.fn(async () => ({
         ...snapshot,
         state: 'failed',
-        progress: { phase: 'saving' },
+        progress,
         error: 'Disk full'
       }))
     }
@@ -808,7 +811,7 @@ it('retains the failed processing stage in the result', async () => {
       </>
     )
   )
-  expect(document.body.textContent).toContain('Last stage: Saving package…')
+  expect(document.body.textContent).toContain(`Last stage: ${label}`)
   const alert = document.querySelector('[role="alert"]')
   expect(alert?.textContent).toContain('Disk full')
   expect(alert?.textContent).not.toContain('Package operation failed')

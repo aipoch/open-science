@@ -2,12 +2,12 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import {
+  runVerificationProcess,
+  VerificationProcessExitError
+} from '../update/verification-process'
 
-import { augmentedPathEnv } from './shell-path'
-
-const execFileAsync = promisify(execFile)
+import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
 
 export type OpencodeDetectResult = {
   resolvedPath: string
@@ -43,7 +43,7 @@ const opencodeBinaryNames = (platform: NodeJS.Platform): string[] =>
 
 // Common non-PATH install locations by platform. Windows: npm's global bin (%APPDATA%\npm). Unix:
 // Homebrew + /usr/local. `~/.local/bin` and `~/.opencode/bin` (install-script targets) are added
-// separately by collectCandidateDirs.
+// separately by candidateDirs.
 const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] => {
   if (platform === 'win32') {
     const p = pathFor(platform)
@@ -55,30 +55,19 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the opencode binary.
-const collectCandidateDirs = async (
-  deps: OpencodeDetectDeps,
-  signal?: AbortSignal
-): Promise<string[]> => {
+const candidateDirs = (deps: OpencodeDetectDeps, signal?: AbortSignal): AsyncGenerator<string> => {
   const p = pathFor(deps.platform)
-  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  let npmBinDirs: string[] = []
-  try {
-    npmBinDirs = await deps.resolveNpmBinDirs(signal)
-  } catch {
-    signal?.throwIfAborted()
-  }
-  signal?.throwIfAborted()
-
-  // De-duplicate while preserving first-seen order so the first real hit wins.
-  return Array.from(
-    new Set([
+  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
+  return withNpmBinFallback(
+    [
       ...pathDirs,
       p.join(deps.homePath, '.local', 'bin'),
       p.join(deps.homePath, '.opencode', 'bin'),
       ...(deps.extraDirs ?? []),
-      ...wellKnownDirs(deps.platform, deps.env),
-      ...npmBinDirs
-    ])
+      ...wellKnownDirs(deps.platform, deps.env)
+    ],
+    deps,
+    signal
   )
 }
 
@@ -90,10 +79,9 @@ const detectOpencode = async (
 ): Promise<OpencodeDetectResult | undefined> => {
   const p = pathFor(deps.platform)
   signal?.throwIfAborted()
-  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = opencodeBinaryNames(deps.platform)
 
-  for (const dir of candidateDirs) {
+  for await (const dir of candidateDirs(deps, signal)) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
@@ -139,33 +127,44 @@ const parseVersion = (output: string): string | undefined => {
   return match ? match[0] : output.trim() || undefined
 }
 
-// Real `<path> --version` runner. On Windows a `.cmd`/`.bat` shim cannot be launched by execFile
-// directly, so route it through the shell with the path quoted; native `.exe`/Unix binaries run
-// without a shell. Short timeout so a hung binary can't stall detection.
+// Real `<path> --version` runner. Windows preserves shell support for `.cmd`/`.bat` shims with
+// the path quoted; Unix binaries run without a shell. Short timeout bounds detection.
 const runOpencodeVersion =
   (platform: NodeJS.Platform, preserveFailure = false) =>
   async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync(`"${path}"`, ['--version'], {
-              timeout: 5000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(process.env),
-              signal
-            })
-          : await execFileAsync(path, ['--version'], {
-              timeout: 5000,
-              windowsHide: true,
-              env: augmentedPathEnv(process.env),
-              signal
-            })
+      const { stdout } = await runVerificationProcess(
+        platform === 'win32' ? `"${path}"` : path,
+        ['--version'],
+        {
+          timeoutMs: 5000,
+          maxBytes: 1024 * 1024,
+          shell: platform === 'win32',
+          env: augmentedPathEnv(process.env),
+          signal
+        }
+      )
 
       return parseVersion(stdout)
     } catch (error) {
       signal?.throwIfAborted()
-      if (preserveFailure) throw error
+      if (preserveFailure) {
+        if (error instanceof VerificationProcessExitError) {
+          const cmd = `${platform === 'win32' ? `"${path}"` : path} --version`
+          throw Object.assign(
+            new Error(`Command failed: ${cmd}\n${error.stderr}`, { cause: error }),
+            {
+              code: error.exitCode,
+              signal: error.signal ?? null,
+              killed: false,
+              stdout: error.stdout,
+              stderr: error.stderr,
+              cmd
+            }
+          )
+        }
+        throw error
+      }
       return undefined
     }
   }
@@ -176,20 +175,13 @@ const resolveNpmBinDirs =
   (platform: NodeJS.Platform) =>
   async (signal?: AbortSignal): Promise<string[]> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(),
-              signal
-            })
-          : await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              env: augmentedPathEnv(),
-              signal
-            })
+      const { stdout } = await runVerificationProcess('npm', ['prefix', '-g'], {
+        timeoutMs: 10_000,
+        maxBytes: 1024 * 1024,
+        shell: platform === 'win32',
+        env: augmentedPathEnv(),
+        signal
+      })
       const prefix = stdout.trim()
 
       if (!prefix) return []
@@ -200,6 +192,9 @@ const resolveNpmBinDirs =
       return []
     }
   }
+
+// A stable resolver lets default OpenCode and CodeBuddy checks share one host npm lookup.
+const resolveHostNpmBinDirs = resolveNpmBinDirs(process.platform)
 
 // Production dependency bundle wired to real fs/child_process for the current host platform.
 const createDefaultDetectDeps = (): OpencodeDetectDeps => {
@@ -212,8 +207,8 @@ const createDefaultDetectDeps = (): OpencodeDetectDeps => {
     isExecutable: isExecutableFile(platform),
     getVersion: runOpencodeVersion(platform),
     probeVersion: runOpencodeVersion(platform, true),
-    resolveNpmBinDirs: resolveNpmBinDirs(platform)
+    resolveNpmBinDirs: resolveHostNpmBinDirs
   }
 }
 
-export { collectCandidateDirs, createDefaultDetectDeps, detectOpencode, parseVersion }
+export { candidateDirs, createDefaultDetectDeps, detectOpencode, parseVersion }

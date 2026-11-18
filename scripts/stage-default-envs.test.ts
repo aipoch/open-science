@@ -2,12 +2,11 @@ import { basename } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BASE_PYTHON_PACKAGES, BASE_R_PACKAGES, DEFAULT_ENV_VERSION } from '@aipoch/environment'
+import { DEFAULT_BUNDLE_VERSION, DEFAULT_PYTHON_SPEC, DEFAULT_R_SPEC } from '@aipoch/environment'
 import {
   readDefaultEnvVersion,
   buildLockFromSolve,
   derivePackPathBudget,
-  floorPackages,
   packageFilesFromLock,
   packId,
   packArchiveFile,
@@ -18,7 +17,7 @@ import {
 } from './stage-default-envs.mjs'
 
 it('uses the public environment version when staging bundles', () => {
-  expect(readDefaultEnvVersion()).toBe(DEFAULT_ENV_VERSION)
+  expect(readDefaultEnvVersion()).toBe(DEFAULT_BUNDLE_VERSION)
 })
 
 describe('packageFilesFromLock', () => {
@@ -36,8 +35,8 @@ describe('packageFilesFromLock', () => {
 
 describe('curated version matrix', () => {
   it('publishes the confirmed Python and R versions', () => {
-    expect(VERSIONS.python).toEqual(['3.11', '3.12', '3.13'])
-    expect(VERSIONS.r).toEqual(['4.3', '4.4'])
+    expect(VERSIONS.python).toEqual(['3.12'])
+    expect(VERSIONS.r).toEqual(['4.4'])
   })
 
   it('packId is <language>-<version>', () => {
@@ -52,57 +51,32 @@ describe('curated version matrix', () => {
 
   it('packMatrix is the full language x version cross product with pinned floors', () => {
     const matrix = packMatrix()
-    expect(matrix.map((p) => p.id)).toEqual([
-      'python-3.11',
-      'python-3.12',
-      'python-3.13',
-      'r-4.3',
-      'r-4.4'
-    ])
-    const py311 = matrix.find((p) => p.id === 'python-3.11')
-    expect(py311).toMatchObject({ language: 'python', version: '3.11' })
-    expect(py311?.packages).toEqual(['python=3.11', 'matplotlib-base', 'nomkl'])
-    const r43 = matrix.find((p) => p.id === 'r-4.3')
-    expect(r43?.packages).toEqual(['r-base=4.3', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
-  })
-})
-
-// Guard against spec drift: the pack floor mirrors the named-env base floor in provisioner.ts. Compare
-// package NAMES (strip the version pin the packs add) so an edit to BASE_*_PACKAGES cannot silently
-// diverge from what the offline packs solve.
-describe('floor package sync with provisioner base floor', () => {
-  const stripPin = (specs: string[]): string[] => specs.map((s) => s.split('=')[0])
-
-  it('Python floor names match BASE_PYTHON_PACKAGES', () => {
-    expect(stripPin(floorPackages('python', '3.12'))).toEqual(stripPin(BASE_PYTHON_PACKAGES))
-  })
-  it('R floor names match BASE_R_PACKAGES', () => {
-    expect(stripPin(floorPackages('r', '4.4'))).toEqual(stripPin(BASE_R_PACKAGES))
-  })
-  it('the floor is minimal (no scientific stack)', () => {
-    expect(floorPackages('python', '3.11')).not.toContain('numpy')
-    expect(floorPackages('python', '3.11')).not.toContain('pandas')
-    expect(floorPackages('python', '3.11')).not.toContain('matplotlib')
+    expect(matrix.map((p) => p.id)).toEqual(['python-3.12', 'r-4.4'])
+    const python = matrix.find((p) => p.id === 'python-3.12')
+    expect(python).toMatchObject({ language: 'python', version: '3.12' })
+    expect(python?.packages).toEqual(DEFAULT_PYTHON_SPEC.packages)
+    const r = matrix.find((p) => p.id === 'r-4.4')
+    expect(r?.packages).toEqual(['r-base=4.4', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
   })
 })
 
 describe('solveArgv', () => {
   it('is a dry-run json create with the target --platform and the version-pinned floor', () => {
-    const argv = solveArgv('/tmp/staging/python-3.11', floorPackages('python', '3.11'), 'osx-64')
+    const argv = solveArgv('/tmp/staging/python-3.12', DEFAULT_PYTHON_SPEC.packages, 'osx-64')
     expect(argv).toContain('create')
     expect(argv).toContain('--dry-run')
     expect(argv).toContain('--json')
     // --platform immediately precedes the target subdir.
     expect(argv[argv.indexOf('--platform') + 1]).toBe('osx-64')
-    expect(argv).toContain('python=3.11')
+    expect(argv).toContain('python=3.12')
     expect(argv).toContain('matplotlib-base')
     expect(argv).toContain('nomkl')
   })
 
   it('omits --platform when no target subdir is given (native solve)', () => {
-    const argv = solveArgv('/tmp/x', floorPackages('r', '4.3'), '')
+    const argv = solveArgv('/tmp/x', DEFAULT_R_SPEC.packages, '')
     expect(argv).not.toContain('--platform')
-    expect(argv).toContain('r-base=4.3')
+    expect(argv).toContain('r-base=4.4')
   })
 })
 

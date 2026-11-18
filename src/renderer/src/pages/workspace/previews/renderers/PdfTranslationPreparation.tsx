@@ -223,14 +223,17 @@ export function PdfTranslationPreparation({
                   {showReadyStatus ? (
                     <span
                       role="status"
-                      className="shrink-0 text-xs font-normal text-status-success-foreground"
+                      className="shrink-0 text-xs font-normal text-status-success-foreground dark:text-status-success-dark-foreground"
                     >
                       {t('Full text prepared')}
                     </span>
                   ) : (
                     <span aria-hidden="true" />
                   )}
-                  <Check aria-hidden="true" className="size-4 text-status-success-foreground" />
+                  <Check
+                    aria-hidden="true"
+                    className="size-4 text-status-success-foreground dark:text-status-success-dark-foreground"
+                  />
                 </Button>
               </Collapsible.Trigger>
             </div>

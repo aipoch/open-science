@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import {
+  getAgentFramework,
   claudeCodeFramework,
-  codeBuddyFramework,
   codexFramework,
   opencodeFramework
 } from '../agent-framework'
@@ -24,7 +24,7 @@ import {
 } from './permission-policy'
 import { appMcpToolIdentities } from '../agent-framework/app-mcp-names'
 
-const servers = ['open-science-library', 'open-science-literature']
+const servers = ['open-science-library', 'open-science-literature', 'open-science-pptx']
 const request = (title: string): RequestPermissionRequest => ({
   sessionId: 'session',
   toolCall: { toolCallId: 'call', title, kind: 'other', rawInput: { query: 'evidence' } },
@@ -36,6 +36,26 @@ const request = (title: string): RequestPermissionRequest => ({
 })
 
 describe('Library Auto policy', () => {
+  it('requires approval for verified Schedule creation and cancellation in Ask only', () => {
+    const policy = { profile: 'ask' as const, mcpServerNames: ['open-science-schedule'] }
+    for (const tool of [
+      'list_schedules',
+      'manage_current_schedule',
+      'create_schedule',
+      'update_schedule',
+      'close_schedule'
+    ]) {
+      const raw = request('mcp__open_science_schedule__' + tool)
+      const checked = withTrustedMcpToolIdentity(raw, 'open-science-schedule/' + tool)
+      expect(resolveAutomaticPermission(raw, policy)).toBeUndefined()
+      expect(resolveAutomaticPermission(checked, { ...policy, mcpServerNames: [] })).toBeUndefined()
+      expect(resolveAutomaticPermission(checked, policy)).toBe(
+        tool === 'create_schedule' || tool === 'close_schedule' ? undefined : 'once'
+      )
+      expect(resolveAutomaticPermission(checked, { ...policy, profile: 'auto' })).toBe('once')
+    }
+  })
+
   it.each([
     ['list_pdf_annotations', true],
     ['locate_pdf_annotation_target', true],
@@ -69,7 +89,8 @@ describe('Library Auto policy', () => {
       expect(resolveAutomaticPermission(trusted, { ...policy, mcpServerNames: [] })).toBeUndefined()
       expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBe(
         identity.endsWith('/list_pdf_annotations') ||
-          identity.endsWith('/locate_pdf_annotation_target')
+          identity.endsWith('/locate_pdf_annotation_target') ||
+          identity.endsWith('/read_pptx_outline')
           ? 'once'
           : undefined
       )
@@ -80,9 +101,10 @@ describe('Library Auto policy', () => {
     }
   )
 
-  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'open-science-agent'] as const)(
     'checks workflow identity support through the real %s correlation path',
     async (framework) => {
+      const mounted = [...servers, 'open-science-schedule']
       const context = new AcpPermissionContext({
         emitPermissionRequest: vi.fn(),
         routing: {
@@ -97,18 +119,20 @@ describe('Library Auto policy', () => {
           mcpServerNamesFor: () => servers,
           reviewerContextFor: () => undefined,
           resolveReviewerPermission: () => undefined,
-          currentFramework: () =>
-            ({
-              'claude-code': claudeCodeFramework,
-              opencode: opencodeFramework,
-              codex: codexFramework,
-              codebuddy: codeBuddyFramework
-            })[framework],
+          currentFramework: () => getAgentFramework(framework),
           resolveProjectId: () => 'project'
         }
       })
       try {
-        for (const identity of LIBRARY_AUTO_TOOL_IDENTITIES) {
+        for (const identity of [
+          ...LIBRARY_AUTO_TOOL_IDENTITIES,
+          'open-science-schedule/list_schedules',
+          'open-science-schedule/create_schedule',
+          'open-science-schedule/manage_current_schedule',
+          'open-science-schedule/update_schedule',
+          'open-science-schedule/close_schedule'
+        ]) {
+          const scopedSchedule = identity.startsWith('open-science-schedule/')
           const [server, tool] = identity.split('/')
           const title =
             framework === 'codex'
@@ -132,36 +156,38 @@ describe('Library Auto policy', () => {
                 _meta: framework === 'codex' ? { is_mcp_tool_call: true } : { toolName: title }
               }
             },
-            { sessionId: 'session', framework, mcpServerNames: servers }
+            { sessionId: 'session', framework, mcpServerNames: mounted }
           )
           const raw = request(title)
           if (framework === 'codex') Object.assign(raw, { _meta: { is_mcp_tool_approval: true } })
           const restored = await context.restoreToolCall(raw, {
             sessionId: 'session',
             framework,
-            mcpServerNames: servers,
+            mcpServerNames: mounted,
             isCancelled: () => false
           })
           expect(trustedMcpToolIdentity(restored!)).toBe(
-            framework === 'codebuddy' ? undefined : identity
+            framework === 'codebuddy' && !scopedSchedule ? undefined : identity
           )
           expect(
             resolveAutomaticPermission(restored!, {
               profile: 'auto',
               frameworkId: framework,
-              mcpServerNames: servers
+              mcpServerNames: mounted
             })
-          ).toBe(framework === 'codebuddy' ? undefined : 'once')
+          ).toBe(framework === 'codebuddy' && !scopedSchedule ? undefined : 'once')
           expect(
             resolveAutomaticPermission(restored!, {
               profile: 'ask',
               frameworkId: framework,
-              mcpServerNames: servers
+              mcpServerNames: mounted
             })
           ).toBe(
-            framework !== 'codebuddy' &&
-              (identity.endsWith('/list_pdf_annotations') ||
-                identity.endsWith('/locate_pdf_annotation_target'))
+            (scopedSchedule && tool !== 'create_schedule' && tool !== 'close_schedule') ||
+              (framework !== 'codebuddy' &&
+                (identity.endsWith('/list_pdf_annotations') ||
+                  identity.endsWith('/locate_pdf_annotation_target') ||
+                  identity.endsWith('/read_pptx_outline')))
               ? 'once'
               : undefined
           )

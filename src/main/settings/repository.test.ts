@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sanitizeSettings } from './document-codec'
-import { providerValidationFailed } from '../../shared/settings'
+import { providerValidationFailed } from '../../shared/settings-runtime'
 import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'

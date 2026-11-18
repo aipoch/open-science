@@ -1,7 +1,7 @@
 import { getRayToken } from './ray-token'
 import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   RayJobCreationNotSentError,
   RayJobCreationRejectedError,
@@ -11,11 +11,12 @@ import {
   uploadRayWorkingDirectory,
   readRayJobLogs,
   stopRayJob,
-  shellSingleQuote,
+  deleteRayJob,
   type RayJobsTarget,
   type RayJobClaim,
   type RayJobObservation
-} from '@aipoch/compute/node'
+} from '@aipoch/compute/ray'
+import { shellSingleQuote } from '@aipoch/compute/node'
 import { z } from 'zod'
 import type { ComputeJob } from '../../shared/compute'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
@@ -23,6 +24,12 @@ import { decodeDataPath } from '../storage/data-path'
 import type { ComputeJobRepository, UpdateJobRequest } from './job-repository'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { readRayJournal, type RayJobJournal } from './ray-job-journal'
+import { createComputeRuntimeLoop, type ComputeRuntimePassResult } from './compute-runtime-loop'
+import {
+  nextComputeRuntimeBackoff,
+  nextComputeRuntimeWakeAfter,
+  type ComputeRuntimeBackoffState
+} from './compute-runtime-backoff'
 import {
   inspectRayDashboard,
   reserveRayOutputDirectory,
@@ -122,6 +129,7 @@ function terminal(observed: RayJobObservation, timedOut: boolean): UpdateJobRequ
 }
 export function createRayJobRuntime(deps: Dependencies): {
   start(): void
+  wake(): Promise<void>
   resume(): void
   pause(): Promise<void>
   stop(): Promise<void>
@@ -129,17 +137,28 @@ export function createRayJobRuntime(deps: Dependencies): {
   retry(jobId: string): Promise<void>
 } {
   const repo = deps.jobRepository
-  let controller: AbortController | undefined
-  let interval: ReturnType<typeof setInterval> | undefined
-  let active: Promise<void> | undefined
-  let stopped = false
   const expired = (job: ComputeJob): boolean =>
     job.submitted_at != null &&
     job.timeout_seconds != null &&
     Date.now() >= job.submitted_at + job.timeout_seconds * 1000
-  const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<void> => {
+  const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<boolean> => {
     const journal = readRayJournal(job)
-    if (job.harvested_at || journal.published) return
+    if (job.remote_cleanup_disposition !== 'pending') return false
+    const harvestComplete =
+      !job.harvest_error && (job.harvested_at !== undefined || journal.published !== undefined)
+    if (job.harvested_at !== undefined && !journal.launch) {
+      const updated = await repo.settleRayCleanup(job)
+      await deps.onJobUpdated(updated)
+      return updated.remote_cleanup_disposition === 'pending'
+    }
+    if (harvestComplete && journal.launch) {
+      const target = { ...journal.target, getToken: getRayToken }
+      await verifyDashboard(target, signal)
+      await deleteRayJob(target, claimFor(job, journal), signal)
+      const updated = await repo.settleRayCleanup(job)
+      await deps.onJobUpdated(updated)
+      return updated.remote_cleanup_disposition === 'pending'
+    }
     const target = { ...journal.target, getToken: getRayToken }
     if (job.status !== 'submitted' && job.status !== 'running') {
       if (journal.directory)
@@ -148,7 +167,7 @@ export function createRayJobRuntime(deps: Dependencies): {
           { sharedRoot: target.sharedRoot, runId: job.job_id, ...journal.directory },
           signal
         )
-      return
+      return true
     }
     if (!journal.launch && expired(job)) {
       const updated = await repo.updateIfStatus(job.job_id, ['submitted'], {
@@ -159,7 +178,7 @@ export function createRayJobRuntime(deps: Dependencies): {
         harvestError: 'Ray job deadline elapsed before launch.'
       })
       if (updated) await deps.onJobUpdated(updated)
-      return
+      return true
     }
     await verifyDashboard(target, signal)
     if (!journal.launch) {
@@ -167,7 +186,7 @@ export function createRayJobRuntime(deps: Dependencies): {
       const directory = await reserveRayOutputDirectory(scope, journal.nonce, signal)
       if (!journal.directory) {
         await repo.replaceRayJournal(job, JSON.stringify({ ...journal, directory }), true)
-        return
+        return true
       }
       if (directory.dev !== journal.directory.dev || directory.ino !== journal.directory.ino)
         throw new Error('Ray output directory was replaced.')
@@ -182,16 +201,16 @@ export function createRayJobRuntime(deps: Dependencies): {
           JSON.stringify({ ...journal, packageSha256: pkg.sha256 }),
           true
         )
-        return
+        return true
       }
       if (journal.packageSha256 !== pkg.sha256)
         throw new Error('Ray package differs from the approved snapshot.')
       await uploadRayWorkingDirectory({ ...target, signal }, pkg)
       await verifyDashboard(target, signal)
-      if (expired(job)) return
+      if (expired(job)) return true
       const claim = claimFor(job, journal)
       const fenced = JSON.stringify({ ...journal, launch: true })
-      if (!(await repo.replaceRayJournal(job, fenced, true))) return
+      if (!(await repo.replaceRayJournal(job, fenced, true))) return true
       try {
         await submitRayJob(target, claim, signal)
       } catch (error) {
@@ -207,7 +226,7 @@ export function createRayJobRuntime(deps: Dependencies): {
           if (updated) await deps.onJobUpdated(updated)
         }
       }
-      return
+      return true
     }
     const claim = claimFor(job, journal)
     let observed = await inspectRayJob(target, claim, signal)
@@ -215,10 +234,10 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (journal.timedOut || expired(job)) {
         if (!journal.timedOut) {
           await repo.replaceRayJournal(job, JSON.stringify({ ...journal, timedOut: true }), true)
-          return
+          return true
         }
         observed = await stopRayJob(target, claim, signal)
-      } else if (observed.status === 'PENDING') return
+      } else if (observed.status === 'PENDING') return true
     }
     const tail = await readRayJobLogs(target, claim, 256 * 1024, signal)
       .then((v) => v.slice(-8192))
@@ -239,19 +258,20 @@ export function createRayJobRuntime(deps: Dependencies): {
       (observed.status !== 'RUNNING' ||
         (job.status === 'running' && !job.last_poll_error && (!tail || tail === job.stdout_tail)))
     )
-      return
+      return true
     const updated = await repo.updateIfStatus(job.job_id, [job.status], {
       ...(settled ?? { status: 'running', startedAt: job.started_at ? undefined : new Date() }),
       lastPollError: null,
       ...(tail !== undefined && { stdoutTail: tail })
     })
     if (updated) await deps.onJobUpdated(updated)
+    return true
   }
-  const cancelOne = async (signal: AbortSignal): Promise<void> => {
+  const cancelOne = async (signal: AbortSignal): Promise<boolean> => {
     const ops = deps.operationRepository
-    if (!ops) return
+    if (!ops) return false
     const claim = await ops.claimNext('cancel', new Date(), 120000, randomUUID(), 'ray_jobs')
-    if (!claim) return
+    if (!claim) return false
     try {
       const job = await repo.get(claim.jobId)
       if (!job) throw new Error('Ray job unavailable.')
@@ -270,25 +290,34 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (updated) await deps.onJobUpdated(updated)
     } catch {
       await ops.retry(claim, new Date(), new Date(Date.now() + 5000))
+      return true
     }
+    return true
   }
-  const backoff = new Map<string, { delayMs: number; until: number }>()
-  const pass = async (signal: AbortSignal): Promise<void> => {
-    await cancelOne(signal)
+  const backoff = new Map<string, ComputeRuntimeBackoffState>()
+  const keepsActiveCadence = (job: ComputeJob): boolean =>
+    job.remote_cleanup_disposition === 'pending'
+  const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
+    const cancelled = await cancelOne(signal)
     const jobs = await repo.findRayWork()
     const pending = new Set(jobs.map((job) => job.job_id))
     for (const id of backoff.keys()) if (!pending.has(id)) backoff.delete(id)
+    let ready = false
     for (const job of jobs) {
       signal.throwIfAborted()
       const previous = backoff.get(job.job_id)
-      if (previous && Date.now() < previous.until) continue
+      if (previous && previous.retryAt > Date.now()) continue
       try {
-        await reconcile(job, signal)
+        const stillPending = await reconcile(job, signal)
         backoff.delete(job.job_id)
-      } catch {
+        ready ||= stillPending && keepsActiveCadence(job)
+      } catch (error) {
         signal.throwIfAborted()
-        const delayMs = Math.min(300_000, (previous?.delayMs ?? 2_500) * 2)
-        backoff.set(job.job_id, { delayMs, until: Date.now() + delayMs })
+        log.warn('Ray job reconciliation deferred.', {
+          jobId: job.job_id,
+          ...errorLogFields(error)
+        })
+        backoff.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           'Ray job reconciliation is pending. Check the approved cluster and shared output directory before resubmitting.'
         if (job.last_poll_error !== message) {
@@ -299,43 +328,21 @@ export function createRayJobRuntime(deps: Dependencies): {
         }
       }
     }
+    const nextWakeAfterMs = nextComputeRuntimeWakeAfter(backoff.values(), Date.now())
+    return {
+      hasWork: cancelled || ready,
+      ...(nextWakeAfterMs === undefined ? {} : { nextWakeAfterMs })
+    }
   }
-  const tick = (): Promise<void> => {
-    if (!controller) return Promise.resolve()
-    return (active ??= pass(controller.signal)
-      .catch(() => {
-        if (controller && !controller.signal.aborted) log.warn('Ray job reconciliation deferred.')
-      })
-      .finally(() => {
-        active = undefined
-      }))
-  }
-  const start = (): void => {
-    if (stopped || controller) return
-    controller = new AbortController()
-    interval = setInterval(() => void tick(), 5000)
-    interval.unref()
-    void tick()
-  }
-  const pause = async (): Promise<void> => {
-    clearInterval(interval)
-    controller?.abort()
-    controller = undefined
-    await active
-  }
+  const loop = createComputeRuntimeLoop({
+    run: pass,
+    activeIntervalMs: 5000,
+    onError: () => log.warn('Ray job reconciliation deferred.')
+  })
   return {
-    start,
-    resume: start,
-    pause,
-    tick,
+    ...loop,
     retry: async (jobId) => {
-      await active
-      backoff.delete(jobId)
-      await tick()
-    },
-    stop: async () => {
-      stopped = true
-      await pause()
+      await loop.wake(() => backoff.delete(jobId))
     }
   }
 }

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
+import { fork } from 'node:child_process'
+import { once } from 'node:events'
 import {
   createResearchVideoGenerator,
   createResearchFilmAuthor,
@@ -19,6 +21,8 @@ const root = await mkdtemp(join(tmpdir(), 'research-film-consumer-'))
 let worker
 try {
   const resources = researchFilmResources()
+  assert.match(await readFile(join(resources.replayDirectory, 'generic.js'), 'utf8'), /__seek/)
+  assert.match(await readFile(join(resources.replayDirectory, 'generic.css'), 'utf8'), /1920px/)
   assert.match(await readFile(join(resources.authoringDirectory, 'KIT.md'), 'utf8'), /k\.ctx/)
   assert.match(await readFile(join(resources.stageDirectory, 'index.html'), 'utf8'), /html/)
   const source = {
@@ -110,6 +114,49 @@ try {
     ),
     /ENOENT/
   )
+  await assert.rejects(
+    generate(
+      {
+        specPath: join(root, 'video.json'),
+        modelDirectory: join(root, 'missing-model'),
+        engineDirectory: resources.stageDirectory,
+        outputDirectory: join(root, 'failed-narration')
+      },
+      AbortSignal.timeout(10_000)
+    ),
+    { workerRole: 'speech', message: /Install or update Research narration/ }
+  )
+  // Prove the packaged supervisor exits on parent-channel loss without a signal from the parent.
+  const child = fork(resources.speechProcessPath, [], {
+    execArgv: [],
+    serialization: 'advanced',
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+  })
+  const exited = once(child, 'exit')
+  const timeout = setTimeout(() => child.kill('SIGTERM'), 5000)
+  try {
+    const reply = once(child, 'message', { signal: AbortSignal.timeout(5000) })
+    child.send({
+      kind: 'synthesize',
+      lane: 0,
+      text: 'Evidence',
+      input: {
+        kind: 'speech',
+        modelDirectory: join(root, 'missing-model'),
+        runtimeDirectory: join(root, 'standalone-runtime'),
+        threads: 1
+      }
+    })
+    assert.match((await reply)[0].message, /Install or update Research narration/)
+    child.disconnect()
+    // On Windows the operating system can report the signal as an exit code.
+    const [code, signal] = await exited
+    assert.ok(signal === 'SIGKILL' || (process.platform === 'win32' && code !== 0 && !signal))
+  } finally {
+    clearTimeout(timeout)
+    child.kill('SIGKILL')
+    await exited.catch(() => {})
+  }
   assert.deepEqual(await readdir(temporaryRoot), [])
 } finally {
   await worker?.terminate()

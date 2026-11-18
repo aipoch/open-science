@@ -1,3 +1,6 @@
+import { TaskSubmissions } from '../tasks/task-submissions'
+// @ts-expect-error The CLI is a published JavaScript entry.
+import { parseCliArgs, runTaskCommand } from '../../../packages/open-science/cli.mjs'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { createHash } from 'node:crypto'
@@ -1148,8 +1151,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn(),
         cancelRun: vi.fn(),
         listArtifacts: vi.fn(),
-        acquireArtifact: vi.fn(),
-        releaseArtifact: vi.fn()
+        acquireArtifact: vi.fn()
       },
       bootstrap: {
         appName: 'Open-Science',
@@ -1212,8 +1214,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn(),
         cancelRun: vi.fn(),
         listArtifacts: vi.fn(),
-        acquireArtifact: vi.fn(),
-        releaseArtifact: vi.fn()
+        acquireArtifact: vi.fn()
       },
       rpc: {
         channels: () => [],
@@ -2723,6 +2724,77 @@ describe('startWebHttpServer', () => {
     await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
   })
 
+  it('shares remote Task and RPC client capacity and retires the Task caller after idle', async () => {
+    let commandSignal: AbortSignal | undefined
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: {
+        commandNames: () => [],
+        invoke: async (_name, { callerLease }) => {
+          if (!commandSignal) {
+            commandSignal = callerLease.signal
+            await gate
+          }
+          return []
+        }
+      },
+      agent: {} as never
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      tasks,
+      webClientRetention: { maxClientsPerPrincipal: 1, httpIdleTtlMs: 20 },
+      externalAccess: {
+        authorizeHttp: async () => accessOnlyExternalAccess(),
+        authorizeWebSocket: async () => undefined
+      },
+      rpc: { channels: () => ['projects:list'], invoke: async () => [] },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: 'test',
+        configRoot: '/unused',
+        platform: 'test',
+        versions: { node: 'test' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const rpc = (client: string): Promise<Response> =>
+      fetch(base + '/rpc/projects%3Alist', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-open-science-client': client },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+    const first = fetch(base + '/api/v1/projects', {
+      headers: { 'x-open-science-client': 'first' }
+    })
+    try {
+      await vi.waitFor(() => expect(commandSignal).toBeDefined())
+      expect((await rpc('first')).status).toBe(200)
+      expect((await rpc('second')).status).toBe(429)
+      const busy = await fetch(base + '/api/v1/projects', {
+        headers: { 'x-open-science-client': 'second' }
+      })
+      expect(busy.status).toBe(429)
+      expect(await busy.json()).toMatchObject({ error: { code: 'client_busy' } })
+      expect(commandSignal?.aborted).toBe(false)
+      finish()
+      expect((await first).status).toBe(200)
+      await vi.waitFor(() => expect(commandSignal?.aborted).toBe(true))
+      expect((await rpc('second')).status).toBe(200)
+    } finally {
+      finish()
+      await first
+      await tasks.dispose()
+    }
+  })
+
   it('bounds close when an active HTTP request does not finish', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -2981,8 +3053,7 @@ describe('startWebHttpServer', () => {
       getRun: vi.fn(),
       cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
-      acquireArtifact: vi.fn(),
-      releaseArtifact: vi.fn()
+      acquireArtifact: vi.fn()
     }
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
@@ -3126,60 +3197,68 @@ describe('startWebHttpServer', () => {
     }
   )
 
-  it('rejects a delayed doctor result after remote authorization is revoked', async () => {
-    let current = true
-    let markDoctorStarted!: () => void
-    const doctorStarted = new Promise<void>((resolve) => {
-      markDoctorStarted = resolve
-    })
-    let finishDoctor!: () => void
-    const doctorPending = new Promise<void>((resolve) => {
-      finishDoctor = resolve
-    })
-    const doctor = vi.fn(async () => {
-      markDoctorStarted()
-      await doctorPending
-      return { ready: true, checks: {}, next: [], private: 'private-result-marker' }
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'local-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => [], invoke: vi.fn() },
-      tasks: {
-        runWithCallerContext: (_context: CallerContext, operation: () => unknown) => operation(),
-        subscribeProgress: () => () => undefined,
-        doctor
-      } as never,
-      externalAccess: {
-        authorizeHttp: async () => ({
-          kind: 'authorized' as const,
-          principalId: 'paired-browser',
-          isCurrent: () => current
-        }),
-        authorizeWebSocket: async () => undefined
-      },
-      bootstrap: {
-        appName: 'Open-Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
-      }
-    })
-    servers.push(server)
+  it.each(['doctor', 'projects', 'project-error'])(
+    'withholds a delayed Task response after revocation: %s',
+    async (route) => {
+      let current = true
+      let markDoctorStarted!: () => void
+      const doctorStarted = new Promise<void>((resolve) => {
+        markDoctorStarted = resolve
+      })
+      let finishDoctor!: () => void
+      const doctorPending = new Promise<void>((resolve) => {
+        finishDoctor = resolve
+      })
+      const operation = vi.fn(async () => {
+        markDoctorStarted()
+        await doctorPending
+        if (route === 'project-error')
+          throw new TaskApiError('invalid_request', 'private-result-marker')
+        return { ready: true, checks: {}, next: [], private: 'private-result-marker' }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => [], invoke: vi.fn() },
+        tasks: {
+          runWithCallerContext: (_context: CallerContext, operation: () => unknown) => operation(),
+          subscribeProgress: () => () => undefined,
+          doctor: operation,
+          listProjects: operation
+        } as never,
+        externalAccess: {
+          authorizeHttp: async () => ({
+            kind: 'authorized' as const,
+            principalId: 'paired-browser',
+            isCurrent: () => current
+          }),
+          authorizeWebSocket: async () => undefined
+        },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
 
-    const responsePromise = fetch(`http://127.0.0.1:${server.port}/api/v1/doctor`)
-    await doctorStarted
-    current = false
-    finishDoctor()
+      const responsePromise = fetch(
+        `http://127.0.0.1:${server.port}/api/v1/${route === 'doctor' ? 'doctor' : 'projects'}`
+      )
+      await doctorStarted
+      current = false
+      finishDoctor()
 
-    const response = await responsePromise
-    expect(response.status).toBe(401)
-    expect(await response.text()).not.toContain('private-result-marker')
-    expect(doctor).toHaveBeenCalledOnce()
-  })
+      const response = await responsePromise
+      expect(response.status).toBe(401)
+      expect(await response.text()).not.toContain('private-result-marker')
+      expect(operation).toHaveBeenCalledOnce()
+    }
+  )
 
   it('keeps host-management RPC local while preserving the local Web client', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
@@ -3343,7 +3422,9 @@ describe('startWebHttpServer', () => {
 
     expect(localOnly(notebookChannels)).toEqual([
       'notebook:export-ipynb',
-      'notebook:export-ipynb-all'
+      'notebook:export-ipynb-all',
+      'notebook:process-monitor',
+      'notebook:terminate-monitored-process'
     ])
     expect(
       notebookChannels.filter((channel) => !localOnly(notebookChannels).includes(channel))
@@ -3892,8 +3973,7 @@ describe('startWebHttpServer', () => {
           getRun: vi.fn(),
           cancelRun: vi.fn(),
           listArtifacts: vi.fn(),
-          acquireArtifact: vi.fn(),
-          releaseArtifact: vi.fn()
+          acquireArtifact: vi.fn()
         },
         bootstrap: {
           appName: 'Open-Science',
@@ -3998,8 +4078,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn(),
         cancelRun: vi.fn(),
         listArtifacts: vi.fn(),
-        acquireArtifact: vi.fn(),
-        releaseArtifact: vi.fn()
+        acquireArtifact: vi.fn()
       },
       externalAccess: {
         authorizeHttp: vi.fn().mockResolvedValue(accessOnlyExternalAccess()),
@@ -4058,8 +4137,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn(),
         cancelRun: vi.fn(),
         listArtifacts: vi.fn(),
-        acquireArtifact: vi.fn(),
-        releaseArtifact: vi.fn()
+        acquireArtifact: vi.fn()
       },
       externalAccess: {
         authorizeHttp: vi.fn(async (request: IncomingMessage) =>
@@ -4280,7 +4358,6 @@ describe('startWebHttpServer', () => {
       }),
       listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact/1', name: 'report.md' }]),
       acquireArtifact: vi.fn(),
-      releaseArtifact: vi.fn(),
       dispose: vi.fn()
     }
     const server = await startTestWebHttpServer({
@@ -4676,6 +4753,7 @@ describe('startWebHttpServer', () => {
         headers: { 'content-type': 'text/plain', 'content-length': '14' }
       })
     )
+    const release = vi.fn().mockResolvedValue(undefined)
     const tasks = {
       runWithCallerContext,
       subscribeProgress: () => () => undefined,
@@ -4689,16 +4767,16 @@ describe('startWebHttpServer', () => {
       cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
+        release,
         resourceId: 'resource-1',
         url: 'open-science-preview://resource-1/report.txt',
         name: 'report.txt',
         mimeType: 'text/plain',
         size: 14
-      }),
-      releaseArtifact: vi.fn().mockResolvedValue(undefined)
+      })
     }
     if (releaseFails) {
-      tasks.releaseArtifact.mockRejectedValueOnce(
+      release.mockRejectedValueOnce(
         Object.assign(new Error('Capability release failed.'), { code: 'EIO' })
       )
     }
@@ -4732,14 +4810,227 @@ describe('startWebHttpServer', () => {
     expect(await download.text()).toBe('artifact bytes')
     expect(download.headers.get('content-disposition')).toContain('report.txt')
     expect(tasks.acquireArtifact).toHaveBeenCalledWith('artifact-1')
-    expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-1')
-    expect(tasks.releaseArtifact).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
     const nextResponse = await fetch(`http://127.0.0.1:${server.port}/api/bootstrap`, {
       headers: { authorization: 'Bearer test-token' }
     })
     expect(nextResponse.status).toBe(200)
     expect(await nextResponse.json()).toMatchObject({ appName: 'Open-Science' })
   })
+
+  it('serves HTML artifacts inline while keeping the default download disposition', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const release = vi.fn().mockResolvedValue(undefined)
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        release,
+        resourceId: 'resource-html',
+        url: 'open-science-preview://resource-html/report.html',
+        name: 'report.html',
+        mimeType: 'text/html',
+        size: 14
+      })
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const endpoint = `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-html/content`
+    const inlineEndpoint = `${endpoint}?disposition=inline&version=1`
+    const headers = { authorization: 'Bearer test-token' }
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const download = await fetch(endpoint, { headers })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-disposition')).toContain('attachment')
+    expect(download.headers.get('content-type')).toBe('text/plain')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const inline = await fetch(inlineEndpoint, { headers })
+    expect(inline.status).toBe(200)
+    expect(inline.headers.get('content-disposition')).toBe('inline')
+    expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(inline.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(await inline.text()).toBe('<!doctype html>')
+
+    tasks.acquireArtifact.mockResolvedValueOnce({
+      release,
+      resourceId: 'resource-html-mime',
+      url: 'open-science-preview://resource-html-mime/report.txt',
+      name: 'report.txt',
+      mimeType: 'text/html; charset=utf-8',
+      size: 14
+    })
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'application/octet-stream', 'content-length': '16' }
+      })
+    )
+    const mimeInline = await fetch(inlineEndpoint, { headers })
+    expect(mimeInline.status).toBe(200)
+    expect(mimeInline.headers.get('content-disposition')).toBe('inline')
+    expect(mimeInline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(mimeInline.headers.get('referrer-policy')).toBe('no-referrer')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const head = await fetch(inlineEndpoint, { method: 'HEAD', headers })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-disposition')).toBe(inline.headers.get('content-disposition'))
+    expect(head.headers.get('content-type')).toBe(inline.headers.get('content-type'))
+    expect(head.headers.get('content-length')).toBe(inline.headers.get('content-length'))
+    expect(head.headers.get('referrer-policy')).toBe(inline.headers.get('referrer-policy'))
+  })
+
+  it('rejects inline display for non-HTML artifacts', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const release = vi.fn().mockResolvedValue(undefined)
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        release,
+        resourceId: 'resource-text',
+        url: 'open-science-preview://resource-text/report.txt',
+        name: 'report.txt',
+        mimeType: 'text/plain',
+        size: 4
+      })
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline&version=1`,
+      { headers: { authorization: 'Bearer test-token' } }
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'invalid_request',
+        message: 'Inline artifact display is only supported for HTML files.'
+      }
+    })
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it.each(['before', 'after'])(
+    'checks remote Preview authorization at header commit (%s)',
+    async (when) => {
+      let current = true
+      let body!: ReadableStreamDefaultController<Uint8Array>
+      const cancel = vi.fn()
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: '/unused',
+        externalAccess: {
+          authorizeHttp: async () => ({
+            kind: 'authorized',
+            principalId: 'fixture',
+            isCurrent: () => current
+          }),
+          authorizeWebSocket: async () => undefined
+        },
+        rpc: { channels: () => [], invoke: vi.fn() },
+        fetchPreview: async () => {
+          if (when === 'before') current = false
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                body = controller
+                controller.enqueue(Uint8Array.of(1))
+              },
+              cancel
+            })
+          )
+        },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: 'test',
+          configRoot: '/unused',
+          platform: 'test',
+          versions: { node: 'test' }
+        }
+      })
+      servers.push(server)
+      const url = `http://127.0.0.1:${server.port}/preview/fixture`
+      const response = await fetch(url)
+      if (when === 'before') {
+        expect(response.status).toBe(401)
+        expect(cancel).toHaveBeenCalledOnce()
+      } else {
+        expect(response.status).toBe(200)
+        current = false
+        body.enqueue(Uint8Array.of(2))
+        body.close()
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(Uint8Array.of(1, 2))
+        expect((await fetch(url, { headers: { range: 'bytes=1-1' } })).status).toBe(401)
+      }
+    }
+  )
 
   it('cancels the artifact stream and releases its capability when the client disconnects', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
@@ -4757,6 +5048,7 @@ describe('startWebHttpServer', () => {
         { headers: { 'content-type': 'application/octet-stream' } }
       )
     )
+    const release = vi.fn().mockResolvedValue(undefined)
     const tasks = {
       runWithCallerContext,
       subscribeProgress: () => () => undefined,
@@ -4770,13 +5062,13 @@ describe('startWebHttpServer', () => {
       cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
+        release,
         resourceId: 'resource-disconnect',
         url: 'open-science-preview://resource-disconnect/report.bin',
         name: 'report.bin',
         mimeType: 'application/octet-stream',
         size: 2 * 1024 * 1024
-      }),
-      releaseArtifact: vi.fn().mockResolvedValue(undefined)
+      })
     }
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
@@ -4817,7 +5109,7 @@ describe('startWebHttpServer', () => {
 
     await vi.waitFor(() => {
       expect(cancelStream).toHaveBeenCalledOnce()
-      expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-disconnect')
+      expect(release).toHaveBeenCalledOnce()
     })
   })
 })
@@ -5226,5 +5518,112 @@ it('preserves the existing Web single-frame framing allowance', async () => {
     expect(actual === text).toBe(true)
   } finally {
     socket.terminate()
+  }
+})
+
+it('recovers a lost submission response through the real SDK and CLI without starting twice', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'submission-http-'))
+  roots.push(root)
+  let finish!: () => void
+  const preparation = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const run = {
+    id: 'run-receipt',
+    requestId: 'request-receipt',
+    projectId: 'project',
+    sessionId: 'session',
+    cwd: root,
+    status: 'completed' as const,
+    startedAt: 1,
+    completedAt: 2,
+    artifacts: [],
+    preferredComputeHostIds: []
+  }
+  const startRun = vi.fn(async () => {
+    await preparation
+    return run
+  })
+  const owner = new TaskSubmissions(root, { loadRuns: async () => [], startRun })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: root,
+    rpc: { channels: () => [], invoke: vi.fn() },
+    tasks: {
+      runWithCallerContext: (_context, operation) => operation(),
+      supportsSubmissions: () => true,
+      submitRun: (id, request) => owner.submit(id, request),
+      getSubmission: (id) => owner.get(id),
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: () => run,
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn()
+    },
+    externalAccess: {
+      authorizeHttp: async () => authorizedExternalAccess(),
+      authorizeWebSocket: vi.fn()
+    },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: root,
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const lostResponse = new OpenScienceClient({
+    baseUrl,
+    token: 'test-token',
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetch(input, init)
+      if (init?.method === 'PUT') {
+        await response.arrayBuffer()
+        throw Object.assign(new Error('Response connection lost after admission.'), {
+          code: 'timeout'
+        })
+      }
+      return response
+    }
+  })
+  try {
+    await expect(
+      lostResponse.startRun(
+        { project: 'project', prompt: 'Research' },
+        { requestId: 'request-receipt' }
+      )
+    ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
+    expect(
+      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+    ).toMatchObject({ status: 'pending' })
+    expect(startRun).toHaveBeenCalledOnce()
+    expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
+    finish()
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs(['run', 'wait', '--request-id', 'request-receipt', '--json']),
+      {
+        connect: async () => client,
+        log,
+        stdinIsTTY: true
+      }
+    )
+    expect(log).toHaveBeenCalledOnce()
+    expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ id: run.id, status: 'completed' })
+    expect(startRun).toHaveBeenCalledOnce()
+  } finally {
+    finish()
+    await owner.dispose()
   }
 })

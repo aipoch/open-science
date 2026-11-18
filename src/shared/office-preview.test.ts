@@ -76,6 +76,37 @@ describe('Office preview frame messages', () => {
     ).toBe(false)
   })
 
+  it('accepts slide-view reports only with finite geometry and a session', () => {
+    const message = {
+      channel: 'open-science-office-preview',
+      version: 1,
+      type: 'slide-view',
+      slideView: { sessionId: 'session-1', slideIndex: 2, x: 4, y: 8, width: 640, height: 360 }
+    }
+
+    expect(isOfficePreviewRuntimeMessage(message)).toBe(true)
+    for (const patch of [{ width: Number.NaN }, { x: Infinity }, { sessionId: '' }]) {
+      expect(
+        isOfficePreviewRuntimeMessage({ ...message, slideView: { ...message.slideView, ...patch } })
+      ).toBe(false)
+    }
+  })
+
+  it('accepts goto-slide only with a session and a non-negative integer index', () => {
+    const message = {
+      channel: 'open-science-office-preview',
+      version: 1,
+      type: 'goto-slide',
+      sessionId: 'session-1',
+      slideIndex: 0
+    }
+
+    expect(isOfficePreviewHostMessage(message)).toBe(true)
+    expect(isOfficePreviewHostMessage({ ...message, slideIndex: -1 })).toBe(false)
+    expect(isOfficePreviewHostMessage({ ...message, slideIndex: 1.5 })).toBe(false)
+    expect(isOfficePreviewHostMessage({ ...message, sessionId: '' })).toBe(false)
+  })
+
   it('accepts only complete host start messages', () => {
     const start = {
       sessionId: 'session-1',

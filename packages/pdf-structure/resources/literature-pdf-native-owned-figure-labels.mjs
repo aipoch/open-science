@@ -2339,6 +2339,95 @@ export function nativeOwnedRasterTitleRows(
   return [rect]
 }
 
+// A partial crop through a complete vector axis can lose the bottom rail and
+// native tick row. Only a unique closed frame with a numeric scale and a
+// centered single-line axis label owns the remaining strip.
+function nativeClippedClosedAxisLabels(
+  page,
+  caption,
+  captions,
+  tables,
+  rect,
+  frames,
+  tokens,
+  font,
+  foreignOwns
+) {
+  if (page.invalidGraphicsBounds || rect[3] >= caption.rect[1]) return
+  const candidates = frames.filter(
+    (frame) =>
+      frame[0] >= rect[0] &&
+      frame[2] <= rect[2] &&
+      frame[1] >= rect[1] &&
+      frame[3] > rect[3] &&
+      frame[3] - rect[3] <= font * 3 &&
+      intersection(frame, rect) / area(frame) >= 0.75 &&
+      frame[3] - frame[1] >= font * 6 &&
+      frame[2] - frame[0] >= font * 10
+  )
+  if (candidates.length !== 1) return
+  const [frame] = candidates
+  const ticks = page.lines.filter((line) => {
+    if (
+      line.y < frame[3] ||
+      line.y - frame[3] > font * 0.6 ||
+      line.fontSize > font ||
+      line.x < frame[0] - font ||
+      line.x + line.width > frame[2] + font ||
+      line.width < (frame[2] - frame[0]) * 0.85
+    )
+      return false
+    const parts = line.text.trim().split(/\s+/u)
+    if (parts.length < 5 || !parts.every((s) => /^[−-]?\d+(?:\.\d+)?$/u.test(s))) return false
+    const vals = parts.map((s) => Number(s.replace('−', '-')))
+    const step = vals[1] - vals[0]
+    return step > 0 && vals.slice(1).every((v, n) => Math.abs(v - vals[n] - step) <= step * 0.01)
+  })
+  if (ticks.length !== 1) return
+  const [tick] = ticks
+  const title = tokens.filter(
+    (t) =>
+      t.horizontal &&
+      t.height === tick.fontSize &&
+      /^\p{L}$/u.test(t.text.trim()) &&
+      t.rect[1] > tick.y + tick.height &&
+      t.rect[1] - tick.y - tick.height <= font &&
+      Math.abs(t.rect[0] + t.rect[2] - frame[0] - frame[2]) < font * 1.5
+  )
+  if (title.length !== 1) return
+  const [axis] = title
+  const bottom = axis.rect[3] - axis.height * (axis.fontDescent ?? 0)
+  const strip = [Math.min(rect[0], tick.x), rect[3], Math.max(rect[2], tick.x + tick.width), bottom]
+  if (
+    !(bottom < caption.rect[1] - font * 0.5) ||
+    foreignOwns(strip) ||
+    captions.some((c) => c !== caption && intersection(c.rect, strip) > 0) ||
+    tables.some((r) => intersection(r, strip) > 0) ||
+    page.graphicsBounds.some((g) => {
+      const bounds = (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+      return (
+        intersection(bounds, strip) > 0 &&
+        (g.kind !== 'path' || bounds[0] < strip[0] || bounds[2] > strip[2] || bounds[3] > strip[3])
+      )
+    }) ||
+    tokens.some(
+      (t) =>
+        t.text.trim() &&
+        t !== axis &&
+        intersection(t.rect, strip) > 0 &&
+        (t.height > font ||
+          t.rect[3] > tick.y + tick.height + font * 0.1 ||
+          t.rect[0] < frame[0] - font * 2 ||
+          t.rect[2] > frame[2] + font ||
+          (t.rect[3] <= frame[3] && t.text.trim().split(/\s+/u).length > 4))
+    )
+  )
+    return
+  return [strip]
+}
+
 export function nativeOwnedFigureBottomLabels(
   page,
   caption,
@@ -2393,6 +2482,18 @@ export function nativeOwnedFigureBottomLabels(
       .filter((v) => v > 0)
   )
   if (!Number.isFinite(font) || !rect?.every(Number.isFinite)) return []
+  const axisLabels = nativeClippedClosedAxisLabels(
+    page,
+    caption,
+    captions,
+    tables,
+    rect,
+    frames,
+    tokens,
+    font,
+    foreignOwns
+  )
+  if (axisLabels) return axisLabels
   const axes = nativeOwnedRasterAxisPair(
     page,
     caption,
@@ -2486,6 +2587,25 @@ export function nativeOwnedFigureBottomLabels(
     )
   )
     return []
+  const wholeCaptionKey = (t) =>
+    t.sourceItem?.pageNumber === page.pageNumber &&
+    Number.isSafeInteger(t.sourceItem.index) &&
+    t.sourceItem.index >= 0 &&
+    t.sourceItem.text === t.text &&
+    !t.sourceSegment &&
+    tokens.filter(
+      (q) =>
+        q.sourceItem?.index === t.sourceItem.index || q.sourceSegment?.index === t.sourceItem.index
+    ).length === 1
+  const wrappedPair =
+    keys.length === 2 &&
+    keys.every(
+      ({ token, anchor }, n) =>
+        anchor &&
+        wholeCaptionKey(token) &&
+        token.text.trim().startsWith(`(${String.fromCharCode(97 + n)})`) &&
+        token.text.trim().length > 3
+    )
   const keySources = keys.map(({ token, anchor }) => {
     const parts =
       /^\([a-z]\)$/.test(token.text.trim()) && anchor
@@ -2508,7 +2628,38 @@ export function nativeOwnedFigureBottomLabels(
               !/^\([a-z]\)/.test(t.text.trim())
           )
         : []
-    return { token, anchor, parts: parts.length === 1 ? [token, parts[0]] : [token] }
+    const complete = parts.length === 1 ? [token, parts[0]] : [token]
+    if (wrappedPair && complete.every(wholeCaptionKey)) {
+      // Follow the same native text packet, not a guessed paragraph rectangle.
+      // A subcaption may wrap to its own first-row width outside a smaller image.
+      for (let row = 0; row < 2; row++) {
+        const last = complete.at(-1),
+          next = tokens.filter(
+            (t) => t.text.trim() && t.sourceItem?.index === last.sourceItem.index + 1
+          )
+        if (next.length !== 1) break
+        const t = next[0]
+        if (
+          !wholeCaptionKey(t) ||
+          !t.horizontal ||
+          !t.rect?.every(Number.isFinite) ||
+          t.height <= 0 ||
+          Math.abs(t.height - token.height) > token.height * 0.1 ||
+          t.rect[1] < last.rect[3] ||
+          t.rect[1] - last.rect[3] > token.height * 1.5 ||
+          t.rect[0] < token.rect[0] - token.height * 0.1 ||
+          t.rect[2] > token.rect[2] + token.height * 0.1 ||
+          /^\([a-z]\)/u.test(t.text.trim()) ||
+          t.rect[3] >= caption.rect[1] ||
+          foreignOwns(t.rect) ||
+          tables.some((r) => intersection(r, t.rect) > 0) ||
+          captions.some((c) => intersection(c.rect, t.rect) > 0)
+        )
+          break
+        complete.push(t)
+      }
+    }
+    return { token, anchor, parts: complete }
   })
   const ownedSources = keySources.flatMap((key) => key.parts)
   const completeKeys = keySources.map(({ token, anchor, parts }) => ({
@@ -2556,6 +2707,15 @@ export function nativeOwnedFigureBottomLabels(
   if (
     captions.some((c) => c !== caption && intersection(c.rect, strip) > 0) ||
     tables.some((r) => intersection(r, strip) > 0) ||
+    tokens.some(
+      (t) =>
+        t.rect?.every(Number.isFinite) &&
+        area(t.rect) > 0 &&
+        intersection(t.rect, strip) > 0 &&
+        !ownedSources.includes(t) &&
+        intersection(t.rect, rect) / area(t.rect) < 0.999 &&
+        !continuations.some((l) => intersection(t.rect, lineRect(l)) / area(t.rect) > 0.95)
+    ) ||
     page.lines.some((l) => {
       if (intersection(lineRect(l), strip) <= 0 || continuations.includes(l)) return false
       // Page-line grouping can combine two panel keys across a wide empty gap.
@@ -3644,6 +3804,70 @@ function nativeCutRasterLabelRow(page, caption, captions, tables, rect, tokens, 
     )
   )
     return []
+  // A complete repeated catalog can place every label just below its whole
+  // raster, rather than cutting its font box. Require the same one-to-one
+  // native row ownership for all rasters before completing its detached tail.
+  const rasters = (page.graphicsBounds ?? [])
+    .filter((g) => g.kind === 'image' && g.imageHash)
+    .map((g) =>
+      (g.paintedNormalizedRect ?? g.normalizedRect)?.map(
+        (x, n) => x * (n % 2 ? page.height : page.width)
+      )
+    )
+    .filter((r) => valid(r) && intersection(r, rect) / area(r) > 0.999)
+  if (rasters.length >= 9) {
+    const whole = (t) =>
+      t.horizontal &&
+      t.sourceItem?.pageNumber === page.pageNumber &&
+      Number.isSafeInteger(t.sourceItem.index) &&
+      t.sourceItem.index >= 0 &&
+      t.sourceItem.text === t.text &&
+      !t.sourceSegment &&
+      tokens.filter(
+        (q) =>
+          q.sourceItem?.index === t.sourceItem.index ||
+          q.sourceSegment?.index === t.sourceItem.index
+      ).length === 1
+    const labels = rasters.map((r) =>
+      source.filter(
+        (t) =>
+          whole(t) &&
+          t.rect[0] >= r[0] &&
+          t.rect[2] <= r[2] &&
+          t.rect[1] >= r[3] &&
+          t.rect[1] - r[3] < t.height &&
+          t.text.length <= 45 &&
+          !/[.!?]$/u.test(t.text.trim()) &&
+          !foreignOwns(t.rect)
+      )
+    )
+    if (
+      labels.every((row) => row.length === 1) &&
+      new Set(labels.map((row) => row[0])).size === rasters.length
+    ) {
+      const complete = labels.flat(),
+        h = complete[0].height
+      const rows = []
+      for (const r of rasters.slice().sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+        const row = rows.at(-1)
+        if (row && Math.abs(row[0][1] - r[1]) < h) row.push(r)
+        else rows.push([r])
+      }
+      const tail = complete.filter((t) => t.rect[3] > rect[3]),
+        added = [rect[0], rect[3], rect[2], Math.max(...tail.map((t) => t.rect[3]))]
+      if (
+        rows.length >= 3 &&
+        rows[0].length >= 3 &&
+        rows.every((row) => row.length === rows[0].length) &&
+        tail.length === rows.at(-1).length &&
+        complete.every((t) => Math.abs(t.height - h) < h * 0.1) &&
+        !captions.some((c) => c.page === page.pageNumber && intersection(c.rect, added) > 0) &&
+        !tables.some((t) => intersection(t, added) > 0) &&
+        !source.some((t) => !tail.includes(t) && intersection(t.rect, added) > 0)
+      )
+        return tail.map((t) => t.rect)
+    }
+  }
   const row = source.filter(
     (t) =>
       t.horizontal &&

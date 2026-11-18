@@ -1,4 +1,8 @@
-import { applyCachedPdfTableSources, isCurrentPdfTableSources } from './table-source.js'
+import {
+  applyCachedPdfTableSources,
+  isCurrentPdfTableSources,
+  getPdfTableOriginalRetention
+} from './table-source.js'
 import { applyCachedPdfFigureSources } from './figure-source.js'
 import { createPdfTranslationSource } from './source.js'
 import { structureRegionContains } from './structure-regions.js'
@@ -35,32 +39,40 @@ export async function applyCachedPdfStructureSources(
     !isCurrentPdfTableSources(tables)
   )
     return { extraction: original, retainedUnitIds: [] }
-  // Preparation keeps cell replacements, whole-region retention and their diagnostics.
+  const originalUnits = new Map(original.source.units.map((unit) => [unit.id, unit]))
+  const sameWholeOwner = (id: string): boolean => {
+    const before = originalUnits.get(id),
+      after = unstructured.extraction.source.units.find((unit) => unit.id === id)
+    return (
+      !!before &&
+      !!after &&
+      before.source === after.source &&
+      JSON.stringify(before.fragments) === JSON.stringify(after.fragments)
+    )
+  }
+  const tableRetention = getPdfTableOriginalRetention(tables)
+  const tableOwners = tableRetention?.retainedUnitIds.every(sameWholeOwner)
+    ? tableRetention.retainedUnitIds
+    : []
+  const retainedPages = [
+    ...new Set([
+      ...unstructured.retainedSourcePageNumbers,
+      ...(tableOwners.length ? tableRetention!.retainedSourcePageNumbers : [])
+    ])
+  ].sort((a, b) => a - b)
+  // Fresh fixed layout keeps native text; reflow also needs whole source pages.
   if (!args.preserveUnitIdentity)
     return {
       extraction: unstructured.extraction,
-      retainedUnitIds: [],
-      ...(unstructured.retainedSourcePageNumbers.length
-        ? { retainedSourcePageNumbers: unstructured.retainedSourcePageNumbers }
-        : {})
+      retainedUnitIds: tableOwners,
+      ...(retainedPages.length ? { retainedSourcePageNumbers: retainedPages } : {})
     }
   const proved = new Map(figures.source.units.map((unit) => [unit.id, unit]))
   const regions = figures.source.originalRegions ?? []
-  const originalUnits = new Map(original.source.units.map((unit) => [unit.id, unit]))
-  const wholeTableOwners = new Set(
-    unstructured.retainedUnitIds.every((id) => {
-      const before = originalUnits.get(id),
-        after = unstructured.extraction.source.units.find((u) => u.id === id)
-      return (
-        before &&
-        after &&
-        before.source === after.source &&
-        JSON.stringify(before.fragments) === JSON.stringify(after.fragments)
-      )
-    })
-      ? unstructured.retainedUnitIds
-      : []
-  )
+  const wholeTableOwners = new Set([
+    ...tableOwners,
+    ...(unstructured.retainedUnitIds.every(sameWholeOwner) ? unstructured.retainedUnitIds : [])
+  ])
   const retainedUnitIds = original.source.units
     .filter((unit) => {
       const next = proved.get(unit.id)
@@ -94,8 +106,8 @@ export async function applyCachedPdfStructureSources(
   )
   return {
     retainedUnitIds: Object.freeze(retainedUnitIds),
-    ...(wholeTableOwners.size && unstructured.retainedSourcePageNumbers.length
-      ? { retainedSourcePageNumbers: unstructured.retainedSourcePageNumbers }
+    ...(wholeTableOwners.size && retainedPages.length
+      ? { retainedSourcePageNumbers: retainedPages }
       : {}),
     extraction: Object.freeze({
       ...original,

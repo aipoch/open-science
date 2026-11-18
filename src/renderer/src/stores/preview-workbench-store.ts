@@ -46,6 +46,7 @@ const activeWorkbenchGuardScope = (state: PreviewWorkbenchStoreData): string | u
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 export const PROJECT_LIBRARY_PREVIEW_ID = 'tool:project:library'
 export const PROJECT_MARKETPLACE_PREVIEW_ID = 'tool:project:marketplace'
+export const PROJECT_SCHEDULE_PREVIEW_ID = 'tool:project:schedule'
 export const PROJECT_COMPUTE_PREVIEW_ID = 'tool:project:compute'
 export const sideChatTabId = (sessionId: string): string => `tool:side-chat:${sessionId}`
 
@@ -396,6 +397,13 @@ const createProjectMarketplacePreviewItem = (skillId?: string): PreviewToolItem 
   ...(skillId ? { skillDetailRequest: { skillId } } : {})
 })
 
+export const createProjectSchedulePreviewItem = (): PreviewToolItem => ({
+  id: PROJECT_SCHEDULE_PREVIEW_ID,
+  sessionId: '__project_schedule__',
+  type: 'tool',
+  toolKind: 'schedule',
+  title: 'Schedule'
+})
 const createProjectComputePreviewItem = (): PreviewToolItem => ({
   id: PROJECT_COMPUTE_PREVIEW_ID,
   sessionId: '__project_compute__',

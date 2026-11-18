@@ -238,8 +238,12 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       create: async (request) => ({ ...project, ...request })
     },
     previewResources: {
-      acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
-      release: async () => undefined
+      acquire: async () => ({
+        id: 'resource-1',
+        url: 'preview://resource-1',
+        size: 0,
+        release: async () => undefined
+      })
     },
     runtimeEvents: { subscribe: () => () => undefined },
     settings: { get: async () => settings },
@@ -457,6 +461,27 @@ describe('TaskRunner', () => {
       }
     }
   )
+
+  it('does not dispatch a late prepared prompt after disposal', async () => {
+    let finish!: (session: { sessionId: string }) => void
+    const createSession = vi.fn(
+      () =>
+        new Promise<{ sessionId: string }>((resolve) => {
+          finish = resolve
+        })
+    )
+    const prompt = vi.fn()
+    const save = vi.fn()
+    const runner = createRunner({ agent: { createSession, prompt }, sessions: { save } })
+    const pending = runner.startRun({ project: project.id, prompt: 'Research' })
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'submission_unavailable' })
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+    await runner.dispose()
+    finish({ sessionId: 'late-session' })
+    await assertion
+    expect(prompt).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+  })
 
   it.each([
     ['invalid', undefined],
@@ -1691,24 +1716,23 @@ describe('TaskRunner', () => {
         }
       ]
     }
-    const released: string[] = []
+    const release = vi.fn(async () => undefined)
     const previewResources: TaskPreviewResourcePort = {
       acquire: vi.fn(async () => ({
         id: 'resource-1',
         url: 'open-science-preview://resource-1/report.md',
         size: 12,
-        mimeType: 'text/markdown'
-      })),
-      release: async (resourceId) => {
-        released.push(resourceId)
-      }
+        mimeType: 'text/markdown',
+        release
+      }))
     }
     const runner = createRunner({
       sessions: { list: async () => [artifactSession], save: async () => undefined },
       previewResources
     })
 
-    await expect(runner.acquireArtifact('version-1')).resolves.toMatchObject({
+    const acquired = await runner.acquireArtifact('version-1')
+    expect(acquired).toMatchObject({
       resourceId: 'resource-1',
       name: 'report.md',
       mimeType: 'text/markdown'
@@ -1720,8 +1744,8 @@ describe('TaskRunner', () => {
       versionId: 'version-1',
       mimeType: 'text/markdown'
     })
-    await runner.releaseArtifact('resource-1')
-    expect(released).toEqual(['resource-1'])
+    await acquired.release()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('rejects malformed run requests before crossing a port', async () => {
@@ -2536,6 +2560,78 @@ describe('TaskRunner', () => {
         status: 'idle'
       })
     }
+  })
+
+  it('rejects imported history before attaching an Agent or saving a turn', async () => {
+    const resumeSession = vi.fn()
+    const save = vi.fn()
+    const runner = createRunner({
+      sessions: {
+        list: async () => [
+          {
+            ...session,
+            packageOrigin: {
+              importId: 'import-1',
+              sourceProjectId: 'source-project',
+              sourceSessionId: 'source-session',
+              importedAt: 1,
+              manifestChecksum: 'checksum',
+              excludedFiles: []
+            }
+          }
+        ],
+        save
+      },
+      agent: { resumeSession }
+    })
+    await expect(
+      runner.startRun({ project: project.id, sessionId: session.id, prompt: 'Continue' })
+    ).rejects.toMatchObject({ code: 'session_read_only' })
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    await runner.dispose()
+  })
+
+  it('allows the next turn immediately when the completion event is published', async () => {
+    let current = session
+    let sequence = 0
+    const runner = createRunner({
+      createId: () => `followup-${++sequence}`,
+      agent: {
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
+      },
+      sessions: {
+        list: async () => [current],
+        save: async (saved) => {
+          current = saved
+        }
+      }
+    })
+    let followup: Promise<TaskRun> | undefined
+    let firstId: string | undefined
+    runner.subscribeProgress((event) => {
+      if (event.phase === 'accepted' && !firstId) firstId = event.runId
+      if (event.phase === 'completed' && event.runId === firstId) {
+        expect(runner.getRun(event.runId).status).toBe('completed')
+        followup = runner.startRun({
+          project: project.id,
+          sessionId: session.id,
+          prompt: 'Continue'
+        })
+      }
+    })
+    const first = await runner.startRun({
+      project: project.id,
+      sessionId: session.id,
+      prompt: 'Begin'
+    })
+    await runner.waitForRun(first.id)
+    expect(followup).toBeDefined()
+    const next = await followup!
+    expect((await runner.waitForRun(next.id)).status).toBe('completed')
+    await runner.dispose()
   })
 
   it('publishes ordered Run progress from acceptance through completion', async () => {
@@ -6987,8 +7083,12 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
     new TaskRunner({
       projects: { list: async () => [], create: async () => ({}) as never },
       previewResources: {
-        acquire: async () => ({ id: 'r', url: 'preview://r', size: 0 }),
-        release: async () => undefined
+        acquire: async () => ({
+          id: 'r',
+          url: 'preview://r',
+          size: 0,
+          release: async () => undefined
+        })
       },
       runtimeEvents: { subscribe: () => () => undefined },
       settings: { get: async () => ({}) as never },

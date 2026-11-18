@@ -1,7 +1,7 @@
 import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
@@ -268,7 +268,7 @@ type WorkspacePanelLayout = {
   mobileSidebar: {
     isOpen: boolean
     open: () => void
-    close: () => void
+    close: () => HTMLElement | null
   }
   sidebar: AnimatedResizablePanel & {
     state: ResizablePanelState
@@ -298,7 +298,8 @@ type PreviewPanelLayoutPort = {
 // Presents one layout contract to WorkspacePage across desktop and mobile surfaces.
 const useWorkspacePanelLayout = (
   previewPort: PreviewPanelLayoutPort,
-  mobileSidebarDialogRef: React.RefObject<HTMLDivElement | null>
+  mobileSidebarDialogRef: React.RefObject<HTMLDivElement | null>,
+  sidebarOpenRequest?: number
 ): WorkspacePanelLayout => {
   const { t } = useTranslation()
   const [sidebarState, setSidebarState] = useState<ResizablePanelState>('open')
@@ -322,11 +323,26 @@ const useWorkspacePanelLayout = (
     rememberMobileSidebarReturnFocus()
     setIsMobileSidebarOpen(true)
   }, [rememberMobileSidebarReturnFocus])
-  const closeMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(false), [])
+  const closeMobileSidebar = useCallback((): HTMLElement | null => {
+    setIsMobileSidebarOpen(false)
+    return mobileSidebarReturnFocusRef.current
+  }, [])
   const toggleMobileSidebar = useCallback((): void => {
     if (!isMobileSidebarOpen) rememberMobileSidebarReturnFocus()
     setIsMobileSidebarOpen(!isMobileSidebarOpen)
   }, [isMobileSidebarOpen, rememberMobileSidebarReturnFocus])
+  const seenSidebarRequest = useRef<number | undefined>(undefined)
+  const openSidebarForNavigation = useEffectEvent(() => {
+    if (isMobile) {
+      if (!isMobileSidebarOpen) openMobileSidebar()
+    } else setSidebarState('open')
+  })
+  useLayoutEffect(() => {
+    if (sidebarOpenRequest === undefined || sidebarOpenRequest === seenSidebarRequest.current)
+      return
+    seenSidebarRequest.current = sidebarOpenRequest
+    openSidebarForNavigation()
+  }, [sidebarOpenRequest])
   const toggleSidebar = useCallback(
     (): void => setSidebarState((state) => (state === 'collapsed' ? 'open' : 'collapsed')),
     []
@@ -342,6 +358,7 @@ const useWorkspacePanelLayout = (
 
   const sidebar = useAnimatedResizablePanel({
     panelState: sidebarState,
+    requestVersion: sidebarOpenRequest,
     defaultOpenSize: SIDEBAR_PANEL_DEFAULT_SIZE,
     minOpenSize: SIDEBAR_PANEL_MIN_OPEN_SIZE,
     onPanelStateChange: setSidebarState,
@@ -539,6 +556,7 @@ const useWorkspacePanelLayout = (
 }
 
 type WorkspacePanelLayoutProps = {
+  sidebarOpenRequest?: number
   hasPreviewItems: boolean
   isPreviewPresentationActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
@@ -552,7 +570,10 @@ type WorkspacePanelLayoutProps = {
     }
     sidebarToggleRef: React.RefObject<HTMLButtonElement | null>
   }) => React.ReactNode
-  renderMobileSidebar: (options: { isOpen: boolean; close: () => void }) => React.ReactNode
+  renderMobileSidebar: (options: {
+    isOpen: boolean
+    close: () => HTMLElement | null
+  }) => React.ReactNode
   renderConversation: (options: {
     isPreviewPanelCollapsed: boolean
     togglePreviewPanel: () => void
@@ -562,6 +583,7 @@ type WorkspacePanelLayoutProps = {
 
 // Adapts the controller to the desktop split view and mobile drawer/sheet without owning page data.
 const WorkspacePanelLayout = ({
+  sidebarOpenRequest,
   hasPreviewItems,
   isPreviewPresentationActive = true,
   restoredPlanResponder,
@@ -576,7 +598,8 @@ const WorkspacePanelLayout = ({
   const mobileSidebarDialogRef = useRef<HTMLDivElement | null>(null)
   const { isMobile, mobileSidebar, sidebar, preview } = useWorkspacePanelLayout(
     previewPort,
-    mobileSidebarDialogRef
+    mobileSidebarDialogRef,
+    sidebarOpenRequest
   )
 
   return (

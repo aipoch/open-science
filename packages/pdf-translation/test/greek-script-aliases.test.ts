@@ -220,3 +220,45 @@ it.each(['μ', 'µ'])('does not turn a body-sized micro unit into a script: %s',
   expect(unit).toBeDefined()
   expect(actual.some((o) => o.text.normalize('NFKC').trim() === 'μ')).toBe(false)
 })
+
+it.each([
+  ['ℜ', 'ℜ', true],
+  ['ℑ', 'ℑ', true],
+  ['ℜ', 'R', false],
+  ['ℑ', 'ℜ', false]
+] as const)('preserves an owned native complex operator %s → %s', async (symbol, target, valid) => {
+  const pdf = await PDFDocument.create()
+  const page = pdf.addPage([400, 500])
+  const body = await pdf.embedFont(StandardFonts.Helvetica)
+  const symbols = await pdf.embedFont(StandardFonts.Symbol)
+  const left = 'Use '
+  const at = 40 + body.widthOfTextAtSize(left, 10)
+  page.drawText(left, { x: 40, y: 400, size: 10, font: body })
+  page.drawText(symbol, { x: at, y: 400, size: 10, font: symbols })
+  page.drawText(' to select the component.', {
+    x: at + symbols.widthOfTextAtSize(symbol, 10),
+    y: 400,
+    size: 10,
+    font: body
+  })
+  const input = {
+    data: await pdf.save(),
+    source: 'Use ' + symbol + ' to select the component.',
+    translation: '使用 ' + target + ' 选择分量。'
+  }
+  const { original, actual, failures } = await translate(input)
+  expect(original.some(({ text }) => text.trim() === symbol)).toBe(true)
+  if (valid) {
+    expect(failures).toEqual([])
+    expect(
+      actual
+        .map(({ text }) => text)
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe(input.translation.replace(/\s/gu, ''))
+    expect(actual.some(({ text }) => text.trim() === symbol)).toBe(true)
+  } else {
+    expect(failures).toMatchObject([{ unitIndex: 0, code: 'annotations' }])
+    expect(actual).toEqual(original)
+  }
+})

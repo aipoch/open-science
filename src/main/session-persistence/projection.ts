@@ -1,3 +1,5 @@
+import { SessionHistoryProjectionRepository } from './history-projection'
+import type { RuntimeSessionChanges } from '../../shared/runtime-session-projection'
 import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -60,7 +62,8 @@ const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
 
-// An in-process allocation receipt, never part of Session JSON or the database schema.
+// An in-process allocation receipt, never part of Session JSON or the database schema. Repository
+// publication may pass this token back to commitSave once to reuse the validated projection.
 export type PreparedSessionSave = {
   session: PersistedChatSession
   created: boolean
@@ -536,38 +539,151 @@ const sessionData = (
   deletedAtMs: null
 })
 
-const replaceChildren = async (
+// Compare only the projected scalar fields: database rows also include their Session foreign key.
+// This deliberately keeps full projection construction/readback for compatibility with legacy
+// snapshots and reconciliation, while avoiding writes to unchanged historical rows.
+const sameProjectedFields = (existing: object, next: object): boolean =>
+  Object.entries(next).every(([field, value]) => Reflect.get(existing, field) === value)
+
+const diffProjectionRows = <Row extends object>(
+  existing: readonly Row[],
+  next: readonly Row[],
+  identity: (row: Row) => string
+): {
+  added: Row[]
+  changed: Array<{ before: Row; after: Row }>
+  removed: string[]
+} => {
+  const remaining = new Map(existing.map((row) => [identity(row), row]))
+  const added: Row[] = []
+  const changed: Array<{ before: Row; after: Row }> = []
+  for (const row of next) {
+    const id = identity(row)
+    const before = remaining.get(id)
+    remaining.delete(id)
+    if (!before) added.push(row)
+    else if (!sameProjectedFields(before, row)) changed.push({ before, after: row })
+  }
+  return { added, changed, removed: [...remaining.keys()] }
+}
+
+const reconcileChildren = async (
   tx: Prisma.TransactionClient,
   sessionId: string,
   projection: SessionProjection
 ): Promise<void> => {
-  await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
-  await tx.sessionRun.deleteMany({ where: { sessionId } })
-  await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
-  if (projection.turnUsage.length > 0) {
+  const [existingTurns, existingCalls, existingRuns, existingArtifacts] = await Promise.all([
+    tx.sessionTurnUsage.findMany({ where: { sessionId } }),
+    tx.sessionModelCallUsage.findMany({ where: { sessionId } }),
+    tx.sessionRun.findMany({ where: { sessionId } }),
+    tx.sessionArtifactRef.findMany({ where: { sessionId } })
+  ])
+  const turns = diffProjectionRows<SessionProjection['turnUsage'][number]>(
+    existingTurns,
+    projection.turnUsage,
+    ({ messageId }) => messageId
+  )
+  const calls = diffProjectionRows<SessionProjection['modelCalls'][number]>(
+    existingCalls,
+    projection.modelCalls,
+    ({ callId }) => callId
+  )
+  const runs = diffProjectionRows<SessionProjection['runs'][number]>(
+    existingRuns,
+    projection.runs,
+    ({ messageId }) => messageId
+  )
+  const artifacts = diffProjectionRows<SessionProjection['artifactRefs'][number]>(
+    existingArtifacts,
+    projection.artifactRefs,
+    ({ artifactId }) => artifactId
+  )
+
+  // A call has both a stable ID and a unique (message, index) position. Vacate only changed
+  // positions before inserting their replacements, so swaps and moves cannot violate that index.
+  // This also detaches a moved call before its former turn is removed by the cascading FK.
+  const movedCalls = calls.changed.filter(
+    ({ before, after }) =>
+      before.messageId !== after.messageId || before.callIndex !== after.callIndex
+  )
+  const movedCallIds = new Set(movedCalls.map(({ after }) => after.callId))
+  for (const callIds of chunksOf([...calls.removed, ...movedCallIds], 500)) {
+    await tx.sessionModelCallUsage.deleteMany({ where: { sessionId, callId: { in: callIds } } })
+  }
+  for (const messageIds of chunksOf(turns.removed, 500)) {
+    await tx.sessionTurnUsage.deleteMany({ where: { sessionId, messageId: { in: messageIds } } })
+  }
+  if (turns.added.length > 0) {
     await tx.sessionTurnUsage.createMany({
-      data: projection.turnUsage.map((usage) => ({ sessionId, ...usage }))
+      data: turns.added.map((usage) => ({ sessionId, ...usage }))
     })
   }
-  if (projection.modelCalls.length > 0) {
+  for (const { after } of turns.changed) {
+    await tx.sessionTurnUsage.update({
+      where: { sessionId_messageId: { sessionId, messageId: after.messageId } },
+      data: after
+    })
+  }
+  const addedCalls = [...calls.added, ...movedCalls.map(({ after }) => after)]
+  if (addedCalls.length > 0) {
     await tx.sessionModelCallUsage.createMany({
-      data: projection.modelCalls.map((usage) => ({ sessionId, ...usage }))
+      data: addedCalls.map((usage) => ({ sessionId, ...usage }))
+    })
+  }
+  for (const { after } of calls.changed) {
+    if (movedCallIds.has(after.callId)) continue
+    await tx.sessionModelCallUsage.update({
+      where: { sessionId_callId: { sessionId, callId: after.callId } },
+      data: after
     })
   }
   // Completed auxiliary consumption is a durable fact, independent of the active title task.
-  for (const usage of projection.sessionDetailsUsage) {
-    await tx.sessionAuxiliaryTurnUsage.upsert({
-      where: { sessionId_eventId: { sessionId, eventId: usage.eventId } },
-      create: { sessionId, ...usage },
-      update: {}
+  // Keep first-write-wins semantics and leave other sources and older generation facts untouched.
+  if (projection.sessionDetailsUsage.length > 0) {
+    const existing = new Set(
+      (
+        await tx.sessionAuxiliaryTurnUsage.findMany({
+          where: {
+            sessionId,
+            eventId: { in: projection.sessionDetailsUsage.map(({ eventId }) => eventId) }
+          },
+          select: { eventId: true }
+        })
+      ).map(({ eventId }) => eventId)
+    )
+    const added = projection.sessionDetailsUsage.filter(({ eventId }) => !existing.has(eventId))
+    if (added.length > 0) {
+      await tx.sessionAuxiliaryTurnUsage.createMany({
+        data: added.map((usage) => ({ sessionId, ...usage }))
+      })
+    }
+  }
+  for (const messageIds of chunksOf(runs.removed, 500)) {
+    await tx.sessionRun.deleteMany({ where: { sessionId, messageId: { in: messageIds } } })
+  }
+  if (runs.added.length > 0) {
+    await tx.sessionRun.createMany({ data: runs.added.map((run) => ({ sessionId, ...run })) })
+  }
+  for (const { after } of runs.changed) {
+    await tx.sessionRun.update({
+      where: { sessionId_messageId: { sessionId, messageId: after.messageId } },
+      data: after
     })
   }
-  if (projection.runs.length > 0) {
-    await tx.sessionRun.createMany({ data: projection.runs.map((run) => ({ sessionId, ...run })) })
+  for (const artifactIds of chunksOf(artifacts.removed, 500)) {
+    await tx.sessionArtifactRef.deleteMany({
+      where: { sessionId, artifactId: { in: artifactIds } }
+    })
   }
-  if (projection.artifactRefs.length > 0) {
+  if (artifacts.added.length > 0) {
     await tx.sessionArtifactRef.createMany({
-      data: projection.artifactRefs.map((artifact) => ({ sessionId, ...artifact }))
+      data: artifacts.added.map((artifact) => ({ sessionId, ...artifact }))
+    })
+  }
+  for (const { after } of artifacts.changed) {
+    await tx.sessionArtifactRef.update({
+      where: { sessionId_artifactId: { sessionId, artifactId: after.artifactId } },
+      data: after
     })
   }
 }
@@ -613,7 +729,16 @@ const toSummary = (row: {
 })
 
 export class SessionProjectionRepository {
-  constructor(private readonly client: ProjectionClient) {}
+  private readonly preparedProjections = new WeakMap<
+    PreparedSessionSave,
+    { session: PersistedChatSession; projection: SessionProjection }
+  >()
+
+  readonly history: SessionHistoryProjectionRepository
+
+  constructor(private readonly client: ProjectionClient) {
+    this.history = new SessionHistoryProjectionRepository(client)
+  }
 
   async isReady(): Promise<boolean> {
     const client = await this.client()
@@ -765,11 +890,16 @@ export class SessionProjectionRepository {
       const created = await tx.session.create({ data: sessionData(projection, number) })
       return { number: created.number, created: true }
     })
-    return {
+    const prepared: PreparedSessionSave = {
       session:
         session.number === allocation.number ? session : { ...session, number: allocation.number },
       created: allocation.created
     }
+    this.preparedProjections.set(prepared, {
+      session: { ...prepared.session },
+      projection
+    })
+    return prepared
   }
 
   // The Repository must first prove that this failed first publication left no JSON authority,
@@ -811,10 +941,40 @@ export class SessionProjectionRepository {
     })
   }
 
-  async commitSave(session: PersistedChatSession): Promise<void> {
+  async commitSave(
+    session: PersistedChatSession,
+    prepared?: PreparedSessionSave,
+    history?: {
+      sourceFingerprint: string
+      changes?: RuntimeSessionChanges
+      previousSourceFingerprint?: string
+    }
+  ): Promise<void> {
     const number = session.number
     if (number === undefined) throw new Error('Session projection requires a number.')
-    const projection = buildSessionProjection(session)
+    const receipt = prepared && this.preparedProjections.get(prepared)
+    if (prepared) this.preparedProjections.delete(prepared)
+    // Only the Repository's short prepare -> publish -> commit window opts into reuse. It treats
+    // nested payloads as immutable and only changes the top-level revision after number allocation.
+    // In-place nested mutation during that window is unsupported; all other callers build afresh.
+    // Keep an independent shallow snapshot so replacing a field on prepared.session cannot hide a
+    // candidate change. Foreign, consumed, or changed receipts always take the validated full path.
+    const sameCandidate =
+      receipt &&
+      Object.keys(session).filter((field) => field !== 'revision').length ===
+        Object.keys(receipt.session).filter((field) => field !== 'revision').length &&
+      Object.entries(receipt.session).every(
+        ([field, value]) => field === 'revision' || Reflect.get(session, field) === value
+      )
+    const projection = sameCandidate
+      ? {
+          ...receipt.projection,
+          summary: {
+            ...receipt.projection.summary,
+            revision: finiteNonNegativeInteger(session.revision)
+          }
+        }
+      : buildSessionProjection(session)
     assertProjectionStorageShape(projection)
     const client = await this.client()
     await runProjectionTransaction(client, async (tx) => {
@@ -830,11 +990,20 @@ export class SessionProjectionRepository {
       if (existing.projectId !== session.projectId) {
         throw new Error('Cannot move a Session to another Project.')
       }
-      await tx.session.update({
-        where: { id: session.id },
-        data: sessionData(projection, number)
-      })
-      await replaceChildren(tx, session.id, projection)
+      const summary = sessionData(projection, number)
+      if (!sameProjectedFields(existing, summary)) {
+        await tx.session.update({ where: { id: session.id }, data: summary })
+      }
+      await reconcileChildren(tx, session.id, projection)
+      if (history)
+        await this.history.sync(
+          session,
+          history.sourceFingerprint,
+          history.changes && history.previousSourceFingerprint
+            ? { changes: history.changes, sourceFingerprint: history.previousSourceFingerprint }
+            : undefined,
+          tx
+        )
       await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
     })
   }
@@ -853,11 +1022,11 @@ export class SessionProjectionRepository {
         await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
         return
       }
-      await tx.session.update({
-        where: { id: session.id },
-        data: sessionData(projection, session.number ?? existing.number)
-      })
-      await replaceChildren(tx, session.id, projection)
+      const summary = sessionData(projection, session.number ?? existing.number)
+      if (!sameProjectedFields(existing, summary)) {
+        await tx.session.update({ where: { id: session.id }, data: summary })
+      }
+      await reconcileChildren(tx, session.id, projection)
       await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
     })
   }
@@ -913,6 +1082,7 @@ export class SessionProjectionRepository {
       if (pending?.projectId === projectId && pending.operation === 'delete') {
         await tx.bookmark.deleteMany({ where: { projectId, sessionId } })
       }
+      await this.history.delete(sessionId, tx)
       // Unreadable unindexed saves cannot block the tombstone. Keep the explicit intent
       // for replay so a repaired child can be detached without inferring deletion from absence.
       if (!options.retainDeleteIntent || pending?.operation !== 'delete') {
@@ -930,8 +1100,28 @@ export class SessionProjectionRepository {
     })
   }
 
+  async deleteProjectHistory(projectId: string): Promise<void> {
+    await (await this.client()).sessionHistoryIndex.deleteMany({ where: { projectId } })
+  }
+
   async replaceAll(sessions: readonly PersistedChatSession[]): Promise<void> {
     const client = await this.client()
+    const liveProjectIds = new Set(
+      (
+        await client.project.findMany({
+          where: { deletedAt: null },
+          select: { id: true }
+        })
+      ).map(({ id }) => id)
+    )
+    const existingLiveIds = new Set(
+      (
+        await client.session.findMany({
+          where: { deletedAtMs: null },
+          select: { id: true }
+        })
+      ).map(({ id }) => id)
+    )
     const deletedIds = new Set(
       (
         await client.session.findMany({
@@ -940,14 +1130,25 @@ export class SessionProjectionRepository {
         })
       ).map(({ id }) => id)
     )
+    const preservedInvalidIds = new Set<string>()
     const projected = sessions
-      .filter(({ id }) => !deletedIds.has(id))
-      .map((session) => {
+      .filter(({ id, projectId }) => !deletedIds.has(id) && liveProjectIds.has(projectId))
+      .flatMap((session) => {
         const number = session.number
         if (number === undefined) throw new Error('Backfilled Session is missing its number.')
-        const projection = buildSessionProjection(session)
-        assertProjectionStorageShape(projection)
-        return { session: { ...session, number }, projection }
+        try {
+          const projection = buildSessionProjection(session)
+          assertProjectionStorageShape(projection)
+          return [{ session: { ...session, number }, projection }]
+        } catch (error) {
+          if (existingLiveIds.has(session.id)) preservedInvalidIds.add(session.id)
+          createLogger('session-persistence').warn('Skipping invalid Session projection row', {
+            ...diagnosticErrorFields(error),
+            sessionId: session.id,
+            projectId: session.projectId
+          })
+          return []
+        }
       })
     const turnUsage = projected.flatMap(({ session, projection }) =>
       projection.turnUsage.map((usage) => ({ sessionId: session.id, ...usage }))
@@ -974,6 +1175,7 @@ export class SessionProjectionRepository {
       client.session.deleteMany({
         where: {
           deletedAtMs: null,
+          id: { notIn: [...preservedInvalidIds] },
           OR: [
             { project: { deletedAt: null } },
             ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])

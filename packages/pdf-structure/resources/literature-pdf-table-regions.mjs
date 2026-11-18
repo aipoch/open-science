@@ -508,6 +508,112 @@ export function recoverNativeClosedProseSymbolRows(table, items, rules, context)
   }
 }
 
+// A five-stroke parameter table owns two empty outer rails, its literal header,
+// and one complete equation value for every independently aligned body label.
+export function recoverNativeDoubleRuledParameterRows(table, items, captions, rules, context) {
+  const crop = table?.cropRect
+  if (!validRect(crop) || !context?.content || !Array.isArray(context.nativeEvidenceGraphics))
+    return
+  const strokes = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= crop[1] - 0.02 &&
+        r[1] <= crop[3] + 0.02 &&
+        r[0] >= crop[0] - 0.02 &&
+        r[2] <= crop[2] + 0.02
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    strokes.length !== 5 ||
+    strokes.some(
+      (r, n) =>
+        n && (Math.abs(r[0] - strokes[0][0]) > 0.02 || Math.abs(r[2] - strokes[0][2]) > 0.02)
+    )
+  )
+    return
+  const [top, innerTop, divider, innerBottom, bottom] = strokes,
+    frame = [top[0], top[1], top[2], bottom[1]]
+  const source = items.filter((i) => intersect(i.rect, frame) > 0)
+  if (!source.length || source.some((i) => !inside(frame, i))) return
+  const h = Math.max(...source.map((i) => i.height)),
+    topGap = innerTop[1] - top[1],
+    bottomGap = bottom[1] - innerBottom[1]
+  if (
+    !(h > 0) ||
+    topGap <= 0 ||
+    topGap > h * 0.5 ||
+    Math.abs(topGap - bottomGap) > 0.02 ||
+    captions.filter(
+      (c) =>
+        c.page === source[0].sourceItem?.pageNumber &&
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] <= top[1] &&
+        top[1] - c.rect[3] <= h * 2 &&
+        c.rect[0] < frame[2] &&
+        c.rect[2] > frame[0]
+    ).length !== 1 ||
+    captions.some((c) => intersect(c.rect, frame) > 0) ||
+    !proveNativeUniqueWholeFonts(source, items)
+  )
+    return
+  const paintCrop = nativeCompleteRuledPaintCrop(frame, strokes, context, source)
+  if (!paintCrop) return
+  const graphics = context.nativeEvidenceGraphics
+    .filter((g) => intersect(g.rect, paintCrop) > 0)
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[3] - b.rect[3])
+  if (
+    graphics.length !== strokes.length ||
+    graphics.some(({ kind, rect }, n) => {
+      const [x, y, right] = strokes[n]
+      return kind !== 'path' || x < rect[0] || right > rect[2] || y < rect[1] || y > rect[3]
+    })
+  )
+    return
+  const groups = groupSourceRowsWithScripts(
+    [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    h,
+    0.05
+  )
+  if (!groups || groups.length < 5 || groups.length > 13) return
+  const [header, ...body] = groups.map((group) => group.sort((a, b) => a.rect[0] - b.rect[0]))
+  if (
+    header.length !== 2 ||
+    header[0].text.trim().toLowerCase() !== 'parameter' ||
+    header[1].text.trim().toLowerCase() !== 'value' ||
+    header.some((i) => (i.rect[1] + i.rect[3]) / 2 <= innerTop[1] || i.rect[3] >= divider[1])
+  )
+    return
+  const stubs = body.map((g) => g[0]),
+    left = Math.max(header[0].rect[2], ...stubs.map((i) => i.rect[2])),
+    right = Math.min(header[1].rect[0], ...body.flatMap((g) => g.slice(1).map((i) => i.rect[0])))
+  if (
+    right - left < h ||
+    body.some(
+      ([stub, ...value]) =>
+        !/^\p{L}[\p{L} -]+$/u.test(stub.text) ||
+        Math.abs(stub.rect[0] - header[0].rect[0]) > 0.02 ||
+        Math.abs(stub.height - h) > 0.02 ||
+        value
+          .map((i) => i.text)
+          .join('')
+          .split('=').length !== 2 ||
+        !value.some((i) => /\d/u.test(i.text)) ||
+        [stub, ...value].some((i) => i.baseline <= divider[1] || i.rect[3] >= innerBottom[1])
+    )
+  )
+    return
+  return {
+    cuts: [frame[0], (left + right) / 2, frame[2]],
+    groups: [header, ...body],
+    consumed: source,
+    baselineHeight: h,
+    headerRows: 1,
+    cropRect: paintCrop,
+    repair: 'native-captioned-parameter-records-recovered'
+  }
+}
+
 // A complete two-field statistics body needs its own caption, three enclosing
 // horizontal rules, every central-value anchor and every whole script font.
 // This supplies physical row/column ownership; script serialization stays in
@@ -1949,11 +2055,12 @@ function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption, captio
   // that fallback when a distinct explicit title intervenes before its entire
   // rule frame; ordinary continuation titles and neighboring columns remain
   // eligible. Do not remove any existing detector-owned table.
-  const number = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(caption.lines?.[0] ?? '')?.[1]
+  const ordinal = /^Table\s+([A-Z]\.\d+(?:\.\d+)*|\d+[A-Z]?|[IVXLCDM]+)\s*(?:[:.]|$)/i
+  const number = ordinal.exec(caption.lines?.[0] ?? '')?.[1]
   if (
     number &&
     captions.some((other) => {
-      const nextNumber = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(other.lines?.[0] ?? '')?.[1]
+      const nextNumber = ordinal.exec(other.lines?.[0] ?? '')?.[1]
       return (
         other !== caption &&
         other.page === caption.page &&
@@ -2392,6 +2499,130 @@ function recoverBelowCaptionTwoLeafGrid(items, rules, captions, pageNumber, capt
           label: 'table column',
           rect: [xs[column] - crop[0], 0, x - crop[0], crop[3] - crop[1]]
         }))
+      ]
+    }
+  }
+}
+
+// Some open native tables have no top or bottom rule. A full single header
+// separator, independently painted dividers, and complete adjacent native
+// records establish the faces without relying on a detector box.
+function recoverBelowCaptionSingleSeparator(items, rules, caption, page, paint) {
+  if (caption.page !== page || !/^Table\s+\d+\s*[:.]/iu.test(caption.lines[0])) return
+  const em = caption.rect[3] - caption.rect[1]
+  if (!(em > 0)) return
+  const painted = (rule) => validRect(paint?.get(rule.join(',')))
+  const horizontal = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] >= caption.rect[0] - em &&
+      r[2] <= caption.rect[2] + em &&
+      r[2] - r[0] >= em * 12 &&
+      r[1] < caption.rect[1] &&
+      r[1] >= caption.rect[1] - em * 5 &&
+      painted(r)
+  )
+  if (horizontal.length !== 1) return
+  const [left, separator, right] = horizontal[0]
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[0] > left &&
+      r[0] < right &&
+      r[1] >= separator - em * 4 &&
+      r[3] < caption.rect[1] &&
+      painted(r)
+  )
+  const dividers = clusterTableRulePositions(vertical.map((r) => r[0]))
+  if (dividers.length < 4 || dividers.length > 8) return
+  const top = Math.min(...vertical.map((r) => r[1]))
+  const bottom = Math.max(...vertical.map((r) => r[3]))
+  if (
+    separator - top < em * 2 ||
+    bottom - separator < em * 1.5 ||
+    caption.rect[1] - bottom > em * 1.25 ||
+    dividers.some((x) => classifyTableRuleEdge(vertical, 0, x, top, bottom) !== 1)
+  )
+    return
+  const cuts = [left, ...dividers, right]
+  if (cuts.slice(1).some((x, i) => x - cuts[i] < em * 2)) return
+  const source = items
+    .filter(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < right &&
+        i.rect[2] > left &&
+        i.baseline > top - em * 0.15 &&
+        i.baseline < caption.rect[1]
+    )
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  const header = cuts.slice(1).map(() => [])
+  const records = []
+  for (const item of source) {
+    const column = cuts.findIndex(
+      (x, n) => n < cuts.length - 1 && item.rect[0] > x && item.rect[2] < cuts[n + 1]
+    )
+    if (
+      column < 0 ||
+      !item.horizontal ||
+      item.sourceItem?.text !== item.text ||
+      item.rect[3] > bottom + em * 0.08 ||
+      Math.abs(item.height - em) > em * 0.2
+    )
+      return
+    if (item.baseline < separator) {
+      if (!/\p{L}/u.test(item.text)) return
+      const center = (item.rect[0] + item.rect[2]) / 2
+      if (Math.abs(center - (cuts[column] + cuts[column + 1]) / 2) > em * 0.12) return
+      header[column].push(item)
+      continue
+    }
+    let row = records.at(-1)
+    if (!row || item.baseline - row.baseline > em * 0.2) {
+      row = { baseline: item.baseline, cells: cuts.slice(1).map(() => undefined) }
+      records.push(row)
+    }
+    if (row.cells[column]) return
+    row.cells[column] = item
+  }
+  const numeric = /^[−+-]?\d+(?:[.,]\d+)?(?:e[−+-]?\d+)?$/iu
+  if (
+    header.some((cell) => cell.length < 2 || cell.length > 4) ||
+    records.length < 2 ||
+    records.length > 5 ||
+    records.some(({ cells }) =>
+      cells.some(
+        (item, column) =>
+          !item || (column ? !numeric.test(item.text.trim()) : !/\p{L}/u.test(item.text))
+      )
+    )
+  )
+    return
+  const cropRect = [left, Math.min(top, ...source.map((i) => i.rect[1])), right, bottom]
+  const [x0, y0] = cropRect
+  const object = (label, rect) => ({ label, rect: rect.map((v, n) => v - (n % 2 ? y0 : x0)) })
+  const rows = [
+    y0,
+    separator,
+    ...records
+      .slice(1)
+      .map(
+        ({ cells }, n) =>
+          (Math.max(...records[n].cells.map((i) => i.rect[3])) +
+            Math.min(...cells.map((i) => i.rect[1]))) /
+          2
+      ),
+    bottom
+  ]
+  return {
+    id: `page-${page}-table-1`,
+    recoveredGrid: true,
+    cropRect,
+    structure: {
+      objects: [
+        ...rows.slice(1).map((y, n) => object('table row', [left, rows[n], right, y])),
+        ...cuts.slice(1).map((x, n) => object('table column', [cuts[n], y0, x, bottom])),
+        object('table column header', [left, y0, right, separator])
       ]
     }
   }
@@ -2903,6 +3134,7 @@ export function recoverCaptionedRuledTables(
         rulePaintBounds,
         runs
       ) ??
+      recoverBelowCaptionSingleSeparator(items, rules, caption, pageNumber, rulePaintBounds) ??
       (suppressOpenRuleCandidate ? undefined : earlyOpenRule)
     if (closed) {
       if (

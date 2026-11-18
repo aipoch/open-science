@@ -33,7 +33,7 @@ import {
   CLAUDE_SHARED_PROVIDER_ID,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'

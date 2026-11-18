@@ -1,7 +1,7 @@
 import { initDataRoot } from '../storage-root'
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 
@@ -38,9 +38,30 @@ import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
 import { SessionAuxiliaryTurnUsageRecorder } from './auxiliary-turn-usage'
 import { SessionRepository } from './repository'
+import { sessionJournalPath, SessionJournalStore } from './journal'
 import { encodeSessionDataPaths } from './session-data-paths'
 import { ComputeJobOperationRepository } from '../compute/compute-job-operation-repository'
 import type { SessionLoadDiagnostic } from './repository'
+
+const readLogicalSessionText = async (path: string): Promise<string> => {
+  const stored = await new SessionJournalStore({ maxBytes: MAX_PERSISTED_SESSION_BYTES }).read(path)
+  if (!stored) throw new Error(`Missing test Session: ${path}`)
+  return JSON.stringify(stored.document)
+}
+
+const restoreLegacyJsonFixture = async (path: string): Promise<void> => {
+  const value = await readLogicalSessionText(path)
+  for (const file of (
+    await new SessionJournalStore({ maxBytes: MAX_PERSISTED_SESSION_BYTES }).inspectStorage(path)
+  ).paths)
+    await rm(file)
+  await writeFile(path, value)
+}
+
+const readTemporarySession = async (temporaryPath: string): Promise<PersistedChatSession> => {
+  const initial = JSON.parse((await readFile(temporaryPath, 'utf8')).trim())
+  return initial.document.session
+}
 
 const createDeferred = <Value>(): {
   promise: Promise<Value>
@@ -699,7 +720,9 @@ describe('Session projection', () => {
     })
     await files.saveSession({ ...session('unrelated'), parentSessionId: 'import-other' })
     // A missing file alone never authorizes detachment.
-    await rm(join(storageRoot, 'sessions', parent.projectId, parent.id + '.json'))
+    await rm(
+      sessionJournalPath(join(storageRoot, 'sessions', parent.projectId, parent.id + '.json'))
+    )
     await files.recoverDeletedDiscussionChildren(parent.projectId, parent.id)
     expect((await files.loadSession(parent.projectId, child.id))?.parentSessionId).toBe(parent.id)
     await index.markPending(parent.projectId, parent.id, 'delete')
@@ -738,21 +761,22 @@ describe('Session projection', () => {
     const known = await files.saveSession({ ...session('known'), parentSessionId: parent.id })
     const file = (id: string): string =>
       join(storageRoot!, 'sessions', parent.projectId, id + '.json')
-    // Both projections predate their pending saves. Only the JSON can identify the new child.
+    const journalFile = (id: string): string => sessionJournalPath(file(id))
+    // Both projections predate their pending saves. Only the JSONL can identify the new child.
     const ordinary = await files.saveSession(session('ordinary'))
     const late = await files.saveSession(session('late'))
     for (const saved of [ordinary, late]) {
       await index.markPending(parent.projectId, saved.id)
-      await writeFile(file(saved.id), '{')
+      await writeFile(journalFile(saved.id), '{')
     }
     // A confirmed child must be detached before the deletion can commit.
-    const knownContents = await readFile(file(known.id))
-    await writeFile(file(known.id), '{')
+    const knownContents = await readFile(journalFile(known.id))
+    await writeFile(journalFile(known.id), '{')
     await expect(files.deleteSession(parent.projectId, parent.id)).rejects.toThrow(
       'unreadable discussion'
     )
     expect(await index.isDeleted(parent.projectId, parent.id)).toBe(false)
-    await writeFile(file(known.id), knownContents)
+    await writeFile(journalFile(known.id), knownContents)
     // The unrelated unreadable saves predate the delete intent and must not stall replay.
     await files.reconcilePendingSessionProjection()
     expect(await index.isDeleted(parent.projectId, parent.id)).toBe(true)
@@ -774,6 +798,7 @@ describe('Session projection', () => {
 
     const repaired = { ...late, parentSessionId: parent.id }
     await writeFile(file(late.id), JSON.stringify(createSessionFile(repaired)))
+    await rm(journalFile(late.id), { force: true })
     await files.reconcilePendingSessionProjection()
     const detached = await files.loadSession(parent.projectId, late.id)
     expect(detached?.parentSessionId).toBeUndefined()
@@ -784,6 +809,7 @@ describe('Session projection', () => {
       'ordinary'
     ])
     await writeFile(file(ordinary.id), JSON.stringify(createSessionFile(ordinary)))
+    await rm(journalFile(ordinary.id), { force: true })
     await files.reconcilePendingSessionProjection()
     expect(
       (await files.loadSession(parent.projectId, ordinary.id))?.deletedDiscussionSourceId
@@ -820,7 +846,7 @@ describe('Session projection', () => {
     const repository = new SessionRepository(storageRoot, {}, projection)
     const saved = await repository.saveSession(session('session-1'))
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'session-1.json')
-    const originalAuthority = await readFile(authorityPath, 'utf8')
+    const originalAuthority = await readFile(sessionJournalPath(authorityPath), 'utf8')
 
     await expect(
       repository.saveSession({
@@ -830,7 +856,7 @@ describe('Session projection', () => {
       })
     ).rejects.toThrow('Session projection updatedAt must be a non-negative safe integer.')
 
-    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    expect.soft(await readFile(sessionJournalPath(authorityPath), 'utf8')).toBe(originalAuthority)
     await expect(projection.pending()).resolves.toEqual([])
   })
 
@@ -879,9 +905,8 @@ describe('Session projection', () => {
     }
     expect(copiedBytes).toBeLessThan(3 * graphBytes)
     expect(JSON.stringify(candidate)).toBe(original)
-    const contents = await readFile(
-      join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`),
-      'utf8'
+    const contents = await readLogicalSessionText(
+      join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`)
     )
     const expected = createSessionFile(
       encodeSessionDataPaths({ ...candidate, number: saved.number, revision: saved.revision })
@@ -895,7 +920,9 @@ describe('Session projection', () => {
     const repaired = await repository.saveSession({ ...saved, number: 999 })
     expect(repaired).toMatchObject({ number: 1, revision: 2 })
     const repairedContents = JSON.parse(
-      await readFile(join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`), 'utf8')
+      await readLogicalSessionText(
+        join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`)
+      )
     )
     expect(repairedContents.session).toMatchObject({ number: 1, revision: 2 })
     expect(repairedContents.session.conversationGraph).toEqual(
@@ -932,8 +959,11 @@ describe('Session projection', () => {
     const candidate = session('number-boundary')
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'number-boundary.json')
     await new SessionRepository(storageRoot).saveSession(candidate)
-    const maxSessionBytes = (await lstat(authorityPath)).size
-    await rm(authorityPath)
+    const maxSessionBytes = Buffer.byteLength(await readLogicalSessionText(authorityPath))
+    const authorityFiles = await new SessionJournalStore({
+      maxBytes: MAX_PERSISTED_SESSION_BYTES
+    }).inspectStorage(authorityPath)
+    for (const file of authorityFiles.paths) await rm(file)
 
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
@@ -963,7 +993,9 @@ describe('Session projection', () => {
     const initialRepository = new SessionRepository(storageRoot, {}, projection)
     const saved = await initialRepository.saveSession(session('existing-oversized'))
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'existing-oversized.json')
+    await restoreLegacyJsonFixture(authorityPath)
     const maxSessionBytes = (await lstat(authorityPath)).size + 1024
+    await restoreLegacyJsonFixture(authorityPath)
     await truncate(authorityPath, maxSessionBytes + 1)
     const repository = new SessionRepository(storageRoot, { maxSessionBytes }, projection)
 
@@ -1009,7 +1041,7 @@ describe('Session projection', () => {
     const repository = new SessionRepository(storageRoot, {}, projection)
     const saved = await repository.saveSession(session('context-window'))
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'context-window.json')
-    const originalAuthority = await readFile(authorityPath, 'utf8')
+    const originalAuthority = await readFile(sessionJournalPath(authorityPath), 'utf8')
     const invalid = { ...session('context-window'), number: saved.number, revision: saved.revision }
     invalid.messages[1].modelCallUsage![0].contextWindowSize = 0
 
@@ -1018,7 +1050,7 @@ describe('Session projection', () => {
       .then(() => undefined)
       .catch((error: unknown) => error)
 
-    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    expect.soft(await readFile(sessionJournalPath(authorityPath), 'utf8')).toBe(originalAuthority)
     expect(saveError).toEqual(
       expect.objectContaining({
         message: 'Session projection modelCall.contextWindowSize must be a positive safe integer.'
@@ -1037,7 +1069,7 @@ describe('Session projection', () => {
     const repository = new SessionRepository(storageRoot, {}, projection)
     const saved = await repository.saveSession(session('blank-source'))
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'blank-source.json')
-    const originalAuthority = await readFile(authorityPath, 'utf8')
+    const originalAuthority = await readFile(sessionJournalPath(authorityPath), 'utf8')
     const invalid = { ...session('blank-source'), number: saved.number, revision: saved.revision }
     invalid.messages[1].modelCallUsage![0].sourceInvocationId = ' '
 
@@ -1046,7 +1078,7 @@ describe('Session projection', () => {
       .then(() => undefined)
       .catch((error: unknown) => error)
 
-    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    expect.soft(await readFile(sessionJournalPath(authorityPath), 'utf8')).toBe(originalAuthority)
     expect(saveError).toEqual(
       expect.objectContaining({
         message: 'Session projection modelCall.sourceInvocationId must be a non-empty string.'
@@ -1065,7 +1097,7 @@ describe('Session projection', () => {
     const repository = new SessionRepository(storageRoot, {}, projection)
     const saved = await repository.saveSession(session('invalid-status'))
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'invalid-status.json')
-    const originalAuthority = await readFile(authorityPath, 'utf8')
+    const originalAuthority = await readFile(sessionJournalPath(authorityPath), 'utf8')
     const invalid = { ...session('invalid-status'), number: saved.number, revision: saved.revision }
     Object.assign(invalid, { status: 'paused' })
 
@@ -1074,7 +1106,7 @@ describe('Session projection', () => {
       .then(() => undefined)
       .catch((error: unknown) => error)
 
-    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    expect.soft(await readFile(sessionJournalPath(authorityPath), 'utf8')).toBe(originalAuthority)
     expect(saveError).toEqual(
       expect.objectContaining({
         message: 'Session projection status must be a persisted Session status.'
@@ -1434,7 +1466,7 @@ describe('Session projection', () => {
     { existing: false, publication: 'temporary' },
     { existing: false, publication: 'published' }
   ] as const)(
-    'preserves the correct retry authority after rename failure ($existing, $publication)',
+    'preserves the correct retry authority after publication failure ($existing, $publication)',
     async ({ existing, publication }) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-rename-recovery-'))
       initDataRoot(storageRoot)
@@ -1447,20 +1479,31 @@ describe('Session projection', () => {
       const original = existing
         ? await files.saveSession(session('session-1'))
         : session('session-1')
-      const failure = new Error('injected Session rename failure')
+      const failure = new Error('injected Session publication failure')
+      const authorityPath = join(storageRoot, 'sessions', 'project-1', 'session-1.json')
       let temporaryPath: string | undefined
       const failing = new SessionRepository(
         storageRoot,
         {
           renameFile: async (source, destination) => {
+            if (destination !== sessionJournalPath(authorityPath))
+              return rename(source, destination)
             temporaryPath = source
             if (publication === 'published') await rename(source, destination)
             throw failure
           },
           remove: async (path, options) => {
-            if (publication === 'temporary') throw new Error('temporary cleanup failed')
+            if (publication === 'temporary' && path === temporaryPath)
+              throw new Error('temporary cleanup failed')
             await rm(path, options)
-          }
+          },
+          journalDependencies: existing
+            ? {
+                appendFile: async () => {
+                  throw failure
+                }
+              }
+            : undefined
         },
         projection
       )
@@ -1483,7 +1526,7 @@ describe('Session projection', () => {
         if (publication === 'temporary') {
           // A failed temporary cleanup is unresolved authority, not permission to discard its index.
           // Automatic pending replay of a temp-only Session is a separate recovery contract.
-          expect(JSON.parse(await readFile(temporaryPath!, 'utf8')).session.title).toBe('New title')
+          expect((await readTemporarySession(temporaryPath!)).title).toBe('New title')
           return
         }
         await files.ensureSessionProjection(() => files.loadAll())
@@ -1506,12 +1549,15 @@ describe('Session projection', () => {
       const projection = new SessionProjectionRepository(async () => client!)
       const files = new SessionRepository(storageRoot, {}, projection)
       await files.ensureSessionProjection(() => files.loadAll())
-      const failure = new Error('injected Session rename failure')
+      const failure = new Error('injected Session publication failure')
+      const authorityPath = join(storageRoot, 'sessions', 'project-1', 'session-1.json')
       let temporaryPath: string | undefined
       const failing = new SessionRepository(
         storageRoot,
         {
-          renameFile: async (source) => {
+          renameFile: async (source, destination) => {
+            if (destination !== sessionJournalPath(authorityPath))
+              return rename(source, destination)
             temporaryPath = source
             throw failure
           },
@@ -1524,7 +1570,7 @@ describe('Session projection', () => {
       const draft = session('session-1')
       await expect(failing.saveSession(draft, 0)).rejects.toBe(failure)
       const temporaryContents = await readFile(temporaryPath!, 'utf8')
-      expect(JSON.parse(temporaryContents).session.id).toBe(draft.id)
+      expect((await readTemporarySession(temporaryPath!)).id).toBe(draft.id)
 
       if (recovery === 'pending replay') await files.reconcilePendingSessionProjection()
       else await files.ensureSessionProjection(() => files.loadAll())
@@ -1840,6 +1886,75 @@ describe('Session projection', () => {
     })
   })
 
+  it('repairs an unindexed historical Session when a ready projection drifts', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-drift-backfill-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+
+    const files = new SessionRepository(storageRoot)
+    const indexed = await files.saveSession({ ...session('indexed', 100), number: 1 })
+    await files.saveSession(session('missing-number', 200))
+
+    const projection = new SessionProjectionRepository(async () => client!)
+    await projection.replaceAll([indexed])
+    const repository = new SessionRepository(storageRoot, {}, projection)
+
+    const initialized = await repository.ensureSessionProjection(() => files.loadAll())
+
+    expect(initialized.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'indexed', number: 1 }),
+        expect.objectContaining({ id: 'missing-number', number: 2 })
+      ])
+    )
+    await expect(repository.loadSession('project-1', 'missing-number')).resolves.toMatchObject({
+      number: 2
+    })
+    const repairedPath = sessionJournalPath(
+      join(storageRoot, 'sessions', 'project-1', 'missing-number.json')
+    )
+    const repairedFile = JSON.parse(await readLogicalSessionText(repairedPath)) as {
+      session: PersistedChatSession
+    }
+    expect(repairedFile.session.number).toBe(2)
+    await expect(
+      lstat(join(storageRoot, 'sessions', 'project-1', 'missing-number.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(repairedPath.endsWith('.jsonl')).toBe(true)
+    await expect(projection.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'indexed', number: 1 }),
+        expect.objectContaining({ id: 'missing-number', number: 2 })
+      ])
+    )
+  })
+
+  it('keeps the ready projection when drift includes an invalid historical Session', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-invalid-drift-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+
+    const files = new SessionRepository(storageRoot)
+    const indexed = await files.saveSession({ ...session('indexed', 100), number: 1 })
+    await files.saveSession(sessionWithInvalidProjection('invalid', 200))
+
+    const projection = new SessionProjectionRepository(async () => client!)
+    await projection.replaceAll([indexed])
+    const repository = new SessionRepository(storageRoot, {}, projection)
+
+    await expect(repository.ensureSessionProjection(() => files.loadAll())).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ id: indexed.id, number: 1 })]
+    })
+    await expect(projection.list()).resolves.toEqual([
+      expect.objectContaining({ id: indexed.id, number: 1 })
+    ])
+    await expect(projection.isReady()).resolves.toBe(true)
+  })
+
   it('scans historical Session authority once while building the projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-backfill-'))
     initDataRoot(storageRoot)
@@ -1888,6 +2003,9 @@ describe('Session projection', () => {
     const repository = new SessionRepository(storageRoot, {}, projection)
     const saved = await repository.saveSession(session('session-1'))
     await repository.ensureSessionProjection(() => repository.loadAll())
+    await restoreLegacyJsonFixture(
+      join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    )
     await truncate(
       join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`),
       MAX_PERSISTED_SESSION_BYTES + 1
@@ -1919,6 +2037,7 @@ describe('Session projection', () => {
     const saved = await repository.saveSession(session('session-1'))
     await repository.ensureSessionProjection(() => repository.loadAll())
     const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await restoreLegacyJsonFixture(authorityPath)
     await truncate(authorityPath, MAX_PERSISTED_SESSION_BYTES + 1)
 
     const loadAuthority = async (): Promise<LoadAllSessionsResult> => {
@@ -1931,7 +2050,13 @@ describe('Session projection', () => {
     await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
       sessions: [{ id: saved.id }]
     })
-    await rename(authorityPath, join(storageRoot, 'removed-session.json'))
+    const removedDirectory = join(storageRoot, 'removed-session')
+    await mkdir(removedDirectory)
+    const authorityFiles = await new SessionJournalStore({
+      maxBytes: MAX_PERSISTED_SESSION_BYTES
+    }).inspectStorage(authorityPath)
+    for (const file of authorityFiles.paths)
+      await rename(file, join(removedDirectory, basename(file)))
 
     expect(await repository.reconcileMissingSessionProjection(saved.projectId, saved.id)).toBe(true)
 
@@ -1953,6 +2078,7 @@ describe('Session projection', () => {
     const saved = await repository.saveSession(session('session-1'))
     await repository.ensureSessionProjection(() => repository.loadAll())
     const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await restoreLegacyJsonFixture(authorityPath)
     await writeFile(`${authorityPath}.1700000000000-1.tmp`, '', 'utf8')
     await truncate(`${authorityPath}.1700000000000-1.tmp`, maxSessionBytes + 1)
 
@@ -2028,7 +2154,7 @@ describe('Session projection', () => {
       data: { projectionVersion: 6 }
     })
     const sourcePath = join(storageRoot, 'sessions', 'project-1', 'imported.json')
-    const before = await readFile(sourcePath)
+    const before = await readFile(sessionJournalPath(sourcePath))
     const files = new SessionRepository(storageRoot)
     const rebuilt = await repository.ensureSessionProjection(() => files.loadAll())
     expect(rebuilt.sessions).toEqual([
@@ -2038,7 +2164,7 @@ describe('Session projection', () => {
         needsStartupRecovery: false
       })
     ])
-    expect(await readFile(sourcePath)).toEqual(before)
+    expect(await readFile(sessionJournalPath(sourcePath))).toEqual(before)
     expect(await projection.isReady()).toBe(true)
   })
 
@@ -2092,6 +2218,35 @@ describe('Session projection', () => {
     await expect(projection.list()).resolves.toEqual([
       expect.objectContaining({ id: 'stale', number: 1 })
     ])
+  })
+
+  it('keeps healthy sessions available when rebuild sees an orphaned Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-orphan-rebuild-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.createMany({
+      data: [
+        { id: 'project-1', name: 'Project 1' },
+        { id: 'project-2', name: 'Project 2' }
+      ]
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const healthy = await repository.saveSession(session('healthy', 100))
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession({ ...session('orphan', 200), projectId: 'project-2' })
+    await client.project.update({ where: { id: 'project-2' }, data: { deletedAt: new Date() } })
+    await projection.replaceAll([healthy])
+    await client.sessionProjectionState.update({
+      where: { id: 'session-projection' },
+      data: { projectionVersion: 1 }
+    })
+
+    await expect(repository.ensureSessionProjection(() => files.loadAll())).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ id: healthy.id })]
+    })
+    await expect(projection.isReady()).resolves.toBe(true)
   })
 
   it('publishes a fresh authority scan when a Session save overlaps initial backfill', async () => {

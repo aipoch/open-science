@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { once } from 'node:events'
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -108,6 +109,97 @@ function findNsisCompiler(): string | undefined {
 }
 
 const nsisCompiler = findNsisCompiler()
+// Compiles a silent NSIS fixture; makensis warnings fail like electron-builder's build.
+function compileNsisFixture(source: string, lines: string[]): void {
+  writeFileSync(source, lines.join('\n'))
+  const result = spawnSync(nsisCompiler!, ['/V2', '/WX', source], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 30_000
+  })
+  expect(result.status, result.stdout + result.stderr).toBe(0)
+}
+
+describe.skipIf(!nsisCompiler)('NSIS native installation process inventory', () => {
+  it('finds and stops one installation process without touching a sibling or itself', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nsis-process-root-'))
+    const install = join(root, "O'Brien Lab", 'Open-Science')
+    const sibling = `${install}-dev`
+    const output = join(root, 'result.txt')
+    const children: ReturnType<typeof spawn>[] = []
+    const exits: Promise<unknown>[] = []
+    try {
+      mkdirSync(install, { recursive: true })
+      // Both fixtures run from inside the installation, so their own image path matches the root.
+      const fixture = (name: string, body: string[]): string => {
+        const executable = join(install, `${name}.exe`)
+        compileNsisFixture(join(root, `${name}.nsi`), [
+          'Unicode true',
+          'RequestExecutionLevel user',
+          'SilentInstall silent',
+          `OutFile "${executable}"`,
+          `!include "${join(repoRoot, 'build/windows-install-processes.nsh')}"`,
+          'Section',
+          `FileOpen $9 "${output}" w`,
+          ...body,
+          'FileClose $9',
+          'SectionEnd'
+        ])
+        return executable
+      }
+      const self = fixture('self', [
+        '!insertmacro openScienceInstallProcesses "$EXEDIR\\" find $0',
+        'FileWrite $9 "$0"'
+      ])
+      const sweep = fixture('sweep', [
+        '!insertmacro openScienceInstallProcesses "$EXEDIR" find $0',
+        'FileWrite $9 "$0,"',
+        '!insertmacro openScienceInstallProcesses "$EXEDIR" stop $0',
+        'FileWrite $9 "$0,"',
+        // TerminateProcess is asynchronous; the installer flow also waits before re-checking.
+        'Sleep 300',
+        '!insertmacro openScienceInstallProcesses "$EXEDIR" find $0',
+        'FileWrite $9 "$0"'
+      ])
+      const start = async (
+        directory: string
+      ): Promise<{ child: ReturnType<typeof spawn>; exit: Promise<unknown> }> => {
+        mkdirSync(directory, { recursive: true })
+        const executable = join(directory, 'probe.exe')
+        if (!existsSync(executable))
+          copyFileSync(
+            join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/PING.EXE'),
+            executable
+          )
+        const child = spawn(executable, ['-n', '60', '127.0.0.1'], {
+          stdio: 'ignore',
+          windowsHide: true
+        })
+        children.push(child)
+        const exit = once(child, 'exit')
+        exits.push(exit)
+        await once(child, 'spawn')
+        return { child, exit }
+      }
+      const run = (executable: string): string => {
+        const result = spawnSync(executable, ['/S'], { windowsHide: true, timeout: 30_000 })
+        expect(result.error).toBeUndefined()
+        expect(result.status).toBe(0)
+        return readFileSync(output, 'utf8')
+      }
+      const other = await start(sibling)
+      expect(run(self)).toBe('1')
+      const target = await start(install)
+      expect(run(sweep)).toBe('0,0,1')
+      await target.exit
+      expect(other.child.exitCode).toBeNull()
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill()
+      await Promise.all(exits)
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 90_000)
+})
 
 describe.skipIf(!nsisCompiler)('NSIS manual uninstall coordination', () => {
   it.each(['installer-first', 'uninstaller-first', 'nested-update', 'lock-unavailable'])(
@@ -185,10 +277,8 @@ describe.skipIf(!nsisCompiler)('NSIS manual uninstall coordination', () => {
                     '!macroend',
                     '!macro initMultiUser',
                     '!macroend',
-                    '!macro IS_POWERSHELL_AVAILABLE',
-                    '!macroend',
                     // Observe the exact boundary that can terminate application processes.
-                    '!macro _CHECK_APP_RUNNING',
+                    '!macro openScienceCheckAppRunning',
                     `FileOpen $0 "${processCheck}" w`,
                     'FileClose $0',
                     '!macroend',
@@ -280,26 +370,32 @@ describe.skipIf(!nsisCompiler)('NSIS manual uninstall coordination', () => {
 })
 
 describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
-  it('runs the upstream check with native PowerShell on AMD64', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nsis-app-check-'))
-    try {
-      const executable = join(root, 'check.exe')
-      const output = join(root, 'result.txt')
-      const source = join(root, 'check.nsi')
-      // An uncreated, unique executable name keeps this test on the no-process path.
-      const name = `unused-${root.split(/[/\\]/).at(-1)}.exe`
-      writeFileSync(
-        source,
-        [
+  it.each([
+    ['without a running process', false],
+    ['closing a running process during an update', true]
+  ])(
+    'runs the native check %s',
+    async (_label, running) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-app-check-'))
+      const install = join(root, 'app')
+      const children: ReturnType<typeof spawn>[] = []
+      const exits: Promise<unknown>[] = []
+      try {
+        const executable = join(root, 'check.exe')
+        const output = join(root, 'result.txt')
+        // A unique executable name keeps the installer self-name guard out of the way.
+        const name = `unused-${root.split(/[/\\]/).at(-1)}.exe`
+        compileNsisFixture(join(root, 'check.nsi'), [
           'Unicode true',
           'RequestExecutionLevel user',
           'SilentInstall silent',
           `OutFile "${executable}"`,
-          `InstallDir "${join(root, 'app')}"`,
+          `InstallDir "${install}"`,
           `!addincludedir "${join(appBuilderLibRoot, 'templates/nsis/include')}"`,
           '!include LogicLib.nsh',
-          '!define isUpdated "0 == 1"',
+          `!define isUpdated "${running ? '1 == 1' : '0 == 1'}"`,
           `!define APP_EXECUTABLE_FILENAME "${name}"`,
+          '!define PRODUCT_NAME "Fixture"',
           `!include "${join(repoRoot, 'build/windows-app-running.nsh')}"`,
           '!include allowOnlyOneInstallerInstance.nsh',
           'LoadLanguageFile "${NSISDIR}/Contrib/Language files/English.nlf"',
@@ -308,41 +404,48 @@ describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
           'LangString appCannotBeClosed 1033 "Fixture cannot close"',
           'Section',
           '!insertmacro CHECK_APP_RUNNING',
-          `nsExec::ExecToStack '"$PowerShellPath" -NoProfile -NonInteractive -Command "[Environment]::Is64BitProcess"'`,
-          'Pop $2',
-          'Pop $1',
           `FileOpen $0 "${output}" w`,
-          'FileWrite $0 "code=$2$\\r$\\nbitness=$1host=$PowerShellPath$\\r$\\n"',
-          '${If} ${IsNativeAMD64}',
-          'FileWrite $0 "nativeAMD64=true"',
-          '${Else}',
-          'FileWrite $0 "nativeAMD64=false"',
-          '${EndIf}',
+          'FileWrite $0 "checked"',
           'FileClose $0',
           'SectionEnd'
-        ].join('\n')
-      )
-      const compiled = spawnSync(nsisCompiler!, ['/V2', source], {
-        windowsHide: true,
-        encoding: 'utf8',
-        timeout: 30_000
-      })
-      expect(compiled.status, compiled.stderr).toBe(0)
-      const run = spawnSync(executable, ['/S'], { windowsHide: true, timeout: 30_000 })
-      expect(run.error).toBeUndefined()
-      expect(run.status).toBe(0)
-      const result = readFileSync(output, 'utf8')
-      expect(result).toContain('code=0')
-      if (result.includes('nativeAMD64=true')) {
-        expect(result).toContain('bitness=True')
-        expect(result).toMatch(/host=.*\\Sysnative\\WindowsPowerShell/)
-      } else {
-        expect(result).not.toContain('\\Sysnative\\')
+        ])
+        const start = async (
+          directory: string
+        ): Promise<{ child: ReturnType<typeof spawn>; exit: Promise<unknown> }> => {
+          mkdirSync(directory, { recursive: true })
+          const probe = join(directory, 'probe.exe')
+          copyFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/PING.EXE'), probe)
+          const child = spawn(probe, ['-n', '60', '127.0.0.1'], {
+            stdio: 'ignore',
+            windowsHide: true
+          })
+          children.push(child)
+          const exit = once(child, 'exit')
+          exits.push(exit)
+          await once(child, 'spawn')
+          return { child, exit }
+        }
+        const sibling = await start(`${install}-dev`)
+        const target = running ? await start(install) : undefined
+        const startedAt = Date.now()
+        const run = spawnSync(executable, ['/S'], { windowsHide: true, timeout: 30_000 })
+        const elapsed = Date.now() - startedAt
+        expect(run.error).toBeUndefined()
+        expect(run.status).toBe(0)
+        expect(readFileSync(output, 'utf8')).toBe('checked')
+        if (target) await target.exit
+        expect(sibling.child.exitCode).toBeNull()
+        // No PowerShell launch remains: an idle check is immediate, and an update pays only the
+        // upstream 300 ms + 1000 ms grace waits and the 300 ms post-stop wait.
+        expect(elapsed).toBeLessThan(running ? 5_000 : 2_000)
+      } finally {
+        for (const child of children) if (child.exitCode === null) child.kill()
+        await Promise.all(exits)
+        rmSync(root, { recursive: true, force: true })
       }
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  }, 65_000)
+    },
+    65_000
+  )
 })
 
 describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
@@ -391,7 +494,10 @@ describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
         // UI output to a file so an error dialog cannot block unattended regression runs.
         const observed = `${macro}\n${restore}`
           .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+          .replace(
+            /^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm,
+            'FileWriteUTF16LE $9 $1'
+          )
         const output = join(root, 'result.txt')
         const executable = join(root, 'probe.exe')
         const source = join(root, 'probe.nsi')
@@ -519,9 +625,9 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       writeFileSync(applicationFile, 'old application')
       mkdirSync(join(install, 'resources'), { recursive: true })
       const retryFiles = [
-        'resources/windows-update-handoff-uninstall.ps1',
-        'resources/windows-notebook-sandbox-uninstall.ps1',
-        'resources/windows-runtime-cache-uninstall.ps1',
+        'resources/retry-owned-a.txt',
+        'resources/retry-owned-b.txt',
+        'resources/retry-owned-c.txt',
         'Uninstall open-science.exe'
       ]
       retryFiles.forEach((file, index) =>
@@ -567,7 +673,10 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
         })
         .join('\n')
         .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-        .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+        .replace(
+          /^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm,
+          'FileWriteUTF16LE $9 $1'
+        )
       const upstream = readFileSync(
         join(appBuilderLibRoot, 'templates/nsis/uninstaller.nsh'),
         'utf8'
@@ -613,9 +722,8 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       }
       const cleanupPath = join(repoRoot, 'build/windows-program-cleanup.nsh')
       const cleanup = existsSync(cleanupPath) ? readFileSync(cleanupPath, 'utf8') : ''
-      require('./compile-windows-install-publication.cjs')(
-        join(repoRoot, 'build/windows-install-publication.cs'),
-        join(root, 'out/windows-installer/ia32/windows-install-publication.dll')
+      require('./compile-windows-install-publication.cjs').uninstallHelper(
+        join(root, 'out/windows-installer/ia32/windows-uninstall-helper.exe')
       )
       for (const version of ['old', 'current']) {
         compileAndRun(
@@ -1098,48 +1206,44 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(recovery.slice(recovery.indexOf('ExecWait'))).toMatch(
       /\$\{if\} \$R0 != 0[\s\S]*!insertmacro quitFailedUpdate/
     )
-    for (const script of [
-      'windows-update-handoff-uninstall.ps1',
-      'windows-notebook-sandbox-uninstall.ps1',
-      'windows-runtime-cache-uninstall.ps1'
-    ]) {
-      expect(include).toContain(`File "\${BUILD_RESOURCES_DIR}\\${script}"`)
-      expect(include).toContain(`-File "$PLUGINSDIR\\${script}"`)
+    for (const command of ['update-handoff', 'notebook-sandbox', 'runtime-cache']) {
+      expect(include).toContain(`windows-uninstall-helper.exe" ${command}`)
     }
+    expect(include).toContain('!insertmacro extractUninstallHelper')
   })
 
   it('records the helper phase and exit code when cleanup fails', () => {
     const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
     expect(cleanup).toContain(
-      'Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations'
+      'Open-Science windows-uninstall-helper program-data-paths exit code=$R0 phase=resolve-configured-data-locations'
     )
     expect(cleanup).toContain(
-      'Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files'
+      'Open-Science windows-uninstall-helper program-cleanup exit code=$R0 phase=remove-staged-program-files'
     )
 
-    const dataPaths = readFileSync(join(repoRoot, 'build/windows-program-data-paths.ps1'), 'utf8')
-    const programCleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.ps1'), 'utf8')
-    for (const script of [dataPaths, programCleanup]) {
-      expect(script).toContain('nativeErrorCode=')
-      expect(script).toContain('hresult=0x')
-      expect(script).toMatch(/exit 2/)
-    }
+    const helper = readFileSync(join(repoRoot, 'build/windows-uninstall-helper.cs'), 'utf8')
+    expect(helper).toContain('nativeErrorCode=')
+    expect(helper).toContain('hresult=0x')
+    expect(helper).toMatch(/Exit\(2\)/)
   })
 
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
     // The real-lock case: a background child running from the install dir (micromamba
-    // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
-    // path (Win32_Process has ExecutablePath, NOT Path),
-    // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
-    expect(include).toContain('$$_.ExecutablePath')
-    expect(include).not.toContain('$$_.Path.')
+    // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by full image
+    // path, then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
+    expect(include).toContain('openScienceInstallProcesses "${DIR}" stop')
     expect(include).toContain('Call showCleanupFailure')
     expect(include).toContain('SetErrorLevel 2')
   })
 
-  it.skipIf(!nsisCompiler).each(['missing', 'existing'])(
-    'keeps another installation running when recovery cannot inspect processes (%s target)',
-    async (target) => {
+  it.skipIf(!nsisCompiler).each([
+    ['missing', 'available'],
+    ['existing', 'available'],
+    ['missing', 'unavailable'],
+    ['existing', 'unavailable']
+  ])(
+    'keeps another installation running during recovery (%s target, %s inventory)',
+    async (target, inventory) => {
       const root = mkdtempSync(join(tmpdir(), 'nsis-process-recovery-'))
       const name = `${root.split(/[/\\]/).at(-1)}.exe`
       const portable = join(root, 'portable')
@@ -1175,13 +1279,8 @@ describe('NSIS installer include (build/installer.nsh)', () => {
           /!macro uninstallFailureRecoveryAt DIR[\s\S]*?!macroend/
         )?.[0]
         expect(recovery).toBeDefined()
-        // Simulate an unavailable process inspector without changing the host's PowerShell.
         // All image names are unique fixture names: never target real application processes.
         const isolated = recovery!
-          .replaceAll(
-            '$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe',
-            join(root, 'missing-powershell.exe')
-          )
           .replaceAll('micromamba.exe', `mamba-${name}`)
           .replaceAll('notebook-appcontainer-host.exe', `host-${name}`)
         const probe = join(root, 'probe.exe')
@@ -1193,6 +1292,11 @@ describe('NSIS installer include (build/installer.nsh)', () => {
 !define BUILD_RESOURCES_DIR "${join(repoRoot, 'build')}"
 !include "${join(repoRoot, 'build/windows-install-diagnostics.nsh')}"
 !define APP_EXECUTABLE_FILENAME "${name}"
+${
+  // An invalid PROCESSENTRY32W size makes Process32FirstW fail: an unavailable inventory.
+  inventory === 'unavailable' ? '!define OPEN_SCIENCE_PROCESS_ENTRY_SIZE 4' : ''
+}
+!include "${join(repoRoot, 'build/windows-install-processes.nsh')}"
 LoadLanguageFile "\${NSISDIR}/Contrib/Language files/English.nlf"
 LangString uninstallFailed 1033 "Fixture retry failed"
 !macro restoreAllNestedDataRoots
@@ -1356,13 +1460,20 @@ SectionEnd
     expect(normalizeUserAt).toBeLessThan(firstSharedPathCheckAt)
   })
 
-  it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
-    // Custom install dirs may contain apostrophes: interpolating the path into the script source
-    // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
-    // prefix match is anchored with a trailing backslash so sibling directories never match.
-    expect(include).toContain('$$args[0].TrimEnd')
-    expect(include).toContain('$$_.ExecutablePath.StartsWith($$root')
-    expect(include).not.toContain(`StartsWith('$INSTDIR'`)
+  it('sweeps leftover processes in-process, with a directory-boundary match', () => {
+    // A PowerShell sweep joined its -Command arguments into script source and cost a launch;
+    // the native inventory takes the directory as an NSIS string and matches with a trailing
+    // backslash so sibling directories never match.
+    const recovery = include.match(/!macro uninstallFailureRecoveryAt\b[\s\S]*?!macroend/)?.[0]
+    expect(recovery).toContain('!insertmacro openScienceInstallProcesses "${DIR}" stop $R1')
+    expect(recovery).not.toContain('powershell.exe')
+    expect(include).not.toContain('OPEN_SCIENCE_PROCESS_ROOT')
+    const inventory = readFileSync(join(repoRoot, 'build/windows-install-processes.nsh'), 'utf8')
+    expect(inventory).toContain('StrCpy $R2 "$R2\\"')
+    expect(inventory).toContain('A live process whose image cannot be inspected')
+    expect(inventory).toContain('Do not continue with an incomplete process inventory')
+    expect(inventory).toContain('retry_inventory_')
+    expect(inventory).toContain('Sleep 50')
   })
 
   it('caches the per-user install location before the HKCU uninstall pass deletes it', () => {

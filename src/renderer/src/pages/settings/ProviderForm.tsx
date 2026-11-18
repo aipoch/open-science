@@ -46,11 +46,8 @@ import {
   type ProviderKind
 } from './provider-form-value'
 
-import {
-  ENDPOINT_PATHS,
-  isProviderUsableByFramework,
-  type AgentFrameworkView
-} from '../../../../shared/settings'
+import type { AgentFrameworkView } from '../../../../shared/settings'
+import { ENDPOINT_PATHS, isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 
 type ProviderFormProps = {
   value: ProviderFormValue

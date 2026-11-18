@@ -10,6 +10,7 @@ import {
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import {
+  applySessionMetadataReceipt,
   hydratePersistedSessionIfPresent,
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
@@ -119,9 +120,9 @@ const useWorkspaceSessionDetailsController = (
       })
   }
   // Title-only rename (sidebar hover card inline editor). Routes through the session-details
-  // owner's editDetails mutation — like the Edit dialog — so the durable title is marked
+  // owner's title-only mutation — like the Edit dialog — so the durable title is marked
   // sessionDetailsSource 'manual' and a later details generation cannot overwrite it. The
-  // authoritative session is loaded first when needed so its description is preserved verbatim.
+  // owner preserves the current description without loading the transcript into the renderer.
   const rename = (
     session: ChatSession,
     title: string,
@@ -130,33 +131,21 @@ const useWorkspaceSessionDetailsController = (
     if (!isPersistenceReady) return Promise.resolve(true)
     const trimmedTitle = title.trim()
     if (!trimmedTitle || trimmedTitle === expectedTitle) return Promise.resolve(true)
-    const submit = (authoritative: ChatSession): Promise<boolean> =>
-      editDetails({
-        projectId: authoritative.projectId,
-        sessionId: authoritative.id,
+    return window.api.sessions
+      .rename({
+        projectId: session.projectId,
+        sessionId: session.id,
         expectedTitle,
-        expectedDescription: authoritative.description ?? '',
-        title: trimmedTitle,
-        description: authoritative.description ?? ''
-      }).then(() => true)
-    if (session.contentLoaded !== false) {
-      return submit(session)
-    }
-    const authoritative = loadPersistedSession({
-      projectId: session.projectId,
-      sessionId: session.id
-    })
-      .then((persisted) => {
-        if (!persisted) throw new Error('Selected Session JSON is missing.')
-        const hydrated = hydratePersistedSessionIfPresent(persisted)
-        if (!hydrated) throw new Error('Selected Session JSON is invalid.')
-        return hydrated
+        title: trimmedTitle
       })
-      .catch(() => {
-        onLoadFailure()
-        return undefined
+      .then((receipt) => {
+        applySessionMetadataReceipt(session, receipt, ['title'])
+        return true
       })
-    return authoritative.then((loaded) => (loaded ? submit(loaded) : false))
+      .catch((error: unknown) => {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(session.id)
+        throw error
+      })
   }
   return {
     dialog,

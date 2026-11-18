@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { RUNTIME_LOCK_FILE } from '../../src/main/runtime-ownership'
 import { test as baseTest } from '../fixtures/electron-app'
-import { createProject, openRecentSession, sendPrompt } from './helpers'
+import { createProject, openRecentSession, sendPrompt, sendReviewedPrompt } from './helpers'
 
 const captureLifecycleEvidence = async (
   page: Parameters<typeof sendPrompt>[0],
@@ -50,32 +50,6 @@ test.beforeEach(() => {
   if (controlledWindowsFixtureAvailable) test.setTimeout(180_000)
 })
 
-const sendReviewedPrompt = async (
-  page: Parameters<typeof sendPrompt>[0],
-  prompt: string,
-  reply: string,
-  commands: string[],
-  timeout: number
-): Promise<void> => {
-  await Promise.all([
-    sendPrompt(page, prompt, reply, timeout),
-    (async () => {
-      const review = page.getByRole('group', {
-        name: 'Permission request: Review potentially destructive code',
-        exact: true
-      })
-      let previousCode: string | undefined
-      for (const command of commands) {
-        await expect(review).toContainText(command)
-        const code = review.getByTestId('tool-code-block')
-        if (previousCode) await expect(code).not.toHaveText(previousCode)
-        previousCode = await code.innerText()
-        await review.getByRole('button', { name: 'Allow', exact: true }).click()
-      }
-    })()
-  ])
-}
-
 test('executes Windows REPL cells and recovers Shell after an interpreter exit', async ({
   app
 }) => {
@@ -98,12 +72,15 @@ test('installs global npm tools through the app and reuses them across Sessions 
   test.setTimeout(240_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  // Windows .cmd shims prompt separately from the Node fixture code.
+  const npmApprovals = process.platform === 'win32' ? ['npm.cmd pack', 'npm.cmd install'] : []
+  const toolApproval = process.platform === 'win32' ? ['os-npm-app-fixture.cmd'] : []
   await createProject(page, 'Npm installation')
   await sendReviewedPrompt(
     page,
     'Verify application npm global install.',
     'Application npm install verified',
-    ['node -e "eval(Buffer.from('],
+    ['node -e "eval(Buffer.from(', ...npmApprovals, ...toolApproval],
     90_000
   )
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
@@ -112,16 +89,17 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm shared tool and local install.',
     'Application npm local verified',
-    ['node -e "eval(Buffer.from(', 'node -e "eval(Buffer.from('],
+    ['node -e "eval(Buffer.from(', ...npmApprovals, 'node -e "eval(Buffer.from(', ...toolApproval],
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-across-sessions.png')
   page = await app.restart()
   await openRecentSession(page, 'Verify application npm shared tool and local install.')
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
+    toolApproval,
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-after-app-restart.png')
@@ -167,10 +145,11 @@ test('installs global npm tools through the app and reuses them across Sessions 
   expect(discarded).toEqual({ ok: true })
   // The runtime ownership inode must survive discard; all copied data must be gone.
   expect(await readdir(staged.dataRoot)).toEqual([RUNTIME_LOCK_FILE])
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
+    toolApproval,
     90_000
   )
 })

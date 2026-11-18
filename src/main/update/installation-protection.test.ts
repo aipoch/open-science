@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { windowsProcessIsAlive } from '../windows-process-query'
 import { installationFs } from './installation-filesystem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -47,6 +48,11 @@ vi.mock('./installation-filesystem', async (original) => {
   }
 })
 
+vi.mock('../windows-process-query', async (original) => ({
+  ...(await original<typeof import('../windows-process-query')>()),
+  windowsProcessIsAlive: vi.fn(() => true)
+}))
+
 // Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
 vi.mock('../system-boot-identity', async (original) => ({
   ...(await original<typeof import('../system-boot-identity')>()),
@@ -92,12 +98,66 @@ const fixture = (): {
   return { directory, entry, location, runtime, options }
 }
 beforeEach(() => {
+  vi.mocked(windowsProcessIsAlive).mockReset().mockReturnValue(true)
   vi.stubEnv('OPEN_SCIENCE_INSTALLATION_OWNER', process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
   vi.stubEnv(
     'OPEN_SCIENCE_INSTALLATION_STATE_ROOT',
     process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
   )
 })
+
+describe.each(['preflight', 'begin', 'handoff'] as const)(
+  '%s Windows occupant recheck',
+  (phase) => {
+    it.each(['exited', 'alive', 'unreadable'] as const)(
+      'only admits a confirmed exit (%s)',
+      async (state) => {
+        vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+        const f = fixture()
+        const pid = process.pid + 100000
+        const record =
+          phase === 'handoff'
+            ? beginInstallationUpdate({
+                ...f.options,
+                targetManifest: { version: f.options.targetVersion, files: {} }
+              })
+            : undefined
+        if (record) {
+          advanceInstallationUpdate(f.location, record.operationId, 'stopping')
+          advanceInstallationUpdate(f.location, record.operationId, 'stopped', true)
+        }
+        vi.mocked(windowsProcessIsAlive).mockImplementation(() => {
+          if (state === 'unreadable') throw new Error('Access denied')
+          return state === 'alive'
+        })
+        const attempt = async (): Promise<unknown> => {
+          if (phase === 'begin')
+            return beginInstallationUpdate({ ...f.options, inspectProcesses: () => [pid] })
+          if (record)
+            return advanceInstallationUpdateAsync(
+              f.location,
+              record.operationId,
+              'handoff',
+              undefined,
+              {
+                inspectProcesses: async () => [pid]
+              }
+            )
+          return inspectInstallationAvailability({
+            ...f.location,
+            inspectProcesses: async () => [pid]
+          })
+        }
+        if (state === 'exited') await attempt()
+        else
+          await expect(attempt()).rejects.toMatchObject({
+            reason: 'installation-busy',
+            recovery: { detail: 'foreign-process', blockingProcesses: [{ pid }] }
+          })
+      }
+    )
+  }
+)
 afterEach(() => {
   vi.mocked(installationFs.promises.realpath).mockReset().mockImplementation(realpath)
   vi.restoreAllMocks()

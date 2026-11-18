@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/compute/external-compute-provider.ts",
     "src/main/compute/approval-session-lifecycle.ts",
     "src/main/compute/agent-compute-service.ts",
     "src/main/compute/compute-approval-broker.ts",

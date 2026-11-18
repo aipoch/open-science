@@ -2150,6 +2150,62 @@ describe('session store', () => {
     }
   )
 
+  it('adopts durable question authority when a summary is hydrated', () => {
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          id: 'session-1',
+          number: 1,
+          projectId: 'project-1',
+          title: 'Question',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          filesRevision: 0,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Question',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activities: [
+        {
+          id: 'choice',
+          kind: 'tool',
+          title: 'Question',
+          status: 'in_progress',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Choose',
+            fields: [],
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+          }
+        }
+      ]
+    })
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.interactionState?.elicitation).toBe(true)
+    expect(projectSessionActionability(session).blockingInteraction).toBe('elicitation')
+  })
+
   it('preserves pending summary metadata edits when lazy hydration finishes', () => {
     useSessionStore.getState().hydrateSessionSummaries(
       [
@@ -7650,17 +7706,20 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
       'src/renderer/src/lib/replay/timeline.ts',
       'src/renderer/src/lib/session-fork.ts',
+      'src/renderer/src/lib/session-persistence/session-history.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
+      'src/renderer/src/pages/workspace/ConversationPicker.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
       'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
+      'src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx',
       'src/renderer/src/pages/workspace/SessionReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
@@ -7677,6 +7736,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-file-mention.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/schedules/ScheduleDialog.tsx',
+      'src/renderer/src/pages/workspace/schedules/ScheduleMessageCard.tsx',
+      'src/renderer/src/pages/workspace/schedules/SchedulePage.tsx',
+      'src/renderer/src/pages/workspace/schedules/ScheduleRunStatus.tsx',
+      'src/renderer/src/pages/workspace/schedules/use-schedule-selection.ts',
+      'src/renderer/src/pages/workspace/schedules/use-schedules.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-project-file-mention-availability.ts',
