@@ -166,3 +166,24 @@ it.each(['original', 'reversed', 'missing-bar', 'unrelated-prose', 'duplicate-ba
     else expect(result).toBeUndefined()
   }
 )
+
+it.each(['wrapped-fraction', 'wrapped-comma'])(
+  'keeps the source run order when a list spans multiple lines: %s',
+  (variant) => {
+    const { items, rules } = fixture()
+    const comma = { ...items[0], text: ',', rect: [24, 0, 26, 9] }
+    if (variant === 'wrapped-fraction') {
+      for (const item of items.slice(5)) {
+        item.rect = item.rect.map((value, i) => value + (i % 2 ? 30 : -48))
+        item.baseline += 30
+      }
+      rules[1] = rules[1].map((value, i) => value + (i % 2 ? 30 : -48))
+    } else {
+      comma.baseline += 30
+      comma.rect = [-4, 30, -2, 39]
+    }
+    expect(
+      recoverNativeStackedScientificFractions([...items, comma], rules, [{ text: '1e−3N,1e−5N' }])
+    ).toEqual([{ text: '1e−3/N,1e−5/N' }])
+  }
+)

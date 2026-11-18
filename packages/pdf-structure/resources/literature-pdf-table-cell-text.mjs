@@ -323,10 +323,22 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
   // Require exact token ownership and character conservation; unrelated text
   // must never be discarded by this whole-cell serialization.
   const provedItems = proofs.flatMap((proof) => proof.items)
-  const punctuation = items.filter((item) => !provedItems.includes(item))
+  const owned = new Set(provedItems)
+  const punctuation = items.filter((item) => !owned.has(item))
+  // Horizontal order is meaningful only when one horizontal line intersects
+  // every fraction (between its baselines) and every punctuation glyph.
+  const rowTop = Math.max(
+    ...proofs.map((proof) => proof.items[0].baseline),
+    ...punctuation.map((item) => item.rect?.[1])
+  )
+  const rowBottom = Math.min(
+    ...proofs.map((proof) => proof.items.at(-1).baseline),
+    ...punctuation.map((item) => item.rect?.[3])
+  )
   const characters = (value) => [...value.replace(/\s+/gu, '')].sort().join('')
   if (
-    new Set(provedItems).size === provedItems.length &&
+    rowTop <= rowBottom &&
+    owned.size === provedItems.length &&
     punctuation.every((item) => /^[[\](),;]+$/u.test(item.text.trim())) &&
     characters(text) === characters(items.map((item) => item.text).join(''))
   ) {

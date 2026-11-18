@@ -18711,18 +18711,15 @@ export function nativeRecordReadingOrder(items, baselineHeight) {
     a.height - b.height ||
     (a.text < b.text ? -1 : a.text > b.text ? 1 : 0)
   const rows = []
-  // Establish rows before horizontal ordering. Pairwise baseline tolerances are
-  // not transitive; fix both the baseline and tolerance when the row starts.
+  // Keep the first baseline fixed. A larger body glyph can join a raised
+  // script, but must never enlarge the tolerance for the next glyph.
   for (const item of items.slice().sort((a, b) => a.baseline - b.baseline || byPosition(a, b))) {
     const row = rows.at(-1)
-    if (row && item.baseline - row.baseline <= row.threshold) {
+    const threshold = (baselineHeight ?? Math.max(row?.minHeight ?? 0, item.height)) * 0.65
+    if (row && item.baseline - row.baseline <= threshold) {
       row.items.push(item)
-    } else
-      rows.push({
-        baseline: item.baseline,
-        threshold: (baselineHeight ?? item.height) * 0.65,
-        items: [item]
-      })
+      row.minHeight = Math.min(row.minHeight, item.height)
+    } else rows.push({ baseline: item.baseline, minHeight: item.height, items: [item] })
   }
   return rows.flatMap((row) => row.items.sort(byPosition))
 }

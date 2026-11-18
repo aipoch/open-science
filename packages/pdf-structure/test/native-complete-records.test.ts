@@ -17189,3 +17189,12 @@ it.each([
     'LOWER'
   ])
 })
+
+it('keeps short rows separate when the first glyph is tall', () => {
+  const items = [
+    { text: 'A', height: 10, baseline: 10, rect: [40, 0, 45, 10] },
+    { text: 'T', height: 30, baseline: 8, rect: [50, -22, 55, 8] },
+    { text: 'B', height: 10, baseline: 22, rect: [0, 12, 5, 22] }
+  ]
+  expect(nativeRecordReadingOrder(items).map((item) => item.text)).toEqual(['A', 'T', 'B'])
+})
