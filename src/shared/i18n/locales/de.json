@@ -8467,6 +8467,7 @@
     "The source returned an invalid response. Retry or choose another citation source.": "Die Quelle hat eine ungültige Antwort zurückgegeben. Versuchen Sie es erneut oder wählen Sie eine andere Zitationsquelle.",
     "Check the paper identifiers or choose another citation source.": "Prüfen Sie die Kennungen der Publikation oder wählen Sie eine andere Zitationsquelle.",
     "Open in {{source}}": "In {{source}} öffnen",
-    "Exploration started from {{paper}}": "Erkundung ausgehend von {{paper}}"
+    "Exploration started from {{paper}}": "Erkundung ausgehend von {{paper}}",
+    "Fetched: {{time}}": "Abgerufen: {{time}}"
   }
 }

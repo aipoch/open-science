@@ -150,6 +150,95 @@ it('appends unique results while preserving selections and retries failed pages 
   )
   expect(screen.queryByText('Paper d')).toBeNull()
 })
+it('bounds loaded list pages without discarding the selected papers', async () => {
+  related.mockImplementation(async (request) =>
+    result({
+      records: [record(String.fromCharCode(98 + request.offset / 20))],
+      nextOffset: request.offset + 20
+    })
+  )
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  await screen.findByText('Paper b')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper b' }))
+  for (const letter of ['c', 'd', 'e', 'f']) {
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await screen.findByText(`Paper ${letter}`)
+  }
+  expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull()
+  expect(screen.getByText(/Loaded 5 pages for this direction/)).toBeTruthy()
+  expect(screen.getByText('Loaded: 5')).toBeTruthy()
+  expect(
+    (screen.getByRole('checkbox', { name: 'Select Paper b' }) as HTMLInputElement).checked
+  ).toBe(true)
+  expect(related).toHaveBeenCalledTimes(5)
+})
+
+it('retains each direction scroll, selections and loaded pages without another request', async () => {
+  related
+    .mockResolvedValueOnce(result({ nextOffset: 20 }))
+    .mockResolvedValueOnce(result({ records: [record('d')] }))
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  await screen.findByText('Paper b')
+  fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+  await screen.findByText('Paper d')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper d' }))
+  screen.getByRole('tabpanel').scrollTop = 123
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Cited by' }), { button: 0, ctrlKey: false })
+  await screen.findByText('Paper b')
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'References' }), {
+    button: 0,
+    ctrlKey: false
+  })
+  expect(screen.getByText('Loaded: 3')).toBeTruthy()
+  expect(
+    (screen.getByRole('checkbox', { name: 'Select Paper d' }) as HTMLInputElement).checked
+  ).toBe(true)
+  expect(screen.getByRole('tabpanel').scrollTop).toBe(123)
+  expect(related).toHaveBeenCalledTimes(3)
+})
+
+it('retains old results after refresh failure and replaces them only after success', async () => {
+  const retrievedAt = 1700000000000
+  related.mockResolvedValueOnce(result({ retrievedAt, records: [{ ...record('b'), retrievedAt }] }))
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  await screen.findByText('Paper b')
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
+  related.mockResolvedValueOnce(result({ state: 'unavailable', issue: 'unavailable', records: [] }))
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+  await screen.findByRole('alert')
+  expect(screen.getByText('Paper b')).toBeTruthy()
+  related.mockResolvedValue(result({ records: [record('d')], retrievedAt: retrievedAt + 1000 }))
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByText('Paper d')
+  expect(screen.queryByText('Paper b')).toBeNull()
+  expect(related.mock.calls.some(([request]) => request.refresh === true)).toBe(true)
+  expect(transact).not.toHaveBeenCalled()
+})
+
+it('uses graph identity merging for list counts and persists the actual retrieval time', async () => {
+  const retrievedAt = 1700000000000
+  const b = record('b'),
+    c = record('c')
+  b.item.identifiers = [{ scheme: 'doi', value: '10.1234/same', isPrimary: true }]
+  c.item.identifiers = b.item.identifiers
+  related.mockResolvedValue(
+    result({
+      records: [
+        { ...b, retrievedAt },
+        { ...c, retrievedAt }
+      ]
+    })
+  )
+  transact.mockResolvedValue({ kind: 'candidate', id: 'saved', state: 'pending' })
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  await screen.findByText('Loaded: 1')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper b' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add selected to Inbox' }))
+  await screen.findByText('In Inbox')
+  expect(transact.mock.calls[0][0].candidate.source.rawMetadata.retrievedAt).toBe(retrievedAt)
+})
+
 it('ignores an outstanding load-more request after navigating away', async () => {
   related.mockResolvedValueOnce(result({ nextOffset: 20 }))
   const view = render(
@@ -330,7 +419,7 @@ it('lazily mounts the graph and preserves its selection and zoom across list swi
   expect(screen.queryByRole('group', { name: 'Citation graph' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   await screen.findByRole('button', { name: 'Select Paper c' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
   const svg = screen.getByRole('group', { name: 'Citation graph' })
@@ -344,7 +433,7 @@ it('lazily mounts the graph and preserves its selection and zoom across list swi
     'true'
   )
   expect(screen.getByRole('group', { name: 'Citation graph' }).getAttribute('data-zoom')).toBe(zoom)
-  expect(related).toHaveBeenCalledTimes(2)
+  expect(related).toHaveBeenCalledTimes(3)
   expect(transact).not.toHaveBeenCalled()
 })
 it('shares root invalidation with the cached list so returning cannot stage stale selections', async () => {
@@ -592,15 +681,15 @@ it('defaults to Europe PMC routing and pins the actual source across list, graph
   })
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   const neighbor = await screen.findByRole('button', { name: 'Select EP neighbor' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
   fireEvent.click(neighbor)
   fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
   await screen.findByRole('button', { name: 'Select EP descendant' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(4))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(5))
   expect(related.mock.calls.slice(1).every(([request]) => request.provider === 'europe-pmc')).toBe(
     true
   )
-  expect(related.mock.calls[2][0].seedPaperId).toBe('europe-pmc:PMC:PMC2')
+  expect(related.mock.calls[3][0].seedPaperId).toBe('europe-pmc:PMC:PMC2')
   expect(transact).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
   await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))

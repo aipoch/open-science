@@ -8295,6 +8295,7 @@
     "The source returned an invalid response. Retry or choose another citation source.": "データソースから無効な応答が返されました。再試行するか、別の引用データソースを選択してください。",
     "Check the paper identifiers or choose another citation source.": "論文の識別子を確認するか、別の引用データソースを選択してください。",
     "Open in {{source}}": "{{source}}で開く",
-    "Exploration started from {{paper}}": "{{paper}}から探索を開始"
+    "Exploration started from {{paper}}": "{{paper}}から探索を開始",
+    "Fetched: {{time}}": "取得日時：{{time}}"
   }
 }

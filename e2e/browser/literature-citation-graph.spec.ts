@@ -272,10 +272,7 @@ for (const height of [812, 667]) {
       await expect(pane).toHaveAttribute('data-expanded', 'true')
       await page.mouse.move(0, 0)
       const tooltip = frame.locator('[data-citation-hover-title]')
-      if (await tooltip.count()) {
-        await page.keyboard.press('Escape')
-        await expect(tooltip).toHaveCount(0)
-      }
+      await expect(tooltip).toHaveCount(0)
       await expect
         .poll(async () => (await plot.boundingBox())!.height)
         .toBeGreaterThanOrEqual(height === 812 ? 180 : 95)

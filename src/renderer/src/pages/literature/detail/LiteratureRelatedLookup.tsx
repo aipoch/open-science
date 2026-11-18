@@ -1,7 +1,7 @@
 import { CitationLookupError } from './CitationLookupError'
 import { CitationAbstract } from './LiteratureDetailText'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   LiteratureItemView,
@@ -14,8 +14,9 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, LoaderCircle } from 'lucide-react'
+import { BookOpen, Quote, LoaderCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import {
   Select,
   SelectTrigger,
@@ -32,10 +33,8 @@ import {
   type CitationProviderChoice,
   type CitationSourceState
 } from './useCitationSource'
-import { citationRecordProvider } from './citation-graph'
+import { buildCitationGraph, citationRecordProvider } from './citation-graph'
 import type { ScheduleRequest } from './useCitationGraphController'
-
-const firstPageReuseMs = 60_000
 
 export function LiteratureRelatedLookup(
   props: React.ComponentProps<typeof LiteratureRelatedList> & { toolbarHost?: HTMLElement | null }
@@ -68,46 +67,24 @@ function LiteratureRelatedSession(
   const { source, requestRelated } = useCitationSource(props.provider)
   const [graphOpened, setGraphOpened] = useState(view === 'graph')
   const [listOpened, setListOpened] = useState(view === 'list')
-  const graphStarted = useRef(false)
-  const firstPage = useRef<{ response: LiteratureRelatedResult; receivedAt: number } | undefined>(
-    undefined
-  )
-  const scheduleList = useCallback<ScheduleRequest>(
+  const [refreshEpoch, setRefreshEpoch] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshPending = useRef(false)
+  const active = useRef(true)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+  const [refreshError, setRefreshError] = useState<LiteratureRelatedResult>()
+  const [retrievedAt, setRetrievedAt] = useState<number>()
+  const schedule = useCallback<ScheduleRequest>(
     async (request, shouldRun) => {
       const response = await requestRelated(request, shouldRun)
-      if (response.issue === 'expired' || response.issue === 'reference-changed')
-        firstPage.current = undefined
-      if (
-        !graphStarted.current &&
-        !request.offset &&
-        request.direction === 'references' &&
-        !request.resolutionToken
-      ) {
-        firstPage.current =
-          response.state === 'ready' && response.seed && response.resolutionToken
-            ? { response, receivedAt: Date.now() }
-            : undefined
-      }
+      if (response.state === 'ready' && response.retrievedAt !== undefined)
+        setRetrievedAt((previous) => Math.max(previous ?? 0, response.retrievedAt!))
       return response
-    },
-    [requestRelated]
-  )
-  const scheduleGraph = useCallback<ScheduleRequest>(
-    (request, shouldRun) => {
-      graphStarted.current = true
-      const page = firstPage.current
-      firstPage.current = undefined
-      if (
-        page &&
-        Date.now() - page.receivedAt < firstPageReuseMs &&
-        shouldRun() &&
-        !request.seedPaperId &&
-        !request.resolutionToken &&
-        !request.offset &&
-        page.response.direction === request.direction
-      )
-        return Promise.resolve(page.response)
-      return requestRelated(request, shouldRun)
     },
     [requestRelated]
   )
@@ -127,18 +104,62 @@ function LiteratureRelatedSession(
     },
     [onSavingChange]
   )
+  const refresh = async (): Promise<void> => {
+    if (
+      refreshPending.current ||
+      saving ||
+      invalidatedReference.current ||
+      (refreshError?.retryAt ?? 0) > Date.now()
+    )
+      return
+    refreshPending.current = true
+    setRefreshing(true)
+    setRefreshError(undefined)
+    try {
+      const response = await schedule(
+        {
+          itemId: props.item.id,
+          expectedMetadataRevision: props.item.metadataRevision,
+          direction: 'references',
+          offset: 0,
+          refresh: true
+        },
+        () => active.current && !invalidatedReference.current
+      )
+      if (!active.current) return
+      if (response.state === 'ready') setRefreshEpoch((value) => value + 1)
+      else {
+        setRefreshError(response)
+        if (response.issue === 'reference-changed') invalidateReference()
+      }
+    } catch {
+      if (active.current)
+        setRefreshError({
+          itemId: props.item.id,
+          metadataRevision: props.item.metadataRevision,
+          direction: 'references',
+          state: 'unavailable',
+          records: [],
+          issue: 'unavailable'
+        })
+    } finally {
+      refreshPending.current = false
+      if (active.current) setRefreshing(false)
+    }
+  }
   const toolbar = (
     <div
-      className="flex min-w-0 flex-wrap items-center gap-2"
+      className="flex min-w-0 flex-wrap items-center gap-1"
       role="group"
       aria-label={t('Citation discovery view')}
     >
       <div className="inline-flex shrink-0 rounded-lg border border-border-300 bg-muted/50 p-0.5">
         <Button
           size="sm"
+          className="px-2"
           variant={view === 'list' ? 'secondary' : 'ghost'}
           aria-pressed={view === 'list'}
-          disabled={saving}
+          disabled={saving || refreshing}
           onClick={() => {
             setListOpened(true)
             setView('list')
@@ -148,9 +169,10 @@ function LiteratureRelatedSession(
         </Button>
         <Button
           size="sm"
+          className="px-2"
           variant={view === 'graph' ? 'secondary' : 'ghost'}
           aria-pressed={view === 'graph'}
-          disabled={saving}
+          disabled={saving || refreshing}
           onClick={() => {
             setGraphOpened(true)
             setView('graph')
@@ -161,13 +183,13 @@ function LiteratureRelatedSession(
       </div>
       <Select
         value={props.provider}
-        disabled={saving || referenceInvalidated}
+        disabled={saving || refreshing || referenceInvalidated}
         onValueChange={(value) => {
           if (!saving && !invalidatedReference.current)
             props.onProviderChange(value as CitationProviderChoice)
         }}
       >
-        <SelectTrigger aria-label={t('Citation source')} className="w-auto max-w-full">
+        <SelectTrigger aria-label={t('Citation source')} className="w-auto max-w-full px-2">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -176,6 +198,32 @@ function LiteratureRelatedSession(
           <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
         </SelectContent>
       </Select>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t('Refresh')}
+              disabled={saving || refreshing || referenceInvalidated}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw
+                className={refreshing ? 'size-4 animate-spin' : 'size-4'}
+                aria-hidden="true"
+              />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Refresh')}</p>
+            {retrievedAt !== undefined ? (
+              <time dateTime={new Date(retrievedAt).toISOString()}>
+                {t('Fetched: {{time}}', { time: new Date(retrievedAt).toLocaleString() })}
+              </time>
+            ) : null}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   )
   return (
@@ -198,6 +246,22 @@ function LiteratureRelatedSession(
           )}
         </p>
       ) : null}
+      {refreshError ? (
+        <div className="mx-5 mt-3">
+          <CitationLookupError
+            result={refreshError}
+            sourceName={
+              props.provider === 'europe-pmc'
+                ? t('Europe PMC')
+                : props.provider === 'opencitations-index'
+                  ? t('OpenCitations · Index v2')
+                  : t('OpenCitations · SKG-IF')
+            }
+            disabled={saving || refreshing || referenceInvalidated}
+            onRetry={() => void refresh()}
+          />
+        </div>
+      ) : null}
       {referenceInvalidated ? (
         <ErrorNotice
           inline
@@ -214,8 +278,10 @@ function LiteratureRelatedSession(
         {listOpened && (
           <LiteratureRelatedList
             {...props}
+            key={refreshEpoch}
             source={source}
-            requestRelated={scheduleList}
+            disabled={refreshing}
+            requestRelated={schedule}
             referenceInvalidated={referenceInvalidated}
             isReferenceInvalidated={isReferenceInvalidated}
             onReferenceChanged={invalidateReference}
@@ -230,15 +296,15 @@ function LiteratureRelatedSession(
           className="flex min-h-0 flex-1 flex-col"
         >
           <LiteratureCitationGraph
-            key={`${props.item.id}:${props.item.metadataRevision}`}
+            key={`${props.item.id}:${props.item.metadataRevision}:${refreshEpoch}`}
             item={props.item}
             provider={props.provider}
             source={source}
-            requestRelated={scheduleGraph}
+            requestRelated={schedule}
             onSaved={props.onSaved}
             onOpenInbox={props.onOpenInbox}
             onSavingChange={handleSavingChange}
-            disabled={referenceInvalidated}
+            disabled={referenceInvalidated || refreshing}
             onReferenceChanged={invalidateReference}
             referenceInvalidated={referenceInvalidated}
             isReferenceInvalidated={isReferenceInvalidated}
@@ -260,6 +326,7 @@ function LiteratureRelatedList({
   isReferenceInvalidated,
   onReferenceChanged,
   source,
+  disabled = false,
   requestRelated
 }: {
   item: LiteratureItemView
@@ -271,6 +338,7 @@ function LiteratureRelatedList({
   isReferenceInvalidated?: () => boolean
   onReferenceChanged?: () => void
   source?: CitationSourceState
+  disabled?: boolean
   requestRelated?: ScheduleRequest
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -288,6 +356,24 @@ function LiteratureRelatedList({
   const [result, setResult] = useState<LiteratureRelatedResult>()
   const [loadError, setLoadError] = useState<LiteratureRelatedResult>()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [pageCount, setPageCount] = useState(0)
+  const directions = useRef<
+    Partial<
+      Record<
+        LiteratureRelatedRequest['direction'],
+        {
+          result?: LiteratureRelatedResult
+          loadError?: LiteratureRelatedResult
+          selected: Set<string>
+          scroll: number
+          pages: number
+        }
+      >
+    >
+  >({})
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = directions.current[direction]?.scroll ?? 0
+  }, [direction])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [receipts, setReceipts] = useState<Record<string, LiteratureCatalogReceipt | 'failed'>>({})
   const [busy, setBusy] = useState(false)
@@ -329,6 +415,7 @@ function LiteratureRelatedList({
       setBusy(true)
       setLoadError(undefined)
       if (!nextOffset) {
+        setPageCount(0)
         setSelected(new Set())
         setResult((previous) => (previous?.state === 'unavailable' ? previous : undefined))
         if (scrollRef.current) scrollRef.current.scrollTop = 0
@@ -354,23 +441,26 @@ function LiteratureRelatedList({
         )
           throw new Error('Citation discovery identity mismatch.')
         if (current === generation.current) {
+          if (response.state === 'ready') setPageCount((count) => count + 1)
           if (response.issue === 'reference-changed') onReferenceChanged?.()
           if (nextOffset && response.state === 'unavailable') setLoadError(response)
           else
-            setResult((previous) =>
-              nextOffset && previous && response.state === 'ready'
-                ? {
-                    ...response,
-                    records: [
-                      ...previous.records,
-                      ...response.records.filter(
-                        (entry) => !previous.records.some((old) => old.paperId === entry.paperId)
-                      )
-                    ],
-                    omitted: (previous.omitted ?? 0) + (response.omitted ?? 0)
-                  }
-                : response
-            )
+            setResult((previous) => {
+              const merged =
+                nextOffset && previous && response.state === 'ready'
+                  ? {
+                      ...response,
+                      records: [...previous.records, ...response.records],
+                      omitted: (previous.omitted ?? 0) + (response.omitted ?? 0)
+                    }
+                  : response
+              return {
+                ...merged,
+                records: [
+                  ...new Map(merged.records.map((record) => [record.paperId, record])).values()
+                ]
+              }
+            })
         }
       } catch {
         if (current === generation.current)
@@ -412,6 +502,17 @@ function LiteratureRelatedList({
       pending.current = false
     }
   }, [lookup, initialDirection])
+  const listNodes = useMemo(
+    () =>
+      result?.seed && result.state === 'ready'
+        ? buildCitationGraph(
+            result.seed,
+            result.records.map((record) => ({ direction, record }))
+          ).nodes.filter((node) => !node.center)
+        : (result?.records ?? []).map((record) => ({ record, paperIds: [record.paperId] })),
+    [result, direction]
+  )
+  const selectedNodes = listNodes.filter((node) => node.paperIds.some((id) => selected.has(id)))
   const save = async (): Promise<void> => {
     if (
       savingRef.current ||
@@ -426,7 +527,8 @@ function LiteratureRelatedList({
     onSavingChange?.(true)
     const current = generation.current
     try {
-      for (const entry of result.records.filter((entry) => selected.has(entry.paperId))) {
+      for (const node of selectedNodes) {
+        const entry = node.record
         if (current !== generation.current || isReferenceInvalidated?.()) break
         let receipt: LiteratureCatalogReceipt | 'failed'
         try {
@@ -439,6 +541,7 @@ function LiteratureRelatedList({
                 externalId: entry.paperId,
                 sourceUrl: entry.item.url,
                 rawMetadata: {
+                  ...(entry.retrievedAt !== undefined ? { retrievedAt: entry.retrievedAt } : {}),
                   rootItemId: item.id,
                   rootMetadataRevision: item.metadataRevision,
                   seedItemId: item.id,
@@ -460,7 +563,7 @@ function LiteratureRelatedList({
           if (receipt !== 'failed')
             setSelected((previous) => {
               const next = new Set(previous)
-              next.delete(entry.paperId)
+              node.paperIds.forEach((id) => next.delete(id))
               return next
             })
         }
@@ -489,12 +592,23 @@ function LiteratureRelatedList({
       value={direction}
       activationMode="manual"
       onValueChange={(value) => {
-        if (value !== direction)
-          void lookup(
-            value as typeof direction,
-            0,
-            result?.state === 'ready' ? result.resolutionToken : undefined
-          )
+        if (value === direction || disabled) return
+        directions.current[direction] = {
+          result,
+          loadError,
+          selected,
+          scroll: scrollRef.current?.scrollTop ?? 0,
+          pages: pageCount
+        }
+        const next = value as typeof direction
+        const cached = directions.current[next]
+        if (cached) {
+          setDirection(next)
+          setResult(cached.result)
+          setLoadError(cached.loadError)
+          setSelected(cached.selected)
+          setPageCount(cached.pages)
+        } else void lookup(next, 0, result?.state === 'ready' ? result.resolutionToken : undefined)
       }}
       className="flex min-h-0 flex-1 flex-col"
     >
@@ -506,7 +620,7 @@ function LiteratureRelatedList({
               <Tabs.Trigger
                 key={value}
                 value={value}
-                disabled={busy || saving || referenceInvalidated}
+                disabled={disabled || busy || saving || referenceInvalidated}
                 className="flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent py-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 <Icon className="size-4" aria-hidden="true" />
@@ -518,7 +632,7 @@ function LiteratureRelatedList({
         <span className="sr-only">{t('Source: {{source}}', { source: sourceName })}</span>
         {result?.state === 'ready' ? (
           <span className="text-xs tabular-nums text-muted-foreground">
-            {t('Loaded: {{loaded}}', { loaded: result.records.length })}
+            {t('Loaded: {{loaded}}', { loaded: listNodes.length })}
           </span>
         ) : null}
       </div>
@@ -568,14 +682,18 @@ function LiteratureRelatedList({
             result={result}
             sourceName={sourceName}
             inline={false}
-            disabled={busy || saving || referenceInvalidated}
+            disabled={disabled || busy || saving || referenceInvalidated}
             loading={busy && busyVisible}
             onRetry={() => void lookup(direction, 0)}
           />
-        ) : result?.records.length ? (
+        ) : listNodes.length ? (
           <ul className="divide-y divide-border-300">
-            {result.records.map((entry) => {
-              const receipt = receipts[entry.paperId]
+            {listNodes.map((node) => {
+              const entry = node.record
+              const receipt =
+                node.paperIds
+                  .map((id) => receipts[id])
+                  .find((value) => value && value !== 'failed') ?? receipts[entry.paperId]
               return (
                 <li key={entry.paperId} className="py-4 first:pt-0 last:pb-0">
                   <div className="flex items-start gap-3">
@@ -583,15 +701,18 @@ function LiteratureRelatedList({
                       type="checkbox"
                       className="mt-1 size-4 shrink-0 accent-primary"
                       aria-label={t('Select {{title}}', { title: entry.item.title })}
-                      checked={selected.has(entry.paperId)}
+                      checked={node.paperIds.some((id) => selected.has(id))}
                       disabled={
-                        saving || invalidated || (receipt !== undefined && receipt !== 'failed')
+                        disabled ||
+                        saving ||
+                        invalidated ||
+                        (receipt !== undefined && receipt !== 'failed')
                       }
                       onChange={(event) =>
                         setSelected((previous) => {
                           const next = new Set(previous)
                           if (event.target.checked) next.add(entry.paperId)
-                          else next.delete(entry.paperId)
+                          else node.paperIds.forEach((id) => next.delete(id))
                           return next
                         })
                       }
@@ -644,7 +765,7 @@ function LiteratureRelatedList({
             <CitationLookupError
               result={loadError}
               sourceName={sourceName}
-              disabled={busy || saving || referenceInvalidated}
+              disabled={disabled || busy || saving || referenceInvalidated}
               loading={busy}
               onRetry={() =>
                 void lookup(
@@ -655,12 +776,18 @@ function LiteratureRelatedList({
               }
             />
           </div>
+        ) : result?.nextOffset !== undefined && pageCount >= 5 ? (
+          <p role="status" className="mt-3 text-xs text-muted-foreground">
+            {t(
+              'Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.'
+            )}
+          </p>
         ) : result?.nextOffset !== undefined ? (
           <div className="mt-5 flex justify-center">
             <Button
               variant="ghost"
               size="sm"
-              disabled={busy || saving}
+              disabled={disabled || busy || saving}
               onClick={() => void lookup(direction, result.nextOffset, result.resolutionToken)}
             >
               {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
@@ -669,19 +796,19 @@ function LiteratureRelatedList({
           </div>
         ) : null}
       </Tabs.Content>
-      {result?.records.length ? (
+      {listNodes.length ? (
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border-300 px-5 py-3">
           {onOpenInbox &&
           Object.values(receipts).some(
             (receipt) => receipt !== 'failed' && receipt.kind === 'candidate'
           ) ? (
-            <Button size="sm" variant="outline" disabled={saving} onClick={onOpenInbox}>
+            <Button size="sm" variant="outline" disabled={disabled || saving} onClick={onOpenInbox}>
               {t('Open Inbox')}
             </Button>
           ) : null}
           <Button
             size="sm"
-            disabled={busy || saving || invalidated || !selected.size}
+            disabled={disabled || busy || saving || invalidated || !selectedNodes.length}
             onClick={() => void save()}
           >
             {saving ? t('Saving…') : t('Add selected to Inbox')}

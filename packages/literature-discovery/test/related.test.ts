@@ -185,6 +185,108 @@ describe('citation discovery session safeguards', () => {
     expect(fetcher).toHaveBeenCalledTimes(13)
   })
 
+  it('refreshes explicitly, retains the old cache on failure and keeps acquisition times stable', async () => {
+    const { finder, fetcher, advance } = fixture()
+    const old = await finder.run(request)
+    advance(60_000)
+    expect(await finder.run(request)).toEqual(old)
+    expect(old.records[0].retrievedAt).toBe(old.retrievedAt)
+    fetcher.mockImplementationOnce(async () => {
+      advance(1001)
+      return new Response('', { status: 503 })
+    })
+    expect(await finder.run({ ...request, refresh: true })).toMatchObject({ state: 'unavailable' })
+    expect(await finder.run(request)).toEqual(old)
+    const fresh = await finder.run({ ...request, refresh: true })
+    expect(fresh.state).toBe('ready')
+    expect(fresh.retrievedAt).toBeGreaterThan(old.retrievedAt!)
+    expect(fresh.resolutionToken).not.toBe(old.resolutionToken)
+    expect(await finder.run(request)).toEqual(fresh)
+    expect(await finder.run({ ...request, resolutionToken: old.resolutionToken })).toEqual(old)
+  })
+
+  it('allows old cached pages but requires restarting stale live offset pagination', async () => {
+    const { finder, advance, fetcher } = fixture()
+    const first = await finder.run(request)
+    const second = await finder.run({
+      ...request,
+      resolutionToken: first.resolutionToken,
+      offset: 20
+    })
+    advance(15 * 60_000)
+    expect(
+      await finder.run({ ...request, resolutionToken: first.resolutionToken, offset: 20 })
+    ).toEqual(second)
+    expect(
+      await finder.run({ ...request, resolutionToken: first.resolutionToken, offset: 40 })
+    ).toMatchObject({ issue: 'expired' })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect((await finder.run(request)).resolutionToken).not.toBe(first.resolutionToken)
+  })
+
+  it('coalesces equivalent requests while cancellation remains local to each caller', async () => {
+    const { finder, fetcher, advance } = fixture()
+    let release!: (response: Response) => void
+    fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+    const controller = new AbortController()
+    const cancelled = finder.run(
+      { ...request, requestId: '00000000-0000-4000-8000-000000000001' },
+      controller.signal
+    )
+    const rejection = expect(cancelled).rejects.toThrow()
+    const retained = finder.run({ ...request, requestId: '00000000-0000-4000-8000-000000000002' })
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    controller.abort()
+    await rejection
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false)
+    advance(1001)
+    release(identity())
+    expect(await retained).toMatchObject({ state: 'ready' })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels the shared transport when its final caller leaves', async () => {
+    const { finder, fetcher } = fixture()
+    fetcher.mockImplementationOnce(() => new Promise(() => {}))
+    const controller = new AbortController()
+    const pending = finder.run(request, controller.signal)
+    const rejection = expect(pending).rejects.toThrow()
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    controller.abort()
+    await rejection
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true)
+  })
+
+  it('evicts sessions by retained byte budget before the session-count bound', async () => {
+    const { finder, catalog, fetcher, advance } = fixture()
+    fetcher.mockImplementation(async (input) => {
+      advance(1001)
+      if (String(input).includes('/search?')) return identity()
+      const response = await page(input, ['1', '2', '3']).json()
+      for (const record of response.referenceList.reference) {
+        record.title = 'x'.repeat(90_000)
+        record.abstractText = 'y'.repeat(90_000)
+      }
+      return json(response)
+    })
+    const first = await finder.run(request)
+    for (let index = 0; index < 40; index++) {
+      catalog.get.mockResolvedValue({ ...reference(), id: `budget-${index}` })
+      expect(await finder.run({ ...request, itemId: `budget-${index}` })).toMatchObject({
+        state: 'ready'
+      })
+    }
+    catalog.get.mockResolvedValue(reference())
+    expect(await finder.run({ ...request, resolutionToken: first.resolutionToken })).toMatchObject({
+      issue: 'expired'
+    })
+  })
+
   it('rejects removed Semantic Scholar graph inputs before any catalog or transport access', async () => {
     const { finder, catalog, fetcher } = fixture()
     expect(

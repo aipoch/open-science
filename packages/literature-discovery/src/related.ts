@@ -106,9 +106,14 @@ function sourceEndpoint(path: string, query: Record<string, string>): ReadTrace[
   if (path.endsWith('/citations') || query.filter?.startsWith('cf.cites')) return 'citations'
   return 'identity'
 }
-type RelatedPage = Pick<LiteratureRelatedResult, 'records' | 'nextOffset' | 'omitted'>
+type RelatedPage = Pick<
+  LiteratureRelatedResult,
+  'records' | 'nextOffset' | 'omitted' | 'retrievedAt'
+>
 type Resolution = {
   root: boolean
+  bytes: number
+  started: Partial<Record<'references' | 'citations', number>>
   pages: Map<string, RelatedPage>
   itemId: string
   revision: number
@@ -126,6 +131,14 @@ const resolutionLifetimeMs = 24 * 60 * 60_000
 const maxDiscoveredRecords = 2000
 export class LiteratureRelatedFinder {
   private readonly resolutions = new Map<string, Resolution>()
+  private readonly pending = new Map<
+    string,
+    {
+      controller: AbortController
+      users: number
+      promise: Promise<LiteratureRelatedResult>
+    }
+  >()
   private readonly nextRequests = new Map<LiteratureRelatedProvider, number>()
   private readonly cooldowns = new Map<string, number>()
   private readonly readContexts = new WeakMap<AbortSignal, ReadContext>()
@@ -149,9 +162,22 @@ export class LiteratureRelatedFinder {
   }
 
   private remember(token: string, resolution: Resolution): void {
-    while (this.resolutions.size >= 200)
-      this.resolutions.delete(this.resolutions.keys().next().value!)
+    // Count serialized data conservatively, including records shared by pages and aliases.
+    resolution.bytes = Buffer.byteLength(
+      JSON.stringify({
+        ...resolution,
+        discovered: [...resolution.discovered],
+        pages: [...resolution.pages]
+      })
+    )
+    this.resolutions.delete(token)
     this.resolutions.set(token, resolution)
+    let bytes = [...this.resolutions.values()].reduce((sum, value) => sum + value.bytes, 0)
+    while (this.resolutions.size > 200 || bytes > 32 * 1024 * 1024) {
+      const oldest = this.resolutions.keys().next().value!
+      bytes -= this.resolutions.get(oldest)!.bytes
+      this.resolutions.delete(oldest)
+    }
   }
 
   private async readSource(
@@ -346,6 +372,18 @@ export class LiteratureRelatedFinder {
   ): Promise<RelatedPage> {
     const cached = resolution.pages.get(`${request.direction}:${request.offset}`)
     if (cached) return cached
+    const livePages =
+      resolution.provider === 'europe-pmc' ||
+      (resolution.opencitationsMode !== 'index' && request.direction === 'citations')
+    // Live offset APIs cannot provide a stable snapshot across a day-long pause.
+    if (
+      livePages &&
+      request.offset &&
+      Date.now() - (resolution.started[request.direction] ?? Date.now()) >= 15 * 60_000
+    ) {
+      if (request.resolutionToken) this.resolutions.delete(request.resolutionToken)
+      throw new SourceError('expired')
+    }
     if (resolution.provider === 'europe-pmc')
       return readEuropePmcPage(resolution.seed, request.direction, request.offset, (path, query) =>
         this.read('europe-pmc', path, query, signal)
@@ -383,6 +421,49 @@ export class LiteratureRelatedFinder {
   }
 
   async run(
+    input: LiteratureRelatedRequest,
+    callerSignal?: AbortSignal
+  ): Promise<LiteratureRelatedResult> {
+    callerSignal?.throwIfAborted()
+    const request = literatureRelatedRequestSchema.parse(input)
+    const identity = { ...request, requestId: undefined }
+    const key = JSON.stringify(identity)
+    let pending = this.pending.get(key)
+    if (!pending || pending.controller.signal.aborted) {
+      // Admission limits network concurrency; bound the coalescing index independently.
+      if (this.pending.size >= 200) return this.lookup(request, callerSignal)
+      const controller = new AbortController()
+      pending = { controller, users: 0, promise: this.lookup(request, controller.signal) }
+      this.pending.set(key, pending)
+      const entry = pending
+      const remove = (): void => {
+        if (this.pending.get(key) === entry) this.pending.delete(key)
+      }
+      void pending.promise.then(remove, remove)
+    }
+    const entry = pending
+    entry.users++
+    return new Promise<LiteratureRelatedResult>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: unknown, response?: LiteratureRelatedResult): void => {
+        if (settled) return
+        settled = true
+        callerSignal?.removeEventListener('abort', cancel)
+        if (--entry.users === 0) entry.controller.abort()
+        if (response) resolve(literatureRelatedResultSchema.parse(response))
+        else reject(error)
+      }
+      const cancel = (): void => finish(callerSignal?.reason)
+      callerSignal?.addEventListener('abort', cancel, { once: true })
+      if (callerSignal?.aborted) cancel()
+      void entry.promise.then(
+        (response) => finish(undefined, response),
+        (error) => finish(error)
+      )
+    })
+  }
+
+  private async lookup(
     input: LiteratureRelatedRequest,
     callerSignal?: AbortSignal
   ): Promise<LiteratureRelatedResult> {
@@ -432,7 +513,7 @@ export class LiteratureRelatedFinder {
       let token = request.resolutionToken
       let publish = false
       // Reopening a view may omit its token; reuse only the same saved root and source.
-      if (!token && !request.seedPaperId && !request.offset) {
+      if (!request.refresh && !token && !request.seedPaperId && !request.offset) {
         const cached = [...this.resolutions].find(
           ([, entry]) =>
             entry.root &&
@@ -476,6 +557,8 @@ export class LiteratureRelatedFinder {
           resolution = {
             ...resolution,
             root: false,
+            bytes: 0,
+            started: {},
             pages: new Map(),
             seed,
             opencitationsReferences: undefined,
@@ -513,6 +596,8 @@ export class LiteratureRelatedFinder {
           if (!found?.seed) throw new SourceError('no-match')
           const candidate: Resolution = {
             root: true,
+            bytes: 0,
+            started: {},
             pages: new Map(),
             itemId: item.id,
             revision: item.metadataRevision,
@@ -541,6 +626,7 @@ export class LiteratureRelatedFinder {
       }
       signal.throwIfAborted()
       if (resolution.expires <= Date.now()) throw new SourceError('expired')
+      if (!publish && !this.resolutions.has(token!)) throw new SourceError('expired')
       if (!publish && resolution.provider === 'opencitations') {
         const current = this.resolutions.get(token!)
         const previous = current?.opencitationsReferences
@@ -566,12 +652,26 @@ export class LiteratureRelatedFinder {
           )
             throw new SourceError('response-invalid')
         }
-        if (current)
+        if (current) {
           current.opencitationsIndexSnapshots = {
             ...current.opencitationsIndexSnapshots,
             ...resolution.opencitationsIndexSnapshots
           }
+          resolution.opencitationsIndexSnapshots = current.opencitationsIndexSnapshots
+          resolution.opencitationsReferences = current.opencitationsReferences
+          resolution.root = current.root
+        }
       }
+      result.retrievedAt ??= Date.now()
+      result.records = result.records.map((record) => ({
+        ...record,
+        retrievedAt: record.retrievedAt ?? result.retrievedAt
+      }))
+      resolution.seed = {
+        ...resolution.seed,
+        retrievedAt: resolution.seed.retrievedAt ?? result.retrievedAt
+      }
+      resolution.started[request.direction] ??= result.retrievedAt
       result.seed = resolution.seed
       result.provider = resolution.provider
       result.opencitationsMode =
@@ -591,11 +691,24 @@ export class LiteratureRelatedFinder {
       resolution.pages.set(pageKey, {
         records: result.records,
         nextOffset: result.nextOffset,
-        omitted: result.omitted
+        omitted: result.omitted,
+        retrievedAt: result.retrievedAt
       })
       if (resolution.pages.size > 10) resolution.pages.delete(resolution.pages.keys().next().value!)
       // A token only authorizes records from completed, root-revalidated pages.
-      if (publish) this.remember(token!, resolution)
+      // A successful refresh replaces only cached root lookup selection; existing tokens
+      // remain valid for other views until their own expiry or capacity eviction.
+      if (request.refresh)
+        for (const value of this.resolutions.values())
+          if (
+            value.root &&
+            value.itemId === resolution.itemId &&
+            value.revision === resolution.revision &&
+            value.provider === resolution.provider &&
+            value.opencitationsMode === resolution.opencitationsMode
+          )
+            value.root = false
+      this.remember(token!, resolution)
     } catch (error) {
       callerSignal?.throwIfAborted()
       if (readContext.lastReportedError !== error)

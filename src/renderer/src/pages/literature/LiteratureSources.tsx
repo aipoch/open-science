@@ -46,6 +46,12 @@ const SourceRecord = ({
 }): React.JSX.Element => {
   const { i18n, t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const retrievedAt = z
+    .number()
+    .int()
+    .nonnegative()
+    .max(8640000000000000)
+    .safeParse(source.rawMetadata.retrievedAt)
   const href = source.sourceUrl ? sourceLink(source.sourceUrl) : undefined
   return (
     <li className="min-w-0 space-y-2 py-3">
@@ -67,6 +73,13 @@ const SourceRecord = ({
           time: new Date(source.savedAt).toLocaleString(i18n.language)
         })}
       </p>
+      {retrievedAt.success ? (
+        <p className="text-xs text-muted-foreground">
+          {t('Fetched: {{time}}', {
+            time: new Date(retrievedAt.data).toLocaleString(i18n.language)
+          })}
+        </p>
+      ) : null}
       {contextsFor(source).map((context, index) => (
         <div key={index} className="space-y-1 text-xs text-muted-foreground">
           <p>

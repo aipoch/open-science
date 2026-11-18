@@ -22,6 +22,7 @@ export const literatureRelatedPaperIdSchema = z.string().refine((value) => {
 export const literatureRelatedRequestSchema = z
   .object({
     requestId: z.string().uuid().optional(),
+    refresh: z.boolean().optional(),
     itemId: z.string().trim().min(1).max(256),
     expectedMetadataRevision: z.number().int().positive(),
     direction: z.enum(['references', 'citations']),
@@ -33,9 +34,15 @@ export const literatureRelatedRequestSchema = z
   })
   .strict()
   .refine(validOpenCitationsMode, { message: 'OpenCitations mode requires its provider.' })
+  .refine(
+    (request) =>
+      !request.refresh || (!request.offset && !request.seedPaperId && !request.resolutionToken),
+    { message: 'Refresh requires a new root lookup.' }
+  )
 export const literatureRelatedRecordSchema = z
   .object({
     paperId: literatureRelatedPaperIdSchema,
+    retrievedAt: z.number().int().nonnegative().max(8640000000000000).optional(),
     item: bibliographicRecordSchema
   })
   .strict()
@@ -45,6 +52,7 @@ export const literatureRelatedResultSchema = z
     metadataRevision: z.number().int().positive(),
     direction: z.enum(['references', 'citations']),
     state: z.enum(['ready', 'unavailable']),
+    retrievedAt: z.number().int().nonnegative().max(8640000000000000).optional(),
     provider: literatureRelatedProviderSchema.optional(),
     opencitationsMode: literatureOpenCitationsModeSchema.optional(),
     resolutionToken: z.string().uuid().optional(),

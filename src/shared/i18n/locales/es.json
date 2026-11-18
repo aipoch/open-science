@@ -8647,6 +8647,7 @@
     "The source returned an invalid response. Retry or choose another citation source.": "La fuente devolvió una respuesta no válida. Vuelva a intentarlo o elija otra fuente de citas.",
     "Check the paper identifiers or choose another citation source.": "Compruebe los identificadores del artículo o elija otra fuente de citas.",
     "Open in {{source}}": "Abrir en {{source}}",
-    "Exploration started from {{paper}}": "Exploración iniciada desde {{paper}}"
+    "Exploration started from {{paper}}": "Exploración iniciada desde {{paper}}",
+    "Fetched: {{time}}": "Obtenido: {{time}}"
   }
 }

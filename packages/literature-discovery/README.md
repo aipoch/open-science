@@ -129,14 +129,21 @@ record must be fetched again before becoming a seed. Expired tokens require a fr
 
 Requests use fixed HTTPS origins, one-request-per-second admission per provider, responses bounded
 to 2 MiB, and a single 30-second deadline. Caller cancellation and changed root references stop
-the lookup. HTTP 429 respects a capped Retry-After cooldown. Up to 200
+the lookup. HTTP 429 respects a capped Retry-After cooldown. Up to 200 least-recently-used
 resolution tokens remain in memory and expire after 24 hours. Each session caches its ten most
 recent successful pages, keyed by direction and offset. Reopened views reuse the original root
 session only when item ID, metadata revision, provider and source mode match. Cache hits still
 validate the saved root and caller cancellation. Reads do not extend expiry; failures are not
 cached. Cached pages remain available during source cooldowns. Sessions and pages are discarded
-on process restart, with no disk persistence or migration. Concurrent in-flight requests retain
-independent cancellation ownership. Pages contain at most 20 raw rows;
+on process restart, with no disk persistence or migration. Identical concurrent requests share a lookup while retaining independent cancellation ownership;
+the transport is canceled only when the final caller leaves. Retained sessions also have a 32 MiB
+serialized-data budget (not a measurement of JavaScript heap overhead). Successful reads touch LRU
+order. A fresh root request with `refresh: true` bypasses the cache; failure preserves previous
+results and success replaces the default root lookup without revoking other views' tokens.
+Uncached offset pages on live Europe PMC and SKG-IF citation endpoints require a new root lookup
+after a 15-minute continuation window. Cached pages still last up to 24 hours; immutable Index and
+SKG-IF reference snapshots retain their normal lifetime. Live APIs do not guarantee a transactional
+snapshot even within this window. Results and records carry their actual `retrievedAt` time. Pages contain at most 20 raw rows;
 Europe PMC offsets are multiples of 20 mapped to one-based `page` parameters. Its references and
 citations response `request.offSet` fields use different bases, which are checked independently.
 
@@ -152,6 +159,11 @@ original review snapshot and append source evidence. Citation sources store dist
 `rawMetadata.citationContexts`, including the original item/revision, explored or seed paper,
 direction and OpenCitations mode when available. Acceptance and item merges retain these paths. Appending paths to a frozen Inbox source
 preserves its original snapshot timestamp, so a newer Library source still wins during acceptance.
+Explicit saves retain `retrievedAt` in existing source JSON, separately from the legacy `savedAt`
+source-record write time. Old records without acquisition times remain unknown. The UI exposes a
+source refresh action, retains old results on failure, and resets exploration only after success.
+List directions retain their loaded pages, selections and scroll positions while the panel stays
+open. Both views share identity merging and a five-page-per-direction display budget.
 The source disclosure resolves available local root titles and falls back to their stored IDs.
 Existing top-level provenance fields are read into this collection on the next source update;
 there is no database migration or new review state. Previously overwritten paths cannot be

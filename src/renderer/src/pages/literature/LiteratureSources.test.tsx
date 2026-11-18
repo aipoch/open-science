@@ -49,6 +49,20 @@ describe('LiteratureSources', () => {
     expect(screen.getByText(/Source record saved:/)).not.toBeNull()
   })
 
+  it('distinguishes acquisition time from save time and ignores malformed legacy values', async () => {
+    sources.mockResolvedValue([{ ...record, rawMetadata: { retrievedAt: 1600000000000 } }])
+    const view = render(<LiteratureSources itemId="item-1" />)
+    await toggle('Metadata sources')
+    expect(await screen.findByText(/Fetched:/)).toBeTruthy()
+    expect(screen.getByText(/Source record saved:/)).toBeTruthy()
+    view.unmount()
+    sources.mockResolvedValue([{ ...record, rawMetadata: { retrievedAt: 'unknown' } }])
+    render(<LiteratureSources itemId="item-2" />)
+    await toggle('Metadata sources')
+    await screen.findByText('Crossref')
+    expect(screen.queryByText(/Fetched:/)).toBeNull()
+  })
+
   it('distinguishes loading failure from an empty result and retries', async () => {
     sources.mockRejectedValueOnce(new Error('database unavailable')).mockResolvedValueOnce([])
     render(<LiteratureSources itemId="item-1" />)

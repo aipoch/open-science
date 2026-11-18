@@ -8295,6 +8295,7 @@
     "The source returned an invalid response. Retry or choose another citation source.": "來源傳回了無效回應。請重試或選擇其他引文來源。",
     "Check the paper identifiers or choose another citation source.": "請檢查論文識別碼，或選擇其他引文來源。",
     "Open in {{source}}": "在 {{source}} 中開啟",
-    "Exploration started from {{paper}}": "探索起點：{{paper}}"
+    "Exploration started from {{paper}}": "探索起點：{{paper}}",
+    "Fetched: {{time}}": "取得時間：{{time}}"
   }
 }

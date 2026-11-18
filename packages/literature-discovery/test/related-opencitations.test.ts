@@ -245,7 +245,7 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
     ).toMatchObject({
       nextOffset: 40,
       records: expect.arrayContaining([
-        { paperId: 'opencitations:br/021', item: expect.any(Object) }
+        expect.objectContaining({ paperId: 'opencitations:br/021', item: expect.any(Object) })
       ])
     })
     expect(
@@ -1557,6 +1557,50 @@ describe('explicit OpenCitations Index sessions', () => {
     ).toHaveLength(2)
   })
 
+  it('retains an Index direction snapshot when another direction finishes later', async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => edge(String(index + 1)))
+    const papers = Array.from({ length: 21 }, (_, index) => metadata(String(index + 1)))
+    const { finder, fetcher } = fixture([indexIdentity(), json(rows), json(papers)])
+    const first = await finder.run(indexRequest)
+    let instant = Date.now()
+    vi.mocked(Date.now).mockImplementation(() => (instant += 1001))
+    let finishReferences!: (value: Response) => void
+    fetcher.mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path.includes('/index/v2/citations/')) return json([edge('30', 'citations')])
+      if (path.endsWith('br/30')) return json([metadata('30')])
+      return new Promise((resolve) => {
+        finishReferences = resolve
+      })
+    })
+    const references = finder.run({
+      ...indexRequest,
+      resolutionToken: first.resolutionToken,
+      offset: 20
+    })
+    await vi.waitFor(() => expect(finishReferences).toBeTypeOf('function'))
+    const citations = {
+      ...indexRequest,
+      direction: 'citations' as const,
+      resolutionToken: first.resolutionToken
+    }
+    expect(await finder.run(citations)).toMatchObject({
+      state: 'ready',
+      records: [{ paperId: 'opencitations:br/30' }]
+    })
+    finishReferences(json(papers))
+    expect(await references).toMatchObject({
+      state: 'ready',
+      records: [{ paperId: 'opencitations:br/9' }]
+    })
+    const calls = fetcher.mock.calls.length
+    expect(await finder.run({ ...citations, offset: 20 })).toMatchObject({
+      state: 'ready',
+      records: []
+    })
+    expect(fetcher).toHaveBeenCalledTimes(calls)
+  })
+
   it('rejects a conflicting concurrently hydrated Index snapshot without granting its neighbors', async () => {
     const { finder, fetcher } = fixture([indexIdentity(), json([])])
     const first = await finder.run(indexRequest)
@@ -1579,7 +1623,7 @@ describe('explicit OpenCitations Index sessions', () => {
       resolutionToken: first.resolutionToken
     }
     const one = finder.run(citations)
-    const two = finder.run(citations)
+    const two = finder.run({ ...citations, seedPaperId: first.seed!.paperId })
     await vi.waitFor(() => expect(finish.size).toBe(2))
     finish.get('7')!(json([metadata('7')]))
     expect(await one).toMatchObject({

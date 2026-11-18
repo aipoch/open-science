@@ -321,6 +321,9 @@ export function useCitationGraphController({
             externalId: node.record.paperId,
             sourceUrl: node.record.item.url,
             rawMetadata: {
+              ...(node.record.retrievedAt !== undefined
+                ? { retrievedAt: node.record.retrievedAt }
+                : {}),
               rootItemId: item.id,
               rootMetadataRevision: item.metadataRevision,
               ...(citationRecordProvider(node.record.paperId) === 'opencitations'
