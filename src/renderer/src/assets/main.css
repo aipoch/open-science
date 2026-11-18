@@ -152,7 +152,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   position: relative;
   z-index: 1;
   width: min(650px, calc(100vw - 2rem));
-  max-height: min(760px, calc(100svh - 2rem));
+  max-height: min(840px, calc(100svh - 1.5rem));
   overflow: hidden;
   border: 0;
   /* Initial dialog focus must not frame the modal; controls keep their own focus outlines. */
@@ -439,7 +439,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-quick-connect,
 .onboarding-ready {
   display: flex;
-  min-height: min(680px, calc(100svh - 2rem));
+  min-height: min(760px, calc(100svh - 1.5rem));
   flex-direction: column;
   padding: 2rem 2.5rem 1.5rem;
 }
@@ -498,7 +498,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-card {
   position: relative;
   display: flex;
-  min-height: 22rem;
+  min-height: 26rem;
   flex: 0 0 17.5rem;
   flex-direction: column;
   overflow: hidden;
@@ -1060,6 +1060,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
   .onboarding-provider-card {
     flex-basis: min(17.5rem, calc(100vw - 3.5rem));
+    min-height: 24rem;
   }
   .onboarding-quick-footer {
     align-items: flex-end;
