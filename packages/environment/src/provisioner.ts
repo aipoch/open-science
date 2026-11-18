@@ -1643,6 +1643,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
+    // Legacy upgrades retain the readiness baseline; new libraries apply to fresh materialization.
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
       spec,
