@@ -686,6 +686,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.loadHistoryPage',
       'sessions.loadOne',
       'sessions.loadUsage',
+      'sessions.onCatalogChanged',
       'sessions.onCreated',
       'sessions.onDeleted',
       'sessions.onFlushAborted',

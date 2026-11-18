@@ -358,6 +358,67 @@ describe('session persistence startup', () => {
     )
   })
 
+  it('keeps the app ready while catalog hydration is pending and refreshes on completion', async () => {
+    const first = createPersistedSession({ number: 1 })
+    const second = createPersistedSession({ id: 'session-2', number: 2, title: 'Rebuilt' })
+    const summary = (session: PersistedChatSession): SessionSummary => ({
+      number: session.number!,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 0,
+      activeMessageCount: session.messages.length,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      needsStartupRecovery: false
+    })
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [summary(first)],
+        manifest: { version: SESSION_MANIFEST_VERSION },
+        diagnostics: {
+          isComplete: true,
+          catalogHydrationPending: true,
+          warnings: [],
+          isProjectDeletionRecoveryComplete: true
+        }
+      })
+      .mockResolvedValueOnce({
+        sessions: [summary(first), summary(second)],
+        manifest: { version: SESSION_MANIFEST_VERSION },
+        diagnostics: emptyLoadResult().diagnostics
+      })
+    let catalogChanged: (() => void) | undefined
+    window.api.sessions.list = list
+    window.api.sessions.onCatalogChanged = vi.fn((listener: () => void) => {
+      catalogChanged = listener
+      return vi.fn()
+    })
+
+    await act(async () => root.render(<Probe />))
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('div')?.dataset.catalogComplete).toBe('false')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('false')
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).toBe(
+      'sessions available'
+    )
+
+    await act(async () => {
+      catalogChanged?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('div')?.dataset.catalogComplete).toBe('true')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('true')
+    expect(useSessionStore.getState().sessions.map(({ id }) => id)).toEqual([first.id, second.id])
+  })
+
   it.each(['storage', 'missing-record'] as const)(
     'clears the %s notice when another operation commits the retained result',
     async (terminalCommitFailure) => {

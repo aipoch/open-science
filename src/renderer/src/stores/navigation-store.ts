@@ -241,6 +241,22 @@ const navigationState = (
 const findMostRecentSessionId = (projectId: string): string | undefined =>
   findMostRecentProjectSessionId(useSessionStore.getState().sessions, projectId)
 
+const requestSessionDetailsRecovery = (session: {
+  projectId: string
+  id: string
+  contentLoaded?: boolean
+}): void => {
+  const request = { projectId: session.projectId, sessionId: session.id }
+  if (session.contentLoaded === false) {
+    useSessionStore.getState().requestSessionDetailsRecovery(request)
+    return
+  }
+  useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+  const loadOne = typeof window === 'undefined' ? undefined : window.api?.sessions?.loadOne
+  if (typeof loadOne !== 'function') return
+  void loadOne({ ...request, recoverSessionDetails: true }).catch(() => undefined)
+}
+
 const isActiveProject = (projectId: string): boolean =>
   useProjectStore
     .getState()
@@ -446,6 +462,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
       const mostRecentSessionId = findMostRecentSessionId(projectId)
 
       if (mostRecentSessionId) {
+        const session = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === mostRecentSessionId)
+        if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
         useSessionStore.getState().selectSession(mostRecentSessionId)
       } else {
         useSessionStore.getState().clearSelection()
@@ -468,6 +488,12 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     if (!isActiveSession(projectId, sessionId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       if (!isActiveSession(projectId, sessionId)) return false
+      const session = useSessionStore
+        .getState()
+        .sessions.find(
+          (candidate) => candidate.projectId === projectId && candidate.id === sessionId
+        )
+      if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
       useSessionStore.getState().selectSession(sessionId)
 
       if (origin === 'user') recordLastOpenedProject(projectId)

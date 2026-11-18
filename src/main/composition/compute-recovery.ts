@@ -5,7 +5,6 @@ import {
   type DiagnosticOperation
 } from '@aipoch/diagnostics/node'
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
-import type { LoadAllSessionsResult } from '../../shared/session-persistence'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ComputeJobResultDeliveryAdapter } from '../background-result-delivery/compute-adapter'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from '../compute/ipc'
@@ -21,8 +20,6 @@ import { resolveDataRoot } from '../storage-root'
 export async function composeComputeRecovery({
   markComputeResultAuthorityReady,
   computeJobResultDelivery,
-  loadStartupSessions,
-  startupSessionDetails,
   computeIpcModule,
   computeService,
   connectionBroker,
@@ -36,8 +33,6 @@ export async function composeComputeRecovery({
 }: {
   markComputeResultAuthorityReady: () => void
   computeJobResultDelivery: ComputeJobResultDeliveryAdapter
-  loadStartupSessions: () => Promise<LoadAllSessionsResult['sessions']>
-  startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
   computeIpcModule: ReturnType<typeof createComputeIpcModule>
   computeService: ReturnType<typeof createComputeIpcModule>['computeService']
   connectionBroker: import('../compute/connection-broker').ComputeConnectionBroker
@@ -50,8 +45,8 @@ export async function composeComputeRecovery({
   composition: DiagnosticOperation
 }): Promise<void> {
   // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
-  // to finish a pending Project deletion through those owners before restoring concurrency limits.
+  // Side Chat ownership are available. Session Details recovery is local to the Session the user
+  // opens, so idle history does not participate in startup readiness.
   await modules.add(
     {
       computeService,
@@ -157,23 +152,9 @@ export async function composeComputeRecovery({
           } finally {
             markComputeResultAuthorityReady()
           }
-          // Restore current and pending Session work from summaries. Idle history stays on disk;
-          // dispatch does not depend on catalog completeness.
-          composition.phase('session-catalog')
-          await Promise.all([
-            jobPoller.start(),
-            loadStartupSessions()
-              .then((sessions) => {
-                startupSessionDetails.current = sessions
-              })
-              .catch((error) => {
-                startupSessionDetails.current = []
-                createLogger('session-persistence').warn(
-                  'Startup Session hydration failed',
-                  errorLogFields(error)
-                )
-              })
-          ])
+          // Session Details recovery is local to the Session the user opens. Idle history stays on
+          // disk and does not participate in startup readiness.
+          await jobPoller.start()
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()

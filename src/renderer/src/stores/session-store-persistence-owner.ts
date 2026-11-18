@@ -88,6 +88,7 @@ export type SessionStoreData = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
   streamingMessages: StreamingMessageContentByMessageId
+  sessionDetailsRecoveryRequest?: { projectId: string; sessionId: string }
 }
 
 export type SessionHydrationSelection = { sessionId: string | undefined }
