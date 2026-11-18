@@ -197,16 +197,16 @@ index 56adc38..e28610c 100644
  function checkIsRangesSupported(response, reject) {
      // Electron net handles redirects automatically, our NodeJS test server doesn't use redirects - so, we don't check 3xx codes.
 diff --git a/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js b/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
-index c9a579e..3324424 100644
+index c9a579e..7b90e3f 100644
 --- a/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
 +++ b/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
-@@ -3,18 +3,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
+@@ -3,48 +3,64 @@ Object.defineProperty(exports, "__esModule", { value: true });
  exports.verifySignature = verifySignature;
  const builder_util_runtime_1 = require("builder-util-runtime");
  const child_process_1 = require("child_process");
 -const os = require("os");
  const path = require("path");
- function preparePowerShellExec(command, timeout) {
+-function preparePowerShellExec(command, timeout) {
 -    // https://github.com/electron-userland/electron-builder/issues/2421
 -    // https://github.com/electron-userland/electron-builder/issues/2535
 -    // Resetting PSModulePath is necessary https://github.com/electron-userland/electron-builder/issues/7127
@@ -214,29 +214,101 @@ index c9a579e..3324424 100644
 -    //   join commands using & https://github.com/electron-userland/electron-builder/issues/8162
 -    const executable = `set "PSModulePath=" & chcp 65001 >NUL & powershell.exe`;
 -    const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", command];
++// Mirrors electron-builder master (builder-util-runtime authenticodeSignature.ts, PR #10416):
++// importing both modules from $PSHOME skips module auto-discovery on a cold start, and silenced
++// progress keeps "Preparing modules for first use." off stderr, which would reject the update.
++// The file arrives in an environment variable, so no path character is parsed as PowerShell.
++// Non-ASCII text is escaped as \uXXXX instead of assigning [Console]::OutputEncoding, which
++// Constrained Language Mode (AppLocker/WDAC) forbids.
++const AUTHENTICODE_FILE_ENV = "OPEN_SCIENCE_AUTHENTICODE_FILE";
++const AUTHENTICODE_SCRIPT = "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; " +
++    "Import-Module \"$PSHOME\\Modules\\Microsoft.PowerShell.Security\"; " +
++    "Import-Module \"$PSHOME\\Modules\\Microsoft.PowerShell.Utility\"; " +
++    "$env:PSModulePath = ''; " +
++    "function ConvertTo-AsciiEscaped([string]$text) { if ($text -cmatch '[^\\x00-\\x7F]') { -join $(foreach ($c in $text.ToCharArray()) { if ([int]$c -gt 127) { '\\u{0:x4}' -f [int]$c } else { $c } }) } else { $text } }; " +
++    `try { $json = Get-AuthenticodeSignature -LiteralPath $env:${AUTHENTICODE_FILE_ENV} -ErrorAction Stop | ConvertTo-Json -Compress } ` +
++    "catch { Write-Error -Message (ConvertTo-AsciiEscaped ($_ | Out-String)); exit 1 }; " +
++    "ConvertTo-AsciiEscaped $json";
++// electron-builder master allows 60 s (was 20 s). On-access antivirus can scan a freshly written
++// installer for longer than that once; the repeated check reads the cached scan result, so a
++// timed-out check runs once more (pingdotgg/t3code#20345) instead of discarding the download.
++const VERIFY_TIMEOUT_MS = 60 * 1000;
++const VERIFY_ATTEMPTS = 2;
++function prepareAuthenticodeExec(file) {
 +    // Windows PowerShell is an OS component. Neither executable discovery nor UTF-8 output
 +    // requires a shell, chcp, or a trusted PATH. Retain the upstream PSModulePath isolation.
 +    const windowsRoot = process.env.SystemRoot || process.env.WINDIR;
 +    const executable = windowsRoot ? path.win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
-+    const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); " + command];
++    const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-EncodedCommand", Buffer.from(AUTHENTICODE_SCRIPT, "utf16le").toString("base64")];
++    const replaced = new Set(["psmodulepath", AUTHENTICODE_FILE_ENV.toLowerCase()]);
      const options = {
 -        shell: true,
+-        timeout,
 +        windowsHide: true,
 +        encoding: "utf8",
-+        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "psmodulepath")), PSModulePath: "" },
-         timeout,
++        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !replaced.has(key.toLowerCase()))), PSModulePath: "", [AUTHENTICODE_FILE_ENV]: file },
++        timeout: VERIFY_TIMEOUT_MS,
      };
      return [executable, args, options];
-@@ -44,7 +43,7 @@ function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
-         // https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file
-         const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
-         logger.info(`Verifying signature ${tempUpdateFile}`);
+ }
++// Only a check killed at its deadline is repeated. Every other failure keeps rejecting the update.
++function execAuthenticode(file, logger, callback, attempt = 1) {
++    (0, child_process_1.execFile)(...prepareAuthenticodeExec(file), (error, stdout, stderr) => {
++        if (error != null && error.killed && attempt < VERIFY_ATTEMPTS) {
++            logger.warn(`Get-AuthenticodeSignature did not finish within ${VERIFY_TIMEOUT_MS / 1000}s; checking once more.`);
++            execAuthenticode(file, logger, callback, attempt + 1);
++            return;
++        }
++        callback(error, stdout, stderr);
++    });
++}
++// PowerShell rebuilds a drive-qualified path from the drive root, so the drive letter case may differ.
++function normalizeForComparison(file) {
++    return path.normalize(file).replace(/^[a-z]:/, drive => drive.toUpperCase());
++}
+ // $certificateInfo = (Get-AuthenticodeSignature 'xxx\yyy.exe'
+ // | where {$_.Status.Equals([System.Management.Automation.SignatureStatus]::Valid) -and $_.SignerCertificate.Subject.Contains("CN=siemens.com")})
+ // | Out-String ; if ($certificateInfo) { exit 0 } else { exit 1 }
+ function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
+     return new Promise((resolve, reject) => {
+-        // Escape quotes and backticks in filenames to prevent user from breaking the
+-        // arguments and perform a remote command injection.
+-        //
+-        // Consider example powershell command:
+-        // ```powershell
+-        // Get-AuthenticodeSignature 'C:\\path\\my-bad-';calc;'filename.exe'
+-        // ```
+-        // The above would work expected and find the file name, however, it will also execute `;calc;`
+-        // command and start the calculator app.
+-        //
+-        // From Powershell quoting rules:
+-        // https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules?view=powershell-7
+-        // * Double quotes `"` are treated literally within single-quoted strings;
+-        // * Single quotes can be escaped by doubling them: 'don''t' -> don't;
+-        //
+-        // Also note that at this point the file has already been written to the disk, thus we are
+-        // guaranteed that the path will not contain any illegal characters like <>:"/\|?*
+-        // https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+-        const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
+-        logger.info(`Verifying signature ${tempUpdateFile}`);
 -        (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 20 * 1000), (error, stdout, stderr) => {
-+        (0, child_process_1.execFile)(...preparePowerShellExec(`Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress`, 20 * 1000), (error, stdout, stderr) => {
++        logger.info(`Verifying signature ${unescapedTempUpdateFile}`);
++        execAuthenticode(unescapedTempUpdateFile, logger, (error, stdout, stderr) => {
              var _a;
              try {
                  if (error != null || stderr) {
-@@ -117,17 +116,7 @@ function parseOut(out) {
+@@ -55,8 +71,8 @@ function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
+                 const data = parseOut(stdout);
+                 if (data.Status === 0) {
+                     try {
+-                        const normlaizedUpdateFilePath = path.normalize(data.Path);
+-                        const normalizedTempUpdateFile = path.normalize(unescapedTempUpdateFile);
++                        const normlaizedUpdateFilePath = normalizeForComparison(data.Path);
++                        const normalizedTempUpdateFile = normalizeForComparison(unescapedTempUpdateFile);
+                         logger.info(`LiteralPath: ${normlaizedUpdateFilePath}. Update Path: ${normalizedTempUpdateFile}`);
+                         if (normlaizedUpdateFilePath !== normalizedTempUpdateFile) {
+                             handleError(logger, new Error(`LiteralPath of ${normlaizedUpdateFilePath} is different than ${normalizedTempUpdateFile}`), stderr, reject);
+@@ -117,17 +133,7 @@ function parseOut(out) {
      return data;
  }
  function handleError(logger, error, stderr, reject) {
@@ -255,7 +327,7 @@ index c9a579e..3324424 100644
      if (error != null) {
          reject(error);
      }
-@@ -135,8 +124,4 @@ function handleError(logger, error, stderr, reject) {
+@@ -135,8 +141,4 @@ function handleError(logger, error, stderr, reject) {
          reject(new Error(`Cannot execute Get-AuthenticodeSignature, stderr: ${stderr}. Failing signature validation due to unknown stderr.`));
      }
  }
@@ -264,3 +336,4 @@ index c9a579e..3324424 100644
 -    return winVersion.startsWith("6.") && !winVersion.startsWith("6.3");
 -}
  //# sourceMappingURL=windowsExecutableCodeSignatureVerifier.js.map
+\ No newline at end of file
