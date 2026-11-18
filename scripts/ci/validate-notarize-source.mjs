@@ -27,7 +27,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const api = (path) => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8' }))
   const run = api(`repos/${repository}/actions/runs/${id}`)
   if (!/^[a-f0-9]{40}$/.test(run.head_sha ?? '')) throw new Error('Invalid source revision.')
-  const comparison = api(`repos/${repository}/compare/${run.head_sha}...main`)
+  const comparison = {
+    status: execFileSync(
+      'gh',
+      ['api', `repos/${repository}/compare/${run.head_sha}...main`, '--jq', '.status'],
+      { encoding: 'utf8' }
+    ).trim()
+  }
   validateNotarizeSource(run, repository, comparison)
   console.log(
     `Reusing Release run ${id}, source ${run.head_sha}; artifacts remain in the source run.`
