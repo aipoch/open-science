@@ -381,7 +381,8 @@ export const validateSessionRecords = (
 
 export const applySessionRecord = (
   document: JournalValue,
-  record: SessionBusinessRecord
+  record: SessionBusinessRecord,
+  visitJoinedText?: (text: string) => void
 ): JournalValue => {
   if (record.type === 'snapshot') return record.document
   if (!object(document) || document.version !== 2 || !object(document.session))
@@ -396,6 +397,9 @@ export const applySessionRecord = (
     const projected = before && appendText(before, record, true, true)
     if (!messages || !before || !projected)
       return fail('Assistant text event does not match its streaming Message.')
+    // Other after-images are present in the records. Only text can form a new reference
+    // across updates; the compatibility message is required to have the same content.
+    visitJoinedText?.(projected.content as string)
     const graphMessages = graph.messages as readonly JournalValue[]
     const nextMessages = replaceJournalChild(
       graphMessages,

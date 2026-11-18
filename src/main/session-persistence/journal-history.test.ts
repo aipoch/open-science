@@ -76,6 +76,24 @@ describe('read-only JSONL history inspection', () => {
     })
     expect(found).toBe(true)
   })
+  it('inspects changed entities once even when unrelated messages fill the budget', async () => {
+    const { path, store } = await fixture()
+    const messages = [{ id: 'old', content: 'x'.repeat(16 * 1024) }]
+    for (let revision = 5; revision <= 9; revision++) {
+      messages.push({ id: String(revision), content: 'new-' + revision })
+      await store.write(path, {
+        expectedRevision: revision - 1,
+        document: { version: 2, session: { id: 's', revision, messages } }
+      })
+    }
+    const seen: string[] = []
+    await store.visitRetainedHistory(path, {
+      maxBytes: 64 * 1024,
+      maxRecords: 100,
+      visit: (value) => seen.push(JSON.stringify(value))
+    })
+    expect(seen.join('')).toContain('new-9')
+  })
   it.each(['physical', 'logical', 'records'] as const)(
     'keeps cumulative %s budgets',
     async (budget) => {
