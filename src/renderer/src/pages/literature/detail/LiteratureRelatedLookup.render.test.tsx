@@ -297,6 +297,26 @@ it('holds the parent save guard across the complete batch including failed items
   expect(screen.getByText('Could not add this reference. Try again.')).toBeTruthy()
 })
 
+it('starts the graph with a fresh lookup after the list token expires', async () => {
+  related
+    .mockImplementationOnce(async () => result({ nextOffset: 20 }))
+    .mockImplementationOnce(async () =>
+      result({ state: 'unavailable', records: [], issue: 'expired' })
+    )
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+  await screen.findByText('These results expired. Search again.')
+  fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
+  await screen.findByRole('button', { name: 'Select Paper b' })
+  await waitFor(() =>
+    expect(related.mock.calls.slice(2).map(([r]) => r.direction)).toEqual([
+      'references',
+      'citations'
+    ])
+  )
+  expect(related.mock.calls[2][0].resolutionToken).toBeUndefined()
+})
+
 it('lazily mounts the graph and preserves its selection and zoom across list switches without refetching', async () => {
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('Paper b')
@@ -304,7 +324,7 @@ it('lazily mounts the graph and preserves its selection and zoom across list swi
   expect(screen.queryByRole('group', { name: 'Citation graph' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   await screen.findByRole('button', { name: 'Select Paper c' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
   const svg = screen.getByRole('group', { name: 'Citation graph' })
@@ -318,7 +338,7 @@ it('lazily mounts the graph and preserves its selection and zoom across list swi
     'true'
   )
   expect(screen.getByRole('group', { name: 'Citation graph' }).getAttribute('data-zoom')).toBe(zoom)
-  expect(related).toHaveBeenCalledTimes(3)
+  expect(related).toHaveBeenCalledTimes(2)
   expect(transact).not.toHaveBeenCalled()
 })
 it('shares root invalidation with the cached list so returning cannot stage stale selections', async () => {
@@ -566,15 +586,15 @@ it('defaults to Europe PMC routing and pins the actual source across list, graph
   })
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   const neighbor = await screen.findByRole('button', { name: 'Select EP neighbor' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
   fireEvent.click(neighbor)
   fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
   await screen.findByRole('button', { name: 'Select EP descendant' })
-  await waitFor(() => expect(related).toHaveBeenCalledTimes(5))
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(4))
   expect(related.mock.calls.slice(1).every(([request]) => request.provider === 'europe-pmc')).toBe(
     true
   )
-  expect(related.mock.calls[3][0].seedPaperId).toBe('europe-pmc:PMC:PMC2')
+  expect(related.mock.calls[2][0].seedPaperId).toBe('europe-pmc:PMC:PMC2')
   expect(transact).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
   await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
@@ -907,6 +927,10 @@ it('switches from SKG-IF to Index with fresh list pages and graph centers while 
   expect(
     related.mock.calls.slice(before).every(([request]) => request.opencitationsMode === 'index')
   ).toBe(true)
+  expect(related.mock.calls.slice(before).map(([request]) => request.direction)).toEqual([
+    'references',
+    'citations'
+  ])
   fireEvent.click(screen.getByRole('button', { name: 'List' }))
   await screen.findByText('OC neighbor')
   expect(screen.queryByText('Late SKG paper')).toBeNull()

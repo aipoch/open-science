@@ -60,7 +60,10 @@ function fixture(
 ): {
   finder: LiteratureRelatedFinder
   fetcher: Mock<typeof fetch>
-  catalog: { get: Mock<() => Promise<DiscoveryReference>>; sources: Mock<() => Promise<never[]>> }
+  catalog: {
+    get: Mock<() => Promise<DiscoveryReference>>
+    sources: Mock<() => Promise<{ provider: string; externalId?: string }[]>>
+  }
 } {
   let now = Date.now()
   vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -68,7 +71,10 @@ function fixture(
     now += 1001
     return responses.shift()!
   })
-  const catalog = { get: vi.fn(async () => item), sources: vi.fn(async () => []) }
+  const catalog = {
+    get: vi.fn(async () => item),
+    sources: vi.fn<() => Promise<{ provider: string; externalId?: string }[]>>(async () => [])
+  }
   return {
     finder: new LiteratureRelatedFinder({ fetch: fetcher, catalog }),
     fetcher,
@@ -80,6 +86,35 @@ describe('Europe PMC first, source-pinned citation discovery', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.useRealTimers()
+  })
+
+  it('reopens a saved preprint using its exact source and external ID', async () => {
+    const preprint = { source: 'PPR', id: 'PPR1317127', title: 'Preprint' }
+    const { finder, catalog, fetcher } = fixture(
+      [identity([preprint]), page([], preprint)],
+      reference([])
+    )
+    catalog.sources.mockResolvedValue([
+      { provider: 'europe-pmc', externalId: 'europe-pmc:PPR:PPR1317127' }
+    ])
+    expect(await finder.run(request)).toMatchObject({
+      state: 'ready',
+      seed: { paperId: 'europe-pmc:PPR:PPR1317127' }
+    })
+    expect(new URL(String(fetcher.mock.calls[0][0])).searchParams.get('query')).toBe(
+      'EXT_ID:"PPR1317127" AND SRC:PPR'
+    )
+  })
+
+  it('rejects a different preprint returned by the exact source search', async () => {
+    const { finder, catalog } = fixture(
+      [identity([{ source: 'PPR', id: 'PPR99', title: 'Other' }])],
+      reference([])
+    )
+    catalog.sources.mockResolvedValue([
+      { provider: 'europe-pmc', externalId: 'europe-pmc:PPR:PPR1317127' }
+    ])
+    expect(await finder.run(request)).toMatchObject({ state: 'unavailable', issue: 'no-match' })
   })
 
   const nativeIdentityCases = [

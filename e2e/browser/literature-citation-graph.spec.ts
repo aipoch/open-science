@@ -19,6 +19,25 @@ test('citation graph keeps the desktop canvas readable and paper list independen
   await page.screenshot({ path: info.outputPath('graph-desktop-selected.png') })
 })
 
+test('navigates relationship tabs with the keyboard', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await openCitationGraph(page, citationGraphPath, undefined, 'all')
+  const frame = page.locator('[data-current-frame="true"]')
+  await frame.getByRole('tab', { name: 'All', exact: true }).focus()
+  for (const [key, name] of [
+    ['ArrowRight', 'References'],
+    ['End', 'Cited by'],
+    ['Home', 'All']
+  ]) {
+    await page.keyboard.press(key)
+    const tab = frame.getByRole('tab', { name, exact: true })
+    await expect(tab).toBeFocused()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    await expect(frame.getByRole('tabpanel', { name, exact: true })).toBeVisible()
+    if (key === 'ArrowRight') await page.screenshot({ path: info.outputPath('graph-keyboard.png') })
+  }
+})
+
 test('citation graph pointer hits, pan, zoom and cached exploration', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await openCitationGraph(page, citationGraphPath)

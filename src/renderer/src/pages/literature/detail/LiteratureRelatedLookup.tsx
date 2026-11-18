@@ -33,6 +33,8 @@ import {
 import { citationRecordProvider } from './citation-graph'
 import type { ScheduleRequest } from './useCitationGraphController'
 
+const firstPageReuseMs = 60_000
+
 export function LiteratureRelatedLookup(
   props: React.ComponentProps<typeof LiteratureRelatedList>
 ): React.JSX.Element {
@@ -62,6 +64,50 @@ function LiteratureRelatedSession(
   const { view, onViewChange: setView } = props
   const { source, requestRelated } = useCitationSource(props.provider)
   const [graphOpened, setGraphOpened] = useState(view === 'graph')
+  const [listOpened, setListOpened] = useState(view === 'list')
+  const graphStarted = useRef(false)
+  const firstPage = useRef<{ response: LiteratureRelatedResult; receivedAt: number } | undefined>(
+    undefined
+  )
+  const scheduleList = useCallback<ScheduleRequest>(
+    async (request, shouldRun) => {
+      const response = await requestRelated(request, shouldRun)
+      if (response.issue === 'expired' || response.issue === 'reference-changed')
+        firstPage.current = undefined
+      if (
+        !graphStarted.current &&
+        !request.offset &&
+        request.direction === 'references' &&
+        !request.resolutionToken
+      ) {
+        firstPage.current =
+          response.state === 'ready' && response.seed && response.resolutionToken
+            ? { response, receivedAt: Date.now() }
+            : undefined
+      }
+      return response
+    },
+    [requestRelated]
+  )
+  const scheduleGraph = useCallback<ScheduleRequest>(
+    (request, shouldRun) => {
+      graphStarted.current = true
+      const page = firstPage.current
+      firstPage.current = undefined
+      if (
+        page &&
+        Date.now() - page.receivedAt < firstPageReuseMs &&
+        shouldRun() &&
+        !request.seedPaperId &&
+        !request.resolutionToken &&
+        !request.offset &&
+        page.response.direction === request.direction
+      )
+        return Promise.resolve(page.response)
+      return requestRelated(request, shouldRun)
+    },
+    [requestRelated]
+  )
   const [referenceInvalidated, setReferenceInvalidated] = useState(false)
   const invalidatedReference = useRef(false)
   const isReferenceInvalidated = useCallback(() => invalidatedReference.current, [])
@@ -93,7 +139,10 @@ function LiteratureRelatedSession(
           variant={view === 'list' ? 'secondary' : 'ghost'}
           aria-pressed={view === 'list'}
           disabled={saving}
-          onClick={() => setView('list')}
+          onClick={() => {
+            setListOpened(true)
+            setView('list')
+          }}
         >
           {t('List')}
         </Button>
@@ -150,15 +199,17 @@ function LiteratureRelatedSession(
         style={{ display: view === 'list' ? undefined : 'none' }}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <LiteratureRelatedList
-          {...props}
-          source={source}
-          requestRelated={requestRelated}
-          referenceInvalidated={referenceInvalidated}
-          isReferenceInvalidated={isReferenceInvalidated}
-          onReferenceChanged={invalidateReference}
-          onSavingChange={handleSavingChange}
-        />
+        {listOpened && (
+          <LiteratureRelatedList
+            {...props}
+            source={source}
+            requestRelated={scheduleList}
+            referenceInvalidated={referenceInvalidated}
+            isReferenceInvalidated={isReferenceInvalidated}
+            onReferenceChanged={invalidateReference}
+            onSavingChange={handleSavingChange}
+          />
+        )}
       </div>
       {graphOpened ? (
         <div
@@ -171,7 +222,7 @@ function LiteratureRelatedSession(
             item={props.item}
             provider={props.provider}
             source={source}
-            requestRelated={requestRelated}
+            requestRelated={scheduleGraph}
             onSaved={props.onSaved}
             onOpenInbox={props.onOpenInbox}
             onSavingChange={handleSavingChange}

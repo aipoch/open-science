@@ -110,6 +110,33 @@ it('shows only returned directed relationships and stages an explicit keyboard-s
   ).toBeTruthy()
 })
 
+it('preserves a neighbor whose DOI is an unverified local alias of the center', async () => {
+  const doi = (value: string): LiteratureRelatedRecord['item']['identifiers'][number] => ({
+    scheme: 'doi' as const,
+    value: `10.1234/${value}`,
+    isPrimary: false
+  })
+  const seed = record('a')
+  seed.item.identifiers = [doi('a')]
+  const neighbor = record('b')
+  neighbor.item.identifiers = [doi('b')]
+  related.mockImplementation(async (request) =>
+    result(request, { seed, records: request.direction === 'references' ? [neighbor] : [] })
+  )
+  render(
+    <LiteratureCitationGraph
+      item={{ ...item, item: { ...item.item, identifiers: [doi('a'), doi('b')] } }}
+      onSaved={vi.fn()}
+    />
+  )
+  await screen.findByRole('button', { name: 'Select Paper b' })
+  expect(
+    screen
+      .getByRole('group', { name: 'Citation graph' })
+      .querySelector(`[data-source="${paperId('a')}"][data-target="${paperId('b')}"]`)
+  ).toBeTruthy()
+})
+
 it('keeps one active direction visible and switches to the cached other direction', async () => {
   render(<LiteratureCitationGraph item={item} directionMode="single" onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Paper b' })

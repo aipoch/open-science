@@ -11,6 +11,7 @@ import type { LiteratureRelatedRecord } from './related-contracts.js'
 
 const text = z.string().max(100_000)
 const maxReferenceIds = 2000
+const nativePaperId = /^opencitations:br\/(\d{1,30})$/
 const productUrl = /^https:\/\/w3id\.org\/oc\/meta\/br\/(\d{1,30})$/
 export type OpenCitationsReferenceSnapshot = readonly string[]
 const paperSchema = z.object({
@@ -228,21 +229,28 @@ async function readPage(
 
 export async function resolveOpenCitations(
   item: DiscoveryReference,
-  read: Read
+  read: Read,
+  savedSourceIds: () => Promise<string[]>
 ): Promise<
   { seed: LiteratureRelatedRecord; references: OpenCitationsReferenceSnapshot } | undefined
 > {
   const dois = doiValues(item.item.identifiers)
-  if (dois.length !== 1) return undefined
-  const doi = dois[0]
-  const page = await readPage(`identifiers.scheme:doi,identifiers.id:${doi}`, 0, read)
-  if (page.hasNext || page.rows.length !== page.total) throw new z.ZodError([])
-  // The exact DOI filter may return several real OMIDs for one work. A stable
-  // display identity is safe because relationship queries below retain the DOI.
-  const matches = page.rows.filter((paper) => {
-    const values = doiValues(paper.identifiers)
-    return values.length === 1 && values[0] === doi
-  })
+  let matches: Paper[]
+  if (dois.length === 1) {
+    const doi = dois[0]
+    const page = await readPage(`identifiers.scheme:doi,identifiers.id:${doi}`, 0, read)
+    if (page.hasNext || page.rows.length !== page.total) throw new z.ZodError([])
+    matches = page.rows.filter((paper) => {
+      const values = doiValues(paper.identifiers)
+      return values.length === 1 && values[0] === doi
+    })
+    if (matches.length && matches.length !== page.rows.length) throw new z.ZodError([])
+  } else {
+    if (dois.length) return undefined
+    const ids = [...new Set((await savedSourceIds()).filter((id) => nativePaperId.test(id)))]
+    if (ids.length !== 1) return undefined
+    matches = [await readNativePaper(ids[0], read)]
+  }
   for (const paper of matches) {
     for (const scheme of ['pmid', 'pmcid', 'arxiv'] as const) {
       const saved = item.item.identifiers.filter((entry) => entry.scheme === scheme)
@@ -259,14 +267,19 @@ export async function resolveOpenCitations(
     }
   }
   if (!matches.length) return undefined
-  if (matches.length !== page.rows.length) throw new z.ZodError([])
   const seed = matches
     .flatMap((paper) => {
       const entry = record(paper)
       return entry ? [entry] : []
     })
     .sort((a, b) => a.paperId.localeCompare(b.paperId, 'en'))[0]
-  return seed ? { seed, references: referenceSnapshot(matches) } : undefined
+  if (!seed) return undefined
+  // A saved OMID may have gained a DOI. Include its DOI aliases just as for a discovered center.
+  const references =
+    !dois.length && doiValues(seed.item.identifiers).length === 1
+      ? await readReferenceSnapshot(seed, read)
+      : referenceSnapshot(matches)
+  return { seed, references }
 }
 
 function referenceSnapshot(papers: Paper[]): OpenCitationsReferenceSnapshot {
@@ -306,7 +319,11 @@ async function readReferenceSnapshot(
       throw new z.ZodError([])
     return referenceSnapshot(page.rows)
   }
-  const match = /^opencitations:br\/(\d{1,30})$/.exec(seed.paperId)
+  return referenceSnapshot([await readNativePaper(seed.paperId, read)])
+}
+
+async function readNativePaper(id: string, read: Read): Promise<Paper> {
+  const match = nativePaperId.exec(id)
   if (!match) throw new z.ZodError([])
   const identity = `https://w3id.org/oc/meta/br/${match[1]}`
   const path = `skg-if/v1/products/${identity}`
@@ -321,7 +338,7 @@ async function readReferenceSnapshot(
     response['@graph'][0].local_identifier !== identity
   )
     throw new z.ZodError([])
-  return referenceSnapshot(response['@graph'])
+  return response['@graph'][0]
 }
 
 const metaPaperSchema = z.object({

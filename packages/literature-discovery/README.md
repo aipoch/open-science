@@ -43,15 +43,14 @@ Every live result reports its actual `provider`. Semantic Scholar is not a suppo
 its old provider value and temporary 40-character paper IDs are rejected by the graph schemas.
 Historical catalog provenance and other discovery features use their own contracts.
 
-Europe PMC resolution requires an exact normalized DOI, PMID or PMCID. It never guesses from a
+Europe PMC resolves an exact normalized DOI, PMID or PMCID. If these do not resolve, it can verify a unique saved Europe PMC source and external ID against the search result. It never guesses from a
 title. Conflicting saved/provider identifiers and ambiguous matches are rejected; MED is preferred
 when both MED and PMC index the same DOI. The host injects catalog reads and transport; the finder
 never writes catalog records. UI selections use the existing Library candidate-review workflow.
 Europe PMC focuses on biomedical literature; an empty result does not imply absence of citations,
 especially for works outside that scope.
 
-OpenCitations defaults to the official SKG-IF API (`opencitationsMode: 'skg-if'`). Root resolution requires one valid normalized DOI,
-verifies returned DOI values independently, and does not guess from a title. DOI queries always
+OpenCitations defaults to the official SKG-IF API (`opencitationsMode: 'skg-if'`). Root resolution verifies a single normalized DOI against the returned records. A saved paper without a DOI can also reopen through its unique OpenCitations OMID after direct product verification. DOI queries always
 use lowercase keys: the service can return an empty response for mixed-case DOI filters. Several
 OMIDs may represent the same DOI; a stable real OMID supplies the seed metadata while queries
 retain the DOI to cover those aliases. Discovered centers with a unique DOI follow the same rule;

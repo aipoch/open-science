@@ -478,27 +478,21 @@ export class LiteratureRelatedFinder {
           attemptSignal: AbortSignal
         ): Promise<Resolution> => {
           result.provider = provider
+          const savedSourceIds = async (): Promise<string[]> =>
+            (await this.options.catalog.sources(item.id)).flatMap((entry) =>
+              entry.provider === provider && entry.externalId ? [entry.externalId] : []
+            )
+          const read = (path: string, query: Record<string, string>): Promise<unknown> =>
+            this.read(provider, path, query, attemptSignal)
           const found =
             provider === 'opencitations'
               ? request.opencitationsMode === 'index'
                 ? {
-                    seed: await resolveOpenCitationsIndex(
-                      item,
-                      (path, query) => this.read(provider, path, query, attemptSignal),
-                      (await this.options.catalog.sources(item.id)).flatMap((entry) =>
-                        entry.provider === 'opencitations' && entry.externalId
-                          ? [entry.externalId]
-                          : []
-                      )
-                    )
+                    seed: await resolveOpenCitationsIndex(item, read, await savedSourceIds())
                   }
-                : await resolveOpenCitations(item, (path, query) =>
-                    this.read(provider, path, query, attemptSignal)
-                  )
+                : await resolveOpenCitations(item, read, savedSourceIds)
               : {
-                  seed: await resolveEuropePmc(item, (path, query) =>
-                    this.read(provider, path, query, attemptSignal)
-                  )
+                  seed: await resolveEuropePmc(item, read, savedSourceIds)
                 }
           if (!found?.seed) throw new SourceError('no-match')
           const candidate: Resolution = {

@@ -115,25 +115,37 @@ function record(paper: Paper): LiteratureRelatedRecord | undefined {
 
 export async function resolveEuropePmc(
   item: DiscoveryReference,
-  read: Read
+  read: Read,
+  savedSourceIds: () => Promise<string[]>
 ): Promise<LiteratureRelatedRecord | undefined> {
-  for (const scheme of ['doi', 'pmid', 'pmcid'] as const) {
+  for (const scheme of ['doi', 'pmid', 'pmcid', 'native'] as const) {
     const values = [
       ...new Set(
-        item.item.identifiers
-          .filter((entry) => entry.scheme === scheme)
-          .map((entry) => normalizeLiteratureIdentifierKey(scheme, entry.value))
+        scheme === 'native'
+          ? (await savedSourceIds()).filter(
+              (id) =>
+                id.startsWith('europe-pmc:') && literatureRelatedPaperIdSchema.safeParse(id).success
+            )
+          : item.item.identifiers
+              .filter((entry) => entry.scheme === scheme)
+              .map((entry) => normalizeLiteratureIdentifierKey(scheme, entry.value))
       )
     ]
-    if (values.length !== 1 || !createLiteratureIdentifierUrl(scheme, values[0])) continue
+    if (
+      values.length !== 1 ||
+      (scheme !== 'native' && !createLiteratureIdentifierUrl(scheme, values[0]))
+    )
+      continue
     const value = values[0]
     // The response is independently checked: search syntax is never proof of identity.
     const query =
-      scheme === 'doi'
-        ? `DOI:"${value.replace(/["\\]/g, '\\$&')}"`
-        : scheme === 'pmid'
-          ? `EXT_ID:${value} AND SRC:MED`
-          : `PMCID:${value}`
+      scheme === 'native'
+        ? `EXT_ID:"${value.split(':')[2]}" AND SRC:${value.split(':')[1]}`
+        : scheme === 'doi'
+          ? `DOI:"${value.replace(/["\\]/g, '\\$&')}"`
+          : scheme === 'pmid'
+            ? `EXT_ID:${value} AND SRC:MED`
+            : `PMCID:${value}`
     const response = z
       .object({
         hitCount: z.number().int().nonnegative(),
@@ -143,6 +155,7 @@ export async function resolveEuropePmc(
     // More than one page cannot establish an unambiguous exact match.
     if (response.hitCount > 20) return undefined
     const matches = response.resultList.result.filter((paper) => {
+      if (scheme === 'native') return `europe-pmc:${paper.source}:${paper.id}` === value
       const candidate =
         paper[scheme] ??
         (scheme === 'pmid' && paper.source === 'MED'

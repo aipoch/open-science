@@ -119,6 +119,33 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
     vi.useRealTimers()
   })
 
+  it('reopens a saved product without a DOI and follows its verified references', async () => {
+    const product = { ...root, identifiers: [] }
+    const path = `https://api.opencitations.net/skg-if/v1/products/${root.local_identifier}`
+    const { finder, catalog, fetcher } = fixture(
+      [json({ meta: { local_identifier: path }, '@graph': [product] }), json([metadata('9')])],
+      reference([])
+    )
+    catalog.sources.mockResolvedValue([
+      { provider: 'opencitations', externalId: 'opencitations:br/061234' }
+    ])
+    expect(await finder.run(request)).toMatchObject({
+      state: 'ready',
+      seed: { paperId: 'opencitations:br/061234' },
+      records: [{ paperId: 'opencitations:br/9' }]
+    })
+    expect(new URL(String(fetcher.mock.calls[0][0])).pathname).toBe(new URL(path).pathname)
+  })
+
+  it('rejects ambiguous saved OMIDs without contacting the provider', async () => {
+    const { finder, catalog, fetcher } = fixture([], reference([]))
+    catalog.sources.mockResolvedValue(
+      ['1', '2'].map((id) => ({ provider: 'opencitations', externalId: `opencitations:br/${id}` }))
+    )
+    expect(await finder.run(request)).toMatchObject({ state: 'unavailable', issue: 'no-match' })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('uses exact lowercase DOI identity and Meta references on the fixed origin', async () => {
     const child = metadata('9', {
       id: 'doi:10.1234/CHILD pmid:123 omid:br/9',

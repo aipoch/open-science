@@ -219,7 +219,7 @@ export function useCitationGraphController({
                 ? response.seed!.item
                 : {
                     ...localItem,
-                    identifiers: [...localItem.identifiers, ...response.seed!.item.identifiers]
+                    identifiers: response.seed!.item.identifiers
                   }
             }
         )

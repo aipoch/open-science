@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ChevronRight } from 'lucide-react'
+import { Tabs } from 'radix-ui'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { LiteratureRelatedRecord } from '@aipoch/literature-discovery/contracts'
 import { Button } from '@/components/ui/button'
@@ -308,12 +309,16 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
   const directionLabel = (filter: CitationGraphFilter): string =>
     filter === 'all' ? t('All') : filter === 'references' ? t('References') : t('Cited by')
   return (
-    <div data-citation-workspace className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <Tabs.Root
+      data-citation-workspace
+      value={controller.filter}
+      onValueChange={(value) => controller.setDirection(value as CitationGraphFilter)}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
       <span id={`${marker}-center-title`} className="sr-only">
         {title}
       </span>
-      <div
-        role="tablist"
+      <Tabs.List
         aria-label={t('Relationship regions')}
         data-citation-direction-tabs
         className="flex shrink-0 items-center border-b border-border-300 px-3 py-1.5"
@@ -322,24 +327,30 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           {citationFilters.map((direction) => {
             const active = controller.filter === direction
             return (
-              <Button
+              <Tabs.Trigger
                 key={direction}
-                role="tab"
-                aria-selected={active}
-                data-citation-direction-tab={direction}
-                size="sm"
-                variant="ghost"
+                value={direction}
                 disabled={controller.interactionBusy || controller.invalidated}
-                className={`h-7 min-w-11 rounded px-2.5 text-xs font-medium ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                onClick={() => controller.setDirection(direction)}
+                asChild
               >
-                {directionLabel(direction)}
-              </Button>
+                <Button
+                  data-citation-direction-tab={direction}
+                  size="sm"
+                  variant="ghost"
+                  disabled={controller.interactionBusy || controller.invalidated}
+                  className={`h-7 min-w-11 rounded px-2.5 text-xs font-medium ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => controller.setDirection(direction)}
+                >
+                  {directionLabel(direction)}
+                </Button>
+              </Tabs.Trigger>
             )
           })}
         </div>
-      </div>
-      <div
+      </Tabs.List>
+      <Tabs.Content
+        value={controller.filter}
+        forceMount
         className={`grid min-h-0 flex-1 overflow-hidden sm:grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_auto] lg:grid-rows-[minmax(0,1fr)] ${detailsOpen ? 'grid-rows-[minmax(0,3fr)_minmax(0,2fr)]' : 'grid-rows-[minmax(0,1fr)_auto]'}`}
       >
         <LiteratureCitationCanvas
@@ -405,7 +416,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           visible={visible}
           onOpenInbox={props.onOpenInbox}
         />
-      </div>
-    </div>
+      </Tabs.Content>
+    </Tabs.Root>
   )
 }
