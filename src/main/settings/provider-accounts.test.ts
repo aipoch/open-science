@@ -1,3 +1,5 @@
+import * as codeBuddyAuth from './codebuddy-auth'
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
 import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
@@ -1294,6 +1296,7 @@ describe('ProviderAccountsModule', () => {
         settingsIdSequence += 1
         return settingsIdSequence
       },
+      resolveCodeBuddyExecutable: async () => 'test-codebuddy',
       resolveCodexExecutable: vi.fn(async () => '/codex-acp'),
       resolveCodexProxyEnvironment: vi.fn(async () => undefined),
       runClaudeSubscriptionProbe,
@@ -1309,6 +1312,81 @@ describe('ProviderAccountsModule', () => {
     return async () => {
       vi.unstubAllGlobals()
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {
+    const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
+      authenticated: true,
+      model: 'model',
+      models: ['model']
+    })
+    const login = { site: 'internal', action: 'login', mode: 'shared' } as const
+    const id = codeBuddyAccounts.internal.id
+    const stored = async (): Promise<StoredSettings['providers'][number] | undefined> =>
+      (await repository.getSettings()).providers.find((p) => p.id === id)
+    try {
+      expect(await module.codeBuddyAccount(login)).toMatchObject({ ok: true })
+      expect(auth).toHaveBeenLastCalledWith(
+        'test-codebuddy',
+        expect.any(String),
+        'internal',
+        'login',
+        expect.any(AbortSignal),
+        'shared'
+      )
+      expect(await stored()).toMatchObject({
+        codeBuddyAuthMode: 'shared',
+        fetchedModels: ['model']
+      })
+      auth.mockClear()
+      await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
+      expect((await stored())?.disconnectedAt).toEqual(expect.any(Number))
+      expect((await stored())?.fetchedModels).toBeUndefined()
+      expect(await module.codeBuddyAccount({ site: 'internal', action: 'status' })).toMatchObject({
+        ok: false
+      })
+      expect(auth).not.toHaveBeenCalled()
+      expect(await module.codeBuddyAccount(login)).toMatchObject({ ok: true })
+      expect((await stored())?.disconnectedAt).toBeUndefined()
+      auth.mockClear()
+      await module.deleteProvider(id)
+      expect(await stored()).toBeUndefined()
+      expect(auth).not.toHaveBeenCalled()
+    } finally {
+      auth.mockRestore()
+    }
+  })
+
+  it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
+    const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
+    try {
+      auth.mockResolvedValue({ authenticated: true, model: 'old', models: ['old'] })
+      await module.codeBuddyAccount({ site: 'internal', action: 'login' })
+      await module.codeBuddyAccount({ site: 'external', action: 'login' })
+      auth.mockResolvedValue({ authenticated: true, model: 'new', models: ['new'] })
+      await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })
+      auth.mockResolvedValue({ authenticated: true })
+      expect(await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })).toMatchObject({
+        ok: false
+      })
+      const records = async (): Promise<StoredSettings['providers']> =>
+        (await repository.getSettings()).providers
+      expect(
+        (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.fetchedModels
+      ).toEqual(['new'])
+      auth.mockResolvedValue({ authenticated: false })
+      await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
+      const providers = await records()
+      const china = providers.find((p) => p.id === codeBuddyAccounts.internal.id)
+      expect(china).toBeDefined()
+      expect(china?.model).toBeUndefined()
+      expect(china?.fetchedModels).toBeUndefined()
+      expect(providers.find((p) => p.id === codeBuddyAccounts.external.id)?.fetchedModels).toEqual([
+        'old'
+      ])
+    } finally {
+      auth.mockRestore()
     }
   })
 

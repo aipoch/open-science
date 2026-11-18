@@ -1,1 +1,1 @@
-export const CODEBUDDY_VERSION = '2.138.0'
+export { CODEBUDDY_VERSION } from '../../shared/codebuddy-subscription'

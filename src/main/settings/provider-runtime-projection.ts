@@ -1,3 +1,4 @@
+import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   type ModelProtocol,
   getOfficialVendor,
@@ -99,6 +100,7 @@ class ProviderRuntimeProjectionOwner {
       id: provider.id,
       configRevision: provider.configRevision,
       type: provider.type,
+      ...(provider.codeBuddyAuthMode && { codeBuddyAuthMode: provider.codeBuddyAuthMode }),
       codexAuthMode: provider.codexAuthMode,
       codexTransport: provider.codexTransport,
       name: provider.name,
@@ -252,6 +254,17 @@ class ProviderRuntimeProjectionOwner {
   }
 
   resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+    if (provider.type === 'codebuddy-subscription') {
+      const codeBuddySite = codeBuddySiteForId(provider.id)
+      if (!codeBuddySite) throw new Error('Invalid CodeBuddy provider ID.')
+      return {
+        type: provider.type,
+        codeBuddySite,
+        ...(provider.codeBuddyAuthMode && { codeBuddyAuthMode: provider.codeBuddyAuthMode }),
+        model: modelOverride ?? provider.model,
+        apiEndpoints: ['chat-completions']
+      }
+    }
     if (provider.type === 'custom' && provider.baseUrl) {
       const error = getCustomProviderBaseUrlError(provider.baseUrl)
       if (error) throw new Error(error)
@@ -347,6 +360,13 @@ class ProviderRuntimeProjectionOwner {
   }
 
   private availableModels(provider: StoredProvider): string[] {
+    if (provider.type === 'codebuddy-subscription') {
+      if (provider.fetchedModels?.length) return provider.fetchedModels
+      const site = codeBuddySiteForId(provider.id)
+      const base = site ? codeBuddyBaseModels[site] : []
+      // Older records may have only the account's current model.
+      return provider.model ? [...new Set([provider.model, ...base])] : [...base]
+    }
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendorModelIds('openai')
     }

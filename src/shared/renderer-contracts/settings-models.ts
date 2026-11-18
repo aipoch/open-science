@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
 import type {
   ImageModelSettingsMutation,
   ImageModelSettingsSnapshot
@@ -124,6 +125,9 @@ export const settingsLoginIsolatedClaudeContracts = {
     'settings',
     ['settings:login-isolated-claude-browser', LOCAL]
   ),
+  'settings.codeBuddyAccount': callable<
+    (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
+  >()('settings', ['settings:codebuddy-account', LOCAL]),
   'settings.loginIsolatedCodex': callable<() => Promise<ValidateProviderResult>>()('settings', [
     'settings:login-isolated-codex',
     LOCAL

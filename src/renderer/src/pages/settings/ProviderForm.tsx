@@ -1,3 +1,4 @@
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
@@ -69,6 +70,7 @@ type ProviderFormProps = {
   disabled?: boolean
   // Whether Electron can protect new keys with the operating system's secure storage.
   encryptionAvailable?: boolean
+  codeBuddyProviders?: readonly string[]
   showCodexSubscriptions?: boolean
   // Whether to surface the Claude subscription option in the provider-kind picker. Mirrors
   // showCodexSubscriptions: claude-isolated is only meaningful while Claude Code is the active
@@ -257,6 +259,7 @@ const ProviderForm = ({
   isRefreshingModels = false,
   disabled = false,
   encryptionAvailable = true,
+  codeBuddyProviders,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'messages',
@@ -268,6 +271,7 @@ const ProviderForm = ({
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
+  const isCodeBuddySubscription = value.type === 'codebuddy-subscription'
   const isXaiSubscription = value.type === 'xai-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
   // A loopback custom gateway starts with the local-server presets visible, but the user can still
@@ -409,7 +413,10 @@ const ProviderForm = ({
 
   return (
     <div className="space-y-4">
-      {fileCredentialNotice && !isCodexSubscription && value.type !== 'claude-shared' ? (
+      {fileCredentialNotice &&
+      !isCodeBuddySubscription &&
+      !isCodexSubscription &&
+      value.type !== 'claude-shared' ? (
         <p role="status" className="text-sm text-muted-foreground">
           {fileCredentialNotice}
         </p>
@@ -417,13 +424,13 @@ const ProviderForm = ({
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
           <span className={fieldLabelClassName}>{t('Provider type')}</span>
-          {selectedKind ? (
+          {selectedKind?.descriptionKey ? (
             <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
           ) : null}
         </div>
         <Select
           value={selectedKey}
-          disabled={disabled}
+          disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label={t('Provider type')}>
@@ -436,6 +443,7 @@ const ProviderForm = ({
             {PROVIDER_KIND_GROUPS.map((group) => {
               const kinds = PROVIDER_KINDS.filter((kind) => {
                 if (kind.group !== group.id) return false
+                if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
                 // Codex and the built-in Agent share the app-owned subscription sign-in.
                 if (group.id === 'codex' && !showCodexSubscriptions) return false
                 // The Claude subscription section mirrors it: gate on Claude Code being active,
@@ -454,6 +462,7 @@ const ProviderForm = ({
                     <SelectItem
                       key={kind.key}
                       value={kind.key}
+                      disabled={codeBuddyProviders?.includes(kind.key)}
                       icon={<ProviderKindIcon kindKey={kind.key} />}
                     >
                       {kindLabel(kind, t)}
@@ -466,7 +475,10 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      {!isCodexSubscription && !isClaudeSubscription && !isXaiSubscription ? (
+      {!isCodeBuddySubscription &&
+      !isCodexSubscription &&
+      !isClaudeSubscription &&
+      !isXaiSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
             {t('Name')}
@@ -482,7 +494,30 @@ const ProviderForm = ({
         </div>
       ) : null}
 
-      {isXaiSubscription ? (
+      {isCodeBuddySubscription ? (
+        <div className="space-y-1.5">
+          <span className={fieldLabelClassName}>{t('Authentication')}</span>
+          <Select
+            value={value.codeBuddyAuthMode ?? 'isolated'}
+            disabled={disabled || !codeBuddyProviders}
+            onValueChange={(mode) =>
+              onChange({ codeBuddyAuthMode: mode === 'shared' ? 'shared' : 'isolated' })
+            }
+          >
+            <SelectTrigger aria-label={t('Authentication')}>
+              <span>
+                {value.codeBuddyAuthMode === 'shared'
+                  ? t('Use existing CodeBuddy CLI sign-in')
+                  : t('Sign in with Open-Science')}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="shared">{t('Use existing CodeBuddy CLI sign-in')}</SelectItem>
+              <SelectItem value="isolated">{t('Sign in with Open-Science')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : isXaiSubscription ? (
         <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
           <p className="text-sm font-medium text-foreground">{t('One xAI login, every agent')}</p>
           <p className="text-xs text-muted-foreground">
