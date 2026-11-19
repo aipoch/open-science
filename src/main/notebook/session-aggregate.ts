@@ -659,10 +659,11 @@ export class NotebookSessionAggregate<
           const currentSlot = resource.processKey
             ? this.kernelEpochs.get(resource.processKey)
             : undefined
-          if (ownedSlot && currentSlot && currentSlot !== ownedSlot)
+          // A retired epoch can still need projection if no replacement owns the process key.
+          if (currentSlot && currentSlot !== ownedSlot)
             return { ...result, projection: 'complete' as const }
           try {
-            await afterRelease?.(resource)
+            if (this.executorGenerationValue === generation) await afterRelease?.(resource)
             if (ownedSlot) {
               await this.onKernelEpochsRetired?.([ownedSlot.ownership])
               if (this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {

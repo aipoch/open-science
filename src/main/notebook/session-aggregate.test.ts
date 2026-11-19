@@ -61,6 +61,54 @@ describe('NotebookSessionAggregate', () => {
     expect(session.currentKernelEpochId('repl')).toBeUndefined()
   })
 
+  it.each([false, true])(
+    'projects cleanup of a retired epoch only if it has no replacement (replacement: %s)',
+    async (replaceEpoch) => {
+      const resource = {
+        identity: {},
+        group: 'kernel' as const,
+        kind: 'repl',
+        phase: 'cleanup-pending' as const,
+        startedAt: 123,
+        processKey: 'repl',
+        kernelEpochId: '',
+        release: vi.fn(async () => ({ reaped: true }))
+      }
+      const session = new NotebookSessionAggregate({
+        sessionId: 'session-1',
+        projectId: 'project',
+        lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
+        cwd: '/workspace',
+        notebookSessionRoot: '/workspace',
+        dataRoot: '/workspace/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/workspace/run.json',
+        executionCount: 0,
+        executorGeneration: Symbol('original'),
+        executor: {
+          execute: async () => {
+            throw new Error('unused')
+          },
+          shutdown: async () => ({ reaped: false }),
+          resources: () => [resource]
+        }
+      })
+      resource.kernelEpochId = session.kernelEpochId('repl')
+      await session.retireKernelEpoch('repl')
+      const replacement = replaceEpoch ? session.kernelEpochId('repl') : undefined
+      const project = vi.fn(async () => undefined)
+
+      const [original] = session.resources(project)
+      await expect(original.release()).resolves.toMatchObject({
+        reaped: true,
+        projection: 'complete'
+      })
+      expect(resource.release).toHaveBeenCalledOnce()
+      expect(project).toHaveBeenCalledTimes(replaceEpoch ? 0 : 1)
+      expect(session.currentKernelEpochId('repl')).toBe(replacement)
+    }
+  )
+
   it('keeps unreaped shutdown ownership fenced until the original executor can be retried', async () => {
     let reaped = false
     const session = new NotebookSessionAggregate({

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -433,6 +433,62 @@ it.skipIf(process.platform === 'win32')(
       )
     } finally {
       await restore?.()
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.skipIf(process.platform === 'win32')(
+  'retries the original cleanup without marking a replacement kernel terminated',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-release-replaced-kernel-'))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: healthyNotebookMemoryPolicy()
+    })
+    const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+    try {
+      await service.executeControl({ ...scope, code: 'globalThis.kept = 41' })
+      const { runJsonPath } = (await service.getSessionReference(scope))!
+      const { revision } = (await service.getProjectResources(scope)).groups[0]
+      const backup = `${runJsonPath}.backup`
+      await rename(runJsonPath, backup)
+      const request = await (async () => {
+        try {
+          await mkdir(runJsonPath)
+          const { operationId } = await service.releaseSessionResources(
+            { ...scope, revision },
+            () => undefined
+          )
+          await expect(service.waitForSessionTeardown(scope)).rejects.toThrow(
+            /cleanup.*incomplete/i
+          )
+          return { ...scope, operationId }
+        } finally {
+          await rm(runJsonPath, { recursive: true, force: true })
+          await rename(backup, runJsonPath)
+        }
+      })()
+      expect(service.getResourceRelease(request).status).toBe('partial')
+
+      await service.shutdown(scope)
+      await expect(
+        service.executeControl({ ...scope, code: 'globalThis.kept = 73' })
+      ).resolves.toMatchObject({ status: 'completed' })
+      const kernel = JSON.parse(await readFile(runJsonPath, 'utf8')).kernel
+      expect(kernel.lastKnownStatus).toBe('idle')
+
+      await service.retryResourceRelease(request, () => undefined)
+      await service.waitForSessionTeardown(scope)
+      expect(service.getResourceRelease(request).status).toBe('released')
+      expect(JSON.parse(await readFile(runJsonPath, 'utf8')).kernel).toEqual(kernel)
+      await expect(
+        service.executeControl({ ...scope, code: 'console.log(kept)' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: expect.stringContaining('73') })
+    } finally {
       await service.dispose()
       await rm(root, { recursive: true, force: true })
     }

@@ -199,6 +199,7 @@ class NotebookSessionLifecycleOwner {
         .filter(matches)
         .flatMap((session) =>
           session.resources(async (resource) => {
+            if (this.options.sessions.get(session.lane) !== session) return
             if (resource.processKey)
               await this.persistKernelStatus(session, 'terminated', resource.processKey)
             this.notifyChanged(session)
