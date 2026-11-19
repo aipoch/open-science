@@ -1,6 +1,7 @@
 import {
   getVendorModelReasoningCapability,
   type OfficialVendorId,
+  type ReasoningCapability,
   type ModelReasoningEffort,
   type ResolvedReasoningEffort,
   type CustomReasoningEffortTransport
@@ -260,11 +261,32 @@ export const projectReasoningEffortIntent = (
   return nearest?.intent ?? 'default'
 }
 
-/** Project a provider's concrete effort vocabulary into the five-intent product slots. */
-export function profileFromEffortValues(
-  values: readonly ModelReasoningEffort[]
+/** Project concrete provider values into the persisted five-intent product preference. */
+export function resolveVendorModelReasoningEffort(
+  id: OfficialVendorId,
+  modelId: string | undefined
 ): ReasoningEffortProfile {
-  if (values.length === 0) return { supported: false }
+  return reasoningProfileFromCapability(getVendorModelReasoningCapability(id, modelId))
+}
+
+export function reasoningProfileFromCapability(
+  capability: ReasoningCapability
+): ReasoningEffortProfile {
+  if (!capability.supported || capability.values.length === 0) return { supported: false }
+  const values = EFFORT_STRENGTH.filter((value) => capability.values.includes(value))
+  if (values.length > INTENTS.length) {
+    const closest = (intent: ModelReasoningEffort): ModelReasoningEffort =>
+      values.reduce((best, value) =>
+        Math.abs(EFFORT_STRENGTH.indexOf(value) - EFFORT_STRENGTH.indexOf(intent)) <
+        Math.abs(EFFORT_STRENGTH.indexOf(best) - EFFORT_STRENGTH.indexOf(intent))
+          ? value
+          : best
+      )
+    return {
+      supported: true,
+      slots: [closest('low'), closest('medium'), closest('high'), closest('xhigh'), closest('max')]
+    }
+  }
   return {
     supported: true,
     slots: [
@@ -275,14 +297,4 @@ export function profileFromEffortValues(
       values[4] ?? values.at(-1)!
     ]
   }
-}
-
-/** Project concrete provider values into the persisted five-intent product preference. */
-export function resolveVendorModelReasoningEffort(
-  id: OfficialVendorId,
-  modelId: string | undefined
-): ReasoningEffortProfile {
-  const capability = getVendorModelReasoningCapability(id, modelId)
-  if (!capability.supported) return { supported: false }
-  return profileFromEffortValues(capability.values)
 }

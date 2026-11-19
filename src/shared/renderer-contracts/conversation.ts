@@ -200,6 +200,10 @@ export const sessionsDeleteSessionContracts = {
       listener: (snapshot: import('../session-package').PackageOperationSnapshot) => void
     ) => RemoveListener
   >()('sessions', ['sessions:package-operation-changed', EVENT]),
+  'sessions.onCatalogChanged': callable<(listener: () => void) => RemoveListener>()('sessions', [
+    'sessions:catalog-changed',
+    EVENT
+  ]),
   'sessions.orgCasesList': callable<
     (
       query?: import('../org-cases').ListOrgCasesQuery

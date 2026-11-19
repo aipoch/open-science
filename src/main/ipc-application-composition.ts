@@ -966,11 +966,10 @@ export const createApplicationModules = async (
     dispose: () => owner.dispose(),
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
   }))
-  // Recovery starts only after foreground commands and selected-session startup are ready.
+  // Deferred catalog cleanup starts after foreground commands are ready. Session Details recovery
+  // is triggered by the Session load path when the user opens a Session.
   await modules.add(sessionProjection, (projection) => {
-    const recovery = projection.createDeferredRecovery((session) =>
-      sessionSurfaces.sessionDetailsOwner.recoverSession(session)
-    )
+    const recovery = projection.createDeferredRecovery(async () => undefined)
     return {
       name: 'deferred-session-recovery',
       capability: recovery,

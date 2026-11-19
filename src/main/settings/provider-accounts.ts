@@ -1,4 +1,9 @@
 import {
+  decodeCatalogParameters,
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
+import {
   WORKBUDDY_PROFILE_MESSAGE,
   codeBuddyAccounts,
   codeBuddySiteForId,
@@ -18,7 +23,7 @@ import {
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
-import { frameworkRequiresStreaming } from '../../shared/agent-framework-id'
+import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
 import { labModelId } from '../../shared/lab'
 
 import type {
@@ -85,6 +90,7 @@ import {
 } from './provider-runtime-projection'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
+  reconcileCatalogHealth,
   buildProviderValidationPatch,
   targetForValidationResult
 } from './provider-validation-state'
@@ -122,6 +128,12 @@ type ProviderAccountsModuleOptions = {
   // The optional Lab account owner; supplies the "signed in" probe without owning provider records.
   lab?: { isUsable: () => Promise<boolean> }
 }
+type PreparedProvider = {
+  provider: StoredProvider
+  settings: StoredSettings
+  catalogBaseline?: ProviderCatalogState
+}
+
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
@@ -309,9 +321,7 @@ class ProviderAccountsModule {
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
-  private async prepareProvider(
-    request: UpsertProviderRequest
-  ): Promise<{ provider: StoredProvider; settings: StoredSettings }> {
+  private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
@@ -372,15 +382,18 @@ class ProviderAccountsModule {
     }
 
     const carryKey = (): boolean => {
-      const hasKey = Boolean(request.key) || Boolean(existing?.keyRef)
       if (request.key) {
         provider.keyRef = encryptKey(request.key)
         provider.keyMask = maskKey(request.key)
-      } else if (existing?.keyRef) {
+      } else if (
+        existing?.keyRef &&
+        existing.type === provider.type &&
+        existing.vendorId === provider.vendorId
+      ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
       }
-      return hasKey
+      return Boolean(provider.keyRef)
     }
 
     let credentialsChanged = false
@@ -426,11 +439,26 @@ class ProviderAccountsModule {
     } else if (request.type === 'official') {
       const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
       if (!vendorId) throw new Error('A vendor is required for an official provider.')
-      const region = request.region ?? existing?.region
+      const region =
+        request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
-      if (existing?.fetchedModels && vendorId === existing.vendorId) {
-        provider.fetchedModels = existing.fetchedModels
+      provider.catalogParameters =
+        request.catalogParameters === undefined
+          ? vendorId === existing?.vendorId && region === existing.region
+            ? existing.catalogParameters
+            : undefined
+          : decodeCatalogParameters(request.catalogParameters)
+      if (request.catalogParameters && !provider.catalogParameters)
+        throw new Error('Invalid catalog parameters.')
+      if (
+        existing &&
+        vendorId === existing.vendorId &&
+        region === existing.region &&
+        !request.key &&
+        isDeepStrictEqual(provider.catalogParameters ?? {}, existing.catalogParameters ?? {})
+      ) {
+        Object.assign(provider, providerCatalogState(existing))
       }
       if (!carryKey()) throw new Error('API key is required for an official provider.')
       credentialsChanged =
@@ -476,11 +504,20 @@ class ProviderAccountsModule {
     if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
 
-    return { provider, settings }
+    const catalogBaseline = this.modelCatalog.applyDraft(
+      request.catalogDraftToken,
+      provider,
+      existing
+    )
+    return {
+      provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
+      settings,
+      catalogBaseline
+    }
   }
 
   private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
-    const { provider, settings } = await this.prepareProvider(request)
+    const { provider, settings, catalogBaseline } = await this.prepareProvider(request)
     const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
@@ -497,16 +534,17 @@ class ProviderAccountsModule {
     }
 
     await this.repository.upsertProvider(provider, editId, {
+      catalogBaseline,
       expectedConfigRevision: request.expectedConfigRevision
     })
   }
 
-  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<{
-    provider: StoredProvider
-    settings: StoredSettings
-    requireExisting: boolean
-    expectedConfigRevision?: number
-  }> {
+  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<
+    PreparedProvider & {
+      requireExisting: boolean
+      expectedConfigRevision?: number
+    }
+  > {
     if (request.type !== 'custom' && request.type !== 'official')
       throw new Error('Connection testing edits requires an API-key provider.')
     const prepared = await this.prepareProvider(request)
@@ -525,12 +563,9 @@ class ProviderAccountsModule {
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
+    const tested = this.resolveProvider(prepared.provider)
     const expectedValidationState =
-      saved &&
-      this.sameValidationTarget(
-        this.resolveProvider(prepared.provider),
-        this.resolveProvider(saved)
-      )
+      saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
             lastValidatedAt: saved.lastValidatedAt,
             lastValidatedTarget: saved.lastValidatedTarget,
@@ -561,7 +596,19 @@ class ProviderAccountsModule {
       await this.repository.upsertProvider(
         provider,
         prepared.requireExisting ? provider.id : undefined,
-        { expectedConfigRevision: prepared.expectedConfigRevision, expectedValidationState }
+        {
+          catalogBaseline: prepared.catalogBaseline,
+          expectedConfigRevision: prepared.expectedConfigRevision,
+          expectedValidationState,
+          validationMatches: (merged) => {
+            const matches = this.sameValidationTarget(
+              tested,
+              this.resolveProvider(merged, tested.model)
+            )
+            if (!matches) validation.applied = false
+            return matches
+          }
+        }
       )
     })
     return { validation, providerId: provider.id }
@@ -806,6 +853,18 @@ class ProviderAccountsModule {
         (!current || (current.configRevision ?? 0) !== prepared.expectedConfigRevision)
       )
         return { ...result, applied: false }
+      if (current) {
+        const model = result.testedTarget.model
+        const original = prepared.settings.providers.find(({ id }) => id === current.id)
+        if (original && !isDeepStrictEqual(original.modelCatalog, current.modelCatalog)) {
+          const tested = this.resolveProvider(prepared.provider, model)
+          if (
+            this.sameValidationTarget(tested, this.resolveProvider(original, model)) &&
+            !this.sameValidationTarget(tested, this.resolveProvider(current, model))
+          )
+            return { ...result, applied: false }
+        }
+      }
       return result
     }
     if (request.draft) {
@@ -930,16 +989,19 @@ class ProviderAccountsModule {
         }
       }
     }
-    const authResult =
-      resolved.provider.type === 'codebuddy-subscription' && resolved.provider.codeBuddySite
-        ? await this.codeBuddyAccount({ site: resolved.provider.codeBuddySite, action: 'status' })
-        : incompatibility || xaiAuthResult
-          ? undefined
-          : await this.auth.validateProviderAuth(
-              resolved.provider,
-              settings,
-              storedValidationTarget
-            )
+    // A model without a route fails locally, but its validation still has to reach the saved card.
+    const localResult: ValidateProviderResult | undefined =
+      resolved.provider.vendorId && resolved.provider.apiEndpoints?.length === 0
+        ? { ok: false, category: 'model-not-found' }
+        : resolved.provider.type === 'codebuddy-subscription' && resolved.provider.codeBuddySite
+          ? await this.codeBuddyAccount({ site: resolved.provider.codeBuddySite, action: 'status' })
+          : incompatibility || xaiAuthResult
+            ? undefined
+            : await this.auth.validateProviderAuth(
+                resolved.provider,
+                settings,
+                storedValidationTarget
+              )
     const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
     // An incompatible pairing no longer replaces the probe: compatibility is a derivable
     // (provider, framework) relationship, not an endpoint-health fact. The probe still runs —
@@ -951,7 +1013,7 @@ class ProviderAccountsModule {
     )
     let probeResult =
       xaiAuthResult ??
-      authResult ??
+      localResult ??
       (await validateProviderTarget(validationProvider, {
         fetchImpl: netFetchStandard,
         requireBridgeToolCall: framework.id === 'codex' && usesCompatibilityTransport,
@@ -965,7 +1027,7 @@ class ProviderAccountsModule {
     if (
       !probeResult.ok &&
       !incompatibility &&
-      !authResult &&
+      !localResult &&
       !xaiAuthResult &&
       (validationProvider.type === 'custom' || validationProvider.type === 'official') &&
       this.options.runAcpValidation
@@ -1183,12 +1245,8 @@ class ProviderAccountsModule {
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
   ): string | undefined {
-    if (
-      provider.type === 'lab' &&
-      provider.streaming === false &&
-      frameworkRequiresStreaming(framework.id)
-    ) {
-      return `Not compatible with ${framework.displayName}: this Lab model does not support streaming. Pick another model or switch the agent framework.`
+    if (!isModelStreamingCompatible(framework.id, provider.streaming)) {
+      return `Not compatible with ${framework.displayName}: this model does not support streaming. Pick another model or switch the agent framework.`
     }
     if (
       isProviderUsableByFramework(
@@ -1234,6 +1292,7 @@ class ProviderAccountsModule {
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
       left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
+      left.responsesBaseUrl === right.responsesBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')

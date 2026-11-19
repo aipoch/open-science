@@ -1,11 +1,16 @@
+import {
+  catalogModelApiEndpoints,
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from './provider-model-catalog'
+import type { CatalogModel } from '@aipoch/providers'
 import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
-  isVendorModelMultimodal,
-  resolveVendorModelApiEndpoints
+  isVendorModelMultimodal
 } from '@aipoch/providers'
-import { frameworkRequiresStreaming } from './agent-framework-id'
+import { isModelStreamingCompatible } from './agent-framework-id'
 import { isModelBridgeSupported } from './provider-bridge-policy'
 import { labModelLabel, readLabModelCapabilities } from './lab'
 
@@ -34,9 +39,10 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   vendorId?: OfficialVendorId
   model: string
   label: string
+  metadata?: CatalogModel
   selectable: boolean
   supportsImageInput: boolean
-  // False only for a Lab model explicitly marked as non-streaming. Absent means streaming-capable.
+  // Only an explicit false rules out streaming.
   streaming?: boolean
   unavailableReason?:
     'framework-incompatible' | 'model-bridge-unsupported' | 'streaming-unsupported'
@@ -65,17 +71,11 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints' | 'modelProtocols'>,
-  model: string
-): readonly ModelProtocol[] => {
-  if (provider.type === 'lab') {
-    const declared = provider.modelProtocols?.[model]
-    if (declared && declared.length > 0) return declared
-  }
-  return provider.type === 'official' && provider.vendorId
-    ? resolveVendorModelApiEndpoints(provider.vendorId, model)
-    : providerEndpoints(provider)
-}
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints' | 'modelProtocols'>,
+  metadata: CatalogModel | undefined,
+  model?: string
+): readonly ModelProtocol[] =>
+  metadata ? catalogModelApiEndpoints(metadata) : providerEndpoints(provider, model)
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -91,7 +91,11 @@ export const buildConfiguredModelInventory = (
     input.claudeSubscriptionProviderId
   )
 
-  const supportsImageInput = (provider: ProviderView, model: string): boolean => {
+  const supportsImageInput = (
+    provider: ProviderView,
+    model: string,
+    metadata?: CatalogModel
+  ): boolean => {
     if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
       return true
     }
@@ -104,7 +108,7 @@ export const buildConfiguredModelInventory = (
       )
     }
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
+    return metadata?.supportsImageInput === true
   }
 
   return input.providers
@@ -117,17 +121,7 @@ export const buildConfiguredModelInventory = (
           provider.lastValidationFailure?.target !== undefined)
     )
     .flatMap((provider) => {
-      // Lab's fetched catalog is authoritative. An empty catalog means the organization has no
-      // models; it must not fall back to a synthetic "default" entry that the gateway cannot serve.
-      const models =
-        provider.type === 'lab'
-          ? provider.models
-          : provider.models.length > 0
-            ? provider.models
-            : provider.model
-              ? [provider.model]
-              : ['']
-      return models.map((model) =>
+      const entry = (model: string, metadata?: CatalogModel): ConfiguredModelInventoryEntry =>
         Object.freeze({
           key: configuredModelKey(provider.id, model),
           providerId: provider.id,
@@ -136,12 +130,22 @@ export const buildConfiguredModelInventory = (
           ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
           model,
           label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
-          supportsImageInput: supportsImageInput(provider, model),
-          ...(provider.type === 'lab' && provider.modelStreaming?.[model] === false
-            ? { streaming: false }
-            : {})
+          metadata,
+          supportsImageInput: supportsImageInput(provider, model, metadata),
+          ...(provider.modelStreaming?.[model] === false ? { streaming: false } : {})
         })
-      )
+
+      if (provider.type === 'official' && provider.vendorId) {
+        return resolveOfficialModelCatalog(provider)
+          .filter(isCatalogModelAvailable)
+          .map((metadata) => entry(metadata.id, metadata))
+      }
+      // An empty Lab catalog means the organization has no available models.
+      const models =
+        provider.type === 'lab' || provider.models.length > 0
+          ? provider.models
+          : [provider.model ?? '']
+      return models.map((model) => entry(model))
     })
 }
 
@@ -158,7 +162,7 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).flatMap((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
-    const apiEndpoints = configuredModelApiEndpoints(provider, model)
+    const apiEndpoints = configuredModelApiEndpoints(provider, entry.metadata, model)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(
       { apiEndpoints },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
@@ -187,9 +191,7 @@ export const buildConfiguredModelCatalog = (
     )
       return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
-    const streamingSupported = !(
-      frameworkRequiresStreaming(input.frameworkId) && entry.streaming === false
-    )
+    const streamingSupported = isModelStreamingCompatible(input.frameworkId, entry.streaming)
     return [
       Object.freeze({
         ...entry,

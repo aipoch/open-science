@@ -134,3 +134,26 @@ it('accepts a complete catalog with retained successful recovery warnings', asyn
   } as unknown as DesktopRuntimeClient
   await expect(verifyDesktopRecoveryReadiness(client, config)).resolves.toBeUndefined()
 })
+
+it('keeps polling while the Session catalog is hydrating', async () => {
+  vi.useFakeTimers()
+  let sessionListCalls = 0
+  const client = {
+    startupState: () => ({ phase: 'ready' }),
+    runtimeInfo: () => ({ startupOptions: config }),
+    invokeHost: async (name: string) => {
+      if (name === 'storage:get-status')
+        return { dataRoot: config.dataRoot, dataRootMissing: false }
+      if (name === 'projects:list') return []
+      sessionListCalls += 1
+      return sessionListCalls === 1
+        ? { ...catalog, diagnostics: { ...catalog.diagnostics, catalogHydrationPending: true } }
+        : catalog
+    }
+  } as unknown as DesktopRuntimeClient
+
+  const result = verifyDesktopRecoveryReadiness(client, config, 1000)
+  await vi.advanceTimersByTimeAsync(100)
+  await expect(result).resolves.toBeUndefined()
+  expect(sessionListCalls).toBe(2)
+})

@@ -47,29 +47,17 @@ const configuration = (provider: StoredProvider): object => {
         ![
           'name',
           'keyMask',
+          'configRevision',
+          'catalogParameters',
+          'modelCatalog',
+          'modelCatalogStatus',
+          'fetchedModels',
           'lastValidatedAt',
           'lastValidatedTarget',
           'lastValidationFailure'
         ].includes(key)
     )
   )
-}
-const usable = (
-  provider: StoredProvider | undefined,
-  model: string
-): provider is StoredProvider => {
-  if (
-    !provider ||
-    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type) ||
-    provider.disconnectedAt !== undefined
-  )
-    return false
-  const endpoints = new ProviderRuntimeProjectionOwner().resolveProviderApiEndpoints(
-    provider,
-    model
-  )
-  const endpoint = preferredEndpoint(endpoints, harnessFramework.supportedApiTypes)
-  return !!endpoint && !providerValidationFailed(provider, { model, endpoint })
 }
 
 /** Main-only account and lifetime composition; the package owns turn admission and draining. */
@@ -102,6 +90,7 @@ export class HarnessSessionOwner {
     const runner = createAgentRunner({ maxSteps })
     const controller = new AbortController()
     let baseline: StoredProvider | undefined
+    let endpoint: HarnessProviderLease['route']['protocol'] | undefined
     let lease: HarnessProviderLease | undefined
     let closePromise: Promise<void> | undefined
     let acquisitionFinished!: () => void
@@ -110,7 +99,9 @@ export class HarnessSessionOwner {
     })
     const currentMatches = (current?: StoredProvider): boolean =>
       !!baseline &&
-      usable(current, model) &&
+      !!current &&
+      !!endpoint &&
+      !providerValidationFailed(current, { model, endpoint }) &&
       isDeepStrictEqual(configuration(baseline), configuration(current))
     const dispose = (): Promise<void> => {
       if (closePromise) return closePromise
@@ -150,8 +141,21 @@ export class HarnessSessionOwner {
     try {
       baseline = (await this.repository.getSettings()).providers.find(({ id }) => id === providerId)
       controller.signal.throwIfAborted()
-      if (!usable(baseline, model)) throw new Error('Harness provider is unavailable')
-      const target = this.projection.resolveProviderTarget(baseline, { kind: 'required', model })
+      if (
+        !baseline ||
+        baseline.disconnectedAt !== undefined ||
+        !['custom', 'official', 'xai-subscription', 'lab'].includes(baseline.type)
+      )
+        throw new Error('Harness provider is unavailable')
+      const target = this.projection.resolveRuntimeTarget(
+        baseline,
+        { kind: 'required', model },
+        harnessFramework
+      )
+      // Pin the protocol at admission; later discovery only governs new sessions.
+      endpoint = preferredEndpoint(target.apiEndpoints, harnessFramework.supportedApiTypes)
+      if (!endpoint || providerValidationFailed(baseline, { model, endpoint }))
+        throw new Error('Harness provider is unavailable')
       if (
         !['xai-subscription', 'lab'].includes(baseline.type) &&
         baseline.keyRef &&

@@ -42,10 +42,8 @@ import type { LiteratureAttachmentAuthority } from '../literature/attachment-aut
 import type { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
-import {
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
-  type LiteratureLibraryScope
-} from '../literature/library-mcp-server'
+import { LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT } from '../literature/library-mcp-contract'
+import type { LiteratureLibraryScope } from '../literature/library-mcp-contract'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { netFetchStandard } from '../network-fetch'

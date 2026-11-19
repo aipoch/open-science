@@ -69,6 +69,27 @@ describe('resolveProviderReasoningEffortProfile', () => {
     ]
   >([
     [
+      'descending discovery with more effort values than preference slots',
+      {
+        type: 'official',
+        vendorId: 'opencode',
+        modelCatalog: {
+          fetchedAt: 1,
+          models: [
+            {
+              id: 'live',
+              reasoningEffort: {
+                supported: true,
+                values: ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+              }
+            }
+          ]
+        }
+      },
+      'live',
+      { supported: true, slots: ['low', 'medium', 'high', 'xhigh', 'max'] }
+    ],
+    [
       'empty settings default',
       undefined,
       undefined,

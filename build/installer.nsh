@@ -303,7 +303,7 @@ FunctionEnd
 
 !macro customInit
   Call initializeUpdateReceipts
-  # Keep the explicit override empty so diagnostics.ps1 uses its ordinary-user LocalAppData fallback.
+  # Keep the explicit override empty so the native diagnostics helper uses its ordinary-user LocalAppData fallback.
   # Initializing the NSIS variable also keeps makensis warning-as-error builds clean.
   StrCpy $installDiagnosticDirectory ""
   # Cache both registered locations before either uninstall pass deletes their registry data.

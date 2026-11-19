@@ -601,6 +601,42 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it('distinguishes a rejected fetch after credential refresh from an upstream HTTP 502', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(Response.json({ error: { type: 'api_error' } }, { status: 502 }))
+    const proxy = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://provider.example.test/v1',
+        model: 'model-a',
+        resolveKey: async () => 'key'
+      },
+      upstream
+    )
+    const connection = await proxy.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello' })
+      })
+    try {
+      const rejected = await send()
+      expect(rejected.status).toBe(502)
+      expect(rejected.headers.get('x-open-science-provider-failure')).toBe('connection')
+      const unavailable = await send()
+      expect(unavailable.status).toBe(502)
+      expect(unavailable.headers.get('x-open-science-provider-failure')).toBeNull()
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it.each([
     ['JSON', 'application/json', JSON.stringify({ id: 'response', output: [] })],
     ['binary', 'application/octet-stream', 'binary']
@@ -1437,6 +1473,7 @@ describe('native Responses compatibility', () => {
         }
       })
       expect(upstreamSignal?.aborted).toBe(true)
+      expect(response.headers.get('x-open-science-provider-failure')).toBeNull()
       expect(logSpies.warn.mock.calls).toContainEqual([
         'native Responses compatibility request failed',
         expect.objectContaining({
@@ -1911,7 +1948,11 @@ describe('native Responses compatibility', () => {
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { message: privateUpstreamDetail } }), {
           status: 502,
-          headers: { 'content-type': 'application/json' }
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-upstream-status': 'vendor-metadata',
+            'x-open-science-provider-failure': 'vendor-metadata'
+          }
         })
       )
     )
@@ -1938,6 +1979,8 @@ describe('native Responses compatibility', () => {
         })
       })
       expect(response.status).toBe(502)
+      expect(response.headers.has('x-open-science-upstream-status')).toBe(false)
+      expect(response.headers.has('x-open-science-provider-failure')).toBe(false)
       await response.text()
 
       const received = logSpies.info.mock.calls.find(

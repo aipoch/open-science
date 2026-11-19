@@ -1,3 +1,4 @@
+import { readProviderErrorCode } from './contract'
 import type { ClassifiedFailure, FailureFacts } from './contract'
 import { recognizeProvider } from './recognizers/provider'
 import { recognizeInput } from './recognizers/input'
@@ -24,18 +25,28 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
   return {
     category,
     ...(facts.origin === 'provider' &&
+    !facts.protocol &&
     facts.responseMessage &&
     (category === 'service' || category === 'configuration')
       ? { responseMessage: facts.responseMessage }
       : {}),
-    ...(recognized?.reason ? { reason: recognized.reason } : {}),
+    ...(recognized?.reason
+      ? { reason: recognized.reason }
+      : facts.origin === 'provider'
+        ? { reason: 'service/provider-error' as const }
+        : {}),
     diagnostics: {
       ...(facts.status === undefined ? {} : { status: facts.status }),
-      ...(facts.code === undefined ? {} : { code: String(facts.code) }),
+      ...(facts.code === undefined || (facts.protocol && !readProviderErrorCode(facts.code))
+        ? {}
+        : { code: String(facts.code) }),
+      ...(facts.adapterCode === undefined ? {} : { adapterCode: facts.adapterCode }),
+      ...(facts.protocol === undefined ? {} : { protocol: facts.protocol }),
+      ...(facts.phase === undefined ? {} : { phase: facts.phase }),
       ...(facts.provider === undefined ? {} : { provider: facts.provider }),
       ...(facts.model === undefined ? {} : { model: facts.model }),
       ...(facts.requestId === undefined ? {} : { requestId: facts.requestId }),
-      ...(facts.text === undefined ? {} : { raw: facts.text })
+      ...(facts.protocol || facts.text === undefined ? {} : { raw: facts.text })
     }
   }
 }

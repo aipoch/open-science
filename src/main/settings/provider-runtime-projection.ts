@@ -1,12 +1,20 @@
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
+  catalogModelApiEndpoints,
+  resolveOfficialModelCatalog,
+  isCatalogModelAvailable,
+  usesBundledModelCatalog
+} from '../../shared/provider-model-catalog'
+import {
   type ModelProtocol,
+  type CatalogModel,
+  type OfficialVendorId,
   getOfficialVendor,
   isVendorModelMultimodal,
   resolveVendorBaseUrl,
-  resolveVendorModelApiEndpoints,
   resolveVendorChatCompletionsBaseUrl,
-  resolveVendorResponsesBaseUrl
+  resolveVendorResponsesBaseUrl,
+  resolveVendorApiEndpoints
 } from '@aipoch/providers'
 import {
   defaultVendorModel,
@@ -17,7 +25,10 @@ import {
 import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
 import { labModelWireId, readLabModelCapabilities } from '../../shared/lab'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
-import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import {
+  reasoningProfileFromCapability,
+  type ReasoningEffortProfile
+} from '../../shared/reasoning-effort'
 
 import {
   resolveProviderEffectiveModel,
@@ -36,7 +47,7 @@ import {
   requiresChatCompletionsBridge
 } from '../../shared/settings-runtime'
 import type { AgentFrameworkId } from '../agent-framework'
-import { frameworkRequiresStreaming } from '../../shared/agent-framework-id'
+import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
 import type { ResolvedProvider } from './provider-env'
@@ -85,18 +96,18 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (isLabProvider(provider.type)) {
-      const model = activeModel ?? provider.model ?? provider.fetchedModels?.[0]
-      const declared = model ? provider.modelProtocols?.[model] : undefined
-      if (declared && declared.length > 0) return [...declared]
-      return provider.apiEndpoints && provider.apiEndpoints.length > 0
-        ? [...provider.apiEndpoints]
-        : ['chat-completions', 'responses']
+      return providerEndpoints(
+        provider,
+        activeModel ?? provider.model ?? provider.fetchedModels?.[0]
+      )
     }
     if (provider.type === 'official' && provider.vendorId) {
-      return resolveVendorModelApiEndpoints(
-        provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
-      )
+      const catalog = resolveOfficialModelCatalog(provider)
+      const model = activeModel
+        ? catalog.find((entry) => entry.id === activeModel)
+        : catalog.find(isCatalogModelAvailable)
+      if (model || provider.modelCatalog) return catalogModelApiEndpoints(model)
+      return resolveVendorApiEndpoints(provider.vendorId)
     }
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0
@@ -105,6 +116,7 @@ class ProviderRuntimeProjectionOwner {
   }
 
   toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
+    const bundled = usesBundledModelCatalog(provider.vendorId)
     const hasKey = Boolean(provider.keyRef)
     const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
 
@@ -130,6 +142,9 @@ class ProviderRuntimeProjectionOwner {
       vendorId: provider.vendorId,
       region: provider.region,
       models: this.availableModels(provider),
+      modelCatalog: bundled ? undefined : provider.modelCatalog,
+      modelCatalogStatus: bundled ? undefined : provider.modelCatalogStatus,
+      catalogParameters: provider.catalogParameters,
       ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
       ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
       ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
@@ -172,20 +187,20 @@ class ProviderRuntimeProjectionOwner {
           }
         : selection
     const target = this.resolveProviderTarget(storedProvider, modelSelection)
-    if (
-      frameworkRequiresStreaming(framework.id) &&
-      storedProvider.type === 'lab' &&
-      target.effectiveModel &&
-      storedProvider.modelStreaming?.[target.effectiveModel] === false
-    ) {
-      throw new Error(
-        `The model "${target.effectiveModel}" does not support streaming and cannot be used with the built-in Agent.`
-      )
+    return this.withFramework(target, framework)
+  }
+
+  private withFramework(
+    target: ProviderRuntimeTarget,
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+  ): ProviderRuntimeTarget {
+    if (!isModelStreamingCompatible(framework.id, target.provider.streaming)) {
+      throw new Error(`The model "${target.effectiveModel}" does not support streaming.`)
     }
     return {
       ...target,
       frameworkCompatible: isProviderUsableByFramework(
-        { apiEndpoints: target.apiEndpoints, type: storedProvider.type },
+        { apiEndpoints: target.apiEndpoints, type: target.providerType },
         framework
       ),
       needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(
@@ -204,18 +219,19 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
-    if (storedProvider.type === 'lab' && availableModels.length === 0) {
-      const requestedModel =
-        selection.kind === 'required'
-          ? selection.model
-          : selection.kind === 'configured'
-            ? (selection.requestedModel ?? storedProvider.model)
-            : undefined
+    // Preserve pinned IDs for history; reject continuation rather than silently selecting another model.
+    const pinned =
+      selection.kind === 'required'
+        ? selection.model
+        : selection.kind === 'configured'
+          ? (selection.requestedModel ?? storedProvider.model)
+          : undefined
+    if (
+      (storedProvider.modelCatalog && pinned && !availableModels.includes(pinned)) ||
+      (storedProvider.type === 'lab' && availableModels.length === 0)
+    ) {
       throw new Error(
-        buildConfiguredModelUnavailableMessage(
-          requestedModel ?? storedProvider.name,
-          storedProvider.name
-        )
+        buildConfiguredModelUnavailableMessage(pinned ?? storedProvider.name, storedProvider.name)
       )
     }
     if (
@@ -252,9 +268,22 @@ class ProviderRuntimeProjectionOwner {
       )
     }
 
-    const apiEndpoints = this.resolveProviderApiEndpoints(storedProvider, effectiveModel)
     const provider = this.resolveProvider(storedProvider, effectiveModel)
 
+    return this.providerTarget(
+      storedProvider,
+      effectiveModel,
+      provider,
+      resolveProviderReasoningEffortProfile(storedProvider, effectiveModel)
+    )
+  }
+
+  private providerTarget(
+    storedProvider: StoredProvider,
+    effectiveModel: string | undefined,
+    provider: ResolvedProvider,
+    reasoningEffortProfile: ReasoningEffortProfile
+  ): ProviderRuntimeTarget {
     return {
       providerId: storedProvider.id,
       providerName: storedProvider.name,
@@ -264,9 +293,9 @@ class ProviderRuntimeProjectionOwner {
         ? {}
         : { disconnectedAt: storedProvider.disconnectedAt }),
       effectiveModel,
-      apiEndpoints,
+      apiEndpoints: [...(provider.apiEndpoints ?? [])],
       provider,
-      reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
+      reasoningEffortProfile,
       frameworkCompatible: false,
       modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
       needsChatResponsesToChatCompletionsBridge: false,
@@ -278,14 +307,31 @@ class ProviderRuntimeProjectionOwner {
     storedProvider: StoredProvider,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget[] {
-    return this.availableModels(storedProvider)
-      .filter(
-        (model) =>
-          !(
-            frameworkRequiresStreaming(framework.id) &&
-            storedProvider.type === 'lab' &&
-            storedProvider.modelStreaming?.[model] === false
+    const { vendorId } = storedProvider
+    if (storedProvider.type === 'official' && vendorId) {
+      const key = storedProvider.keyRef ? tryDecryptKey(storedProvider.keyRef) : undefined
+      return resolveOfficialModelCatalog(storedProvider)
+        .filter(isCatalogModelAvailable)
+        .map((descriptor) => {
+          const provider = this.officialProvider(
+            storedProvider,
+            vendorId,
+            descriptor.id,
+            descriptor,
+            key
           )
+          const effort = descriptor.reasoningEffort
+            ? reasoningProfileFromCapability(descriptor.reasoningEffort)
+            : ({ supported: false } as const)
+          return this.withFramework(
+            this.providerTarget(storedProvider, descriptor.id, provider, effort),
+            framework
+          )
+        })
+    }
+    return this.availableModels(storedProvider)
+      .filter((model) =>
+        isModelStreamingCompatible(framework.id, storedProvider.modelStreaming?.[model])
       )
       .map((model) =>
         this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
@@ -358,23 +404,9 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? defaultVendorModel(provider.vendorId, provider.region)
-      const contextWindow = resolveModelContextWindow(provider.vendorId, model)
-      return {
-        type: 'custom',
-        vendorId: provider.vendorId,
-        baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
-        chatCompletionsBaseUrl: resolveVendorChatCompletionsBaseUrl(
-          provider.vendorId,
-          provider.region
-        ),
-        responsesBaseUrl: resolveVendorResponsesBaseUrl(provider.vendorId, provider.region),
-        model,
-        ...(contextWindow === undefined ? {} : { contextWindow }),
-        key,
-        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
-      }
+      const model = modelOverride ?? provider.model ?? this.availableModels(provider)[0]
+      const descriptor = resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
+      return this.officialProvider(provider, provider.vendorId, model, descriptor, key)
     }
 
     const model = modelOverride ?? provider.model
@@ -414,6 +446,37 @@ class ProviderRuntimeProjectionOwner {
     }
   }
 
+  private officialProvider(
+    provider: StoredProvider,
+    vendorId: OfficialVendorId,
+    model: string | undefined,
+    descriptor: CatalogModel | undefined,
+    key: string | undefined
+  ): ResolvedProvider {
+    const contextWindow = descriptor?.contextWindow
+    const routes = descriptor?.routes
+    return {
+      type: 'custom',
+      vendorId: vendorId,
+      baseUrl: routes?.messages ?? resolveVendorBaseUrl(vendorId, provider.region),
+      chatCompletionsBaseUrl:
+        routes?.['chat-completions'] ??
+        resolveVendorChatCompletionsBaseUrl(vendorId, provider.region),
+      responsesBaseUrl:
+        routes?.responses ?? resolveVendorResponsesBaseUrl(vendorId, provider.region),
+      maxInputTokens: descriptor?.maxInputTokens,
+      maxOutputTokens: descriptor?.maxOutputTokens,
+      model,
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      key,
+      apiEndpoints:
+        descriptor || provider.modelCatalog
+          ? catalogModelApiEndpoints(descriptor)
+          : resolveVendorApiEndpoints(vendorId),
+      supportsImageInput: descriptor?.supportsImageInput === true
+    }
+  }
+
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isLabProvider(provider.type)) {
       // Lab has a heterogeneous catalog; without a selected model there is no single image
@@ -429,10 +492,12 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type)) return true
     if (provider.type === 'custom') return provider.supportsImageInput === true
     if (provider.type === 'official' && provider.vendorId) {
-      return isVendorModelMultimodal(
-        provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
-      )
+      const catalog = resolveOfficialModelCatalog(provider)
+      const model =
+        activeModel === undefined
+          ? catalog.find(isCatalogModelAvailable)
+          : catalog.find((entry) => entry.id === activeModel)
+      return model?.supportsImageInput === true
     }
     return false
   }
@@ -456,7 +521,9 @@ class ProviderRuntimeProjectionOwner {
     if (isLabProvider(provider.type))
       return provider.fetchedModels ? [...provider.fetchedModels] : []
     if (provider.type === 'official' && provider.vendorId) {
-      return getOfficialVendorModelIds(provider.vendorId, provider.region, provider.fetchedModels)
+      return resolveOfficialModelCatalog(provider)
+        .filter(isCatalogModelAvailable)
+        .map((entry) => entry.id)
     }
     return provider.model ? [provider.model] : []
   }

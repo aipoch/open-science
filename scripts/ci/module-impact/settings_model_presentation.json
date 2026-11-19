@@ -32,7 +32,8 @@
     "src/renderer/src/pages/settings/CodeBuddySubscriptionRow.tsx",
     "src/renderer/src/pages/settings/ImageModelSettings.render.test.tsx",
     "src/renderer/src/pages/settings/ImageModelSettings.tsx",
-    "src/renderer/src/pages/settings/use-image-model-settings.ts"
+    "src/renderer/src/pages/settings/use-image-model-settings.ts",
+    "src/renderer/src/pages/settings/ImageServiceTest.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AgentHomeImportView.tsx",

@@ -1,6 +1,8 @@
+import { resolveOfficialModelCatalog } from './provider-model-catalog'
+import type { CatalogSnapshot } from '@aipoch/providers'
 import {
-  profileFromEffortValues,
   resolveVendorModelReasoningEffort,
+  reasoningProfileFromCapability,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
@@ -19,6 +21,8 @@ export type ProviderReasoningEffortSource = {
   vendorId?: OfficialVendorId
   model?: string
   models?: readonly string[]
+  region?: string
+  modelCatalog?: CatalogSnapshot
   reasoningEffortPreset?: ReasoningEffortPresetSetting
   modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
 }
@@ -33,6 +37,12 @@ export const resolveProviderEffectiveModel = (
   if (!provider) return undefined
 
   const availableModels = provider.models ?? []
+  if (
+    (provider.type === 'lab' || (provider.type === 'official' && provider.modelCatalog)) &&
+    availableModels.length === 0
+  ) {
+    return undefined
+  }
   if (
     requestedModel &&
     (availableModels.length === 0 || availableModels.includes(requestedModel))
@@ -73,10 +83,15 @@ export const resolveProviderReasoningEffortProfile = (
   const providerType = provider.type
 
   switch (providerType) {
-    case 'official':
+    case 'official': {
+      const capability = resolveOfficialModelCatalog(provider).find(
+        (entry) => entry.id === model
+      )?.reasoningEffort
+      if (capability) return reasoningProfileFromCapability(capability)
       return provider.vendorId
         ? resolveVendorModelReasoningEffort(provider.vendorId, model)
         : { supported: false }
+    }
     case 'codex-shared':
     case 'codex-isolated':
       return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }
@@ -91,13 +106,11 @@ export const resolveProviderReasoningEffortProfile = (
       const capabilities = readLabModelCapabilities(
         model ? provider.modelCapabilities?.[model] : undefined
       )
-      if (!capabilities) return { supported: false }
-      if (capabilities.reasoningValues?.length) {
-        return profileFromEffortValues(capabilities.reasoningValues)
-      }
-      return capabilities.reasoningToggle
-        ? profileFromEffortValues(['none', 'high'])
-        : { supported: false }
+      return reasoningProfileFromCapability({
+        supported: true,
+        values:
+          capabilities?.reasoningValues ?? (capabilities?.reasoningToggle ? ['none', 'high'] : [])
+      })
     }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)

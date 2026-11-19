@@ -63,6 +63,10 @@ export function sampleWindowsResources(
 /** Single process identity read; no process enumeration. Null means unavailable. */
 export function readWindowsResourceBirth(pid: number): string | null
 
+// Windows only. Terminates the process only when its creation FILETIME matches birth, using one
+// handle for the check and the kill so a reused PID is never signaled. Returns false when the
+// process is missing, already exited, inaccessible, or has a different birth.
+export function windowsTerminateProcessByBirth(pid: number, birth: string): boolean
 // Windows only. Each returns null for a missing or exited process and throws for any other
 // query failure. The creation time is the decimal FILETIME (100 ns since 1601-01-01 UTC).
 export function getWindowsProcessCreationTime(pid: number): string | null

@@ -44,6 +44,7 @@ public static class UninstallHelper {
             options.ContainsKey("report") ? options["report"] : null,
             options.ContainsKey("upgrade"));
           break;
+        case "diagnostics": InstallDiagnostics.Run(options); break;
 #if OPEN_SCIENCE_HELPER_TEST_SEAMS
         // Test builds only: expose the ownership verdicts for parity with the reset script.
         case "test-inspect-cache": InspectCache(options); break;
@@ -65,7 +66,7 @@ public static class UninstallHelper {
       if (!args[index].StartsWith("--", StringComparison.Ordinal))
         throw new ArgumentException("Unexpected argument: " + args[index]);
       var name = args[index].Substring(2);
-      if (name == "upgrade") { options[name] = ""; continue; }
+      if (name == "upgrade" || name == "write-message-next-to-report") { options[name] = ""; continue; }
       if (index + 1 >= args.Length) throw new ArgumentException("Missing value for --" + name);
       options[name] = args[++index];
     }

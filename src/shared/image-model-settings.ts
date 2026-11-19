@@ -1,4 +1,5 @@
 import { getProviderDefinition } from '@aipoch/providers'
+import type { ImageErrorDetail } from './image-model-error'
 
 export const IMAGE_MODEL_PRESET_ADAPTERS = {
   'minimax-h3/official': 'minimax',
@@ -44,6 +45,9 @@ export type ImageModelSettingsMutation =
   | ({ kind: 'save'; apiKey?: string } & ImageServiceConfiguration)
   | { kind: 'remove'; id: string }
   | { kind: 'bind'; binding?: ImageModelBinding }
+
+export type ImageModelTestRequest = Extract<ImageModelSettingsMutation, { kind: 'save' }>
+export type ImageModelTestResult = { ok: true } | { ok: false; error: ImageErrorDetail }
 
 export const IMAGE_VENDOR_PRESETS = {
   minimax: 'minimax-h3/official',

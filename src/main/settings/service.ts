@@ -689,6 +689,7 @@ class SettingsService {
     })
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
+      this.providers,
       options.onProviderHealthChanged
     )
     this.harnessSessions = new HarnessSessionOwner(
@@ -1155,7 +1156,7 @@ class SettingsService {
     return this.scenarioModels.vision.admit()
   }
 
-  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve'> {
+  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve' | 'test'> {
     return this.scenarioModels.image
   }
 

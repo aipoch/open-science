@@ -154,20 +154,22 @@ export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
 }
 
 // Codex subscription records always use Responses, including older records without endpoint metadata.
-// Other absent/empty endpoints default to Messages for legacy provider compatibility.
-export const providerEndpoints = (provider: {
-  apiEndpoints?: readonly ModelProtocol[]
-  type?: ProviderType
-}): ModelProtocol[] =>
-  provider.type && isCodexSubscriptionProvider(provider.type)
-    ? ['responses']
-    : provider.type && isLabProvider(provider.type)
-      ? provider.apiEndpoints && provider.apiEndpoints.length > 0
-        ? [...provider.apiEndpoints]
-        : ['chat-completions', 'responses']
-      : provider.apiEndpoints && provider.apiEndpoints.length > 0
-        ? [...provider.apiEndpoints]
-        : ['messages']
+// An official catalog may explicitly have no usable route. Legacy configurations default to Messages.
+export const providerEndpoints = (
+  provider: {
+    apiEndpoints?: readonly ModelProtocol[]
+    type?: ProviderType
+    modelProtocols?: Readonly<Record<string, readonly ModelProtocol[]>>
+  },
+  model?: string
+): ModelProtocol[] => {
+  if (provider.type && isCodexSubscriptionProvider(provider.type)) return ['responses']
+  const declared = provider.type === 'lab' && model ? provider.modelProtocols?.[model] : undefined
+  if (declared?.length) return [...declared]
+  if (provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official'))
+    return [...provider.apiEndpoints]
+  return provider.type === 'lab' ? ['chat-completions', 'responses'] : ['messages']
+}
 
 // App-managed providers keep separate transport families: an xAI OAuth bridge and a Lab bridge
 // cannot be reused across a model switch, while every API-key provider keeps sharing one family.

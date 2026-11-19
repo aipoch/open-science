@@ -22,8 +22,10 @@ const STREAMING_AGENT_FRAMEWORKS = new Set<AgentFrameworkId>([
   'open-science-agent'
 ])
 
-export const frameworkRequiresStreaming = (frameworkId: AgentFrameworkId): boolean =>
-  STREAMING_AGENT_FRAMEWORKS.has(frameworkId)
+export const isModelStreamingCompatible = (
+  frameworkId: AgentFrameworkId,
+  streaming?: boolean
+): boolean => streaming !== false || !STREAMING_AGENT_FRAMEWORKS.has(frameworkId)
 
 export const DEFAULT_AGENT_FRAMEWORK_ID: AgentFrameworkId = 'open-science-agent'
 

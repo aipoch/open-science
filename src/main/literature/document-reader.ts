@@ -14,7 +14,7 @@ import { MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { extractPdfText } from '../uploads/pdf-text-extraction'
 import type { OcrLanguage } from '../../shared/local-models'
 import { literatureIndex } from './full-text-index'
-import type { LiteratureReadDocumentRequest } from './mcp-server'
+import type { LiteratureReadDocumentRequest } from './mcp-contract'
 import { resolveCurrentPdfContext } from './pdf-context'
 import type {
   ResolvedSessionPdfVersion,

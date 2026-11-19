@@ -70,6 +70,50 @@ describe('MessagesBridge', () => {
   })
 
   it.each([false, true])(
+    'marks only host connection failures (disconnected=%s)',
+    async (disconnected) => {
+      const upstream = createServer((request, response) => {
+        request.resume()
+        request.on('end', () => {
+          if (disconnected) {
+            response.destroy()
+            return
+          }
+          response.writeHead(502, {
+            'content-type': 'application/json',
+            'x-open-science-provider-failure': 'connection',
+            'x-open-science-upstream-status': 'vendor-metadata'
+          })
+          response.end('{"error":{"message":"Upstream gateway unavailable"}}')
+        })
+      })
+      servers.push(upstream)
+      const target = {
+        id: 'connection-boundary',
+        baseUrl: await listen(upstream),
+        model: 'model-a'
+      }
+      const bridge = new MessagesBridge([target], target.id)
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      const response = await fetch(`${connection.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [], stream: true })
+      })
+      expect(response.status).toBe(502)
+      expect(response.headers.has('x-open-science-upstream-status')).toBe(false)
+      expect(response.headers.get('x-open-science-provider-failure')).toBe(
+        disconnected ? 'connection' : null
+      )
+      await response.body?.cancel()
+    }
+  )
+
+  it.each([false, true])(
     'decodes upstream compression when the client accepts zstd (stream=%s)',
     async (stream) => {
       const json = '{"type":"message_stop"}'

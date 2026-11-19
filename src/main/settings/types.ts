@@ -1,3 +1,4 @@
+import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
@@ -110,6 +111,9 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Per-model protocol sets for app-managed heterogeneous catalogs (Lab). Keys are the stored model
   // ids (namespaced for Lab); absent means apiEndpoints applies to every model.
   modelProtocols?: Record<string, ModelProtocol[]>

@@ -485,11 +485,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         if (mode === 'unwritable-diagnostic')
           writeFileSync(join(f.root, 'logs'), 'preserve this file')
         mkdirSync(resources)
-        for (const file of [
-          'prepare-windows-extraction.cjs',
-          'windows-install-diagnostics.ps1',
-          'windows-install-diagnostics.nsh'
-        ])
+        for (const file of ['prepare-windows-extraction.cjs', 'windows-install-diagnostics.nsh'])
           writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
         // The seam build reads these from the inherited environment of the NSIS fixture.
         const helperEnv = {

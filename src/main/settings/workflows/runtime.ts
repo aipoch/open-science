@@ -5,6 +5,7 @@ import {
 } from '../../../shared/codebuddy-subscription'
 import type {
   ProviderDeletionScenarioModelHandling,
+  SettingsSnapshot,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
   SetAgentFrameworkRequest,
@@ -67,6 +68,23 @@ const affectedProviderIds = (providerId: string): readonly string[] =>
     ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
     : [providerId]
 
+// Official accounts derive their model list and capabilities from discovery. Those may
+// change while the configured runtime connection stays the same.
+function needsProviderReconnect(
+  request: UpsertProviderRequest,
+  before: SettingsSnapshot,
+  after?: SettingsSnapshot
+): boolean {
+  if (request.type !== 'official' || request.key) return true
+  const previous = before.providers.find(({ id }) => id === request.id)
+  const current = after?.providers.find(({ id }) => id === request.id)
+  if (previous?.type !== 'official') return true
+  return (
+    (current?.vendorId ?? request.vendorId ?? previous.vendorId) !== previous.vendorId ||
+    (current?.region ?? request.region ?? previous.region) !== previous.region
+  )
+}
+
 // Owns post-persistence runtime and authentication effects. Its required effect port makes an
 // incomplete production composition fail at construction instead of silently skipping a reconnect.
 class RuntimeSettingsWorkflows {
@@ -100,7 +118,7 @@ class RuntimeSettingsWorkflows {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.upsertProvider(request)
 
-    if (request.id) {
+    if (request.id && needsProviderReconnect(request, before, snapshot)) {
       this.effects.requestProviderReconnect(
         affectedProviderIds(request.id),
         request.id === before.activeProviderId || request.id === snapshot.activeProviderId
@@ -115,7 +133,11 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['saveValidatedProvider']>>> {
     const before = await this.settings.getSettingsView()
     const result = await this.settings.saveValidatedProvider(request)
-    if (result.providerId && request.id) {
+    if (
+      result.providerId &&
+      request.id &&
+      needsProviderReconnect(request, before, result.snapshot)
+    ) {
       try {
         this.effects.requestProviderReconnect(
           affectedProviderIds(result.providerId),
@@ -136,22 +158,8 @@ class RuntimeSettingsWorkflows {
   async refreshProviderModels(
     request: RefreshProviderModelsRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['refreshProviderModels']>>> {
-    const before = await this.settings.getSettingsView()
-    const result = await this.settings.refreshProviderModels(request)
-    if (!result.ok) return result
-    const after = await this.settings.getSettingsView()
-    const previous = before.providers.find((provider) => provider.id === request.providerId)
-    const current = after.providers.find((provider) => provider.id === request.providerId)
-    // Catalog order can own an omitted model's default. Reconnect existing provider generations
-    // through the same deferred transition used for provider edits; do not interrupt active turns.
-    if (previous && current && JSON.stringify(previous.models) !== JSON.stringify(current.models)) {
-      this.effects.requestProviderReconnect(
-        affectedProviderIds(request.providerId),
-        request.providerId === before.activeProviderId ||
-          request.providerId === after.activeProviderId
-      )
-    }
-    return result
+    // Running sessions own their negotiated routes. New connections read the refreshed inventory.
+    return this.settings.refreshProviderModels(request)
   }
 
   async deleteProvider(

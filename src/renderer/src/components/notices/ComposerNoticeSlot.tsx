@@ -96,22 +96,26 @@ const ComposerFailureNoticeSlot = ({
       : undefined) ?? notices[0]
   if (!current) return null
   const presentation = noticePresentation(current.failure)
+  const providerMessage = current.failure.diagnostics.protocol
+    ? undefined
+    : current.failure.responseMessage
   const title =
     current.summary?.title ??
-    (current.failure.responseMessage ? t('Model provider error') : t(presentation.titleKey))
+    (providerMessage ? t('Model provider error') : t(presentation.titleKey))
   const description = current.summary
     ? (current.summary.description ?? '')
-    : current.failure.responseMessage
-      ? current.failure.responseMessage.startsWith('{') ||
-        current.failure.responseMessage.startsWith('[')
-        ? ''
-        : current.failure.responseMessage
-      : t(presentation.descriptionKey)
+    : current.source === 'session' && current.failure.diagnostics.protocol
+      ? t('This turn was interrupted. Resume to continue.')
+      : providerMessage
+        ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
+          ? ''
+          : providerMessage
+        : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
       value !== undefined &&
-      (current.failure.responseMessage
+      (providerMessage || current.failure.diagnostics.protocol
         ? ['status', 'provider', 'model'].includes(key)
         : key !== 'raw')
   )
@@ -161,12 +165,17 @@ const ComposerFailureNoticeSlot = ({
   const available = (action: NoticeActionId, notice = current): boolean =>
     (showDiagnostics && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
-  const primary =
-    presentation.primaryAction && available(presentation.primaryAction)
-      ? presentation.primaryAction
-      : presentation.primaryAction === 'open-environment' && available('retry')
-        ? 'retry'
-        : undefined
+  const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
+    const action = noticePresentation(notice.failure).primaryAction
+    return notice.source === 'session' && available('resume', notice)
+      ? 'resume'
+      : action && available(action, notice)
+        ? action
+        : action === 'open-environment' && available('retry', notice)
+          ? 'retry'
+          : undefined
+  }
+  const primary = primaryAction(current)
   const actionButton = (
     action: NoticeActionId,
     notice: ComposerNotice,
@@ -301,13 +310,13 @@ const ComposerFailureNoticeSlot = ({
                       <TruncatedText
                         text={
                           notice.summary?.title ??
-                          (notice.failure.responseMessage
+                          (notice.failure.responseMessage && !notice.failure.diagnostics.protocol
                             ? t('Model provider error')
                             : t(item.titleKey))
                         }
                       />
                     </button>
-                    {item.primaryAction ? actionButton(item.primaryAction, notice) : null}
+                    {primaryAction(notice) ? actionButton(primaryAction(notice)!, notice) : null}
                   </li>
                 )
               })}
@@ -447,7 +456,7 @@ const ComposerFailureNoticeSlot = ({
           </>
         }
         dismissButton={
-          onDismiss
+          onDismiss && current.source !== 'session'
             ? {
                 label: t('Dismiss error'),
                 onClick: () => {

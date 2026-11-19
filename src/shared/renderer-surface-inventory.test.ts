@@ -380,6 +380,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-project-files-filter',
     'switch-local-shell-to-powershell',
     'test-classification',
+    'test-image-model',
     'uninstall-claude',
     'uninstall-codebuddy',
     'uninstall-codex',

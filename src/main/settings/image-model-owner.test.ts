@@ -43,10 +43,10 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 
-it('keeps old settings unconfigured and round-trips independent model presets without selecting a default', async () => {
+it('selects the first model on creation and persists the binding with independent presets', async () => {
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
   const saved = await owner.mutate({ kind: 'save', ...service })
-  expect(saved.imageModel).toBeUndefined()
+  expect(saved.imageModel).toEqual(binding)
   expect(saved.services[0]).toMatchObject({ ...service, configured: true })
   await owner.mutate({ kind: 'bind', binding })
   const restarted = new ImageModelOwner(new SettingsRepository(directory))
@@ -78,7 +78,7 @@ it('notifies only committed execution changes and unsubscribes without exposing 
     throw new Error('observer failed')
   })
   await owner.mutate({ kind: 'save', ...service })
-  expect(changed).not.toHaveBeenCalled()
+  expect(changed).toHaveBeenCalledOnce()
   await owner.mutate({ kind: 'bind', binding })
   expect(changed.mock.calls).toEqual([[]])
   expect(JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8')).imageModel).toEqual(
@@ -105,6 +105,7 @@ it('notifies only committed execution changes and unsubscribes without exposing 
 it('stores encrypted custom credentials, masks snapshots, and requires a new key for a new endpoint', async () => {
   const remote = { ...service, baseUrl: 'https://images.example/v1' }
   await expect(owner.mutate({ kind: 'save', ...remote })).rejects.toThrow('API key')
+  expect((await owner.snapshot()).imageModel).toBeUndefined()
   const snapshot = await owner.mutate({
     kind: 'save',
     ...remote,
@@ -411,4 +412,69 @@ it('keeps the legacy Bailian address and accepts official workspace URLs for bot
     ).rejects.toThrow('Invalid image')
   }
   expect((await owner.resolve())?.baseUrl).toBe(baseUrl)
+})
+
+it('preserves existing defaults and leaves historical or explicitly disabled services unselected on edit', async () => {
+  await repository.mutateImageModels(() => ({ imageServices: [service] }))
+  expect(
+    (await new ImageModelOwner(new SettingsRepository(directory)).snapshot()).imageModel
+  ).toBeUndefined()
+  expect(
+    (await owner.mutate({ kind: 'save', ...service, name: 'Edited' })).imageModel
+  ).toBeUndefined()
+  const other = { ...service, id: '22222222-2222-4222-8222-222222222222' }
+  const otherBinding = { serviceId: other.id, modelId: other.models[0].id }
+  expect((await owner.mutate({ kind: 'save', ...other })).imageModel).toEqual(otherBinding)
+  expect((await owner.mutate({ kind: 'save', ...service })).imageModel).toEqual(otherBinding)
+  const third = { ...service, id: '33333333-3333-4333-8333-333333333333' }
+  expect((await owner.mutate({ kind: 'save', ...third })).imageModel).toEqual(otherBinding)
+  await owner.mutate({ kind: 'bind' })
+  expect((await owner.mutate({ kind: 'save', ...other })).imageModel).toBeUndefined()
+})
+
+it('tests drafts without saving and only reuses credentials for the saved destination', async () => {
+  const testGeneration = vi.fn(async () => ({ ok: true as const }))
+  const testOwner = new ImageModelOwner(repository, testGeneration)
+  const remote = { ...service, baseUrl: 'https://images.example/v1' }
+  await owner.mutate({ kind: 'save', ...remote, apiKey: 'saved-key' })
+  const before = await readFile(join(directory, 'settings.json'), 'utf8')
+  const changed = vi.fn()
+  const unsubscribe = repository.subscribeImageModels(changed)
+  expect(await testOwner.test({ kind: 'save', ...remote, name: 'Unsaved edit' })).toEqual({
+    ok: true
+  })
+  expect(testGeneration).toHaveBeenLastCalledWith(
+    expect.objectContaining({ apiKey: 'saved-key', model: service.models[0] })
+  )
+  expect(
+    await testOwner.test({ kind: 'save', ...remote, baseUrl: 'https://other.example/v1' })
+  ).toMatchObject({ ok: false })
+  expect(testGeneration).toHaveBeenCalledOnce()
+  expect(await testOwner.test({ kind: 'save', ...remote, apiKey: 'draft-key' })).toEqual({
+    ok: true
+  })
+  expect(testGeneration).toHaveBeenLastCalledWith(expect.objectContaining({ apiKey: 'draft-key' }))
+  expect(await readFile(join(directory, 'settings.json'), 'utf8')).toBe(before)
+  expect(changed).not.toHaveBeenCalled()
+  unsubscribe()
+})
+
+it('bounds simultaneous tests without blocking saves', async () => {
+  let complete!: (result: { ok: true }) => void
+  const testGeneration = vi.fn(
+    () =>
+      new Promise<{ ok: true }>((resolve) => {
+        complete = resolve
+      })
+  )
+  const testOwner = new ImageModelOwner(repository, testGeneration)
+  const pending = testOwner.test({ kind: 'save', ...service })
+  await vi.waitFor(() => expect(testGeneration).toHaveBeenCalledOnce())
+  expect(await testOwner.test({ kind: 'save', ...service })).toEqual({
+    ok: false,
+    error: { code: 'RATE_LIMITED' }
+  })
+  expect((await testOwner.mutate({ kind: 'save', ...service })).imageModel).toEqual(binding)
+  complete({ ok: true })
+  expect(await pending).toEqual({ ok: true })
 })

@@ -6,7 +6,7 @@ import type {
   ImageSpatialReference
 } from '../../shared/image-model-presets'
 import type { ImageAdapterKind } from '../../shared/image-model-settings'
-import type { ResolvedImageModel } from '../settings/image-model-owner'
+import type { ResolvedImageModel } from './contract'
 import { ImageModelError, MAX_IMAGE_BYTES, type ImageRaster } from './contract'
 
 const imageDataUrl = (image: ImageRaster): string =>

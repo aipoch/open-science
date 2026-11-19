@@ -1,4 +1,6 @@
 import type {
+  ImageModelTestRequest,
+  ImageModelTestResult,
   ImageModelSettingsMutation,
   ImageModelSettingsSnapshot
 } from '../../shared/image-model-settings'
@@ -268,6 +270,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [id: string],
     StoreResult<'getConnectorDetail'>
   >('settings:get-connector-detail'),
+  testImageModel: defineApplicationCommand<
+    'settings:test-image-model',
+    readonly [request: ImageModelTestRequest],
+    ImageModelTestResult
+  >('settings:test-image-model'),
   getImageModels: defineApplicationCommand<
     'settings:get-image-models',
     readonly [],
@@ -610,6 +617,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getClassification,
+  settingsCoreApplicationCommands.testImageModel,
   settingsCoreApplicationCommands.getImageModels,
   settingsCoreApplicationCommands.updateImageModels,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
@@ -747,6 +755,10 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectOpencode()),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
+      'settings:test-image-model': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:test-image-model')
+        return dependencies.service.imageModels.test(args[0])
+      },
       'settings:get-image-models': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-image-models')
         return dependencies.service.imageModels.snapshot()

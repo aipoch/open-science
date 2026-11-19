@@ -68,7 +68,7 @@ export function pdfTranslationApiModels(
   )
   return buildConfiguredModelInventory({ providers: eligible }).filter((entry) => {
     const provider = eligible.find((value) => value.id === entry.providerId)!
-    const endpoints = configuredModelApiEndpoints(provider, entry.model)
+    const endpoints = configuredModelApiEndpoints(provider, entry.metadata)
     const endpoint = endpoints.includes('chat-completions')
       ? 'chat-completions'
       : endpoints.includes('messages')

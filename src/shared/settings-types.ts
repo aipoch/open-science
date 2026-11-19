@@ -1,3 +1,4 @@
+import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
   AgentHomeSkillRef,
@@ -133,6 +134,9 @@ export type ProviderValidationFailure = {
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Human configuration revision; legacy records start at zero.
   configRevision?: number
   id: string
@@ -478,6 +482,8 @@ export type ReadinessPreflight = Preflight & {
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
+  catalogParameters?: Record<string, string>
+  catalogDraftToken?: string
   type: ProviderType
   codexTransport?: CodexSubscriptionTransport
   name?: string
@@ -593,12 +599,18 @@ export type SaveValidatedProviderResult = {
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
 // catalog with the account's current models).
 export type RefreshProviderModelsRequest = {
-  providerId: string
+  providerId?: string
+  draft?: ProviderDraft
+  expectedConfigRevision?: number
 }
 
 // Outcome of a model-list refresh. On success `models` is the fetched list (also persisted on the
 // provider); on failure the caller keeps the bundled catalog and can surface `message`.
 export type RefreshProviderModelsResult = {
+  catalog?: CatalogSnapshot
+  catalogStatus?: CatalogStatus
+  draftToken?: string
+  code?: CatalogErrorCode
   ok: boolean
   models?: string[]
   category: ValidationCategory
