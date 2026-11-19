@@ -52,6 +52,22 @@ their normal meaning; the selection is neither truncated nor expanded to the ful
 removes the temporary file after the command exits, including test or spawn failures. Forced parent
 termination can leave a file in the OS temporary directory; it contains test arguments only.
 
+### Built-in Web tool controls
+
+The `web_tools` module covers anonymous Exa, public fetch, invocation receipts,
+snapshot continuation and branch ownership. The Harness integration exercises search,
+fetch and citation through Chat Completions, Responses and Messages with deterministic
+fixtures. Run the host receipt, permission and renderer contract suites when changing
+the integration. A cancellation that wins before publication cannot promote a late
+success or grant snapshot ownership.
+
+Run `npm run test:e2e:web-tools` after building the Electron test application, or
+dispatch `web-tools-development.yml`. These
+manual journeys include a public Exa search-to-citation smoke test, fetch and
+cancellation, offline branches, and research package export/import. The smoke uses a
+local deterministic model fixture and real Web networking. Record the test network and
+proxy when evaluating a target environment.
+
 ### Dependency boundaries and explainable convergence
 
 `test:affected` refines a declared selection against immutable merge-base, head and actual checkout

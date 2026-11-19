@@ -230,7 +230,12 @@ export async function connectHarnessMcp(input: {
                         definition.name
                       )
                     },
-                    kind: 'other',
+                    kind:
+                      server.name === 'open-science-web' && definition.name === 'web_fetch'
+                        ? 'fetch'
+                        : server.name === 'open-science-web' && definition.name === 'web_search'
+                          ? 'search'
+                          : 'other',
                     status: 'pending',
                     rawInput: args
                   },

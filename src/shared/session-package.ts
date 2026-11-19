@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { useCaseSourceSchema } from './use-cases'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import { packageWebOmissionSchema, type PackageWebOmission } from './session-package-web'
 import {
   orgCaseUploadMetadataSchema,
   orgCaseUploadedSummarySchema,
@@ -82,6 +83,7 @@ export type PackageFileSelection = {
 }
 
 export type PackageSelectionSummary = {
+  webOmissions?: PackageWebOmission[]
   pdfNotesAvailable?: boolean
   researchFilms?: { count: number; sizeBytes: number }
   retainedFiles: Array<PackageExcludedFile & { checksum?: string }>
@@ -187,6 +189,7 @@ export type PackageOperationSnapshot = {
   summary?: PackageSelectionSummary
   result?: {
     filePath?: string
+    webOmissions?: PackageWebOmission[]
     uploadedCase?: OrgCaseUploadedSummary
     imported?: SessionPackageRequest
     recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
@@ -297,7 +300,10 @@ const packageFeatureSchema = z.enum([
   'content-dedupe',
   'research-film',
   'log-evidence',
-  'compute-log-evidence'
+  'compute-log-evidence',
+  'web-evidence-v2',
+  'web-restricted-result-v1',
+  'web-search-operations-v1'
 ])
 
 export const sessionPackageManifestSchema = z
@@ -343,7 +349,8 @@ export const sessionPackagePreviewSchema = z
     messageCount: z.number().int().nonnegative(),
     fileCount: z.number().int().nonnegative(),
     totalBytes: z.number().int().nonnegative(),
-    omissions: sessionPackageManifestSchema.shape.omissions
+    omissions: sessionPackageManifestSchema.shape.omissions,
+    webOmissions: z.array(packageWebOmissionSchema).max(100).optional()
   })
   .strict()
 export type SessionPackagePreview = z.infer<typeof sessionPackagePreviewSchema>
@@ -480,6 +487,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .optional(),
     summary: z
       .object({
+        webOmissions: z.array(packageWebOmissionSchema).max(100).optional(),
         retainedFiles: z
           .array(packageExcludedFileSchema.extend({ checksum: checksum.optional() }))
           .max(10000),
@@ -498,6 +506,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     result: z
       .object({
         filePath: z.string().optional(),
+        webOmissions: z.array(packageWebOmissionSchema).max(100).optional(),
         uploadedCase: orgCaseUploadedSummarySchema.optional(),
         imported: sessionPackageRequestSchema.optional(),
         recovery: sessionPackageRequestSchema

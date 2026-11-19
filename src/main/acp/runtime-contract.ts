@@ -166,6 +166,10 @@ export type AcpRuntimeOptions = {
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
   }>
+  web?: Readonly<{
+    handlerFor: (sessionId: string, projectId: string) => import('../web/mcp-server').WebMcpHandler
+    cancelSession?: (sessionId: string) => void
+  }>
   literature?: Readonly<{
     annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools
     elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools

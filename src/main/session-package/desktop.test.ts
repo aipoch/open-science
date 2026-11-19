@@ -1779,6 +1779,21 @@ it.each(['none', 'dialog', 'export'] as const)(
       status: 'idle',
       createdAt: 1,
       updatedAt: 2,
+      activities: [
+        {
+          id: 'incomplete-web',
+          kind: 'tool',
+          title: 'Web Fetch',
+          providerToolName: 'mcp__open_science_web__web_fetch',
+          appOwned: true,
+          rawInput: { url: 'https://example.org/' },
+          status: 'failed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
       messages: []
     })
     const remove = fsPromises.rm
@@ -1821,6 +1836,12 @@ it.each(['none', 'dialog', 'export'] as const)(
       desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
     ).resolves.toEqual({ saved: true, filePath })
     const snapshot = desktop.operations.snapshot!
+    expect(snapshot.result?.webOmissions).toContainEqual({
+      component: 'fetch_body',
+      reason: 'invalid',
+      count: 1
+    })
+    expect(snapshot.summary).toBeUndefined()
     expect(() => sessionPackageCommandContracts.operation.result.parse(snapshot)).not.toThrow()
     expect(() =>
       sessionPackageCommandContracts.operation.args.parse([
@@ -2904,6 +2925,12 @@ it('exports and uploads directly to an organization case without saving locally,
     getClient: async () => fixture.client
   })
 
+  const webOmission = { component: 'fetch_body', reason: 'policy-unknown', count: 1 } as const
+  const exportTo = service.exportTo.bind(service)
+  vi.spyOn(service, 'exportTo').mockImplementation(async (...args) => ({
+    ...(await exportTo(...args)),
+    webOmissions: [webOmission]
+  }))
   vi.mocked(dialog.showSaveDialog).mockClear()
 
   let stagedArchiveDuringUpload = ''
@@ -2986,7 +3013,10 @@ it('exports and uploads directly to an organization case without saving locally,
     ).resolves.toMatchObject({
       state: 'succeeded',
       exportDestination: 'org-case',
-      result: { uploadedCase: { id: 'case_org_1', name: 'Renamed Case', code: 'ABCD5678' } }
+      result: {
+        uploadedCase: { id: 'case_org_1', name: 'Renamed Case', code: 'ABCD5678' },
+        webOmissions: [webOmission]
+      }
     })
 
     expect(uploader).toHaveBeenCalledTimes(1)

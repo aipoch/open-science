@@ -2836,6 +2836,78 @@ it.each([false, true])(
   }
 )
 
+it('localizes the known required Web evidence export restriction with an isolated locale', async () => {
+  const { createInstance } = await import('i18next')
+  const { I18nextProvider } = await import('react-i18next')
+  const error = 'Required Web execution evidence cannot be shared under the current data policy.'
+  const locale = createInstance()
+  await locale.init({
+    lng: 'test',
+    keySeparator: false,
+    nsSeparator: false,
+    resources: { test: { translation: { [error]: 'Localized Web policy restriction' } } },
+    interpolation: { escapeValue: false }
+  })
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => ({
+        ...snapshot,
+        state: 'failed',
+        progress: { phase: 'saving' },
+        error
+      }))
+    }
+  })
+  await act(async () =>
+    root.render(
+      <I18nextProvider i18n={locale}>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </I18nextProvider>
+    )
+  )
+  const alert = document.querySelector('[role="alert"]')
+  expect(alert?.textContent).toContain('Localized Web policy restriction')
+  expect(alert?.textContent).not.toContain(error)
+})
+
+it('shows terminal Web omissions after large selection summaries have been released', async () => {
+  const completed: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'succeeded',
+    progress: { phase: 'saving' },
+    files: undefined,
+    summary: undefined,
+    importPreview: undefined,
+    result: {
+      filePath: '/exports/research.science',
+      webOmissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
+  }
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => completed)
+    }
+  })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  expect(document.querySelector('[data-testid="package-web-omissions"]')?.textContent).toContain(
+    'Sharing permission has not been confirmed'
+  )
+  expect(document.body.textContent).toContain('Fetched page text')
+  expect(document.body.textContent).toContain('/exports/research.science')
+})
+
 it('hides Export and upload when Lab is not authenticated', async () => {
   vi.stubGlobal('api', { sessions: { packageOperation: vi.fn(async () => undefined) } })
   useSettingsStore.setState({ lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } })

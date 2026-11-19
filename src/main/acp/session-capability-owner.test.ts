@@ -47,6 +47,97 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('binds Web authority to committed primary host routes and revokes it', async () => {
+    const host = new AgentMcpHttpHost()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      web: { handlerFor: () => ({ fetchPage: vi.fn() }) },
+      mcpHttpHost: host
+    })
+    try {
+      for (const [id, policy] of [
+        ['primary', CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY],
+        ['reviewer', REVIEWER_SESSION_CAPABILITY_POLICY],
+        ['side', SIDE_CHAT_SESSION_CAPABILITY_POLICY]
+      ] as const) {
+        const provision = await owner.provision({
+          stableAppSessionId: id,
+          framework: harnessFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy,
+          sessionCwd: '/workspace',
+          projectId: 'project'
+        })
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBeUndefined()
+        provision.commit(id)
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBe(
+          id === 'primary' ? 'fetch' : undefined
+        )
+        expect(owner.webToolOperationFor('other', 'open-science-web/web_fetch')).toBeUndefined()
+        expect(owner.webToolOperationFor(id, 'external/web_fetch')).toBeUndefined()
+        owner.revokeSession(id)
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBeUndefined()
+      }
+    } finally {
+      await host.close()
+    }
+  })
+
+  it('rejects stale Web URLs and restores the exact committed route on rollback', async () => {
+    const host = new AgentMcpHttpHost()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      web: { handlerFor: () => ({ fetchPage: vi.fn() }) },
+      mcpHttpHost: host
+    })
+    const request = {
+      stableAppSessionId: 'web-session',
+      framework: harnessFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+    try {
+      const first = await owner.provision(request)
+      first.commit('web-session')
+      const oldUrl = host.urlFor('web', 'web-session')
+      const { token } = await host.ensureStarted()
+      const status = async (url: string): Promise<number> =>
+        (
+          await fetch(url, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+              accept: 'application/json, text/event-stream'
+            },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+          })
+        ).status
+      expect(await status(oldUrl)).toBe(200)
+      const second = await owner.provision(request)
+      const newUrl = host.urlFor('web', 'web-session')
+      expect(newUrl).not.toBe(oldUrl)
+      expect(owner.webToolOperationFor('web-session', 'open-science-web/web_fetch')).toBeUndefined()
+      expect(await status(oldUrl)).toBe(404)
+      await second.release({ ownsStableIdentity: true })
+      expect(host.urlFor('web', 'web-session')).toBe(oldUrl)
+      expect(await status(oldUrl)).toBe(200)
+      expect(await status(newUrl)).toBe(404)
+      expect(owner.webToolOperationFor('web-session', 'open-science-web/web_fetch')).toBe('fetch')
+    } finally {
+      owner.revokeSession('web-session')
+      await host.close()
+    }
+  })
+
   it('admits Schedule identities only for a committed primary provision', async () => {
     const host = {
       ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),

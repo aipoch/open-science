@@ -927,7 +927,7 @@ export class SessionPackageDesktop {
               let filePath: string | undefined = destinationPath
               let orgCaseTarget: OrgCaseUploadMetadata | undefined = uploadOrgCase
               let sessionTitle: string | undefined = initialTitle
-              await this.options.withDataRootWrite(() =>
+              const { webOmissions } = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
                   this.options.service.exportTo(request, archive, {
                     ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
@@ -1002,6 +1002,7 @@ export class SessionPackageDesktop {
                 )
               )
               signal.throwIfAborted()
+              const omissionResult = webOmissions?.length ? { webOmissions } : {}
               if (orgCaseTarget) {
                 const uploader = this.resolveOrgCaseUploader()
                 if (!uploader) throw new OrgCaseFailure('unconfigured')
@@ -1032,7 +1033,7 @@ export class SessionPackageDesktop {
                 )
                 signal.throwIfAborted()
                 const uploadedCase = { id: uploaded.id, name: uploaded.name, code: uploaded.code }
-                this.operations.completeResult({ uploadedCase })
+                this.operations.completeResult({ uploadedCase, ...omissionResult })
                 return { saved: true, uploadedCase }
               }
               if (!filePath) throw new Error('No export destination was selected.')
@@ -1044,7 +1045,7 @@ export class SessionPackageDesktop {
                   validateDestination: async () => signal.throwIfAborted()
                 }
               )
-              this.operations.completeResult({ filePath })
+              this.operations.completeResult({ filePath, ...omissionResult })
               return { saved: true, filePath }
             }, request)
           } finally {

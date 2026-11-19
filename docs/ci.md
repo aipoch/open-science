@@ -49,9 +49,16 @@ set and deferred groups appear in preflight reason chains. Checks retain complet
 each selected group, so this is group selection rather than individual-test pruning. Native supervisor
 consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate. Complete Windows business/browser variants run
 in the independent Windows E2E Regression workflow.
-PR Gate does not allocate Mac runners, including for platform-sensitive changes;
-its Mac validation happens in merge queue. The separate Process Lifecycle workflow runs
-three native platforms for its declared lifecycle owner and harness paths, as described below.
+PR Gate selects a short native update-occupancy check on macOS, Linux and Windows for runtime/CLI
+lanes and full fallback plans. It reuses the read-only Update Occupancy workflow and rejects a
+selected job that fails, is cancelled, or is skipped. The desktop/CLI fixture also checks that a
+backend self-restart uses the production restart path to transfer the same reader to the new runtime
+generation. A controlled delayed EOF verifies that handoff joins reader exit after stopping the
+backend; the production wait is bounded to five seconds and retains the final occupancy check with
+its independent platform budget. Preparing checks allow up to 60 seconds for transient external holders,
+while pinning the backend and reader birth identities so their exit cannot produce a false pass.
+Other Mac validation runs in merge queue.
+The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
@@ -106,10 +113,31 @@ diagnosis. Classification and gate validation continue to use trusted base code.
 
 ### Scheduled regression and publication
 
+Package Smoke runs `e2e/certification/update-occupancy.spec.ts` against the exact candidate package
+on all five platform/architecture rows. In-place candidates' real `update.recheck()` must admit their
+own runtime, reject a foreign bundled-Node process, recover after that process exits, and pass again
+after restart. Ad-hoc macOS nightlies intentionally use the manual installer strategy, which has no
+update admission API: those candidates instead verify the actual packaged reader's owner identity,
+held SQLite lease and native occupancy, distinguish an unregistered foreign Node, and repeat after
+restart. Reports identify this narrower coverage explicitly; a stable macOS candidate selecting the
+manual fallback fails. Signed stable macOS packages must pass the real updater path. IPC and OS
+occupancy are not mocked. Positive readiness checks wait at most 60 seconds for real admission
+(e.g. a hosted Windows provisioning agent releasing a freshly installed executable); they never
+exempt that agent, and the controlled foreign Node must still block by exact PID. Missing packaged identity or prerequisites fail
+the job. Nightly and Release already require Package Smoke before publication, so this is a blocking
+pre-publication check. The existing post-release Windows Upgrade Smoke still covers actual binary
+replacement from older versions; its failure is advisory and cannot retroactively stop a release.
+A fixed target cannot repair the updater already running in an older source version. Clients with
+the unregistered reader may need a complete service shutdown and manual package installation for
+that first upgrade. Use Package Smoke's `artifact_run_id` dispatch to replay a candidate without
+rebuilding or publishing; diagnostic replays never emit release certification.
+
 Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
-default-branch SHA is unchanged. Its manual `core` and `detector` modes are focused no-publish
-dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
+default-branch SHA is unchanged. Its manual `core`, `detector` and `update-occupancy` modes are focused no-publish
+dry-runs. Daily `core` additionally checks real desktop/CLI launch readers, reattachment, rejection
+of a real foreign installation occupant, and complete installation release on shutdown. PR Gate
+calls only the short occupancy mode; its existing required check aggregates the result.
 Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
 module tests do not collect its native suite or count it as portable consumer evidence.
 PRs changing its harness, explicit lifecycle owners, process identity/stop helpers, dynamic

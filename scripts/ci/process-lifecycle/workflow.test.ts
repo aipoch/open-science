@@ -144,16 +144,16 @@ it('retains evidence on failure and uses the existing reporter only for complete
   )!
   expect(upload.if).toContain('always()')
   expect(upload.with?.['if-no-files-found']).toBe('error')
-  expect(workflow.jobs.report.needs).toBe('lifecycle')
+  expect(workflow.jobs.report.needs).toEqual(['lifecycle', 'update_occupancy'])
   expect(workflow.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
   expect(workflow.jobs.report.permissions).toEqual({ contents: 'read', issues: 'write' })
   const reporter = workflow.jobs.report.steps.at(-1)!
   expect(reporter.env?.CONCLUSION).toBe(
-    "${{ needs.lifecycle.result == 'success' && 'success' || 'failure' }}"
+    "${{ needs.lifecycle.result == 'success' && needs.update_occupancy.result == 'success' && 'success' || 'failure' }}"
   )
   expect(reporter.with?.script).toContain('report-scheduled-failure.mjs')
   for (const job of Object.values(workflow.jobs))
-    for (const step of job.steps) {
+    for (const step of job.steps ?? []) {
       if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/)
     }
 })

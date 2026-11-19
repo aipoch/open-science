@@ -240,7 +240,10 @@ it('validates org-case upload metadata and result snapshots on package export co
     exportDestination: 'org-case',
     state: 'succeeded',
     progress: { phase: 'uploading', completedBytes: 50, totalBytes: 50 },
-    result: { uploadedCase: { id: 'case_1', name: 'Trimmed Case', code: '7Q2M9X4B' } }
+    result: {
+      uploadedCase: { id: 'case_1', name: 'Trimmed Case', code: '7Q2M9X4B' },
+      webOmissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
   }
   expect(sessionPackageCommandContracts.operation.result.parse(uploadedSnapshot)).toEqual(
     uploadedSnapshot
