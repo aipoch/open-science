@@ -53,7 +53,9 @@ PR Gate selects a short native update-occupancy check on macOS, Linux and Window
 lanes and full fallback plans. It reuses the read-only Update Occupancy workflow and rejects a
 selected job that fails, is cancelled, or is skipped. The desktop/CLI fixture also checks that a
 backend self-restart transfers the same reader to the new runtime generation and that final shutdown
-releases the installation. Other Mac validation runs in merge queue.
+releases the installation. Positive checks allow up to 60 seconds for transient external holders,
+while pinning the backend and reader birth identities so their exit cannot produce a false pass.
+Other Mac validation runs in merge queue.
 The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps

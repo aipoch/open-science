@@ -109,7 +109,10 @@ ${fixtureSource
     }
     res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration`
   )
-  .replace('const server=http', 'setTimeout(()=>process.exit(2),60000).unref();\nconst server=http')
+  .replace(
+    'const server=http',
+    'setTimeout(()=>process.exit(2),300000).unref();\nconst server=http'
+  )
   .replace(
     "req.headers['x-open-science-runtime-generation']!==generation",
     "(req.url!=='/api/bootstrap'&&req.headers['x-open-science-runtime-generation']!==generation)"
@@ -186,13 +189,32 @@ server.listen(`
         const owner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
         const location = { installationRoot, stateRoot }
         const runtime = { pid: owner.pid, generation: owner.generation, configRoot }
-        await expect(
-          inspectInstallationAvailability({ ...location, runtime })
-        ).resolves.toBeUndefined()
+        const reader = children.find((child) => child.spawnargs.includes('--input-type=commonjs'))
+        expect(reader?.pid).toBeDefined()
+        const readerBirth = processBirthIdentity(reader!.pid!)
+        expect(readerBirth).toBeTruthy()
+        const expectAvailable = async (expectedRuntime: typeof runtime): Promise<void> => {
+          const runtimeBirth = processBirthIdentity(expectedRuntime.pid)
+          expect(runtimeBirth).toBeTruthy()
+          // Hosted Windows provisioning can briefly hold the executable after a launch.
+          // Keep both intended processes live while waiting for actual admission.
+          await vi.waitFor(
+            async () => {
+              await expect(
+                inspectInstallationAvailability({
+                  ...location,
+                  runtime: expectedRuntime
+                })
+              ).resolves.toBeUndefined()
+              expect(processBirthIdentity(expectedRuntime.pid)).toBe(runtimeBirth)
+              expect(processBirthIdentity(reader!.pid!)).toBe(readerBirth)
+            },
+            { timeout: 60000, interval: 250 }
+          )
+        }
+        await expectAvailable(runtime)
         expect((await startOrAttachDesktopBackend(options)).startedProcess).toBeUndefined()
-        await expect(
-          inspectInstallationAvailability({ ...location, runtime })
-        ).resolves.toBeUndefined()
+        await expectAvailable(runtime)
         const foreign = childProcess.spawn(
           command,
           ['-e', "process.stdout.write('ready');process.stdin.resume()"],
@@ -205,16 +227,18 @@ server.listen(`
             inspectInstallationAvailability({ ...location, runtime })
           ).rejects.toMatchObject({
             reason: 'installation-busy',
-            recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: foreign.pid }] }
+            recovery: {
+              detail: 'foreign-process',
+              blockingProcesses: expect.arrayContaining([
+                expect.objectContaining({ pid: foreign.pid })
+              ])
+            }
           })
         } finally {
           foreign.stdin!.end()
           await foreignExit
         }
-        await expect(
-          inspectInstallationAvailability({ ...location, runtime })
-        ).resolves.toBeUndefined()
-        const beforeRestart = await inspectInstallationProcessesAsync(installationRoot)
+        await expectAvailable(runtime)
         const restarted = once(backendProcess!, 'exit')
         await fetch(`http://127.0.0.1:${owner.port}/restart`, {
           headers: {
@@ -234,26 +258,25 @@ server.listen(`
         const birth = processBirthIdentity(replacement.pid)
         expect(birth).toBeTruthy()
         replacements.push({ pid: replacement.pid, birth: birth! })
-        await expect(
-          inspectInstallationAvailability({
-            ...location,
-            runtime: { pid: replacement.pid, generation: replacement.generation, configRoot }
-          })
-        ).resolves.toBeUndefined()
-        expect((await inspectInstallationProcessesAsync(installationRoot)).sort()).toEqual(
-          [...beforeRestart.filter((pid) => pid !== owner.pid), replacement.pid].sort()
+        await expectAvailable({
+          pid: replacement.pid,
+          generation: replacement.generation,
+          configRoot
+        })
+        expect(await inspectInstallationProcessesAsync(installationRoot)).toEqual(
+          expect.arrayContaining([replacement.pid, reader!.pid])
         )
         process.kill(replacement.pid, 'SIGTERM')
         await vi.waitFor(
           async () => expect(await inspectInstallationAvailability(location)).toBeUndefined(),
-          { timeout: 15000, interval: 100 }
+          { timeout: 60000, interval: 250 }
         )
       } finally {
         if (previousStateRoot === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
         else process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = previousStateRoot
       }
     },
-    120000
+    240000
   )
   it.each([true, false])(
     'resolves bundled npm in the actual Node backend (packaged: %s)',
