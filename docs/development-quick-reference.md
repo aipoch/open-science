@@ -129,9 +129,10 @@ Add `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to the repository's gitignored `.e
 active config root, which defaults to `~/.open-science`. Restart the backend after changing
 configuration. A missing or invalid endpoint leaves tracing off.
 
-For Langfuse, paste both project API keys into `.env`. The Agent builds Basic Auth and sets the
-v4 ingestion header for `/api/public/otel/v1/traces`. This example uses the EU region. Replace the
-host with your region or self-hosted instance. [Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
+In Langfuse, open the target project's settings and copy its public and secret API keys. The key
+pair selects the project. The Agent builds Basic Auth and sets the v4 ingestion header for
+`/api/public/otel/v1/traces`. This example uses the EU region. Replace the host with your region
+or self-hosted instance. [Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
 
 ```dotenv
 OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
@@ -154,8 +155,15 @@ executes an MCP tool also emits a `harness.tool` span. Spans carry operational m
 the Agent session and model request IDs, timing, outcomes, and reported model token usage.
 The payload excludes prompts, generated text, tool arguments and results, credentials, and error
 details. Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
-Failed uploads are dropped without local logs or retries. Keep the Agent process open until the
-collector receives the spans, since closing the helper cancels pending uploads.
+Failed uploads are dropped without retries. Keep the Agent process open until the collector
+receives the spans, since closing the helper cancels pending uploads.
+
+To inspect uploads from the terminal, add `OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1` to `.env`,
+restart the backend, and send a turn. Run `cat .env.otel-status.json` from the directory containing
+`.env`. The Agent overwrites one record with the last reported outcome and its timestamp. It
+includes the HTTP status when available. `http_accepted` means the collector returned HTTP 2xx.
+Confirm the trace appears in the target project's Tracing view. With diagnostics disabled, the
+Agent emits no upload status or logs.
 
 ## Coding-agent navigation
 
