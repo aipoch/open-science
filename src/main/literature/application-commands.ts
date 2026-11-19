@@ -66,6 +66,7 @@ import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
+  type ApplicationCallerLease,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -104,7 +105,7 @@ type LiteratureCommandOwner = Readonly<{
     signal?: AbortSignal
   ): Promise<LiteraturePublicationCheckResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
-  lookupMetadata(doi: string): Promise<LiteratureItemInput>
+  lookupMetadata(reference: string, signal?: AbortSignal): Promise<LiteratureItemInput>
   completeMetadata(
     request: LiteratureMetadataCompletionRequest
   ): Promise<LiteratureMetadataCompletionResult>
@@ -174,6 +175,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteraturePublicationCheckRequest],
     LiteraturePublicationCheckResult
   >('literature:publication-check', literatureApplicationCommandContracts.publicationCheck),
+  cancelRelated: defineApplicationCommand<
+    'literature:cancel-related',
+    readonly [{ requestId: string }],
+    void
+  >('literature:cancel-related', literatureApplicationCommandContracts.cancelRelated),
   related: defineApplicationCommand<
     'literature:related',
     readonly [LiteratureRelatedRequest],
@@ -191,7 +197,7 @@ const literatureApplicationCommands = Object.freeze({
   >('literature:full-text', literatureApplicationCommandContracts.fullText),
   lookupMetadata: defineApplicationCommand<
     'literature:lookup-metadata',
-    readonly [string],
+    readonly [string, string?],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
   overviewBatch: defineApplicationCommand<
@@ -269,6 +275,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
   literatureApplicationCommands.related,
+  literatureApplicationCommands.cancelRelated,
   literatureApplicationCommands.publicationCheck,
   literatureApplicationCommands.supplements,
   literatureApplicationCommands.supplementAttachment,
@@ -301,6 +308,14 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   const lifetime = new AbortController()
   const pending = new Set<Promise<unknown>>()
+  const lookups = new Map<string, AbortController>()
+  // A cancellation can overtake its HTTP lookup. Retain bounded, short-lived tombstones.
+  const cancelled = new Map<string, number>()
+  const requestKey = (lease: { leaseId: string; generation: number }, requestId: string): string =>
+    JSON.stringify([lease.leaseId, lease.generation, requestId])
+  const pruneCancelled = (): void => {
+    for (const [key, until] of cancelled) if (until <= Date.now()) cancelled.delete(key)
+  }
   const run = <Result>(
     operation: () => Promise<Result> | Result,
     write = true
@@ -315,6 +330,26 @@ const registerLiteratureApplicationCommands = (
       () => pending.delete(task)
     )
     return task
+  }
+  const runLookup = <T>(
+    callerLease: ApplicationCallerLease,
+    requestId: string | undefined,
+    operation: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> => {
+    const key = requestId ? requestKey(callerLease, requestId) : crypto.randomUUID()
+    pruneCancelled()
+    if (lookups.has(key)) throw new Error('Citation request is already active.')
+    if (lookups.size >= 200) throw new Error('Too many active citation requests.')
+    const cancellation = new AbortController()
+    if (cancelled.has(key)) cancellation.abort()
+    lookups.set(key, cancellation)
+    const signal = AbortSignal.any([callerLease.signal, lifetime.signal, cancellation.signal])
+    return run(() => {
+      signal.throwIfAborted()
+      return operation(signal)
+    }, false).finally(() => {
+      lookups.delete(key)
+    })
   }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
@@ -333,11 +368,20 @@ const registerLiteratureApplicationCommands = (
             AbortSignal.any([callerLease.signal, lifetime.signal])
           )
         ),
-      'literature:related': ({ args, callerLease }) =>
-        run(
-          () => owner.related(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
-          false
-        ),
+      'literature:cancel-related': ({ args, callerLease }) => {
+        const key = requestKey(callerLease, args[0].requestId)
+        const active = lookups.get(key)
+        if (active) active.abort()
+        else {
+          pruneCancelled()
+          if (cancelled.size >= 200) cancelled.delete(cancelled.keys().next().value!)
+          cancelled.set(key, Date.now() + 30_000)
+        }
+      },
+      'literature:related': ({ args, callerLease }) => {
+        const request = args[0]
+        return runLookup(callerLease, request.requestId, (signal) => owner.related(request, signal))
+      },
       'literature:supplements': ({ args, callerLease }) =>
         run(
           () => owner.supplements(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
@@ -350,7 +394,8 @@ const registerLiteratureApplicationCommands = (
           false
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
-      'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:lookup-metadata': ({ args, callerLease }) =>
+        runLookup(callerLease, args[1], (signal) => owner.lookupMetadata(args[0], signal)),
       'literature:study-snapshot': ({ args, callerLease }) =>
         run(
           () =>

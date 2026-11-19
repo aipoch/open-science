@@ -49,6 +49,7 @@ const getToolExecutionPhase = (
   permission: SessionPermissionRuntimeContext | undefined,
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
 ): ToolExecutionPhase => {
+  if (activity.toolDisposition === 'cancelled') return 'cancelled'
   if (activity.toolDisposition === 'declined') return 'declined'
   if (isPendingNotebookCodeReview(activity)) return 'awaiting-approval'
   const correlatedRun = isNotebookExecutionActivity(activity)

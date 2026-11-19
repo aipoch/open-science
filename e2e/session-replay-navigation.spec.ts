@@ -90,7 +90,6 @@ test('asks immediately after seeking recorded artifact and upload steps without 
   // Asking opens the project draft and preserves the parked writable conversation.
   const source: PersistedChatSession = {
     ...recorded,
-    title: 'Imported recorded file evidence',
     packageOrigin: sourceFixture(projectId, 'a').packageOrigin
   }
   const target: PersistedChatSession = {

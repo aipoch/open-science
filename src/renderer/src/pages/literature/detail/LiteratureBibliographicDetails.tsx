@@ -4,10 +4,7 @@ import { JournalAttributes } from '../JournalAttributes'
 import { LiteratureSources } from '../LiteratureSources'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import {
-  createLiteratureIdentifierUrl,
-  normalizeLiteratureIdentifierValue
-} from '@aipoch/literature-citations/contracts'
+import { LiteratureIdentifiers } from './LiteratureIdentifiers'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 
 import {
@@ -88,39 +85,10 @@ export function LiteratureBibliographicDetails({
               ) : null}
             </dl>
           ) : null}
-          {selectedItem.item.identifiers.length > 0 ? (
-            <dl
-              className={`mt-3 flex flex-wrap gap-x-5 gap-y-2${hasFields ? ' border-t border-border-300/70 pt-3' : ''}`}
-            >
-              {selectedItem.item.identifiers.map((identifier) => {
-                const value = normalizeLiteratureIdentifierValue(
-                  identifier.scheme,
-                  identifier.value
-                )
-                const href = createLiteratureIdentifierUrl(identifier.scheme, value)
-                return (
-                  <div
-                    key={`${identifier.scheme}:${identifier.value}`}
-                    className="flex min-w-0 items-baseline gap-2"
-                  >
-                    <dt className="text-xs uppercase text-muted-foreground">{identifier.scheme}</dt>
-                    <dd className="min-w-0 break-all">
-                      {href ? (
-                        <ExternalTextLink
-                          href={href}
-                          aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
-                        >
-                          {value}
-                        </ExternalTextLink>
-                      ) : (
-                        value
-                      )}
-                    </dd>
-                  </div>
-                )
-              })}
-            </dl>
-          ) : null}
+          <LiteratureIdentifiers
+            identifiers={selectedItem.item.identifiers}
+            className={hasFields ? 'mt-3 border-t border-border-300/70 pt-3' : 'mt-3'}
+          />
         </section>
       ) : null}
       <LiteratureSources

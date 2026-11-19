@@ -3,6 +3,9 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promise
 import { join } from 'node:path'
 import type { ElectronApplication } from 'playwright'
 import { x as extract } from 'tar'
+import { createSessionFile } from '../src/shared/session-persistence'
+import { openProjectSession } from './certification/helpers'
+import { readRawOutcomeSession } from './fixtures/session-outcome-fault'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -219,7 +222,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
 }, testInfo) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  let page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Diagnostic research')
   const prompt = 'Summarize the deterministic fixture.'
   await submitPromptViaUi(page, prompt)
@@ -231,23 +234,20 @@ test('exports selected diagnostics without changing the persisted session', asyn
     if (!session) throw new Error('Diagnostic fixture session was not persisted')
     return { projectId: session.projectId, sessionId: session.id }
   })
+  await expect
+    .poll(async () => (await readRawOutcomeSession(app, identity)).sessionDetailsGeneration?.status)
+    .toMatch(/^(succeeded|failed|disabled|superseded)$/)
+  const secret = 'diagnostic-e2e-credential-do-not-export'
+  const evidence = JSON.stringify({
+    ...createSessionFile(await readRawOutcomeSession(app, identity)),
+    diagnosticFixture: { apiKey: secret }
+  })
+  // This journey checks metadata-only export for damaged legacy JSON as well as redaction.
+  page = await app.restartWithRawSessionFileFixture({ ...identity, contents: evidence })
+  await openProjectSession(page, 'Diagnostic research', prompt)
   const application = (app as unknown as { application: ElectronApplication }).application
   const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
   const sourcePath = join(configRoot, 'sessions', identity.projectId, `${identity.sessionId}.json`)
-  // The reply can finish before its background title/description attempt is persisted.
-  await expect
-    .poll(async () => {
-      const saved = JSON.parse(await readFile(sourcePath, 'utf8'))
-      return saved.session.sessionDetailsGeneration?.status
-    })
-    .toMatch(/^(succeeded|failed|disabled|superseded)$/)
-  const original = await readFile(sourcePath, 'utf8')
-  const secret = 'diagnostic-e2e-credential-do-not-export'
-  const evidence = JSON.stringify({
-    ...JSON.parse(original),
-    diagnosticFixture: { apiKey: secret }
-  })
-  await writeFile(sourcePath, evidence)
   const logsRoot = await application.evaluate(() => {
     const root = process.env.OPEN_SCIENCE_CONFIG_ROOT ?? process.env.OPEN_SCIENCE_STORAGE_ROOT
     if (!root) throw new Error('Isolated backend config root is unavailable.')

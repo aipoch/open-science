@@ -1,5 +1,6 @@
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { afterEach, expect, it, vi } from 'vitest'
+import { lookupCachedLiteratureMetadata } from '../literature-metadata-lookup'
 import { completeLiteraturePdfDraft } from './literature-pdf-metadata'
 
 const draft = literatureItemInputSchema.parse({
@@ -222,4 +223,25 @@ it('does not report a lookup failure when local metadata has no lookup identifie
   expect(await completeLiteraturePdfDraft(window.api, local, notice)).toBe(local)
   expect(lookup).not.toHaveBeenCalled()
   expect(notice).not.toHaveBeenCalled()
+})
+
+it('keeps a shared lookup alive for a PDF reader after citation details close', async () => {
+  const pending = Promise.withResolvers<typeof resolved>()
+  const lookupMetadata = vi.fn().mockReturnValue(pending.promise)
+  const cancelRelated = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('window', { api: { literature: { lookupMetadata, cancelRelated } } })
+  const reader = new AbortController()
+  const detail = lookupCachedLiteratureMetadata(
+    window.api,
+    draft.identifiers[0].value,
+    false,
+    reader.signal
+  )
+  const pdf = completeLiteraturePdfDraft(window.api, draft)
+  reader.abort()
+  expect(cancelRelated).not.toHaveBeenCalled()
+  pending.resolve(resolved)
+  await expect(pdf).resolves.toMatchObject({ title: resolved.title })
+  await detail
+  expect(lookupMetadata).toHaveBeenCalledTimes(1)
 })

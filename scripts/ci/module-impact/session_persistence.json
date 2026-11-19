@@ -109,7 +109,8 @@
     "src/main/session-persistence/runtime-session-file.ts",
     "src/main/session-persistence/runtime-session-mutation.ts",
     "src/main/session-persistence/session-storage-benchmark.test.ts",
-    "src/main/session-persistence/deferred-recovery.ts"
+    "src/main/session-persistence/deferred-recovery.ts",
+    "src/main/session-persistence/web-evidence.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -200,7 +201,8 @@
       "src/main/session-persistence/repository-pending-import.test.ts",
       "src/main/session-persistence/runtime-business-records.integration.test.ts",
       "src/main/session-persistence/runtime-session-file.test.ts",
-      "src/main/session-persistence/session-storage-benchmark.test.ts"
+      "src/main/session-persistence/session-storage-benchmark.test.ts",
+      "src/main/session-persistence/web-evidence.integration.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",

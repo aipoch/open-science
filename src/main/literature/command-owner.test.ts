@@ -1,4 +1,4 @@
-import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
+import { LiteratureProviderError, LiteratureReferenceResolver } from '@aipoch/literature-discovery'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
 import { runInNewContext } from 'node:vm'
@@ -130,20 +130,58 @@ describe('Literature command workflows', () => {
     expect(withDataRootWrite).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
-  it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
-    const run = vi.fn().mockResolvedValue({ records: [] })
+  it.each([false, 'europe-pmc', 'opencitations'] as const)(
+    'forwards citation relationship queries and caller cancellation without publishing changes (temporary center: %s)',
+    async (temporary) => {
+      const run = vi.fn().mockResolvedValue({ records: [] })
+      const owner = createLiteratureCommandOwner({
+        literatureRelatedFinder: { run }
+      } as unknown as Services)
+      const request = {
+        itemId: 'paper',
+        expectedMetadataRevision: 1,
+        direction: 'references' as const,
+        offset: 0,
+        ...(temporary
+          ? {
+              provider: temporary,
+              seedPaperId:
+                temporary === 'opencitations'
+                  ? 'opencitations:br/06180349574'
+                  : 'europe-pmc:MED:10647931',
+              resolutionToken: '00000000-0000-4000-8000-000000000001'
+            }
+          : {})
+      }
+      const signal = new AbortController().signal
+      await owner.related(request, signal)
+      expect(run).toHaveBeenCalledWith(request, signal)
+      expect(withDataRootWrite).not.toHaveBeenCalled()
+      expect(broadcastToRenderers).not.toHaveBeenCalled()
+    }
+  )
+  it('preserves the Index mode and cancellation across the citation command boundary', async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValue({ records: [], provider: 'opencitations', opencitationsMode: 'index' })
     const owner = createLiteratureCommandOwner({
       literatureRelatedFinder: { run }
     } as unknown as Services)
     const request = {
       itemId: 'paper',
       expectedMetadataRevision: 1,
-      direction: 'references' as const,
-      offset: 0
+      direction: 'citations' as const,
+      provider: 'opencitations' as const,
+      opencitationsMode: 'index' as const,
+      seedPaperId: 'opencitations:br/062203052290',
+      resolutionToken: '00000000-0000-4000-8000-000000000001',
+      offset: 20
     }
     const signal = new AbortController().signal
-    await owner.related(request, signal)
-    expect(run).toHaveBeenCalledWith(request, signal)
+    await expect(owner.related(request, signal)).resolves.toMatchObject({
+      opencitationsMode: 'index'
+    })
+    expect(run).toHaveBeenCalledExactlyOnceWith(request, signal)
     expect(withDataRootWrite).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
@@ -458,9 +496,25 @@ it.each([
     literatureReferenceResolver: { lookup }
   } as unknown as Services)
   await expect(owner.lookupMetadata(input)).resolves.toBe(item)
-  expect(lookup).toHaveBeenCalledWith(reference)
+  expect(lookup).toHaveBeenCalledWith(reference, undefined)
   expect(broadcastToRenderers).not.toHaveBeenCalled()
 })
+
+it.each([404, 429, 503])(
+  'reports transient metadata errors separately from HTTP %i',
+  async (status) => {
+    const error = new LiteratureProviderError(status)
+    const owner = createLiteratureCommandOwner({
+      literatureReferenceResolver: { lookup: vi.fn().mockRejectedValue(error) }
+    } as unknown as Services)
+    const result = owner.lookupMetadata('pmid:35022204')
+    if (status === 404) await expect(result).rejects.toBe(error)
+    else
+      await expect(result).rejects.toMatchObject({
+        code: 'literature-metadata-temporarily-unavailable'
+      })
+  }
+)
 
 it('accepts exactly one bounded import source at the transport boundary', () => {
   const items = [literatureItemInputSchema.parse({ itemType: 'review', title: 'Native record' })]

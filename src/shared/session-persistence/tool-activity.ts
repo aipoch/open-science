@@ -14,6 +14,8 @@ import type {
   PersistedToolCallLocation
 } from '../session-message-contract'
 import { asNumber, asString, asStringArray, isRecord } from './primitives'
+import { webInvocationMetadataSchema } from '../web-tools'
+import { packageWebActivityEvidenceSchema } from '../session-package-web'
 
 const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'pending',
@@ -24,7 +26,8 @@ const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
 
 const TOOL_ACTIVITY_DISPOSITIONS = new Set<PersistedToolActivityDisposition>([
   'declined',
-  'permission-closed'
+  'permission-closed',
+  'cancelled'
 ])
 
 const MAX_PERSISTED_RAW_CHARS = 8_000
@@ -151,6 +154,23 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   if (elicitation) sanitized.elicitation = elicitation
   if (toolDisposition) sanitized.toolDisposition = toolDisposition
   if (executionInvocationId) sanitized.executionInvocationId = executionInvocationId
+  if (activity.appOwned === true && executionInvocationId) {
+    const metadata = webInvocationMetadataSchema.safeParse(activity.webInvocation)
+    if (metadata.success) sanitized.webInvocation = metadata.data
+    const packet = packageWebActivityEvidenceSchema.safeParse(activity.packageWebEvidence)
+    if (
+      packet.success &&
+      packet.data.invocationId === executionInvocationId &&
+      [
+        `mcp__open_science_web__web_${packet.data.operation}`,
+        `mcp__open-science-web__web_${packet.data.operation}`
+      ].includes(providerToolName ?? '')
+    ) {
+      sanitized.packageWebEvidence = packet.data
+      // Imported evidence is a display record, never a grant to repeat the original operation.
+      if (sanitized.webInvocation) delete sanitized.webInvocation.retryEligible
+    }
+  }
 
   return sanitized
 }

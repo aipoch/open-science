@@ -45,6 +45,7 @@
     "src/renderer/src/components/ui/split-button.css",
     "src/renderer/src/components/ui/split-button.test.tsx",
     "src/renderer/src/components/ui/progress-bar.tsx",
+    "src/renderer/src/components/ui/zoom-controls.tsx",
     "src/renderer/src/components/image-error-notice.tsx",
     "src/renderer/src/components/notices/ComposerNoticeSlot.tsx",
     "src/renderer/src/components/notices/composer-notice-catalog.ts"

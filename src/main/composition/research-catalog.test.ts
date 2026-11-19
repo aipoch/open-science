@@ -138,7 +138,6 @@ const createDependencies = vi.fn(() => ({
     resolveExplicitAgentBackend: vi.fn().mockResolvedValue({ resolved: true }),
     captureActiveExplicitAgentBackendTarget: vi.fn().mockResolvedValue({ id: 'initial-model' }),
     getConnectors: vi.fn().mockResolvedValue({
-      semanticScholarApiKeyRef: 'semantic-ref',
       openAlexApiKeyRef: 'openalex-ref',
       contactEmail: 'research@example.test'
     })
@@ -404,7 +403,22 @@ describe('research catalog composition', () => {
       mocks.decrypt.mockImplementation((ref) => `decrypted:${ref}`)
       expect(await fullText.openAlexKey()).toBe('decrypted:openalex-ref')
       expect(await fullText.contactEmail()).toBe('research@example.test')
-      expect(await mocks.related.mock.calls[0][0].apiKey()).toBe('decrypted:semantic-ref')
+      expect(mocks.related.mock.calls[0][0]).not.toHaveProperty('apiKey')
+      const diagnostic = {
+        provider: 'opencitations',
+        endpoint: 'citations',
+        phase: 'http',
+        attempt: 1,
+        outcome: 'failed',
+        status: 503,
+        issue: 'unavailable',
+        elapsedMs: 120
+      }
+      mocks.related.mock.calls[0][0].onDiagnostic(diagnostic)
+      expect(d.literatureContextLog.warn).toHaveBeenCalledWith(
+        'Citation source request diagnostic',
+        diagnostic
+      )
       d.settingsService.getConnectors.mockResolvedValueOnce(undefined as never)
       expect(await fullText.contactEmail()).toBeUndefined()
       const signal = new AbortController().signal

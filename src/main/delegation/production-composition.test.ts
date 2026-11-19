@@ -3857,6 +3857,13 @@ describe('production delegated-work composition', () => {
         }
       }
     })
+    const executionsStarted = Promise.withResolvers<void>()
+    const startExecution = harness.execution.run.bind(harness.execution)
+    vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+      const handle = startExecution(...args)
+      if (harness.execution.controls().length === 2) executionsStarted.resolve()
+      return handle
+    })
     const delegated = await harness.composition.host.delegate(
       harness.caller,
       [
@@ -3865,7 +3872,9 @@ describe('production delegated-work composition', () => {
       ],
       { wait: false }
     )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    // Synchronize with both executions instead of relying on expect.poll's default 1 s budget.
+    await executionsStarted.promise
+    expect(harness.execution.controls()).toHaveLength(2)
     for (const control of harness.execution.controls()) control.accept()
 
     const send = (

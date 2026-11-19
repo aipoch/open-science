@@ -82,7 +82,7 @@ function reapStaleRegistrations(directory, DatabaseSync = require('node:sqlite')
   }
   return reaped
 }
-function protectInstallationStartup(entryPath, configRoot, stateRoot) {
+function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwner) {
   // Loading node:sqlite emits an experimental warning on Node 22; ordinary CLI commands
   // must not load it and contaminate their machine-readable output.
   let DatabaseSync
@@ -125,10 +125,11 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot) {
       '--open-science-plan-mcp'
     ]
     if (
-      helperFlags.some((flag) => process.argv.includes(flag)) &&
-      process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+      helperOwner ||
+      (helperFlags.some((flag) => process.argv.includes(flag)) &&
+        process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
     ) {
-      const candidate = JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
+      const candidate = helperOwner ?? JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
       const tokenHash = createHash('sha256').update(String(candidate.token)).digest('hex')
       for (const name of readdirSync(directory).filter((name) =>
         /^[\da-f-]{36}\.json$/.test(name)

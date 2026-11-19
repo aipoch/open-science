@@ -1,3 +1,4 @@
+import { PackageWebOmissions } from './PackageWebOmissions'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -306,6 +307,7 @@ export const PackageFileSelection = ({
                   : '—'}
               </strong>
             </div>
+            <PackageWebOmissions omissions={summary?.webOmissions} />
             {summary ? (
               <p className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
                 <span>{t('History and required evidence')}</span>
