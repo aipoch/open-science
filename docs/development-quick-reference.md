@@ -124,39 +124,25 @@ and continue to require the certified, version-matched WSL2 assets.
 
 ### Open-Science Agent traces
 
-To collect traces for harness evaluation, start the app or backend with
-`OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` set to the full OTLP/HTTP JSON trace URL.
-Tracing is disabled when the value is unset or invalid. For a local collector on port 4318,
-launch development from the repository root.
+Add `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to the repository's gitignored `.env` file, then run
+`npm run dev` or `npm run dev:web` as usual. Installed desktop and CLI runtimes read `.env` from the
+active config root, which defaults to `~/.open-science`. Restart the backend after changing
+configuration. A missing or invalid endpoint leaves tracing off.
 
-```bash
-OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces npm run dev
-```
-
-The same environment variables work with `npm run dev:web` and `open-science start --no-open`.
-Stop any already-running backend before relaunching with the new environment.
-
-For collectors that require authentication, save a JSON object of HTTP header names and string
-values in a private file outside the repository. Set `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE`
-to its absolute path. The Agent reads this file on the first upload. An unreadable or invalid file
-disables uploads for that helper process.
-
-For Langfuse, encode `public_key:secret_key` as Base64 and use the result after `Basic ` in the header
-file. This example uses the EU region. Replace the host with your region or self-hosted instance.
+For Langfuse, encode `public_key:secret_key` as Base64 and use the result after `Basic `.
+This example uses the EU region. Replace the host with your region or self-hosted instance.
 [Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
 
-```json
-{
-  "Authorization": "Basic YOUR_BASE64_CREDENTIALS",
-  "x-langfuse-ingestion-version": "4"
-}
+```dotenv
+OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
+OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='{"Authorization":"Basic YOUR_BASE64_CREDENTIALS","x-langfuse-ingestion-version":"4"}'
 ```
 
-```bash
-OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces \
-OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE="$HOME/.config/open-science/otel-headers.json" \
-npm run dev
-```
+The Agent reads these settings without adding them to the process environment. To store the
+headers in a separate JSON file, set `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE` to its absolute
+path. When both are present, the headers file takes precedence. An unreadable or invalid file
+disables trace uploads. An endpoint explicitly set in the launch environment overrides the
+`.env` configuration and uses only a headers file explicitly set in that environment.
 
 Send a turn with the Open-Science Agent and look for a `harness.turn` span with a
 `harness.model` child under the `open-science-agent` service in the collector. A turn that

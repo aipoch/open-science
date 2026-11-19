@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { harnessFramework } from './harness'
+import * as runtimeMetadata from '../runtime-metadata'
 import { harnessConfigSchema, HARNESS_ACP_ARG } from '../harness-acp/config'
 import { isRuntimeHelper } from '../runtime-helper'
 import { isProviderUsableByFramework } from '../../shared/settings-runtime'
@@ -71,9 +72,39 @@ describe('built-in Agent host boundary', () => {
       expect(childEnv).toBeDefined()
       expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT).toBe(endpoint)
       expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE).toBe(headersFile)
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_ENV_FILE).toBe(resolve('.env'))
       expect(childEnv).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS')
     }
   )
+
+  it('locates installed trace configuration under the active config root', () => {
+    const configRoot = resolve('profile')
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', undefined)
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', configRoot)
+    const metadata = vi.spyOn(runtimeMetadata, 'runtimeMetadataIfConfigured').mockReturnValue({
+      version: '1.0.0',
+      locale: 'en',
+      packaged: true,
+      applicationPath: resolve('installed'),
+      homePath: resolve('home'),
+      downloadsPath: resolve('home', 'Downloads'),
+      resourcesPath: resolve('installed', 'resources')
+    })
+    try {
+      const spawnProcess = vi.fn<NonNullable<AgentSpawnInput['spawnProcess']>>()
+      harnessFramework.spawn({
+        executablePath: resolve('installed/backend/out/backend/index.cjs'),
+        args: [HARNESS_ACP_ARG, resolve('data', 'sessions')],
+        env: {},
+        spawnProcess
+      })
+      expect(spawnProcess.mock.calls[0][2]?.env?.OPEN_SCIENCE_AGENT_OTLP_ENV_FILE).toBe(
+        resolve(configRoot, '.env')
+      )
+    } finally {
+      metadata.mockRestore()
+    }
+  })
 
   it('rejects remote model credentials and unsupported subscription routes', () => {
     expect(

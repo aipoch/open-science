@@ -1,11 +1,18 @@
 import { randomBytes } from 'node:crypto'
 import { constants, open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
+import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
+import {
+  HARNESS_OTLP_TRACES_ENDPOINT,
+  HARNESS_OTLP_TRACES_HEADERS,
+  HARNESS_OTLP_TRACES_HEADERS_FILE
+} from './config'
 
 const MAX_QUEUED_SPANS = 256
 const EXPORT_TIMEOUT_MS = 2_000
 const MAX_HEADERS_FILE_BYTES = 8_192
+const MAX_ENV_FILE_BYTES = 65_536
 const SERVICE_NAME = 'open-science-agent'
 const timeOriginNanos = BigInt(Math.round(performance.timeOrigin * 1_000)) * 1_000n
 const unixNanos = (): string =>
@@ -74,11 +81,13 @@ function traceSession(
   record: SpanRecorder,
   sessionId: string,
   modelName: string,
-  protocol: string
+  protocol: string,
+  enabled: () => boolean
 ): HarnessSessionTracing {
   let active: Turn | undefined
   return {
     startTurn() {
+      if (!enabled()) return undefined
       const span = startSpan('harness.turn', 1)
       if (!span) return undefined
       active = { span }
@@ -163,55 +172,78 @@ export type HarnessTracing = {
   dispose(): void
 }
 
-async function loadExportHeaders(filePath: string | undefined): Promise<Headers> {
+async function readTraceFile(path: string, maxBytes: number): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))
+  try {
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.size > maxBytes) throw new Error('Invalid OTLP configuration file')
+    const buffer = Buffer.alloc(stat.size)
+    for (let offset = 0; offset < buffer.length;) {
+      const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset)
+      if (!bytesRead) throw new Error('Incomplete OTLP configuration file')
+      offset += bytesRead
+    }
+    return buffer.toString('utf8')
+  } finally {
+    await file.close()
+  }
+}
+
+async function loadExportConfig(
+  endpoint: string | undefined,
+  headersFile: string | undefined,
+  envFile: string | undefined
+): Promise<{ url: URL; headers: Headers } | undefined> {
+  // Explicit launch settings are one export destination. Do not attach file credentials to
+  // a URL supplied by an environment override.
+  const env =
+    endpoint === undefined && envFile
+      ? parseEnv(await readTraceFile(envFile, MAX_ENV_FILE_BYTES))
+      : {}
+  const target = endpoint ?? env[HARNESS_OTLP_TRACES_ENDPOINT]
+  const path = headersFile ?? env[HARNESS_OTLP_TRACES_HEADERS_FILE]
+  if (!target?.trim() || (path && !isAbsolute(path))) return undefined
+  const url = new URL(target)
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
+    return undefined
   const headers = new Headers()
-  if (filePath) {
-    const file = await open(filePath, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))
-    try {
-      const stat = await file.stat()
-      if (!stat.isFile() || stat.size > MAX_HEADERS_FILE_BYTES)
-        throw new Error('Invalid OTLP headers file')
-      const buffer = Buffer.alloc(stat.size)
-      for (let offset = 0; offset < buffer.length;) {
-        const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset)
-        if (!bytesRead) throw new Error('Incomplete OTLP headers file')
-        offset += bytesRead
-      }
-      const values: unknown = JSON.parse(buffer.toString('utf8'))
-      if (!values || typeof values !== 'object' || Array.isArray(values))
-        throw new Error('Expected an OTLP headers object')
-      for (const [name, value] of Object.entries(values)) {
-        if (typeof value !== 'string') throw new Error('Expected an OTLP header string')
-        headers.set(name, value)
-      }
-    } finally {
-      await file.close()
+  const rawHeaders = path
+    ? await readTraceFile(path, MAX_HEADERS_FILE_BYTES)
+    : env[HARNESS_OTLP_TRACES_HEADERS]
+  if (rawHeaders !== undefined) {
+    const values: unknown = JSON.parse(rawHeaders)
+    if (!values || typeof values !== 'object' || Array.isArray(values))
+      throw new Error('Expected an OTLP headers object')
+    for (const [name, value] of Object.entries(values)) {
+      if (typeof value !== 'string') throw new Error('Expected an OTLP header string')
+      headers.set(name, value)
     }
   }
   headers.set('content-type', 'application/json')
-  return headers
+  return { url, headers }
 }
 
 /** Best-effort OTLP/HTTP JSON, owned by the ACP helper. No global SDK, logging or disk queue. */
 export function createHarnessTracing(
   endpoint: string | undefined,
-  headersFile?: string
+  headersFile?: string,
+  envFile?: string
 ): HarnessTracing | undefined {
-  if (!endpoint?.trim() || (headersFile && !isAbsolute(headersFile))) return undefined
-  let url: URL
-  try {
-    url = new URL(endpoint)
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
-      return undefined
-  } catch {
-    return undefined
-  }
-
+  if (endpoint === undefined && !envFile) return undefined
   const lifetime = new AbortController()
   let queued: FinishedSpan[] = []
   let exporting = false
   let scheduled: NodeJS.Immediate | undefined
-  let exportHeaders: Promise<Headers> | undefined
+  let disabled = false
+  const destination = loadExportConfig(endpoint, headersFile, envFile)
+    .catch(() => undefined)
+    .then((config) => {
+      if (!config) {
+        disabled = true
+        queued = []
+      }
+      return config
+    })
 
   function scheduleExport(): void {
     if (scheduled || exporting || !queued.length || lifetime.signal.aborted) return
@@ -226,10 +258,9 @@ export function createHarnessTracing(
     queued = []
     exporting = true
     try {
-      // Resolve credentials lazily, on the export path. A configured file must load successfully
-      // before this helper sends any traces.
-      const headers = await (exportHeaders ??= loadExportHeaders(headersFile))
-      if (lifetime.signal.aborted) return
+      const config = await destination
+      if (!config || lifetime.signal.aborted) return
+      const { url, headers } = config
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -254,7 +285,7 @@ export function createHarnessTracing(
   }
 
   const record: SpanRecorder = (span, outcome, attributes) => {
-    if (!span || lifetime.signal.aborted || queued.length >= MAX_QUEUED_SPANS) return
+    if (!span || disabled || lifetime.signal.aborted || queued.length >= MAX_QUEUED_SPANS) return
     try {
       queued.push({
         ...span,
@@ -270,7 +301,7 @@ export function createHarnessTracing(
   }
 
   return {
-    session: (id, model, protocol) => traceSession(record, id, model, protocol),
+    session: (id, model, protocol) => traceSession(record, id, model, protocol, () => !disabled),
     dispose() {
       lifetime.abort()
       queued = []

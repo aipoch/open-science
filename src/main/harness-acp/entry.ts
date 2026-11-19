@@ -3,6 +3,7 @@ import { ndJsonStream } from '@agentclientprotocol/sdk'
 import { createHarnessAcpAgent } from './agent'
 import {
   HARNESS_ACP_ARG,
+  HARNESS_OTLP_ENV_FILE,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS_FILE
 } from './config'
@@ -13,7 +14,8 @@ export async function runHarnessAcp(argv: readonly string[]): Promise<void> {
   if (index < 0 || index !== argv.length - 2) throw new Error('Invalid built-in Agent arguments')
   const tracing = createHarnessTracing(
     process.env[HARNESS_OTLP_TRACES_ENDPOINT],
-    process.env[HARNESS_OTLP_TRACES_HEADERS_FILE]
+    process.env[HARNESS_OTLP_TRACES_HEADERS_FILE],
+    process.env[HARNESS_OTLP_ENV_FILE]
   )
   const owner = createHarnessAcpAgent(argv[index + 1], tracing)
   const connection = owner.app.connect(

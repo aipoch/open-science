@@ -477,20 +477,19 @@ it('exports correlated OTLP spans with Basic Auth and completes a turn when the 
   const directory = await mkdtemp(join(tmpdir(), 'harness-otel-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const credentials = Buffer.from('pk-lf-test:sk-lf-test').toString('base64')
-  const headersFile = join(directory, 'otel-headers.json')
+  const envFile = join(directory, '.env')
+  const tracePath = '/api/public/otel/v1/traces'
+  const endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}${tracePath}`
+  const headers = JSON.stringify({
+    Authorization: `Basic ${credentials}`,
+    'x-langfuse-ingestion-version': '4'
+  })
   await writeFile(
-    headersFile,
-    JSON.stringify({
-      Authorization: `Basic ${credentials}`,
-      'x-langfuse-ingestion-version': '4'
-    }),
+    envFile,
+    `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}\nOPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='${headers}'\n`,
     { mode: 0o600 }
   )
-  const tracePath = '/api/public/otel/v1/traces'
-  const tracing = createHarnessTracing(
-    `http://127.0.0.1:${(collector.address() as AddressInfo).port}${tracePath}`,
-    headersFile
-  )!
+  const tracing = createHarnessTracing(undefined, undefined, envFile)!
   cleanup.push(async () => tracing.dispose())
   const managed = await mcpServer(false, undefined, false, 'private-tool-result', true)
   let step = 0

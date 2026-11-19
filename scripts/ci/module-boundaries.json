@@ -11702,7 +11702,8 @@
         "node:crypto",
         "node:fs/promises",
         "node:path",
-        "node:stream"
+        "node:stream",
+        "node:util"
       ]
     }
   }
