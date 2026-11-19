@@ -67,10 +67,38 @@ function plainTitle(raw: string): string {
   return value
 }
 
-function record(paper: Paper): LiteratureRelatedRecord | undefined {
-  const identity = literatureRelatedPaperIdSchema.safeParse(
-    `europe-pmc:${paper.source ?? ''}:${paper.id ?? ''}`
+const identitySchemes = ['doi', 'pmid', 'pmcid'] as const
+
+const nativePaperId = (paper: Paper): string => `europe-pmc:${paper.source ?? ''}:${paper.id ?? ''}`
+
+function paperIdentifier(
+  paper: Paper,
+  scheme: (typeof identitySchemes)[number]
+): string | undefined {
+  const explicit = paper[scheme]
+  if (explicit != null) return explicit
+  if (
+    (scheme === 'pmid' && paper.source === 'MED') ||
+    (scheme === 'pmcid' && paper.source === 'PMC')
   )
+    return paper.id
+  return undefined
+}
+
+function conflictingPageIdentities(papers: Paper[]): boolean {
+  return identitySchemes.some((scheme) => {
+    const claims = new Set<string>()
+    for (const paper of papers) {
+      const value = paperIdentifier(paper, scheme)
+      if (value && createLiteratureIdentifierUrl(scheme, value))
+        claims.add(normalizeLiteratureIdentifierKey(scheme, value))
+    }
+    return claims.size > 1
+  })
+}
+
+function record(paper: Paper): LiteratureRelatedRecord | undefined {
+  const identity = literatureRelatedPaperIdSchema.safeParse(nativePaperId(paper))
   if (!identity.success || !paper.title?.trim()) return undefined
   // MED's native ID is its PMID; PMC's native ID is its PMCID. Cross-library
   // aliases are independent, but an explicit identifier in this namespace must agree.
@@ -84,14 +112,8 @@ function record(paper: Paper): LiteratureRelatedRecord | undefined {
       normalizeLiteratureIdentifierKey(nativeScheme, paper.id!)
   )
     return undefined
-  const identifiers = (['doi', 'pmid', 'pmcid'] as const).flatMap((scheme) => {
-    const raw =
-      paper[scheme] ??
-      (scheme === 'pmid' && paper.source === 'MED'
-        ? paper.id
-        : scheme === 'pmcid' && paper.source === 'PMC'
-          ? paper.id
-          : undefined)
+  const identifiers = identitySchemes.flatMap((scheme) => {
+    const raw = paperIdentifier(paper, scheme)
     if (!raw) return []
     const value = normalizeLiteratureIdentifierValue(scheme, raw)
     return createLiteratureIdentifierUrl(scheme, value) ? [{ scheme, value }] : []
@@ -286,15 +308,23 @@ export async function readEuropePmcPage(
   if (!rows && page.hitCount !== 0) throw new z.ZodError([])
   if (!rows?.length && offset < page.hitCount) throw new z.ZodError([])
   if (rows?.length && rows.length > page.hitCount - offset) throw new z.ZodError([])
-  const records = new Map<string, LiteratureRelatedRecord>()
+  const records: LiteratureRelatedRecord[] = []
   let omitted = 0
-  for (const raw of rows ?? []) {
-    const entry = record(raw)
-    if (!entry) omitted++
-    else records.set(entry.paperId, entry)
+  for (const group of Map.groupBy(rows ?? [], nativePaperId).values()) {
+    if (group.length > 1 && conflictingPageIdentities(group)) {
+      omitted += group.length
+      continue
+    }
+    let selected: LiteratureRelatedRecord | undefined
+    for (const paper of group) {
+      const entry = record(paper)
+      if (entry) selected = entry
+      else omitted++
+    }
+    if (selected) records.push(selected)
   }
   return {
-    records: [...records.values()],
+    records,
     ...(offset + 20 < page.hitCount ? { nextOffset: offset + 20 } : {}),
     ...(omitted ? { omitted } : {})
   }

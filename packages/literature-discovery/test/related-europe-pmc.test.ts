@@ -201,6 +201,69 @@ describe('Europe PMC first, source-pinned citation discovery', () => {
     }
   )
 
+  it.each([
+    {
+      direction: 'references',
+      source: 'MED',
+      id: '111',
+      scheme: 'doi',
+      left: '10.1234/a',
+      right: '10.1234/b'
+    },
+    {
+      direction: 'citations',
+      source: 'PMC',
+      id: 'PMC111',
+      scheme: 'pmid',
+      left: '201',
+      right: '202'
+    },
+    {
+      direction: 'citations',
+      source: 'MED',
+      id: '111',
+      scheme: 'pmcid',
+      left: 'PMC201',
+      right: 'PMC202'
+    }
+  ] as const)(
+    'omits the whole $source group with conflicting $scheme claims from $direction',
+    async ({ direction, source, id, scheme, left, right }) => {
+      const child = { source, id, title: 'Duplicate record' }
+      const neighbor = { source: 'MED', id: '222', title: 'Neighbor', doi: '10.1234/Article' }
+      const { finder, fetcher } = fixture([
+        identity(),
+        page(
+          [
+            { ...child, [scheme]: left },
+            neighbor,
+            child,
+            { ...child, [scheme]: right },
+            { ...neighbor, title: 'Revised title', doi: 'https://doi.org/10.1234/article' },
+            { ...child, [scheme]: left }
+          ],
+          { direction, count: 25 }
+        )
+      ])
+      const result = await finder.run({ ...request, direction })
+      expect(result).toMatchObject({
+        state: 'ready',
+        omitted: 4,
+        nextOffset: 20,
+        records: [{ paperId: 'europe-pmc:MED:222', item: { title: 'Revised title' } }]
+      })
+      expect(
+        await finder.run({
+          ...request,
+          direction,
+          resolutionToken: result.resolutionToken,
+          seedPaperId: `europe-pmc:${source}:${id}`
+        })
+      ).toMatchObject({ issue: 'expired', records: [] })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('prefers exact Europe PMC identities, preserves native IDs, metadata and omitted entries', async () => {
     const child = {
       source: 'MED',
