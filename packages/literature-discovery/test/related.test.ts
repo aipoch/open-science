@@ -45,14 +45,14 @@ it.each([
 
 const json = (value: unknown): Response => new Response(JSON.stringify(value))
 const identity = (): Response => json({ hitCount: 1, resultList: { result: [paper] } })
-function page(input: string | URL | Request, ids: string[] = ['1'], count = ids.length): Response {
+function page(input: string | URL | Request, ids: string[] = ['1'], count?: number): Response {
   const url = new URL(String(input))
   const [, source, id, direction] = /\/rest\/([^/]+)\/([^/]+)\/(references|citations)$/.exec(
     url.pathname
   )!
   const pageNumber = Number(url.searchParams.get('page'))
   return json({
-    hitCount: count,
+    hitCount: count ?? (pageNumber - 1) * 20 + ids.length,
     request: {
       source,
       id,

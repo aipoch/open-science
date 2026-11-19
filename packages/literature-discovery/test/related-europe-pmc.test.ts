@@ -490,6 +490,31 @@ describe('Europe PMC first, source-pinned citation discovery', () => {
     }
   )
 
+  it.each(['references', 'citations'] as const)(
+    'validates the raw %s row count against the remaining hits before deduplication',
+    async (direction) => {
+      const child = { ...paper, id: '123' }
+      const { finder } = fixture([
+        identity(),
+        page([child], { direction, count: 0 }),
+        identity(),
+        page([child], { direction, count: 21 }),
+        page([child, child], { direction, offset: 20, count: 21 }),
+        page([child], { direction, offset: 20, count: 21 })
+      ])
+      const first = { ...request, direction }
+      expect(await finder.run(first)).toMatchObject({ issue: 'response-invalid', records: [] })
+      const valid = await finder.run(first)
+      expect(valid).toMatchObject({ state: 'ready', nextOffset: 20 })
+      const last = { ...first, resolutionToken: valid.resolutionToken, offset: 20 }
+      expect(await finder.run(last)).toMatchObject({ issue: 'response-invalid', records: [] })
+      expect(await finder.run(last)).toMatchObject({
+        state: 'ready',
+        records: [{ paperId: 'europe-pmc:MED:123' }]
+      })
+    }
+  )
+
   it('honors Europe PMC Retry-After without retrying pinned requests', async () => {
     const { finder, fetcher } = fixture([
       identity(),

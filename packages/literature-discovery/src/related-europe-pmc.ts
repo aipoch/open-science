@@ -285,6 +285,7 @@ export async function readEuropePmcPage(
     direction === 'references' ? page.referenceList?.reference : page.citationList?.citation
   if (!rows && page.hitCount !== 0) throw new z.ZodError([])
   if (!rows?.length && offset < page.hitCount) throw new z.ZodError([])
+  if (rows?.length && rows.length > page.hitCount - offset) throw new z.ZodError([])
   const records = new Map<string, LiteratureRelatedRecord>()
   let omitted = 0
   for (const raw of rows ?? []) {
