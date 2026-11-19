@@ -235,6 +235,7 @@ export function composeSessionPackageSurfaces({
   conversationExportService: ReturnType<typeof createConversationExportService>
   sessionPackageDesktop: ReturnType<typeof createSessionPackageDesktop>
   browserPackageImport: BrowserPackageImport
+  registerExternalTransferCheck: (check: () => boolean) => () => void
 } {
   const conversationExportService = createConversationExportService({
     translate,
@@ -290,12 +291,20 @@ export function composeSessionPackageSurfaces({
     onChanged: (transfers) => sessionPackageDesktop.operations.setBrowserTransfers(transfers),
     cancelReceived: (path) => sessionPackageDesktop.cancelReceivedFile(path)
   })
+  const externalTransferChecks = new Set<() => boolean>()
+  const hasExternalActiveTransfer = (): boolean =>
+    Array.from(externalTransferChecks).some((check) => check())
   // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
   sessionPackageDesktopLifecycle.isActive = () =>
-    browserPackageImport.active || sessionPackageDesktop.operations.active
+    browserPackageImport.active ||
+    sessionPackageDesktop.operations.active ||
+    hasExternalActiveTransfer()
   declareElectronAdapter('session-package-quit-guard', () =>
     desktopInteraction('Session package quit confirmation').installPackageQuitGuard(
-      () => browserPackageImport.active || sessionPackageDesktop.hasActiveTransfer(),
+      () =>
+        browserPackageImport.active ||
+        sessionPackageDesktop.hasActiveTransfer() ||
+        hasExternalActiveTransfer(),
       () => {
         desktopInteraction('Confirm desktop action').confirmSync({
           type: 'info',
@@ -313,5 +322,15 @@ export function composeSessionPackageSurfaces({
     await sessionPackageDesktop.close()
     await browserPackageImport.close()
   }
-  return { conversationExportService, sessionPackageDesktop, browserPackageImport }
+  return {
+    conversationExportService,
+    sessionPackageDesktop,
+    browserPackageImport,
+    registerExternalTransferCheck: (check: () => boolean): (() => void) => {
+      externalTransferChecks.add(check)
+      return () => {
+        externalTransferChecks.delete(check)
+      }
+    }
+  }
 }

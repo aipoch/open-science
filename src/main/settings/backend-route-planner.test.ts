@@ -134,6 +134,69 @@ describe('BackendRoutePlanner route matrix', () => {
     expect(plan.modelRoute).toBe(testCase.route)
   })
 
+  it('does not start Lab forwarding for a Pi session using a personal model', () => {
+    const personal = makeStoredProvider({
+      id: 'personal',
+      type: 'custom',
+      baseUrl: 'https://personal.example/v1',
+      model: 'personal-model',
+      apiEndpoints: ['chat-completions']
+    })
+    const lab = makeStoredProvider({
+      id: 'builtin-lab',
+      type: 'lab',
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'lab:research-default',
+      labServerUrl: 'https://lab.example.com',
+      apiEndpoints: ['chat-completions']
+    })
+    const personalTarget = makeTarget(personal, {
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
+    })
+    const labTarget = makeTarget(lab, {
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      apiEndpoints: ['chat-completions'],
+      provider: {
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        labServerUrl: 'https://lab.example.com',
+        model: 'lab:research-default',
+        apiEndpoints: ['chat-completions']
+      }
+    })
+    const planner = new BackendRoutePlanner({
+      providers: {
+        resolveRuntimeTarget: vi.fn((provider) =>
+          provider.id === 'builtin-lab' ? labTarget : personalTarget
+        ),
+        resolveRuntimeModelCatalog: vi.fn(() => [])
+      }
+    })
+    const settings = {
+      ...makeSettings(personal),
+      providers: [personal, lab],
+      activeProviderId: personal.id,
+      agentFrameworkId: 'pi' as const
+    }
+
+    const plan = planner.planBackend({
+      settings,
+      frameworkId: 'pi',
+      target: personalTarget,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport.kind).toBe('pi')
+    if (plan.transport.kind !== 'pi') throw new Error('expected Pi transport')
+    expect(plan.transport.targets).toHaveLength(1)
+    expect(plan.transport.targets[0]?.target.providerId).toBe('personal')
+  })
+
   it('rejects forced native compatibility for Codex subscription before planning resources', () => {
     const provider = makeStoredProvider({
       id: 'builtin-codex-subscription',

@@ -764,7 +764,15 @@ const WorkspacePage = ({
       actionTarget: authenticationOperationTarget
     }
   )
+  const labSignInExpired = useSettingsStore((state) => {
+    if (state.lab?.state !== 'expired') return false
+    const providerId = activeAgentConfiguration?.providerId
+    return Boolean(
+      providerId && state.providers.find((provider) => provider.id === providerId)?.type === 'lab'
+    )
+  })
   const conversation = useWorkspaceConversationController({
+    cancelInFlightRun: labSignInExpired,
     activeSession,
     projectId: scopedProjectId,
     currentDraftKey,

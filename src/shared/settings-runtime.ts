@@ -1,6 +1,8 @@
 import { ApplicationCommandError } from './application-command-contract'
+import { LAB_PROVIDER_ID } from './lab'
 import { providerAllowsAnonymousAccess, isOfficialOpenAiResponsesBase } from './provider-url-policy'
 export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
+export { LAB_PROVIDER_ID }
 import type { AgentFrameworkId, AgentModelRoute } from './agent-framework-id'
 import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
 import type { ReasoningEffort } from './model-preference-contract'
@@ -68,8 +70,17 @@ export const xaiSubscriptionProviderIdentity = (): { id: string; name: string } 
 export const isXaiSubscriptionProvider = (type: ProviderType): type is 'xai-subscription' =>
   type === 'xai-subscription'
 
+// The optional Lab enterprise provider. One fixed record exists only while the user is signed in;
+// its models and base URL are derived from GET /api/me/bootstrap and never edited by hand.
+export const labProviderIdentity = (): { id: string; name: string } => ({
+  id: LAB_PROVIDER_ID,
+  name: 'Lab'
+})
+
+export const isLabProvider = (type: ProviderType): type is 'lab' => type === 'lab'
+
 export const usesAppProviderTransport = (type: ProviderType): boolean =>
-  type === 'custom' || type === 'xai-subscription'
+  type === 'custom' || type === 'xai-subscription' || type === 'lab'
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
@@ -144,18 +155,29 @@ export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
 
 // Codex subscription records always use Responses, including older records without endpoint metadata.
 // An official catalog may explicitly have no usable route. Legacy configurations default to Messages.
-export const providerEndpoints = (provider: {
-  apiEndpoints?: readonly ModelProtocol[]
-  type?: ProviderType
-}): ModelProtocol[] =>
-  provider.type && isCodexSubscriptionProvider(provider.type)
-    ? ['responses']
-    : provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official')
-      ? [...provider.apiEndpoints]
-      : ['messages']
+export const providerEndpoints = (
+  provider: {
+    apiEndpoints?: readonly ModelProtocol[]
+    type?: ProviderType
+    modelProtocols?: Readonly<Record<string, readonly ModelProtocol[]>>
+  },
+  model?: string
+): ModelProtocol[] => {
+  if (provider.type && isCodexSubscriptionProvider(provider.type)) return ['responses']
+  const declared = provider.type === 'lab' && model ? provider.modelProtocols?.[model] : undefined
+  if (declared?.length) return [...declared]
+  if (provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official'))
+    return [...provider.apiEndpoints]
+  return provider.type === 'lab' ? ['chat-completions', 'responses'] : ['messages']
+}
+
+// App-managed providers keep separate transport families: an xAI OAuth bridge and a Lab bridge
+// cannot be reused across a model switch, while every API-key provider keeps sharing one family.
+const providerTransportFamily = (type: ProviderType): 'xai' | 'lab' | 'app' =>
+  isXaiSubscriptionProvider(type) ? 'xai' : isLabProvider(type) ? 'lab' : 'app'
 
 export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
-  isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
+  providerTransportFamily(left) === providerTransportFamily(right)
 
 export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
@@ -216,10 +238,15 @@ export const isProviderUsableByFramework = (
   if (provider.type === 'codebuddy-subscription') return framework.id === 'codebuddy'
   if (
     framework.id === 'open-science-agent' &&
-    !['custom', 'official', 'xai-subscription'].includes(provider.type) &&
+    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type) &&
     !isCodexSubscriptionProvider(provider.type)
   )
     return false
+  // Lab speaks the two gateway protocols natively. It deliberately has no compatibility-bridge
+  // path: a model that does not natively speak the framework's protocol is reported as incompatible
+  // instead of being routed through a conversion bridge that cannot resolve a host-owned credential.
+  if (isLabProvider(provider.type))
+    return isProviderCompatibleWith(providerEndpoints(provider), framework.supportedApiTypes)
   if (isCodexSubscriptionProvider(provider.type))
     return (
       framework.id === 'codex' ||

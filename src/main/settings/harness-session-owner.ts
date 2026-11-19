@@ -59,6 +59,7 @@ const configuration = (provider: StoredProvider): object => {
     )
   )
 }
+
 /** Main-only account and lifetime composition; the package owns turn admission and draining. */
 export class HarnessSessionOwner {
   private readonly entries = new Set<Entry>()
@@ -143,15 +144,23 @@ export class HarnessSessionOwner {
       if (
         !baseline ||
         baseline.disconnectedAt !== undefined ||
-        !['custom', 'official', 'xai-subscription'].includes(baseline.type)
+        !['custom', 'official', 'xai-subscription', 'lab'].includes(baseline.type)
       )
         throw new Error('Harness provider is unavailable')
-      const target = this.projection.resolveProviderTarget(baseline, { kind: 'required', model })
+      const target = this.projection.resolveRuntimeTarget(
+        baseline,
+        { kind: 'required', model },
+        harnessFramework
+      )
       // Pin the protocol at admission; later discovery only governs new sessions.
       endpoint = preferredEndpoint(target.apiEndpoints, harnessFramework.supportedApiTypes)
       if (!endpoint || providerValidationFailed(baseline, { model, endpoint }))
         throw new Error('Harness provider is unavailable')
-      if (baseline.type !== 'xai-subscription' && baseline.keyRef && !target.provider.key)
+      if (
+        !['xai-subscription', 'lab'].includes(baseline.type) &&
+        baseline.keyRef &&
+        !target.provider.key
+      )
         throw new Error('Harness provider credentials are unavailable')
       lease = await this.transports.acquireHarness(target, controller.signal)
       const current = (await this.repository.getSettings()).providers.find(

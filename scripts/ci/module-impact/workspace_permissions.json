@@ -13,7 +13,8 @@
     "src/renderer/src/pages/workspace/permission-request-presentation.ts",
     "src/renderer/src/pages/workspace/session-permissions.test.ts",
     "src/renderer/src/pages/workspace/session-permissions.ts",
-    "src/renderer/src/pages/workspace/PermissionScopeButton.tsx"
+    "src/renderer/src/pages/workspace/PermissionScopeButton.tsx",
+    "src/renderer/src/pages/workspace/WebSearchPermissionCard.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",

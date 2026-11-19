@@ -4,6 +4,7 @@
     "src/main/storage-root.ts",
     "src/main/storage/config-root.ts",
     "src/main/storage/data-directories.ts",
+    "src/main/storage/data-directory-availability.ts",
     "src/main/storage/data-location-identity.test.ts",
     "src/main/storage/data-location-identity.ts",
     "src/main/storage/data-location-selection.ts",

@@ -19,6 +19,7 @@ import { SettingsPreferencesModule } from '../settings/preferences'
 import { ManagedUploadResolver } from '../uploads/managed-upload-resolver'
 import { getSessionUploadDir } from '../uploads/storage-helpers'
 import { initializeDataLocation, prepareApplicationLocations } from './initialize-location'
+import { DataDirectoryUnavailableError } from './data-directory-availability'
 
 let fixture: string
 beforeEach(async () => {
@@ -253,7 +254,7 @@ it('blocks a missing saved data directory without recreating it', async () => {
   const missing = join(fixture, 'removed research')
   await repository.setDataRoot({ dataRoot: missing })
   await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(
-    /location.*missing|missing.*location/i
+    DataDirectoryUnavailableError
   )
   expect(existsSync(missing)).toBe(false)
 })
