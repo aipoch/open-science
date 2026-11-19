@@ -9,7 +9,12 @@ import { checkCiIntegrityChanges, ciIntegrityFilesFromRevisions } from './check-
 
 describe('CI integrity policy', () => {
   it('accepts the repository PR Gate and CI Integrity workflows as new files', () => {
-    const paths = ['.github/workflows/pr-gate.yml', '.github/workflows/ci-integrity.yml']
+    const paths = [
+      '.github/workflows/pr-gate.yml',
+      '.github/workflows/ci-integrity.yml',
+      '.github/workflows/pr-automation-signal.yml',
+      '.github/workflows/resolve-pr-signal.yml'
+    ]
     const result = checkCiIntegrityChanges(
       paths.map((path) => ({
         path,
@@ -32,6 +37,10 @@ describe('CI integrity policy', () => {
   ])('accepts only the unfiltered PR completion signal: $signal', ({ signal, ok }) => {
     const path = '.github/workflows/ci-integrity.yml'
     const result = checkCiIntegrityChanges([
+      ...['pr-automation-signal', 'resolve-pr-signal'].map((name) => ({
+        path: `.github/workflows/${name}.yml`,
+        headText: readFileSync(`.github/workflows/${name}.yml`, 'utf8')
+      })),
       {
         path,
         baseText: readFileSync(resolve(path), 'utf8'),
@@ -41,8 +50,11 @@ describe('CI integrity policy', () => {
   merge_group:
     types: [checks_requested]
 jobs:
+  resolve:
+    uses: ./.github/workflows/resolve-pr-signal.yml
   integrity:
     name: CI Integrity
+    needs: [resolve]
 `
       }
     ])
@@ -51,6 +63,94 @@ jobs:
       expect(result.violations).toContainEqual(
         expect.objectContaining({ rule: 'required-check-triggers' })
       )
+  })
+
+  it('checks unchanged successor dependencies when a later PR disables its signal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ci-signal-contract-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+    try {
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      mkdirSync(join(root, '.github/workflows'), { recursive: true })
+      const signal = '.github/workflows/pr-automation-signal.yml'
+      const resolver = '.github/workflows/resolve-pr-signal.yml'
+      const integrity = '.github/workflows/ci-integrity.yml'
+      for (const path of [signal, resolver]) writeFileSync(join(root, path), readFileSync(path))
+      writeFileSync(
+        join(root, integrity),
+        `on:
+  workflow_run:
+    workflows: [PR Automation Signal]
+    types: [completed]
+  merge_group:
+    types: [checks_requested]
+jobs:
+  resolve:
+    uses: ./.github/workflows/resolve-pr-signal.yml
+  integrity:
+    name: CI Integrity
+    needs: [resolve]
+`
+      )
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'baseline')
+      const base = git('rev-parse', 'HEAD')
+      writeFileSync(
+        join(root, signal),
+        readFileSync(signal, 'utf8').replace(
+          'name: Signal PR automation',
+          'name: Signal PR automation\n    if: false'
+        )
+      )
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'disable signal')
+      const files = ciIntegrityFilesFromRevisions(base, git('rev-parse', 'HEAD'), { cwd: root })
+      expect(files.map(({ path }) => path)).toEqual(
+        expect.arrayContaining([signal, resolver, integrity])
+      )
+      expect(checkCiIntegrityChanges(files).violations).toContainEqual(
+        expect.objectContaining({ path: signal, rule: 'pr-automation-support' })
+      )
+      expect(
+        checkCiIntegrityChanges(
+          files.map((file) => (file.path === signal ? { ...file, headText: '' } : file))
+        ).ok
+      ).toBe(false)
+      expect(
+        checkCiIntegrityChanges(
+          files.map((file) =>
+            file.path === signal ? { ...file, headText: readFileSync(signal, 'utf8') } : file
+          )
+        ).ok
+      ).toBe(true)
+      const validFiles = files.map((file) =>
+        file.path === signal ? { ...file, headText: readFileSync(signal, 'utf8') } : file
+      )
+      for (const needs of ['resolve', 'unrelated-resolve']) {
+        const candidate = validFiles.map((file) =>
+          file.path === integrity
+            ? { ...file, headText: file.headText.replace('needs: [resolve]', `needs: ${needs}`) }
+            : file
+        )
+        expect(checkCiIntegrityChanges(candidate).ok).toBe(needs === 'resolve')
+      }
+      const renamedSignal = validFiles.map((file) =>
+        file.path === signal
+          ? {
+              ...file,
+              headText: file.headText.replace(
+                'run-name: PR automation',
+                'run-name: Renamed automation'
+              )
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(renamedSignal).ok).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('fails its Git revision CLI and publishes violations for Actions', () => {

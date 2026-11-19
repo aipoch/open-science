@@ -12,6 +12,17 @@ import { checkDerivedConsumerRevisions } from './module-graph/index.mjs'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
 const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
+const integrityWorkflowPath = '.github/workflows/ci-integrity.yml'
+const signalWorkflowPath = '.github/workflows/pr-automation-signal.yml'
+const resolverWorkflowPath = '.github/workflows/resolve-pr-signal.yml'
+const signalActivities = [
+  'opened',
+  'edited',
+  'synchronize',
+  'reopened',
+  'ready_for_review',
+  'converted_to_draft'
+]
 
 function actionReferences(document, workflow) {
   const references = new Set()
@@ -334,11 +345,77 @@ export function checkCiIntegrityChanges(files) {
     }
   }
 
+  violations.push(...prAutomationSupportViolations(files))
+
   return {
     ok: violations.length === 0,
     inspectedFiles: files.map(({ path }) => path).sort(),
     violations
   }
+}
+
+function prAutomationSupportViolations(files) {
+  const documents = new Map()
+  for (const path of [integrityWorkflowPath, signalWorkflowPath, resolverWorkflowPath]) {
+    try {
+      documents.set(path, load(files.find((file) => file.path === path)?.headText ?? ''))
+    } catch {
+      // Changed malformed YAML is reported above; missing support still fails below.
+    }
+  }
+  const integrity = documents.get(integrityWorkflowPath)
+  if (!workflowTriggers(integrity).workflow_run?.workflows?.includes('PR Automation Signal'))
+    return []
+  const signal = documents.get(signalWorkflowPath)
+  const resolver = documents.get(resolverWorkflowPath)
+  const trigger = workflowTriggers(signal).pull_request
+  const job = workflowJobs(signal).signal
+  const validSignal =
+    signal?.name === 'PR Automation Signal' &&
+    signal['run-name'] === 'PR automation (${{ github.event.action }})' &&
+    trigger?.branches?.length === 1 &&
+    trigger.branches[0] === 'main' &&
+    !['paths', 'paths-ignore', 'branches-ignore'].some((key) => Object.hasOwn(trigger, key)) &&
+    signalActivities.every((activity) => triggerTypes(trigger).includes(activity)) &&
+    signal.permissions &&
+    typeof signal.permissions === 'object' &&
+    !Array.isArray(signal.permissions) &&
+    Object.keys(signal.permissions).length === 0 &&
+    job?.name === 'Signal PR automation' &&
+    !Object.hasOwn(job, 'if') &&
+    !Object.hasOwn(job, 'permissions') &&
+    job.steps?.length === 1 &&
+    job.steps[0]?.run === 'true' &&
+    !Object.hasOwn(job.steps[0], 'if')
+  const needs = workflowJobs(integrity).integrity?.needs
+  const validResolver =
+    Object.hasOwn(workflowTriggers(resolver), 'workflow_call') &&
+    workflowJobs(resolver).resolve &&
+    !Object.hasOwn(workflowJobs(resolver).resolve, 'if') &&
+    workflowJobs(integrity).resolve?.uses === `./${resolverWorkflowPath}` &&
+    (Array.isArray(needs) ? needs : [needs]).includes('resolve')
+  return [
+    ...(!validSignal
+      ? [
+          {
+            path: signalWorkflowPath,
+            rule: 'pr-automation-support',
+            message:
+              'CI Integrity requires the permissionless PR Automation Signal and its complete PR trigger.'
+          }
+        ]
+      : []),
+    ...(!validResolver
+      ? [
+          {
+            path: resolverWorkflowPath,
+            rule: 'pr-automation-support',
+            message:
+              'CI Integrity must resolve the signal through the reusable PR resolver before inspection.'
+          }
+        ]
+      : [])
+  ]
 }
 
 function isGuardedPath(path) {
@@ -375,7 +452,7 @@ export function ciIntegrityFilesFromRevisions(base, head, { cwd = process.cwd() 
     cwd,
     maxBuffer: GIT_OUTPUT_MAX_BUFFER
   })
-  return parseNameStatus(diff.toString('utf8'))
+  const files = parseNameStatus(diff.toString('utf8'))
     .filter(({ path, previousPath }) => [path, previousPath].filter(Boolean).some(isGuardedPath))
     .map(({ path, previousPath }) => ({
       path,
@@ -383,6 +460,27 @@ export function ciIntegrityFilesFromRevisions(base, head, { cwd = process.cwd() 
       baseText: textAtRevision(mergeBase, previousPath ?? path, cwd),
       headText: textAtRevision(head, path, cwd)
     }))
+  const integrityText = textAtRevision(head, integrityWorkflowPath, cwd)
+  let successor = false
+  try {
+    successor = workflowTriggers(load(integrityText)).workflow_run?.workflows?.includes(
+      'PR Automation Signal'
+    )
+  } catch {
+    // The changed-workflow YAML guard reports malformed candidates.
+  }
+  if (successor) {
+    // Validate unchanged support too: a later PR may delete or disable only the signal.
+    for (const path of [integrityWorkflowPath, signalWorkflowPath, resolverWorkflowPath]) {
+      if (!files.some((file) => file.path === path))
+        files.push({
+          path,
+          baseText: textAtRevision(mergeBase, path, cwd),
+          headText: path === integrityWorkflowPath ? integrityText : textAtRevision(head, path, cwd)
+        })
+    }
+  }
+  return files
 }
 
 function argumentValue(arguments_, name) {

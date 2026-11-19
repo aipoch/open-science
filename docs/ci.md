@@ -750,6 +750,11 @@ The successor must validate GitHub run/PR metadata, inspect candidate Git object
 using trusted code, and publish **CI Integrity** on the inspected PR head. Retain
 `merge_group: checks_requested` and the existing required-check names throughout
 the rollout; policy approval alone does not activate or verify the successor.
+Integrity also validates the candidate signal and resolver even when those files
+are unchanged in the diff. Removing or disabling the signal, narrowing its PR
+activities, or disconnecting the reusable resolver blocks the migration and later
+changes. Runtime check-publication behavior still requires workflow tests and
+CI-owner review.
 
 Trusted policy may retire a historical cross-package contract test registration only when
 its existing package selector already excludes that test package for every owner path. Both Git
