@@ -51,18 +51,18 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.3.0 updates
+### 💡 AIPOCH Open-Science v1.3.1 updates
 
-_November 18, 2026_
+_November 19, 2026_
 
-- **Scheduled research tasks**: Set recurring or one-time schedules that launch sessions and Notebook tasks on their own — every run opens in the workspace with its own record.
-- **Image generation & editing**: Generate images with your configured provider and iterate with follow-up edits; every variant is a new version you can compare, revisit, and reuse.
-- **Editable presentations**: PowerPoint files open for in-place text editing — fonts, sizes, colors, and alignment — while the slide structure stays intact.
-- **Films, replayed**: Replay film operations onto new branches with independent outputs, open films straight from the session menu, and see token usage before you generate.
-- **Smarter agent questions**: When the agent asks for input, options now lay out their trade-offs so you can decide with the consequences in view.
-- **Reliability & speed**: Long session histories persist incrementally, stalled film and package transfers recover on their own, Windows installs and updates get leaner, and the app reaches your project sooner at startup.
+- **Web search & page reading**: The built-in agent can search the web and read public pages; search approvals show the query in a readable card, and cited sources stay with the conversation.
+- **Citation graph**: Explore a paper's references and citing papers as an interactive graph — re-center on any related paper and filter by direction.
+- **MCP without opening the app**: Connecting an external agent through MCP starts the Open-Science service for you, with setup options for more than 30 agents and clients.
+- **Lab models & organization cases**: Sign in with a Lab account to use your organization's models and to search, import, or share research cases with teammates.
+- **Fresh model lists & clearer errors**: Refresh a provider's model list from Settings, and see the cause and next step when a provider request fails.
+- **Updating from 1.3.0**: If the 1.3.0 updater reports that another process is using the installation, fully quit Open-Science and install the downloaded package manually.
 
-[View the full v1.3.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[View the full v1.3.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
 
 <a id="share-your-research"></a>
 

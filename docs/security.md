@@ -119,6 +119,11 @@ is not an automatic upload of the local PDF. Remote jobs transfer the scripts an
 needed for the job. In the Web UI, uploaded files first go to the machine running Open-Science,
 which can be different from the machine running the browser.
 
+Built-in web search sends the search query and its filters to Exa, a third-party search service,
+without an account. Reading a public page contacts that page's host, which receives the requested
+URL. With a Lab account, Lab model requests go to the Lab server the user signs in to, and sharing
+an organization case uploads the selected session package to that server.
+
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
 IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
 remote HTTP configurations remain editable but cannot supply a running model until corrected.
