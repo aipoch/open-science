@@ -185,6 +185,27 @@ test('Electron keeps a failed citation page readable and retries in place', asyn
   await expect(notice).toHaveCount(0)
 })
 
+test('Electron briefly hints only when a new page adds papers beyond the viewport', async ({
+  page
+}, info) => {
+  await openCitationGraph(page, url)
+  const frame = page.locator('[data-current-frame="true"]')
+  const hint = frame.getByText(
+    'New papers are outside the current view. Fit the graph to see all loaded papers.'
+  )
+  const zoomIn = frame.getByRole('button', { name: 'Zoom in', exact: true })
+  await zoomIn.click()
+  await zoomIn.click()
+  await expect(hint).toHaveCount(0)
+  await frame.getByRole('button', { name: 'Load more' }).click()
+  await expect(hint).toBeVisible()
+  await page.screenshot({ path: info.outputPath('citation-page-hint.png') })
+  await expect(hint).toHaveCount(0, { timeout: 8000 })
+  await zoomIn.click()
+  await expect(hint).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath('citation-zoomed.png') })
+})
+
 test('Electron graph preserves selected paper and camera across detail disclosure return', async ({
   page
 }) => {

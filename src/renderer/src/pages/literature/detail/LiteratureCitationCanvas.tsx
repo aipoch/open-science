@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Shrink, PanelRightClose, PanelRightOpen, LoaderCircle } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ZoomControls } from '@/components/ui/zoom-controls'
 import { fullCreatorLabel } from '../literature-item-display'
@@ -24,6 +24,7 @@ export type CitationCanvasModel = Pick<
   'graph' | 'unfilteredGraph' | 'selectedNode' | 'busy' | 'filter'
 > & {
   setSelected(id: string): void
+  additionalPages: number
   initialSearchSettled: boolean
   centerTitle: string
   sourceName: string
@@ -54,6 +55,7 @@ export function LiteratureCitationCanvas({
     selectedNode,
     setSelected,
     busy,
+    additionalPages,
     initialSearchSettled,
     centerTitle,
     sourceName
@@ -78,23 +80,23 @@ export function LiteratureCitationCanvas({
   const ignoreClickUntil = useRef(0)
   const [camera, setCamera] = useState<CitationGraphCamera>()
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 500 })
-  const [layout, setLayout] = useState<{ graph?: CitationGraph; slots: Map<string, number> }>({
+  const [hintGraph, setHintGraph] = useState<CitationGraph>()
+  const [layout, setLayout] = useState<{
+    graph?: CitationGraph
+    slots: Map<string, number>
+    additionalPages: number
+  }>({
+    additionalPages: 0,
     slots: new Map()
   })
   const viewport = useRef<HTMLDivElement>(null)
   const plot = useRef<HTMLDivElement>(null)
   // Adjust only this component's state when its input snapshot changes. React retries this
   // render before committing children, so slots and camera never commit a stale graph frame.
-  let currentSlots = layout.slots
-  if (layout.graph !== unfilteredGraph) {
-    currentSlots = assignCitationGraphSlots(unfilteredGraph?.nodes ?? [], layout.slots)
-    setLayout({ graph: unfilteredGraph, slots: currentSlots })
-    if (!unfilteredGraph) {
-      setZoom(1)
-      setPan({ x: 0, y: 0 })
-      setCamera(undefined)
-    }
-  }
+  const currentSlots =
+    layout.graph === unfilteredGraph
+      ? layout.slots
+      : assignCitationGraphSlots(unfilteredGraph?.nodes ?? [], layout.slots)
   const allPositions = useMemo(
     () =>
       new Map(
@@ -158,15 +160,31 @@ export function LiteratureCitationCanvas({
     viewportSize,
     narrow ? 5 : 16
   )
-  const outsideView =
-    camera &&
-    [...positions.values()].some(
-      (point) =>
-        point.x < view.x - (offset.x + pan.x) / scale + 30 ||
-        point.x > view.x + (viewportSize.width - offset.x - pan.x) / scale - 30 ||
-        point.y < view.y - (offset.y + pan.y) / scale + 50 ||
-        point.y > view.y + (viewportSize.height - offset.y - pan.y) / scale - 50
-    )
+  if (layout.graph !== unfilteredGraph || layout.additionalPages !== additionalPages) {
+    setLayout({ graph: unfilteredGraph, slots: currentSlots, additionalPages })
+    const newPaperOutside =
+      visible &&
+      camera &&
+      additionalPages > layout.additionalPages &&
+      graph?.nodes.some((node) => {
+        if (node.center || node.paperIds.some((id) => layout.slots.has(id))) return false
+        const point = positions.get(node.id)!
+        const x = (point.x - view.x) * scale + offset.x + pan.x
+        const y = (point.y - view.y) * scale + offset.y + pan.y
+        return x < 0 || x > viewportSize.width || y < 0 || y > viewportSize.height
+      })
+    setHintGraph(newPaperOutside ? graph : undefined)
+    if (!unfilteredGraph) {
+      setZoom(1)
+      setPan({ x: 0, y: 0 })
+      setCamera(undefined)
+    }
+  }
+  useEffect(() => {
+    if (!hintGraph) return
+    const timer = setTimeout(() => setHintGraph(undefined), 4000)
+    return () => clearTimeout(timer)
+  }, [hintGraph])
   useEffect(() => {
     if (camera || busy || !graph || !initialSearchSettled) return
     let current = true
@@ -307,6 +325,7 @@ export function LiteratureCitationCanvas({
   }, [visible, inspectedNode])
   useEffect(() => () => clearTimeout(titleLeaveTimer.current), [])
   const fitGraph = (): void => {
+    setHintGraph(undefined)
     setZoom(1)
     setCamera(fittedCamera)
     setPan({ x: 0, y: 0 })
@@ -424,43 +443,15 @@ export function LiteratureCitationCanvas({
 
         <p
           id={`${marker}-arrow-meaning`}
-          className={
-            narrow && outsideView
-              ? 'sr-only'
-              : 'pointer-events-none absolute inset-x-3 bottom-2 z-10 text-center text-[10px] font-medium text-muted-foreground/80'
-          }
+          className="pointer-events-none absolute inset-x-3 bottom-2 z-10 text-center text-[10px] font-medium text-muted-foreground/80"
         >
           {t('A → B means A cites B.')}{' '}
           <span className="hidden xl:inline">{t('Scroll to zoom. Drag to pan.')}</span>
         </p>
-        {outsideView && narrow ? (
-          <div
-            data-citation-pan-hint
-            data-no-pan
-            className="absolute inset-x-3 bottom-0 z-10 flex h-6 items-center justify-center"
-          >
-            <span role="status" className="sr-only">
-              {t(
-                'New papers are outside the current view. Fit the graph to see all loaded papers.'
-              )}
-            </span>
-            <Button
-              size="xs"
-              variant="link"
-              className="h-6 gap-1 text-[11px]"
-              title={t(
-                'New papers are outside the current view. Fit the graph to see all loaded papers.'
-              )}
-              onClick={fitGraph}
-            >
-              <Shrink className="size-3" aria-hidden="true" />
-              {t('Fit graph')}
-            </Button>
-          </div>
-        ) : outsideView ? (
+        {visible && hintGraph && hintGraph === graph ? (
           <p
             role="status"
-            className="pointer-events-none absolute right-3 bottom-8 z-10 max-w-72 rounded-md bg-card/95 px-2 py-1 text-xs text-muted-foreground"
+            className="pointer-events-none absolute right-3 bottom-16 z-10 max-w-72 rounded-md bg-card/95 px-2 py-1 text-xs text-muted-foreground sm:bottom-8"
           >
             {t('New papers are outside the current view. Fit the graph to see all loaded papers.')}
           </p>

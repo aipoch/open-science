@@ -368,6 +368,9 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
             selectedNode: controller.selectedNode,
             setSelected: selectPaper,
             busy: controller.busy,
+            additionalPages:
+              Math.max(0, controller.states.references.pages - 1) +
+              Math.max(0, controller.states.citations.pages - 1),
             initialSearchSettled:
               Boolean(controller.states.references.result) &&
               (Boolean(controller.states.citations.result) ||

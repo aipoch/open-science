@@ -1202,10 +1202,10 @@ it('freezes the initial camera and existing coordinates while paging, then fits 
   dispatchPointer(canvas, 'pointermove', { clientX: 10000 })
   dispatchPointer(canvas, 'pointerup')
   expect(
-    screen.getByText(
+    screen.queryByText(
       'New papers are outside the current view. Fit the graph to see all loaded papers.'
     )
-  ).toBeTruthy()
+  ).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Fit graph' }))
   expect(
     screen.queryByText(
