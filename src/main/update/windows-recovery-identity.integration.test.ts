@@ -14,7 +14,7 @@ describe.runIf(process.platform === 'win32')(
       const identity = await prefetchSystemBootIdentity()
       expect(identity).toMatch(/^windows-boot:[a-f0-9-]{36}$/)
       expect(systemBootIdentity()).toBe(identity)
-    }, 15_000)
+    }, 20_000)
 
     it('reads a live process creation identity without granting ownership to an unknown PID', () => {
       vi.stubEnv('PATH', '')
