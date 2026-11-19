@@ -60,7 +60,8 @@ describe('policy-filtered package Web evidence', () => {
     expect(container.textContent).toContain('Saved allowed body.')
     expect(container.textContent).toContain('Sharing is not permitted by the data policy')
     expect(container.textContent).toContain('Read-only')
-    expect(container.textContent).toContain('This excerpt is truncated.')
+    expect(container.textContent).toContain('Page excerpt')
+    expect(container.textContent).toContain('Partial page text')
     expect(container.querySelector('a, img, script, iframe')).toBeNull()
     expect(container.textContent).not.toContain('Retry')
     expect(container.textContent).not.toContain('example.org')
@@ -86,6 +87,9 @@ describe('policy-filtered package Web evidence', () => {
     )
     expect(container.querySelector('a')?.href).toBe('https://example.org/methods')
     expect(container.textContent).toContain('Sharing permission has not been confirmed')
+    expect(container.querySelector('[data-testid="package-web-source"]')?.textContent).toBe(
+      'Allowed sourcehttps://example.org/methods'
+    )
     expect(container.querySelector('pre')).toBeNull()
     expect(container.textContent).not.toContain('Retry')
   })

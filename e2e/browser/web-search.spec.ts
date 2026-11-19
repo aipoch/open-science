@@ -68,14 +68,12 @@ test('uses actual pending query, preserves open panel on completion and distingu
   await expect(page.getByTestId('web-search-source')).toHaveCount(8)
   await page.goto('/web-search.html?scenario=empty')
   await page.getByTestId('tool-chip').click()
-  await expect(page.getByTestId('tool-search-details')).toContainText(
-    'No search results were returned.'
-  )
+  await expect(page.getByTestId('tool-search-details')).toContainText('No results found')
   await page.goto('/web-search.html?scenario=limited')
   await page.getByTestId('tool-chip').click()
   const details = page.getByTestId('tool-search-details')
   await expect(details).toContainText('The search service is temporarily limiting requests.')
-  await expect(details).not.toContainText('No search results were returned.')
+  await expect(details).not.toContainText('No results found')
   await expect(details.locator('details').first()).not.toHaveAttribute('open', '')
   await page.screenshot({ path: testInfo.outputPath('search-rate-limited.png'), fullPage: true })
   await page.goto('/web-search.html?scenario=cancelled')

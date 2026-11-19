@@ -205,7 +205,7 @@ const WorkspaceWebSearchActivityRow = ({
       ? t(
           'The search service is temporarily limiting requests. Wait a moment, then ask to try again.'
         )
-      : t('The web search could not finish. Check the connection, then ask to try again.')
+      : undefined
   const duration = webResult ? `${Math.round(webResult.duration_ms)} ms` : undefined
   const visibleResults = showAll ? results : results.slice(0, 8)
   const searchService = webResult?.provider?.id === 'exa' ? 'Exa' : undefined
@@ -245,16 +245,13 @@ const WorkspaceWebSearchActivityRow = ({
             <p role="status">{status}</p>
           ) : null}
           {queryTruncated && query ? (
-            <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">
-              <span className="mr-1 text-text-100">{t('Query')}</span>
-              {query}
-            </p>
+            <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">{query}</p>
           ) : null}
           {!stopped && !failed && !pending ? (
             unavailable ? (
               <p className="text-text-100">{t('Result unavailable')}</p>
             ) : resultCount === 0 ? (
-              <p>{t('No search results were returned. Try different search terms.')}</p>
+              <p>{t('No results found')}</p>
             ) : (
               <>
                 <div className="divide-y divide-border-200">

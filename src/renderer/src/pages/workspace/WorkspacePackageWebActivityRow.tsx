@@ -84,24 +84,25 @@ export const WorkspacePackageWebActivityRow = ({
         <p className="text-text-100">{t('Result unavailable')}</p>
       ) : null}
       {!stopped &&
-        evidence.sources.map((source) => (
-          <article
-            key={source.sourceId}
-            className="min-w-0 space-y-1"
-            data-testid="package-web-source"
-          >
-            {source.title ? (
-              <h3 className="font-medium [overflow-wrap:anywhere]">{text(source.title)}</h3>
-            ) : null}
-            {source.url ? <div>{link(source.url)}</div> : null}
-            {source.snippet ? (
-              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text(source.snippet)}</p>
-            ) : null}
-            {!source.snippet && source.evidenceKind !== 'provider_citation' ? (
-              <p className="text-text-100">{t('Excerpt unavailable')}</p>
-            ) : null}
-          </article>
-        ))}
+        evidence.sources
+          .filter(({ title, url, snippet }) => title || url || snippet)
+          .map((source) => (
+            <article
+              key={source.sourceId}
+              className="min-w-0 space-y-1"
+              data-testid="package-web-source"
+            >
+              {source.title ? (
+                <h3 className="font-medium [overflow-wrap:anywhere]">{text(source.title)}</h3>
+              ) : null}
+              {source.url ? <div>{link(source.url)}</div> : null}
+              {source.snippet ? (
+                <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {text(source.snippet)}
+                </p>
+              ) : null}
+            </article>
+          ))}
       {!stopped &&
       evidence.operation === 'fetch' &&
       evidence.status === 'ok' &&
@@ -110,12 +111,8 @@ export const WorkspacePackageWebActivityRow = ({
       ) : null}
       {!stopped && document?.text !== undefined ? (
         <section>
-          <h3 className="font-medium">{t('Tool result excerpt')}</h3>
-          {document.truncated ? (
-            <p className="text-text-100">
-              {t('This excerpt is truncated. The full page has not been returned.')}
-            </p>
-          ) : null}
+          <h3 className="font-medium">{t('Page excerpt')}</h3>
+          {document.truncated ? <p className="text-text-100">{t('Partial page text')}</p> : null}
           <pre className="mt-2 whitespace-pre-wrap font-mono [overflow-wrap:anywhere]">
             {text(document.text)}
           </pre>

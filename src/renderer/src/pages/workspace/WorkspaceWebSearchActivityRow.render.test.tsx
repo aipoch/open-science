@@ -70,7 +70,7 @@ describe('built-in search row', () => {
     )
     expect(container.textContent).toContain('Result unavailable')
     expect(container.textContent).not.toContain('0 results')
-    expect(container.textContent).not.toContain('No search results')
+    expect(container.textContent).not.toContain('No results found')
     expect(container.querySelector('a, img, iframe')).toBeNull()
   })
 
@@ -181,7 +181,7 @@ describe('built-in search row', () => {
         />
       )
     )
-    expect(container.textContent).toContain('No search results were returned.')
+    expect(container.textContent).toContain('No results found')
     expect(container.textContent).not.toContain('The web search could not finish')
   })
   it('shows localized rate-limit guidance before collapsed error details', async () => {
@@ -202,7 +202,7 @@ describe('built-in search row', () => {
       )
     )
     expect(container.textContent).toContain('Wait a moment, then ask to try again.')
-    expect(container.textContent).not.toContain('No search results were returned.')
+    expect(container.textContent).not.toContain('No results found')
     expect(container.querySelector('details')?.open).toBe(false)
     expect(container.textContent).toContain('RATE_LIMITED')
     expect(container.querySelectorAll('details')).toHaveLength(1)

@@ -43,14 +43,15 @@ describe('fetch activity detail surface', () => {
     expect(container.querySelector('img, script, iframe')).toBeNull()
     expect(container.textContent).toContain('Partial page text')
     expect(Array.from(container.querySelectorAll('time'), (time) => time.dateTime)).toEqual([
-      result.retrieved_at,
       result.document!.fetched_at
     ])
     const details = container.querySelector('details')!
     expect(details.open).toBe(false)
-    expect(details.textContent).toContain('Main content · Normal')
-    expect(details.textContent).toContain('Cached · 450 ms old')
-    expect(details.textContent).toContain('Returned lines1–1 of 1')
+    expect(Array.from(details.querySelectorAll('dt'), (item) => item.textContent)).toEqual([
+      'Original URL',
+      'Final URL',
+      'Fetched at'
+    ])
     expect(container.querySelector('section a')?.getAttribute('href')).toBe(
       'https://example.org/final'
     )
