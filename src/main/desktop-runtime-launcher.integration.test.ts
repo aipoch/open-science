@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url'
 import { once } from 'node:events'
 import { inspectInstallationProcessesAsync } from './update/installation-occupancy'
 import { processBirthIdentity } from './process-birth-identity'
+import { prefetchSystemBootIdentity } from './system-boot-identity'
 import {
   inspectInstallationAvailability,
   captureInstallationHelperExit,
@@ -275,6 +276,7 @@ server.listen(`
         expect(await inspectInstallationProcessesAsync(installationRoot)).toEqual(
           expect.arrayContaining([replacement.pid, reader!.pid])
         )
+        await prefetchSystemBootIdentity()
         const record = await beginInstallationUpdateAsync({
           ...location,
           runtime: { pid: replacement.pid, generation: replacement.generation, configRoot },
