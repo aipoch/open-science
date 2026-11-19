@@ -28,7 +28,20 @@ const callbackPage = (accepted: boolean): string => {
   <meta name="color-scheme" content="light dark">
   <title>${title}</title>
   <style>
-    :root { color-scheme: light dark }
+    /* Mirror the renderer's default palette from src/renderer/src/assets/main.css. */
+    :root {
+      color-scheme: light dark;
+      --background: #fafaf8;
+      --foreground: #202321;
+      --muted-foreground: hsl(90 3% 34%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #1a1a18;
+        --foreground: #e8e6df;
+        --muted-foreground: hsl(45 5% 78%);
+      }
+    }
     * { box-sizing: border-box }
     body {
       margin: 0;
@@ -38,18 +51,14 @@ const callbackPage = (accepted: boolean): string => {
       place-items: center;
       padding: 32px 24px;
       font: 15px/1.6 system-ui, sans-serif;
-      background: #f7f8fa;
-      color: #20242d;
+      background: var(--background);
+      color: var(--foreground);
     }
     main { width: min(100%, 440px); text-align: center; margin-block-end: 6vh }
     .logo { display: grid; place-items: center; width: 72px; height: 72px; margin: 0 auto 20px }
     .logo svg { display: block; width: 100%; height: auto }
     h1 { margin: 0 0 10px; font-size: clamp(24px, 5vw, 30px); font-weight: 650; line-height: 1.2; letter-spacing: -.035em }
-    p { margin: 0; color: #555e6d }
-    @media (prefers-color-scheme: dark) {
-      body { background: #17191d; color: #f1f3f6 }
-      p { color: #b5bdca }
-    }
+    p { margin: 0; color: var(--muted-foreground) }
   </style>
 </head>
 <body>
