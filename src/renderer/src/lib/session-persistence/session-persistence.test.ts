@@ -633,7 +633,7 @@ describe('renderer session persistence bridge', () => {
 
   it('hydrates a newer catalog revision instead of the retained content cache', async () => {
     const cached = materializeSessionConversationGraph(
-      createPersistedSession({ revision: 2, title: 'Old' })
+      createPersistedSession({ revision: 2, title: 'Old', status: 'running' })
     )
     const fresh = materializeSessionConversationGraph({ ...cached, revision: 3, title: 'New' })
     useSessionStore.getState().hydrateSessions([cached])
@@ -656,13 +656,25 @@ describe('renderer session persistence bridge', () => {
     }
     const api = createApi({
       loadOne,
+      loadHistoryPage: vi.fn(),
       list: vi.fn().mockResolvedValue({
         sessions: [summary],
         manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: fresh.id }
       })
     })
     await loadPersistedSession({ projectId: cached.projectId, sessionId: cached.id }, api)
+    // A regular catalog refresh should preserve paging, even with a selected live Session.
     await loadPersistedSessions(api, () => true, { sessionId: cached.id }, true)
+    expect(loadOne).toHaveBeenCalledTimes(1)
+    await loadPersistedSessions(
+      api,
+      () => true,
+      { sessionId: cached.id },
+      true,
+      undefined,
+      undefined,
+      true
+    )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ revision: 3, title: 'New' })
     expect(loadOne).toHaveBeenCalledTimes(2)
   })

@@ -542,7 +542,7 @@ it('keeps small read results available when the temporary transfer quota is full
   await expect(reader.invoke('sessions:load-one')).resolves.toEqual({ id: 'small' })
 })
 
-it.each(['sessions:load-one', 'notebook:state'])(
+it.each(['sessions:load-one', 'sessions:load-history-page', 'notebook:state'])(
   'bounds pending %s reads before dispatch and releases admission after completion',
   async (channel) => {
     const result = { text: 'x'.repeat(9 * 1024 * 1024) }
