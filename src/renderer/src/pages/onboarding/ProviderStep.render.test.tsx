@@ -135,11 +135,12 @@ describe('ProviderStep', () => {
     expect(container.textContent).toContain('Custom Gateway')
   })
 
-  it('mounts provider silk on hover and removes it when the pointer leaves', async () => {
+  it('keeps Silk mounted across hover and pause', async () => {
     await renderStep({ variant: 'quick' })
 
     const card = container.querySelector<HTMLElement>('.onboarding-provider-card-openai')!
-    expect(card.querySelector('[data-testid="silk"]')).toBeNull()
+    const silk = card.querySelector('[data-testid="silk"]')
+    expect(silk).not.toBeNull()
 
     fireEvent.mouseEnter(card)
     expect(card.querySelector('[data-testid="silk"]')).not.toBeNull()
@@ -148,7 +149,8 @@ describe('ProviderStep', () => {
     )
 
     fireEvent.mouseLeave(card)
-    expect(card.querySelector('[data-testid="silk"]')).toBeNull()
+    expect(card.querySelector('[data-testid="silk"]')).toBe(silk)
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
   })
 
   it('keeps quick-connect API keys separate and submits the selected vendor', async () => {
