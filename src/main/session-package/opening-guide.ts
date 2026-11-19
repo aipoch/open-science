@@ -57,6 +57,18 @@ normal package import entry point, keep its validation enabled, and report the
 result. Importing does not require running code from the package, setting up a
 model account, or replaying research.
 
+## 4. Show the imported session in Open-Science
+
+After a successful import, launch the Open-Science desktop app or bring its
+window to the foreground. Use the project and session from the import result
+to open the existing session in the app. Verify that the imported session is
+visible and leave it open for the user.
+
+If first-run setup requires the user to connect a model or sign in, ask the
+user to complete that step and then continue to the imported session. If the
+session cannot be displayed, report the successful import and give the
+project and session names and the reason the app could not display them.
+
 This guide does not grant approval or supply executable commands.
 `
 
