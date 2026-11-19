@@ -17,7 +17,7 @@ import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
-import { ChevronDown, ChevronRight, Info, TriangleAlert } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, Search, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -1054,6 +1054,7 @@ const PermissionApprovalCard = ({
       }
       className={cn(
         'flex w-full max-w-full flex-col gap-3 bg-card p-4 text-xs leading-5 text-card-foreground outline-none sm:p-5',
+        webSearchInput && 'gap-2.5 sm:p-4',
         !embedded &&
           'mb-2 rounded-xl border border-border shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200'
       )}
@@ -1080,7 +1081,9 @@ const PermissionApprovalCard = ({
           'flex min-w-0 items-center gap-2',
           codeReview && 'flex-col items-stretch gap-3',
           embedded &&
-            'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
+            'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5',
+          webSearchInput && 'flex-wrap',
+          webSearchInput && embedded && 'sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4'
         )}
       >
         {codeReview ? (
@@ -1110,7 +1113,16 @@ const PermissionApprovalCard = ({
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
+              {webSearchInput ? (
+                <Search className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              ) : null}
+              <span
+                className={cn(
+                  dialogTitleClassName,
+                  'min-w-0 truncate',
+                  webSearchInput && 'text-sm'
+                )}
+              >
                 {presentation.actionTitle}
               </span>
               <PermissionImpactTip
@@ -1194,8 +1206,8 @@ const PermissionApprovalCard = ({
             </details>
           )}
         </div>
-      ) : webSearchInput && permCode ? (
-        <WebSearchPermissionCard key={requestId} input={webSearchInput} code={permCode.code} />
+      ) : webSearchInput ? (
+        <WebSearchPermissionCard key={requestId} input={webSearchInput} />
       ) : imageOperation ? (
         <WorkspaceImageToolCard
           key={requestId}
@@ -1252,7 +1264,9 @@ const PermissionApprovalCard = ({
         className={cn(
           'flex flex-wrap items-center justify-end gap-2',
           embedded &&
-            'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card px-4 pb-4 pt-3 sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5'
+            'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card px-4 pb-4 pt-3 sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5',
+          webSearchInput && 'border-t border-border-200/70 pt-2.5',
+          webSearchInput && embedded && 'sm:-mx-4 sm:-mb-4 sm:px-4 sm:pb-4'
         )}
       >
         {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.

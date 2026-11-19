@@ -10,27 +10,8 @@ test('reviews built-in search parameters and preserves allow and deny responses'
   await expect(card).toContainText('Up to 10 results')
   await expect(card).toContainText('nature.com')
   await expect(card).toContainText('science.org')
-  await expect(card.getByTestId('tool-code-block')).not.toBeVisible()
-  await card.locator('summary').click()
-  await expect(card.getByTestId('tool-code-block')).toBeVisible()
-  await expect(card.getByTestId('tool-code-block')).toContainText('allowed_domains')
-  await page.evaluate(() =>
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: async (value: string) => Object.assign(window, { copiedInput: value }) }
-    })
-  )
-  await card.getByRole('button', { name: 'Copy code', exact: true }).click()
-  expect(
-    await page.evaluate(() =>
-      JSON.parse((window as unknown as { copiedInput: string }).copiedInput)
-    )
-  ).toEqual({
-    query: 'new foundation model release 2026',
-    freshness: 'month',
-    max_results: 10,
-    allowed_domains: ['nature.com', 'science.org']
-  })
+  await expect(card.getByTestId('tool-code-block')).toHaveCount(0)
+  await expect(card.locator('details')).toHaveCount(0)
   await page.getByRole('button', { name: 'Choose authorization scope' }).click()
   await expect(page.getByRole('menuitemradio')).toHaveCount(2)
   await page.keyboard.press('Escape')
@@ -42,10 +23,17 @@ test('reviews built-in search parameters and preserves allow and deny responses'
   ).toEqual([{ requestId: 'built-in-search', optionId: 'session' }])
 
   await page.setViewportSize({ width: 375, height: 700 })
-  await page.goto('/web-permission.html?built-in-search=1&lang=zh-Hans&sites=1')
+  await page.goto('/web-permission.html?built-in-search=1&lang=zh-Hans&sites=1&embedded=1')
   await expect(card).toContainText('过去一个月')
   await expect(card).toContainText('最多 10 条结果')
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375)
+  for (const width of [320, 375, 414, 768]) {
+    await page.setViewportSize({ width, height: 700 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width
+    )
+    await expect(page.getByTestId('allow-primary')).toBeInViewport()
+    await expect(page.getByRole('button', { name: '拒绝', exact: true })).toBeInViewport()
+  }
   await page.getByRole('button', { name: '拒绝', exact: true }).click()
   expect(
     await page.evaluate(

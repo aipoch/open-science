@@ -10,6 +10,7 @@ import type { ToolActivity } from '@/stores/session-store'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { PermissionApprovalControls } from '@/pages/workspace/PermissionApprovalControls'
+import { ResizableBottomPanel } from '@/pages/workspace/ResizableBottomPanel'
 import { useAcpRuntime } from '@/lib/acp/useAcpRuntime'
 import type {
   AcpPermissionRequest,
@@ -349,6 +350,24 @@ const SchedulePreview = (): React.JSX.Element => {
 }
 void Promise.resolve(prepareI18nLocale(language)).then(() => {
   initI18n(language)
+  const embedded = new URLSearchParams(location.search).has('embedded')
+  const approval = (
+    <PermissionApprovalControls
+      embedded={embedded}
+      requests={[
+        runtimeSelection
+          ? runtimeRequest
+          : risk
+            ? riskRequest
+            : builtInSearch
+              ? builtInSearchRequest
+              : request
+      ]}
+      onRespond={(requestId, optionId) => {
+        responses.push({ requestId, optionId })
+      }}
+    />
+  )
   createRoot(document.getElementById('root')!).render(
     <main className="min-h-screen bg-background p-5 text-foreground">
       <div className="mx-auto max-w-3xl">
@@ -358,21 +377,17 @@ void Promise.resolve(prepareI18nLocale(language)).then(() => {
           <RiskReceipt />
         ) : network ? (
           <NetworkApproval />
+        ) : embedded ? (
+          <ResizableBottomPanel
+            ariaLabel="Resize permission panel"
+            testId="permission-composer"
+            scrollTestId="permission-composer-scroll"
+            constrainGrowthToOverflow
+          >
+            {approval}
+          </ResizableBottomPanel>
         ) : (
-          <PermissionApprovalControls
-            requests={[
-              runtimeSelection
-                ? runtimeRequest
-                : risk
-                  ? riskRequest
-                  : builtInSearch
-                    ? builtInSearchRequest
-                    : request
-            ]}
-            onRespond={(requestId, optionId) => {
-              responses.push({ requestId, optionId })
-            }}
-          />
+          approval
         )}
       </div>
     </main>

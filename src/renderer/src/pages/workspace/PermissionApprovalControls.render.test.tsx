@@ -40,7 +40,7 @@ it.each([false, true])('presents built-in search parameters as a card (wrapped: 
         {
           ...builtInSearchRequest,
           rawInput: wrapped
-            ? { arguments: builtInSearchRequest.rawInput, requestTag: 'keep-visible-in-input' }
+            ? { arguments: builtInSearchRequest.rawInput, requestTag: 'transport-metadata' }
             : builtInSearchRequest.rawInput
         }
       ]}
@@ -54,8 +54,9 @@ it.each([false, true])('presents built-in search parameters as a card (wrapped: 
   expect(html).toContain('Up to 10 results')
   expect(html).toContain('Limit to these sites')
   expect(html).toContain('example.org')
-  expect(html).toContain('data-language="json"')
-  if (wrapped) expect(html).toContain('keep-visible-in-input')
+  expect(html).not.toContain('data-language="json"')
+  expect(html).not.toContain('<summary')
+  expect(html).not.toContain('transport-metadata')
   expect(html).not.toContain('External service input')
 })
 
