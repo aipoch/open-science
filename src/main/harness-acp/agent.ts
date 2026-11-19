@@ -598,12 +598,13 @@ export function createHarnessAcpAgent(
           throw new Error(message)
       }
       const sessionTracing = tracing?.session(id, target.model, target.protocol)
+      const tracedModel = sessionTracing?.wrapModel(model) ?? model
       const sessionModel: AgentModel = {
         ...model,
         stream(request, signal) {
-          if (request.useProviderOutputDefault) return model.stream(request, signal)
+          if (request.useProviderOutputDefault) return tracedModel.stream(request, signal)
           const available = target.contextWindow - meter.measure(request)
-          return model.stream(
+          return tracedModel.stream(
             { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
             signal
           )
@@ -612,7 +613,7 @@ export function createHarnessAcpAgent(
       session = await openAgentSession({
         sessionId: id,
         store: ephemeral ? createMemoryAgentStore() : store,
-        model: sessionTracing?.wrapModel(sessionModel) ?? sessionModel,
+        model: sessionModel,
         tools: sessionTracing ? mcp.tools.map(sessionTracing.wrapTool) : mcp.tools,
         // Original results are already authorized evidence in this exact session; no external access.
         toolResults: toolLess
@@ -791,7 +792,7 @@ export function createHarnessAcpAgent(
           entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
-          const finishTrace = entry.tracing?.startTurn()
+          const finishTrace = entry.tracing?.startTurn(context.params.prompt)
           let traceOutcome: acp.StopReason | 'error' = 'error'
           let traceRequestCount: number | undefined
           try {
