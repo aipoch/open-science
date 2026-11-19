@@ -709,6 +709,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.useCaseCatalog',
       'sessions.useCaseIntroduction',
       'settings.addCustomServer',
+      'settings.addOnboardingKiloProvider',
       'settings.addSkillSource',
       'settings.authenticateCustomServer',
       'settings.authenticateDeviceCredential',

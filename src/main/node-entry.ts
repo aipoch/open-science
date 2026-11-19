@@ -607,10 +607,13 @@ async function main(): Promise<void> {
     ]
     const startupCommands: ApplicationCommandByNameDispatcher = {
       commandNames: () => runtime?.applicationCommands.desktop.commandNames() ?? earlyChannels,
-      invoke: async (name, invocation) => {
+      invoke: (name, invocation) => {
         if (runtime) {
-          if (name === 'settings:get-settings') await initializeDesktopKiloDefaults()
-          return runtime.applicationCommands.desktop.invoke(name, invocation)
+          const commands = runtime.applicationCommands.desktop
+          if (name === 'settings:get-settings') {
+            return initializeDesktopKiloDefaults().then(() => commands.invoke(name, invocation))
+          }
+          return commands.invoke(name, invocation)
         }
         requireDesktopCaller(invocation.callerContext)
         switch (name) {

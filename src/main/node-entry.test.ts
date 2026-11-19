@@ -269,8 +269,11 @@ vi.mock('./storage/initialize-location', () => ({
   prepareApplicationLocations: async () => {
     if (f.storageFailure) throw f.storageFailure
     return {
-      settingsStore: {},
-      repository: { getSettings: async () => ({ localePreference: 'system' }) }
+      settingsStore: { readExisting: async () => undefined },
+      repository: {
+        getSettings: async () => ({ localePreference: 'system', providers: [] }),
+        initializeDesktopKiloDefaults: async () => {}
+      }
     }
   }
 }))
