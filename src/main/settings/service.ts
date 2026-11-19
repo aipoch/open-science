@@ -1800,7 +1800,8 @@ class SettingsService {
     return this.getSettingsView()
   }
 
-  cancelCodexLogin(): void {
+  cancelCodexLogin(signInInstallId?: string): void | Promise<void> {
+    if (signInInstallId) return this.runtimeManager.cancelSignInInstall(signInInstallId)
     this.providers.cancelCodexLogin()
   }
 

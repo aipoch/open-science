@@ -63,7 +63,10 @@ export type RuntimeSetupActions = {
     signInAttemptId?: string
   ) => Promise<ClaudeInstallResult>
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
-  installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
+  installCodex: (
+    source?: CodexInstallSource,
+    signInAttemptId?: string
+  ) => Promise<ClaudeInstallResult>
   installCodeBuddy: (source?: 'managed') => Promise<ClaudeInstallResult>
   installPi: (source?: 'managed') => Promise<ClaudeInstallResult>
   uninstallClaude: () => Promise<void>
@@ -490,9 +493,9 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'opencode', (commands) =>
       commands.installOpencode({ source })
     ),
-  installCodex: (source = 'managed') =>
+  installCodex: (source = 'managed', signInAttemptId) =>
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codex', (commands) =>
-      commands.installCodex({ source })
+      commands.installCodex({ source, ...(signInAttemptId && { signInAttemptId }) })
     ),
   installCodeBuddy: (source = 'managed') =>
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codebuddy', (commands) =>

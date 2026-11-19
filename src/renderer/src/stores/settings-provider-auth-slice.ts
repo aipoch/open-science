@@ -37,7 +37,7 @@ export type ProviderAuthActions = {
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
-  cancelCodexLogin: () => Promise<void>
+  cancelCodexLogin: (signInInstallId?: string) => Promise<void>
   codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
@@ -202,7 +202,10 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     return result
   },
 
-  cancelCodexLogin: () => getCommands().cancelCodexLogin(),
+  cancelCodexLogin: (signInInstallId) =>
+    signInInstallId
+      ? getCommands().cancelCodexLogin(signInInstallId)
+      : getCommands().cancelCodexLogin(),
 
   codeBuddyAccount: async (request) => {
     const commands = getCommands()
