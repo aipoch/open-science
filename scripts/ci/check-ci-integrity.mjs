@@ -126,7 +126,8 @@ const stableChecks = {
   '.github/workflows/ci-integrity.yml': {
     jobId: 'integrity',
     name: 'CI Integrity',
-    pullRequestTrigger: 'pull_request_target'
+    pullRequestTrigger: 'pull_request_target',
+    pullRequestSignal: 'PR Automation Signal'
   }
 }
 
@@ -147,10 +148,25 @@ function triggerTypes(trigger) {
   return Array.isArray(types) ? types : []
 }
 
-function missingRequiredTriggers(document, { pullRequestTrigger }) {
+function missingRequiredTriggers(document, { pullRequestTrigger, pullRequestSignal }) {
   const triggers = workflowTriggers(document)
   const missing = []
-  if (!Object.hasOwn(triggers, pullRequestTrigger)) missing.push(pullRequestTrigger)
+  // Land this policy before replacing the target trigger: candidate workflows cannot
+  // authorize their own migration. Only the named, unfiltered completion signal qualifies.
+  const signal = triggers.workflow_run
+  const hasSignal =
+    pullRequestSignal &&
+    signal &&
+    Array.isArray(signal.workflows) &&
+    signal.workflows.length === 1 &&
+    signal.workflows[0] === pullRequestSignal &&
+    triggerTypes(signal).length === 1 &&
+    triggerTypes(signal)[0] === 'completed' &&
+    !Object.hasOwn(signal, 'branches') &&
+    !Object.hasOwn(signal, 'branches-ignore')
+  if (!Object.hasOwn(triggers, pullRequestTrigger) && !hasSignal) {
+    missing.push(pullRequestTrigger)
+  }
   if (
     !Object.hasOwn(triggers, 'merge_group') ||
     !triggerTypes(triggers.merge_group).includes('checks_requested')

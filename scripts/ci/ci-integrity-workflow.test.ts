@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { classifyChanges, platformExecutionPlan } from './classify-pr-changes.mjs'
 
 type Step = {
@@ -172,6 +172,100 @@ describe('CI Integrity workflow', () => {
     expect(resolveTitle.run).toContain('exit 1')
     expect(resolveTitle.run).not.toContain('git checkout')
     expect(job.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' })
+  })
+})
+
+describe('trusted PR signal resolution', () => {
+  const resolver = load(
+    readFileSync(join(process.cwd(), '.github/workflows/resolve-pr-signal.yml'), 'utf8')
+  ) as Workflow
+  const script = resolver.jobs.resolve.steps![0].with!.script as string
+
+  it.each([
+    'linked',
+    'fork',
+    'stale-head',
+    'wrong-repo',
+    'wrong-path',
+    'old-attempt',
+    'ambiguous-fork'
+  ])('resolves only a current, uniquely identified PR: %s', async (scenario) => {
+    const head = 'a'.repeat(40)
+    const base = 'b'.repeat(40)
+    const pr = {
+      number: 42,
+      state: 'open',
+      title: 'ci(events): migrate signals',
+      created_at: '2026-11-01',
+      base: { repo: { id: 1 }, ref: 'main', sha: base },
+      head: {
+        repo: { id: 2 },
+        ref: 'ci/events',
+        sha: scenario === 'stale-head' ? 'c'.repeat(40) : head
+      }
+    }
+    const run = {
+      id: 100,
+      repository: { id: scenario === 'wrong-repo' ? 9 : 1 },
+      event: 'pull_request',
+      path:
+        scenario === 'wrong-path'
+          ? '.github/workflows/other.yml'
+          : '.github/workflows/pr-automation-signal.yml',
+      status: 'completed',
+      conclusion: 'success',
+      run_attempt: scenario === 'old-attempt' ? 2 : 1,
+      display_title: 'PR automation (synchronize)',
+      head_sha: head,
+      head_branch: 'ci/events',
+      head_repository: { id: 2, owner: { login: 'contributor' } },
+      created_at: '2026-11-19',
+      pull_requests: scenario.includes('fork') ? [] : [pr]
+    }
+    const jobs = vi.fn()
+    const pulls = vi.fn()
+    const github = {
+      rest: {
+        actions: {
+          getWorkflowRun: vi.fn(async () => ({ data: run })),
+          listJobsForWorkflowRunAttempt: jobs
+        },
+        pulls: { list: pulls, get: vi.fn(async () => ({ data: pr })) }
+      },
+      paginate: vi.fn(async (method) =>
+        method === jobs
+          ? [{ name: 'Signal PR automation', conclusion: 'success' }]
+          : scenario === 'ambiguous-fork'
+            ? [pr, { ...pr, number: 43 }]
+            : [pr]
+      )
+    }
+    const output: Record<string, string> = {}
+    const execute = new Function(
+      'github',
+      'context',
+      'core',
+      'process',
+      `return (async () => {${script}})()`
+    )
+    await execute(
+      github,
+      {
+        repo: { owner: 'aipoch', repo: 'open-science' },
+        payload: { repository: { id: 1, default_branch: 'main' } }
+      },
+      {
+        setOutput: (key: string, value: string) => {
+          output[key] = value
+        }
+      },
+      { env: { SIGNAL_RUN_ID: '100', SIGNAL_RUN_ATTEMPT: '1' } }
+    )
+    expect(output).toEqual(
+      ['linked', 'fork'].includes(scenario)
+        ? { number: '42', head_sha: head, base_sha: base, action: 'synchronize', title: pr.title }
+        : {}
+    )
   })
 })
 

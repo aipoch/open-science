@@ -21,6 +21,38 @@ describe('CI integrity policy', () => {
     expect(result).toMatchObject({ ok: true, violations: [] })
   })
 
+  it.each([
+    { signal: 'workflows: [PR Automation Signal]\n    types: [completed]', ok: true },
+    { signal: 'workflows: [Other]\n    types: [completed]', ok: false },
+    { signal: 'workflows: [PR Automation Signal]\n    types: [requested]', ok: false },
+    {
+      signal: 'workflows: [PR Automation Signal]\n    types: [completed]\n    branches: [main]',
+      ok: false
+    }
+  ])('accepts only the unfiltered PR completion signal: $signal', ({ signal, ok }) => {
+    const path = '.github/workflows/ci-integrity.yml'
+    const result = checkCiIntegrityChanges([
+      {
+        path,
+        baseText: readFileSync(resolve(path), 'utf8'),
+        headText: `on:
+  workflow_run:
+    ${signal}
+  merge_group:
+    types: [checks_requested]
+jobs:
+  integrity:
+    name: CI Integrity
+`
+      }
+    ])
+    expect(result.ok).toBe(ok)
+    if (!ok)
+      expect(result.violations).toContainEqual(
+        expect.objectContaining({ rule: 'required-check-triggers' })
+      )
+  })
+
   it('fails its Git revision CLI and publishes violations for Actions', () => {
     const root = mkdtempSync(join(tmpdir(), 'ci-integrity-'))
     const summary = join(root, 'summary')
