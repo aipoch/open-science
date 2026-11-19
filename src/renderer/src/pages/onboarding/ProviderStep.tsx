@@ -228,9 +228,6 @@ const ProviderStep = ({
   const [quickCardId, setQuickCardId] = useState<string>()
   const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
   const [quickMode, setQuickMode] = useState<'key' | undefined>()
-  const [codexAuthMode, setCodexAuthMode] = useState<CodexAuthMode>(
-    formValue.type === 'codex-isolated' ? 'codex-isolated' : 'codex-shared'
-  )
   const [quickKeys, setQuickKeys] = useState<Record<string, string>>(() =>
     formValue.type === 'official' && formValue.vendorId
       ? { [formValue.vendorId]: formValue.key }
@@ -569,26 +566,26 @@ const ProviderStep = ({
 
   const chooseQuickProvider = async (
     card: QuickProviderCard,
-    mode: 'account' | 'key'
+    mode: 'account' | 'key' | CodexAuthMode
   ): Promise<void> => {
     if (card.kindKey === 'custom') {
       onAdvanced?.()
       return
     }
 
-    const kindKey = mode === 'account' ? card.subscriptionKind : card.kindKey
+    const kindKey = mode === 'key' ? card.kindKey : card.subscriptionKind
     if (!kindKey) return
 
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(kindKey)),
-      ...(kindKey === 'codex-subscription' ? { type: codexAuthMode } : {}),
+      ...(mode === 'codex-shared' || mode === 'codex-isolated' ? { type: mode } : {}),
       key: mode === 'key' ? (quickKeys[card.id] ?? '') : '',
       providerFormTouched: true
     }
     setQuickCardId(card.id)
     setQuickMode(mode === 'key' ? 'key' : undefined)
     setFormValue(nextValue)
-    if (mode !== 'account') return
+    if (mode === 'key') return
 
     const attempt = new AbortController()
     quickAuth.current = attempt
@@ -791,22 +788,20 @@ const ProviderStep = ({
                       ) : (
                         <>
                           {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
-                          {card.subscriptionKind === 'codex-subscription' && (
+                          {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
                             <div
                               role="group"
                               aria-label={t('Codex authentication')}
-                              className="mb-2 grid grid-cols-2 gap-1.5"
+                              className="grid grid-cols-2 gap-1.5"
                             >
                               {(['codex-shared', 'codex-isolated'] as const).map((mode) => (
                                 <Button
                                   key={mode}
                                   type="button"
                                   size="sm"
-                                  variant="outline"
-                                  aria-pressed={codexAuthMode === mode}
                                   disabled={isSaving}
-                                  className="h-auto min-w-0 py-1.5 text-xs whitespace-normal aria-pressed:border-primary aria-pressed:bg-primary/15"
-                                  onClick={() => setCodexAuthMode(mode)}
+                                  className="h-auto min-w-0 py-1.5 text-xs whitespace-normal"
+                                  onClick={() => void chooseQuickProvider(card, mode)}
                                 >
                                   {mode === 'codex-shared'
                                     ? t('Import existing Codex sign-in')
@@ -814,13 +809,17 @@ const ProviderStep = ({
                                 </Button>
                               ))}
                             </div>
-                          )}
-                          {subscriptionAvailable ? (
+                          ) : subscriptionAvailable ? (
                             <div className="flex items-center gap-2">
                               <Button
                                 type="button"
-                                onClick={() => void chooseQuickProvider(card, 'account')}
+                                onClick={
+                                  isAuthorizing
+                                    ? undefined
+                                    : () => void chooseQuickProvider(card, 'account')
+                                }
                                 disabled={isSaving}
+                                aria-busy={isAuthorizing}
                                 className="min-w-0 flex-1"
                               >
                                 {isAuthorizing
