@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
 import {
+  HARNESS_OTLP_TRACES_API_KEY,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS,
   HARNESS_OTLP_TRACES_HEADERS_FILE
@@ -14,6 +15,7 @@ const EXPORT_TIMEOUT_MS = 2_000
 const MAX_HEADERS_FILE_BYTES = 8_192
 const MAX_ENV_FILE_BYTES = 65_536
 const SERVICE_NAME = 'open-science-agent'
+const LANGFUSE_TRACE_PATH = '/api/public/otel/v1/traces'
 const timeOriginNanos = BigInt(Math.round(performance.timeOrigin * 1_000)) * 1_000n
 const unixNanos = (): string =>
   (timeOriginNanos + BigInt(Math.round(performance.now() * 1_000_000))).toString()
@@ -210,6 +212,7 @@ async function loadExportConfig(
   const rawHeaders = path
     ? await readTraceFile(path, MAX_HEADERS_FILE_BYTES)
     : env[HARNESS_OTLP_TRACES_HEADERS]
+  const apiKey = env[HARNESS_OTLP_TRACES_API_KEY]?.trim()
   if (rawHeaders !== undefined) {
     const values: unknown = JSON.parse(rawHeaders)
     if (!values || typeof values !== 'object' || Array.isArray(values))
@@ -217,6 +220,17 @@ async function loadExportConfig(
     for (const [name, value] of Object.entries(values)) {
       if (typeof value !== 'string') throw new Error('Expected an OTLP header string')
       headers.set(name, value)
+    }
+  } else if (apiKey) {
+    headers.set('authorization', `Bearer ${apiKey}`)
+  } else if (url.pathname === LANGFUSE_TRACE_PATH) {
+    const publicKey = env.LANGFUSE_PUBLIC_KEY?.trim()
+    const secretKey = env.LANGFUSE_SECRET_KEY?.trim()
+    if (publicKey || secretKey) {
+      if (!publicKey || !secretKey || publicKey.includes(':')) return undefined
+      const credentials = Buffer.from(`${publicKey}:${secretKey}`, 'utf8').toString('base64')
+      headers.set('authorization', `Basic ${credentials}`)
+      headers.set('x-langfuse-ingestion-version', '4')
     }
   }
   headers.set('content-type', 'application/json')
