@@ -195,14 +195,6 @@ export type LabBootstrap = Readonly<{
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
 
-export const isLoopbackLabServerUrl = (value: string): boolean => {
-  try {
-    return LOOPBACK_HOSTS.has(new URL(value).hostname.toLowerCase())
-  } catch {
-    return false
-  }
-}
-
 // Server-address policy: reuse the existing provider URL policy (http/https only, no query or
 // fragment, no embedded credentials), plus the Lab rule that a non-loopback address must be https.
 export const getLabServerUrlError = (value: string): LabErrorCode | undefined => {
@@ -218,7 +210,8 @@ export const getLabServerUrlError = (value: string): LabErrorCode | undefined =>
     // PROVIDER_TRANSPORT_ERROR: the shared policy rejects insecure remote URLs.
     return 'server-url-insecure'
   }
-  if (!isLoopbackLabServerUrl(trimmed) && !trimmed.startsWith('https://')) {
+  const { protocol, hostname } = new URL(trimmed)
+  if (protocol !== 'https:' && !LOOPBACK_HOSTS.has(hostname)) {
     return 'server-url-insecure'
   }
   return undefined
@@ -234,9 +227,10 @@ export const labModelWireId = (modelId: string): string =>
 
 export const labModelLabel = (modelId: string): string => labModelWireId(modelId)
 
-// The gateway serves only POST /v1/chat/completions and POST /v1/responses. Bootstrap advertises
-// either protocol ids; anything unknown is ignored rather than guessed.
+// Legacy bootstrap catalogs may omit protocol metadata. An explicit declaration must match a
+// route the gateway can serve.
 export const labProtocolsToEndpoints = (model: LabBootstrapModel): ModelProtocol[] => {
+  if (model.protocol === undefined && model.protocols === undefined) return ['chat-completions']
   const declared = [...(model.protocols ?? []), ...(model.protocol ? [model.protocol] : [])]
   const endpoints: ModelProtocol[] = []
   for (const protocol of declared) {
@@ -250,16 +244,14 @@ export const labProtocolsToEndpoints = (model: LabBootstrapModel): ModelProtocol
   return endpoints
 }
 
-export const labProviderApiEndpoints = (models: readonly LabBootstrapModel[]): ModelProtocol[] => {
-  const endpoints: ModelProtocol[] = []
-  for (const model of models) {
-    for (const endpoint of labProtocolsToEndpoints(model)) {
-      if (!endpoints.includes(endpoint)) endpoints.push(endpoint)
-    }
-  }
-  // No protocol metadata at all is treated as the broadly compatible chat route.
-  return endpoints.length > 0 ? endpoints : ['chat-completions']
-}
+export const labAvailableModels = (
+  models: readonly LabBootstrapModel[]
+): Array<LabBootstrapModel & { endpoints: ModelProtocol[] }> =>
+  models.flatMap((model) => {
+    if (model.enabled === false || model.available === false) return []
+    const endpoints = labProtocolsToEndpoints(model)
+    return endpoints.length > 0 ? [{ ...model, endpoints }] : []
+  })
 
 export const isLabDeploymentUrl = (serverUrl: string, candidate: string): boolean => {
   try {
@@ -427,16 +419,14 @@ export const labModelSummaries = (
   models: readonly LabBootstrapModel[]
 ): readonly LabModelSummary[] =>
   Object.freeze(
-    models
-      .filter((model) => model.enabled !== false && model.available !== false)
-      .map((model) =>
-        Object.freeze({
-          id: labModelIdFromBootstrap(model.id),
-          name: model.name?.trim() || model.id,
-          protocols: Object.freeze(labProtocolsToEndpoints(model)),
-          streaming: model.streaming !== false
-        })
-      )
+    labAvailableModels(models).map((model) =>
+      Object.freeze({
+        id: labModelIdFromBootstrap(model.id),
+        name: model.name?.trim() || model.id,
+        protocols: Object.freeze(model.endpoints),
+        streaming: model.streaming !== false
+      })
+    )
   )
 
 // Maps a gateway error body to the token-free message forwarded through the provider bridge. Only

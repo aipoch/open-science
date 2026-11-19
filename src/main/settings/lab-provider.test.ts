@@ -17,8 +17,9 @@ const BOOTSTRAP: LabBootstrap = {
         limit: { context: 1_000_000, output: 64_000 }
       }
     },
-    { id: 'plain-chat', protocol: 'openai' },
+    { id: 'plain-chat' },
     { id: 'lab:research-default', protocol: 'openai-response', streaming: false },
+    { id: 'unsupported-model', protocols: ['anthropic'] },
     { id: 'disabled-model', protocol: 'openai', enabled: false },
     { id: 'unavailable-model', protocol: 'openai', available: false }
   ],
@@ -42,12 +43,14 @@ describe('buildLabProviderRecord', () => {
     ])
     expect(record.modelProtocols).toMatchObject({
       'lab:research-default': ['chat-completions'],
+      'lab:plain-chat': ['chat-completions'],
       'lab:lab:research-default': ['responses']
     })
+    expect(record.apiEndpoints).toEqual(['chat-completions', 'responses'])
     expect(record.modelStreaming).toEqual({ 'lab:lab:research-default': false })
   })
 
-  it.each([null, 'disabled-model', 'unavailable-model', 'unknown-model'])(
+  it.each([null, 'disabled-model', 'unavailable-model', 'unsupported-model', 'unknown-model'])(
     'leaves the default unset when the published default is %s',
     (default_model_id) => {
       const record = buildLabProviderRecord('https://lab.example.com', {
@@ -60,6 +63,15 @@ describe('buildLabProviderRecord', () => {
       ).toBe('lab:research-default')
     }
   )
+
+  it('publishes an empty catalog when no model has a supported protocol', () => {
+    const record = buildLabProviderRecord('https://lab.example.com', {
+      ...BOOTSTRAP,
+      models: [{ id: 'unsupported', protocol: 'anthropic' }]
+    })
+    expect(record.fetchedModels).toEqual([])
+    expect(record.apiEndpoints).toEqual([])
+  })
 
   it('omits the map when no model advertises capabilities', () => {
     const record = buildLabProviderRecord('https://lab.example.com', {

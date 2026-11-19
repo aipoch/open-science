@@ -148,6 +148,7 @@ export type ExchangeCodeInput = Readonly<{
   code: string
   redirectUri: string
   codeVerifier: string
+  signal?: AbortSignal
 }>
 
 const withDeadline = async <T>(
@@ -283,7 +284,8 @@ export class LabApi {
           code_verifier: input.codeVerifier
         }).toString()
       },
-      LAB_RESOURCE_LIMITS.tokenTimeoutMs
+      LAB_RESOURCE_LIMITS.tokenTimeoutMs,
+      { signal: input.signal }
     )
     return this.readTokenResponse(body)
   }
@@ -359,12 +361,14 @@ export class LabApi {
             {
               id: candidate.id,
               ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
-              ...(typeof candidate.protocol === 'string' ? { protocol: candidate.protocol } : {}),
-              ...(Array.isArray(candidate.protocols)
+              ...(Object.hasOwn(candidate, 'protocol')
+                ? { protocol: typeof candidate.protocol === 'string' ? candidate.protocol : '' }
+                : {}),
+              ...(Object.hasOwn(candidate, 'protocols')
                 ? {
-                    protocols: candidate.protocols.filter(
-                      (protocol): protocol is string => typeof protocol === 'string'
-                    )
+                    protocols: Array.isArray(candidate.protocols)
+                      ? candidate.protocols.filter((protocol) => typeof protocol === 'string')
+                      : []
                   }
                 : {}),
               ...(typeof candidate.streaming === 'boolean'

@@ -81,6 +81,29 @@ describe('Lab API client', () => {
     expect(tokens).toMatchObject({ accessToken: 'at_1', refreshToken: 'rt_1', expiresIn: 900 })
   })
 
+  it('aborts an in-flight token exchange when the login is cancelled', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+    )
+    const api = new LabApi({ fetch: fetchMock })
+    const controller = new AbortController()
+    const pending = expect(
+      api.exchangeCode({
+        serverUrl: SERVER,
+        code: 'code_1',
+        redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+        codeVerifier: 'verifier',
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    controller.abort()
+    await pending
+  })
+
   it('treats invalid_grant on refresh as an expired sign-in', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -141,7 +164,10 @@ describe('Lab API client', () => {
               limit: { context: 1_000_000, output: 64_000 }
             },
             upstream_model: 'must-not-be-used'
-          }
+          },
+          { id: 'legacy' },
+          { id: 'invalid-protocol', protocol: 42 },
+          { id: 'invalid-protocols', protocols: 'openai' }
         ],
         default_model_id: 'research-default',
         model_base_url: '/v1'
@@ -160,6 +186,11 @@ describe('Lab API client', () => {
       }
     })
     expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
+    expect(bootstrap.models.slice(1)).toEqual([
+      { id: 'legacy' },
+      { id: 'invalid-protocol', protocol: '' },
+      { id: 'invalid-protocols', protocols: [] }
+    ])
   })
 
   it.each(['', '  '])('rejects bootstrap with an empty user ID %j', async (id) => {

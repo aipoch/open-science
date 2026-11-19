@@ -7,7 +7,6 @@ import {
   labModelLabel,
   labModelSummaries,
   labModelWireId,
-  labProviderApiEndpoints,
   labProtocolsToEndpoints,
   mapLabGatewayError,
   readLabModelCapabilities,
@@ -20,7 +19,10 @@ describe('Lab shared contract', () => {
     expect(getLabServerUrlError('lab.example.com')).toBe('server-url-invalid')
     expect(getLabServerUrlError('http://lab.example.com')).toBe('server-url-insecure')
     expect(getLabServerUrlError('https://lab.example.com')).toBeUndefined()
+    expect(getLabServerUrlError('HTTPS://lab.example.com')).toBeUndefined()
+    expect(getLabServerUrlError('HTTP://lab.example.com')).toBe('server-url-insecure')
     expect(getLabServerUrlError('http://127.0.0.1:8080')).toBeUndefined()
+    expect(getLabServerUrlError('http://127.0.0.2:8080')).toBe('server-url-insecure')
   })
 
   it('rejects query strings, fragments and embedded credentials', () => {
@@ -46,12 +48,9 @@ describe('Lab shared contract', () => {
       'responses'
     ])
     expect(labProtocolsToEndpoints({ id: 'a', protocols: ['anthropic'] })).toEqual([])
-    expect(
-      labProviderApiEndpoints([
-        { id: 'a', protocol: 'openai' },
-        { id: 'b', protocol: 'openai-response' }
-      ])
-    ).toEqual(['chat-completions', 'responses'])
+    expect(labProtocolsToEndpoints({ id: 'a', protocols: [] })).toEqual([])
+    expect(labProtocolsToEndpoints({ id: 'a', protocol: '' })).toEqual([])
+    expect(labProtocolsToEndpoints({ id: 'a' })).toEqual(['chat-completions'])
   })
 
   it('joins the server address and the bootstrap model base url', () => {
@@ -65,15 +64,17 @@ describe('Lab shared contract', () => {
     )
   })
 
-  it('drops disabled or unavailable bootstrap models from the status summary', () => {
+  it('limits the status summary to available models with a usable gateway route', () => {
     const models = labModelSummaries([
       { id: 'a', name: 'A', protocol: 'openai', available: true },
-      { id: 'lab:a', protocol: 'openai' },
+      { id: 'lab:a' },
       { id: 'b', name: 'B', protocol: 'openai', enabled: false },
-      { id: 'c', name: 'C', protocol: 'openai-response', available: false }
+      { id: 'c', name: 'C', protocol: 'openai-response', available: false },
+      { id: 'unsupported', protocol: 'anthropic' }
     ])
     expect(models.map((model) => model.id)).toEqual(['lab:a', 'lab:lab:a'])
     expect(models[0]?.protocols).toEqual(['chat-completions'])
+    expect(models[1]?.protocols).toEqual(['chat-completions'])
   })
 })
 

@@ -1,13 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ModelProtocol } from '@aipoch/providers'
-
 import {
   isLabDeploymentUrl,
   joinLabBaseUrl,
+  labAvailableModels,
   labModelIdFromBootstrap,
-  labProtocolsToEndpoints,
-  labProviderApiEndpoints,
   type LabBootstrap,
   type LabModelCapabilities
 } from '../../shared/lab'
@@ -30,20 +27,14 @@ export const buildLabProviderRecord = (
   ) {
     throw new Error('Lab model_base_url must stay on the configured deployment.')
   }
-  const models = bootstrap.models
-    .filter((model) => model.enabled !== false && model.available !== false)
+  const models = labAvailableModels(bootstrap.models)
     .slice(0, LAB_RESOURCE_LIMITS.maxModels)
     .map((model) => ({ ...model, id: labModelIdFromBootstrap(model.id) }))
   const fetchedModels = models.map(({ id }) => id)
   const defaultModel = bootstrap.default_model_id
     ? labModelIdFromBootstrap(bootstrap.default_model_id)
     : undefined
-  const modelProtocols: Record<string, ModelProtocol[]> = Object.fromEntries(
-    models.map((model) => {
-      const endpoints = labProtocolsToEndpoints(model)
-      return [model.id, endpoints.length > 0 ? endpoints : ['chat-completions']]
-    })
-  )
+  const modelProtocols = Object.fromEntries(models.map(({ id, endpoints }) => [id, endpoints]))
   const modelCapabilities: Record<string, LabModelCapabilities> = Object.fromEntries(
     models.flatMap((model) => (model.capabilities ? [[model.id, model.capabilities] as const] : []))
   )
@@ -58,7 +49,7 @@ export const buildLabProviderRecord = (
     baseUrl: joinLabBaseUrl(serverUrl, bootstrap.model_base_url),
     labServerUrl: serverUrl.replace(/\/+$/u, ''),
     labCatalogToken: randomUUID(),
-    apiEndpoints: labProviderApiEndpoints(bootstrap.models),
+    apiEndpoints: [...new Set(models.flatMap(({ endpoints }) => endpoints))],
     fetchedModels,
     ...(defaultModel && fetchedModels.includes(defaultModel) ? { model: defaultModel } : {}),
     ...(Object.keys(modelProtocols).length > 0 ? { modelProtocols } : {}),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { LabApi } from './lab-api'
+import type { ExchangeCodeInput, LabApi } from './lab-api'
 import { LabApiError } from './lab-api'
 import type { LabCredentialStore } from './lab-credential-store'
 import { LabLoopbackCallbackHost, LabOAuthController } from './lab-oauth'
@@ -152,6 +152,7 @@ describe('Lab OAuth controller', () => {
     await cancelling
     expect(error).toBeInstanceOf(LabApiError)
     expect((error as LabApiError).code).toBe('cancelled')
+    expect((api.exchangeCode.mock.calls[0]![0] as ExchangeCodeInput).signal?.aborted).toBe(true)
     expect(credentials.saveSession).not.toHaveBeenCalled()
   })
 

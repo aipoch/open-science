@@ -274,7 +274,8 @@ export class LabOAuthController {
         serverUrl: pending.serverUrl,
         code: result.code,
         redirectUri,
-        codeVerifier: pending.verifier
+        codeVerifier: pending.verifier,
+        signal: pending.abort.signal
       })
       // Cancellation (or a server switch) while the code was being exchanged must not persist a
       // credential pair for an attempt that is no longer current.
