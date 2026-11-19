@@ -323,7 +323,9 @@ describe('ProviderStep', () => {
           finishLogin = resolve
         })
     )
-    const saveProvider = vi.fn().mockRejectedValue(new Error('Missing auth.json'))
+    const rawError =
+      "Error invoking remote method 'settings:upsert-provider': Error: Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead."
+    const saveProvider = vi.fn().mockRejectedValue(new Error(rawError))
     const persistProvider = vi.fn().mockResolvedValue('builtin-codex-isolated')
     const cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
@@ -346,7 +348,12 @@ describe('ProviderStep', () => {
     expect(card.textContent).not.toContain('Continue with OpenAI')
     await act(async () => importButton.click())
     const warning = container.querySelector('[data-notice-level="warning"]')!
-    expect(warning.querySelector('[role="alert"]')?.textContent).toContain('Missing auth.json')
+    const summary = warning.querySelector('[role="alert"]')!
+    expect(summary.textContent).toContain('No Codex sign-in file was found')
+    expect(summary.textContent).not.toContain(rawError)
+    const details = warning.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('pre')?.textContent).toBe(rawError)
     expect(warning.querySelector('svg')).not.toBeNull()
     expect(loginIsolatedCodex).not.toHaveBeenCalled()
     await clickButton(/^Dismiss$/)
