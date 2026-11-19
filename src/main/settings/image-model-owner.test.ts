@@ -177,6 +177,14 @@ it('refreshes the linked Bailian image catalog and preserves the active model on
     })
   )
   expect(await owner.snapshot()).toEqual(saved)
+  await expect(
+    owner.refreshCatalog({
+      ...target,
+      vendorId: 'bailian',
+      baseUrl: 'https://test.us-east-1.maas.aliyuncs.com/compatible-mode/v1'
+    })
+  ).resolves.toEqual({ ok: false, code: 'missing-key' })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledOnce()
   const updated = await owner.mutate({ ...official, models: [visible] })
   expect(updated.imageModel).toEqual(saved.imageModel)
   expect(updated.services[0].models).toEqual([visible, active])

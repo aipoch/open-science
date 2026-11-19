@@ -1,84 +1,56 @@
 import { expect } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { test } from './fixtures/electron-app'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
-test('refreshes a custom image service without submitting a generation', async ({ app }) => {
-  const token = 'synthetic-image-catalog-key'
-  const requests: Array<{ method?: string; path?: string; authorization?: string }> = []
-  let rejectCatalog = false
-  const server = createServer((request, response) => {
-    requests.push({
-      method: request.method,
-      path: request.url,
-      authorization: request.headers.authorization
-    })
-    response.writeHead(rejectCatalog ? 401 : 200, { 'content-type': 'application/json' })
-    response.end(JSON.stringify({ data: [{ id: 'fixture-image' }, { id: 'second-image' }] }))
-  })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-  try {
-    const page = await app.completeOnboarding()
-    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    const settings = await openSettingsPage(page, 'Model')
-    await settings.locator('[data-scenario-model="image-generation"]').click()
-    await settings.getByRole('button', { name: 'Image services', exact: true }).click()
-    await settings.getByRole('button', { name: 'Add image service', exact: true }).click()
-    await settings.getByLabel('Name', { exact: true }).fill('Catalog image service')
-    await settings.getByLabel('Base URL', { exact: true }).fill(`${baseUrl}/v1`)
-    await settings.getByLabel('API key', { exact: true }).fill(token)
+test('limits image catalog refresh to official providers and saves custom model IDs', async ({
+  app
+}) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const settings = await openSettingsPage(page, 'Model')
+  await settings.locator('[data-scenario-model="image-generation"]').click()
+  await settings.getByRole('button', { name: 'Image services', exact: true }).click()
+  await settings.getByRole('button', { name: 'Add image service', exact: true }).click()
 
-    const refresh = settings.getByRole('button', { name: 'Refresh model list', exact: true })
-    const discovered = settings.getByRole('combobox', {
-      name: 'Choose a server model that supports image generation.'
-    })
-    await refresh.click()
-    await discovered.click()
-    await page.getByRole('option', { name: 'fixture-image', exact: true }).click()
-    await expect(settings.getByLabel('Model ID', { exact: true })).toHaveValue('fixture-image')
-    expect(await page.evaluate(() => window.api.settings.getImageModels())).toMatchObject({
-      services: []
-    })
-    await settings.getByRole('button', { name: 'Save', exact: true }).click()
-    await settings.getByRole('button', { name: 'Edit Catalog image service' }).click()
+  const refresh = settings.getByRole('button', { name: 'Refresh model list', exact: true })
+  const providerType = settings.getByRole('combobox', { name: 'Provider type', exact: true })
+  const format = settings.getByRole('combobox', { name: 'API format', exact: true })
+  const modelId = settings.getByLabel('Model ID', { exact: true })
+  const baseUrl = 'http://127.0.0.1:9/v1'
+  await settings.getByLabel('Name', { exact: true }).fill('Manual image service')
+  await settings.getByLabel('Base URL', { exact: true }).fill(baseUrl)
+  for (const label of ['MiniMax', 'Qwen Images', 'Seedream', 'OpenAI Images']) {
+    await format.click()
+    await page.getByRole('option', { name: label, exact: true }).click()
+    await expect(refresh).toHaveCount(0)
+    await expect(modelId).toBeEditable()
+  }
 
-    rejectCatalog = true
-    await refresh.click()
-    await expect(
-      settings.getByText('Model refresh failed. The previous list is kept.')
-    ).toBeVisible()
-    await expect(settings.getByLabel('Model ID', { exact: true })).toHaveValue('fixture-image')
-    rejectCatalog = false
-    await settings.getByLabel('Base URL', { exact: true }).fill(`${baseUrl}/other/v1`)
-    await refresh.click()
-    await expect(discovered).toBeVisible()
-    expect(requests).toEqual([
-      { method: 'GET', path: '/v1/models', authorization: `Bearer ${token}` },
-      { method: 'GET', path: '/v1/models', authorization: `Bearer ${token}` },
-      { method: 'GET', path: '/other/v1/models', authorization: undefined }
-    ])
+  const result = await page.evaluate(
+    (baseUrl) =>
+      window.api.settings.refreshImageModelCatalog({
+        id: crypto.randomUUID(),
+        adapter: 'openai-images',
+        baseUrl
+      }),
+    baseUrl
+  )
+  expect(result).toEqual({ ok: false, code: 'unsupported' })
+  await modelId.fill('manual-image')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await settings.getByRole('button', { name: 'Edit Manual image service' }).click()
+  await expect(modelId).toHaveValue('manual-image')
+  await expect(refresh).toHaveCount(0)
 
-    const restarted = await app.restart()
-    const persisted = await restarted.evaluate(() => window.api.settings.getImageModels())
-    expect(persisted.services).toHaveLength(1)
-    const [service] = persisted.services
-    expect(service).toMatchObject({
-      baseUrl: `${baseUrl}/v1`,
-      models: [{ wireModelId: 'fixture-image', presetId: 'openai-images/generic' }]
-    })
-    expect(persisted.imageModel).toEqual({ serviceId: service.id, modelId: service.models[0].id })
-  } finally {
-    server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()))
-    })
+  for (const vendor of ['OpenAI', 'MiniMax', 'Bailian', 'Volcengine Ark']) {
+    await providerType.click()
+    await page.getByRole('option', { name: vendor, exact: true }).click()
+    await expect(refresh).toBeVisible()
+    await expect(refresh).toBeDisabled()
+    await settings.getByLabel('API key', { exact: true }).fill('synthetic-catalog-key')
+    await expect(refresh).toBeEnabled()
   }
 })
 

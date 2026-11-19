@@ -358,7 +358,7 @@ const ImageServiceEditor = ({
   onCancel: () => void
   onRemove?: () => Promise<void>
 }): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [id] = useState(() => service?.id ?? crypto.randomUUID())
   const [name, setName] = useState(service?.name ?? '')
   const [vendorId, setVendorId] = useState<ImageVendorId | 'custom'>(
@@ -463,7 +463,8 @@ const ImageServiceEditor = ({
     setCatalogError(undefined)
   }
   const refreshCatalog = async (): Promise<void> => {
-    if (refreshInFlight.current || invalidConnection || busy) return
+    if (!vendor?.supportsCatalogRefresh || refreshInFlight.current || invalidConnection || busy)
+      return
     refreshInFlight.current = true
     setRefreshing(true)
     setCatalogError(undefined)
@@ -478,7 +479,7 @@ const ImageServiceEditor = ({
       setRefreshing(false)
     }
   }
-  const refreshButton = (vendor ? vendor.supportsCatalogRefresh : adapter === 'openai-images') && (
+  const refreshButton = vendor?.supportsCatalogRefresh && (
     <Button
       type="button"
       variant="outline"
@@ -494,7 +495,9 @@ const ImageServiceEditor = ({
     <>
       {catalog && (
         <p role="status" className="text-xs text-muted-foreground">
-          {t('Last updated: {{time}}', { time: new Date(catalog.fetchedAt).toLocaleString() })}
+          {t('Last updated: {{time}}', {
+            time: new Date(catalog.fetchedAt).toLocaleString(i18n.language)
+          })}
         </p>
       )}
       {catalogError && (
@@ -511,9 +514,6 @@ const ImageServiceEditor = ({
       )}
     </>
   )
-  const discoveredModels =
-    !vendor &&
-    catalog?.modelIds.filter((id) => !models.some((model) => model.wireModelId.trim() === id))
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
@@ -758,7 +758,6 @@ const ImageServiceEditor = ({
               <Select
                 value={adapter}
                 onValueChange={(value: ImageAdapterKind) => {
-                  resetCatalog()
                   setAdapter(value)
                   setApiKey('')
                   setKeyVisible(false)
@@ -783,43 +782,7 @@ const ImageServiceEditor = ({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className={fieldLabelClassName}>{t('Models')}</span>
-                {refreshButton}
-              </div>
-              {catalogNotice}
-              {discoveredModels && discoveredModels.length > 0 && (
-                <Select
-                  value=""
-                  disabled={
-                    models.length >= 16 && models.every((model) => model.wireModelId.trim())
-                  }
-                  onValueChange={(wireModelId) => {
-                    const blank = models.findIndex((model) => !model.wireModelId.trim())
-                    if (blank !== -1) updateModel(blank, { wireModelId })
-                    else if (models.length < 16)
-                      setModels([
-                        ...models,
-                        { id: crypto.randomUUID(), wireModelId, presetId: defaultPresets[adapter] }
-                      ])
-                  }}
-                >
-                  <SelectTrigger
-                    aria-label={t('Choose a server model that supports image generation.')}
-                  >
-                    <SelectValue
-                      placeholder={t('Choose a server model that supports image generation.')}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {discoveredModels.map((id) => (
-                      <SelectItem key={id} value={id}>
-                        {id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              <span className={fieldLabelClassName}>{t('Models')}</span>
               <TooltipProvider>
                 <div className="space-y-3">
                   {models.map((model, index) => (

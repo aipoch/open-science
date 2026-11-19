@@ -13,7 +13,7 @@ import {
 import { getCustomProviderBaseUrlError } from './provider-url-policy'
 
 const imageOptionId = z.string().trim().min(1).max(128)
-export const imageWireModelIdSchema = z
+const imageWireModelIdSchema = z
   .string()
   .trim()
   .min(1)
@@ -80,7 +80,10 @@ export const imageServiceSchema = z
 export const imageModelCatalogRequestSchema = z
   .strictObject({ ...targetFields, apiKey })
   .refine(
-    (service) => validTarget(service) && (!service.providerId || service.apiKey === undefined)
+    (service) =>
+      Boolean(service.vendorId || service.providerId) &&
+      validTarget(service) &&
+      (!service.providerId || service.apiKey === undefined)
   )
 export const imageModelBindingSchema = z
   .object({ serviceId: z.string().uuid(), modelId: imageOptionId })

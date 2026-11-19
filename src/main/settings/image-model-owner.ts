@@ -19,8 +19,7 @@ import {
   imageModelCatalogRequestSchema,
   imageModelMutationSchema,
   imageProviderConfiguration,
-  imageServiceMatchesProvider,
-  imageWireModelIdSchema
+  imageServiceMatchesProvider
 } from '../../shared/image-model-service-policy'
 import { isCatalogModelAvailable } from '../../shared/provider-model-catalog'
 import { testImageModel } from '../image-model/probe'
@@ -151,7 +150,7 @@ export class ImageModelOwner {
     private readonly testGeneration: typeof testImageModel = testImageModel
   ) {}
 
-  /** 使用当前表单连接预览生图目录，保存仍走生图服务设置。 */
+  /** 使用当前连接预览官方生图目录，保存仍走生图服务设置。 */
   async refreshCatalog(request: ImageModelCatalogRequest): Promise<ImageModelCatalogResult> {
     const parsed = imageModelCatalogRequestSchema.safeParse(request)
     if (!parsed.success) return { ok: false, code: 'unsupported' }
@@ -167,10 +166,10 @@ export class ImageModelOwner {
     )
       return { ok: false, code: 'stale' }
     const vendorId = target.vendorId ?? official?.vendorId
-    const options = vendorId && getProviderDefinition(vendorId)?.imageGeneration?.modelsList
+    const vendor = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === vendorId)
+    const options = vendor && getProviderDefinition(vendor.id)?.imageGeneration?.modelsList
     const baseUrl = target.baseUrl ?? official?.baseUrl
-    if (!baseUrl || (vendorId ? !options : target.adapter !== 'openai-images'))
-      return { ok: false, code: 'unsupported' }
+    if (!vendor || !options || !baseUrl) return { ok: false, code: 'unsupported' }
 
     let url = `${baseUrl.replace(/\/+$/, '')}/models`
     if (vendorId === 'bailian') {
@@ -180,27 +179,27 @@ export class ImageModelOwner {
         : workspaceId && `https://${workspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
       if (!workspace || !isQwenWorkspaceBaseUrl(workspace))
         return { ok: false, code: 'missing-parameter' }
-      url = new URL('/api/v1/models', workspace).href
+      const catalogUrl = new URL('/api/v1/models', workspace)
+      // 生图只关联百炼中国站账户，其他地区的目录需要独立密钥。
+      if (provider && !catalogUrl.hostname.endsWith('.cn-beijing.maas.aliyuncs.com'))
+        return { ok: false, code: 'missing-key' }
+      if (catalogUrl.hostname.endsWith('.us-east-1.maas.aliyuncs.com'))
+        catalogUrl.hostname = 'dashscope-us.aliyuncs.com'
+      url = catalogUrl.href
     }
     const keyRef = provider?.keyRef ?? savedImageCredential(target, current)?.keyRef
     const key = target.apiKey || (keyRef ? tryDecryptKey(keyRef) : undefined)
-    if (!key && (keyRef || customProviderRequiresKey(baseUrl)))
-      return { ok: false, code: 'missing-key' }
+    if (!key) return { ok: false, code: 'missing-key' }
 
     const result = await listProviderModels(
       { url, key, options },
       { fetchImpl: netFetchWithManualRedirect, limits: PROVIDER_RESOURCE_LIMITS }
     )
     if (!result.ok) return { ok: false, code: result.code ?? 'invalid-response' }
-    const supported = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === vendorId)?.models
     const modelIds = (result.catalog ?? [])
       .filter(isCatalogModelAvailable)
       .map(({ id }) => id)
-      .filter((id) =>
-        supported
-          ? supported.some((model) => model.wireModelId === id)
-          : imageWireModelIdSchema.safeParse(id).data === id
-      )
+      .filter((id) => vendor.models.some((model) => model.wireModelId === id))
     return modelIds.length
       ? { ok: true, modelIds, fetchedAt: Date.now() }
       : { ok: false, code: 'invalid-response' }
