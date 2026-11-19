@@ -38,6 +38,10 @@ import type {
 } from '../literature/library-mcp-server'
 import type { LiteratureReadDocumentRequest } from '../literature/mcp-contract'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
+import type {
+  NotebookExecutionIntent,
+  NotebookExecutionIntentScope
+} from '../notebook/execution-intent'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type {
@@ -373,6 +377,19 @@ export type AcpRuntimeUploadOptions = {
 }
 
 export type AcpRuntimeNotebookOptions = {
+  createExecutionIntent?: (scope: NotebookExecutionIntentScope) => NotebookExecutionIntent
+  currentExecutionIntent?: (
+    scope: NotebookExecutionIntentScope
+  ) => NotebookExecutionIntent | undefined
+  rememberExecutionIntent?: (
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ) => void
+  resolveExecutionIntent?: (
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ) => NotebookExecutionIntent | undefined
   authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
   canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
   projectId: string
@@ -385,6 +402,7 @@ export type AcpRuntimeNotebookOptions = {
     sessionId: string
     projectId: string
     memoryTools: boolean
+    executionIntent?: NotebookExecutionIntent
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void

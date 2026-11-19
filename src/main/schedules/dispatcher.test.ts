@@ -1,4 +1,5 @@
 import { NotebookRuntimeService, type NotebookExecutionResult } from '../notebook/runtime-service'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { createScheduleExecution } from './execution'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -494,6 +495,7 @@ it('submits a scheduled script to Notebook once and reconciles its receipt witho
   }))
   const onDelivery = vi.fn(async () => undefined)
   const notebook = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     onBackgroundRunAdmitted: onDelivery,
     onBackgroundRunTerminal: onDelivery,
     configRoot: root,

@@ -19,6 +19,56 @@ export const CHILD_UNCONFIRMED = 'RUNTIME_CHILD_UNCONFIRMED'
 export const isChildUnconfirmedError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes(CHILD_UNCONFIRMED)
 
+export type EnvironmentChildCleanup = Readonly<{
+  identity: object
+  startedAt: number
+  release(): Promise<{ reaped: boolean }>
+}>
+
+const retainedChildCleanup = Symbol('environment-child-cleanup')
+
+// This capability belongs to the original child/sandbox. It never enters persisted errors.
+export const retainEnvironmentChildCleanup = <T extends Error>(
+  error: T,
+  cleanup: EnvironmentChildCleanup
+): T => {
+  let releasing: Promise<{ reaped: boolean }> | undefined
+  const retained: EnvironmentChildCleanup = {
+    ...cleanup,
+    release: () => {
+      if (releasing) return releasing
+      const release = Promise.resolve().then(() => cleanup.release())
+      releasing = release
+      void release.then(
+        (result) => {
+          if (!result.reaped && releasing === release) releasing = undefined
+        },
+        () => {
+          if (releasing === release) releasing = undefined
+        }
+      )
+      return release
+    }
+  }
+  Object.defineProperty(error, retainedChildCleanup, { value: retained, configurable: true })
+  return error
+}
+
+export const environmentChildCleanup = (error: unknown): EnvironmentChildCleanup | undefined => {
+  const seen = new Set<object>()
+  let current = error
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current)
+    const retained = current as {
+      [retainedChildCleanup]?: EnvironmentChildCleanup
+      cause?: unknown
+    }
+    if (retained[retainedChildCleanup]) return retained[retainedChildCleanup]
+    current = retained.cause
+  }
+  return undefined
+}
+
 // Structured payload attached to a runMicromamba failure (exit / timeout). The user-facing
 // `Error.message` carries only a short excerpt; the full stdout/stderr tails live here so machine
 // consumers (cache-corruption / MAX_PATH recovery parsers, startup-gate logging) keep the complete
@@ -266,6 +316,11 @@ export const createMicromambaExecutor =
       const completion = { settled: false }
       let termination: Promise<boolean> | undefined
       const startedAt = Date.now()
+      const childCleanup: EnvironmentChildCleanup = {
+        identity: child,
+        startedAt,
+        release: () => supervisor.terminateTree(child)
+      }
       const appendTail = (current: string, chunk: unknown): string =>
         `${current}${String(chunk)}`.slice(-maxTail)
       const publishOutput = (stream: MicromambaOutput['stream'], chunk: unknown): void => {
@@ -299,14 +354,17 @@ export const createMicromambaExecutor =
         if (!trySettle()) return
         const reason = cancelled ? 'cancellation' : timedOut ? 'timeout' : 'PID recording failure'
         reject(
-          new Error(
-            `${CHILD_UNCONFIRMED}: the micromamba process tree could not be confirmed stopped after ` +
-              `${reason}; leaving the operation for recovery to block.`
+          retainEnvironmentChildCleanup(
+            new Error(
+              `${CHILD_UNCONFIRMED}: the micromamba process tree could not be confirmed stopped after ` +
+                `${reason}; leaving the operation for recovery to block.`
+            ),
+            childCleanup
           )
         )
       }
       const terminateTree = (): Promise<boolean> => {
-        termination ??= killAndConfirmExit(child, supervisor.terminateTree)
+        termination ??= killAndConfirmExit(child, supervisor.terminateTree).catch(() => false)
         void termination.then((confirmed) => {
           if (!confirmed) rejectUnconfirmed()
         })

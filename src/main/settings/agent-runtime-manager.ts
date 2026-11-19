@@ -525,10 +525,12 @@ export class AgentRuntimeManager {
               activeEndpoints ?? [],
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
-                : framework.id === 'codex' ||
-                    requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
-                  ? DEFAULT_ENDPOINT_ORDER
-                  : framework.supportedApiTypes
+                : activeProvider.type === 'lab'
+                  ? (['chat-completions', 'responses'] as const)
+                  : framework.id === 'codex' ||
+                      requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
+                    ? DEFAULT_ENDPOINT_ORDER
+                    : framework.supportedApiTypes
             )
           }
         : undefined

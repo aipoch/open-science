@@ -1,3 +1,4 @@
+import { withNotebookUserOperation } from '../notebook/execution-intent'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import type {
   SessionReproducibilityCommand,
@@ -29,7 +30,7 @@ import type {
 import type { ArtifactReproducibilityAttemptOwner } from './artifact-reproducibility-lifecycle'
 
 import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
-import { requireDesktopCaller } from '../caller-context'
+import { requireDesktopCaller, canSatisfyHumanApproval } from '../caller-context'
 export type ArtifactReproducibilityCommandOwner = Pick<
   ArtifactReproducibilityAttemptOwner,
   | 'start'
@@ -128,12 +129,25 @@ export function createArtifactReproducibilityCommands(
     )
       throw new Error('Invalid reproduced output scope.')
   }
+  const userOperation = <T extends object>(
+    request: T,
+    invocation: ApplicationInvocation<readonly unknown[]>
+  ): T => {
+    const assertCurrent = (): void => {
+      callerFor(invocation)
+      if (!canSatisfyHumanApproval(invocation.callerContext))
+        throw new Error('Starting a new reproducibility check requires a current human caller.')
+    }
+    assertCurrent()
+    return withNotebookUserOperation(request, { assertCurrent })
+  }
   return {
     sessionCommand: (
       invocation: ApplicationInvocation<readonly [SessionReproducibilityCommand]>
     ): Promise<SessionReproducibilityBatch | undefined> => {
-      const request = sessionReproducibilityCommandSchema.parse(invocation.args[0])
+      let request = sessionReproducibilityCommandSchema.parse(invocation.args[0])
       callerFor(invocation)
+      if (request.action === 'start') request = userOperation(request, invocation)
       const invoke = async (): Promise<SessionReproducibilityBatch | undefined> =>
         getOwner().sessionCommand(request, callerFor(invocation), publishFor(invocation))
       return request.action === 'prepare' || request.action === 'start'
@@ -214,7 +228,11 @@ export function createArtifactReproducibilityCommands(
     start: (invocation: ApplicationInvocation<readonly [ArtifactReproducibilityCheckRequest]>) => {
       callerFor(invocation)
       return dependencies.withSessionAvailable(invocation.args[0], async () =>
-        getOwner().start(invocation.args[0], callerFor(invocation), publishFor(invocation))
+        getOwner().start(
+          userOperation(invocation.args[0], invocation),
+          callerFor(invocation),
+          publishFor(invocation)
+        )
       )
     },
     cancel: (

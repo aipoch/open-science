@@ -3,6 +3,13 @@ import {
   type NotebookCellPreview
 } from '../../shared/notebook-process-monitor'
 import { compilePowerShellCommand } from './powershell-native-capture'
+import { createNotebookMemorySampler, type NotebookOwnedMemorySample } from './resource-memory'
+import {
+  NotebookExecutionAdmissionError,
+  type NotebookMemoryPolicyPort
+} from './execution-admission'
+import { createWslExecutionMemoryPolicy } from './memory-policy-wsl'
+import type { NotebookSandboxedSpawn } from './process-sandbox'
 import { NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE } from './process-sandbox'
 import { ExecutionDeadline } from './execution-deadline'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -23,6 +30,7 @@ type Launch = (
   onProcess: (child: ChildProcessWithoutNullStreams) => void,
   controlPipe?: string
 ) => Promise<{
+  memoryProbe?: NotebookSandboxedSpawn['memoryProbe']
   completion: Promise<NotebookShellResult>
   beginExecution: (
     request: NotebookShellProcessRequest,
@@ -101,11 +109,23 @@ export class ShellCellSession {
     }
   }
 
+  get resourcePhase(): 'starting' | 'running' | 'idle' | 'cleanup-pending' {
+    if (
+      this.closed ||
+      this.processResult?.ownedTreeReaped === false ||
+      this.processResult?.errorCode === 'shell-cleanup-incomplete'
+    )
+      return 'cleanup-pending'
+    if (!this.child) return 'starting'
+    return this.cell ? 'running' : 'idle'
+  }
+
   get isLive(): boolean {
     return Boolean(this.child && !this.closed && !this.processResult)
   }
   private tail: Promise<unknown> = Promise.resolve()
   private child?: ChildProcessWithoutNullStreams
+  sampleMemory?: (signal: AbortSignal) => Promise<NotebookOwnedMemorySample>
   private controlServer?: Server
   private controlSocket?: Socket
   private completion?: Promise<NotebookShellResult>
@@ -113,6 +133,10 @@ export class ShellCellSession {
   private launchedProcess = false
   private cleanupVerified = false
   private retryCleanup?: () => Promise<boolean>
+  private executionPolicy?: { scope: string; policy: NotebookMemoryPolicyPort }
+  executionMemoryPolicy(scope: string): NotebookMemoryPolicyPort | undefined {
+    return this.executionPolicy?.scope === scope ? this.executionPolicy.policy : undefined
+  }
   private lifetime = new AbortController()
   private beginExecution?: Awaited<ReturnType<Launch>>['beginExecution']
   private annotateStderr?: Awaited<ReturnType<Launch>>['annotateStderr']
@@ -120,13 +144,16 @@ export class ShellCellSession {
   private closed = false
   private cwd?: string
   private launchContext?: string
+  private bootstrapReady?: { promise: Promise<void>; resolve(): void }
+  private bootstrapBuffer = ''
   private readonly protocolName = `__os_cell_${randomUUID().replaceAll('-', '')}`
 
   constructor(
     readonly identity: NotebookShellProcessRequest,
     private readonly launch: Launch,
     private readonly validate: (request: NotebookShellProcessRequest) => Promise<void>,
-    private readonly nativeControl = false
+    private readonly nativeControl = false,
+    private readonly configRoot?: string
   ) {}
 
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
@@ -164,6 +191,8 @@ export class ShellCellSession {
   private async shutdownInternal(): Promise<{ reaped: boolean }> {
     this.closed = true
     this.lifetime.abort()
+    this.executionPolicy?.policy.dispose?.()
+    this.executionPolicy = undefined
     this.cleanupInProgress = true
     try {
       await this.tail
@@ -233,7 +262,7 @@ export class ShellCellSession {
     const name = this.protocolName
     return powershell
       ? `$${name}_pipe = [IO.Pipes.NamedPipeClientStream]::new('.', '${pipeName}', [IO.Pipes.PipeDirection]::In); $${name}_pipe.Connect(10000); $${name}_reader = [IO.StreamReader]::new($${name}_pipe); try { while ($null -ne ($${name} = $${name}_reader.ReadLine())) { . ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($${name})))) } } finally { $${name}_reader.Dispose(); $${name}_pipe.Dispose() }`
-      : `while IFS= read -r ${name}; do eval "$${name}"; done`
+      : `${this.identity.runtimeBinding?.kind === 'wsl2-bash' ? `printf '\\000${name}_ready\\000'; ` : ''}while IFS= read -r ${name}; do eval "$${name}"; done`
   }
 
   private frame(command: string, marker: string, powershell: boolean): string {
@@ -254,6 +283,19 @@ export class ShellCellSession {
   }
 
   private accept(stream: 'stdout' | 'stderr', chunk: string): void {
+    if (stream === 'stdout' && this.bootstrapReady) {
+      this.bootstrapBuffer += chunk
+      const marker = `\0${this.protocolName}_ready\0`
+      const index = this.bootstrapBuffer.indexOf(marker)
+      if (index < 0) {
+        if (this.bootstrapBuffer.length > 4096) this.lifetime.abort()
+        return
+      }
+      chunk = this.bootstrapBuffer.slice(index + marker.length)
+      this.bootstrapBuffer = ''
+      this.bootstrapReady.resolve()
+      this.bootstrapReady = undefined
+    }
     const cell = this.cell
     if (!cell || cell.ended[stream]) return
     const prefix = `\0${cell.marker}${stream === 'stdout' ? ':' : '\0'}`
@@ -306,6 +348,30 @@ export class ShellCellSession {
     if (this.closed || request.signal?.aborted) return cancelledResult()
     if (!(await this.verifyCleanup())) return cleanupBlockedResult()
     if (this.closed || request.signal?.aborted) return cancelledResult()
+    const hostAdmission = request.executionAdmission
+    if (this.executionPolicy && request.executionAdmission?.withExecutionDomain)
+      request = {
+        ...request,
+        executionAdmission: request.executionAdmission.withExecutionDomain(
+          this.executionPolicy.policy,
+          this.executionPolicy.scope
+        )
+      }
+    try {
+      await request.executionAdmission?.prepare('dispatch')
+      request.executionAdmission?.assertCurrent('dispatch')
+    } catch (error) {
+      if (request.signal?.aborted) return cancelledResult()
+      if (!(error instanceof NotebookExecutionAdmissionError)) throw error
+      return {
+        stdout: '',
+        stderr: error.message,
+        exitCode: 1,
+        kernelDispatched: false,
+        executionStarted: false,
+        recovery: error.recovery
+      }
+    }
     const context = JSON.stringify([
       request.cwd,
       request.handoffDir,
@@ -321,6 +387,7 @@ export class ShellCellSession {
       this.lifetime.abort()
       await this.completion
       if (!(await this.verifyCleanup())) return cleanupBlockedResult()
+      request = { ...request, executionAdmission: hostAdmission }
     }
     request = { ...request, cwd: this.cwd ?? request.cwd }
     try {
@@ -339,6 +406,7 @@ export class ShellCellSession {
     let timer: ExecutionDeadline | undefined
     let connectionTimer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
+    let waitingForNetwork = false
     if (!this.child) this.lifetime = new AbortController()
     const abort = (): void => {
       this.lifetime.abort()
@@ -363,6 +431,12 @@ export class ShellCellSession {
         this.launchContext = context
         const control = powershell ? await this.openControl() : undefined
         const ready = Promise.withResolvers<void>()
+        const bootstrap =
+          this.identity.runtimeBinding?.kind === 'wsl2-bash'
+            ? Promise.withResolvers<void>()
+            : undefined
+        this.bootstrapReady = bootstrap
+        this.bootstrapBuffer = ''
         const launched = await this.launch(
           request,
           this.startup(powershell, control?.name),
@@ -370,6 +444,8 @@ export class ShellCellSession {
           (child) => {
             this.launchedProcess = true
             this.child = child
+            if (this.identity.runtimeBinding?.kind !== 'wsl2-bash')
+              this.sampleMemory = createNotebookMemorySampler(child)
             this.lastPid = child.pid
             this.lastProcessIdentity = child
             this.lastCell = undefined
@@ -387,6 +463,8 @@ export class ShellCellSession {
         this.annotateStderr = launched.annotateStderr
         this.retryCleanup = launched.retryCleanup
         this.completion = launched.completion.then((exit) => {
+          this.executionPolicy?.policy.dispose?.()
+          this.executionPolicy = undefined
           this.closeControl()
           this.child = undefined
           this.cwd = undefined
@@ -409,6 +487,29 @@ export class ShellCellSession {
           ready.resolve()
           return exit
         })
+        this.executionPolicy?.policy.dispose?.()
+        this.executionPolicy = undefined
+        if (this.identity.runtimeBinding?.kind === 'wsl2-bash') {
+          connectionTimer = setTimeout(() => this.lifetime.abort(), 5_000)
+          await Promise.race([bootstrap!.promise, this.completion])
+          clearTimeout(connectionTimer)
+          if (!this.child) return await result
+          const probe = launched.memoryProbe
+          if (!probe || !hostAdmission?.withExecutionDomain) {
+            this.lifetime.abort()
+            await this.completion
+            throw new NotebookExecutionAdmissionError(
+              'NOTEBOOK_MEMORY_UNAVAILABLE',
+              'The original WSL execution has no trusted memory sampling capability.'
+            )
+          }
+          const policy = await createWslExecutionMemoryPolicy(probe, this.configRoot)
+          this.executionPolicy = { scope: probe.executionScope, policy }
+          request = {
+            ...request,
+            executionAdmission: hostAdmission!.withExecutionDomain!(policy, probe.executionScope)
+          }
+        }
         await ready.promise
         if (control && this.child) {
           connectionTimer = setTimeout(() => this.lifetime.abort(), 10_000)
@@ -417,16 +518,25 @@ export class ShellCellSession {
         }
       }
       if (!this.child) return await result
-      endExecution = this.beginExecution?.(request, (waiting) => timer?.setPaused(waiting))
+      endExecution = this.beginExecution?.(request, (waiting) => {
+        waitingForNetwork = waiting
+        timer?.setPaused(waiting)
+      })
       if (this.closed || request.signal?.aborted) abort()
       if (!this.lifetime.signal.aborted) {
+        await request.executionAdmission?.prepare('dispatch')
+        request.signal?.throwIfAborted()
         const timeoutMs = request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
         timer = new ExecutionDeadline(timeoutMs, () => {
           timedOut = true
           abort()
         })
+        timer.setPaused(waitingForNetwork)
         const input = powershell && !this.nativeControl ? this.controlSocket! : this.child.stdin
-        input.write(this.frame(request.command, this.cell!.marker, powershell))
+        const frame = this.frame(request.command, this.cell!.marker, powershell)
+        request.signal?.throwIfAborted()
+        request.executionAdmission?.assertCurrent('dispatch')
+        input.write(frame)
         this.lastCell = createNotebookCellPreview(request.command)
       }
       const completed = await result
@@ -454,6 +564,22 @@ export class ShellCellSession {
           }
         : { ...completed, cwdBefore: request.cwd }
     } catch (error) {
+      // A trusted refusal happens before stdin.write. Preserve the persistent namespace.
+      if (error instanceof NotebookExecutionAdmissionError) {
+        if (
+          this.processResult?.ownedTreeReaped === false ||
+          this.processResult?.errorCode === 'shell-cleanup-incomplete'
+        )
+          return this.processResult
+        return {
+          stdout: '',
+          stderr: error.message,
+          exitCode: 1,
+          kernelDispatched: false,
+          executionStarted: false,
+          recovery: error.recovery
+        }
+      }
       this.lifetime.abort()
       await this.completion
       this.closeControl()
@@ -465,7 +591,8 @@ export class ShellCellSession {
       return {
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error),
-        exitCode: null
+        exitCode: null,
+        ...(request.signal?.aborted ? { cancelled: true } : {})
       }
     } finally {
       timer?.cancel()

@@ -470,9 +470,9 @@ export function LiteratureCitationCanvas({
         {visible && hintGraph && hintGraph === graph ? (
           <p
             role="status"
-            className="pointer-events-none absolute right-3 bottom-16 z-10 max-w-72 rounded-md bg-card/95 px-2 py-1 text-xs text-muted-foreground sm:bottom-8"
+            className="pointer-events-none absolute bottom-14 left-2 z-10 max-w-52 rounded-md bg-card/90 px-2 py-1 text-[11px] text-muted-foreground sm:top-auto sm:right-3 sm:bottom-8 sm:left-auto sm:max-w-72"
           >
-            {t('New papers are outside the current view. Fit the graph to see all loaded papers.')}
+            {t('New papers off-screen. Fit graph.')}
           </p>
         ) : null}
         <div

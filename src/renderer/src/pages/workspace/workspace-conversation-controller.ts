@@ -115,6 +115,7 @@ type WorkspaceConversationControllerOptions = {
   permissionProfile: PermissionProfileId
   isReviewing: boolean
   isTurnAdmissionBlocked: boolean
+  cancelInFlightRun?: boolean
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
@@ -155,6 +156,14 @@ type WorkspaceConversationController = {
     submit: {
       draft: (intent: DraftSubmitIntent) => void
       restoredPlan: (response: RestoredPlanResponse) => Promise<void>
+      notebookContinuation: (intent: {
+        projectId: string
+        sessionId: string
+        cwd?: string
+        refusalId: string
+        messageBranchId?: string
+        text: string
+      }) => ReturnType<WorkspaceConversationRuntime['sendMessage']>
     }
     revise: (
       messageId: string,
@@ -402,6 +411,25 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const cancelledInFlightSessionRef = useRef<string | undefined>(undefined)
+  const { activeSession, cancelInFlightRun, promptInFlightSessionIds, runtime } = options
+  const activeSessionId = activeSession?.id
+  useEffect(() => {
+    if (!cancelInFlightRun) {
+      cancelledInFlightSessionRef.current = undefined
+      return
+    }
+    if (
+      !activeSessionId ||
+      !promptInFlightSessionIds.includes(activeSessionId) ||
+      cancelledInFlightSessionRef.current === activeSessionId
+    )
+      return
+    // Main stopped using the expired credential. End the visible turn immediately instead of
+    // leaving the runtime retrying a 5xx until its own timeout.
+    cancelledInFlightSessionRef.current = activeSessionId
+    void runtime.cancelRun(activeSessionId).catch(() => undefined)
+  }, [activeSessionId, cancelInFlightRun, promptInFlightSessionIds, runtime])
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
     options.activeSession,
@@ -743,7 +771,23 @@ const useWorkspaceConversationController = (
     }
 
     return {
-      submit: { draft: submitDraft, restoredPlan: submitRestoredPlan },
+      submit: {
+        draft: submitDraft,
+        restoredPlan: submitRestoredPlan,
+        notebookContinuation: (intent) =>
+          optionsRef.current.runtime.sendMessage({
+            projectId: intent.projectId,
+            sessionId: intent.sessionId,
+            cwd: intent.cwd,
+            requireExistingSession: true,
+            preserveSelection: true,
+            notebookContinuation: {
+              refusalId: intent.refusalId,
+              messageBranchId: intent.messageBranchId
+            },
+            text: intent.text
+          })
+      },
       revise: async (messageId, doc, annotations = []): Promise<EditedMessageSendResult> => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id

@@ -1,3 +1,4 @@
+import { notebookExecutionIntent } from '../notebook/execution-intent'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import { DelegatedProcessOwnership } from './process-ownership'
@@ -338,6 +339,7 @@ const createProductionDelegatedFrameworkRuntime = (
               supportsImageInput: runtimeBackend.supportsImageInput === true
             },
             permissionPrompts,
+            executionIntent: notebookExecutionIntent(input),
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,
             rootFrameId: graph.rootFrameId,

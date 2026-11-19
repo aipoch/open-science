@@ -17,6 +17,15 @@ import {
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import {
+  NotebookExecutionIntent,
+  markNotebookExecutionIntent,
+  notebookExecutionIntent,
+  notebookUserOperation
+} from '../notebook/execution-intent'
+import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 
 type AcpRuntimePromptReloadHost = Readonly<{
   prepareContinuationReplay: AcpPromptTurnWorkflowOptions['prepareContinuationReplay']
@@ -25,6 +34,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
+  refreshNotebookConnection?: AcpProviderSessionResumer['refreshNotebookConnection']
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
@@ -223,8 +233,56 @@ const composeAcpRuntimePromptOwners = (
     providerSessionId: string
     cwd: string
     skillRuntimeAllowlist?: readonly string[]
+    request?: AcpPromptRequest
+    signal?: AbortSignal
+    assertCurrent?: () => void
   }): Promise<void> => {
     session.sessionUpdateProjector.clearAssistantOutput(input.appSessionId)
+    const intent = input.request && notebookExecutionIntent(input.request)
+    // A distinct Provider dispatch has its own credential even when it inherits the same stopped
+    // intent. A late callback from its predecessor must never stop a newer explanatory branch.
+    if (intent) {
+      let refresh:
+        | Awaited<ReturnType<typeof base.sessionCapabilities.prepareNotebookConnectionRefresh>>
+        | undefined
+      try {
+        refresh = await base.sessionCapabilities.prepareNotebookConnectionRefresh({
+          appSessionId: input.appSessionId,
+          projectId: projectId(input.appSessionId),
+          cwd: input.cwd,
+          executionIntent: intent
+        })
+        const assertCurrent = (): void => {
+          input.signal?.throwIfAborted()
+          input.assertCurrent?.()
+          if (input.request) notebookUserOperation(input.request)?.assertCurrent()
+        }
+        assertCurrent()
+        if (!host.refreshNotebookConnection)
+          throw new Error('Notebook provider refresh is unavailable.')
+        const shellRuntime = base.sessionCapabilities.shellRuntimeBindingFor(input.appSessionId)
+        await host.refreshNotebookConnection({
+          sessionId: input.appSessionId,
+          cwd: input.cwd,
+          mcpServers: refresh.mcpServers,
+          skillRuntimeAllowlist: input.skillRuntimeAllowlist,
+          ...(shellRuntime
+            ? { shellRuntimeAgentContract: shellRuntimeAgentContract(shellRuntime) }
+            : {}),
+          signal: input.signal,
+          assertCurrent
+        })
+        assertCurrent()
+        refresh.commit()
+      } catch (error) {
+        // A cancelled/failed preparation must not leave an executable current intent for a
+        // later generic reconnect. Retired credentials are never restored.
+        intent.abandonUserExecution()
+        refresh?.release()
+        throw error
+      }
+      return
+    }
     if (!input.framework.beforePromptDispatch) return
     const connection = base.connectionResources.connection
     if (!connection) throw new Error('ACP connection is not available.')
@@ -380,7 +438,134 @@ const composeAcpRuntimePromptOwners = (
           ...(attribution ? { attribution } : {}),
           text
         }),
-      beforePromptDispatch: beforeFrameworkPromptDispatch
+      beforePromptDispatch: beforeFrameworkPromptDispatch,
+      prepareNotebookIntent: (request, mode) => {
+        const notebook = options.notebook
+        if (!notebook) return
+        const scope = {
+          projectId: projectId(request.sessionId),
+          sessionId: request.sessionId,
+          messageBranchId: request.provenanceContext?.messageBranchId,
+          promptMessageId: request.provenanceContext?.promptMessageId
+        }
+        const current = notebook.currentExecutionIntent
+          ? notebook.currentExecutionIntent(scope)
+          : base.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+        // Lightweight runtime adapters without a Notebook authority port keep their existing
+        // presentation-only contract. Production root and child capabilities always carry one.
+        if (!notebook.createExecutionIntent && !current && !notebookExecutionIntent(request)) return
+        const operation = notebookUserOperation(request)
+        let intent = notebookExecutionIntent(request)
+        const humanTurn =
+          mode.kind === 'user' &&
+          mode.runtimeReviewOwner !== 'task' &&
+          !request.continuation &&
+          !request.suppressUserMessage
+        if (humanTurn && operation && notebook.createExecutionIntent) {
+          operation.assertCurrent()
+          if (operation.projectId && operation.projectId !== scope.projectId)
+            throw new Error('Notebook continuation does not belong to this Project.')
+          if (
+            operation.refusalId &&
+            (current?.refusalId !== operation.refusalId ||
+              current.scope.messageBranchId !== scope.messageBranchId)
+          )
+            throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
+          // Ordinary chat may explain a refusal; only the purpose-owned human command creates
+          // another executable context after rejection.
+          if (current?.refusalId && !operation.refusalId) intent = current
+          else {
+            intent = notebook.createExecutionIntent(scope)
+            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
+          }
+        } else if (!intent) {
+          const origin =
+            request.provenanceContext?.originMessageId ?? request.provenanceContext?.promptMessageId
+          intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
+          if (
+            !intent &&
+            mode.kind === 'application' &&
+            mode.attribution.feature === 'schedule' &&
+            !request.provenanceContext?.originMessageId &&
+            request.provenanceContext?.promptMessageId
+          ) {
+            // A trusted scheduled wake keeps the Session's existing execution context, including
+            // refusals. Its first context remains pending until the ordinary prompt preparation.
+            intent = current?.forDescendant(request.provenanceContext)
+            if (!intent && notebook.createExecutionIntent) {
+              intent = notebook.createExecutionIntent(scope)
+              intent.prepareUserExecution()
+            }
+          }
+        }
+        if (!intent) {
+          intent = new NotebookExecutionIntent(scope)
+          intent.block('originating-execution-context-unavailable')
+        }
+        markNotebookExecutionIntent(request, intent)
+        const promptId = request.provenanceContext?.promptMessageId
+        if (promptId) notebook.rememberExecutionIntent?.(scope, promptId, intent)
+      },
+      observeNotebookExecutionLoop: ({
+        appSessionId,
+        providerSessionId,
+        request,
+        signal,
+        assertCurrent
+      }) => {
+        const intent = notebookExecutionIntent(request)
+        const credential = base.sessionCapabilities.notebookCredentialFor(appSessionId)
+        const connection = base.connectionResources.connection
+        const provider = activeSession(appSessionId)
+        if (!intent || !credential || !connection || provider?.sessionId !== providerSessionId)
+          return () => undefined
+        const isCurrent = (): boolean => {
+          if (
+            signal.aborted ||
+            base.connectionResources.connection !== connection ||
+            activeSession(appSessionId) !== provider
+          )
+            return false
+          try {
+            assertCurrent()
+            return base.sessionCapabilities.notebookCredentialFor(appSessionId) === credential
+          } catch {
+            return false
+          }
+        }
+        let stopObservation: (() => void) | undefined
+        const release = intent.observeViolations(credential, () => {
+          if (!isCurrent()) return
+          log.warn('Notebook Agent repeated a stopped execution', {
+            sessionId: appSessionId,
+            providerSessionId
+          })
+          stopObservation = requestPlanReviewProviderStop({
+            notify: () =>
+              connection.agent.notify(acp.methods.agent.session.cancel, {
+                sessionId: providerSessionId
+              }),
+            isCurrent,
+            onUnconfirmed: (reason) => {
+              session.publication.pushEvent({
+                kind: 'system',
+                level: 'error',
+                sessionId: appSessionId,
+                title: 'Notebook Agent stop was not confirmed',
+                text: `Execution remains blocked (${reason}). Repair the Agent runtime before continuing. Already dispatched Notebook work keeps its original owner.`
+              })
+            }
+          })
+        })
+        const onUserCancellation = (): void => release.acceptUserCancellation()
+        signal.addEventListener('abort', onUserCancellation, { once: true })
+        return () => {
+          release()
+          stopObservation?.()
+          // The logical interaction can still be draining already dispatched Notebook work.
+          // Its real user cancellation remains effective after the Provider has stopped.
+        }
+      }
     },
     artifacts: {
       open: openArtifact,

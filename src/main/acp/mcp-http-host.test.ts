@@ -552,6 +552,69 @@ describe('AgentMcpHttpHost', () => {
     expect(search).toHaveBeenCalledOnce()
   })
 
+  it('never lends a replacement Notebook environment to an old HTTP route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const environment = {
+      endpoint: 'http://127.0.0.1:1/notebook',
+      token: 'old-notebook-token',
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: '/workspace'
+    }
+    host.registerNotebook('session', environment)
+    const oldUrl = host.urlFor('notebook', 'session')
+    host.registerNotebook('session', { ...environment, token: 'new-notebook-token' })
+    const newUrl = host.urlFor('notebook', 'session')
+    const stale = await fetch(oldUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(stale.status).toBe(404)
+    const client = new Client({ name: 'fresh-notebook-intent', version: '1' })
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(newUrl), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      expect((await client.listTools()).tools.some(({ name }) => name === 'repl_execute')).toBe(
+        true
+      )
+    } finally {
+      await client.close()
+    }
+  })
+
+  it.each(['replacement', 'unregister', 'clear'] as const)(
+    'does not restore a Notebook route after %s supersedes its registration',
+    async (action) => {
+      host = new AgentMcpHttpHost()
+      await host.ensureStarted()
+      const environment = {
+        endpoint: 'http://127.0.0.1:1/notebook',
+        token: 'notebook-token',
+        projectId: 'project',
+        sessionId: 'session',
+        workspaceCwd: '/workspace'
+      }
+      host.registerNotebook('session', environment)
+      const rollback = host.registerNotebook('session', environment)
+      if (action === 'replacement') {
+        host.registerNotebook('session', { ...environment, token: 'successor' })
+        const successorUrl = host.urlFor('notebook', 'session')
+        rollback()
+        expect(host.urlFor('notebook', 'session')).toBe(successorUrl)
+      } else {
+        if (action === 'clear') host.clear()
+        else host.unregister('session')
+        rollback()
+        expect(() => host!.urlFor('notebook', 'session')).toThrow('No registered notebook')
+      }
+    }
+  )
+
   it('serves only the owned Skill allowlist and revokes each HTTP projection independently', async () => {
     root = await mkdtemp(join(tmpdir(), 'harness-skill-http-'))
     for (const name of ['allowed', 'hidden']) {

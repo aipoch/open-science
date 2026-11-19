@@ -91,6 +91,28 @@ export class NotebookRuntimeBindingOwner {
 
   constructor(private readonly options: NotebookRuntimeBindingOwnerOptions) {}
 
+  hasSessionTeardownConflict(sessionIds: readonly string[]): boolean {
+    return (
+      Boolean(this.globalWriteGate) ||
+      sessionIds.some((id) => this.sessionWriteGates.has(id) || this.activeWritesBySession.has(id))
+    )
+  }
+
+  // Manual release must report a conflict immediately rather than queueing an unseen stop behind
+  // another binding mutation or teardown. These are the same gates used by normal writes.
+  tryHoldSessionTeardown(sessionIds: readonly string[]): () => void {
+    const ids = [...new Set(sessionIds)]
+    if (this.hasSessionTeardownConflict(ids))
+      throw new Error('Notebook runtime binding is changing. Refresh before releasing resources.')
+    const gate = admissionGate()
+    for (const id of ids) this.sessionWriteGates.set(id, gate)
+    return () => {
+      for (const id of ids)
+        if (this.sessionWriteGates.get(id) === gate) this.sessionWriteGates.delete(id)
+      gate.release()
+    }
+  }
+
   /**
    * Admits one complete binding write, including session creation and durable persistence. The lease
    * is session-scoped so unrelated notebook sessions retain their existing independent lifecycle.

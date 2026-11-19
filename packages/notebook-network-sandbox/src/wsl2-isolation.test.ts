@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import * as childProcess from 'node:child_process'
 import { mapWsl2Path } from './index.js'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -90,6 +90,11 @@ describe('WSL2 sandbox adapter', () => {
       const missing = join(root, 'missing folder')
       const receipt = join(root, 'receipt')
       await writeFile(existing, 'original')
+      // This wrapper fixture runs on macOS too; only its /proc birth read is
+      // supplied by a fixture command. Guest integration verifies the real stat.
+      const awk = join(root, 'awk')
+      await writeFile(awk, "#!/bin/sh\nprintf '123\\n'\n")
+      await chmod(awk, 0o700)
       const launch = await wsl2Launch({
         target: { kind: 'wsl2', profileId: 'missing-write', distro: 'Ubuntu', user: 'fixture' },
         command: '--open-science-deny-write',
@@ -131,7 +136,7 @@ describe('WSL2 sandbox adapter', () => {
             '--',
             ...launch.argv.slice(bwrap + 1)
           ],
-          { encoding: 'utf8' }
+          { encoding: 'utf8', env: { ...process.env, PATH: `${root}:${process.env.PATH}` } }
         )
         const args = JSON.parse(output) as string[]
         const existingDeny = args.findIndex(
@@ -154,6 +159,27 @@ describe('WSL2 sandbox adapter', () => {
           missing
         ])
         expect(args.at(-1)).toBe('--open-science-deny-write')
+        const stdin = execFileSync(
+          '/bin/bash',
+          [
+            '--noprofile',
+            '--norc',
+            '-c',
+            launch.argv[wrapper - 1]!,
+            'fixture',
+            receipt,
+            'fixture-token',
+            process.execPath,
+            '-e',
+            'process.stdin.pipe(process.stdout)'
+          ],
+          {
+            encoding: 'utf8',
+            input: 'safe-frame\n',
+            env: { ...process.env, PATH: `${root}:${process.env.PATH}` }
+          }
+        )
+        expect(stdin).toBe('safe-frame\n')
       } finally {
         await launch.release()
         await rm(root, { recursive: true, force: true })
@@ -306,6 +332,7 @@ describe('WSL2 sandbox adapter', () => {
       openBridge
     })
 
+    expect(launch.memoryProbe.executionScope).not.toContain(launch.memoryProbe.token)
     expect(launch.argv[0]).toMatch(/wsl\.exe$/i)
     expect(launch.argv).toEqual(
       expect.arrayContaining([

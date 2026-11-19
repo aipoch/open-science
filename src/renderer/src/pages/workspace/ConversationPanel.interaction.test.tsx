@@ -739,7 +739,8 @@ const createPanelDefaults = (): PanelProps => ({
     actions: {
       submit: {
         draft: vi.fn(),
-        restoredPlan: vi.fn().mockResolvedValue(undefined)
+        restoredPlan: vi.fn().mockResolvedValue(undefined),
+        notebookContinuation: vi.fn()
       },
       revise: vi.fn(),
       branch: vi.fn(),
@@ -9941,6 +9942,46 @@ describe('ConversationPanel unified failure notices', () => {
     act(() => action(button)?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith(panel)
     expect(action('report')).toBeNull()
+  })
+
+  it('routes a Lab model configuration failure to the Lab settings panel', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({
+      openSettingsToPanel,
+      providers: [
+        {
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          models: ['lab:research-default'],
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false,
+          lastValidatedAt: 10
+        }
+      ]
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          failure: {
+            category: 'configuration',
+            reason: 'configuration/model-unavailable',
+            diagnostics: {}
+          }
+        }
+      },
+      agentControls: {
+        modelConfiguration: {
+          providerId: 'builtin-lab',
+          model: 'lab:research-default',
+          reasoningEffort: 'default'
+        }
+      }
+    })
+    act(() => action('open-provider-settings')?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('lab')
   })
 
   it('retries a service failure through the existing revision command and preserves the current draft', async () => {

@@ -27,7 +27,12 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
 import { defaultSpawn } from './environment-process'
-import { packageProcessTreeTerminated, type InstallSpawn } from '@aipoch/environment'
+import {
+  environmentChildCleanup,
+  packageProcessTreeTerminated,
+  retainEnvironmentChildCleanup,
+  type InstallSpawn
+} from '@aipoch/environment'
 import type { InstallRequest } from '../../shared/notebook-env'
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from '@aipoch/environment'
@@ -344,6 +349,7 @@ export const sandboxedPackageSpawn =
     let endExecution: (() => void) | undefined
     let ended = false
     let processesTerminated = false
+    let spawnError: unknown
     try {
       spawnOptions?.signal?.throwIfAborted()
       endExecution = sandboxed.beginExecution?.()
@@ -376,6 +382,7 @@ export const sandboxedPackageSpawn =
       processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
     } catch (error) {
+      spawnError = error
       if (packageProcessTreeTerminated(error)) {
         processesTerminated = true
         if (sandboxed.confirmProcessTreeTermination) {
@@ -384,14 +391,56 @@ export const sandboxedPackageSpawn =
       } else if (!ended && sandboxed.confirmProcessTreeTermination) {
         processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
       }
+      const childCleanup = environmentChildCleanup(error)
+      if (childCleanup && error instanceof Error) {
+        retainEnvironmentChildCleanup(error, {
+          identity: childCleanup.identity,
+          startedAt: childCleanup.startedAt,
+          release: async () => {
+            let failure: unknown
+            if (!processesTerminated) {
+              processesTerminated = await childCleanup.release().then(
+                ({ reaped }) => reaped,
+                (error: unknown) => {
+                  failure = error
+                  return false
+                }
+              )
+            }
+            const cleaned = await sandboxed.cleanup('spawn-failed', {
+              processesTerminated,
+              ...(sandboxed.confirmProcessTreeTermination
+                ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
+                : {})
+            })
+            return {
+              ...cleaned,
+              reaped: Boolean(
+                processesTerminated &&
+                cleaned?.processesTerminated &&
+                cleaned.networkClosed &&
+                cleaned.temporaryResourcesRemoved
+              ),
+              ...(failure === undefined ? {} : { error: failure })
+            }
+          }
+        })
+      }
       throw error
     } finally {
       if (!ended) endExecution?.()
-      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
-        processesTerminated,
-        ...(sandboxed.confirmProcessTreeTermination
-          ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
-          : {})
-      })
+      await Promise.resolve()
+        .then(() =>
+          sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
+            processesTerminated,
+            ...(sandboxed.confirmProcessTreeTermination
+              ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
+              : {})
+          })
+        )
+        .catch((error: unknown) => {
+          // Retain the original failure and its owned cleanup capability, including CHILD_UNCONFIRMED.
+          if (spawnError === undefined) throw error
+        })
     }
   }

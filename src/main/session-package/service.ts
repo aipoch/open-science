@@ -252,6 +252,7 @@ type PackageOptions = {
   getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
+  reserveExport?: (request: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
   readImageTasks?: (scope: ImageTaskScope) => Promise<ImageTask[]>
   inspectPackage?: typeof inspectSessionPackage
   runSessionPublication?: (
@@ -859,7 +860,26 @@ export class SessionPackageService {
     path: string,
     options: PackageExportOptions = {}
   ): Promise<SessionPackagePreview> {
-    return this.serialize(() => this.exportNow(rawRequest, path, options), options.signal)
+    return this.serialize(
+      () =>
+        this.withExportReservation(rawRequest, (request) => this.exportNow(request, path, options)),
+      options.signal
+    )
+  }
+
+  private async withExportReservation<Result>(
+    rawRequest: SessionPackageRequest,
+    work: (request: SessionPackageRequest) => Promise<Result>
+  ): Promise<Result> {
+    const request = sessionPackageRequestSchema.parse(rawRequest)
+    const release = await this.options.reserveExport?.(request, this.signal)
+    try {
+      this.signal.throwIfAborted()
+      await this.assertExportIdle(request)
+      return await work(request)
+    } finally {
+      release?.()
+    }
   }
 
   private async exportNow(
@@ -1892,33 +1912,34 @@ export class SessionPackageService {
     const safe = sessionPackageRequestSchema.parse(request)
     return this.serialize(async () => {
       await this.assertImportProject(safe.projectId)
-      await this.assertExportIdle(safe)
-      const source = await new SessionRepository(this.configRoot).loadSession(
-        safe.projectId,
-        safe.sessionId
-      )
-      if (!source) throw new Error('Session not found or unreadable.')
-      if (
-        source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
-        source.runtimeContext?.permission?.state === 'pending' ||
-        source.runtimeContext?.plan?.approval === 'pending'
-      )
-        throw new Error('Wait for pending approvals before forking this Session.')
-      let result: SessionPackageRequest | undefined
-      await this.exportNow(safe, '', {
-        onProgress,
-        consumeSnapshot: async (directory) => {
-          result = await this.importNow(
-            directory,
-            onProgress,
-            undefined,
-            { projectId: safe.projectId },
-            source
-          )
-        }
+      return this.withExportReservation(safe, async () => {
+        const source = await new SessionRepository(this.configRoot).loadSession(
+          safe.projectId,
+          safe.sessionId
+        )
+        if (!source) throw new Error('Session not found or unreadable.')
+        if (
+          source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
+          source.runtimeContext?.permission?.state === 'pending' ||
+          source.runtimeContext?.plan?.approval === 'pending'
+        )
+          throw new Error('Wait for pending approvals before forking this Session.')
+        let result: SessionPackageRequest | undefined
+        await this.exportNow(safe, '', {
+          onProgress,
+          consumeSnapshot: async (directory) => {
+            result = await this.importNow(
+              directory,
+              onProgress,
+              undefined,
+              { projectId: safe.projectId },
+              source
+            )
+          }
+        })
+        if (!result) throw new Error('Fork did not publish a Session.')
+        return result
       })
-      if (!result) throw new Error('Fork did not publish a Session.')
-      return result
     }, signal)
   }
 

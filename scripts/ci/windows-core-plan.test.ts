@@ -48,6 +48,12 @@ describe('Windows core impact and event selection', () => {
   it.each([
     ['scripts/build-notebook-host.mjs', ['windows_runtime']],
     ['scripts/windows-dev-notebook-host.integration.test.ts', ['windows_runtime']],
+    ['src/main/notebook/resource-release.windows.integration.test.ts', ['windows_runtime']],
+    ['src/main/notebook/memory-admission.windows.integration.test.ts', ['windows_runtime']],
+    ['src/main/notebook/python-lifecycle.windows.integration.test.ts', ['windows_runtime']],
+    ['src/main/composition/session-package-lifecycle.integration.test.ts', ['windows_runtime']],
+    ['src/main/notebook/host-mcp.integration.test.ts', ['windows_runtime']],
+    ['src/main/notebook/host-compute.integration.test.ts', ['windows_runtime']],
     [
       'src/main/notebook/shell-runtime.ts',
       ['windows_shell', 'windows_service_timeout', 'windows_sandbox']
@@ -166,6 +172,21 @@ it('keeps every Windows core test registered with its actual workflow step', () 
     expect(step.if).toContain(`windowsCoreChecks, '${step.id}'`)
     expect(step.if).toContain('!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks')
   }
+})
+
+it('runs the Windows Notebook RPC checks with real kernels enabled', () => {
+  const runtime = steps.find(({ id }) => id === 'windows_runtime')!
+  expect(runtime.env?.RUN_KERNEL).toBe('1')
+  expect(windowsCoreChecks.windows_runtime.tests).toEqual(
+    expect.arrayContaining([
+      'src/main/notebook/resource-release.windows.integration.test.ts',
+      'src/main/notebook/memory-admission.windows.integration.test.ts',
+      'src/main/notebook/python-lifecycle.windows.integration.test.ts',
+      'src/main/composition/session-package-lifecycle.integration.test.ts',
+      'src/main/notebook/host-mcp.integration.test.ts',
+      'src/main/notebook/host-compute.integration.test.ts'
+    ])
+  )
 })
 
 it.skipIf(process.platform === 'win32')(

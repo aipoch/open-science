@@ -88,6 +88,7 @@ export type NotebookSandboxInvocation = Readonly<{
 }>
 
 export type NotebookSandboxedSpawn = Readonly<{
+  memoryProbe?: import('@aipoch/notebook-network-sandbox').NotebookSandboxedProcess['memoryProbe']
   executable: string
   args: readonly string[]
   env: NodeJS.ProcessEnv

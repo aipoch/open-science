@@ -1,6 +1,7 @@
 import type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityFailedStep,
   ArtifactReproducibilityReceiptComparison
 } from '@aipoch/reproducibility/contracts'
 export type {
@@ -200,4 +201,5 @@ export type ArtifactReproducibilityCheckState = {
   logsTruncated?: boolean
   receipt?: ArtifactReproducibilityReceipt
   errorMessage?: string
+  failedStep?: ArtifactReproducibilityFailedStep
 }

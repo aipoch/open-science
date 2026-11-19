@@ -779,7 +779,7 @@ describe('post-merge Windows validation', () => {
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
     // Hosted runner indexes can reference superseded packages that now return HTTP 404.
     expect(linux.run).toMatch(
-      /^sudo apt-get update\s+sudo apt-get install --yes (?:[a-z0-9+.-]+ )*\.\/dist\/\*\.deb$/m
+      /^sudo apt-get update\n\s*sudo apt-get install --yes (?:[a-z0-9][a-z0-9+.-]* )*\.\/dist\/\*\.deb$/m
     )
     expect(evidence.run).toContain('--electron-p0 not-applicable')
     expect(evidence.run).toContain('--visual-regression not-applicable')

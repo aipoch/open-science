@@ -1,5 +1,5 @@
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { CirclePlus, Sparkles } from 'lucide-react'
+import { CirclePlus, FlaskConical, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
@@ -121,6 +121,15 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'xai-subscription') {
     return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
+  if (kindKey === 'lab') {
+    return (
+      <FlaskConical
+        className={cn('size-5 shrink-0 text-muted-foreground', className)}
+        aria-hidden="true"
+      />
+    )
   }
 
   if (

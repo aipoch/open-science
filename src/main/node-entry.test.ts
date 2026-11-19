@@ -449,17 +449,25 @@ it.each([1, 75])(
   async (code) => {
     f.healthyCredentials = true
     const { RuntimeOwnershipConflict } = await import('./runtime-ownership')
+    const { DataDirectoryUnavailableError } = await import('./storage/data-directory-availability')
     f.storageFailure =
       code === 75
         ? new RuntimeOwnershipConflict('isolated storage ownership conflict')
-        : new Error('isolated storage initialization failure')
+        : new DataDirectoryUnavailableError('private data directory')
     vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
     const send = vi.spyOn(process, 'send').mockImplementation(() => true)
     vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
     await import('./node-entry')
     await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
     const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
-    expect(messages).toContainEqual(expect.objectContaining({ kind: 'failed', stage: 'storage' }))
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        kind: 'failed',
+        stage: 'storage',
+        code: code === 75 ? 'startup-failed' : 'data-directory-unavailable'
+      })
+    )
+    expect(JSON.stringify(messages)).not.toContain('private data directory')
     expect(f.verifyDatabase).not.toHaveBeenCalled()
     const failureIndex = f.log.error.mock.calls.findIndex(
       ([message]) => message === 'startup failed'

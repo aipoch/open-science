@@ -51,6 +51,7 @@ import {
   ipcMainHandle
 } from '../ipc-handler-registry'
 import type { InstalledElectronSurfaceAdapter } from '../runtime-electron-wiring'
+import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import { createArtifactElectronSurface } from './artifacts'
 
@@ -276,7 +277,11 @@ describe('Artifact Electron surface', () => {
       scope.appSessionId,
       expect.any(Function)
     )
-    expect(owner.start).toHaveBeenCalledWith(request, sender.id, expect.any(Function))
+    expect(owner.start).toHaveBeenCalledWith(
+      withNotebookUserOperation(request, { assertCurrent: expect.any(Function) }),
+      sender.id,
+      expect.any(Function)
+    )
     expect(sender.send).toHaveBeenCalledWith('artifacts:reproducibility-check-changed', {
       attemptId: 'attempt-1'
     })

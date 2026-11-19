@@ -304,4 +304,32 @@ describe('ActiveModelSelect', () => {
     expect(optionByText('sonnet')).toBeDefined()
     expect(optionByText('gpt')).toBeDefined()
   })
+
+  it('shows Lab models next to personal models and selects them', () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({ id: 'p1', name: 'Gateway', apiEndpoints: ['messages'], models: ['m1'] }),
+        provider({
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          apiEndpoints: ['chat-completions', 'responses'],
+          models: ['lab:research-default'],
+          hasKey: false
+        })
+      ],
+      setActiveProvider
+    })
+    render()
+    openSelect()
+
+    const labOption = optionByText('research-default')
+    expect(labOption).toBeDefined()
+    expect(labOption?.getAttribute('aria-disabled')).not.toBe('true')
+    clickOption('research-default')
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-lab', 'lab:research-default')
+  })
 })

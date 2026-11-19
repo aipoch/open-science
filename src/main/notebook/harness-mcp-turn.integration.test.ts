@@ -13,6 +13,7 @@ import {
 } from '@aipoch/agent-harness'
 import { openNotebookHarnessTurn } from './harness-mcp-turn'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
 import { NotebookRunRepository } from './repository'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
@@ -81,6 +82,7 @@ async function setup(
     return completed(root)
   })
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: root,
     dataRoot: root,
     projectId: 'project',
@@ -137,7 +139,17 @@ async function setup(
     }
   }
   rpc.setArtifactTurnBinding('session', binding)
-  const connection = await rpc.issueSessionConnection('session', 'project', 'root-frame-session')
+  const executionIntent = service.createExecutionIntent({
+    projectId: 'project',
+    sessionId: 'session'
+  })
+  const connection = await rpc.issueSessionConnection(
+    'session',
+    'project',
+    'root-frame-session',
+    true,
+    executionIntent
+  )
   cleanup.push(async () => connection.release?.())
   const environment = {
     ...connection,
