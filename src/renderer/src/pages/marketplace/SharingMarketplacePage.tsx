@@ -860,7 +860,11 @@ export const SharingMarketplacePage = ({
             )}
             aria-hidden={activeResource !== 'marketplace'}
           >
-            <UseCaseCarousel variant="marketplace" compact={embedded} />
+            <UseCaseCarousel
+              variant="marketplace"
+              compact={embedded}
+              active={activeResource === 'marketplace'}
+            />
           </div>
           {visitedResources.has('skills') && (
             <div

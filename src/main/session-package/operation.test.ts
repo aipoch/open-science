@@ -404,3 +404,40 @@ it('publishes catalog download ownership from the first snapshot and hands off o
     'research'
   )
 })
+
+it('captures sessionTitle for export selection and tracks org-case upload destination cleanly', async () => {
+  const owner = new SessionPackageOperation()
+  const run = owner.run('export', session, () =>
+    owner.selectFiles([file], undefined, undefined, 'Experiment Run 42')
+  )
+  try {
+    expect(owner.snapshot?.sessionTitle).toBe('Experiment Run 42')
+    expect(() =>
+      owner.respond({
+        action: 'select',
+        operationId: owner.snapshot!.id,
+        excludedStorageKeys: [],
+        destination: 'org-case'
+      })
+    ).toThrow('Invalid package selection')
+
+    owner.respond({
+      action: 'select',
+      operationId: owner.snapshot!.id,
+      excludedStorageKeys: [],
+      destination: 'org-case',
+      orgCase: { name: 'Experiment Run 42', description: 'Uploaded from desktop' }
+    })
+
+    expect(owner.snapshot?.sessionTitle).toBeUndefined()
+    expect(owner.snapshot?.exportDestination).toBe('org-case')
+    expect(owner.uploadTarget).toEqual({
+      name: 'Experiment Run 42',
+      description: 'Uploaded from desktop'
+    })
+    await expect(run).resolves.toEqual({ excludedStorageKeys: [], includePdfNotes: false })
+  } finally {
+    owner.cancel()
+    await run.catch(() => undefined)
+  }
+})

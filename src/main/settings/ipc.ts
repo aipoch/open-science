@@ -1,5 +1,6 @@
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
+import type { LabCheckRequest, SetLabServerRequest } from '../../shared/lab'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -368,6 +369,23 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-xai-oauth', () =>
     snapshotCommits.currentSnapshotAfter(workflows.runtime.logoutXaiOAuth())
   )
+  ipcMainHandle('settings:lab-set-server', (_event, request: SetLabServerRequest) =>
+    snapshotCommits.projectAfter(service.setLabServer(request))
+  )
+  ipcMainHandle('settings:lab-check', (_event, request?: LabCheckRequest) =>
+    snapshotCommits.projectAfter(service.checkLab(request))
+  )
+  ipcMainHandle('settings:lab-begin-login', () =>
+    snapshotCommits.projectAfter(service.beginLabLogin())
+  )
+  ipcMainHandle('settings:lab-wait-login', () =>
+    snapshotCommits.projectAfter(service.waitLabLogin())
+  )
+  ipcMainHandle('settings:lab-cancel-login', () =>
+    snapshotCommits.projectAfter(service.cancelLabLogin())
+  )
+  ipcMainHandle('settings:lab-refresh', () => snapshotCommits.projectAfter(service.refreshLab()))
+  ipcMainHandle('settings:lab-logout', () => snapshotCommits.projectAfter(service.logoutLab()))
   ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) =>

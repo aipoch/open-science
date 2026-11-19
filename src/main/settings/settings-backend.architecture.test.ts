@@ -503,18 +503,18 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDestination allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        buildSkillExport beginLabLogin beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelLabLogin checkLab cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getComputePythonRuntime getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWslSetupStatus getWsl2BashPreviewStatus hasActiveInstall holdInstallAdmission quiesceAuthentication
-        getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
+        getLabCase getLabCaseDownload getLabView getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
-        dispose codeBuddyAccount loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
-        logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
+        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listLabCases listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
+        dispose codeBuddyAccount initializeLab loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
+        logoutClaudeShared logoutIsolatedClaude logoutLab logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities openHarnessSession openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
-        previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
+        previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip refreshLab
         createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference reviewNotebookPrivateDestination
         resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveExplicitDirectProvider resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken saveValidatedProvider
@@ -524,8 +524,8 @@ describe('Settings backend ownership architecture', () => {
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
-        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
+        setLabServer setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill uploadLabCase upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitLabLogin waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -738,14 +738,19 @@ describe('Settings backend ownership architecture', () => {
       'id',
       'keyMask',
       'keyRef',
+      'labCatalogToken',
+      'labServerUrl',
       'lastValidatedAt',
       'lastValidatedTarget',
       'lastValidationFailure',
       'maxInputTokens',
       'maxOutputTokens',
       'model',
+      'modelCapabilities',
       'modelCatalog',
       'modelCatalogStatus',
+      'modelProtocols',
+      'modelStreaming',
       'name',
       'reasoningEffortPreset',
       'reasoningEffortTransport',

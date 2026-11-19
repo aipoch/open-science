@@ -53,6 +53,7 @@ import type { composeResearchCatalog } from './research-catalog'
 import { registerReviewerComposition } from './reviewer'
 import type { composeSessionAuthority } from './session-authority'
 import type { composeSessionFoundation } from './session-foundation'
+import type { OrgCaseService } from '../session-package/org-cases'
 import type { composeSessionPackageSurfaces, composeSessionPackages } from './session-packages'
 import type { composeSessionSurfaces } from './session-surfaces'
 import type { composeSettingsBootstrap } from './settings-bootstrap'
@@ -103,6 +104,7 @@ export function composeCommandDependencies({
   storageHandoff,
   artifactSurfaces,
   sessionPackageSurfaces,
+  orgCases,
   reviewerCommandOwner,
   listAppIconPreviews
 }: {
@@ -118,6 +120,7 @@ export function composeCommandDependencies({
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
   sessionFoundation: Awaited<ReturnType<typeof composeSessionFoundation>>
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
+  orgCases?: Pick<OrgCaseService, 'listCases' | 'getCase' | 'importCase' | 'cancelImport'>
   managedFiles: ReturnType<typeof composeManagedFiles>
   schedules: ScheduleManagement
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
@@ -224,6 +227,7 @@ export function composeCommandDependencies({
     },
     settingsRuntime: {
       workflows: settingsEffects.settingsWorkflows.runtime,
+      lab: settingsBootstrap.settingsService,
       snapshotCommits: settingsBootstrap.settingsSnapshotCommits
     },
     compute: {
@@ -277,6 +281,16 @@ export function composeCommandDependencies({
     },
     dataContent: {
       useCaseCatalog,
+      orgCases: orgCases ?? {
+        listCases: async () => ({ ok: false, errorCode: 'unconfigured' }),
+        getCase: async () => ({ ok: false, errorCode: 'unconfigured' }),
+        importCase: async (caseId: string) => ({
+          status: 'failed',
+          caseId,
+          errorCode: 'unconfigured'
+        }),
+        cancelImport: () => ({ cancelled: false })
+      },
       officePreviewCommands,
       pptxEditCommands: createPptxEditCommands({
         sessions: managedFiles.pptxEditSessions,

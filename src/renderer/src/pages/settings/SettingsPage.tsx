@@ -24,6 +24,7 @@ import {
   BrainCircuit,
   ChartNoAxesCombined,
   Cloud,
+  FlaskConical,
   Globe,
   KeyRound,
   LockKeyhole,
@@ -204,6 +205,7 @@ const ArchivedPanel = lazy(async () => ({
 const TokenUsagePanel = lazy(async () => ({
   default: (await import('./TokenUsagePanel')).TokenUsagePanel
 }))
+const LabPanel = lazy(async () => ({ default: (await import('./LabPanel')).LabPanel }))
 
 type SettingsPageProps = {
   open: boolean
@@ -328,6 +330,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
+      { id: 'lab', labelKey: 'Lab', Icon: FlaskConical },
       { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
       { id: 'compute', labelKey: 'Compute', Icon: Zap }
     ]
@@ -1955,6 +1958,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <NotificationsPanel />
                     ) : activePanel === 'remote-control' ? (
                       <RemoteControlPanel />
+                    ) : activePanel === 'lab' ? (
+                      <LabPanel />
                     ) : activePanel === 'agent' ? (
                       <AgentPanel
                         title={t('Agent framework')}
