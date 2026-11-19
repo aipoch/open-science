@@ -38,21 +38,15 @@ it('loads on entry as a secondary page with the last seven local dates and advan
   expect(document.body.textContent).toContain('No matching network records.')
   expect(document.body.textContent).toContain('Retention days')
 })
-it('places retention controls below the list and requires confirmation before shortening', async () => {
+it('displays a previously saved custom retention without changing it on entry', async () => {
+  query.mockResolvedValueOnce({ records: [], retentionDays: 45, warnings: [] })
   await act(async () => root.render(<NotebookNetworkLogs />))
-  const input = document.querySelector<HTMLInputElement>('[aria-label="Retention days"]')!
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '30')
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-  })
   const save = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Save')!
+  expect(document.querySelector('button[aria-label="Retention days"]')?.textContent).toBe('45')
+  expect(save.disabled).toBe(true)
   await act(async () => save.click())
   expect(retention).not.toHaveBeenCalled()
-  expect(document.body.textContent).toContain('Shorten network log retention?')
-  await act(async () =>
-    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click()
-  )
-  expect(retention).not.toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('Shorten network log retention?')
 })
 
 it('keeps the last successful query when a new filter fails before loading more', async () => {
@@ -64,6 +58,7 @@ it('keeps the last successful query when a new filter fails before loading more'
         scope: 'notebook:network' as const,
         msg: 'network access' as const,
         data: {
+          eventId: 'event-1',
           requestId: 'request-1',
           mode: 'relaxed' as const,
           projectId: 'project-1',
@@ -81,16 +76,16 @@ it('keeps the last successful query when a new filter fails before loading more'
     warnings: []
   }
   let calls = 0
-  query.mockImplementation(async (request: Record<string, unknown>) => {
+  query.mockImplementation(async (request: { sessionId?: string }) => {
     calls++
     if (calls === 1) return firstPage
-    if (request.mode === 'strict') throw new Error('temporary read failure')
+    if (request.sessionId === 'other') throw new Error('temporary read failure')
     return { ...firstPage, records: [] }
   })
   await act(async () => root.render(<NotebookNetworkLogs />))
   await act(async () => {
-    fireEvent.change(document.querySelector('[aria-label="Network mode"]')!, {
-      target: { value: 'strict' }
+    fireEvent.change(document.querySelector('[aria-label="Session ID"]')!, {
+      target: { value: 'other' }
     })
     fireEvent.submit(document.querySelector('form')!)
   })

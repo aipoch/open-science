@@ -3,9 +3,15 @@ import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import { EditableNumberCombobox } from '@/components/ui/editable-number-combobox'
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import type {
   NotebookNetworkAuditPage,
@@ -13,7 +19,8 @@ import type {
   NotebookNetworkAuditRecord
 } from '../../../../shared/notebook-network-audit'
 
-const selectClass = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
+const fieldClass = 'w-44 max-w-full'
+const retentionPresets = [30, 90, 180, 365]
 
 function localMinute(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
@@ -114,11 +121,10 @@ function NetworkLogContent(): React.JSX.Element {
   }
   const field = (
     key: 'address' | 'projectId' | 'sessionId' | 'notebookRunId',
-    label: string,
-    className?: string
+    label: string
   ): React.JSX.Element => (
     <Input
-      className={className}
+      className={fieldClass}
       aria-label={label}
       placeholder={label}
       value={filters[key] ?? ''}
@@ -127,9 +133,9 @@ function NetworkLogContent(): React.JSX.Element {
   )
   return (
     <>
-      <div className="space-y-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
         <form
-          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+          className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
           onSubmit={(e) => {
             e.preventDefault()
             void load({ ...filters, ...queryRange(range) })
@@ -138,57 +144,68 @@ function NetworkLogContent(): React.JSX.Element {
           <div
             className={`flex flex-wrap items-center gap-2 ${advanced ? 'col-span-full' : 'sm:col-span-2'}`}
           >
-            <select
-              className={selectClass}
-              aria-label={t('Network mode')}
-              value={filters.mode ?? ''}
-              onChange={(e) =>
+            <Select
+              value={filters.mode ?? 'all'}
+              onValueChange={(value) =>
                 setFilters({
                   ...filters,
-                  mode: (e.target.value as NotebookNetworkAuditQuery['mode']) || undefined
+                  mode: value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['mode'])
                 })
               }
             >
-              <option value="">{t('All modes')}</option>
-              <option value="relaxed">{t('Relaxed')}</option>
-              <option value="strict">{t('Strict')}</option>
-            </select>
-            <select
-              className={selectClass}
-              aria-label={t('Decision')}
-              value={filters.decision ?? ''}
-              onChange={(e) =>
+              <SelectTrigger className={fieldClass} aria-label={t('Network mode')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('All modes')}</SelectItem>
+                <SelectItem value="relaxed">{t('Relaxed')}</SelectItem>
+                <SelectItem value="strict">{t('Strict')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filters.decision ?? 'all'}
+              onValueChange={(value) =>
                 setFilters({
                   ...filters,
-                  decision: (e.target.value as NotebookNetworkAuditQuery['decision']) || undefined
+                  decision:
+                    value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['decision'])
                 })
               }
             >
-              <option value="">{t('All decisions')}</option>
-              <option value="allowed">{t('Allowed')}</option>
-              <option value="blocked">{t('Blocked')}</option>
-            </select>
-            <select
-              className={selectClass}
-              aria-label={t('Result')}
-              value={filters.outcome ?? ''}
-              onChange={(e) =>
+              <SelectTrigger className={fieldClass} aria-label={t('Decision')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('All decisions')}</SelectItem>
+                <SelectItem value="allowed">{t('Allowed')}</SelectItem>
+                <SelectItem value="blocked">{t('Blocked')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filters.outcome ?? 'all'}
+              onValueChange={(value) =>
                 setFilters({
                   ...filters,
-                  outcome: (e.target.value as NotebookNetworkAuditQuery['outcome']) || undefined
+                  outcome:
+                    value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['outcome'])
                 })
               }
             >
-              <option value="">{t('All results')}</option>
-              {Object.entries(labels)
-                .filter(([key]) => key !== 'allowed' && key !== 'blocked')
-                .map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-            </select>
-            {field('sessionId', t('Session ID'), 'w-32')}
+              <SelectTrigger className={fieldClass} aria-label={t('Result')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('All results')}</SelectItem>
+                {Object.entries(labels)
+                  .filter(([key]) => key !== 'allowed' && key !== 'blocked')
+                  .map(([key, label]) => (
+                    <SelectItem key={key} value={key}>
+                      {label}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {field('sessionId', t('Session ID'))}
           </div>
           <div id="network-log-advanced" className={advanced ? 'contents' : 'hidden'}>
             <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -202,6 +219,7 @@ function NetworkLogContent(): React.JSX.Element {
               </label>
               <Input
                 id="network-log-from"
+                className={fieldClass}
                 type="datetime-local"
                 value={range.from}
                 onChange={(e) => setRange({ ...range, from: e.target.value })}
@@ -213,6 +231,7 @@ function NetworkLogContent(): React.JSX.Element {
               </label>
               <Input
                 id="network-log-to"
+                className={fieldClass}
                 type="datetime-local"
                 min={range.from || undefined}
                 value={range.to}
@@ -224,7 +243,7 @@ function NetworkLogContent(): React.JSX.Element {
             type="button"
             size="sm"
             variant="ghost"
-            className="w-full"
+            className="h-8 w-full"
             aria-expanded={advanced}
             aria-controls="network-log-advanced"
             onClick={(event) => {
@@ -238,7 +257,7 @@ function NetworkLogContent(): React.JSX.Element {
             type="submit"
             size="sm"
             disabled={busy}
-            className="col-start-2 w-full sm:col-start-3"
+            className="col-start-2 h-8 w-full sm:col-start-3"
           >
             {busy ? t('Loading…') : t('Search')}
           </Button>
@@ -253,9 +272,9 @@ function NetworkLogContent(): React.JSX.Element {
             )}
           />
         ) : null}
-        <div aria-busy={busy} className="overflow-x-auto rounded-lg">
+        <div aria-busy={busy} className="min-h-24 flex-1 overflow-auto rounded-lg">
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="bg-muted">
+            <thead className="sticky top-0 z-10 bg-muted">
               <tr>
                 {[
                   t('Time'),
@@ -339,7 +358,7 @@ function NetworkLogContent(): React.JSX.Element {
             <p className="p-4 text-sm text-muted-foreground">{t('No matching network records.')}</p>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-end gap-3 bg-background">
           {page?.cursor ? (
             <Button
               variant="outline"
@@ -348,27 +367,35 @@ function NetworkLogContent(): React.JSX.Element {
             >
               {t('Load more')}
             </Button>
-          ) : (
-            <span aria-hidden="true" />
-          )}
-          <div className="flex flex-wrap items-end justify-end gap-2">
-            <div className="w-40 space-y-1">
+          ) : null}
+          <div className="ms-auto flex flex-wrap items-end justify-end gap-2">
+            <div className="space-y-1">
               <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
                 {t('Retention days')}
               </label>
-              <EditableNumberCombobox
-                id="network-log-days"
-                ariaLabel={t('Retention days')}
-                value={days}
-                presets={[30, 90, 180, 365]}
-                onValueChange={setDays}
-                disabled={!page || saving}
-                locale={i18n.language}
-              />
+              <Select value={days} onValueChange={setDays} disabled={!page || saving}>
+                <SelectTrigger
+                  id="network-log-days"
+                  className={fieldClass}
+                  aria-label={t('Retention days')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from(new Set([...retentionPresets, page?.retentionDays ?? 90]))
+                    .sort((a, b) => a - b)
+                    .map((value) => (
+                      <SelectItem key={value} value={String(value)}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button
               size="sm"
               variant="outline"
+              className="h-8"
               disabled={
                 !page ||
                 saving ||
@@ -407,7 +434,7 @@ function NetworkLogContent(): React.JSX.Element {
 export function NotebookNetworkLogs(): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <div className="space-y-4 p-5">
+    <div className="flex h-full flex-col gap-4 p-5">
       <div>
         <h1 className="text-lg font-medium">{t('Notebook network logs')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">

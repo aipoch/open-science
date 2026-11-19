@@ -1687,6 +1687,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         modelView.kind === 'classification-edit' ||
                         modelView.kind === 'image-service-create' ||
                         modelView.kind === 'image-service-edit')) ||
+                      (activePanel === 'network' && networkView.kind === 'logs') ||
                       activePanel === 'memory' ||
                       activePanel === 'tags'
                       ? 'h-full'
