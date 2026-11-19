@@ -1,16 +1,20 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Runs inside the standalone HTML player. */
 window.__checkFilm = () => {
   const { scenes } = window.DATA.timeline
-  const issues = window.__checkCaptions().slice(0, 32)
+  const captions = window.__checkCaptions()
+  const textIssues = captions.filter((issue) => issue.textLayout).slice(0, 32)
+  const notes = captions.filter((issue) => !issue.textLayout).slice(0, 32)
+  const renderFailures = []
   const frames = []
   const seen = new Set()
-  function report(scene, message, script, textLayout = false) {
-    const key = JSON.stringify([scene, script, message, textLayout])
+  function report(scene, message, script, flags = {}) {
+    const issues = flags.renderFailure ? renderFailures : flags.textLayout ? textIssues : notes
+    const key = JSON.stringify([scene, script, message, flags])
     if (seen.has(key) || issues.length >= 64) return
     seen.add(key)
     issues.push({
       scene,
-      ...(textLayout && { textLayout: true }),
+      ...flags,
       ...(script ? { script } : {}),
       message: message.slice(0, 500)
     })
@@ -63,16 +67,15 @@ window.__checkFilm = () => {
         if (x < 24 || y < 24 || x + w > W - 24 || y + h > H - 24)
           report(scene.id, box.id + ' extends outside the safe area.')
         for (const text of box.overflow)
-          report(scene.id, box.id + ' clips the text "' + text + '".', undefined, true)
+          report(scene.id, box.id + ' clips the text "' + text + '".', undefined, {
+            textLayout: true
+          })
         for (const [j, other] of boxes.entries()) {
           if (i === j || (other.id.startsWith('panel:') && j < i)) continue
           if (overlap(box.rect, other.rect))
-            report(
-              scene.id,
-              box.id + ' overlaps ' + other.id + '.',
-              undefined,
-              window.__filmTextOverlaps(box.id, other.id)
-            )
+            report(scene.id, box.id + ' overlaps ' + other.id + '.', undefined, {
+              textLayout: window.__filmTextOverlaps(box.id, other.id)
+            })
         }
       }
       for (const a of animations) {
@@ -86,7 +89,19 @@ window.__checkFilm = () => {
     }
     for (const a of animations) {
       const script = a.id.slice(scene.id.length + 1)
-      for (const error of a.diag.errors) report(scene.id, 'Drawing error: ' + error, script)
+      // The kit also records a timing warning for CSS that uses the wall clock.
+      const errors = a.diag.errors.filter(
+        (error) =>
+          error !==
+          'CSS animations/transitions run on the wall clock — set styles from k.t every frame instead'
+      )
+      for (const error of a.diag.errors)
+        report(
+          scene.id,
+          'Drawing error: ' + error,
+          script,
+          errors.includes(error) ? { renderFailure: true } : {}
+        )
       for (const hit of a.diag.textHits)
         report(
           scene.id,
@@ -96,14 +111,14 @@ window.__checkFilm = () => {
             hit.key +
             '. Move them into separate areas.',
           script,
-          true
+          { textLayout: true }
         )
       for (const hit of a.diag.outside)
         report(
           scene.id,
           hit.what + ' is ' + hit.by + ' px outside the canvas at ' + hit.t + 's into the scene.',
           script,
-          hit.what.startsWith('text "') || hit.what === '<text>'
+          { textLayout: hit.what.startsWith('text "') || hit.what === '<text>' }
         )
       for (const hit of a.diag.cardSpill)
         report(
@@ -116,10 +131,12 @@ window.__checkFilm = () => {
             hit.t +
             's. Resize the card or use k.readoutCard.',
           script,
-          true
+          { textLayout: true }
         )
-      if (!ink.has(a) && !a.diag.errors.length)
-        report(scene.id, 'The animation draws nothing while its panel is visible.', script)
+      if (!ink.has(a) && !errors.length)
+        report(scene.id, 'The animation draws nothing while its panel is visible.', script, {
+          renderFailure: true
+        })
     }
     frames.push({
       scene: scene.id,
@@ -148,6 +165,8 @@ window.__checkFilm = () => {
       last.id,
       'The final branded end card is missing or has not fully appeared before the fade. Give it its own closing hold.'
     )
+  // Preserve repairable failures when the report reaches its transport limit.
+  const issues = [...renderFailures, ...textIssues, ...notes]
   if (window.__filmAppError || window.__filmAppUsed === false)
     issues.unshift({
       scene: scenes[0].id,
@@ -155,7 +174,6 @@ window.__checkFilm = () => {
       message:
         'The session app could not be shown. Use a drawn illustration of the research subject.'
     })
-  // Keep all observations for the host. Only measured text defects request a layout repair.
   return {
     issues: issues
       .slice(0, 64)

@@ -105,11 +105,14 @@ it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML b
     await rm(directory, { recursive: true, force: true })
   }
 })
-it.each([false, true])(
-  'publishes the earliest least-defective draft after text repairs (invalid last revision: %s)',
-  async (invalidRevision) => {
+it.each([
+  { text: [5, 2, 2, 4], failures: [0, 0, 0, 0], invalidRevision: false },
+  { text: [0, 3, 3, 0], failures: [1, 0, 0, 1], invalidRevision: false },
+  { text: [0, 2, 0, 0], failures: [1, 0, 1, 0], invalidRevision: true }
+])(
+  'publishes the earliest best playable draft for %j',
+  async ({ text, failures, invalidRevision }) => {
     const directory = await mkdtemp(join(tmpdir(), 'film-best-layout-'))
-    const counts = [5, 2, 2, 4]
     let pass = 0
     try {
       const result = await generateResearchFilm({
@@ -129,13 +132,21 @@ it.each([false, true])(
           await writeFile(sourcePath, 'sources ' + pass)
           return { playerPath, sourcePath, duration: pass, preparationMs: 1 }
         },
-        reviewPlayer: async () =>
-          Array.from({ length: counts[pass - 1] }, (_, i) => ({
+        reviewPlayer: async () => [
+          ...Array.from({ length: failures[pass - 1] }, () => ({
+            scene: 'hook',
+            script: 'anims/hook.js',
+            textLayout: false,
+            renderFailure: true as const,
+            message: 'Animation is blank.'
+          })),
+          ...Array.from({ length: text[pass - 1] }, (_, i) => ({
             scene: 'hook',
             script: 'anims/hook.js',
             textLayout: true,
             message: 'Overlapping label ' + i
-          })),
+          }))
+        ],
         signal: new AbortController().signal,
         modelDirectory: 'model',
         modelRevision: 'v',

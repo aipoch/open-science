@@ -8,6 +8,7 @@ export const filmVisualIssueSchema = z
     line: z.number().int().nonnegative().max(2).optional(),
     app: z.literal(true).optional(),
     textLayout: z.boolean().optional(),
+    renderFailure: z.literal(true).optional(),
     script: z
       .string()
       .regex(/^anims\/[\w-]+\.js$/)

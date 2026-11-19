@@ -52,9 +52,9 @@ it('checks canvas content independently of its panel and requires a visible end 
   )
   const inspect = (): ReturnType<typeof filmVisualCheckSchema.parse> =>
     filmVisualCheckSchema.parse(player.__checkFilm())
-  expect(inspect().issues.map((i) => [i.scene, i.textLayout, i.message])).toEqual([
-    ['result', false, expect.stringContaining('draws nothing')],
-    ['outro', false, expect.stringContaining('end card')]
+  expect(inspect().issues.map((i) => [i.scene, i.renderFailure, i.message])).toEqual([
+    ['result', true, expect.stringContaining('draws nothing')],
+    ['outro', undefined, expect.stringContaining('end card')]
   ])
   expect(frames.mock.calls.length).toBeGreaterThan(15)
   cards.mockReturnValue([
@@ -72,4 +72,12 @@ it('checks canvas content independently of its panel and requires a visible end 
   ])
   animation.diag.textHits.length = 0
   expect(inspect().issues).toEqual([])
+  animation.diag.errors.push('Cannot read drawing coordinates')
+  expect(inspect().issues).toEqual([
+    expect.objectContaining({
+      renderFailure: true,
+      script: 'anims/result.js',
+      message: expect.stringContaining('Cannot read drawing coordinates')
+    })
+  ])
 })

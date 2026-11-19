@@ -397,7 +397,12 @@ export async function generateResearchFilm(
   const reviewedScripts = new Map<string, string>()
   const bestDirectory = join(options.directory, 'best-layout')
   let best:
-    { defects: number; result: Awaited<ReturnType<typeof generateResearchFilm>> } | undefined
+    | {
+        renderFailures: number
+        textDefects: number
+        result: Awaited<ReturnType<typeof generateResearchFilm>>
+      }
+    | undefined
   let ownsBestDirectory = false
   const restoreBest = async (
     result: Awaited<ReturnType<typeof generateResearchFilm>>
@@ -408,7 +413,7 @@ export async function generateResearchFilm(
     options.signal.throwIfAborted()
     return result
   }
-  let textRepairs = 0
+  let visualRepairs = 0
   try {
     for (let pass = 0; ; pass++) {
       const { specPath, title, spec, scriptScore } = await authorResearchFilmSource({
@@ -447,21 +452,30 @@ export async function generateResearchFilm(
       if (!review || !spec) return candidate
       options.onProgress?.({ phase: 'verifying' })
       const observations = await review(options.source, result.playerPath, spec, options.signal)
-      // The player explicitly marks non-text observations as advisory. Keep the app fallback
-      // and respect custom reviewers that request repairs without a text classification.
-      visualIssues = observations.filter((issue) => issue.app || issue.textLayout !== false)
+      // Unclassified findings from custom reviewers retain their existing repair behavior.
+      visualIssues = observations.filter(
+        (issue) => issue.app || issue.renderFailure || issue.textLayout !== false
+      )
       options.signal.throwIfAborted()
       if (!visualIssues.length) return candidate
-      const textOnly = visualIssues.every((issue) => issue.textLayout && !issue.app)
-      const better = textOnly && (!best || visualIssues.length < best.defects)
-      if (textOnly && textRepairs >= 3) {
+      const ranked = visualIssues.every(
+        (issue) => !issue.app && (issue.renderFailure || issue.textLayout)
+      )
+      const renderFailures = visualIssues.filter((issue) => issue.renderFailure).length
+      const textDefects = visualIssues.filter((issue) => issue.textLayout).length
+      const better =
+        ranked &&
+        (!best ||
+          renderFailures < best.renderFailures ||
+          (renderFailures === best.renderFailures && textDefects < best.textDefects))
+      if (ranked && visualRepairs >= 3) {
         if (better || !best) return candidate
         return await restoreBest(best.result)
       }
-      if (textOnly) textRepairs++
+      if (ranked) visualRepairs++
       const useDrawing =
-        usedSessionApp && (visualIssues.some((i) => i.app) || (!textOnly && pass >= 3))
-      if (pass >= 3 && !textOnly && !useDrawing)
+        usedSessionApp && (visualIssues.some((i) => i.app) || (!ranked && pass >= 3))
+      if (pass >= 3 && !ranked && !useDrawing)
         throw new Error(
           'The HTML film still needs visual repairs. ' +
             visualIssues
@@ -496,7 +510,7 @@ export async function generateResearchFilm(
             await rm(join(bestDirectory, name), { recursive: true, force: true })
         }
         await moveFilmDraft(options.directory, bestDirectory)
-        best = { defects: visualIssues.length, result: candidate }
+        best = { renderFailures, textDefects, result: candidate }
         continue
       }
       for (const name of draftFiles) {
