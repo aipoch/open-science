@@ -2,6 +2,7 @@ import { CitationPaperDetails } from './CitationPaperDetails'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  RotateCw,
   ListChecks,
   ArrowLeft,
   ChevronRight,
@@ -16,7 +17,7 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/comp
 import { Button } from '@/components/ui/button'
 import { creatorLabel } from '../literature-item-display'
 import { LiteratureCitationStatus, type CitationStatusModel } from './LiteratureCitationStatus'
-import type { CitationGraphNode } from './citation-graph'
+import type { CitationGraphNode, CitationMetadata } from './citation-graph'
 import type { CitationGraphController } from './useCitationGraphController'
 
 export type CitationInspectorModel = Pick<
@@ -76,6 +77,7 @@ function PaperAction({
 
 export function LiteratureCitationInspector({
   model,
+  paperMetadata,
   statusModel,
   sourceName,
   onRestart,
@@ -87,6 +89,7 @@ export function LiteratureCitationInspector({
   ref
 }: {
   model: CitationInspectorModel
+  paperMetadata: CitationMetadata
   statusModel: CitationStatusModel
   sourceName: string
   onRestart(): void
@@ -113,16 +116,17 @@ export function LiteratureCitationInspector({
   } = model
   const [checked, setChecked] = useState<Set<string>>()
   const selecting = checked !== undefined
-  const selectedPapers = selecting
-    ? (statusModel.unfilteredGraph?.nodes.filter((node) => {
-        const receipt = model.receiptFor(node)
-        return (
-          !node.center &&
-          (!receipt || receipt === 'failed') &&
-          node.paperIds.some((id) => checked.has(id))
-        )
-      }) ?? [])
+  const checkedNodes = checked
+    ? (statusModel.unfilteredGraph?.nodes.filter(
+        (node) => !node.center && !node.conflicting && node.paperIds.some((id) => checked.has(id))
+      ) ?? [])
     : []
+  const selectedPapers = checkedNodes.filter((node) => {
+    const receipt = model.receiptFor(node)
+    return !receipt || receipt === 'failed'
+  })
+  const failedCount = selectedPapers.filter((node) => model.receiptFor(node) === 'failed').length
+  const retrySelection = failedCount > 0 && failedCount === selectedPapers.length
   const [listOpen, setListOpen] = useState(true)
   const [listDirection, setListDirection] = useState<'references' | 'citations'>('references')
   const direction = model.filter === 'all' ? listDirection : model.filter
@@ -191,14 +195,20 @@ export function LiteratureCitationInspector({
             ? t('Previously dismissed; review it in Inbox.')
             : t('In Inbox')
   const receiptText = receiptLabel(receipt)
-  const saveDisabled = blocked || (receipt !== undefined && receipt !== 'failed')
-  const centerDisabled = blocked || !canExplore
+  const saveDisabled =
+    blocked || selectedNode?.conflicting === true || (receipt !== undefined && receipt !== 'failed')
+  const centerDisabled = blocked || selectedNode?.conflicting === true || !canExplore
   const saveLabel = saving ? t('Saving…') : t('Add to Inbox')
+  const SaveIcon = saving ? LoaderCircle : Inbox
+  const saveIcon = (
+    <SaveIcon aria-hidden="true" className={saving ? 'motion-safe:animate-spin' : undefined} />
+  )
   const paperRow = (node: CitationGraphNode): React.JSX.Element => {
     const Row = selecting ? 'label' : 'button'
     const rowReceipt = selecting ? model.receiptFor(node) : undefined
     const alreadySaved = Boolean(rowReceipt && rowReceipt !== 'failed')
-    const included = !alreadySaved && node.paperIds.some((id) => checked?.has(id))
+    const included =
+      !node.conflicting && !alreadySaved && node.paperIds.some((id) => checked?.has(id))
     const highlighted = selecting ? included : selectedNode?.id === node.id
     return (
       <li key={node.id} className={highlighted ? 'rounded-md bg-primary/10' : undefined}>
@@ -218,7 +228,7 @@ export function LiteratureCitationInspector({
               type="checkbox"
               className="mt-0.5 size-4 shrink-0 accent-primary"
               aria-label={t('Select {{title}}', { title: node.record.item.title })}
-              disabled={saving || statusModel.invalidated || alreadySaved}
+              disabled={saving || statusModel.invalidated || node.conflicting || alreadySaved}
               checked={included}
               onChange={() =>
                 setChecked((previous) => {
@@ -248,6 +258,9 @@ export function LiteratureCitationInspector({
                 .filter(Boolean)
                 .join(' · ')}
             </span>
+            {node.conflicting && (
+              <span className="block text-xs">{t('Conflicting identifiers')}</span>
+            )}
             {selecting && rowReceipt && (
               <span role="status" className="block text-xs text-muted-foreground">
                 {receiptLabel(rowReceipt)}
@@ -472,6 +485,8 @@ export function LiteratureCitationInspector({
           {selectedNode && !listOpen ? (
             expanded && visible ? (
               <CitationPaperDetails
+                paperMetadata={paperMetadata}
+                conflicting={selectedNode.conflicting}
                 key={selectedNode.record.paperId}
                 record={selectedNode.record}
               />
@@ -510,15 +525,20 @@ export function LiteratureCitationInspector({
         {listOpen && selecting && (
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border-300 bg-card px-3 py-2">
             <span role="status" className="text-xs tabular-nums text-muted-foreground">
-              {t('Selected: {{selected}}', { selected: selectedPapers.length })}
+              {failedCount
+                ? t('Processed: {{saved}} · Failed: {{failed}}', {
+                    saved: checkedNodes.length - selectedPapers.length,
+                    failed: failedCount
+                  })
+                : t('Selected: {{selected}}', { selected: selectedPapers.length })}
             </span>
             <Button
               size="sm"
               disabled={blocked || !selectedPapers.length}
               onClick={() => void save(selectedPapers)}
             >
-              <Inbox aria-hidden="true" />
-              {saveLabel}
+              {retrySelection && !saving ? <RotateCw aria-hidden="true" /> : saveIcon}
+              {retrySelection && !saving ? t('Retry') : saveLabel}
             </Button>
           </div>
         )}
@@ -536,19 +556,17 @@ export function LiteratureCitationInspector({
                   size="sm"
                   variant="outline"
                   disabled={centerDisabled}
-                  onClick={() => {
-                    exploreSelected()
-                  }}
+                  onClick={exploreSelected}
                 >
+                  <Crosshair aria-hidden="true" />
                   {t('Set as center')}
                 </Button>
               ) : null}
               {!selectedNode.center || temporaryCenter ? (
-                <>
-                  <Button size="sm" disabled={saveDisabled} onClick={() => void save()}>
-                    {saveLabel}
-                  </Button>
-                </>
+                <Button size="sm" disabled={saveDisabled} onClick={() => void save()}>
+                  {saveIcon}
+                  {saveLabel}
+                </Button>
               ) : null}
             </div>
             {receiptText ? (

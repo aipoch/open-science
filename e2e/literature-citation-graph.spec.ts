@@ -120,17 +120,33 @@ test('Electron groups graph guidance, loads missing paper details and stages sel
   await openCitationGraph(page, url + '&hold-paper-details', undefined, 'all')
   const frame = page.locator('[data-current-frame="true"]')
   const source = page.getByRole('combobox', { name: 'Citation source' })
+  await expect(source.locator('.lucide-library-big')).toBeVisible()
   await source.click()
-  for (const option of await page.getByRole('option').all()) {
-    await expect(option.locator('svg').first()).toBeVisible()
-  }
+  await expect(page.getByRole('option')).toHaveCount(3)
+  await expect(page.getByRole('option').locator('svg')).toHaveCount(1)
+  await expect(page.getByRole('option', { selected: true }).locator('.lucide-check')).toBeVisible()
   await page.screenshot({ path: info.outputPath('citation-sources.png') })
   await page.keyboard.press('Escape')
   const key = frame.locator('[data-citation-legend]')
+  const legend = (await key.boundingBox())!
+  const canvas = (await frame.getByRole('region', { name: 'Citation graph' }).boundingBox())!
+  expect(legend.x - canvas.x).toBeLessThan(20)
+  const centerMark = frame.locator('[data-citation-legend] .border-primary')
+  expect(await centerMark.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+    await frame
+      .locator('[data-paper-id="europe-pmc:MED:1000"] [data-node-mark]')
+      .evaluate((el) => getComputedStyle(el).fill)
+  )
   await expect(key.getByText('Scroll to zoom. Drag to pan.')).toBeVisible()
   await frame.locator('[data-paper-id="europe-pmc:MED:1101"] [data-node-mark]').click()
   await expect(frame.locator('[data-slot="abstract-skeleton"]')).toBeVisible()
   await expect(frame.getByRole('heading', { name: /Graph paper 1101/ })).toBeVisible()
+  await expect(
+    frame.getByRole('button', { name: 'Set as center' }).locator('.lucide-crosshair')
+  ).toBeVisible()
+  await expect(
+    frame.getByRole('button', { name: 'Add to Inbox' }).locator('.lucide-inbox')
+  ).toBeVisible()
   await page.screenshot({ path: info.outputPath('citation-details-loading.png') })
   await page.evaluate(() =>
     (
@@ -139,6 +155,7 @@ test('Electron groups graph guidance, loads missing paper details and stages sel
   )
   await expect(frame.locator('[data-slot="abstract-skeleton"]')).toHaveCount(0)
   await expect(frame.getByText(/Metadata supplied by the browser fixture/)).toBeVisible()
+  await page.screenshot({ path: info.outputPath('citation-detail-actions.png') })
   await frame.getByRole('button', { name: 'Back to list' }).click()
   await frame.getByRole('button', { name: 'Select multiple' }).click()
   await frame.getByRole('checkbox', { name: /Select Graph paper 1101:/ }).check()

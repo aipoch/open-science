@@ -66,6 +66,7 @@ import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
+  type ApplicationCallerLease,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -104,7 +105,7 @@ type LiteratureCommandOwner = Readonly<{
     signal?: AbortSignal
   ): Promise<LiteraturePublicationCheckResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
-  lookupMetadata(doi: string): Promise<LiteratureItemInput>
+  lookupMetadata(reference: string, signal?: AbortSignal): Promise<LiteratureItemInput>
   completeMetadata(
     request: LiteratureMetadataCompletionRequest
   ): Promise<LiteratureMetadataCompletionResult>
@@ -196,7 +197,7 @@ const literatureApplicationCommands = Object.freeze({
   >('literature:full-text', literatureApplicationCommandContracts.fullText),
   lookupMetadata: defineApplicationCommand<
     'literature:lookup-metadata',
-    readonly [string],
+    readonly [string, string?],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
   overviewBatch: defineApplicationCommand<
@@ -330,6 +331,26 @@ const registerLiteratureApplicationCommands = (
     )
     return task
   }
+  const runLookup = <T>(
+    callerLease: ApplicationCallerLease,
+    requestId: string | undefined,
+    operation: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> => {
+    const key = requestId ? requestKey(callerLease, requestId) : undefined
+    pruneCancelled()
+    if (key && lookups.has(key)) throw new Error('Citation request is already active.')
+    if (lookups.size >= 200) throw new Error('Too many active citation requests.')
+    const cancellation = new AbortController()
+    if (key && cancelled.has(key)) cancellation.abort()
+    if (key) lookups.set(key, cancellation)
+    const signal = AbortSignal.any([callerLease.signal, lifetime.signal, cancellation.signal])
+    return run(() => {
+      signal.throwIfAborted()
+      return operation(signal)
+    }, false).finally(() => {
+      if (key) lookups.delete(key)
+    })
+  }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
       'literature:collect': ({ args, callerLease }) =>
@@ -359,20 +380,7 @@ const registerLiteratureApplicationCommands = (
       },
       'literature:related': ({ args, callerLease }) => {
         const request = args[0]
-        const key = request.requestId ? requestKey(callerLease, request.requestId) : undefined
-        pruneCancelled()
-        if (key && lookups.has(key)) throw new Error('Citation request is already active.')
-        if (lookups.size >= 200) throw new Error('Too many active citation requests.')
-        const cancellation = new AbortController()
-        if (key && cancelled.has(key)) cancellation.abort()
-        if (key) lookups.set(key, cancellation)
-        const signal = AbortSignal.any([callerLease.signal, lifetime.signal, cancellation.signal])
-        return run(() => {
-          signal.throwIfAborted()
-          return owner.related(request, signal)
-        }, false).finally(() => {
-          if (key) lookups.delete(key)
-        })
+        return runLookup(callerLease, request.requestId, (signal) => owner.related(request, signal))
       },
       'literature:supplements': ({ args, callerLease }) =>
         run(
@@ -386,7 +394,8 @@ const registerLiteratureApplicationCommands = (
           false
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
-      'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:lookup-metadata': ({ args, callerLease }) =>
+        runLookup(callerLease, args[1], (signal) => owner.lookupMetadata(args[0], signal)),
       'literature:study-snapshot': ({ args, callerLease }) =>
         run(
           () =>

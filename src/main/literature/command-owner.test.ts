@@ -496,7 +496,7 @@ it.each([
     literatureReferenceResolver: { lookup }
   } as unknown as Services)
   await expect(owner.lookupMetadata(input)).resolves.toBe(item)
-  expect(lookup).toHaveBeenCalledWith(reference)
+  expect(lookup).toHaveBeenCalledWith(reference, undefined)
   expect(broadcastToRenderers).not.toHaveBeenCalled()
 })
 

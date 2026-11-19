@@ -7451,6 +7451,7 @@
     "Could not delete all recovery copies. Check the remaining files and try again.": "すべての復元用コピーを削除できませんでした。残りのファイルを確認して、もう一度お試しください。",
     "Permanently delete": "完全に削除",
     "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "この会話にはまだ計算ジョブがあります。会話を復元するか、そのジョブを削除してから、これらのコピーを削除してください。ジョブのリモートファイルは保持されます。",
+    "Processed: {{saved}} · Failed: {{failed}}": "処理済み：{{saved}} · 失敗：{{failed}}",
     "Add selected to Inbox": "選択した文献を受信箱に追加",
     "Already in Library": "ライブラリに登録済み",
     "Citation discovery": "引用文献の探索",

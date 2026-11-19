@@ -7449,6 +7449,7 @@
     "Could not delete all recovery copies. Check the remaining files and try again.": "일부 복구 사본을 삭제하지 못했습니다. 남은 파일을 확인하고 다시 시도하세요.",
     "Permanently delete": "영구 삭제",
     "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "이 대화에 아직 계산 작업이 있습니다. 대화를 복구하거나 해당 작업을 삭제한 후 이 사본을 삭제하세요. 작업의 원격 파일은 유지됩니다.",
+    "Processed: {{saved}} · Failed: {{failed}}": "처리됨: {{saved}} · 실패: {{failed}}",
     "Add selected to Inbox": "선택한 문헌을 받은 편지함에 추가",
     "Already in Library": "이미 라이브러리에 있음",
     "Citation discovery": "인용 문헌 탐색",

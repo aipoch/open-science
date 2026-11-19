@@ -163,6 +163,12 @@ Explicit saves retain `retrievedAt` in existing source JSON, separately from the
 source-record write time. Old records without acquisition times remain unknown. The panel reuses cached results and offers a retry when a lookup fails.
 List directions retain their loaded pages, selections and scroll positions while the panel stays
 open. Both views share identity merging and a five-page-per-direction display budget.
+When scholarly identifiers connect records with conflicting claims, the graph keeps their native
+identities visible and excludes those records from automatic staging. Opening a paper's details
+reuses the bibliographic lookup. Explicit saves can fill missing fields from a verified result
+already viewed in that session and record its lookup identifier in `rawMetadata.metadataLookup`.
+Batch staging starts no additional metadata lookups. Partial failures remain
+selected across both direction tabs for retry.
 The source disclosure resolves available local root titles and falls back to their stored IDs.
 Existing top-level provenance fields are read into this collection on the next source update;
 there is no database migration or new review state. Previously overwritten paths cannot be

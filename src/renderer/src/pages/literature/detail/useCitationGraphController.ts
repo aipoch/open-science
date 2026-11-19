@@ -12,6 +12,8 @@ import {
 import { useLiteratureHost } from '../renderer-host'
 import {
   buildCitationGraph,
+  supplementedCitation,
+  type CitationMetadata,
   filterCitationGraph,
   normalizeCitationPaperId,
   citationRecordProvider,
@@ -28,6 +30,7 @@ export type ScheduleRequest = (
 ) => Promise<LiteratureRelatedResult>
 
 export type CitationGraphControllerProps = {
+  paperMetadata?: CitationMetadata
   item: LiteratureItemView
   onSaved(): void
   onSavingChange?(saving: boolean): void
@@ -55,6 +58,7 @@ export const citationDirections = ['references', 'citations'] as const
 /** Owns one cached center's query lifetime and all catalog writes. Views only invoke commands. */
 export function useCitationGraphController({
   item,
+  paperMetadata,
   onSaved,
   onSavingChange,
   disabled = false,
@@ -318,18 +322,21 @@ export function useCitationGraphController({
     for (const node of nodes) {
       if (!isCurrent() || invalidatedSession.current || isReferenceInvalidated?.()) break
       const previous = receiptFor(node)
-      if ((node.center && !center) || (previous && previous !== 'failed')) continue
+      if (node.conflicting || (node.center && !center) || (previous && previous !== 'failed'))
+        continue
       let receipt: LiteratureCatalogReceipt | 'failed'
       try {
+        const supplemented = supplementedCitation(node.record.item, paperMetadata)
         receipt = await api.literature.transact({
           kind: 'stage-candidate',
           candidate: {
-            item: node.record.item,
+            item: supplemented.item,
             source: {
               provider: citationRecordProvider(node.record.paperId),
               externalId: node.record.paperId,
               sourceUrl: node.record.item.url,
               rawMetadata: {
+                ...(supplemented.reference && { metadataLookup: supplemented.reference }),
                 ...(node.record.retrievedAt !== undefined
                   ? { retrievedAt: node.record.retrievedAt }
                   : {}),
@@ -371,7 +378,13 @@ export function useCitationGraphController({
   }
 
   const exploreSelected = (): void => {
-    if (!blocked && selectedNode && !selectedNode.center && token.current)
+    if (
+      !blocked &&
+      selectedNode &&
+      !selectedNode.conflicting &&
+      !selectedNode.center &&
+      token.current
+    )
       onExplore(selectedNode.record, token.current)
   }
   return {

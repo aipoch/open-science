@@ -7451,6 +7451,7 @@
     "Could not delete all recovery copies. Check the remaining files and try again.": "未能删除所有恢复副本。请检查剩余文件后重试。",
     "Permanently delete": "永久删除",
     "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "此会话仍有关联的计算任务。请先恢复会话或删除其计算任务，再删除这些副本。任务的远程文件会保留。",
+    "Processed: {{saved}} · Failed: {{failed}}": "已处理：{{saved}} · 失败：{{failed}}",
     "Add selected to Inbox": "将所选文献加入收件箱",
     "Already in Library": "已在文献库中",
     "Citation discovery": "引用发现",

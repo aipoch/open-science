@@ -9,6 +9,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import {
   citationGraphRecordsMatch,
   normalizeCitationPaperId,
+  type CitationMetadata,
   type CitationGraphFilter
 } from './citation-graph'
 import {
@@ -28,6 +29,7 @@ import {
 } from './LiteratureCitationInspector'
 
 export type GraphProps = {
+  paperMetadata?: CitationMetadata
   item: LiteratureItemView
   onSaved(): void
   onSavingChange?(saving: boolean): void
@@ -66,6 +68,7 @@ function CitationGraphSession({
   const source = props.source ?? localSource.source
   const requestRelated = props.requestRelated ?? localSource.requestRelated
   const { onSavingChange, onReferenceChanged, isReferenceInvalidated } = props
+  const [paperMetadata] = useState<CitationMetadata>(() => props.paperMetadata ?? new Map())
   const [frames, setFrames] = useState<GraphFrame[]>([{ key: 'root' }])
   const [current, setCurrent] = useState('root')
   const [history, setHistory] = useState<string[]>([])
@@ -251,6 +254,7 @@ function CitationGraphSession({
           <CitationGraphCenter
             {...props}
             source={source}
+            paperMetadata={paperMetadata}
             center={frame.center}
             parentToken={frame.parentToken}
             visible={props.visible !== false && frame.key === current}
@@ -270,7 +274,7 @@ function CitationGraphSession({
 }
 
 type CitationGraphFrameProps = CitationGraphControllerProps &
-  Pick<GraphProps, 'visible' | 'source'> & { onRestart(): void }
+  Pick<GraphProps, 'visible' | 'source'> & { paperMetadata: CitationMetadata; onRestart(): void }
 
 function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element {
   const controller = useCitationGraphController({
@@ -391,6 +395,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           }}
         />
         <LiteratureCitationInspector
+          paperMetadata={props.paperMetadata}
           ref={inspector}
           toggle={sidebarToggle}
           expanded={detailsOpen}

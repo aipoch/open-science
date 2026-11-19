@@ -844,12 +844,15 @@ export function LiteratureCitationCanvas({
       {graph ? (
         <div
           data-citation-legend
-          className="mx-2 mb-2 max-w-full self-end rounded-md border border-border-300 bg-card px-2.5 py-1.5 text-xs text-muted-foreground sm:mx-3"
+          className="mx-2 mb-2 max-w-full self-start rounded-md border border-border-300 bg-card px-2.5 py-1.5 text-xs text-muted-foreground sm:mx-3"
           aria-label={t('Citation graph')}
         >
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="inline-flex items-center gap-1 text-foreground">
-              <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+              <span
+                className="size-2 rounded-full border border-primary bg-background"
+                aria-hidden="true"
+              />
               {t('Current center')}
             </span>
             <span className="h-3 w-px bg-border-300" aria-hidden="true" />

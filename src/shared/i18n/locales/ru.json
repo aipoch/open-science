@@ -7920,6 +7920,7 @@
     "Could not delete all recovery copies. Check the remaining files and try again.": "Не удалось удалить все копии для восстановления. Проверьте оставшиеся файлы и повторите попытку.",
     "Permanently delete": "Удалить навсегда",
     "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "У этого диалога ещё есть вычислительные задания. Восстановите диалог или удалите его задания, прежде чем удалять эти копии. Удалённые файлы заданий сохраняются.",
+    "Processed: {{saved}} · Failed: {{failed}}": "Обработано: {{saved}} · Ошибок: {{failed}}",
     "Add selected to Inbox": "Добавить выбранное во входящие",
     "Already in Library": "Уже в библиотеке",
     "Citation discovery": "Поиск цитирований",

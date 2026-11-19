@@ -132,7 +132,7 @@ export const createLiteratureCommandOwner = ({
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: (request) =>
     withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
-  lookupMetadata: async (doi) => {
+  lookupMetadata: async (doi, signal) => {
     const input = doi.trim()
     const separator = input.indexOf(':')
     const scheme = separator >= 0 ? input.slice(0, separator).toLowerCase() : ''
@@ -141,7 +141,7 @@ export const createLiteratureCommandOwner = ({
       : input.startsWith('10.')
         ? `doi:${input}`
         : input
-    const resolved = await literatureReferenceResolver.lookup(reference)
+    const resolved = await literatureReferenceResolver.lookup(reference, signal)
     return resolved.item
   },
   completeMetadata: (request) => literatureMetadataEnricher.complete(request),

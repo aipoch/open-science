@@ -2321,9 +2321,11 @@ it('resolves visible details once and ignores a previous paper returning late', 
   fireEvent.click(await list.findByRole('button', { name: 'Paper b' }))
   expect(lookup).not.toHaveBeenCalled()
   fireEvent.click(list.getByRole('button', { name: 'View details' }))
-  expect(lookup).toHaveBeenCalledExactlyOnceWith('pmid:100')
+  expect(lookup).toHaveBeenCalledExactlyOnceWith('pmid:100', expect.any(String))
+  const requestId = lookup.mock.calls[0][1]
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper c' }))
   await screen.findByText('Verified abstract')
+  expect(window.api.literature.cancelRelated).toHaveBeenCalledWith({ requestId })
   await act(async () => late.resolve({ ...first.item, abstract: 'Late abstract' }))
   expect(screen.queryByText('Late abstract')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
@@ -2349,7 +2351,13 @@ it('keeps the citation when metadata belongs to another paper and retries on req
   expect(screen.getByRole('heading', { name: 'Paper b' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByText('Correct abstract')
-  expect(transact).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
+  await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+  expect(transact.mock.calls[0][0].candidate).toMatchObject({
+    item: { title: 'Paper b', abstract: 'Correct abstract' },
+    source: { rawMetadata: { metadataLookup: 'pmid:100' } }
+  })
 })
 
 it('stages the selected row and recenters directly from its actions', async () => {
@@ -2394,7 +2402,9 @@ it('stages a cross-tab selection once per paper and retries only failed papers',
   expect(check('b')).toHaveProperty('disabled', true)
   expect(check('b')).toHaveProperty('checked', false)
   expect(check('c')).toHaveProperty('checked', true)
-  fireEvent.click(add)
+  showCategory('references')
+  expect(screen.getByText('Processed: 1 · Failed: 1')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByText('Selected: 0')
   expect(transact.mock.calls.map(([request]) => request.candidate.source.externalId)).toEqual([
     paperId('b'),
@@ -2404,4 +2414,25 @@ it('stages a cross-tab selection once per paper and retries only failed papers',
   expect(onSaved).toHaveBeenCalledTimes(2)
   fireEvent.click(screen.getByRole('button', { name: 'Done' }))
   expect(screen.queryByRole('checkbox')).toBeNull()
+})
+
+it('keeps conflicting cross-tab papers readable and excludes both from staging', async () => {
+  const first = record('b')
+  const second = record('c')
+  for (const entry of [first, second])
+    entry.item.identifiers = [
+      { scheme: 'pmid', value: '100', isPrimary: true },
+      { scheme: 'doi', value: '10.1234/' + entry.paperId.split(':').pop(), isPrimary: false }
+    ]
+  related.mockImplementation(async (request) =>
+    result(request, { records: [request.direction === 'references' ? first : second] })
+  )
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  await screen.findByRole('button', { name: 'Select Paper c' })
+  fireEvent.click(screen.getByRole('button', { name: 'Select multiple' }))
+  expect(screen.getByRole('checkbox', { name: 'Select Paper b' })).toHaveProperty('disabled', true)
+  showCategory('citations')
+  expect(screen.getByRole('checkbox', { name: 'Select Paper c' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: 'Add to Inbox' })).toHaveProperty('disabled', true)
+  expect(transact).not.toHaveBeenCalled()
 })

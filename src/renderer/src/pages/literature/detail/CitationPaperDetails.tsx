@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureRelatedRecord } from '@aipoch/literature-discovery/contracts'
-import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import {
-  createLiteratureIdentifierUrl,
-  normalizeLiteratureIdentifierKey
-} from '@aipoch/literature-citations/contracts'
+  citationMetadataReference,
+  supplementedCitation,
+  verifiedCitationMetadata,
+  type CitationMetadata
+} from './citation-graph'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ErrorNotice } from '@/components/error-notice'
 import { lookupCachedLiteratureMetadata } from '../literature-metadata-lookup'
@@ -18,78 +19,48 @@ import { useLiteratureHost } from '../renderer-host'
 import { CollapsibleAbstract } from './LiteratureDetailText'
 import { LiteratureIdentifiers } from './LiteratureIdentifiers'
 
-const lookupSchemes = ['pmid', 'pmcid', 'doi', 'arxiv'] as const
-type Identifier = LiteratureItemInput['identifiers'][number]
-const identity = ({ scheme, value }: Identifier): string =>
-  `${scheme}:${normalizeLiteratureIdentifierKey(scheme, value)}`
-
 export function CitationPaperDetails({
-  record
+  record,
+  paperMetadata,
+  conflicting
 }: {
   record: LiteratureRelatedRecord
+  paperMetadata: CitationMetadata
+  conflicting?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const { api } = useLiteratureHost()
-  const item = record.item
-  const identifier = lookupSchemes.flatMap((scheme) => {
-    const matches = item.identifiers.filter((entry) => entry.scheme === scheme)
-    return matches.length === 1 && createLiteratureIdentifierUrl(scheme, matches[0].value)
-      ? matches
-      : []
-  })[0]
-  const reference = identifier && identity(identifier)
-  const [response, setResponse] = useState<{ reference: string; metadata?: LiteratureItemInput }>()
+  const base = record.item
+  const reference = conflicting ? undefined : citationMetadataReference(base)
   const [attempt, setAttempt] = useState(0)
+  const [settled, setSettled] = useState<string>()
   useEffect(() => {
     if (!reference) return
-    let active = true
-    void lookupCachedLiteratureMetadata(api, reference, attempt > 0).then(
-      (metadata) => {
-        if (active) setResponse({ reference, metadata })
+    const reader = new AbortController()
+    void lookupCachedLiteratureMetadata(api, reference, attempt > 0, reader.signal).then(
+      (candidate) => {
+        if (reader.signal.aborted) return
+        if (verifiedCitationMetadata(base, candidate, reference))
+          paperMetadata.set(reference, candidate)
+        setSettled(reference)
       },
       () => {
-        if (active) setResponse({ reference })
+        if (!reader.signal.aborted) setSettled(reference)
       }
     )
-    return () => {
-      active = false
-    }
-  }, [api, reference, attempt])
+    return () => reader.abort()
+  }, [api, base, reference, attempt, paperMetadata])
 
-  const current = response?.reference === reference ? response : undefined
-  const candidate = current?.metadata
-  const metadata =
-    candidate?.identifiers.some((entry) => identity(entry) === reference) &&
-    !item.identifiers.some(
-      (local) =>
-        lookupSchemes.some((scheme) => scheme === local.scheme) &&
-        candidate.identifiers.some((remote) => remote.scheme === local.scheme) &&
-        !candidate.identifiers.some((remote) => identity(remote) === identity(local))
-    )
-      ? candidate
-      : undefined
-  const authors = fullCreatorLabel(item) || (metadata && fullCreatorLabel(metadata))
-  const publication = publicationCitation({
-    ...item,
-    containerTitle: item.containerTitle || metadata?.containerTitle || '',
-    issuedYear: item.issuedYear ?? metadata?.issuedYear,
-    issuedText:
-      item.issuedText ||
-      (metadata?.issuedYear === item.issuedYear || !item.issuedYear ? metadata?.issuedText : '') ||
-      '',
-    typeFields: { ...metadata?.typeFields, ...item.typeFields }
-  })
-  const identifiers = [
-    ...item.identifiers,
-    ...(metadata?.identifiers ?? []).filter(
-      (entry) => !item.identifiers.some((local) => identity(local) === identity(entry))
-    )
-  ]
-  const pending = Boolean(reference && !current)
-  const abstract = item.abstract || metadata?.abstract
+  const supplement = supplementedCitation(base, conflicting ? undefined : paperMetadata)
+  const { item } = supplement
+  const pending = Boolean(reference && settled !== reference && !supplement.reference)
+  const authors = fullCreatorLabel(item)
+  const publication = publicationCitation(item)
+  const { identifiers, abstract } = item
   const href = getExternalLiteratureUrl(item.url)?.href
   return (
     <div className="space-y-4 text-sm">
+      {conflicting && <p className="text-xs">{t('Conflicting identifiers')}</p>}
       <div className="space-y-1.5">
         {pending && !authors && (
           <div
@@ -136,7 +107,7 @@ export function CitationPaperDetails({
             ))}
           </div>
         ) : (
-          (!reference || metadata) && (
+          (!reference || supplement.reference) && (
             <p className="mt-2 text-xs text-muted-foreground">{t('No abstract available.')}</p>
           )
         )}
@@ -146,7 +117,7 @@ export function CitationPaperDetails({
           {t('Loading…')}
         </p>
       )}
-      {current && !metadata && (
+      {reference && settled === reference && !supplement.reference && (
         <ErrorNotice
           inline
           role="alert"
@@ -154,7 +125,7 @@ export function CitationPaperDetails({
           primaryButton={{
             label: t('Retry'),
             onClick: () => {
-              setResponse(undefined)
+              setSettled(undefined)
               setAttempt((n) => n + 1)
             }
           }}

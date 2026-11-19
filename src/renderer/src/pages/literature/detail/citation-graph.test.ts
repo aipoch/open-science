@@ -3,6 +3,9 @@ import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { LiteratureRelatedRecord } from '@aipoch/literature-discovery/contracts'
 import {
   buildCitationGraph,
+  citationGraphRecordsMatch,
+  citationMetadataReference,
+  supplementedCitation,
   filterCitationGraph,
   citationRecordProvider,
   normalizeCitationPaperId,
@@ -520,4 +523,48 @@ it('keeps the center when a direction has no results', () => {
   const references = filterCitationGraph(graph, 'references')
   expect(references.nodes).toEqual([graph.nodes[0]])
   expect(references.edges).toEqual([])
+})
+
+it('keeps disjoint claims separate even when an intermediate native ID bridges both', () => {
+  const pmid = { scheme: 'pmid', value: '12' } as const
+  const first = record('b', [pmid, { scheme: 'doi', value: '10.1234/first' }])
+  const bridge = record('c', [pmid])
+  const last = record('d', [pmid, { scheme: 'doi', value: '10.1234/last' }])
+  for (const rows of [
+    [first, bridge, last],
+    [last, first, bridge]
+  ]) {
+    const graph = buildCitationGraph(
+      record('a'),
+      rows.map((record) => ({ direction: 'references', record }))
+    )
+    expect(graph.nodes.slice(1).map((node) => [node.id, node.conflicting])).toEqual(
+      rows.map((r) => [r.paperId, true])
+    )
+    expect(graph.edges).toHaveLength(3)
+  }
+  expect(citationGraphRecordsMatch(first, last)).toBe(false)
+})
+
+it('uses transport-compatible DOI and PMCID values and fills only verified fields', () => {
+  const item = record('b', [{ scheme: 'doi', value: 'https://doi.org/10.1234/Title' }]).item
+  const pmcid = { scheme: 'pmcid', value: 'pmc123', isPrimary: false } as const
+  const incoming = {
+    ...item,
+    title: 'Alternate title',
+    abstract: 'Verified',
+    identifiers: [...item.identifiers, pmcid]
+  }
+  expect(citationMetadataReference(item)).toBe('10.1234/title')
+  expect(citationMetadataReference({ ...item, identifiers: [pmcid] })).toBe('pmcid:PMC123')
+  const metadata = new Map([['10.1234/title', incoming]])
+  expect(supplementedCitation(item, metadata).item).toMatchObject({
+    title: item.title,
+    abstract: 'Verified',
+    identifiers: incoming.identifiers
+  })
+  const conflicting = { ...item, identifiers: [...item.identifiers, { ...pmcid, value: 'PMC999' }] }
+  expect(supplementedCitation(conflicting, new Map([['pmcid:PMC999', incoming]]))).toEqual({
+    item: conflicting
+  })
 })

@@ -15,7 +15,7 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, LibraryBig, Network, ListTree } from 'lucide-react'
+import { BookOpen, Quote, LibraryBig } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -33,7 +33,12 @@ import {
   type CitationProviderChoice,
   type CitationSourceState
 } from './useCitationSource'
-import { buildCitationGraph, citationRecordProvider } from './citation-graph'
+import {
+  buildCitationGraph,
+  citationRecordProvider,
+  supplementedCitation,
+  type CitationMetadata
+} from './citation-graph'
 import type { ScheduleRequest } from './useCitationGraphController'
 
 export function LiteratureRelatedLookup(
@@ -65,6 +70,7 @@ function LiteratureRelatedSession(
   const { t } = useTranslation()
   const { view, onViewChange: setView } = props
   const { source, requestRelated } = useCitationSource(props.provider)
+  const [paperMetadata] = useState<CitationMetadata>(() => new Map())
   const [graphOpened, setGraphOpened] = useState(view === 'graph')
   const [listOpened, setListOpened] = useState(view === 'list')
   const [referenceInvalidated, setReferenceInvalidated] = useState(false)
@@ -84,11 +90,10 @@ function LiteratureRelatedSession(
     [onSavingChange]
   )
   const sources = [
-    { value: 'europe-pmc', label: t('Europe PMC'), Icon: LibraryBig },
-    { value: 'opencitations', label: t('OpenCitations · SKG-IF'), Icon: Network },
-    { value: 'opencitations-index', label: t('OpenCitations · Index v2'), Icon: ListTree }
+    { value: 'europe-pmc', label: t('Europe PMC') },
+    { value: 'opencitations', label: t('OpenCitations · SKG-IF') },
+    { value: 'opencitations-index', label: t('OpenCitations · Index v2') }
   ]
-  const SourceIcon = (sources.find(({ value }) => value === props.provider) ?? sources[0]).Icon
   const toolbar = (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1"
@@ -132,16 +137,12 @@ function LiteratureRelatedSession(
         }}
       >
         <SelectTrigger aria-label={t('Citation source')} className="w-auto max-w-full px-2">
-          <SourceIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <LibraryBig className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {sources.map(({ value, label, Icon }) => (
-            <SelectItem
-              key={value}
-              value={value}
-              icon={<Icon className="size-4 text-muted-foreground" aria-hidden="true" />}
-            >
+          {sources.map(({ value, label }) => (
+            <SelectItem key={value} value={value}>
               {label}
             </SelectItem>
           ))}
@@ -185,6 +186,7 @@ function LiteratureRelatedSession(
         {listOpened && (
           <LiteratureRelatedList
             {...props}
+            paperMetadata={paperMetadata}
             source={source}
             requestRelated={requestRelated}
             referenceInvalidated={referenceInvalidated}
@@ -203,6 +205,7 @@ function LiteratureRelatedSession(
           <LiteratureCitationGraph
             item={props.item}
             provider={props.provider}
+            paperMetadata={paperMetadata}
             source={source}
             requestRelated={requestRelated}
             onSaved={props.onSaved}
@@ -222,6 +225,7 @@ function LiteratureRelatedSession(
 function LiteratureRelatedList({
   item,
   initialDirection,
+  paperMetadata,
   onSaved,
   onSavingChange,
   onOpenInbox,
@@ -233,6 +237,7 @@ function LiteratureRelatedList({
   requestRelated
 }: {
   item: LiteratureItemView
+  paperMetadata?: CitationMetadata
   initialDirection: LiteratureRelatedRequest['direction']
   onSaved(): void
   onSavingChange?: (saving: boolean) => void
@@ -260,7 +265,7 @@ function LiteratureRelatedList({
   const [loadError, setLoadError] = useState<LiteratureRelatedResult>()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [pageCount, setPageCount] = useState(0)
-  const directions = useRef<
+  const [directions, setDirections] = useState<
     Partial<
       Record<
         LiteratureRelatedRequest['direction'],
@@ -275,8 +280,8 @@ function LiteratureRelatedList({
     >
   >({})
   useLayoutEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = directions.current[direction]?.scroll ?? 0
-  }, [direction])
+    if (scrollRef.current) scrollRef.current.scrollTop = directions[direction]?.scroll ?? 0
+  }, [direction, directions])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [receipts, setReceipts] = useState<Record<string, LiteratureCatalogReceipt | 'failed'>>({})
   const [busy, setBusy] = useState(false)
@@ -408,17 +413,27 @@ function LiteratureRelatedList({
       pending.current = false
     }
   }, [lookup, initialDirection])
-  const listNodes = useMemo(
-    () =>
-      result?.seed && result.state === 'ready'
-        ? buildCitationGraph(
-            result.seed,
-            result.records.map((record) => ({ direction, record }))
-          ).nodes.filter((node) => !node.center)
-        : (result?.records ?? []).map((record) => ({ record, paperIds: [record.paperId] })),
-    [result, direction]
+  const otherDirection = direction === 'references' ? 'citations' : 'references'
+  const other = directions[otherDirection]?.result
+  const listNodes = useMemo(() => {
+    if (!result?.seed || result.state !== 'ready')
+      return (result?.records ?? []).map((record) => ({
+        record,
+        paperIds: [record.paperId],
+        conflicting: false
+      }))
+    const entries = result.records.map((record) => ({ direction, record }))
+    if (other?.resolutionToken && other.resolutionToken === result.resolutionToken)
+      entries.push(
+        ...other.records.map((record) => ({ direction: otherDirection, record }) as const)
+      )
+    return buildCitationGraph(result.seed, entries).nodes.filter(
+      (node) => node.relation === direction || node.relation === 'both'
+    )
+  }, [result, direction, other, otherDirection])
+  const selectedNodes = listNodes.filter(
+    (node) => !node.conflicting && node.paperIds.some((id) => selected.has(id))
   )
-  const selectedNodes = listNodes.filter((node) => node.paperIds.some((id) => selected.has(id)))
   const save = async (): Promise<void> => {
     if (
       savingRef.current ||
@@ -438,15 +453,17 @@ function LiteratureRelatedList({
         if (current !== generation.current || isReferenceInvalidated?.()) break
         let receipt: LiteratureCatalogReceipt | 'failed'
         try {
+          const supplemented = supplementedCitation(entry.item, paperMetadata)
           receipt = await api.literature.transact({
             kind: 'stage-candidate',
             candidate: {
-              item: entry.item,
+              item: supplemented.item,
               source: {
                 provider: citationRecordProvider(entry.paperId),
                 externalId: entry.paperId,
                 sourceUrl: entry.item.url,
                 rawMetadata: {
+                  ...(supplemented.reference && { metadataLookup: supplemented.reference }),
                   ...(entry.retrievedAt !== undefined ? { retrievedAt: entry.retrievedAt } : {}),
                   rootItemId: item.id,
                   rootMetadataRevision: item.metadataRevision,
@@ -499,15 +516,18 @@ function LiteratureRelatedList({
       activationMode="manual"
       onValueChange={(value) => {
         if (value === direction || disabled) return
-        directions.current[direction] = {
-          result,
-          loadError,
-          selected,
-          scroll: scrollRef.current?.scrollTop ?? 0,
-          pages: pageCount
-        }
+        setDirections({
+          ...directions,
+          [direction]: {
+            result,
+            loadError,
+            selected,
+            scroll: scrollRef.current?.scrollTop ?? 0,
+            pages: pageCount
+          }
+        })
         const next = value as typeof direction
-        const cached = directions.current[next]
+        const cached = directions[next]
         if (cached) {
           setDirection(next)
           setResult(cached.result)
@@ -580,11 +600,12 @@ function LiteratureRelatedList({
                       type="checkbox"
                       className="mt-1 size-4 shrink-0 accent-primary"
                       aria-label={t('Select {{title}}', { title: entry.item.title })}
-                      checked={node.paperIds.some((id) => selected.has(id))}
+                      checked={!node.conflicting && node.paperIds.some((id) => selected.has(id))}
                       disabled={
                         disabled ||
                         saving ||
                         invalidated ||
+                        node.conflicting ||
                         (receipt !== undefined && receipt !== 'failed')
                       }
                       onChange={(event) =>
@@ -606,6 +627,9 @@ function LiteratureRelatedList({
                       <ExternalTextLink href={entry.item.url} className="text-xs">
                         {t('Open in {{source}}', { source: sourceName })}
                       </ExternalTextLink>
+                      {node.conflicting && (
+                        <p className="text-xs">{t('Conflicting identifiers')}</p>
+                      )}
                       <CitationAbstract text={entry.item.abstract} className="mt-2" />
                       {receipt ? (
                         <p role="status" className="mt-2 text-xs">

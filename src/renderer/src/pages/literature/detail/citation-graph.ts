@@ -1,5 +1,8 @@
 import {
+  createLiteratureIdentifierUrl,
+  LITERATURE_IDENTITY_SCHEMES,
   normalizeLiteratureIdentifierKey,
+  normalizeLiteratureIdentifierValue,
   type BibliographicRecord
 } from '@aipoch/literature-citations/contracts'
 import {
@@ -19,6 +22,7 @@ export type CitationGraphNode = {
   record: LiteratureRelatedRecord
   center: boolean
   relation: CitationGraphRelation
+  conflicting?: boolean
   paperIds: string[]
 }
 export type CitationGraph = {
@@ -37,13 +41,95 @@ export function citationRecordProvider(paperId: string): LiteratureRelatedProvid
   throw new Error('Unsupported citation source identity.')
 }
 
-function identities(item: BibliographicRecord, paperId?: string): string[] {
+type Identifier = BibliographicRecord['identifiers'][number]
+const identifierKey = ({ scheme, value }: Identifier): string =>
+  scheme + ':' + normalizeLiteratureIdentifierKey(scheme, value)
+
+function identities(item: BibliographicRecord, paperId: string): string[] {
   return [
-    ...(paperId ? [`${citationRecordProvider(paperId)}:${normalizeCitationPaperId(paperId)}`] : []),
+    normalizeCitationPaperId(paperId),
     ...item.identifiers
-      .filter(({ scheme }) => ['doi', 'pmid', 'pmcid', 'arxiv'].includes(scheme))
-      .map(({ scheme, value }) => `${scheme}:${normalizeLiteratureIdentifierKey(scheme, value)}`)
+      .filter(({ scheme }) => LITERATURE_IDENTITY_SCHEMES.some((strong) => strong === scheme))
+      .map(identifierKey)
   ]
+}
+
+// Each observed set of aliases for a scheme must overlap the other observations.
+function conflictingClaims(items: BibliographicRecord[]): boolean {
+  return LITERATURE_IDENTITY_SCHEMES.some((scheme) => {
+    const claims: Set<string>[] = []
+    for (const item of items) {
+      const values = item.identifiers.filter((id) => id.scheme === scheme).map(identifierKey)
+      if (!values.length) continue
+      if (claims.some((previous) => !values.some((value) => previous.has(value)))) return true
+      claims.push(new Set(values))
+    }
+    return false
+  })
+}
+
+function lookupReference(id: Identifier): string {
+  return id.scheme === 'doi'
+    ? normalizeLiteratureIdentifierKey(id.scheme, id.value)
+    : id.scheme + ':' + normalizeLiteratureIdentifierValue(id.scheme, id.value)
+}
+
+export function citationMetadataReference(item: BibliographicRecord): string | undefined {
+  for (const scheme of ['pmid', 'pmcid', 'doi', 'arxiv'] as const) {
+    const values = item.identifiers.filter((id) => id.scheme === scheme)
+    if (values.length !== 1 || !createLiteratureIdentifierUrl(scheme, values[0].value)) continue
+    return lookupReference(values[0])
+  }
+  return undefined
+}
+
+function mergeIdentifiers(left: Identifier[], right: Identifier[]): Identifier[] {
+  const known = new Map(left.map((id) => [identifierKey(id), id]))
+  for (const id of right) {
+    const key = identifierKey(id)
+    if (!known.has(key)) known.set(key, id)
+  }
+  return [...known.values()]
+}
+
+// Keep only supplements the user viewed in this discovery session.
+export type CitationMetadata = Map<string, BibliographicRecord>
+
+export function verifiedCitationMetadata(
+  item: BibliographicRecord,
+  candidate: BibliographicRecord,
+  reference: string
+): boolean {
+  return (
+    candidate.identifiers.some((id) => lookupReference(id) === reference) &&
+    !conflictingClaims([item, candidate])
+  )
+}
+
+export function supplementedCitation(
+  item: BibliographicRecord,
+  metadata?: CitationMetadata
+): { item: BibliographicRecord; reference?: string } {
+  const reference = citationMetadataReference(item)
+  const candidate = reference && metadata?.get(reference)
+  if (!candidate || !verifiedCitationMetadata(item, candidate, reference)) return { item }
+  return {
+    reference,
+    item: {
+      ...item,
+      creators: item.creators.some((c) => c.creatorType === 'author')
+        ? item.creators
+        : [...item.creators, ...candidate.creators.filter((c) => c.creatorType === 'author')],
+      abstract: item.abstract || candidate.abstract,
+      containerTitle: item.containerTitle || candidate.containerTitle,
+      issuedYear: item.issuedYear ?? candidate.issuedYear,
+      issuedText:
+        item.issuedText ||
+        (!item.issuedYear || item.issuedYear === candidate.issuedYear ? candidate.issuedText : ''),
+      typeFields: { ...candidate.typeFields, ...item.typeFields },
+      identifiers: mergeIdentifiers(item.identifiers, candidate.identifiers)
+    }
+  }
 }
 
 // Provider IDs and exact scholarly identifiers establish identity; titles never establish an edge.
@@ -74,42 +160,55 @@ export function buildCitationGraph(
       aliases.set(identity, index)
     }
   })
-  const nodes = new Map<number, CitationGraphNode>()
+  const groups = new Map<number, BibliographicRecord[]>()
   records.forEach((record, index) => {
     const key = root(index)
+    const items = groups.get(key)
+    if (items) items.push(record.item)
+    else groups.set(key, [record.item])
+  })
+  // A bridge can connect two contradictory records indirectly. Fall back to native
+  // identities for the entire ambiguous group, independent of arrival order.
+  const conflicts = new Set(
+    [...groups]
+      .filter(([, items]) => items.length > 1 && conflictingClaims(items))
+      .map(([key]) => key)
+  )
+  const native = new Map<string, number>()
+  const keys = records.map((record, index) => {
+    if (!conflicts.has(root(index))) return root(index)
+    const first = native.get(record.paperId) ?? index
+    native.set(record.paperId, first)
+    return first
+  })
+  const nodes = new Map<number, CitationGraphNode>()
+  records.forEach((record, index) => {
+    const key = keys[index]
     const existing = nodes.get(key)
-    if (existing) {
-      const identifiers = [...existing.record.item.identifiers]
-      const seen = new Set(
-        identifiers.map(
-          ({ scheme, value }) => `${scheme}:${normalizeLiteratureIdentifierKey(scheme, value)}`
-        )
+    if (existing && !existing.conflicting) {
+      const identifiers = mergeIdentifiers(
+        existing.record.item.identifiers,
+        record.item.identifiers
       )
-      for (const identifier of record.item.identifiers) {
-        const identity = `${identifier.scheme}:${normalizeLiteratureIdentifierKey(identifier.scheme, identifier.value)}`
-        if (!seen.has(identity)) {
-          identifiers.push(identifier)
-          seen.add(identity)
-        }
-      }
       nodes.set(key, {
         ...existing,
         paperIds: [...new Set([...existing.paperIds, normalizeCitationPaperId(record.paperId)])],
         record: { ...existing.record, item: { ...existing.record.item, identifiers } }
       })
-    } else if (nodes.size < limit)
+    } else if (!existing && nodes.size < limit)
       nodes.set(key, {
         id: records[key].paperId,
         record,
-        center: key === root(0),
-        relation: key === root(0) ? 'center' : 'references',
+        ...(conflicts.has(root(index)) ? { conflicting: true } : {}),
+        center: key === keys[0],
+        relation: key === keys[0] ? 'center' : 'references',
         paperIds: [normalizeCitationPaperId(record.paperId)]
       })
   })
-  const centerId = nodes.get(root(0))!.id
+  const centerId = nodes.get(keys[0])!.id
   const edges = new Map<string, { source: string; target: string }>()
   entries.forEach(({ direction }, index) => {
-    const node = nodes.get(root(index + 1))
+    const node = nodes.get(keys[index + 1])
     if (!node || node.id === centerId) return
     const edge =
       direction === 'references'
@@ -129,7 +228,7 @@ export function buildCitationGraph(
             : 'citations'
     })),
     edges: [...edges.values()],
-    limited: new Set(records.map((_, index) => root(index))).size > nodes.size
+    limited: new Set(keys).size > nodes.size
   }
 }
 
@@ -209,7 +308,10 @@ export function citationGraphRecordsMatch(
   right: LiteratureRelatedRecord
 ): boolean {
   const leftIds = new Set(identities(left.item, left.paperId))
-  return identities(right.item, right.paperId).some((identity) => leftIds.has(identity))
+  return (
+    !conflictingClaims([left.item, right.item]) &&
+    identities(right.item, right.paperId).some((identity) => leftIds.has(identity))
+  )
 }
 
 export type CitationGraphCamera = { x: number; y: number; width: number; height: number }

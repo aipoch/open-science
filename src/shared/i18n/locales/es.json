@@ -7779,6 +7779,7 @@
     "Could not delete all recovery copies. Check the remaining files and try again.": "No se pudieron eliminar todas las copias de recuperación. Revise los archivos restantes e inténtelo de nuevo.",
     "Permanently delete": "Eliminar permanentemente",
     "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "Esta conversación aún tiene tareas de cálculo. Recupere la conversación o elimine sus tareas antes de eliminar estas copias. Se conservarán sus archivos remotos.",
+    "Processed: {{saved}} · Failed: {{failed}}": "Procesados: {{saved}} · Fallidos: {{failed}}",
     "Add selected to Inbox": "Añadir selección a la bandeja de entrada",
     "Already in Library": "Ya está en la biblioteca",
     "Citation discovery": "Explorar citas",
