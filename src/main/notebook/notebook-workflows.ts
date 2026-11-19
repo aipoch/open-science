@@ -219,7 +219,7 @@ const createNotebookCommandWorkflows = (
       request.projectId,
       request.sessionId,
       async () => ({
-        operation: operation(() => {
+        operation: await operation(() => {
           assertCurrent()
           assertReleaseAvailable()
           authority.assertSessionResourceReleaseAvailable(request.projectId, request.sessionId)

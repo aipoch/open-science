@@ -125,6 +125,42 @@ describe('Notebook command workflows', () => {
     ).resolves.toEqual(expected)
   })
 
+  it('holds session availability until a resource mutation settles', async () => {
+    const target = { projectId: 'project-1', sessionId: 'session-1' }
+    const release: NotebookResourceRelease = {
+      ...target,
+      operationId: 'release',
+      revision: 'revision',
+      status: 'released',
+      startedAt: 1,
+      resources: [],
+      continuations: []
+    }
+    const releaseOperation = Promise.withResolvers<NotebookResourceRelease>()
+    const runtime = createRuntime({
+      releaseSessionResources: vi.fn(() => releaseOperation.promise)
+    })
+    let guardReleased = false
+    const workflows = createNotebookCommandWorkflows(runtime, {
+      withSessionAvailable: async (_project, _session, operation) => {
+        const result = await operation()
+        guardReleased = true
+        return result
+      },
+      isSessionResourceReadable: async () => true,
+      assertSessionResourceReleaseAvailable: () => undefined
+    })
+    workflows.configureResourceReleaseGuard(() => undefined)
+
+    const pending = workflows.releaseSessionResources({ ...target, revision: 'revision' }, () => {})
+    await Promise.resolve()
+    expect(guardReleased).toBe(false)
+
+    releaseOperation.resolve(release)
+    await expect(pending).resolves.toEqual(release)
+    expect(guardReleased).toBe(true)
+  })
+
   it('reads in-memory Project activity while data-root writes are blocked', async () => {
     const getProjectActivity = vi.fn<NotebookCommandRuntime['getProjectActivity']>(() => ({
       kernels: [],
