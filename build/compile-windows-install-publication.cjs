@@ -46,7 +46,8 @@ module.exports.uninstallHelper = (
   module.exports(
     [
       path.join(__dirname, 'windows-uninstall-helper.cs'),
-      publicationSource ?? path.join(__dirname, 'windows-install-publication.cs')
+      publicationSource ?? path.join(__dirname, 'windows-install-publication.cs'),
+      path.join(__dirname, 'windows-install-diagnostics.cs')
     ],
     destination,
     { target: 'exe', references: ['System.Web.Extensions.dll'], defines, warnAsError }
@@ -59,7 +60,8 @@ module.exports.installHelper = (destination, defines = []) =>
   module.exports(
     [
       path.join(__dirname, 'windows-install-helper.cs'),
-      path.join(__dirname, 'windows-install-publication.cs')
+      path.join(__dirname, 'windows-install-publication.cs'),
+      path.join(__dirname, 'windows-install-diagnostics.cs')
     ],
     destination,
     { target: 'exe', references: ['System.Web.Extensions.dll'], defines }

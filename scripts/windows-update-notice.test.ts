@@ -29,6 +29,9 @@ describe.skipIf(process.platform !== 'win32' || !makensis)(
       const parent = resolve('tmp/nsis-handoff-regression')
       mkdirSync(parent, { recursive: true })
       const root = mkdtempSync(join(parent, `${name}-`))
+      const helper = join(root, 'out/windows-installer/ia32/windows-uninstall-helper.exe')
+      mkdirSync(dirname(helper), { recursive: true })
+      writeFileSync(helper, '')
       const source = join(root, 'probe.nsi')
       const executable = join(root, 'probe.exe')
       const preflight = hook.match(
@@ -48,6 +51,7 @@ describe.skipIf(process.platform !== 'win32' || !makensis)(
           '!define isForceRun \'"0" == "1"\'',
           '!define UNINSTALL_FILENAME "fixture-uninstaller.exe"',
           `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
+          `!define PROJECT_DIR "${root}"`,
           `!include "${resolve('build/installer.nsh')}"`,
           'Var installMode',
           '!insertmacro defineUpdateReceiptFunctions',
