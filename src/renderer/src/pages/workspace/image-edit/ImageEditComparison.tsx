@@ -12,10 +12,14 @@ import { ZoomablePreview } from '../previews/renderers/ZoomablePreview'
 // Both images share one transform; clipping never rescales either image.
 export function ImageEditComparison({
   source,
-  resultUrl
+  resultUrl,
+  sourceLabel,
+  resultLabel
 }: {
   source: ImageEditSnapshot['source']
   resultUrl: string
+  sourceLabel?: string
+  resultLabel?: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const surface = useRef<HTMLDivElement>(null)
@@ -51,8 +55,8 @@ export function ImageEditComparison({
         aria-hidden="true"
         className="pointer-events-none flex shrink-0 select-none items-center justify-between gap-4 px-1 pb-2 text-xs text-text-200"
       >
-        <span className="truncate">{t('Before edit')}</span>
-        <span className="truncate">{t('After edit')}</span>
+        <span className="truncate">{sourceLabel ?? t('Before edit')}</span>
+        <span className="truncate">{resultLabel ?? t('After edit')}</span>
       </div>
       <div className="relative min-h-0 flex-1">
         <ZoomablePreview tooltipClassName="z-[80]" cursorMode="grab-when-zoomed">
@@ -65,7 +69,7 @@ export function ImageEditComparison({
           >
             <img
               src={resultUrl}
-              alt={t('After edit')}
+              alt={resultLabel ?? t('After edit')}
               draggable={false}
               onError={() => setDecodeError(true)}
               className="size-full select-none object-contain"
@@ -76,7 +80,7 @@ export function ImageEditComparison({
             >
               <img
                 src={input.url}
-                alt={t('Before edit')}
+                alt={sourceLabel ?? t('Before edit')}
                 draggable={false}
                 onError={() => setDecodeError(true)}
                 className="size-full select-none object-contain"

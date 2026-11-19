@@ -15,6 +15,7 @@ export type ActivePdfTranslation = {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  imageEditActivation?: 'click' | 'explicit'
   onPinImageSource?: () => void
   onImageEditorVersionChange?: (item: PreviewFileItem | undefined) => void
   readOnly?: boolean

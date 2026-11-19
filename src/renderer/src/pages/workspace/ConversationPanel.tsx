@@ -1,3 +1,5 @@
+import { useImageComposerHost } from './image-edit/image-composer-bridge'
+import { imageEditorScope } from './image-edit/image-editor-state'
 import { usePromptOptimization } from './composer/use-prompt-optimization'
 
 import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
@@ -1262,8 +1264,12 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
+  const { active: imageComposerActive, attachHost: attachImageComposerHost } = useImageComposerHost(
+    imageEditorScope(activeSession),
+    !blockingInteraction && !packageLocked && !authenticationRequired && !isImported
+  )
   const ordinaryComposerBlocked = Boolean(
-    blockingInteraction || packageLocked || authenticationRequired
+    blockingInteraction || packageLocked || authenticationRequired || imageComposerActive
   )
   const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
     pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
@@ -1519,6 +1525,7 @@ const ConversationPanel = ({
   )
 
   const handleSubmit = (): void => {
+    if (ordinaryComposerBlocked) return
     if (canExplainUnavailableSpecialist && activeSession) {
       setSpecialistNoticeVisible(!specialistNoticeTarget)
       setSpecialistNoticeTarget({ sessionId: activeSession.id, specialistId })
@@ -2200,7 +2207,8 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (authenticationRequired ||
+                      (imageComposerActive ||
+                        authenticationRequired ||
                         packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
@@ -2211,6 +2219,7 @@ const ConversationPanel = ({
                   />
 
                   {ordinaryComposerBlocked &&
+                  !imageComposerActive &&
                   (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
                       data-testid="blocking-composer-overlay"
@@ -2332,6 +2341,12 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
+                  <div
+                    ref={attachImageComposerHost}
+                    hidden={!imageComposerActive}
+                    data-testid="conversation-image-composer"
+                    className="relative z-10"
+                  />
                   {/* The ordinary composer keeps this lane's geometry while a blocking interaction
                       overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
                   <TooltipProvider>
@@ -2444,7 +2459,8 @@ const ConversationPanel = ({
                         inert={ordinaryComposerBlocked || undefined}
                         className={cn(
                           'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                          ordinaryComposerBlocked && 'invisible pointer-events-none'
+                          ordinaryComposerBlocked && 'invisible pointer-events-none',
+                          imageComposerActive && 'hidden'
                         )}
                         data-specialist-color={specialistComposerColor}
                         onSubmit={(event) => event.preventDefault()}

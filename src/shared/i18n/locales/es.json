@@ -9117,6 +9117,20 @@
     "Up to {{count}} results_one": "Hasta {{count}} resultado",
     "Up to {{count}} results_many": "Hasta {{count}} resultados",
     "Up to {{count}} results_other": "Hasta {{count}} resultados",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "Ya hay otra operación de paquete en curso. Espere a que finalice e inténtelo de nuevo."
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "Ya hay otra operación de paquete en curso. Espere a que finalice e inténtelo de nuevo.",
+    "Generating image…": "Generando imagen…",
+    "New image ready": "Nueva imagen lista",
+    "View image": "Ver imagen",
+    "Revise last edit": "Revisar la última edición",
+    "Continue editing": "Continuar editando",
+    "Generate new version": "Generar una nueva versión",
+    "Expand instructions": "Ampliar instrucciones",
+    "Collapse instructions": "Contraer instrucciones",
+    "Hide instructions": "Ocultar instrucciones",
+    "View source image": "Ver imagen original",
+    "Add instruction": "Añadir instrucción",
+    "Click to edit image. Alt-click to add a note.": "Hacer clic para editar la imagen. Alt + clic para añadir una nota.",
+    "Click to edit": "Hacer clic para editar",
+    "Generate another version to compare.": "Generar otra versión para comparar."
   }
 }

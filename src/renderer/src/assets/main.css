@@ -1579,36 +1579,69 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 }
 
-/* The loading surface covers the canvas without hiding the source comparison. */
-.image-generation-mask {
-  background: color-mix(in srgb, var(--color-bg-000) 36%, transparent);
-  backdrop-filter: blur(2px);
-}
-.image-generation-mask::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 38%,
-    color-mix(in srgb, var(--color-primary) 12%, transparent) 49%,
-    color-mix(in srgb, var(--color-bg-000) 40%, transparent) 53%,
-    transparent 65%
+/* Image editing keeps its tools and prompt as floating surfaces within one canvas. */
+.image-edit-studio {
+  container-type: inline-size;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--color-border-300) 38%, transparent) 0.65px,
+    transparent 0.65px
   );
-  animation: image-generation-sweep 3.6s ease-in-out infinite;
-  will-change: transform;
+  background-size: 18px 18px;
 }
-@keyframes image-generation-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(100%);
-  }
+
+.image-edit-dock[data-collapsed='true'] {
+  width: fit-content;
+  max-width: calc(100% - 1.5rem);
+}
+
+/* Tools belong to the image, not the pane header. Labels remain available as tooltips. */
+.image-edit-studio .image-edit-tool-label {
+  display: none;
+}
+.image-edit-studio .image-edit-tool {
+  width: 2rem;
+  padding-inline: 0;
+}
+.image-edit-selection {
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 120ms ease;
+}
+.image-edit-selection[data-hovered='true'] {
+  outline-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+.image-edit-selection[data-selected='true'] {
+  outline-color: color-mix(in srgb, var(--color-primary) 80%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
-  .image-generation-mask::before {
-    animation: none;
-    will-change: auto;
+  .image-edit-selection {
+    transition: none;
+  }
+}
+
+.image-edit-entry-outline {
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+}
+.image-edit-entry-outline[data-hovered='true'] {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 80%, transparent);
+}
+.image-edit-entry:focus-visible > .image-edit-entry-outline {
+  outline: 2px solid var(--color-primary);
+}
+
+.image-edit-entry-action {
+  visibility: hidden;
+}
+.image-edit-entry[data-hovered='true'] > .image-edit-entry-action,
+.image-edit-entry:focus-within > .image-edit-entry-action {
+  visibility: visible;
+}
+.image-edit-entry:focus-within > .image-edit-entry-outline {
+  outline: 2px solid var(--color-primary);
+}
+@media (hover: none) {
+  .image-edit-entry-action {
+    visibility: visible;
   }
 }
