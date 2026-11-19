@@ -40,7 +40,11 @@ it('prepares the converter through the registered helper without reading its ski
       pythonLoopPath: resolve('resources/notebook/python_loop.py'),
       platform: process.platform
     })
-    let prepared: { script_path: string; reference_path: string }
+    let prepared: {
+      script_path: string
+      reference_path: string
+      word_pdf_script_path: string | null
+    }
     try {
       const result = await executor.execute({
         cwd: root,
@@ -63,6 +67,13 @@ it('prepares the converter through the registered helper without reading its ski
     expect(await readFile(prepared.reference_path)).toEqual(
       await readFile('resources/skills/docx-generation/assets/reference.docx')
     )
+    if (process.platform === 'win32') {
+      expect(await readFile(prepared.word_pdf_script_path!)).toEqual(
+        await readFile('resources/skills/docx-generation/scripts/export-word-pdf.ps1')
+      )
+    } else {
+      expect(prepared.word_pdf_script_path).toBeNull()
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -78,6 +89,9 @@ it('projects the on-demand DOCX workflow and its executable assets together', as
   try {
     await new ClaudeCodeSkillMaterializer().sync(root, [skill])
     const projected = join(root, 'skills/os-docx-generation')
+    expect(await readFile(join(projected, 'scripts/export-word-pdf.ps1'))).toEqual(
+      await readFile('resources/skills/docx-generation/scripts/export-word-pdf.ps1')
+    )
     expect(await readFile(join(projected, 'assets/reference.docx'))).toEqual(
       await readFile('resources/skills/docx-generation/assets/reference.docx')
     )

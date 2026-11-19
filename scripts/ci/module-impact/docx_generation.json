@@ -1,9 +1,11 @@
 {
   "ownerPaths": [
     "src/main/skills/docx-generation.test.ts",
+    "src/main/notebook/windows-word-pdf.integration.test.ts",
     "resources/skills/docx-generation/README.md",
     "resources/skills/docx-generation/SKILL.md",
     "resources/skills/docx-generation/scripts/convert.py",
+    "resources/skills/docx-generation/scripts/export-word-pdf.ps1",
     "resources/skills/docx-generation/scripts/build_reference.py",
     "resources/skills/docx-generation/assets/reference.docx",
     "resources/skills/docx-generation/open-science.json",
@@ -12,10 +14,14 @@
   ],
   "interfacePaths": [
     "resources/skills/docx-generation/SKILL.md",
-    "resources/skills/docx-generation/scripts/convert.py"
+    "resources/skills/docx-generation/scripts/convert.py",
+    "resources/skills/docx-generation/scripts/export-word-pdf.ps1"
   ],
   "testFiles": {
-    "owner": ["src/main/skills/docx-generation.test.ts"],
+    "owner": [
+      "src/main/skills/docx-generation.test.ts",
+      "src/main/notebook/windows-word-pdf.integration.test.ts"
+    ],
     "contract": ["src/main/skills/runtime-mcp-server.test.ts"],
     "consumer": []
   },

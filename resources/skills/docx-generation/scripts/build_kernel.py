@@ -4,7 +4,7 @@ import base64
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ('scripts/convert.py', 'assets/reference.docx')
+FILES = ('scripts/convert.py', 'assets/reference.docx', 'scripts/export-word-pdf.ps1')
 
 
 def kernel_source():
@@ -42,6 +42,7 @@ def prepare_docx_conversion(directory="."):
         "pandoc_path": str(pandoc) if pandoc.is_file() else None,
         "script_path": str(root / "scripts/convert.py"),
         "reference_path": str(root / "assets/reference.docx"),
+        "word_pdf_script_path": str(root / "scripts/export-word-pdf.ps1") if sys.platform == "win32" else None,
         "workflow_directory": str(root),
     }
 '''

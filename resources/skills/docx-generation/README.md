@@ -11,9 +11,10 @@ reference through the existing `kernelSkillIds` mechanism and writes them into a
 fresh directory under the caller's authorized execution directory. No filesystem
 permission expansion is needed. The model receives paths, not base64 file contents.
 
-`kernel.py` is generated from `scripts/convert.py` and `assets/reference.docx` by
+`kernel.py` is generated from `scripts/convert.py`, `assets/reference.docx`, and
+`scripts/export-word-pdf.ps1` by
 `python3 resources/skills/docx-generation/scripts/build_kernel.py`. Rebuild it after
-changing either source asset; a regression rejects stale embedded assets. The
+changing any source asset; a regression rejects stale embedded assets. The
 original CLI remains available for environments with direct package access.
 
 ## Reproducibility
@@ -44,6 +45,17 @@ images) also stop publication and are returned as actionable errors. This is not
 For content-preserving edits to existing DOCX files use a suitable editing library;
 a Markdown round trip can lose information. The reference still requires appropriate fonts on the viewing host. No font installation or Office engine is bundled.
 
+## Windows Word PDF export
+
+The registered helper also returns `word_pdf_script_path` on Windows. Run the
+script through the standard native Windows Notebook Shell with desktop Word
+already installed. The script launches Word directly and binds to a window
+owned by that process, so the existing Shell job can reap it on timeout. It
+never attaches to a running Word session. The input is opened read-only and
+the destination is published without overwriting an existing file. This is
+an explicit export workflow, not a change to PDF preview, arbitrary COM
+commands, or protected Shell mode.
+
 ## Validation
 
 ```sh
@@ -55,6 +67,12 @@ npx playwright test --config e2e/playwright.browser.config.ts e2e/browser/docx-t
 
 Python tests cover real Pandoc conversion when the supported executable is
 available; absence is reported as skipped, not a successful integration run.
+On Windows with desktop Word and the native Notebook runtime prepared, leave
+an unrelated Word instance open, set
+`OPEN_SCIENCE_TEST_WORD_PDF=1` and run
+`npx vitest run src/main/notebook/windows-word-pdf.integration.test.ts`.
+This opt-in test forces a Shell timeout with a real test DOCX locked by Word,
+then checks that the unrelated Word instance survives and the file unlocks.
 Browser tests cover the production preview, including zoom/resize and nested
 styles. Semantic/style assertions run on every OS; the reviewed pixel baseline
 uses macOS fonts and runs only on macOS. Other platforms capture screenshots

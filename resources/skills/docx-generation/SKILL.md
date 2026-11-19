@@ -1,6 +1,6 @@
 ---
 name: docx-generation
-description: Use when creating a Word DOCX report from Markdown, converting Markdown tables and lists to DOCX, or choosing a workflow for editing an existing DOCX while preserving its structure and styles. Use this workflow before running Markdown-to-DOCX shell commands. Includes report typography, table layout, a reusable reference document, and a Python converter.
+description: Use when creating or editing a Word DOCX report, converting Markdown to DOCX, or exporting an existing DOCX to PDF with Microsoft Word on Windows. Includes report typography, table layout, a reference document, and maintained conversion scripts.
 license: Apache-2.0
 ---
 
@@ -44,6 +44,16 @@ Do not substitute the bundled template when the user supplied a template or requ
 For Pandoc Markdown pipe tables, retain intentional delimiter-row widths. Padding or reformatting a wide Markdown table can change the column proportions inferred by Pandoc.
 
 The converter emits one JSON receipt with the output path, MIME type, versions, and template hash. It requires a new output filename and leaves existing files intact. If the supported Pandoc version is unavailable, report the missing prerequisite or use another suitable document-generation workflow under the session's normal environment rules. This skill does not require Pandoc for every DOCX task.
+
+## Windows: export a DOCX to PDF with Microsoft Word
+
+Use desktop Microsoft Word installed on the host and the native, standard Windows PowerShell Notebook Shell. This workflow does not require Pandoc. In the Windows Python Notebook, load `docx-generation` with `kernelSkillIds` and call `prepare_docx_conversion('.')` as above. Pass its `word_pdf_script_path` to an approved `bash_execute` call with a suitable `timeoutMs`:
+
+```powershell
+& '<returned-word_pdf_script_path>' -InputDocx '<source.docx>' -OutputPdf '<new-output.pdf>'
+```
+
+Use a new destination filename. The script opens the source read-only with macros disabled, and publishes a PDF only after its dedicated Word exits. After a timeout, check the tool result and do not claim that a PDF was produced. Do not fall back to `New-Object -ComObject Word.Application`, `GetActiveObject`, or closing unrelated Word processes: a server activated outside the supervised Shell may hold the document after timeout. If the supervised workflow is unavailable, report the prerequisite or use an approved non-Word converter. Do not change the Shell's protection mode to run this workflow.
 
 ## Editing existing DOCX files
 
