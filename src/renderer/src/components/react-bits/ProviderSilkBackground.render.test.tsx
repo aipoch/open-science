@@ -8,16 +8,26 @@ vi.mock('./Silk', () => ({ default: silk }))
 import { ProviderSilkBackground } from './ProviderSilkBackground'
 
 describe('ProviderSilkBackground', () => {
-  it('keeps a static texture until the card is hovered', () => {
-    render(
-      <div>
-        <ProviderSilkBackground color="#123456" active={false} />
-      </div>
+  it('keeps the silk mounted and pauses it until the card is hovered', () => {
+    const view = render(<ProviderSilkBackground color="#123456" active={false} />)
+
+    expect(silk).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        color: '#123456',
+        paused: true,
+        rotation: 0,
+        speed: 0.35,
+        noiseIntensity: 1.6,
+        mouseInteraction: false,
+        clickRipple: false,
+        intro: false,
+        wave: 0.45,
+        dpr: 1.25
+      }),
+      undefined
     )
 
-    expect(silk).not.toHaveBeenCalled()
-
-    render(<ProviderSilkBackground color="#123456" active />)
+    view.rerender(<ProviderSilkBackground color="#123456" active />)
     expect(silk).toHaveBeenLastCalledWith(
       expect.objectContaining({
         color: '#123456',
@@ -28,7 +38,8 @@ describe('ProviderSilkBackground', () => {
         mouseInteraction: false,
         clickRipple: false,
         intro: false,
-        wave: 0.45
+        wave: 0.45,
+        dpr: 1.25
       }),
       undefined
     )

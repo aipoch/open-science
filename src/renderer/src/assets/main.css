@@ -522,8 +522,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   z-index: 0;
   overflow: hidden;
   border-radius: inherit;
-  opacity: 0.35;
-  filter: blur(7px) saturate(0.72) contrast(0.82);
+  opacity: 0.52;
+  filter: blur(1.8px) saturate(0.76) contrast(0.84);
   pointer-events: none;
   background:
     radial-gradient(
@@ -544,8 +544,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
       transparent 68%
     );
   transition:
-    opacity 220ms ease,
-    filter 220ms ease;
+    opacity 420ms ease,
+    filter 420ms ease;
 }
 .onboarding-provider-silk > div,
 .onboarding-provider-silk canvas {
@@ -556,21 +556,24 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: color-mix(in oklab, var(--bg-000) 24%, transparent);
-  backdrop-filter: blur(3px);
+  background: color-mix(in oklab, var(--bg-000) 58%, transparent);
+  opacity: 0.92;
+  backdrop-filter: blur(7px) saturate(0.76);
   content: '';
   pointer-events: none;
   transition:
+    opacity 480ms ease,
     background-color 420ms ease,
-    backdrop-filter 420ms ease;
+    backdrop-filter 480ms ease;
 }
 .onboarding-provider-silk.is-active {
-  opacity: 0.56;
-  filter: blur(2.5px) saturate(0.92) contrast(0.94);
+  opacity: 0.68;
+  filter: blur(0.45px) saturate(0.96) contrast(0.96);
 }
 .onboarding-provider-silk.is-active::after {
-  background: color-mix(in oklab, var(--bg-000) 13%, transparent);
-  backdrop-filter: blur(2px);
+  background: transparent;
+  opacity: 0;
+  backdrop-filter: blur(0) saturate(1);
 }
 .onboarding-provider-card::after {
   position: absolute;
