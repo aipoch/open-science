@@ -61,6 +61,7 @@ export type SessionJournalDependencies = Partial<DurableJsonFileDependencies> & 
 }
 export type SessionJournalOptions = {
   maxBytes: number
+  maxReplayBytes?: number
   maxCacheBytes?: number
   maxCacheEntries?: number
   dependencies?: SessionJournalDependencies
@@ -104,6 +105,17 @@ const fail = (message: string): never => {
 }
 const exact = (value: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key))
+const SESSION_JOURNAL_VERSION = 1
+const assertJournalVersion = (value: Record<string, unknown>): void => {
+  const version = Object.hasOwn(value, 'journalVersion')
+    ? value.journalVersion
+    : SESSION_JOURNAL_VERSION
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1)
+    return fail('Invalid Session journal version.')
+  if (version > SESSION_JOURNAL_VERSION) throw new SessionJournalVersionError()
+}
+const exactJournalEnvelope = (value: Record<string, unknown>, keys: string[]): boolean =>
+  exact(value, Object.hasOwn(value, 'journalVersion') ? [...keys, 'journalVersion'] : keys)
 const revisionOf = (value: JournalValue, format: 'legacy' | 'journal' = 'journal'): number => {
   if (!object(value)) return fail('Session document must be an object.')
   const revision = object(value.session) ? value.session.revision : value.revision
@@ -141,6 +153,7 @@ export class SessionJournalStore {
     if (
       !nonnegative(options.maxBytes) ||
       options.maxBytes === 0 ||
+      (options.maxReplayBytes !== undefined && !nonnegative(options.maxReplayBytes)) ||
       !nonnegative(this.maxCacheBytes) ||
       !nonnegative(this.maxCacheEntries)
     )
@@ -220,7 +233,7 @@ export class SessionJournalStore {
   ): Promise<SessionJournalRead> {
     return this.lane(path, async () => {
       if (!nonnegative(request.expectedRevision)) return fail('Invalid expected Session revision.')
-      const state = await this.readState(path)
+      const state = await this.readState(path, prepared?.previous)
       if ((state?.revision ?? 0) !== request.expectedRevision)
         throw new SessionJournalRevisionError(request.expectedRevision, state?.revision ?? 0)
       if (state?.format === 'legacy')
@@ -242,7 +255,12 @@ export class SessionJournalStore {
       this.assertSize(document)
       if (!state) return this.publish(path, document)
       const contents =
-        JSON.stringify({ type: 'session_update', revision: revisionOf(document), records }) + '\n'
+        JSON.stringify({
+          type: 'session_update',
+          journalVersion: SESSION_JOURNAL_VERSION,
+          revision: revisionOf(document),
+          records
+        }) + '\n'
       this.assertLineSize(Buffer.byteLength(contents))
       const target = sessionJournalPath(path)
       if ((await this.fingerprint(path)) !== state.fingerprint)
@@ -283,7 +301,12 @@ export class SessionJournalStore {
     await this.assertDirectory(path)
     await mkdir(dirname(path), { recursive: true })
     const target = sessionJournalPath(path)
-    const contents = JSON.stringify({ type: 'session_snapshot', document }) + '\n'
+    const contents =
+      JSON.stringify({
+        type: 'session_snapshot',
+        journalVersion: SESSION_JOURNAL_VERSION,
+        document
+      }) + '\n'
     this.assertLineSize(Buffer.byteLength(contents))
     if ((await this.fingerprint(path)) !== 'missing')
       return fail('Session authority changed before initial publication.')
@@ -400,9 +423,11 @@ export class SessionJournalStore {
     this.assertSize(document)
     return document
   }
-  private async readState(path: string): Promise<State | undefined> {
+  private async readState(path: string, preparedState?: State): Promise<State | undefined> {
     await this.assertDirectory(path)
     const fingerprint = await this.fingerprint(path)
+    // A prepared save already holds its source even when it exceeds the shared cache budget.
+    if (preparedState?.fingerprint === fingerprint) return preparedState
     const cached = this.cache.get(path)
     if (cached && cached.fingerprint === fingerprint) return cached
     this.invalidate(path)
@@ -437,6 +462,9 @@ export class SessionJournalStore {
     observer?: HistoryObserver
   ): Promise<Pick<State, 'document' | 'revision' | 'storageBytes' | 'validBytes'>> {
     const expectedBytes = (await this.fileStat(path))?.size
+    const limit = this.options.maxReplayBytes
+    if (limit !== undefined && expectedBytes !== undefined && expectedBytes > limit)
+      throw new SessionJournalSizeError(limit)
     let document: JournalValue | undefined
     let validBytes = 0
     let storageBytes = 0
@@ -454,28 +482,29 @@ export class SessionJournalStore {
         return fail('Session journal contains an invalid complete record.')
       }
       if (!object(value)) return fail('Invalid Session journal record.')
+      assertJournalVersion(value)
       if (document === undefined) {
-        if (!exact(value, ['type', 'document']) || value.type !== 'session_snapshot')
+        if (!exactJournalEnvelope(value, ['type', 'document']) || value.type !== 'session_snapshot')
           return fail('Session journal must start with its initial snapshot.')
         document = freezeParsedJournalValue(value.document)
         if (object(document) && typeof document.version === 'number' && document.version > 2)
           throw new SessionJournalVersionError()
         revisionOf(document)
         this.assertSize(document)
+        observer?.visit(document)
       } else {
         if (
-          !exact(value, ['type', 'revision', 'records']) ||
+          !exactJournalEnvelope(value, ['type', 'revision', 'records']) ||
           value.type !== 'session_update' ||
           value.revision !== revisionOf(document) + 1
         )
           return fail('Session journal record has invalid schema or revision.')
         const records = validateSessionRecords(value.records, { parsed: true })
-        document = this.applyRecords(document, records)
+        observer?.visit(records as unknown as JournalValue)
+        document = this.applyRecords(document, records, observer?.visit)
         if (revisionOf(document) !== value.revision)
           return fail('Session journal revision does not match its update.')
-        observer?.visit(records as unknown as JournalValue)
       }
-      observer?.visit(document)
       validBytes += line.bytes
     }
     if (storageBytes !== expectedBytes)
@@ -500,9 +529,13 @@ export class SessionJournalStore {
     path: string
   ): AsyncGenerator<{ text: string; bytes: number; complete: boolean }> {
     await this.fileStat(path)
+    let readBytes = 0
     let parts: Buffer[] = []
     let length = 0
     for await (const buffer of this.dependencies.readChunks?.(path) ?? this.chunks(path)) {
+      readBytes += buffer.length
+      if (this.options.maxReplayBytes !== undefined && readBytes > this.options.maxReplayBytes)
+        throw new SessionJournalSizeError(this.options.maxReplayBytes)
       let start = 0
       for (let index = buffer.indexOf(10, start); index !== -1; index = buffer.indexOf(10, start)) {
         const part = buffer.subarray(start, index + 1)
@@ -528,9 +561,13 @@ export class SessionJournalStore {
   }
   private applyRecords(
     document: JournalValue,
-    records: readonly SessionBusinessRecord[]
+    records: readonly SessionBusinessRecord[],
+    visitJoinedText?: (value: JournalValue) => void
   ): JournalValue {
-    const result = records.reduce(applySessionRecord, document)
+    const result = records.reduce(
+      (current, record) => applySessionRecord(current, record, visitJoinedText),
+      document
+    )
     this.assertSize(result)
     return result
   }

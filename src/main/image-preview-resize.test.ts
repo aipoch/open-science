@@ -46,6 +46,21 @@ describe('bounded image preview conversion', () => {
     preview.release()
   })
 
+  it('fits candidate thumbnails within a small square', async () => {
+    const { resizeImagePreview } = await import('./image-preview-resize')
+    const source = Buffer.from('source')
+    pipeline.toBuffer.mockResolvedValue({
+      data: Buffer.from('thumbnail'),
+      info: { width: 192, height: 96 }
+    })
+    const preview = await resizeImagePreview(source.length, async () => source, true)
+    expect(pipeline.resize).toHaveBeenCalledWith(192, 96, {
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    preview.release()
+  })
+
   it('serializes source reads and continues after a failed conversion', async () => {
     const { resizeImagePreview } = await import('./image-preview-resize')
     let reject!: (error: Error) => void
@@ -107,6 +122,38 @@ describe('bounded image preview conversion', () => {
     third.release()
   })
 
+  it('reserves capacity for a foreground preview ahead of queued thumbnails', async () => {
+    const { resizeImagePreview } = await import('./image-preview-resize')
+    const order: string[] = []
+    let finish!: (bytes: Buffer) => void
+    const first = resizeImagePreview(
+      1,
+      () =>
+        new Promise<Buffer>((resolve) => {
+          finish = resolve
+        }),
+      true
+    )
+    const thumbnail = (): ReturnType<typeof resizeImagePreview> =>
+      resizeImagePreview(
+        1,
+        async () => {
+          order.push('thumbnail')
+          return Buffer.from('a')
+        },
+        true
+      )
+    const grid = Array.from({ length: 7 }, thumbnail)
+    await expect(thumbnail()).rejects.toThrow(/capacity is busy/)
+    const foreground = resizeImagePreview(1, async () => {
+      order.push('foreground')
+      return Buffer.from('a')
+    })
+    finish(Buffer.from('a'))
+    for (const preview of await Promise.all([first, foreground, ...grid])) preview.release()
+    expect(order).toEqual(['foreground', ...Array<string>(7).fill('thumbnail')])
+  })
+
   it('rejects animated input without silently extracting its first frame', async () => {
     const { resizeImagePreview } = await import('./image-preview-resize')
     pipeline.metadata.mockResolvedValue({ pages: 2, autoOrient: { width: 8000, height: 4000 } })
@@ -127,10 +174,16 @@ describe('bounded image preview conversion', () => {
     expect(pipeline.metadata).not.toHaveBeenCalled()
   })
 
-  it('rejects oversized encoded sources before reading them', async () => {
+  it('accepts the image generation byte budget and rejects oversized sources before reading', async () => {
     const { resizeImagePreview } = await import('./image-preview-resize')
+    const { MAX_IMAGE_BYTES } = await import('./image-model/contract')
+    const source = Buffer.alloc(MAX_IMAGE_BYTES)
+    for (const thumbnail of [false, true]) {
+      const preview = await resizeImagePreview(source.length, async () => source, thumbnail)
+      preview.release()
+    }
     const read = vi.fn()
-    await expect(resizeImagePreview(50 * 1024 * 1024 + 1, read)).rejects.toThrow(/50 MiB/)
+    await expect(resizeImagePreview(MAX_IMAGE_BYTES + 1, read)).rejects.toThrow(/64 MiB/)
     expect(read).not.toHaveBeenCalled()
   })
 

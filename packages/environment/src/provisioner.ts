@@ -68,6 +68,7 @@ import { discardImportedEnvironmentLock } from './imported-environment-lock'
 import { isChildUnconfirmedError, micromambaDiagnosticText } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import {
+  DEFAULT_BUNDLE_VERSION,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -130,17 +131,28 @@ export const DEFAULT_MANAGED_VERSION: Record<NotebookLanguage, string> = {
   r: '4.4'
 }
 
-// Default managed env package sets. These are now the MINIMAL kernel-protocol floor (interpreter +
-// matplotlib-base/nomkl for Python; r-jsonlite for R) — NOT a full scientific stack. The heavier
-// convenience packages (numpy/pandas/scipy/…) install on demand via manage_packages, matching the
-// curated language packs (which are likewise minimal). No Jupyter: code runs through the exec-loop
-// (python_loop.py / r_loop.R). matplotlib-base backs Python figure capture; r-jsonlite implements the
-// R loop's line-based JSON protocol.
+// Fresh defaults use the same package specs as release staging. Named environments stay lean.
 export const DEFAULT_PYTHON_SPEC: EnvSpec = {
   name: DEFAULT_PY_ENV,
   language: 'python',
   version: DEFAULT_MANAGED_VERSION.python,
-  packages: [`python=${DEFAULT_MANAGED_VERSION.python}`, 'matplotlib-base', 'nomkl']
+  packages: [
+    `python=${DEFAULT_MANAGED_VERSION.python}`,
+    'matplotlib-base',
+    'nomkl',
+    'python-docx=1.2.0',
+    'python-pptx=1.0.2',
+    'pillow',
+    'reportlab',
+    'pypdf',
+    'pdfplumber',
+    'pypdfium2',
+    'openpyxl',
+    'pandas',
+    'numpy',
+    'scipy',
+    'pandoc=3.12.1'
+  ]
 }
 export const DEFAULT_R_SPEC: EnvSpec = {
   name: DEFAULT_R_ENV,
@@ -1631,6 +1643,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
+    // Legacy upgrades retain the readiness baseline; new libraries apply to fresh materialization.
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
       spec,
@@ -1769,7 +1782,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
       spec,
-      DEFAULT_ENV_VERSION,
+      DEFAULT_BUNDLE_VERSION,
       onProgress,
       this.abort?.signal
     )
@@ -1891,7 +1904,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           })
           const reseeded = await this.deps.fetchBundle(
             spec,
-            DEFAULT_ENV_VERSION,
+            DEFAULT_BUNDLE_VERSION,
             onProgress,
             this.abort?.signal
           )

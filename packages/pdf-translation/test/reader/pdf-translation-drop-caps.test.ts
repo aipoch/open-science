@@ -200,3 +200,20 @@ test.each([true, false])(
     assert.deepEqual(runs, unchanged)
   }
 )
+
+test('joins a bundled small-cap opening to its native initial without an inserted word space', () => {
+  const runs = [
+    { ...item('V', 60, 132, 20, 30, 'initial'), hasEOL: false },
+    item('ISUAL systems combine several available signals in multi-', 81, 120, 249),
+    item('modal experiments recover useful evidence from independent observations', 81, 132, 249),
+    item('these methods remain useful across several controlled settings.', 60, 144, 270),
+    item('A separate neighboring paragraph starts below the completed opening.', 60, 180, 270)
+  ]
+  const result = extract(runs)
+  const paragraph = result.units.find((unit) => unit.items.includes('1:0'))!
+  assert.ok(paragraph.source.startsWith('VISUAL systems'), paragraph.source)
+  assert.ok(paragraph.source.includes('multi-modal experiments'), paragraph.source)
+  assert.ok(!paragraph.source.includes('V ISUAL'))
+  assert.deepEqual(paragraph.items, ['1:0', '1:1', '1:2', '1:3'])
+  assert.equal(result.units.find((unit) => unit.items.includes('1:4'))?.items.length, 1)
+})

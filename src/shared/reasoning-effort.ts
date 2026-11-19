@@ -1,6 +1,7 @@
 import {
   getVendorModelReasoningCapability,
   type OfficialVendorId,
+  type ReasoningCapability,
   type ModelReasoningEffort,
   type ResolvedReasoningEffort,
   type CustomReasoningEffortTransport
@@ -265,9 +266,27 @@ export function resolveVendorModelReasoningEffort(
   id: OfficialVendorId,
   modelId: string | undefined
 ): ReasoningEffortProfile {
-  const capability = getVendorModelReasoningCapability(id, modelId)
+  return reasoningProfileFromCapability(getVendorModelReasoningCapability(id, modelId))
+}
+
+export function reasoningProfileFromCapability(
+  capability: ReasoningCapability
+): ReasoningEffortProfile {
   if (!capability.supported || capability.values.length === 0) return { supported: false }
-  const values = capability.values
+  const values = EFFORT_STRENGTH.filter((value) => capability.values.includes(value))
+  if (values.length > INTENTS.length) {
+    const closest = (intent: ModelReasoningEffort): ModelReasoningEffort =>
+      values.reduce((best, value) =>
+        Math.abs(EFFORT_STRENGTH.indexOf(value) - EFFORT_STRENGTH.indexOf(intent)) <
+        Math.abs(EFFORT_STRENGTH.indexOf(best) - EFFORT_STRENGTH.indexOf(intent))
+          ? value
+          : best
+      )
+    return {
+      supported: true,
+      slots: [closest('low'), closest('medium'), closest('high'), closest('xhigh'), closest('max')]
+    }
+  }
   return {
     supported: true,
     slots: [

@@ -1466,6 +1466,190 @@ describe('translated PDF ownership', () => {
   })
 })
 
+it.each([
+  'valid',
+  'unlinked-other-key',
+  'unlinked-repeated-key',
+  'swapped-repeated-actions',
+  'swapped-within-row',
+  'changed-number',
+  'missing-link',
+  'extra-link',
+  'changed-action'
+] as const)(
+  'verifies transitive native citation runs without borrowing actions: %s',
+  async (kind) => {
+    const f = fixture(),
+      tail =
+        kind === 'unlinked-other-key'
+          ? 'Later [11].'
+          : kind === 'unlinked-repeated-key'
+            ? 'Later [7].'
+            : '',
+      before = ['First [7], [9].', 'Again [7], [9].', ...(tail ? [tail] : [])],
+      sourceText = before.join(' '),
+      labels =
+        kind === 'swapped-within-row' ? ['9', '7'] : ['7', kind === 'changed-number' ? '8' : '9'],
+      translatedTail =
+        kind === 'unlinked-other-key'
+          ? '另见[11]。'
+          : kind === 'unlinked-repeated-key'
+            ? '另见[7]。'
+            : '',
+      targetText =
+        `见[${labels[0]}]、[${labels[1]}]。见[${labels[0]}]、[${labels[1]}]。` + translatedTail,
+      source = createPdfTranslationSource({
+        ...f.results.source,
+        units: [
+          {
+            ...f.results.source.units[0],
+            source: sourceText,
+            fragments: [
+              {
+                ...f.results.source.units[0].fragments[0],
+                items: before.map((text, index) => ({ index, text }))
+              }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        units: [{ id: 'one', translationSource: sourceText, translation: targetText }]
+      },
+      item = (str: string, x: number, y: number, width: number): typeof f.item => ({
+        ...f.item,
+        str,
+        transform: [10, 0, 0, 10, x, y],
+        width
+      })
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: before.map((s, i) => item(s, 60, 700 - i * 16, 160))
+    })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [
+        ...[700, 684].flatMap((y) => [
+          item('见[', 60, y, 20),
+          item(labels[0], 80, y, 6),
+          item(']、[', 86, y, 30),
+          item(labels[1], 116, y, 6),
+          item(']。', 122, y, 20)
+        ]),
+        ...(tail ? [item(translatedTail, 60, 668, 80)] : [])
+      ]
+    })
+    const links = [0, 1, 2, 3].map((i) => ({
+      annotationType: 2,
+      rect: [
+        99 + (i % 2) * 40,
+        699 - Math.floor(i / 2) * 16,
+        107 + (i % 2) * 40,
+        711 - Math.floor(i / 2) * 16
+      ],
+      url: `https://example.org/reference/${i % 2 ? 9 : 7}/occurrence/${Math.floor(i / 2)}`
+    }))
+    f.originalPage.getAnnotations.mockResolvedValue(links)
+    const moved = links.slice(0, kind === 'missing-link' ? 3 : 4).map((link, i) => {
+      const at = kind === 'swapped-repeated-actions' ? (i + 2) % 4 : i,
+        x = [80, 116][at % 2],
+        y = 700 - Math.floor(at / 2) * 16
+      return {
+        ...link,
+        rect: [x - 1, y - 1, x + 7, y + 11],
+        ...(kind === 'changed-action' && i === 0 ? { url: 'https://example.org/changed' } : {})
+      }
+    })
+    f.targetPage.getAnnotations.mockResolvedValue(
+      kind === 'extra-link' ? [...moved, moved[0]] : moved
+    )
+    const artifact = { results, data: new Uint8Array([4, 5]) },
+      hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(
+        ['valid', 'unlinked-other-key'].includes(kind) ? 'ready' : 'error'
+      )
+    )
+  }
+)
+
+it.each([
+  'proved pair',
+  'swapped target order',
+  'different destination',
+  'overlapping source boxes',
+  'missing source link',
+  'changed target number',
+  'same target glyph'
+])('checks repeated figure links in one native row: %s', async (change) => {
+  const f = fixture(),
+    sourceText = 'Compare Figure 7. Use Figure 7 again.',
+    targetNumber = change === 'changed target number' ? '8' : '7',
+    translation = `比较图7。再看图${targetNumber}。`,
+    item = (str: string, x: number, width: number): typeof f.item => ({
+      ...f.item,
+      str,
+      transform: [10, 0, 0, 10, x, 700],
+      width
+    }),
+    source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [
+        {
+          ...f.results.source.units[0],
+          source: sourceText,
+          fragments: [
+            {
+              ...f.results.source.units[0].fragments[0],
+              items: [{ index: 0, text: sourceText }]
+            }
+          ]
+        }
+      ]
+    }),
+    results = { source, units: [{ id: 'one', translationSource: sourceText, translation }] },
+    link = { annotationType: 2, dest: [0, { name: 'XYZ' }, 12, 90, null] },
+    second = {
+      ...link,
+      ...(change === 'different destination' ? { dest: [0, { name: 'XYZ' }, 12, 110, null] } : {})
+    },
+    firstTarget = change === 'swapped target order' ? 167 : 94,
+    secondTarget = ['swapped target order', 'same target glyph'].includes(change) ? 94 : 167
+  f.originalPage.getTextContent.mockResolvedValue({ items: [item(sourceText, 60, 220)] })
+  f.targetPage.getTextContent.mockResolvedValue({
+    items: [
+      item('比较图', 60, 30),
+      item('7', 95, 5),
+      item('。再看图', 104, 60),
+      item(targetNumber, 168, 5),
+      item('。', 177, 5)
+    ]
+  })
+  f.originalPage.getAnnotations.mockResolvedValue([
+    { ...link, rect: [136, 699, 143, 711] },
+    ...(change === 'missing source link'
+      ? []
+      : [
+          {
+            ...second,
+            rect:
+              change === 'overlapping source boxes' ? [140, 699, 147, 711] : [230, 699, 237, 711]
+          }
+        ])
+  ])
+  f.targetPage.getAnnotations.mockResolvedValue([
+    { ...link, rect: [firstTarget, 699, firstTarget + 7, 711] },
+    ...(change === 'missing source link'
+      ? []
+      : [{ ...second, rect: [secondTarget, 699, secondTarget + 7, 711] }])
+  ])
+  const artifact = { results, data: new Uint8Array([4, 5]) },
+    hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+  await waitFor(() =>
+    expect(hook.result.current.state.status).toBe(change === 'proved pair' ? 'ready' : 'error')
+  )
+  hook.unmount()
+})
+
 describe('independent moved-link validation', () => {
   it.each([
     'changed-body',
@@ -6236,24 +6420,43 @@ it.each([
   'changed-character',
   'moved-piece',
   'changed-width',
-  'duplicate-piece'
+  'duplicate-piece',
+  'staggered-same-ink',
+  'staggered-changed-ink',
+  'staggered-missing',
+  'staggered-duplicate',
+  'staggered-moved'
 ])(
   'verifies a split untouched neighboring run with complete geometry and rendered ink: %s',
   async (kind) => {
     const { createCanvas } = await import('@napi-rs/canvas')
+    const staggered = kind.startsWith('staggered-'),
+      moved = kind === 'moved-piece' || kind === 'staggered-moved'
     const f = fixture(),
       before = {
-        str: '1) (%)',
+        str: staggered ? '❳❳' : '1) (%)',
+        ...(staggered ? { height: 10 } : {}),
         fontName: 'native',
         transform: [10, 0, 0, 10, 100, 700],
-        width: 30
+        width: staggered ? 18.8 : 30
       },
-      first = { ...before, str: kind === 'changed-character' ? '2)' : '1)', width: 10 },
+      first = {
+        ...before,
+        str: staggered ? '❳' : kind === 'changed-character' ? '2)' : '1)',
+        width: 10
+      },
       last = {
         ...before,
-        str: '(%)',
-        width: kind === 'changed-width' ? 14 : 15,
-        transform: [10, 0, 0, 10, kind === 'moved-piece' ? 116 : 115, 700]
+        str: staggered ? '❳' : '(%)',
+        width: staggered ? 10 : kind === 'changed-width' ? 14 : 15,
+        transform: [
+          10,
+          0,
+          0,
+          10,
+          (staggered ? 108.8 : 115) + (moved ? 1 : 0),
+          staggered ? 698 : 700
+        ]
       },
       source = createPdfTranslationSource({
         ...f.results.source,
@@ -6275,7 +6478,12 @@ it.each([
             fragments: [
               {
                 pageNumber: 1,
-                rect: { x: 100 / 600, y: 90 / 800, width: 30 / 600, height: 10 / 800 },
+                rect: {
+                  x: 100 / 600,
+                  y: 90 / 800,
+                  width: before.width / 600,
+                  height: (staggered ? 14 : 10) / 800
+                },
                 items: [{ index: 1, text: before.str }]
               }
             ]
@@ -6285,9 +6493,10 @@ it.each([
     const originalText = {
       items: [{ ...f.item, str: 'cell' }, before],
       styles:
-        kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
+        staggered || kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
           ? {
               native: {
+                fontFamily: 'serif',
                 ascent: kind === 'invalid-font-metrics' ? NaN : 0.72,
                 descent: -0.18,
                 vertical: false
@@ -6295,10 +6504,17 @@ it.each([
             }
           : {}
     }
+    const targetText = {
+      items: [
+        f.item,
+        first,
+        ...(kind === 'staggered-missing' ? [] : [last]),
+        ...(['duplicate-piece', 'staggered-duplicate'].includes(kind) ? [last] : [])
+      ],
+      styles: staggered ? originalText.styles : {}
+    }
     f.originalPage.getTextContent.mockResolvedValue(originalText)
-    f.targetPage.getTextContent.mockResolvedValue({
-      items: [f.item, first, last, ...(kind === 'duplicate-piece' ? [last] : [])]
-    })
+    f.targetPage.getTextContent.mockResolvedValue(targetText)
     const createElement = document.createElement.bind(document),
       canvasFactory = vi
         .spyOn(document, 'createElement')
@@ -6321,7 +6537,12 @@ it.each([
               context.fillStyle = 'black'
               // Matching run bounds alone cannot detect movement of an inner glyph.
               if (kind !== 'blank-ink')
-                context.fillRect(kind === 'changed-ink' && changed ? 5 : 4, 4, 3, 3)
+                context.fillRect(
+                  ['changed-ink', 'staggered-changed-ink'].includes(kind) && changed ? 5 : 4,
+                  4,
+                  3,
+                  3
+                )
               if (changed && ['neighbor-ink', 'invalid-font-metrics'].includes(kind))
                 context.fillRect(4, 440 + transform[5], 3, 3)
             }
@@ -6329,7 +6550,11 @@ it.each([
           }
         ),
       originalRender = render(false),
-      targetRender = render(['changed-ink', 'neighbor-ink', 'invalid-font-metrics'].includes(kind))
+      targetRender = render(
+        ['changed-ink', 'staggered-changed-ink', 'neighbor-ink', 'invalid-font-metrics'].includes(
+          kind
+        )
+      )
     Object.assign(f.originalPage, { render: originalRender })
     Object.assign(f.targetPage, { render: targetRender })
     for (const page of [f.originalPage, f.targetPage])
@@ -6349,11 +6574,13 @@ it.each([
       )
       await waitFor(() =>
         expect(hook.result.current.state.status).toBe(
-          kind === 'same-ink' || kind === 'neighbor-ink' ? 'ready' : 'error'
+          ['same-ink', 'neighbor-ink', 'staggered-same-ink'].includes(kind) ? 'ready' : 'error'
         )
       )
       if (
         [
+          'staggered-same-ink',
+          'staggered-changed-ink',
           'same-ink',
           'neighbor-ink',
           'invalid-font-metrics',
@@ -7854,3 +8081,190 @@ it.each(['owned formula', 'printable glyph', 'moved glyph', 'other owner', 'dupl
     )
   }
 )
+
+describe('native mixed bullet literals', () => {
+  const sample = JSON.parse(
+    readFileSync(
+      resolve('packages/pdf-translation/test/fixtures/mixed-bullet-native.jsonl'),
+      'utf8'
+    )
+      .trim()
+      .split('\n', 1)[0]
+  ) as {
+    page: {
+      items: {
+        str: string
+        width: number
+        height: number
+        dir: string
+        transform: number[]
+        fontName: string
+        fontFamily: string
+        hasEOL?: boolean
+      }[]
+    }
+  }
+  const positive = '• 80% 的试验：替换为 [TOKEN]，例如 red fox → red [TOKEN]'
+  it.each([
+    'valid',
+    'changed',
+    'missing',
+    'duplicate',
+    'reordered',
+    'spaces',
+    'actual',
+    'actual-spaces',
+    'lost-type',
+    'restored',
+    'split-restored',
+    'split-fragment'
+  ])('reproves native ownership and retains only a failing owner: %s', async (fault) => {
+    const f = fixture(),
+      native = structuredClone(sample.page.items)
+    let translation = positive
+    if (fault === 'changed' || fault === 'split-fragment')
+      translation = positive.replace('red fox', 'blue fox')
+    if (fault === 'missing') translation = positive.replace(' → red [TOKEN]', '')
+    if (fault === 'duplicate') translation = positive + ' red fox → red [TOKEN]'
+    if (fault === 'reordered') translation = 'red fox → red [TOKEN] 然后 [TOKEN]'
+    if (fault === 'spaces') translation = positive.replace('red fox', 'redfox')
+    if (fault === 'lost-type') native[6].fontName = 'other'
+    const sourceData = {
+      resourceRequestKey: 'reader:mixed',
+      fingerprint: 'fp',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'bullet',
+          source: native
+            .slice(0, 8)
+            .map((i) => i.str)
+            .join(' '),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.06, y: 0.11, width: 0.4, height: 0.06 },
+              items: native.slice(0, 8).map((item, index) => ({ index, text: item.str }))
+            }
+          ]
+        },
+        {
+          id: 'peer',
+          source: native
+            .slice(8)
+            .map((i) => i.str)
+            .join(' '),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.06, y: 0.17, width: 0.6, height: 0.06 },
+              items: native.slice(8).map((item, index) => ({ index: index + 8, text: item.str }))
+            }
+          ]
+        }
+      ]
+    }
+    if (fault === 'split-restored' || fault === 'split-fragment') {
+      const head = {
+        pageNumber: 1,
+        rect: { x: 0.06, y: 0.11, width: 0.4, height: 0.02 },
+        items: native.slice(0, 1).map((item, index) => ({ index, text: item.str }))
+      }
+      const tail = {
+        pageNumber: 1,
+        rect: { x: 0.06, y: 0.13, width: 0.4, height: 0.04 },
+        items: native.slice(1, 8).map((item, index) => ({ index: index + 1, text: item.str }))
+      }
+      if (fault === 'split-restored')
+        sourceData.units.splice(
+          0,
+          1,
+          { id: 'bullet', source: native[0].str, fragments: [head] },
+          {
+            id: 'tail',
+            source: native
+              .slice(1, 8)
+              .map((i) => i.str)
+              .join(' '),
+            fragments: [tail]
+          }
+        )
+      else sourceData.units[0].fragments = [head, tail]
+    }
+    const source = createPdfTranslationSource(
+      fault === 'restored' || fault === 'split-restored'
+        ? JSON.parse(JSON.stringify(sourceData))
+        : sourceData
+    )
+    const results = {
+      source,
+      units: source.units.map((unit) => ({
+        id: unit.id,
+        translationSource: unit.source,
+        translation:
+          unit.id === 'peer'
+            ? '另一段译文'
+            : unit.id === 'tail'
+              ? '[TOKEN] 例如 blue fox → red [TOKEN]'
+              : translation
+      }))
+    }
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: native,
+      styles: {
+        body: { fontFamily: 'serif' },
+        mono: { fontFamily: 'monospace' },
+        arrow: { fontFamily: 'serif' }
+      }
+    } as unknown as Awaited<ReturnType<typeof f.originalPage.getTextContent>>)
+    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
+      const targetItems = input.units
+        .filter((u) => u.source !== source.units.at(-1)!.source)
+        .flatMap((unit) => {
+          const owner = source.units.find((u) => u.source === unit.source)!
+          const indices = owner.fragments.flatMap((f) => f.items.map((i) => i.index))
+          if (unit.translation === unit.source) return indices.map((i) => native[i])
+          return [
+            {
+              str:
+                fault === 'actual'
+                  ? positive.replace('red fox', 'blue fox')
+                  : fault === 'actual-spaces'
+                    ? positive.replace('red fox', 'redfox')
+                    : unit.translation,
+              transform: [...native[indices[0]].transform],
+              width: 180
+            }
+          ]
+        })
+      f.targetPage.getTextContent.mockResolvedValue({
+        items: [
+          ...targetItems,
+          {
+            str: '另一段译文',
+            transform: [10, 0, 0, 10, 40, 640],
+            width: 60
+          }
+        ]
+      } as unknown as Awaited<ReturnType<typeof f.targetPage.getTextContent>>)
+      return { data: new Uint8Array([4, 5]), layoutFailures: [] }
+    })
+    vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, results, undefined, 'reader:mixed')
+    )
+    await waitFor(() => expect(hook.result.current.ready).toBeDefined())
+    const valid = fault === 'valid' || fault === 'restored'
+    expect(generatePdf).toHaveBeenCalledTimes(valid ? 1 : fault === 'split-restored' ? 3 : 2)
+    expect(hook.result.current.layoutFailures.bullet?.code).toBe(
+      valid ? undefined : 'validation-failed'
+    )
+    expect(hook.result.current.layoutFailures.peer).toBeUndefined()
+    if (fault === 'split-restored')
+      expect(hook.result.current.layoutFailures.tail?.code).toBe('validation-failed')
+    expect(
+      generatePdf.mock.calls.at(-1)![0].units.find((u) => u.source === source.units.at(-1)!.source)
+        ?.translation
+    ).toBe('另一段译文')
+  })
+})

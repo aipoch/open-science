@@ -3,6 +3,15 @@ import {
   SessionHistoryCursorStaleError,
   loadSessionHistoryPageRequestSchema
 } from '../shared/session-history'
+import type {
+  ImageTask,
+  ImageTaskStart,
+  ImageTaskList,
+  ImageTaskStartResult,
+  ImageTaskIdentity
+} from '../shared/image-task'
+import type { ImageTaskOwner } from './image-model/tasks'
+import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoPresentationRequest,
@@ -13,7 +22,8 @@ import type {
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { createVideoExportTools } from '@aipoch/research-film'
 import { createResearchVideoExportControl } from './research-video/export-control'
@@ -254,6 +264,7 @@ type DataContentApplicationCommandDependencies = Readonly<{
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
   managedFileVersions: ManagedFileVersionCommandOwner
+  imageTasks?: ImageTaskOwner
   researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
   videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
@@ -463,9 +474,29 @@ const dataContentApplicationCommands = Object.freeze({
   >('preview-resources:read-range'),
   previewResearchVideoExport: defineApplicationCommand<
     'preview-resources:export-research-video',
-    readonly [request: { resourceId: string }],
+    readonly [request: { resourceId: string; resolution?: ResearchVideoResolution }],
     ResearchVideoExportResult
   >('preview-resources:export-research-video'),
+  imageTaskStart: defineApplicationCommand<
+    'image-tasks:start',
+    readonly [request: ImageTaskStart],
+    ImageTaskStartResult
+  >('image-tasks:start'),
+  imageTaskGet: defineApplicationCommand<
+    'image-tasks:get',
+    readonly [request: ImageTaskIdentity],
+    ImageTask | undefined
+  >('image-tasks:get'),
+  imageTaskList: defineApplicationCommand<
+    'image-tasks:list',
+    readonly [request: ImageTaskList],
+    ImageTask[]
+  >('image-tasks:list'),
+  imageTaskCancel: defineApplicationCommand<
+    'image-tasks:cancel',
+    readonly [request: ImageTaskIdentity],
+    void
+  >('image-tasks:cancel'),
   researchVideoPresentationStart: defineApplicationCommand<
     'research-video:start',
     readonly [request: ResearchVideoStartRequest],
@@ -784,6 +815,10 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.previewResourceRelease,
     dataContentApplicationCommands.previewResearchVideoExport,
     dataContentApplicationCommands.previewResearchVideoCancel,
+    dataContentApplicationCommands.imageTaskStart,
+    dataContentApplicationCommands.imageTaskGet,
+    dataContentApplicationCommands.imageTaskList,
+    dataContentApplicationCommands.imageTaskCancel,
     dataContentApplicationCommands.researchVideoPresentationStart,
     dataContentApplicationCommands.researchVideoPresentationStatus,
     dataContentApplicationCommands.researchVideoPresentationRemove,
@@ -1076,6 +1111,27 @@ const registerDataContentApplicationCommands = (
           invocation.args[0],
           invocation.callerContext.clientId
         )
+      },
+      'image-tasks:start': async (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        try {
+          return await dependencies.imageTasks.start(invocation.args[0])
+        } catch (error) {
+          if (!(error instanceof ImageModelError)) throw error
+          return { error: error.detail }
+        }
+      },
+      'image-tasks:get': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.get(invocation.args[0])
+      },
+      'image-tasks:list': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.list(invocation.args[0])
+      },
+      'image-tasks:cancel': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.cancel(invocation.args[0])
       },
       'research-video:start': (invocation) => {
         assertElectronCaller(invocation, 'research-video:start')

@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../../shared/codebuddy-subscription'
 import { ProviderAcpValidator } from './provider-acp-validation'
 import { SkillSourceRepository } from '../skills/source-repository'
 import type {
@@ -638,6 +639,7 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       allocateSettingsIdSequence,
+      resolveCodeBuddyExecutable: (path) => this.runtimeManager.resolveCodeBuddyExecutable(path),
       resolveCodexExecutable: async (adapterPath, nativePath, prepareForHarness) => {
         if (
           prepareForHarness ||
@@ -657,6 +659,7 @@ class SettingsService {
     })
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
+      this.providers,
       options.onProviderHealthChanged
     )
     this.harnessSessions = new HarnessSessionOwner(
@@ -1116,6 +1119,10 @@ class SettingsService {
 
   async admitVisionModel(): ReturnType<ScenarioModelOwner['vision']['admit']> {
     return this.scenarioModels.vision.admit()
+  }
+
+  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve' | 'test'> {
+    return this.scenarioModels.image
   }
 
   async admitReviewerExecutionModel(): ReturnType<ScenarioModelOwner['reviewer']['admit']> {
@@ -1799,6 +1806,10 @@ class SettingsService {
 
   cancelClaudeLogin(): void {
     this.providers.cancelClaudeLogin()
+  }
+
+  async codeBuddyAccount(request: CodeBuddyAccountRequest): Promise<ValidateProviderResult> {
+    return this.providers.codeBuddyAccount(request)
   }
 
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {

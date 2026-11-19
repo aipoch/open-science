@@ -101,7 +101,9 @@ const setup = (
   const owner = new AcpPromptPreparationOwner({
     promptContent,
     classificationImages,
-    imageInputCompatibility,
+    imageInputCompatibility: imageInputCompatibility
+      ? { isAvailable: async () => true, ...imageInputCompatibility }
+      : undefined,
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
     selectBridgeSkills: vi.fn(async () => []),

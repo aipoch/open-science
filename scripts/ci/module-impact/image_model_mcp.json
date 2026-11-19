@@ -1,0 +1,16 @@
+{
+  "ownerPaths": ["src/main/image-model/mcp-server.ts", "src/main/image-model/mcp-server.test.ts"],
+  "interfacePaths": ["src/main/image-model/mcp-server.ts"],
+  "consumerModules": ["desktop_composition", "settings_backend_resolution"],
+  "testFiles": {
+    "owner": ["src/main/image-model/mcp-server.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/main/acp/session-capability-owner.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The image MCP adapter is a separate process and session capability boundary; retain full CI validation of tool discovery, cancellation and trusted Artifact handoff."
+}

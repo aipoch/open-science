@@ -52,6 +52,10 @@ function cleanupCommand(
   return `& ${quote(executable)} program-cleanup --staging-path ${quote(stage)} --report ${quote(report)}${upgrade ? ' --upgrade' : ''}; exit $LASTEXITCODE`
 }
 
+function diagnosticsCommand(action: 'record' | 'finalize', options: string): string {
+  return `& ${quote(helper)} diagnostics --action ${action} ${options}`
+}
+
 function compileInjectedHelper(fixture: string, source: string): string {
   const injectedSource = join(fixture, 'injected.cs')
   writeFileSync(injectedSource, source)
@@ -311,7 +315,10 @@ exit $code`)
       ])
     )
     const finalized = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )
     )
     expect(finalized.status, String(finalized.stderr)).toBe(0)
     const message = finalized.stdout.toString('utf16le')
@@ -321,7 +328,10 @@ exit $code`)
     expect(message).toContain('contact support before removing them')
     expect(message).not.toContain('An application file is in use.')
     const restored = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )}`
     )
     expect(restored.status, String(restored.stderr)).toBe(0)
     const restoredMessage = restored.stdout.toString('utf16le')
@@ -396,10 +406,12 @@ exit $code`)
         ]
       })
     )
-    const diagnostics = resolve('build/windows-install-diagnostics.ps1')
     const saved = join(root, 'saved-logs')
     const result = run(
-      `& ${quote(diagnostics)} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(diagnostics)} -Action finalize -ReportPath ${quote(report)} -ReportsDirectory ${quote(reports)} -LogDirectory ${quote(saved)} -ExitCode 2 -AppVersion 1.2.0 -Language 1033`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --reports-directory ${quote(reports)} --log-directory ${quote(saved)} --exit-code 2 --app-version 1.2.0 --language 1033`
+      )}`
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -433,7 +445,10 @@ exit $code`)
     const blockedLogDirectory = join(root, 'not-a-directory')
     writeFileSync(blockedLogDirectory, 'preserve')
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(blockedLogDirectory)} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(blockedLogDirectory)} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -494,7 +509,10 @@ exit $code`)
 
   it('uses the selected installer language and Pro branding for a missing final report', () => {
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(join(root, 'missing.json'))} -LogDirectory ${quote(join(root, 'localized-log'))} -Language 2052 -ProductName 'Open-Science Pro' -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(join(root, 'missing.json'))} --log-directory ${quote(join(root, 'localized-log'))} --language 2052 --product-name ${quote('Open-Science Pro')} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -592,7 +610,7 @@ SectionEnd`
         const parent = compile(
           'parent',
           `
-!include "${resolve('build/windows-install-diagnostics.nsh')}"
+!include "${resolve('build/windows-program-cleanup.nsh')}"
 ${outcome === 'visible-failed' ? 'SilentInstall normal' : ''}
 Function .onInit
 InitPluginsDir
@@ -611,9 +629,11 @@ FileOpen $8 "${resultFile}" w
 FileWrite $8 "$R0"
 FileClose $8
 ${!recovered ? "System::Call 'kernel32::CloseHandle(p R6)'" : ''}
-\${if} $R0 != 0
+${outcome === 'missing-child-report' ? 'StrCpy $R0 "launch-failed"' : ''}
+${outcome === 'missing-child-report' ? '${if} $R0 == "launch-failed"' : '${if} $R0 != 0'}
 Call showCleanupFailure
-CopyFiles /SILENT "$installDiagnosticMessagePath" "${join(fixture, 'notice.txt')}"
+CopyFiles /SILENT "$installDiagnosticMessagePath" "${fixture}"
+Rename "${join(fixture, 'cleanup-notice.txt')}" "${join(fixture, 'notice.txt')}"
 SetErrorLevel 2
 Quit
 \${endif}
@@ -724,6 +744,9 @@ $start=[Diagnostics.ProcessStartInfo]::new(${quote(parent)}); $start.UseShellExe
         if (recovered) {
           expect(readdirSync(fixture)).not.toContain('logs')
         } else {
+          const notice = readFileSync(join(fixture, 'notice.txt'), 'utf16le')
+          expect(notice).toContain('Diagnostic:')
+          expect(notice).not.toContain('The diagnostic could not be saved.')
           const logs = readdirSync(logDirectory)
           expect(logs).toHaveLength(1)
           const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')

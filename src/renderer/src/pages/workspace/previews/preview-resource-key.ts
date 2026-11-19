@@ -1,6 +1,7 @@
 import type { ManagedPreviewSource } from '../../../../../shared/preview-resources'
 
 type PreviewResourceIdentity = {
+  imageGenerationSessionId?: string
   projectId?: string
   sessionId?: string
   source?: ManagedPreviewSource
@@ -23,7 +24,8 @@ const createPreviewResourceKey = (identity: PreviewResourceIdentity): string =>
     identity.selectedVersionId ?? null,
     identity.mimeType ?? null,
     identity.size ?? null,
-    identity.mtimeMs ?? null
+    identity.mtimeMs ?? null,
+    identity.imageGenerationSessionId ?? null
   ])
 
 export { createPreviewResourceKey }

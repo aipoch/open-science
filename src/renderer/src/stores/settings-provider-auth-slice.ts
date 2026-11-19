@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../../../shared/codebuddy-subscription'
 import type { StoreApi } from 'zustand'
 
 import {
@@ -12,6 +13,7 @@ import type {
   ProviderDeletionScenarioModelHandling,
   ProviderView,
   RefreshProviderModelsResult,
+  RefreshProviderModelsRequest,
   SettingsSnapshot,
   SaveValidatedProviderResult,
   UpsertProviderRequest,
@@ -36,6 +38,7 @@ export type ProviderAuthActions = {
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
+  codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
   loginSharedClaude: () => Promise<ValidateProviderResult>
@@ -49,7 +52,9 @@ export type ProviderAuthActions = {
   waitXaiOAuthLogin: () => Promise<XaiOAuthLoginResult>
   cancelXaiOAuthLogin: () => Promise<void>
   logoutXaiOAuth: () => Promise<void>
-  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
+  refreshProviderModels: (
+    request: string | RefreshProviderModelsRequest
+  ) => Promise<RefreshProviderModelsResult & { refreshFailed?: boolean }>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   deleteProvider: (
@@ -74,6 +79,7 @@ type ProviderAuthCommands = Pick<
   | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -195,6 +201,16 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
 
   cancelCodexLogin: () => getCommands().cancelCodexLogin(),
 
+  codeBuddyAccount: async (request) => {
+    const commands = getCommands()
+    const result = await commands.codeBuddyAccount(request)
+    if (request.action !== 'status' && request.action !== 'cancel') {
+      reconcileSnapshot(await commands.getSettings())
+      if (request.action !== 'refresh' || result.category === 'auth') await refreshPreflight()
+    }
+    return result
+  },
+
   loginIsolatedCodex: async () => {
     const commands = getCommands()
     const result = await commands.loginIsolatedCodex()
@@ -276,14 +292,15 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     await refreshPreflight()
   },
 
-  refreshProviderModels: async (providerId) => {
+  refreshProviderModels: async (request) => {
     const commands = getCommands()
-    const result = await commands.refreshProviderModels({ providerId })
+    const target = typeof request === 'string' ? { providerId: request } : request
+    const result = await commands.refreshProviderModels(target)
+    if (target.draft && result.code !== 'stale') return result
     try {
       reconcileSnapshot(await commands.getSettings())
-    } catch (error) {
-      // Keep the original refresh failure if best-effort reconciliation also fails.
-      if (result.ok) throw error
+    } catch {
+      if (result.ok) return { ...result, refreshFailed: true }
     }
     return result
   },

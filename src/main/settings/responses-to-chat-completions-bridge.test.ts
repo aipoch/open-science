@@ -5,6 +5,7 @@ import { Agent, fetch as nodeFetch } from 'undici'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
+import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
@@ -969,6 +970,123 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('"name":"notebook_execute"')
       expect(output).toContain('"call_id":"call-notebook-1"')
       expect(output).not.toContain('"name":"mcp__open_science_notebook__notebook_execute"')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('projects image calls and replay only for a mounted session, then removes the catalog', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const source = {
+      projectId: 'p',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'file',
+      inputFileVersionId: 'version'
+    }
+    const args = JSON.stringify({
+      prompt: 'recolor',
+      source,
+      options: { size: 'auto' },
+      idempotencyKey: 'image-call'
+    })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      {
+        baseUrl: 'https://vendor.example/v1',
+        namespacedTools: codexBridgeStaticMcpTools()
+      },
+      async (_url, init) => {
+        const request = JSON.parse(String(init?.body))
+        requests.push(request)
+        return Response.json({
+          id: 'chat-image',
+          model: 'model-a',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-image',
+                    type: 'function',
+                    function: { name: 'mcp__open_science_images__edit_image', arguments: args }
+                  }
+                ]
+              },
+              finish_reason: 'tool_calls'
+            }
+          ]
+        })
+      }
+    )
+    const connection = await bridge.start()
+    const post = async (
+      session?: string,
+      input: unknown = 'edit image'
+    ): Promise<{ output: Array<{ type: string; [key: string]: unknown }> }> => {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'model-a', prompt_cache_key: session, input, stream: false })
+      })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    const imageNames = (): string[] =>
+      (requests.at(-1)!.tools as Array<{ function: { name: string } }>)
+        .map((tool: { function: { name: string } }) => tool.function.name)
+        .filter((name: string) => name.startsWith('mcp__open_science_images__'))
+    try {
+      await post()
+      expect(imageNames()).toEqual([])
+      bridge.registerMcpSession('image-session', createCodexBridgeMcpTools({ images: true }), [
+        'mcp__open_science_images'
+      ])
+      await post('other-session')
+      expect(imageNames()).toEqual([])
+      const result = await post('image-session')
+      expect(imageNames()).toEqual([
+        'mcp__open_science_images__generate_image',
+        'mcp__open_science_images__edit_image'
+      ])
+      const call = result.output.find((item: { type: string }) => item.type === 'function_call')
+      expect(call).toMatchObject({
+        namespace: 'mcp__open_science_images',
+        name: 'edit_image',
+        call_id: 'call-image',
+        arguments: args
+      })
+      await post('image-session', [
+        call,
+        { type: 'function_call_output', call_id: 'call-image', output: '{"versionId":"next"}' }
+      ])
+      expect(requests.at(-1)!.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            tool_calls: [
+              expect.objectContaining({
+                id: 'call-image',
+                function: { name: 'mcp__open_science_images__edit_image', arguments: args }
+              })
+            ]
+          }),
+          expect.objectContaining({
+            role: 'tool',
+            tool_call_id: 'call-image',
+            content: '{"versionId":"next"}'
+          })
+        ])
+      )
+      bridge.registerMcpSession('image-session', [], ['mcp__open_science_images'])
+      await post('image-session')
+      expect(imageNames()).toEqual([])
+      bridge.unregisterMcpSession('image-session')
+      await post('image-session')
+      expect(imageNames()).toEqual([])
     } finally {
       await bridge.close()
     }

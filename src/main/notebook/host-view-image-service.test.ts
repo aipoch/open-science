@@ -67,6 +67,7 @@ const harness = (
     items?: HostArtifactCatalogItem[]
     prepareImage?: PrepareImageMock
     openVersion?: HostViewImageServiceOptions['managedFileVersions']['openVersion']
+    openProducerVersion?: HostViewImageServiceOptions['managedFileVersions']['openProducerVersion']
     captureVisionRelay?: HostViewImageServiceOptions['captureVisionRelay']
     prepareVisionEvidence?: HostViewImageServiceOptions['prepareVisionEvidence']
   } = {}
@@ -99,7 +100,7 @@ const harness = (
     }))
   const service = new HostViewImageService({
     catalog: { readHostArtifactCatalog },
-    managedFileVersions: { openVersion },
+    managedFileVersions: { openVersion, openProducerVersion: options.openProducerVersion },
     captureBackend: options.captureBackend ?? (() => backend),
     captureVisionRelay: options.captureVisionRelay,
     prepareVisionEvidence: options.prepareVisionEvidence,
@@ -129,6 +130,55 @@ const context = (
 })
 
 describe('HostViewImageService', () => {
+  it('reads only the supplied producer scope and closes its lease when the turn expires', async () => {
+    let active = true
+    const close = vi.fn(async () => {})
+    const scope = {
+      appSessionId: 'calling-session',
+      artifactRunId: 'turn-1',
+      rootFrameId: 'root',
+      agentFrameId: 'root',
+      messageBranchId: 'branch',
+      runtimeSegmentId: 'segment',
+      promptMessageId: 'prompt',
+      assertActive: () => {
+        if (!active) throw new Error('turn expired')
+      }
+    }
+    const openProducerVersion = vi.fn(async () => ({ path: '/pending/image.png', close }) as never)
+    const h = harness({ openProducerVersion })
+    await expect(
+      h.service.stage({ versionId: 'generated-version' }, {}, context())
+    ).rejects.toThrow('not found')
+    expect(openProducerVersion).not.toHaveBeenCalled()
+    await expect(
+      h.service.stage(
+        { versionId: 'generated-version' },
+        {},
+        { ...context(), producerScope: scope }
+      )
+    ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
+    expect(openProducerVersion).toHaveBeenCalledWith('project-a', 'generated-version', scope)
+    expect(close).toHaveBeenCalledOnce()
+    h.prepareImage.mockImplementationOnce(async () => {
+      active = false
+      return {
+        data: 'cG5n',
+        mimeType: 'image/png',
+        originalSize: { width: 1, height: 1 },
+        outputSize: { width: 1, height: 1 }
+      }
+    })
+    await expect(
+      h.service.stage(
+        { versionId: 'generated-version' },
+        {},
+        { ...context(), producerScope: scope }
+      )
+    ).rejects.toThrow('could not prepare the authorized image source')
+    expect(close).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     ['claude-code', 'claude-anthropic'],
     ['opencode', 'opencode-openai'],
@@ -706,7 +756,8 @@ describe('HostViewImageService', () => {
       '/managed/artifact-version-1.png',
       {},
       expect.objectContaining({ aborted: false }),
-      undefined
+      undefined,
+      true
     )
     expect(h.closeVersion).toHaveBeenCalledTimes(2)
   })
@@ -782,7 +833,8 @@ describe('HostViewImageService', () => {
       await realpath(join(workspace, 'results', 'image.png')),
       {},
       expect.objectContaining({ aborted: false }),
-      await realpath(join(workspace, 'results', 'image.png'))
+      await realpath(join(workspace, 'results', 'image.png')),
+      false
     )
 
     for (const path of [
@@ -816,7 +868,8 @@ describe('HostViewImageService', () => {
       await realpath(join(root, 'image.png')),
       { crop, maxSize: 800 },
       expect.objectContaining({ aborted: false }),
-      await realpath(join(root, 'image.png'))
+      await realpath(join(root, 'image.png')),
+      false
     )
 
     for (const options of [

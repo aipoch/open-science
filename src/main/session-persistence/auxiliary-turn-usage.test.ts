@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { PrismaClient } from '@prisma/client'
@@ -54,6 +55,20 @@ afterEach(async () => {
 })
 
 describe('auxiliary usage recovery through SQLite', () => {
+  it('stores image-generation measurements in the existing ledger exactly once', async () => {
+    const input = { ...record('image:call-1'), source: 'image-generation' as const }
+    expect(await recorder.record(input)).toBe(true)
+    expect(await recorder.record(input)).toBe(false)
+    const rows = await client.sessionAuxiliaryTurnUsage.findMany()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      source: 'image-generation',
+      inputTokens: 10n,
+      outputTokens: 3n
+    })
+    expect((await projection.usage()).usageEvents).toHaveLength(1)
+  })
+
   it('retries an earlier failed measurement when the next auxiliary call is recorded', async () => {
     // This connection owns both transactions: SQLite itself rejects the write, without mocking
     // the recorder or its callers. Reads still work, as with a temporarily read-only database.
@@ -112,4 +127,57 @@ describe('auxiliary usage recovery through SQLite', () => {
     await expect(recorder.record(record('valid'))).resolves.toBe(true)
     expect(await client.sessionAuxiliaryTurnUsage.count()).toBe(1)
   })
+})
+
+it('replays image measurements after a process restart without duplicate charges in the ledger', async () => {
+  const input = { ...record('image:durable'), source: 'image-generation' as const }
+  const first = new SessionAuxiliaryTurnUsageRecorder(
+    async () => client,
+    () => root
+  )
+  await client.$executeRawUnsafe('PRAGMA query_only = ON')
+  // Image completion only waits for the durable outbox, even if SQLite cannot commit.
+  await expect(first.record(input, 'stage')).resolves.toBe(false)
+  await expect(first.flushStaged()).rejects.toThrow(/readonly/i)
+  await client.$executeRawUnsafe('PRAGMA query_only = OFF')
+  const restarted = new SessionAuxiliaryTurnUsageRecorder(
+    async () => client,
+    () => root
+  )
+  await Promise.all([restarted.flush(), restarted.flush()])
+  expect(await client.sessionAuxiliaryTurnUsage.count()).toBe(1)
+  await restarted.record(input)
+  expect(await client.sessionAuxiliaryTurnUsage.count()).toBe(1)
+  expect(await readdir(join(root, 'image-usage-outbox'))).toEqual([])
+})
+
+it('keeps valid statistics readable when individual image receipts are damaged', async () => {
+  const imageRecorder = new SessionAuxiliaryTurnUsageRecorder(
+    async () => client,
+    () => root
+  )
+  await recorder.record(record('already-indexed'))
+  await imageRecorder.record({ ...record('image:healthy'), source: 'image-generation' }, 'stage')
+  const directory = join(root, 'image-usage-outbox')
+  const malformed = '{broken'
+  const invalid = JSON.stringify({
+    ...record('image:invalid'),
+    source: 'image-generation',
+    usage: { inputTokens: -1 }
+  })
+  const invalidName = createHash('sha256')
+    .update(JSON.stringify(['project', 'session', 'image:invalid']))
+    .digest('hex')
+  await writeFile(join(directory, `${'a'.repeat(64)}.json`), malformed)
+  await writeFile(join(directory, `${invalidName}.json`), invalid)
+
+  await expect(imageRecorder.flush()).resolves.toBeUndefined()
+  await expect(imageRecorder.flush()).resolves.toBeUndefined()
+  expect((await projection.usage()).usageEvents).toHaveLength(2)
+  const retained = await readdir(directory)
+  expect(retained).toHaveLength(2)
+  expect(retained.every((name) => name.endsWith('.invalid'))).toBe(true)
+  expect(
+    await Promise.all(retained.map((name) => readFile(join(directory, name), 'utf8')))
+  ).toEqual(expect.arrayContaining([malformed, invalid]))
 })

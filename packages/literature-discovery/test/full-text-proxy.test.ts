@@ -1,6 +1,7 @@
+import { createRequire } from 'node:module'
 import { Readable } from 'node:stream'
 
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { downloadFullText as download } from '../src/full-text-download.js'
 const downloadFullText = (...args: Parameters<typeof download>): ReturnType<typeof download> =>
@@ -18,43 +19,45 @@ const fixture = vi.hoisted(() => ({
   blockEuropeRender: false
 }))
 
-vi.mock('node:dns/promises', () => ({ lookup: fixture.lookup }))
+const require = createRequire(import.meta.url)
+const https = require('node:https') as typeof import('node:https')
+const dns = require('node:dns/promises') as typeof import('node:dns/promises')
+const tls = require('node:tls') as typeof import('node:tls')
 
-vi.mock('node:tls', () => ({ connect: fixture.tls }))
-
-vi.mock('node:https', async (original) => ({
-  ...(await original<typeof import('node:https')>()),
-  get: (
-    url: URL,
-    options: { agent?: import('node:https').Agent },
-    callback: (response: Readable) => void
-  ) => {
-    fixture.requests(url.href, options)
-    let reject: (error: Error) => void = () => {}
-    queueMicrotask(() => {
-      options.agent!.createConnection({}, (error) => {
-        if (error) return reject(error)
-        callback(
-          Object.assign(Readable.from([Buffer.from('%PDF-test')]), {
-            statusCode:
-              fixture.blockEuropeRender && url.pathname.startsWith('/articles/')
-                ? 403
-                : fixture.status,
-            headers: fixture.location ? { location: fixture.location } : {}
-          })
-        )
-      })
+const mockGet = (
+  url: URL,
+  options: { agent?: import('node:https').Agent },
+  callback: (response: Readable) => void
+): { on: (_event: string, handler: (error: Error) => void) => void } => {
+  fixture.requests(url.href, options)
+  let reject: (error: Error) => void = () => {}
+  queueMicrotask(() => {
+    options.agent!.createConnection({}, (error) => {
+      if (error) return reject(error)
+      callback(
+        Object.assign(Readable.from([Buffer.from('%PDF-test')]), {
+          statusCode:
+            fixture.blockEuropeRender && url.pathname.startsWith('/articles/')
+              ? 403
+              : fixture.status,
+          headers: fixture.location ? { location: fixture.location } : {}
+        })
+      )
     })
-    return {
-      on: (_event: string, handler: (error: Error) => void) => {
-        reject = handler
-      }
+  })
+  return {
+    on: (_event: string, handler: (error: Error) => void) => {
+      reject = handler
     }
   }
-}))
+}
 
+afterEach(() => vi.restoreAllMocks())
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.spyOn(https, 'get').mockImplementation(mockGet as never)
+  vi.spyOn(dns, 'lookup').mockImplementation(fixture.lookup)
+  vi.spyOn(tls, 'connect').mockImplementation(fixture.tls)
   fixture.status = 200
   fixture.location = ''
   fixture.blockEuropeRender = false

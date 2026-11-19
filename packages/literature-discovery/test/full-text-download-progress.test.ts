@@ -1,6 +1,7 @@
+import { createRequire } from 'node:module'
 import { Readable } from 'node:stream'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LiteratureFullTextProgress } from '../src/contracts.js'
 
@@ -13,25 +14,28 @@ const fixture = vi.hoisted(() => ({
   accept: ''
 }))
 
-vi.mock('node:https', () => ({
-  get: (
-    _url: URL,
-    options: { headers: { Accept: string } },
-    callback: (response: Readable) => void
-  ) => {
-    fixture.requests += 1
-    fixture.accept = options.headers.Accept
-    queueMicrotask(() =>
-      callback(
-        Object.assign(Readable.from([Buffer.from('%PDF-'), Buffer.from('12345')]), {
-          statusCode: fixture.status,
-          headers: fixture.headers
-        })
-      )
+const https = createRequire(import.meta.url)('node:https') as typeof import('node:https')
+const mockGet = (
+  _url: URL,
+  options: { headers: { Accept: string } },
+  callback: (response: Readable) => void
+): { on: (_event: string, handler: (error: Error) => void) => void } => {
+  fixture.requests += 1
+  fixture.accept = options.headers.Accept
+  queueMicrotask(() =>
+    callback(
+      Object.assign(Readable.from([Buffer.from('%PDF-'), Buffer.from('12345')]), {
+        statusCode: fixture.status,
+        headers: fixture.headers
+      })
     )
-    return { on: vi.fn() }
-  }
-}))
+  )
+  return { on: vi.fn() }
+}
+beforeEach(() => {
+  vi.spyOn(https, 'get').mockImplementation(mockGet as never)
+})
+afterEach(() => vi.restoreAllMocks())
 
 describe('full-text transfer progress', () => {
   it('honors source throttling without additional size or download requests during Retry-After', async () => {

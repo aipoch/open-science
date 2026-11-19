@@ -25,6 +25,7 @@ import {
   SESSION_MANIFEST_VERSION,
   SessionRevisionConflictError,
   type LoadAllSessionsResult,
+  type ListSessionSummariesResult,
   type PersistedChatSession,
   type SessionSummary
 } from '../../../../shared/session-persistence'
@@ -726,6 +727,46 @@ describe('renderer session persistence bridge', () => {
       { id: 'session-1', contentLoaded: false, messages: [] },
       { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
     ])
+  })
+
+  it('uses the current selection when a summary refresh resolves after navigation', async () => {
+    const deferred = createDeferred<ListSessionSummariesResult>()
+    const first = createPersistedSession({ id: 'session-1' })
+    const second = createPersistedSession({ id: 'session-2' })
+    const summary = (session: PersistedChatSession, number: number): SessionSummary => ({
+      number,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 1,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery: false
+    })
+    const api = createApi({ list: vi.fn().mockReturnValue(deferred.promise) })
+    useSessionStore.setState({ selectedSessionId: first.id })
+
+    const load = loadPersistedSessions(
+      api,
+      () => true,
+      () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
+      true
+    )
+    useSessionStore.setState({ selectedSessionId: second.id })
+    deferred.resolve({
+      sessions: [summary(first, 1), summary(second, 2)],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: first.id }
+    })
+
+    await load
+
+    expect(useSessionStore.getState().selectedSessionId).toBe(second.id)
   })
 
   it('also hydrates unopened Sessions that require startup recovery', async () => {
@@ -6014,6 +6055,254 @@ describe('passive summary hydration', () => {
     await save(useSessionStore.getState())
     expect(api.saveSession).not.toHaveBeenCalled()
     expect(api.loadOne).not.toHaveBeenCalled()
+  })
+
+  it('preserves live session state while applying refreshed summary metadata', () => {
+    const base = createPersistedSession({
+      revision: 4,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 1 },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Keep this loaded message',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        title: 'Unsaved title',
+        unsavedTitle: true,
+        interactionState: { permission: true, elicitation: false, plan: false }
+      }))
+    }))
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: 'Refreshed title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: true,
+          revision: 5,
+          activeMessageCount: 1,
+          artifactCount: 2,
+          filesRevision: 3,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Unsaved title',
+      unsavedTitle: true,
+      status: 'running',
+      activeRun: base.activeRun,
+      pinned: true,
+      revision: 5,
+      artifactCount: 2,
+      filesRevision: 3,
+      interactionState: { permission: true, elicitation: false, plan: false }
+    })
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(
+      'Keep this loaded message'
+    )
+  })
+
+  it('preserves waiting session state while applying refreshed summary metadata', () => {
+    const base = createPersistedSession({
+      revision: 4,
+      status: 'waiting-permission'
+    })
+    useSessionStore.getState().hydrateSessions([base])
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: base.pinned ?? false,
+          revision: 5,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      revision: 5
+    })
+  })
+
+  it('keeps newer live metadata when an older summary arrives', () => {
+    const base = createPersistedSession({
+      revision: 5,
+      title: 'Current title',
+      pinned: true,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+    })
+    useSessionStore.getState().hydrateSessions([base])
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: 'Stale title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 4,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt - 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Current title',
+      pinned: true,
+      status: 'running',
+      revision: 5
+    })
+  })
+
+  it('does not save an idle transcript after a newer summary revision arrives', async () => {
+    const base = createPersistedSession({
+      revision: 4,
+      pinned: false,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Older loaded message',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 5,
+          pinned: false,
+          activeMessageCount: 2,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    const refreshed = useSessionStore.getState().sessions[0]
+    expect(refreshed.contentLoaded).toBe(false)
+    expect(refreshed.messages).toEqual([])
+    expect(isExternallyHydratedSession(refreshed)).toBe(true)
+
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('drops a partial history page when a newer summary revision arrives', () => {
+    const base = createPersistedSession({ revision: 4 })
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        historyPage: { revision: 4, totalItems: 1, hasMore: true, beforeCursor: 'older' }
+      }))
+    }))
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 5,
+          pinned: false,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      contentLoaded: false,
+      messages: []
+    })
+    expect(useSessionStore.getState().sessions[0].historyPage).toBeUndefined()
   })
 })
 

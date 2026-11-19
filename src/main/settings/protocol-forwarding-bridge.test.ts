@@ -295,7 +295,10 @@ describe('ProtocolForwardingBridge', () => {
         onProviderFailure
       }
       const bridge = new ProtocolForwardingBridge([target], target.id, async () =>
-        Response.json(body, { status })
+        Response.json(body, {
+          status,
+          headers: { 'x-open-science-upstream-status': 'vendor-metadata' }
+        })
       )
       bridges.push(bridge)
       const connection = await bridge.start()
@@ -308,6 +311,9 @@ describe('ProtocolForwardingBridge', () => {
         body: JSON.stringify({ input: 'hello' })
       })
       expect(response.status).toBe(status >= 429 ? status : 400)
+      expect(response.headers.get('x-open-science-upstream-status')).toBe(
+        status >= 429 ? null : String(status)
+      )
       if (category)
         expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
           startedAt: expect.any(Number),

@@ -85,7 +85,9 @@ class ArtifactProvenanceDependencyReader {
           row.sourceFileId === uploadSource.uploadFileId &&
           row.sourceSessionId === uploadSource.uploadFile.sessionId &&
           row.sourceVersionNumber === uploadSource.versionNumber &&
-          sameDate(row.sourceCreatedAt, uploadSource.createdAt) &&
+          (sameDate(row.sourceCreatedAt, uploadSource.createdAt) ||
+            (uploadSource.createdAt === null &&
+              sameDate(row.sourceCreatedAt, uploadSource.registeredAt))) &&
           row.filename === (uploadSource.originalFilename || uploadSource.filename) &&
           row.contentType === uploadSource.contentType &&
           row.sizeBytes === uploadSource.sizeBytes &&

@@ -740,6 +740,7 @@ class ProviderTransportOwner {
           ...input.activeTarget.provider,
           baseUrl: connection.baseUrl,
           chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
+          responsesBaseUrl: `${connection.baseUrl}/v1`,
           model: activeModel,
           key: connection.token,
           apiEndpoints: ['responses'] as const

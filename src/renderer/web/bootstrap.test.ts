@@ -70,7 +70,7 @@ type WebApi = {
     (request: unknown) => Promise<unknown>
   >
   settings: Record<
-    'installClaude' | 'installCodeBuddy' | 'installCodex' | 'installOpencode',
+    'installClaude' | 'installCodeBuddy' | 'installCodex' | 'installOpencode' | 'testImageModel',
     (request: unknown) => Promise<unknown>
   >
   notebook: {
@@ -101,6 +101,18 @@ const chunkOperations = [
 
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
+  {
+    channel: 'settings:test-image-model',
+    result: { ok: true },
+    invoke: (api: WebApi) =>
+      api.settings.testImageModel({
+        kind: 'save',
+        id: 'draft',
+        name: 'Images',
+        adapter: 'openai-images',
+        models: [{ id: 'image', wireModelId: 'image', presetId: 'openai-images/generic' }]
+      })
+  },
   {
     channel: 'literature:overview-batch',
     result: {
@@ -853,7 +865,8 @@ describe('Web bootstrap event connection', () => {
           source: 'artifact',
           projectId: 'project-1',
           fileId: 'artifact-1',
-          versionId: 'version-3'
+          versionId: 'version-3',
+          purpose: 'download'
         }
       ]
     })

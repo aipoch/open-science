@@ -231,6 +231,30 @@ describe.each(['existing', 'new'])('mentionProjectFile in a %s conversation', (c
     })
   })
 
+  it('mentions the candidate version even when the file head is newer', async () => {
+    const candidate = { ...headVersion, id: 'candidate-1', checksum: 'b'.repeat(64) }
+    const inspect = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        headVersionId: headVersion.id,
+        headVersion,
+        selectedVersion: candidate,
+        versions: [headVersion],
+        sessionId: 'session-1',
+        displayName: 'report.md'
+      }
+    }))
+    window.api = { managedFileVersions: { inspect } } as unknown as Window['api']
+    await expect(mentionProjectFile({ ...file(), versionId: candidate.id })).resolves.toBe(
+      'mentioned'
+    )
+    expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ versionId: candidate.id }))
+    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({
+      sourceVersionId: candidate.id,
+      checksum: candidate.checksum
+    })
+  })
+
   it('reports unavailable when inspection fails', async () => {
     window.api = {
       managedFileVersions: { inspect: vi.fn(async () => ({ ok: false })) }

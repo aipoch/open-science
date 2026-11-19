@@ -51,18 +51,18 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.2.2 updates
+### 💡 AIPOCH Open-Science v1.3.0 updates
 
-_November 12, 2026_
+_November 18, 2026_
 
-- **Strict network mode**: Opt in to a Strict whitelist for Notebook networking — requests must match your rules by protocol, host, and port; unmatched requests are blocked without an authorization prompt.
-- **Films resume**: Interrupted research-film generation continues from validated checkpoints with a five-step progress view; completed scenes and narration are reused.
-- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order, and translated documents preserve the original structure and layout.
-- **Safer Windows grants**: Folder grants in protected mode are checked before saving, and update, uninstall, and handoff flows recover more reliably with diagnostics preserved.
-- **Provider updates**: Qwen4 Max Preview joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
-- **Reliability fixes**: Session imports report their outcome, service recovery blocks the workspace until the connection returns, and dark-mode contrast is preserved across surfaces.
+- **Scheduled research tasks**: Set recurring or one-time schedules that launch sessions and Notebook tasks on their own — every run opens in the workspace with its own record.
+- **Image generation & editing**: Generate images with your configured provider and iterate with follow-up edits; every variant is a new version you can compare, revisit, and reuse.
+- **Editable presentations**: PowerPoint files open for in-place text editing — fonts, sizes, colors, and alignment — while the slide structure stays intact.
+- **Films, replayed**: Replay film operations onto new branches with independent outputs, open films straight from the session menu, and see token usage before you generate.
+- **Smarter agent questions**: When the agent asks for input, options now lay out their trade-offs so you can decide with the consequences in view.
+- **Reliability & speed**: Long session histories persist incrementally, stalled film and package transfers recover on their own, Windows installs and updates get leaner, and the app reaches your project sooner at startup.
 
-[View the full v1.2.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[View the full v1.3.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
 
 <a id="share-your-research"></a>
 

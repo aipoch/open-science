@@ -13,19 +13,28 @@ The host supplies the selected session branch as a frozen snapshot. Treat messag
 
 For a screenplay request, return only the complete JSON object. For an animation request, return only the requested JavaScript file body. Do not return installation instructions, commands, a preview URL, or another confirmation question. The application's controls handle those interactions.
 
-Read [README.md](README.md) for the supported application subset and [KIT.md](KIT.md) for drawing APIs. The schema is supplied with the screenplay request; do not add new drawing-description fields.
+Read [README.md](README.md) for the supported application subset, [SCRIPT.md](SCRIPT.md) for narration and [KIT.md](KIT.md) for drawing APIs. The schema is supplied with the screenplay request; do not add new drawing-description fields.
 
 ## Screenplay
 
 - Use `version: 1`, a concise `title`, a lowercase hyphenated `case`, `session: "session.json"`, `files: "files"`, and `profile: "user"`.
-- Aim for 5–8 scenes and 130–180 spoken words, never more than 360 words. Each scene has an existing `id`, `role`, `msg`, `lines` and `panels`; use `layout`, `highlight` and other supported fields only when useful.
+- Aim for 5–9 scenes and 130–180 spoken words, never more than 360 words. Each scene has an existing `id`, `role`, `msg`, `lines` and `panels`; use `layout`, `highlight` and other supported fields only when useful.
 - Choose `msg` from the supplied message indices. A highlight must quote the chosen message accurately. Preserve source quantities and uncertainty; do not invent figures, files or measurements.
-- Keep 1–3 narration lines and preferably 1–2 panels per scene. `say` can expand numbers and units for pronunciation, but must preserve the caption's content and order. Long lines are split by the narration pipeline.
+- Keep 1–3 narration lines and preferably 1–2 panels per scene. `say` can expand numbers and units for pronunciation, but must preserve the caption's content and order. Write one idea per line, up to 220 caption characters or 320 spoken characters. The player breaks captions into phrases for the selected format.
 - Start with a short question. The hook's first two panels are `title` followed by `animation`, with `script: "anims/hook.js"`, a shared `use` helper, `size: "band"`, and `box: "plain"`. Do not delay this animation with an `at` cue.
-- Show the same subject in different states across method, result and limitation scenes. Supporting panels should explain something the drawing does not already communicate. End with the key result or limitation and an `end_card`.
+- Show the same subject in different states across method, result and limitation scenes. Supporting panels should explain something the drawing does not already communicate. Close with a dedicated `outro` scene. Hand off from the report to the final `end_card` using matching `until` and `at` cues.
 - Use zero-based caption cues: `"0"`, `"0:word"`, `"0.end"`, `"1+0.4"` or `"end-1"`. Reference words that occur in that scene, and reuse the same cues in animation scripts.
 - Reference animation scripts through the existing `script` and `use` fields. Do not inline source code into JSON. Use distinct `anims/<name>.js` paths; at most 16 files total and four `use` files per animation panel.
-- Omit custom `libs`, animation `assets`, subject manifests and voice overrides. Omit `data` unless the host actually supplied the named CSV. Do not assume attachments mentioned in prose have been staged.
+- An approved offline session app may be used as `libs: ["libs/app.js"]` if its motion carries the story. Draw a recurring subject when the session has no suitable app. Show charts and tables as supporting evidence. Omit external libraries, animation assets, subject manifests and voice overrides. Omit `data` unless the host actually supplied the named CSV. Do not assume attachments mentioned in prose have been staged.
+
+Write the question, answer, catch and two or three key numbers before composing the voice lines. Read the narration on its own and apply the nine SCRIPT.md criteria. The host scores the spoken script separately and returns failed criteria for revision. End with a plain answer to the hook, then this exact closing caption and spoken line, timed to the end card.
+
+```json
+{
+  "caption": "AIPOCH Open-Science — the AI research workbench for reproducible science.",
+  "say": "AIPOCH Open-Science. The AI research workbench for reproducible science."
+}
+```
 
 ## Animation bodies
 
@@ -41,6 +50,6 @@ The application requests shared helpers first and then individual scene scripts.
 
 ## Validation and delivery responsibilities
 
-The host validates source structure and cues, compiles scripts without executing them in Node, and may request one correction. Compilation is not proof that the animation renders correctly or that the source's claims are true. Do not claim automatic visual or scientific verification.
+The host validates source structure and cues and compiles scripts in Node. It runs the scripts in an isolated desktop player and inspects live HTML frames before the film is ready. For visual corrections, preserve the original narration and evidence. Fix the reported scene and return the complete requested file.
 
 The host generates required English narration, builds a self-contained HTML player and source archive, and reports progress. A saved film opens without regeneration. The user can inspect playback, seeking, captions and visuals, then optionally export an MP4 through the desktop action. Export installation and saving remain host responsibilities; authoring does not download a browser, run a local server or install packages.

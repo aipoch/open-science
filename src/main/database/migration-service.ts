@@ -1,4 +1,8 @@
 import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
+import {
+  imageModelsMigration,
+  IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS
+} from './migrations/0060-image-models'
 import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
@@ -567,16 +571,28 @@ const NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Ob
 )
 const CLASSIFICATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = {
   SessionAuxiliaryTurnUsage: {
-    SessionAuxiliaryTurnUsage_source_check: `"source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')`
+    // Keep both suffixes accepted while replaying a ledger that predates image usage.
+    SessionAuxiliaryTurnUsage_source_check: [
+      `"source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')`,
+      `"source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification', 'image-generation')`
+    ]
   }
 }
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
-  const merged: Record<string, Record<string, string>> = {}
+  const merged: Record<string, Record<string, string | readonly string[]>> = {}
   for (const contract of contracts) {
     for (const [table, constraints] of Object.entries(contract)) {
-      merged[table] = { ...merged[table], ...constraints }
+      merged[table] ??= {}
+      for (const [name, value] of Object.entries(constraints)) {
+        const prior = merged[table][name]
+        const values = [
+          ...(prior === undefined ? [] : Array.isArray(prior) ? prior : [prior]),
+          ...(Array.isArray(value) ? value : [value])
+        ]
+        merged[table][name] = [...new Set(values)]
+      }
     }
   }
   return merged
@@ -1058,6 +1074,18 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...imageModelsMigration,
+    foreignKeysDuringApply: 'disabled',
+    checksum: checksumMigrationPayload(
+      imageModelsMigration.id,
+      imageModelsMigration.statements,
+      imageModelsMigration.verifiers,
+      imageModelsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1325,12 +1353,17 @@ const runMigrationVerifiers = async (
           if (
             !tableSql ||
             table.constraints.some(({ name, expression }) => {
-              const upgradedExpression = allowedSuffixChecks[table.table]?.[name]
+              const upgradedExpressions = allowedSuffixChecks[table.table]?.[name]
               return (
                 !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`) &&
                 !(
-                  upgradedExpression &&
-                  tableSql.includes(`CONSTRAINT "${name}" CHECK (${upgradedExpression})`)
+                  upgradedExpressions &&
+                  (Array.isArray(upgradedExpressions)
+                    ? upgradedExpressions
+                    : [upgradedExpressions]
+                  ).some((candidate) =>
+                    tableSql.includes(`CONSTRAINT "${name}" CHECK (${candidate})`)
+                  )
                 )
               )
             })
@@ -1477,7 +1510,8 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     sessionAuxiliaryTurnUsageMigration.verifiers,
     mergeAllowedSuffixChecks(
       NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS,
-      CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+      CLASSIFICATION_ALLOWED_SUFFIX_CHECKS,
+      IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS
     )
   )
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
@@ -2072,6 +2106,7 @@ const applyManifestMigration = async (
   // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
   // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
   const allowedCheckUpgrades = mergeAllowedSuffixChecks(
+    migration.id < imageModelsMigration.id ? IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS : {},
     migration.id < numericAndNullConstraintsMigration.id
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
       : {},
@@ -2547,6 +2582,9 @@ const migrateApplicationDatabaseWithManifest = async (
   )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
+    manifest.some((entry) => entry.id === imageModelsMigration.id)
+      ? IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS
+      : {},
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
     adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},

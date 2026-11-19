@@ -20,6 +20,7 @@ import {
 } from '../../shared/claude-runtime'
 import { findPythonCommand, type PythonCommand } from '@aipoch/environment'
 import { netFetchStandard } from '../network-fetch'
+import { CODEBUDDY_VERSION } from '../../shared/codebuddy-subscription'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'
@@ -38,7 +39,7 @@ const REGISTRY_LABELS: Record<ManagedClaudeRegistry, string> = {
 const REGISTRY_PROBE_PATHS: Partial<Record<AgentFrameworkId, string>> = {
   'claude-code': '/@anthropic-ai%2fclaude-code/latest',
   opencode: '/opencode-ai/latest',
-  codebuddy: '/@tencent-ai%2fcodebuddy-code/2.138.0',
+  codebuddy: `/@tencent-ai%2fcodebuddy-code/${CODEBUDDY_VERSION}`,
   codex: '/@agentclientprotocol%2fcodex-acp/latest',
   pi: '/@openma%2fpi-acp/0.1.8'
 }

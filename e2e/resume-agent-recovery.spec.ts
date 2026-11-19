@@ -221,7 +221,7 @@ test('failed provider attachment exposes original details and exports real diagn
   await slot.locator('[data-select-notice*=":action:"]').click()
   await expect(error).toBeVisible()
   await expect(error.locator('details')).not.toHaveAttribute('open')
-  await app.setMainWindowSizeAndViewport(desktopSize.width, desktopSize.height)
+  await page.setViewportSize(desktopSize)
   await page.evaluate(() => document.documentElement.classList.remove('dark'))
   const archive = info.outputPath('resume-failure-diagnostics.tar.gz')
   await application.evaluate(({ dialog }, path) => {

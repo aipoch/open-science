@@ -17,6 +17,10 @@ const assertProviderDraftLimits = (draft: ProviderDraft & { id?: string }): void
   assertCharacterLimit(draft.id, PROVIDER_RESOURCE_LIMITS.idCharacters, 'Provider ID')
   assertCharacterLimit(draft.name, PROVIDER_RESOURCE_LIMITS.nameCharacters, 'Provider name')
   assertCharacterLimit(draft.baseUrl, PROVIDER_RESOURCE_LIMITS.baseUrlCharacters, 'Base URL')
+  assertCharacterLimit(draft.region, PROVIDER_RESOURCE_LIMITS.idCharacters, 'Region')
+  assertCharacterLimit(draft.vendorId, PROVIDER_RESOURCE_LIMITS.idCharacters, 'Vendor ID')
+  // Main issues catalog draft tokens with randomUUID().
+  assertCharacterLimit(draft.catalogDraftToken, 36, 'Catalog draft token')
   assertCharacterLimit(draft.model, PROVIDER_RESOURCE_LIMITS.modelIdCharacters, 'Model ID')
 
   if (

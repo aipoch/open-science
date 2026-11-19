@@ -80,7 +80,10 @@ const continued = (before: Document): Document => {
   return after
 }
 const replay = (before: unknown, records: readonly SessionBusinessRecord[]): JournalValue =>
-  records.reduce(applySessionRecord, normalizeJournalValue(before))
+  records.reduce(
+    (document, record) => applySessionRecord(document, record),
+    normalizeJournalValue(before)
+  )
 const textRecord = (): Extract<SessionBusinessRecord, { type: 'assistant_text_received' }> => {
   const before = document()
   return diffSessionRecords(normalizeJournalValue(before), continued(before), {

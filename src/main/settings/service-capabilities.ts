@@ -15,6 +15,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'codeBuddySkillCatalog'
   | 'getConversationSkillImportEnabled'
   | 'admitVisionModel'
+  | 'imageModels'
   | 'getConnectors'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'

@@ -53,18 +53,18 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-### 💡 AIPOCH Open-Science v1.2.2 — Neuerungen
+### 💡 AIPOCH Open-Science v1.3.0 — Neuerungen
 
-_12. November 2026_
+_18. November 2026_
 
-- **Strenger Netzwerkmodus**: Opt-in für eine strikte Whitelist beim Notebook-Netzwerkzugriff — Anfragen müssen Ihren Regeln nach Protokoll, Host und Port entsprechen; nicht übereinstimmende Anfragen werden ohne Autorisierungsabfrage blockiert.
-- **Filme setzen sich fort**: Eine unterbrochene Forschungsfilm-Erzeugung läuft an validierten Prüfpunkten mit einer Fortschrittsanzeige in fünf Schritten weiter; fertige Szenen und Kommentar werden wiederverwendet.
-- **PDF-Qualität**: Externe PDFs behalten native Abbildungen, Tabellen, Bildunterschriften und Lesereihenfolge, und übersetzte Dokumente bewahren die ursprüngliche Struktur und das Layout.
-- **Sicherere Windows-Berechtigungen**: Ordnerberechtigungen im geschützten Modus werden vor dem Speichern geprüft; Update-, Deinstallations- und Übergabe-Abläufe erholen sich zuverlässiger und bewahren ihre Diagnosen.
-- **Anbieter-Aktualisierungen**: Qwen4 Max Preview ergänzt Bailian Token Plans in Peking und Singapur, und die Standardmodelle offizieller Verbindungen werden erneuert.
-- **Zuverlässigkeitskorrekturen**: Sitzungsimporte melden ihr Ergebnis, die Dienstwiederherstellung blockiert den Workspace, bis die Verbindung zurückkehrt, und der Kontrast im Dunkelmodus bleibt über alle Flächen erhalten.
+- **Geplante Forschungsaufgaben**: Wiederkehrende oder einmalige Zeitpläne starten Sessions und Notebook-Aufgaben von selbst — jeder Lauf öffnet sich mit eigener Aufzeichnung im Arbeitsbereich.
+- **Bildgenerierung und -bearbeitung**: Generieren Sie Bilder über Ihren konfigurierten Anbieter und verbessern Sie sie mit Folgeanweisungen; jede Variante wird als neue Version gespeichert und kann verglichen und wiederverwendet werden.
+- **Bearbeitbare Präsentationen**: PowerPoint-Dateien lassen sich direkt bearbeiten — Text mit Schriftart, Größe, Farbe und Ausrichtung — während die Folienstruktur erhalten bleibt.
+- **Filme erneut abspielen**: Spielen Sie Filmoperationen auf neue Zweige ab und erhalten Sie unabhängige Ergebnisse, öffnen Sie Filme direkt aus dem Session-Menü und sehen Sie den Tokenverbrauch vor der Generierung.
+- **Klügere Agentenfragen**: Wenn der Agent eine Eingabe anfordert, zeigen die Optionen nun ihre Abwägungen, damit Sie mit Blick auf die Folgen entscheiden können.
+- **Zuverlässigkeit und Geschwindigkeit**: Lange Session-Verläufe werden schrittweise gespeichert, angehaltene Film- und Paketübertragungen erholen sich selbst, Windows-Installation und -Updates werden schlanker und die App erreicht Ihr Projekt beim Start schneller.
 
-[Vollständige Versionshinweise v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[Vollständige Versionshinweise v1.3.0](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
 
 <a id="share-your-research"></a>
 

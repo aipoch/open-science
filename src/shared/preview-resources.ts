@@ -4,18 +4,23 @@ export type ManagedPreviewSource =
   'artifact' | 'upload' | 'compute-output' | 'notebook-input' | 'literature' | 'local'
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
+export const IMAGE_PREVIEW_BUSY_MESSAGE = 'Image preview capacity is busy.'
 
 type ManagedPreviewPresentation = {
   mimeType?: string
   maxBytes?: number
-  // Opt into bounded display bytes; raw resource consumers keep original-byte semantics.
-  imagePreview?: boolean
+  // Owner-authorized original bytes, served as an opaque download.
+  purpose?: 'download'
+  // Opt into a bounded image preview, with an optional thumbnail scale.
+  imagePreview?: boolean | 'thumbnail'
 }
 
 type AcquireManagedVersionPreviewRequest = ManagedPreviewPresentation & {
   projectId: string
   fileId: string
   versionId?: string
+  // Live image-tool output only; the Host must resolve an exact owned generation receipt.
+  imageGenerationSessionId?: string
 } & ({ source: 'artifact' } | { source: 'upload' })
 
 type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
@@ -39,10 +44,13 @@ export type ManagedPreviewResource = {
   size: number
   mimeType: string
   version: number
+  // Original name from the authorized immutable Version, when one was acquired.
+  filename?: string
   // Optional SHA-256 from the main-owned immutable content lease, never a PDF.js fingerprint.
   // Transient evidence for this acquired resource; older responses may omit it.
   sourceChecksum?: string
-  // Original, oriented pixel dimensions, even when display bytes are downsampled.
+  // Original, oriented pixel dimensions for image previews, even when downsampled.
+  // Thumbnail requests report the thumbnail dimensions for renderer cache accounting.
   // Absent for non-images and for images whose header could not be parsed.
   width?: number
   height?: number

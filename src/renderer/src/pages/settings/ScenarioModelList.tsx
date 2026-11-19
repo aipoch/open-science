@@ -1,8 +1,11 @@
+import { ImageModelSelector } from './ImageModelSettings'
+import { useImageModelSettings } from './use-image-model-settings'
 import type { TFunction } from 'i18next'
 import {
   Captions,
   ChevronRight,
   Eye,
+  ImagePlus,
   SearchCheck,
   WandSparkles,
   Workflow,
@@ -38,7 +41,13 @@ import {
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
 
-type ScenarioId = 'session-details' | 'subagent' | 'reviewer' | 'vision' | 'prompt-optimization'
+type ScenarioId =
+  | 'image-generation'
+  | 'session-details'
+  | 'subagent'
+  | 'reviewer'
+  | 'vision'
+  | 'prompt-optimization'
 
 // One-line summary of a scenario's routing policy, derived from the same catalog the in-row
 // selectors use so the row and the expanded selector never disagree on availability.
@@ -50,7 +59,7 @@ type ScenarioSummary =
       model: string
       providerName: string
       providerKind: string
-      effortLabel: string
+      effortLabel?: string
     }>
   | Readonly<{
       kind: 'unavailable'
@@ -58,7 +67,7 @@ type ScenarioSummary =
       providerId: string
       providerName?: string
       providerKind?: string
-      effortLabel: string
+      effortLabel?: string
     }>
 
 // Badge labels must match what the paired control displays: the per-scenario select projects the
@@ -192,7 +201,7 @@ const ScenarioRowCluster = ({ summary }: { summary: ScenarioSummary }): React.JS
           <span className="truncate text-sm text-muted-foreground">
             {summary.model} / {t('Unavailable')}
           </span>
-          <FixedEffortBadge label={summary.effortLabel} />
+          {summary.effortLabel ? <FixedEffortBadge label={summary.effortLabel} /> : null}
           <ProviderTail
             providerKind={summary.providerKind}
             name={summary.providerName ?? summary.providerId}
@@ -203,7 +212,7 @@ const ScenarioRowCluster = ({ summary }: { summary: ScenarioSummary }): React.JS
       return (
         <>
           <span className="truncate text-sm text-foreground">{summary.model}</span>
-          <FixedEffortBadge label={summary.effortLabel} />
+          {summary.effortLabel ? <FixedEffortBadge label={summary.effortLabel} /> : null}
           <ProviderTail providerKind={summary.providerKind} name={summary.providerName} />
         </>
       )
@@ -267,7 +276,11 @@ const ScenarioModelRow = ({
       {expanded ? (
         <div id={panelId} className="border-t border-border px-4 pb-3">
           {scenario.selector}
-          <p className="pb-1 text-[13px] leading-5 text-muted-foreground">{scenario.description}</p>
+          {scenario.description && (
+            <p className="pb-1 text-[13px] leading-5 text-muted-foreground">
+              {scenario.description}
+            </p>
+          )}
         </div>
       ) : null}
     </div>
@@ -278,7 +291,22 @@ const ScenarioModelRow = ({
 // after Vision so the image-routing and metadata-routing helpers stay adjacent.
 // Rows expand inline as an accordion — a single useState, purely local UI state — and reuse the
 // existing policy selectors unchanged, so a selection still saves optimistically through the store.
-const ScenarioModelList = (): React.JSX.Element => {
+const ScenarioModelList = ({
+  onManageImages
+}: {
+  onManageImages?: () => void
+}): React.JSX.Element => {
+  const images = useImageModelSettings()
+  const imageService = images.snapshot?.services.find(
+    (service) => service.id === images.snapshot?.imageModel?.serviceId
+  )
+  const imageVendorId =
+    imageService?.vendorId ??
+    images.snapshot?.availableProviders.find((account) => account.id === imageService?.providerId)
+      ?.vendorId
+  const imageModel = imageService?.models.find(
+    (model) => model.id === images.snapshot?.imageModel?.modelId
+  )
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
@@ -341,6 +369,22 @@ const ScenarioModelList = (): React.JSX.Element => {
         ? resolveFixedSummary(visionModel, visionCatalog, providers, t)
         : { kind: 'unconfigured' },
       selector: <VisionModelSelect />
+    },
+    {
+      id: 'image-generation',
+      icon: ImagePlus,
+      name: t('Image generation'),
+      description: '',
+      summary:
+        imageService && imageModel
+          ? {
+              kind: 'fixed',
+              model: imageModel.label ?? imageModel.wireModelId,
+              providerName: imageService.name,
+              providerKind: imageVendorId ? `official:${imageVendorId}` : 'custom'
+            }
+          : { kind: 'unconfigured' },
+      selector: <ImageModelSelector state={images} onManage={onManageImages ?? (() => undefined)} />
     },
     {
       id: 'session-details',

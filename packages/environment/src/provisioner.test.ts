@@ -707,6 +707,12 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     await new DefaultRuntimeProvisioner(deps).provisionPython(() => {})
 
     expect(fetchBundle).toHaveBeenCalledOnce()
+    expect(fetchBundle).toHaveBeenCalledWith(
+      DEFAULT_PYTHON_SPEC,
+      3,
+      expect.any(Function),
+      expect.anything()
+    )
     expect(runArgv).toHaveBeenCalledOnce()
     expect(readReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
   })
@@ -1579,15 +1585,28 @@ describe('DefaultRuntimeProvisioner.provisionR', () => {
 })
 
 describe('default specs', () => {
-  it('are the MINIMAL protocol floor, pinned to the default managed version (extras install on demand)', () => {
-    // The default managed envs are no longer a full scientific stack — just the interpreter + the
-    // kernel-protocol floor, matching the curated language packs. numpy/pandas/ggplot2/… install on
-    // demand via manage_packages. Pinned to DEFAULT_MANAGED_VERSION for reproducibility.
+  it('pins the document and data packages in the managed default specs', () => {
     expect(DEFAULT_PYTHON_SPEC).toEqual({
       name: DEFAULT_PY_ENV,
       language: 'python',
       version: '3.12',
-      packages: ['python=3.12', 'matplotlib-base', 'nomkl']
+      packages: [
+        'python=3.12',
+        'matplotlib-base',
+        'nomkl',
+        'python-docx=1.2.0',
+        'python-pptx=1.0.2',
+        'pillow',
+        'reportlab',
+        'pypdf',
+        'pdfplumber',
+        'pypdfium2',
+        'openpyxl',
+        'pandas',
+        'numpy',
+        'scipy',
+        'pandoc=3.12.1'
+      ]
     })
     expect(DEFAULT_R_SPEC).toEqual({
       name: DEFAULT_R_ENV,

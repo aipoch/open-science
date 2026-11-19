@@ -44,6 +44,9 @@ public static class InstallHelper {
             Required(options, "lists"),
             Optional(options, "report"));
           break;
+        case "diagnostics":
+          InstallDiagnostics.Run(options);
+          break;
         default: throw new ArgumentException("Unknown subcommand: " + args[0]);
       }
       return 0;

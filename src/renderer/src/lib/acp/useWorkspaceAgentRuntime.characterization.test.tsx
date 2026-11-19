@@ -553,6 +553,7 @@ describe('workspace Agent Runtime hook contract', () => {
           apiEndpoints: ['messages'],
           model: 'legacy-model',
           models: ['legacy-model'],
+          modelCatalog: { fetchedAt: 1, models: [{ id: 'legacy-model' }] },
           supportsImageInput: true,
           hasKey: true,
           needsKey: false

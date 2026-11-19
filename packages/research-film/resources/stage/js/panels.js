@@ -70,7 +70,18 @@
   F.title = (box, p, ctx) => {
     const lines = p.text.split('|').map((s) => h('span', { html: md(s.trim()) }))
     const head = el('display title-q', ...lines),
-      eb = eyebrow(p.eyebrow),
+      eb = p.fast
+        ? el(
+            'cobrand',
+            h('img', { class: 'cb-ai', src: 'brand/logos/aipoch-logo-primary.svg', alt: 'AIPOCH' }),
+            h('i', { class: 'cb-bar' }),
+            h('img', {
+              class: 'cb-os',
+              src: 'brand/logos/open-science-lockup-black.svg',
+              alt: 'Open-Science'
+            })
+          )
+        : eyebrow(p.eyebrow),
       note = p.note ? rich('pill-note', p.note) : null
     put(box, el('title-stack', eb, head, note))
     AFTER_FONTS.push(() => fitText(head, ctx.tall ? 960 : 1600, ctx.tall ? 700 : 520))

@@ -27,6 +27,9 @@ const rowButton = (scenario: string): HTMLButtonElement | null =>
 
 describe('ScenarioModelList', () => {
   beforeEach(() => {
+    vi.stubGlobal('api', {
+      settings: { getImageModels: vi.fn(async () => ({ services: [], availableProviders: [] })) }
+    })
     useSettingsStore.setState({
       ...createInitialSettingsState(),
       agentFrameworkId: 'opencode',
@@ -48,6 +51,7 @@ describe('ScenarioModelList', () => {
 
   afterEach(() => {
     document.body.innerHTML = ''
+    vi.unstubAllGlobals()
   })
 
   it('summarizes inherited, follow-active, and unconfigured scenarios without badges', () => {
@@ -81,6 +85,7 @@ describe('ScenarioModelList', () => {
       'Expand Subagent settings',
       'Expand Reviewer settings',
       'Expand Vision settings',
+      'Expand Image generation settings',
       'Expand Session details settings',
       'Expand Prompt optimization settings'
     ])

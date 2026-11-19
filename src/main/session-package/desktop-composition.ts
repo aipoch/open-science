@@ -59,6 +59,7 @@ export const createSessionPackageDesktop = ({
           request.projectId,
           request.sessionId,
           async () => {
+            await sessionPackageService.prepareExport(request)
             releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
               request.projectId,
               request.sessionId

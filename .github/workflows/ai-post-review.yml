@@ -77,6 +77,11 @@ jobs:
               repo: context.repo.repo,
               pull_number: issueNumber,
             });
+            if (currentPullRequest.draft) {
+              core.notice('Skipping Codex feedback: the pull request is a draft.');
+              core.setOutput('posted', 'false');
+              return;
+            }
             if (currentPullRequest.head.sha !== process.env.REVIEW_HEAD_SHA) {
               core.notice('Skipping Codex feedback: a newer pull request commit exists.');
               core.setOutput('posted', 'false');

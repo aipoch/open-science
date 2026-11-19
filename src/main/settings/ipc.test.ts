@@ -905,7 +905,7 @@ describe('settings IPC handlers', () => {
   )
 
   it.each(['p1', 'other'])(
-    'reconnects provider-default Sessions after catalog refresh with active provider %s',
+    'keeps existing Sessions connected when refresh changes the default for future connections (%s)',
     async (activeProviderId) => {
       handlers.clear()
       const service = createFakeService()
@@ -933,7 +933,7 @@ describe('settings IPC handlers', () => {
       })
       await invoke('settings:refresh-provider-models', { providerId: 'p1' })
       expect(resolveProviderEffectiveModel(provider, undefined)).toBe('claude-opus-4-6')
-      expect(onActiveProviderChanged).toHaveBeenCalledWith(['p1'], activeProviderId === 'p1')
+      expect(onActiveProviderChanged).not.toHaveBeenCalled()
     }
   )
 

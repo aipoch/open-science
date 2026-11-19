@@ -143,14 +143,14 @@ export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
 }
 
 // Codex subscription records always use Responses, including older records without endpoint metadata.
-// Other absent/empty endpoints default to Messages for legacy provider compatibility.
+// An official catalog may explicitly have no usable route. Legacy configurations default to Messages.
 export const providerEndpoints = (provider: {
   apiEndpoints?: readonly ModelProtocol[]
   type?: ProviderType
 }): ModelProtocol[] =>
   provider.type && isCodexSubscriptionProvider(provider.type)
     ? ['responses']
-    : provider.apiEndpoints && provider.apiEndpoints.length > 0
+    : provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official')
       ? [...provider.apiEndpoints]
       : ['messages']
 
@@ -216,6 +216,7 @@ export const isProviderUsableByFramework = (
   },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
+  if (provider.type === 'codebuddy-subscription') return framework.id === 'codebuddy'
   if (
     framework.id === 'open-science-agent' &&
     !['custom', 'official', 'xai-subscription'].includes(provider.type) &&
@@ -525,7 +526,8 @@ export const providerValidationRoute = (
       route = endpoints.includes('chat-completions') ? 'opencode-openai' : 'opencode-anthropic'
       break
     case 'codebuddy':
-      route = 'codebuddy-openai'
+      route =
+        provider.type === 'codebuddy-subscription' ? 'codebuddy-subscription' : 'codebuddy-openai'
       break
     case 'pi':
       route = 'pi'

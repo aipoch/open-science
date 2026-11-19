@@ -1,5 +1,6 @@
 // Owns one complete Reviewer assessment from scope resolution through durable submission.
 
+import { sharedCodeBuddySiteMatches } from '../settings/codebuddy-profile'
 import { homedir } from 'node:os'
 
 import type { ActiveSession } from '@agentclientprotocol/sdk'
@@ -383,6 +384,10 @@ export const runReviewAssessment = async (
           cwd: built.cwd
         })
         if (abortSignal?.aborted) throw new Error('reviewer session was aborted before stopping')
+        const site =
+          backend?.modelRoute === 'codebuddy-subscription' && backend.adapter.codeBuddySharedSite
+        if (site && !sharedCodeBuddySiteMatches(site))
+          throw new Error('Sign in to the selected site in CodeBuddy CLI.')
         const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
         void Promise.resolve(promptRequest).catch(() => undefined)
         const stopReason = await driveReviewerToStop(

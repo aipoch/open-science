@@ -4,7 +4,12 @@
     "src/main/settings/provider-token-limits.test.ts"
   ],
   "interfacePaths": ["src/main/settings/provider-token-limits.ts"],
-  "consumerModules": ["settings_provider_accounts", "settings_service_facade", "compute_service"],
+  "consumerModules": [
+    "settings_provider_accounts",
+    "settings_service_facade",
+    "compute_service",
+    "desktop_composition"
+  ],
   "testFiles": {
     "owner": ["src/main/settings/provider-token-limits.test.ts"],
     "contract": [
@@ -865,5 +870,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Image service persistence adds schema and account-reference validation beyond the reviewed source boundary; retain full CI until the expanded boundary is reviewed."
 }

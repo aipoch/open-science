@@ -1,3 +1,10 @@
+import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
+import type {
+  ImageModelTestRequest,
+  ImageModelTestResult,
+  ImageModelSettingsMutation,
+  ImageModelSettingsSnapshot
+} from '../image-model-settings'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type {
   ClaudeDetectResult,
@@ -120,6 +127,9 @@ export const settingsLoginIsolatedClaudeContracts = {
     'settings',
     ['settings:login-isolated-claude-browser', LOCAL]
   ),
+  'settings.codeBuddyAccount': callable<
+    (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
+  >()('settings', ['settings:codebuddy-account', LOCAL]),
   'settings.loginIsolatedCodex': callable<() => Promise<ValidateProviderResult>>()('settings', [
     'settings:login-isolated-codex',
     LOCAL
@@ -225,4 +235,17 @@ export const settingsUpsertProviderContracts = {
     'settings:wait-xai-oauth-login',
     LOCAL
   ])
+} as const
+
+export const settingsImageModelsContracts = {
+  'settings.testImageModel': callable<
+    (request: ImageModelTestRequest) => Promise<ImageModelTestResult>
+  >()('settings', ['settings:test-image-model', LOCAL]),
+  'settings.getImageModels': callable<() => Promise<ImageModelSettingsSnapshot>>()('settings', [
+    'settings:get-image-models',
+    LOCAL
+  ]),
+  'settings.updateImageModels': callable<
+    (request: ImageModelSettingsMutation) => Promise<ImageModelSettingsSnapshot>
+  >()('settings', ['settings:update-image-models', LOCAL])
 } as const
