@@ -240,6 +240,40 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledWith('account')
   })
 
+  it('keeps the authorizing card open and ignores a cancelled login even after retry', async () => {
+    const attempts: Array<(result: ValidateProviderResult) => void> = []
+    const cancelSharedClaudeLogin = vi.fn().mockResolvedValue(undefined)
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('claude-account'),
+      loginSharedClaude: vi.fn(
+        () => new Promise<ValidateProviderResult>((resolve) => attempts.push(resolve))
+      ),
+      cancelSharedClaudeLogin,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    await clickButton(/Continue with Anthropic/)
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
+    expect(container.querySelectorAll('.is-authorizing')).toHaveLength(1)
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
+    const cancel = card.querySelector<HTMLButtonElement>('button[aria-label="Cancel sign-in"]')!
+    expect(cancel.previousElementSibling?.textContent).toBe('Signing in…')
+    await act(async () => cancel.click())
+    expect(cancelSharedClaudeLogin).toHaveBeenCalledOnce()
+    expect(card.classList.contains('is-authorizing')).toBe(false)
+    await clickButton(/Continue with Anthropic/)
+    await act(async () => attempts[0]({ ok: true, category: 'ok' }))
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    await act(async () => attempts[1]({ ok: true, category: 'ok' }))
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
   it('stops subscription login if the compatible framework cannot be selected', async () => {
     const persistProvider = vi.fn()
     const loginSharedClaude = vi.fn()
@@ -264,13 +298,20 @@ describe('ProviderStep', () => {
       useSettingsStore.setState({ agentFrameworkId: 'codex' })
     })
     const onAdvance = vi.fn()
-    useSettingsStore.setState({ agentFrameworkId: 'claude-code', setAgentFramework })
+    const saveProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'openai-account', validation: { ok: true, category: 'ok' } })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      setAgentFramework,
+      saveProvider,
+      setActiveProvider
+    })
     await renderStep({ variant: 'quick', onAdvance })
     await clickButton(/Continue with OpenAI/)
     expect(setAgentFramework).toHaveBeenCalledWith('codex')
-    expect(useSettingsStore.getState().saveAndActivateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'codex-shared' })
-    )
+    expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
     expect(onAdvance).toHaveBeenCalledWith('account')
   })
 
