@@ -825,6 +825,66 @@ open-science artifacts download <artifact-id> --output ./report.md --json
 
 Artifact output paths are resolved relative to the current working directory.
 
+## Research Films
+
+Create a self-contained, narrated HTML player from a Session branch. Use
+`--mode research-explanation` to explain a completed research response or `--mode operation-replay`
+to present the branch's recorded evidence. Both modes run through the local service with the desktop
+app closed. Use the same profile as the original Run. On first use, `--install-narration` explicitly
+authorizes the service to download the local narration model. The desktop app handles MP4 export.
+
+Research explanation needs Chrome, Chromium, or Microsoft Edge for headless HTML verification.
+Set `OPEN_SCIENCE_RESEARCH_FILM_BROWSER` to an absolute browser executable path before starting
+the service if the browser cannot be detected. Operation replay uses recorded evidence and runs
+without a browser on the server. [Headless browser setup](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#headless-research-film-review)
+
+```bash
+open-science run --project <project> --prompt-file ./task.md --wait --json
+open-science film start <session-id> --project <project> --mode research-explanation --install-narration --json
+open-science film status <session-id> --project <project> --mode research-explanation --branch <branch-id> --json
+open-science film download <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --output ./film.html --json
+```
+
+Use `sessionId` from the Run. When `--branch` is omitted, the service selects the active branch.
+When the service returns `branchId`, use it for subsequent calls to keep the same branch selected.
+`film start` returns generation status before a new player is finished. Poll
+`film status` for progress. When the attempt completes, use `result.id` as the film ID. A status
+may include a previously published `result` while a newer attempt is running or has failed.
+
+If automatic film review cannot fix a draft, `reviewFailure` provides an `attemptId`, the review
+stage, and findings. Discuss the findings with the user and submit their instructions for that
+attempt. The service runs its checks again before publishing a revision.
+
+```bash
+open-science film revise <session-id> --project <project> --mode research-explanation --branch <branch-id> --attempt-id <attempt-id> --feedback-file ./film-feedback.md --json
+```
+
+`--feedback <text>` accepts inline instructions. Poll status again and use updated findings if
+the revision also fails review. The revision command accepts feedback for a failed review and
+keeps any existing published player available until a new one passes. A `reviewFailure` requires
+`film revise`. Use `film start --resume` when `canResume` is true after another interruption.
+`film cancel` requests cancellation of active work for the selected branch and mode. A request
+timeout ends the client request. Check status before reissuing a start, revise, or cancel request
+whose outcome is uncertain.
+
+Research explanation requires a narration review score of 9/9 by default. To make that score advisory,
+pass `--advisory-narration-review` on a fresh `film start` or on `film revise`. Chromium checks,
+screenshot review when supported, and player integrity checks still apply. The service assesses
+the final narration once after visual review and includes `result.scriptScore` when it obtains a
+valid score. An ordinary scoring failure can leave that field absent after publication. A
+revision or an explicit `film start --resume` inherits the pending attempt's narration review policy
+when the flag is omitted. Operation replay uses its own recorded-evidence checks and rejects this flag.
+
+`film download` writes the selected published HTML player. An interrupted download leaves any
+existing destination file intact. The Node SDK uses `startResearchFilm`, `getResearchFilmStatus`,
+`reviseResearchFilm`, `cancelResearchFilm`, and `downloadResearchFilm` for the same workflow.
+These commands require local bearer authentication on a service with the `research-film-html`
+capability. `connectToOpenScience` discovers the local service and configures bearer authentication.
+An older service may report a missing Task API endpoint. A stale review attempt returns
+`film_review_conflict`.
+Check the current `reviewFailure` before submitting feedback again. A missing published film
+returns `film_not_found` with exit code `4`.
+
 ## Literature
 
 Read the running service's Literature library and format citations:

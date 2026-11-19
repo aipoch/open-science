@@ -266,6 +266,10 @@ export type AcquiredTaskArtifact = {
 }
 
 export type TaskApiErrorCode =
+  | 'film_not_found'
+  | 'film_review_conflict'
+  | 'film_busy'
+  | 'unsupported_capability'
   | 'submission_conflict'
   | 'submission_unavailable'
   | 'submission_not_found'

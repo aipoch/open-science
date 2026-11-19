@@ -593,6 +593,44 @@ export class OpenScienceClient {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`, options)
   }
 
+  startResearchFilm(request, options) {
+    return this.request('/api/v1/research-films/start', {
+      ...options,
+      method: 'POST',
+      body: request
+    })
+  }
+
+  getResearchFilmStatus(scope, options) {
+    return this.request('/api/v1/research-films/status', {
+      ...options,
+      method: 'POST',
+      body: scope
+    })
+  }
+
+  reviseResearchFilm(request, options) {
+    return this.request('/api/v1/research-films/revise', {
+      ...options,
+      method: 'POST',
+      body: request
+    })
+  }
+
+  cancelResearchFilm(scope, options) {
+    return this.request('/api/v1/research-films/cancel', {
+      ...options,
+      method: 'POST',
+      body: scope
+    })
+  }
+
+  async downloadResearchFilm({ projectId, sessionId, branchId, mode, filmId }, options) {
+    const query = new URLSearchParams({ projectId, sessionId, mode, filmId })
+    if (branchId !== undefined) query.set('branchId', branchId)
+    return this.#download(`/api/v1/research-films/player?${query}`, options)
+  }
+
   searchLiterature({ query, projectId, offset, limit } = {}, options) {
     return callLiteratureRpc(
       this,
@@ -755,20 +793,21 @@ export class OpenScienceClient {
     return { itemIds: [...new Set(itemIds)], state }
   }
 
-  async downloadArtifact(artifactId, { signal, timeoutMs } = {}) {
+  async downloadArtifact(artifactId, options) {
+    return this.#download(`/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`, options)
+  }
+
+  async #download(path, { signal, timeoutMs } = {}) {
     const lifecycle = createRequestLifecycle({
       defaultTimeoutMs: this.requestTimeoutMs,
       signal,
       timeoutMs
     })
     try {
-      const response = await this.fetch(
-        `${this.baseUrl}/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`,
-        {
-          headers: { authorization: `Bearer ${this.token}` },
-          signal: lifecycle.signal
-        }
-      )
+      const response = await this.fetch(`${this.baseUrl}${path}`, {
+        headers: { authorization: `Bearer ${this.token}` },
+        signal: lifecycle.signal
+      })
       if (!response.ok) {
         await this.throwResponseError(response)
       }

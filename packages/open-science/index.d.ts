@@ -545,6 +545,80 @@ export type FormattedReferences = {
   exports: { bibtex: string; ris: string }
 }
 
+export type ResearchFilmMode = 'research-explanation' | 'operation-replay'
+
+export type ResearchFilmScope = {
+  projectId: string
+  sessionId: string
+  /** Omit to select the active conversation branch. Use the returned branchId for subsequent calls. */
+  branchId?: string
+  mode: ResearchFilmMode
+}
+
+export type ResearchFilmProgress = {
+  phase:
+    | 'preparing'
+    | 'writing'
+    | 'loading'
+    | 'voice'
+    | 'alignment'
+    | 'mixing'
+    | 'build'
+    | 'publishing'
+    | 'verifying'
+    | 'repairing'
+    | 'completed'
+    | 'cancelled'
+    | 'failed'
+  completed?: number
+  total?: number
+  completedLines?: number
+  totalLines?: number
+  startedAt: number
+  endedAt?: number
+}
+
+export type ResearchFilmReviewFailure = {
+  attemptId: string
+  stage: 'script' | 'visual' | 'replay'
+  findings: string[]
+}
+
+export type ResearchFilmStatus = {
+  branchId?: string
+  /** Indicates a resumable interruption. Review failures require reviseResearchFilm. */
+  canResume?: boolean
+  filmStep?: number
+  generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
+  /** The applied policy for the current attempt when advisory review was requested. */
+  narrationReview?: 'advisory'
+  narrationDownload?: {
+    availability: 'notInstalled' | 'installing' | 'ready' | 'error'
+    recommendedRevision: string
+    installedRevision?: string
+    downloadBytes: number
+    installedBytes: number
+    hasFiles: boolean
+    inUse: boolean
+    transferredBytes: number
+    updateAvailable: boolean
+    error?: 'download' | 'integrity' | 'storage' | 'incompatible'
+  }
+  progress?: ResearchFilmProgress
+  /** The currently published player, which can predate an active or failed attempt. */
+  result?: {
+    id: string
+    title: string
+    duration: number
+    scriptScore?: number
+    narrationReview?: 'advisory'
+    sessionAppMode?: 'live' | 'drawn'
+  }
+  reviewFailure?: ResearchFilmReviewFailure
+  error?: string
+  preflightError?: string
+}
+
 export class OpenScienceApiError extends Error {
   requestId?: string
   code: string
@@ -731,6 +805,39 @@ export class OpenScienceClient {
     }
   ): Promise<Run>
   listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
+  /** Starts generation or explicitly resumes an interrupted generation. Does not wait for completion. */
+  startResearchFilm(
+    request: ResearchFilmScope & {
+      installNarration?: boolean
+      resume?: boolean
+      /** For research explanation only. Run one narration review without a minimum score for publication. */
+      narrationReview?: 'advisory'
+    },
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  getResearchFilmStatus(
+    scope: ResearchFilmScope,
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  /** Applies feedback to a specific attempt that failed review, then runs the film checks again. */
+  reviseResearchFilm(
+    request: ResearchFilmScope & {
+      attemptId: string
+      feedback: string
+      /** For research explanation only. Omit to inherit the failed attempt's narration review policy. */
+      narrationReview?: 'advisory'
+    },
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  cancelResearchFilm(
+    scope: ResearchFilmScope,
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  /** Downloads the exact checked HTML player identified by the published result. */
+  downloadResearchFilm(
+    request: ResearchFilmScope & { filmId: string },
+    options?: RequestOptions
+  ): Promise<Response>
   /** Searches the global Literature library, optionally limited to one Project. */
   searchLiterature(
     request?: { query?: string; projectId?: string; offset?: number; limit?: number },

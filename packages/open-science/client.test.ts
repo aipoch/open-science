@@ -52,6 +52,73 @@ afterEach(async () => {
 })
 
 describe('OpenScienceClient', () => {
+  it('scopes authenticated film operations and streams the exact published player', async () => {
+    const scope = {
+      projectId: 'project/a',
+      sessionId: 'session?b',
+      branchId: 'branch c',
+      mode: 'operation-replay' as const
+    }
+    const failure = {
+      branchId: scope.branchId,
+      reviewFailure: {
+        attemptId: 'attempt-1',
+        stage: 'replay',
+        findings: ['Check evidence order.']
+      }
+    }
+    const fetch = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = new URL(String(input))
+      expect(options?.headers).toEqual(expect.objectContaining({ authorization: 'Bearer token' }))
+      if (url.pathname.endsWith('/player')) {
+        expect(Object.fromEntries(url.searchParams)).toEqual({ ...scope, filmId: 'film+#1' })
+        return new Response('<!doctype html><title>Research Film</title>', {
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+      return response(200, { data: failure })
+    })
+    const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'token', fetch })
+    const start = { ...scope, installNarration: true }
+    const revise = { ...scope, attemptId: 'attempt-1', feedback: 'Preserve the recorded order.' }
+    await expect(client.startResearchFilm(start)).resolves.toEqual(failure)
+    await expect(client.getResearchFilmStatus(scope)).resolves.toEqual(failure)
+    await expect(client.reviseResearchFilm(revise)).resolves.toEqual(failure)
+    await expect(client.cancelResearchFilm(scope)).resolves.toEqual(failure)
+    const player = await client.downloadResearchFilm({ ...scope, filmId: 'film+#1' })
+    expect(await player.text()).toContain('<title>Research Film</title>')
+
+    const requests = fetch.mock.calls.slice(0, 4).map(([url, options]) => ({
+      path: new URL(String(url)).pathname,
+      method: options?.method,
+      body: JSON.parse(String(options?.body)) as unknown
+    }))
+    expect(requests).toEqual([
+      { path: '/api/v1/research-films/start', method: 'POST', body: start },
+      { path: '/api/v1/research-films/status', method: 'POST', body: scope },
+      { path: '/api/v1/research-films/revise', method: 'POST', body: revise },
+      { path: '/api/v1/research-films/cancel', method: 'POST', body: scope }
+    ])
+  })
+
+  it('forwards explicit advisory review on explanation generation and revision', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response(200, { data: {} }))
+    const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'token', fetch })
+    const scope = {
+      projectId: 'project',
+      sessionId: 'session',
+      mode: 'research-explanation'
+    } as const
+    const start = { ...scope, narrationReview: 'advisory' } as const
+    const revise = { ...start, attemptId: 'attempt', feedback: 'Read the units aloud.' }
+    await client.startResearchFilm(start)
+    await client.reviseResearchFilm(revise)
+    expect(fetch.mock.calls.map(([, request]) => request?.body)).toEqual([
+      JSON.stringify(start),
+      JSON.stringify(revise)
+    ])
+  })
+
   it('retains the receipt identity when the deadline expires just after admission', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(0)
     try {
@@ -169,7 +236,7 @@ describe('OpenScienceClient', () => {
     }
   )
 
-  it('pins the SDK method inventory including Connector management', () => {
+  it('pins the SDK method inventory', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
@@ -214,6 +281,11 @@ describe('OpenScienceClient', () => {
         'waitForRun',
         'listArtifacts',
         'downloadArtifact',
+        'startResearchFilm',
+        'getResearchFilmStatus',
+        'reviseResearchFilm',
+        'cancelResearchFilm',
+        'downloadResearchFilm',
         'searchLiterature',
         'getLiteratureItem',
         'listCitationStyles',

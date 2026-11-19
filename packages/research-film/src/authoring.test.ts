@@ -347,6 +347,70 @@ it('uses the default comparison reveal for malformed timing while preserving con
   expect(() => parse({ at: 'after the first line' })).toThrow()
 })
 
+it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'visual failure'])(
+  'keeps only the narration score advisory (%s)',
+  async (outcome) => {
+    const directory = await mkdtemp(join(tmpdir(), 'film-advisory-review-'))
+    try {
+      const story = structuredClone(spec)
+      story.scenes[1].lines = [{ caption: 'The evidence is uncertain.' }, { ...FILM_CLOSING_LINE }]
+      Object.assign(story.scenes[1].panels[0], { at: '1' })
+      const unsafe = new Error('Model worker cleanup is unconfirmed.')
+      const visual = new Error('The browser checker is unavailable.')
+      const report = JSON.stringify({
+        spine: 'Strengthen the opening question.',
+        catch: null,
+        thread: null,
+        audioOnly: null,
+        numbers: null,
+        plainWords: null,
+        lineCraft: null,
+        clean: null,
+        true: null
+      })
+      const sequence: string[] = []
+      const reviewScript = vi.fn(async () => {
+        sequence.push('score')
+        if (outcome === 'unsafe cleanup') throw unsafe
+        if (outcome === 'provider error') throw new Error('Scoring provider unavailable.')
+        if (outcome === 'malformed score') return 'Malformed scorer response'
+        return report
+      })
+      const reviewPlayer = vi.fn(async () => {
+        sequence.push('visual')
+        if (outcome === 'visual failure') throw visual
+        return []
+      })
+      const writeScreenplay = vi.fn().mockResolvedValue(JSON.stringify(story))
+      const run = generateResearchFilm({
+        source,
+        directory,
+        signal: new AbortController().signal,
+        author: { writeScreenplay, reviewScript, writeAnimation: async () => '// drawing' },
+        narrationReview: 'advisory',
+        isFatalNarrationReviewError: (error) => error === unsafe,
+        generate: async () => ({
+          playerPath: 'player.html',
+          sourcePath: 'sources.zip',
+          duration: 4,
+          preparationMs: 1
+        }),
+        reviewPlayer,
+        modelDirectory: 'model',
+        engineDirectory: 'engine',
+        modelRevision: 'v'
+      })
+      if (outcome === 'visual failure') await expect(run).rejects.toBe(visual)
+      else if (outcome === 'unsafe cleanup') await expect(run).rejects.toBe(unsafe)
+      else expect((await run).scriptScore).toBe(outcome === 'low score' ? 8 : undefined)
+      expect(writeScreenplay).toHaveBeenCalledOnce()
+      expect(sequence).toEqual(outcome === 'visual failure' ? ['visual'] : ['visual', 'score'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 it('preserves a long verdict and gives its remaining pages time before the next narration', () => {
   const text = 'The measured difference remains uncertain. '.repeat(8) + '不能据此得出因果结论。'
   const scenes = [
@@ -386,7 +450,7 @@ it.each([false, true])(
       const writeScreenplay = vi
         .fn()
         .mockResolvedValueOnce('invalid')
-        .mockResolvedValue(valid ? JSON.stringify(spec) : '{}')
+        .mockResolvedValue(valid ? JSON.stringify(spec) : 'I cannot create a screenplay.')
       const writeAnimation = vi.fn(async () => 'k.ctx.fillRect(0, 0, 1, 1);')
       const generate = vi.fn(async () => ({
         playerPath: 'player.html',
@@ -412,7 +476,11 @@ it.each([false, true])(
         expect(generate.mock.calls).toHaveLength(1)
         expect(writeAnimation).toHaveBeenCalledOnce()
       } else {
-        await expect(run).rejects.toThrow()
+        await expect(run).rejects.toMatchObject({
+          stage: 'script',
+          findings: ['The model returned an invalid screenplay JSON document.'],
+          message: 'The model returned an invalid screenplay JSON document.'
+        })
         expect(generate).not.toHaveBeenCalled()
         expect(writeAnimation).not.toHaveBeenCalled()
       }
@@ -426,6 +494,28 @@ it.each([false, true])(
     }
   }
 )
+
+it('keeps transport failures after a screenplay correction request operational', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-authoring-'))
+  try {
+    const transport = new SyntaxError('The model gateway could not decode the transport response.')
+    const writeScreenplay = vi
+      .fn()
+      .mockResolvedValueOnce('an invalid screenplay')
+      .mockRejectedValueOnce(transport)
+    await expect(
+      authorResearchFilmSource({
+        source,
+        directory,
+        author: { writeScreenplay },
+        signal: new AbortController().signal
+      })
+    ).rejects.toBe(transport)
+    expect(writeScreenplay).toHaveBeenCalledTimes(2)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 it.each(['truncated', 'paths', 'assets', 'missing-file', 'missing-outro', 'missing-card'])(
   'repairs %s screenplay output before animation authoring',

@@ -1,4 +1,5 @@
 import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { randomUUID } from 'node:crypto'
 import {
   parseResearchVideoScreenplay,
   ResearchVideoBuildCleanupError,
@@ -164,6 +165,284 @@ it('keeps the previous film available while reviewing a replacement, and withhol
     expect(reviewPlayer).toHaveBeenCalledTimes(6)
   } finally {
     first.resolve([])
+    await owner.close()
+  }
+})
+
+it('recovers failed headless review after restart and requires feedback for the current attempt', async () => {
+  const f = await fixture()
+  const issue = { scene: 'scene-1', message: 'Panel covers the caption' }
+  const reviewPlayerHeadless = vi.fn().mockResolvedValueOnce([]).mockResolvedValue([issue])
+  const writeScreenplay = vi.fn<Options['writeScreenplay']>().mockResolvedValue(script)
+  const options = { ...f.options, writeScreenplay, reviewPlayerHeadless }
+  const headless = { ...request, headless: true }
+  const owner = createResearchVideoPresentationOwner(options)
+  let next: typeof owner | undefined
+  try {
+    await owner.start(headless)
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(1))
+    const published = (await owner.status(request)).result!
+    await owner.start(headless)
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).reviewFailure).toMatchObject({
+        stage: 'visual',
+        findings: ['scene-1: Panel covers the caption']
+      })
+    )
+    const failure = (await owner.status(request)).reviewFailure!
+    await owner.close()
+    next = createResearchVideoPresentationOwner(options)
+    expect(await next.status(request)).toMatchObject({ result: published, reviewFailure: failure })
+    const before = writeScreenplay.mock.calls.length
+    await expect(next.start({ ...headless, resume: true })).resolves.toMatchObject({
+      reviewFailure: failure
+    })
+    await expect(
+      next.start({ ...headless, revision: { attemptId: randomUUID(), feedback: 'Move the label' } })
+    ).rejects.toMatchObject({ code: 'film_review_conflict' })
+    expect(writeScreenplay).toHaveBeenCalledTimes(before)
+    reviewPlayerHeadless.mockResolvedValue([])
+    const feedback = 'Move the label away from the caption.'
+    await next.start({ ...headless, revision: { attemptId: failure.attemptId, feedback } })
+    await vi.waitFor(async () =>
+      expect((await next!.status(request)).result?.id).not.toBe(published.id)
+    )
+    expect(writeScreenplay.mock.calls[before][2]?.error).toContain(feedback)
+    expect(writeScreenplay.mock.calls[before][2]?.error).toContain(issue.message)
+    expect(writeScreenplay.mock.calls[before][2]?.draft).toContain('Rainfall uncertainty')
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(3))
+    expect(await next.status(request)).not.toHaveProperty('reviewFailure')
+    await expect(
+      next.start({ ...headless, revision: { attemptId: failure.attemptId, feedback } })
+    ).rejects.toMatchObject({ code: 'film_review_conflict' })
+  } finally {
+    await owner.close()
+    await next?.close()
+  }
+})
+
+it('rejects feedback after the failed review source changes', async () => {
+  const f = await fixture()
+  let source = session
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    loadSession: async () => source,
+    reviewPlayerHeadless: vi.fn().mockResolvedValue([{ scene: 'scene-1', message: 'Fix layout' }])
+  })
+  try {
+    await owner.start({ ...request, headless: true })
+    await vi.waitFor(async () => expect((await owner.status(request)).reviewFailure).toBeDefined())
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const failure = (await owner.status(request)).reviewFailure!
+    source = {
+      ...session,
+      messages: [{ ...session.messages[0], content: 'New question' }, session.messages[1]]
+    }
+    expect(await owner.status(request)).not.toHaveProperty('reviewFailure')
+    await expect(
+      owner.start({
+        ...request,
+        headless: true,
+        revision: { attemptId: failure.attemptId, feedback: 'Fix layout' }
+      })
+    ).rejects.toMatchObject({ code: 'film_review_conflict' })
+  } finally {
+    await owner.close()
+  }
+})
+
+it('persists advisory narration review on an explicitly revised attempt across a restart', async () => {
+  const f = await fixture()
+  const screenplay = JSON.parse(script)
+  screenplay.scenes.push({
+    msg: 1,
+    lines: [
+      { caption: 'The observed trend was uncertain.' },
+      { caption: 'AIPOCH Open-Science — the AI research workbench for reproducible science.' }
+    ],
+    panels: [{ type: 'end_card', text: 'Rainfall uncertainty', at: '1' }]
+  })
+  const writeScreenplay = vi
+    .fn<Options['writeScreenplay']>()
+    .mockResolvedValue(JSON.stringify(screenplay))
+  const reviewScript = vi.fn().mockResolvedValue(
+    JSON.stringify({
+      spine: 'Ask a clear opening question.',
+      catch: null,
+      thread: null,
+      audioOnly: null,
+      numbers: null,
+      plainWords: null,
+      lineCraft: null,
+      clean: null,
+      true: null
+    })
+  )
+  const reviewPlayerHeadless = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Browser unavailable.'))
+    .mockResolvedValue([])
+  const options = { ...f.options, writeScreenplay, reviewScript, reviewPlayerHeadless }
+  const owner = createResearchVideoPresentationOwner(options)
+  const headless = { ...request, headless: true }
+  let resumed: typeof owner | undefined
+  try {
+    await owner.start(headless)
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).reviewFailure).toMatchObject({
+        stage: 'script',
+        findings: ['spine: Ask a clear opening question.']
+      })
+    )
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(1))
+    const failure = (await owner.status(request)).reviewFailure!
+    expect(reviewPlayerHeadless).not.toHaveBeenCalled()
+    const scoresBeforeRevision = reviewScript.mock.calls.length
+    await owner.start({
+      ...headless,
+      narrationReview: 'advisory',
+      revision: { attemptId: failure.attemptId, feedback: 'Preserve uncertainty.' }
+    })
+    await vi.waitFor(async () =>
+      expect(await owner.status(request)).toMatchObject({
+        progress: { phase: 'failed' },
+        narrationReview: 'advisory',
+        canResume: true,
+        error: 'Browser unavailable.'
+      })
+    )
+    await owner.close()
+    expect(reviewScript).toHaveBeenCalledTimes(scoresBeforeRevision)
+    resumed = createResearchVideoPresentationOwner(options)
+    expect(await resumed.status(request)).toMatchObject({
+      narrationReview: 'advisory',
+      canResume: true
+    })
+    await resumed.start({ ...headless, resume: true })
+    await vi.waitFor(async () =>
+      expect((await resumed!.status(request)).result).toMatchObject({
+        narrationReview: 'advisory',
+        scriptScore: 8
+      })
+    )
+    expect(reviewPlayerHeadless).toHaveBeenCalledTimes(2)
+    expect(reviewScript).toHaveBeenCalledTimes(scoresBeforeRevision + 1)
+  } finally {
+    await owner.close()
+    await resumed?.close()
+  }
+})
+
+it('pins the headless active branch behind both status and cancel', async () => {
+  const f = await fixture()
+  let branch = 'first'
+  const loadSession = async (): Promise<PersistedChatSession> => ({
+    ...session,
+    conversationGraph: {
+      rootFrameId: 'frame',
+      activeFrameId: 'frame',
+      frames: [{ id: 'frame', activeBranchId: branch }],
+      branches: [
+        { id: 'first', agentFrameId: 'frame', headMessageId: 'first-result' },
+        { id: 'second', agentFrameId: 'frame', headMessageId: 'second-result' }
+      ],
+      messages: [
+        { ...session.messages[0], agentFrameId: 'frame' },
+        {
+          ...session.messages[1],
+          id: 'first-result',
+          agentFrameId: 'frame',
+          parentMessageId: 'question'
+        },
+        {
+          ...session.messages[1],
+          id: 'second-result',
+          agentFrameId: 'frame',
+          parentMessageId: 'question'
+        }
+      ]
+    } as NonNullable<PersistedChatSession['conversationGraph']>
+  })
+  const review = Promise.withResolvers<[]>()
+  const reviewPlayerHeadless = vi.fn(() => review.promise)
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    loadSession,
+    reviewPlayerHeadless
+  })
+  try {
+    expect(await owner.start({ ...request, headless: true })).toMatchObject({ branchId: 'first' })
+    await vi.waitFor(() => expect(reviewPlayerHeadless).toHaveBeenCalledOnce())
+    branch = 'second'
+    expect(await owner.status(request)).toMatchObject({
+      branchId: 'first',
+      progress: { phase: 'verifying' }
+    })
+    expect(await owner.status({ ...request, branchId: 'first' })).toMatchObject({
+      progress: { phase: 'verifying' }
+    })
+    owner.cancel({ ...request, branchId: 'first' })
+    review.resolve([])
+    await vi.waitFor(async () =>
+      expect((await owner.status({ ...request, branchId: 'first' })).progress?.phase).toBe(
+        'cancelled'
+      )
+    )
+    expect(await owner.status({ ...request, branchId: 'second' })).not.toHaveProperty('result')
+  } finally {
+    review.resolve([])
+    await owner.close()
+  }
+})
+
+it('guides correction of replay validation failures without using the headless visual checker', async () => {
+  const f = await fixture()
+  const replay = { ...request, mode: 'operation-replay' as const }
+  const checkHeadlessReadiness = vi.fn(async () => {
+    throw new Error('No browser')
+  })
+  const script = (evidenceId: string): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Recorded rainfall',
+      scenes: [
+        {
+          id: 's1',
+          evidenceIds: [evidenceId],
+          narration: 'The recorded answer reports an uncertain trend.'
+        }
+      ]
+    })
+  const writeReplay = vi
+    .fn<NonNullable<Options['writeReplay']>>()
+    .mockResolvedValue(script('missing'))
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    writeReplay,
+    checkHeadlessReadiness
+  })
+  try {
+    await owner.start({ ...replay, headless: true })
+    await vi.waitFor(async () =>
+      expect((await owner.status(replay)).reviewFailure).toMatchObject({
+        stage: 'replay',
+        findings: [expect.stringContaining('unknown replay reference')]
+      })
+    )
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const review = (await owner.status(replay)).reviewFailure!
+    const feedback = 'Use the recorded answer as the referenced event.'
+    writeReplay.mockResolvedValue(script('message:result'))
+    await owner.start({
+      ...replay,
+      headless: true,
+      revision: { attemptId: review.attemptId, feedback }
+    })
+    await vi.waitFor(async () => expect((await owner.status(replay)).result).toBeDefined())
+    expect(writeReplay.mock.lastCall?.[2]?.error).toContain(feedback)
+    expect(checkHeadlessReadiness).not.toHaveBeenCalled()
+  } finally {
     await owner.close()
   }
 })

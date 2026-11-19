@@ -4,6 +4,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import {
   extractRestrictedInferenceUsage,
   RestrictedInferenceError,
+  UnconfirmedRestrictedInferenceCleanupError,
   type RestrictedInferenceClient,
   type RestrictedInferenceResult,
   type RestrictedInferenceRunInput
@@ -178,11 +179,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     const finishRuntime = async (): Promise<void> => {
       const outcome = await shutdownRuntime()
       if (this.options.requireConfirmedCleanup && runtime && outcome?.reaped !== true) {
-        const failure = new RestrictedInferenceError(
-          'transport-unavailable',
-          'Research film model cleanup could not be confirmed. Automatic retry was stopped.',
-          turnUsage
-        )
+        const failure = new UnconfirmedRestrictedInferenceCleanupError(turnUsage)
         failure.cause = inferenceFailure
         throw failure
       }

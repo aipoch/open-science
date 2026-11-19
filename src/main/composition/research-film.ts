@@ -49,6 +49,11 @@ import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
 import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
+import {
+  assertHeadlessResearchFilmReady,
+  checkHeadlessResearchFilmHtml
+} from '../research-video/headless-review'
+import { FilmDraftVisualError } from '../research-video/player-review'
 import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
 import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
@@ -75,7 +80,7 @@ const isTransientFilmNetworkError = (error: unknown): boolean => {
   )
 }
 
-/** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
+/** Film generation uses restricted inference and publishes through the Film owner. */
 export async function composeResearchFilm({
   configRoot,
   settingsService,
@@ -382,6 +387,45 @@ export async function composeResearchFilm({
   }
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
+  const reviewPlayer =
+    (
+      check: NonNullable<ReturnType<typeof desktopFileInteraction>['checkResearchVideoHtml']>,
+      headless = false
+    ): NonNullable<Parameters<typeof createResearchVideoPresentationOwner>[0]['reviewPlayer']> =>
+    async (source, htmlPath, spec, signal) => {
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
+      let review: Awaited<ReturnType<typeof check>>
+      try {
+        review = await check({ htmlPath, includeFrames: supportsImages }, signal)
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!headless || !(error instanceof FilmDraftVisualError)) throw error
+        return [{ scene: error.scene ?? spec.scenes[0]?.id ?? 'scene-1', message: error.message }]
+      }
+      signal.throwIfAborted()
+      const { issues, frames } = review
+      filmLog.info('film HTML checked', {
+        ...currentFilmAttempt(),
+        issues: issues.length,
+        frames: frames.length
+      })
+      if (issues.length || !supportsImages) return issues
+      if (
+        frames.length !== spec.scenes.length ||
+        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
+      )
+        throw new Error('The Film browser returned incomplete review frames.')
+      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
+        inferResearchVideo(
+          source,
+          FILM_VISUAL_REVIEW_PROMPT,
+          { frames: positions, correction },
+          signal,
+          images
+        )
+      )
+    }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
@@ -494,34 +538,13 @@ export async function composeResearchFilm({
       )
       return result.response === 1
     },
-    reviewPlayer: async (source, htmlPath, spec, signal) => {
+    reviewPlayer: reviewPlayer((request, signal) => {
       const check = desktopFileInteraction().checkResearchVideoHtml
       if (!check) throw new Error('The desktop HTML film checker is unavailable.')
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
-      const { issues, frames } = await check({ htmlPath, includeFrames: supportsImages }, signal)
-      signal.throwIfAborted()
-      filmLog.info('film HTML checked', {
-        ...currentFilmAttempt(),
-        issues: issues.length,
-        frames: frames.length
-      })
-      if (issues.length || !supportsImages) return issues
-      if (
-        frames.length !== spec.scenes.length ||
-        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
-      )
-        throw new Error('The desktop returned incomplete film review frames.')
-      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
-        inferResearchVideo(
-          source,
-          FILM_VISUAL_REVIEW_PROMPT,
-          { frames: positions, correction },
-          signal,
-          images
-        )
-      )
-    },
+      return check(request, signal)
+    }),
+    reviewPlayerHeadless: reviewPlayer(checkHeadlessResearchFilmHtml, true),
+    checkHeadlessReadiness: assertHeadlessResearchFilmReady,
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)

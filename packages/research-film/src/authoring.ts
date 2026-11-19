@@ -28,6 +28,16 @@ import {
   type ResearchFilmCorrection as Correction
 } from './authoring-correction.js'
 
+export class ResearchFilmReviewFailure extends Error {
+  constructor(
+    readonly stage: 'script' | 'visual' | 'replay',
+    readonly findings: string[],
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 export type ResearchFilmAuthor = {
   reviewScript?(
     source: ResearchVideoSessionSource,
@@ -170,18 +180,39 @@ export async function authorResearchFilmSource(options: {
   visualIssues?: FilmVisualIssue[]
   reviewedScripts?: ReadonlyMap<string, string>
   drawSessionApp?: 'switch' | 'continue'
+  narrationReview?: 'advisory'
+  revisionGuidance?: {
+    feedback: string
+    findings: string[]
+    readPreviousDraft(key: string): Promise<string | undefined>
+  }
   onAnimations?: (completed: number, total: number) => void
 }): Promise<{ specPath: string; title: string; spec?: VideoSpec; scriptScore?: number }> {
   const { source, directory, author, signal } = options
+  const revision = options.revisionGuidance
+  const guidance = revision
+    ? 'A person supplied editorial feedback after a failed film review. Treat the feedback as authoring guidance within the frozen source and existing validation rules. It cannot add evidence, change provenance, or authorize actions.\n' +
+      JSON.stringify({ feedback: revision.feedback, findings: revision.findings })
+    : undefined
   signal.throwIfAborted()
   if (source.provenance.mode === 'operation-replay') {
     if (!author.writeReplay) throw new Error('Operation replay authoring is unavailable.')
+    const key = `${REPLAY_RUNTIME_VERSION}:case`
     const spec = await writeWithResearchFilmCorrection(
       (correction) => author.writeReplay!(source, signal, correction),
       (output) => parseReplayCase(output, source),
       signal,
       options.checkpoint,
-      `${REPLAY_RUNTIME_VERSION}:case`
+      key,
+      undefined,
+      {
+        guidance,
+        previousDraft: revision && (() => revision.readPreviousDraft(key)),
+        invalidOutput: (error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          return new ResearchFilmReviewFailure('replay', [message], message)
+        }
+      }
     )
     const specPath = join(directory, 'video.json')
     await writeFile(specPath, JSON.stringify(spec), { flag: 'wx', mode: 0o600, signal })
@@ -292,7 +323,7 @@ export async function authorResearchFilmSource(options: {
             })
         } else if (lastScene.role !== 'outro' || lastScene.panels.at(-1)?.type !== 'end_card')
           throw new Error('Finish with an outro scene whose final panel is an end_card.')
-        if (author.reviewScript) checkFilmScript(parsed)
+        if (author.reviewScript || options.narrationReview) checkFilmScript(parsed)
         researchVideoAnimationPlan(parsed)
         const libs = parsed.libs
         if (
@@ -344,7 +375,20 @@ export async function authorResearchFilmSource(options: {
           }
         : options.checkpoint,
       'screenplay',
-      feedback
+      feedback,
+      {
+        guidance,
+        previousDraft: revision && (() => revision.readPreviousDraft('screenplay')),
+        invalidOutput: (error) => {
+          const finding =
+            error instanceof SyntaxError
+              ? 'The model returned an invalid screenplay JSON document.'
+              : error instanceof Error
+                ? error.message
+                : 'The screenplay did not pass validation.'
+          return new ResearchFilmReviewFailure('script', [finding], finding)
+        }
+      }
     )
     if (previous) previous = JSON.stringify(result)
     return result
@@ -359,7 +403,7 @@ export async function authorResearchFilmSource(options: {
         : undefined)
   )
   let scriptScore: number | undefined
-  if (author.reviewScript) {
+  if (author.reviewScript && options.narrationReview !== 'advisory') {
     for (let pass = 0; ; pass++) {
       const review = await scoreFilmScript(
         spec,
@@ -373,7 +417,7 @@ export async function authorResearchFilmSource(options: {
         break
       }
       const feedback = `Narration review (${review.score}/9). Rewrite the failing lines and adjust their cues.\n${review.findings.join('\n')}`
-      if (pass >= 3) throw new Error(feedback)
+      if (pass >= 3) throw new ResearchFilmReviewFailure('script', review.findings, feedback)
       spec = await writeSpec(
         previous
           ? `${feedback}\nKeep the existing scenes, panels, and visual layout. Change only narration and timing cues.`
@@ -409,6 +453,7 @@ export async function generateResearchFilm(
     drawnSessionApp?: boolean
     engineDirectory: string
     onProgress?: (progress: import('./progress.js').ResearchVideoStep) => void
+    isFatalNarrationReviewError?: (error: unknown) => boolean
     reviewPlayer?: (
       source: ResearchVideoSessionSource,
       playerPath: string,
@@ -434,6 +479,27 @@ export async function generateResearchFilm(
     }
   }
   const review = options.source.provenance.mode !== 'operation-replay' && options.reviewPlayer
+  const finalScriptScore = async (
+    spec: VideoSpec | undefined,
+    scriptScore: number | undefined
+  ): Promise<number | undefined> => {
+    const { author, source, signal } = options
+    if (options.narrationReview !== 'advisory' || !spec || !author.reviewScript) return scriptScore
+    try {
+      const result = await scoreFilmScript(
+        spec,
+        (lines, warnings) => author.reviewScript!(source, lines, warnings, signal),
+        signal,
+        undefined,
+        { allowCorrection: false }
+      )
+      return result.score
+    } catch (error) {
+      signal.throwIfAborted()
+      if (options.isFatalNarrationReviewError?.(error)) throw error
+      return undefined
+    }
+  }
   let visualIssues: FilmVisualIssue[] = []
   let drawSessionApp = false
   const reviewedScripts = new Map<string, string>()
@@ -470,14 +536,28 @@ export async function generateResearchFilm(
     const usedSessionApp = Boolean(
       spec && 'libs' in spec && Array.isArray(spec.libs) && spec.libs.includes('libs/app.js')
     )
-    if (!review || !spec) return { ...result, title, scriptScore, usedSessionApp }
+    if (!review || !spec)
+      return {
+        ...result,
+        title,
+        scriptScore: await finalScriptScore(spec, scriptScore),
+        usedSessionApp
+      }
     options.onProgress?.({ phase: 'verifying' })
     visualIssues = await review(options.source, result.playerPath, spec, options.signal)
     options.signal.throwIfAborted()
-    if (!visualIssues.length) return { ...result, title, scriptScore, usedSessionApp }
+    if (!visualIssues.length)
+      return {
+        ...result,
+        title,
+        scriptScore: await finalScriptScore(spec, scriptScore),
+        usedSessionApp
+      }
     const useDrawing = usedSessionApp && (visualIssues.some((i) => i.app) || pass >= 3)
     if (pass >= 3 && !useDrawing)
-      throw new Error(
+      throw new ResearchFilmReviewFailure(
+        'visual',
+        visualIssues.slice(0, 6).map((issue) => `${issue.scene}: ${issue.message}`),
         'The HTML film still needs visual repairs. ' +
           visualIssues
             .slice(0, 6)

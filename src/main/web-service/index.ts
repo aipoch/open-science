@@ -15,6 +15,7 @@ import { projectTaskRuntimeEvents } from './application-event-projections'
 import { loadOrCreateWebToken } from './auth'
 import type { ExternalWebAccess } from './external-access-contract'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
+import { createTaskResearchFilmApi, type TaskResearchFilmPort } from './research-film-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 import { HeadlessTaskApi } from './task-api'
 
@@ -82,6 +83,7 @@ const createWebServiceController = (
     permissionApprovalPresence,
     taskAgent,
     taskControls,
+    taskResearchFilms,
     computePreferences,
     detectActiveSessions
   }: {
@@ -93,6 +95,7 @@ const createWebServiceController = (
     permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
     taskControls?: TaskControlPorts
+    taskResearchFilms?: TaskResearchFilmPort
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
   },
@@ -122,6 +125,7 @@ const createWebServiceController = (
       commands: applicationCommands.task,
       agent: taskAgent,
       controls: taskControls,
+      researchFilms: taskResearchFilms && createTaskResearchFilmApi(taskResearchFilms),
       computePreferences,
       detectActiveSessions
     },

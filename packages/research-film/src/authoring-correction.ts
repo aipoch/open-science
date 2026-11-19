@@ -16,7 +16,12 @@ export async function writeWithResearchFilmCorrection<T>(
   signal: AbortSignal,
   checkpoint?: FilmAuthoringCheckpoint,
   key = 'screenplay',
-  feedback?: string
+  feedback?: string,
+  review?: {
+    guidance?: string
+    previousDraft?: () => Promise<string | undefined>
+    invalidOutput?: (error: unknown) => Error
+  }
 ): Promise<T> {
   const saved = await checkpoint?.read(key)
   if (saved !== undefined && !feedback) {
@@ -26,8 +31,9 @@ export async function writeWithResearchFilmCorrection<T>(
       signal.throwIfAborted()
     }
   }
-  let correction: ResearchFilmCorrection | undefined = feedback
-    ? { draft: saved ?? '', error: feedback }
+  const guidance = [feedback, review?.guidance].filter(Boolean).join('\n\n')
+  let correction: ResearchFilmCorrection | undefined = guidance
+    ? { draft: saved ?? (await review?.previousDraft?.()) ?? '', error: guidance }
     : undefined
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted()
@@ -40,6 +46,8 @@ export async function writeWithResearchFilmCorrection<T>(
     } catch (error) {
       signal.throwIfAborted()
       const incomplete = error instanceof ResearchFilmIncompleteError
+      if (attempt > 0 && output !== undefined && !incomplete && review?.invalidOutput)
+        throw review.invalidOutput(error)
       if (attempt > 0 || (output === undefined && !incomplete)) throw error
       correction = {
         draft: incomplete ? '' : output!,
@@ -49,7 +57,7 @@ export async function writeWithResearchFilmCorrection<T>(
             ? error.message
             : String(error)
       }
-      if (feedback) correction.error += `\nHTML review: ${feedback}`
+      if (guidance) correction.error += `\nAdditional guidance: ${guidance}`
       continue
     }
     await checkpoint?.save(key, output!)

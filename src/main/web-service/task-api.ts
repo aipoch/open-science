@@ -60,6 +60,7 @@ import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { TaskSubmissions } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
+import type { TaskResearchFilmApi } from './research-film-api'
 import {
   TaskRunner,
   TaskRunnerError,
@@ -75,6 +76,7 @@ type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
   controls?: TaskControlPorts
+  researchFilms?: TaskResearchFilmApi
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
 }
@@ -97,6 +99,10 @@ class HeadlessTaskApi {
   private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
   private readonly submissions?: TaskSubmissions
+
+  get researchFilms(): TaskResearchFilmApi | undefined {
+    return this.ports.researchFilms
+  }
 
   constructor(
     private readonly ports: TaskApiPorts,

@@ -126,21 +126,25 @@ export async function scoreFilmScript(
     correction?: ResearchFilmCorrection
   ) => Promise<string>,
   signal: AbortSignal,
-  checkpoint?: FilmAuthoringCheckpoint
+  checkpoint?: FilmAuthoringCheckpoint,
+  { allowCorrection = true } = {}
 ): Promise<{ score: number; findings: string[] }> {
   const narration = filmNarration(spec)
   const key =
     'script-rubric-v1:' + createHash('sha256').update(JSON.stringify(narration)).digest('hex')
-  const report = await writeWithResearchFilmCorrection(
-    (correction) => write(narration, scriptWarnings(narration), correction),
-    (raw) =>
-      reviewSchema.parse(
-        JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1'))
-      ),
-    signal,
-    checkpoint,
-    key
-  )
+  const warnings = scriptWarnings(narration)
+  const parse = (raw: string): z.infer<typeof reviewSchema> =>
+    reviewSchema.parse(JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1')))
+  const report = allowCorrection
+    ? await writeWithResearchFilmCorrection(
+        (correction) => write(narration, warnings, correction),
+        parse,
+        signal,
+        checkpoint,
+        key
+      )
+    : parse(await write(narration, warnings))
+  signal.throwIfAborted()
   const introduction = agentIntroductionIssue(narration)
   if (introduction) report.clean = [introduction, report.clean].filter(Boolean).join(' ')
   const findings = criteria.filter((k) => report[k] !== null).map((k) => k + ': ' + report[k])

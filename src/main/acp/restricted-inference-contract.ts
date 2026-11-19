@@ -18,6 +18,16 @@ export class RestrictedInferenceError extends Error {
   }
 }
 
+export class UnconfirmedRestrictedInferenceCleanupError extends RestrictedInferenceError {
+  constructor(usage?: AcpTurnTokenUsage) {
+    super(
+      'transport-unavailable',
+      'Research film model cleanup could not be confirmed. Automatic retry was stopped.',
+      usage
+    )
+  }
+}
+
 export const extractRestrictedInferenceUsage = (error: unknown): AcpTurnTokenUsage | undefined => {
   if (error instanceof RestrictedInferenceError) return error.usage
   if (!(error instanceof Error)) return undefined

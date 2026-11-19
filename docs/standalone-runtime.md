@@ -441,6 +441,20 @@ AppImage. Old payloads are not automatically deleted while a server may use them
 versions manually after stopping every server that uses them. Full AppImage execution remains a
 Linux release validation item.
 
+### Headless Research Film review
+
+Research explanation uses an installed Chromium-based browser for HTML review when generated through
+the SDK or CLI. The backend checks standard installation paths for Chrome, Chromium, and Microsoft
+Edge. To use another installation, set `OPEN_SCIENCE_RESEARCH_FILM_BROWSER` to the absolute browser
+executable path in the environment where `open-science start` runs. Restart an already-running service
+after changing the variable.
+
+The browser runs headless with its Chromium sandbox enabled. Run the backend under an account that can
+use the browser sandbox. If the browser is missing or cannot start with its sandbox, film generation
+reports an error. The preview uses a temporary browser context, renders offline, and checks portrait
+and landscape layout. Operation replay uses its frozen evidence and does not require a browser on the
+generation host.
+
 ## Historical compatibility requiring review
 
 The [release compatibility policy](compatibility.md) defines stable interfaces and the direction

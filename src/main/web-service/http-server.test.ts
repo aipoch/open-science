@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import type { ResearchVideoPresentationStatus } from '../../shared/research-video-presentation'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
@@ -47,6 +48,7 @@ import {
   type RunningWebServer
 } from './http-server'
 import { HeadlessTaskApi, TaskApiError } from './task-api'
+import { createTaskResearchFilmApi } from './research-film-api'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -112,6 +114,156 @@ const accessOnlyExternalAccess = (
   kind: 'authorized' as const,
   principalId,
   isCurrent: () => true
+})
+
+it('exposes a local Film review and player workflow without exposing host paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-film-http-'))
+  roots.push(root)
+  const playerPath = join(root, 'player.html')
+  const html = '<!doctype html><title>Research Film</title>'
+  await writeFile(playerPath, html)
+  const filmId = '2de8caa6-e865-4e34-8a30-9b98ffac6d82'
+  const attemptId = 'bbf1c96c-45a7-47f4-97c7-8854bbe76e91'
+  const scope = {
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    branchId: 'branch-1',
+    mode: 'research-explanation' as const
+  }
+  const reviewFailure = {
+    attemptId,
+    stage: 'visual' as const,
+    findings: ['Scene 2 overlaps its title.']
+  }
+  const result = { id: filmId, title: 'Film title', duration: 10, playerPath, sourcePath: root }
+  const start = vi.fn().mockResolvedValue({ branchId: scope.branchId, reviewFailure })
+  const status = vi.fn(
+    async (request: { branchId?: string }): Promise<ResearchVideoPresentationStatus> =>
+      request.branchId === undefined || request.branchId === scope.branchId
+        ? { branchId: scope.branchId, reviewFailure, result }
+        : { generationBlock: 'unavailable' }
+  )
+  const cancel = vi.fn()
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    rpc: { channels: () => [], invoke: vi.fn() },
+    tasks: {
+      runWithCallerContext,
+      subscribeProgress: vi.fn(() => vi.fn()),
+      researchFilms: createTaskResearchFilmApi({ start, status, cancel })
+    } as never,
+    externalAccess: {
+      authorizeHttp: async () => authorizedExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: '1.3.0',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: '24' }
+    }
+  })
+  servers.push(server)
+  const base = `http://127.0.0.1:${server.port}/api/v1/research-films/`
+  const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' }
+  const post = (action: string, body: unknown, local = true): Promise<Response> =>
+    fetch(base + action, {
+      method: 'POST',
+      headers: local ? headers : { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+
+  expect((await post('start', scope, false)).status).toBe(403)
+  expect((await post('start', { ...scope, headless: false })).status).toBe(400)
+  expect(
+    (
+      await post('start', {
+        ...scope,
+        mode: 'operation-replay',
+        narrationReview: 'advisory'
+      })
+    ).status
+  ).toBe(400)
+  expect(start).not.toHaveBeenCalled()
+  const started = await post('start', scope)
+  expect(started.status).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({ ...scope, headless: true })
+  expect(await started.json()).toEqual({
+    data: { branchId: scope.branchId, canResume: false, reviewFailure }
+  })
+  expect((await post('start', { ...scope, narrationReview: 'advisory' })).status).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({
+    ...scope,
+    headless: true,
+    narrationReview: 'advisory'
+  })
+
+  const observed = await post('status', scope)
+  expect(await observed.json()).toEqual({
+    data: {
+      branchId: scope.branchId,
+      canResume: false,
+      reviewFailure,
+      result: { id: filmId, title: 'Film title', duration: 10 }
+    }
+  })
+  status.mockResolvedValueOnce({
+    branchId: scope.branchId,
+    narrationReview: 'advisory',
+    result: { ...result, narrationReview: 'advisory', scriptScore: 7 }
+  })
+  const advisory = await post('status', scope)
+  expect(await advisory.json()).toEqual({
+    data: {
+      branchId: scope.branchId,
+      narrationReview: 'advisory',
+      result: {
+        id: filmId,
+        title: 'Film title',
+        duration: 10,
+        narrationReview: 'advisory',
+        scriptScore: 7
+      }
+    }
+  })
+  const feedback = 'Move the label below the plot.'
+  expect(
+    (await post('revise', { ...scope, attemptId, feedback, narrationReview: 'advisory' })).status
+  ).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({
+    ...scope,
+    headless: true,
+    narrationReview: 'advisory',
+    revision: { attemptId, feedback }
+  })
+  start.mockRejectedValueOnce(
+    Object.assign(new Error('A newer attempt exists.'), { code: 'film_review_conflict' })
+  )
+  const stale = await post('revise', { ...scope, attemptId, feedback })
+  expect(stale.status).toBe(409)
+  expect(await stale.json()).toMatchObject({ error: { code: 'film_review_conflict' } })
+  expect((await post('cancel', { ...scope, branchId: undefined })).status).toBe(200)
+  expect(cancel).toHaveBeenCalledWith(scope)
+
+  const query = new URLSearchParams({ ...scope, filmId })
+  const player = await fetch(`${base}player?${query}`, { headers })
+  expect(player.status).toBe(200)
+  expect(player.headers.get('content-disposition')).toContain('attachment;')
+  expect(player.headers.get('content-security-policy')).toContain('sandbox')
+  expect(await player.text()).toBe(html)
+  query.set('filmId', attemptId)
+  expect((await fetch(`${base}player?${query}`, { headers })).status).toBe(404)
+  query.set('filmId', filmId)
+  query.set('branchId', 'unknown-branch')
+  expect((await fetch(`${base}player?${query}`, { headers })).status).toBe(404)
+
+  const client = new OpenScienceClient({ baseUrl: new URL(base).origin, token: 'test-token' })
+  expect(await client.getResearchFilmStatus(scope)).toMatchObject({ reviewFailure })
+  expect(await (await client.downloadResearchFilm({ ...scope, filmId })).text()).toBe(html)
 })
 const startBudgetTestServer = async (
   requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,

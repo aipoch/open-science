@@ -13,6 +13,7 @@ import type {
 import type { ImageTaskOwner } from './image-model/tasks'
 import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
+import { researchVideoStartRequestSchema } from '../shared/research-video-presentation'
 import type {
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
@@ -1137,7 +1138,9 @@ const registerDataContentApplicationCommands = (
         assertElectronCaller(invocation, 'research-video:start')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
-        return dependencies.researchVideoPresentation.start(invocation.args[0])
+        return dependencies.researchVideoPresentation.start(
+          researchVideoStartRequestSchema.parse(invocation.args[0])
+        )
       },
       'research-video:status': (invocation) => {
         assertElectronCaller(invocation, 'research-video:status')

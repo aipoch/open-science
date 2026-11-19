@@ -4,7 +4,12 @@ import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
-import { PENDING_FILM_OWNER, pendingFilmOwnerSchema, pendingFilmSchema } from './checkpoint'
+import {
+  PENDING_FILM_LIMIT_BYTES,
+  PENDING_FILM_OWNER,
+  pendingFilmOwnerSchema,
+  pendingFilmSchema
+} from './checkpoint'
 import { researchFilmModeSchema } from '../../shared/research-video-presentation'
 import { researchFilmScopeKey } from './stored-presentation'
 
@@ -112,7 +117,9 @@ export function createResearchFilmLifecycle(options: {
       if (!/^[a-f0-9]{64}$/.test(key)) continue
       const base = join(presentations, key)
       const latest = receiptId.safeParse(await readReceipt(join(base, 'latest.json'), 4096))
-      const pending = receiptId.safeParse(await readReceipt(join(base, 'pending.json'), 4096))
+      const pending = receiptId.safeParse(
+        await readReceipt(join(base, 'pending.json'), PENDING_FILM_LIMIT_BYTES)
+      )
       for (const id of await directories(base)) {
         if (id !== 'pending' && !uuid.safeParse(id).success) continue
         const directory = join(base, id)
@@ -280,7 +287,10 @@ export function createResearchFilmLifecycle(options: {
               existing.has(owner.data.sessionId)
             )
               continue
-            const pointer = await captureReceipt(join(base, 'pending.json'), 4096)
+            const pointer = await captureReceipt(
+              join(base, 'pending.json'),
+              PENDING_FILM_LIMIT_BYTES
+            )
             if (!pointer) continue
             const pending = pendingFilmSchema.safeParse(pointer.value)
             if (

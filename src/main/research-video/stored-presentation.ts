@@ -5,7 +5,10 @@ import { open, lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
-import { researchFilmModeSchema } from '../../shared/research-video-presentation'
+import {
+  researchFilmModeSchema,
+  researchFilmNarrationReviewSchema
+} from '../../shared/research-video-presentation'
 import type {
   ResearchVideoPresentation,
   ResearchVideoPresentationRequest
@@ -31,6 +34,7 @@ export const researchFilmReceiptSchema = z
     title: z.string().min(1).max(160),
     duration: z.number().positive(),
     scriptScore: z.number().int().min(0).max(9).optional(),
+    narrationReview: researchFilmNarrationReviewSchema.optional(),
     sessionAppMode: z.enum(['live', 'drawn']).optional()
   })
   .strict()
@@ -117,8 +121,8 @@ export async function readStoredResearchFilm(
       !(await hasResearchFilmOutputs(directory))
     )
       throw error
-    const { id, title, duration, scriptScore, sessionAppMode } = known
-    return { id, title, duration, scriptScore, sessionAppMode }
+    const { id, title, duration, scriptScore, narrationReview, sessionAppMode } = known
+    return { id, title, duration, scriptScore, narrationReview, sessionAppMode }
   })
   if (!receipt) return undefined
   const directory = join(base, receipt.id)
