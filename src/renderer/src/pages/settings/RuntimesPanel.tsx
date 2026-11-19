@@ -651,8 +651,10 @@ const RuntimesPanel = ({
                 'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
               )
             : undefined)
-    const standard = networkStatus.kind === 'standard'
-    const AccessSection = standard ? 'details' : 'div'
+    const showRevocationOnly =
+      networkStatus.kind === 'standard' ||
+      (networkStatus.kind === 'setupRequired' && networkStatus.platform === 'win32')
+    const AccessSection = showRevocationOnly ? 'details' : 'div'
 
     return (
       <div
@@ -779,12 +781,9 @@ const RuntimesPanel = ({
           </div>
         ) : null}
 
-        {(external || defaultManaged) &&
-        language === 'r' &&
-        window.api.platform === 'win32' &&
-        !(networkStatus.kind === 'setupRequired' && networkStatus.platform === 'win32') ? (
+        {(external || defaultManaged) && language === 'r' && window.api.platform === 'win32' ? (
           <AccessSection className="mt-3 border-t border-border pt-3">
-            {standard ? (
+            {showRevocationOnly ? (
               <summary className="cursor-pointer text-xs text-muted-foreground">
                 {t('Notebook network protection')}
               </summary>
@@ -796,7 +795,7 @@ const RuntimesPanel = ({
               </p>
             )}
             <div className="mt-2 flex flex-wrap gap-2">
-              {!standard ? (
+              {!showRevocationOnly ? (
                 <RuntimeDisabledHint reason={verifyHint} label={t('Authorize and verify')}>
                   <Button
                     type="button"
@@ -821,7 +820,7 @@ const RuntimesPanel = ({
                 </Button>
               </RuntimeDisabledHint>
             </div>
-            {!standard && networkStatus.kind !== 'ready' ? (
+            {!showRevocationOnly && networkStatus.kind !== 'ready' ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 {t(
                   'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
