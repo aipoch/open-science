@@ -992,7 +992,7 @@ lack the endpoints return an endpoint error; the CLI never falls back to editing
 
 ## External agents through MCP
 
-For npm setup, use the [external agent quick start](../../README.md#connect-your-own-agent-through-mcp).
+For npm setup, use the [external agent quick start](https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp).
 The client launches one stdio adapter per connection. Open-Science owns the backend and research
 runs, so disconnecting the client leaves the service running.
 
@@ -1003,7 +1003,7 @@ The npm launch command is `npx --yes @aipoch/open-science@latest mcp`.
 
 | Agent                    | Where to configure it                                                                                                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WorkBuddy                | Add a custom local MCP server using the [README configuration](../../README.md#connect-your-own-agent-through-mcp).                                                                                                                                |
+| WorkBuddy                | Add a custom local MCP server using the [README configuration](https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp).                                                                                                         |
 | Codex CLI                | Run `codex mcp add open-science -- npx --yes @aipoch/open-science@latest mcp`.                                                                                                                                                                     |
 | Claude Code              | Run `claude mcp add --transport stdio open-science -- npx --yes @aipoch/open-science@latest mcp`.                                                                                                                                                  |
 | DeepSeek TUI / Harness   | Add a [DSH MCP client entry](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp/mcp-client) with `serverName: open-science`, `transport: stdio`, `command: npx` and `args: ['--yes', '@aipoch/open-science@latest', 'mcp']`. |
