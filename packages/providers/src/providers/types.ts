@@ -57,6 +57,8 @@ export type OfficialModel = {
   // Advertised context-window size for this exact model, in tokens.
   readonly contextWindow: number
   readonly maxOutputTokens?: number
+  // This bundled model has been verified to support keyless requests.
+  readonly supportsAnonymousAccess?: boolean
   // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
   // the vendor-level endpoint set.
   readonly apiEndpoint?: ModelProtocol

@@ -18,12 +18,13 @@ import {
 export const customProviderRequiresKey = (baseUrl: string | undefined): boolean =>
   !isLoopbackProviderBaseUrl((baseUrl ?? '').trim())
 
-// Older snapshots lack eligibility metadata, so only the bundled free models are known there.
+// For snapshots without eligibility metadata, use the verified bundled eligibility for that ID.
 export const kiloModelSupportsAnonymousAccess = (
   model: Pick<CatalogModel, 'id' | 'supportsAnonymousAccess'>
 ): boolean =>
   model.supportsAnonymousAccess ??
-  getOfficialVendor('kilo')?.models.some(({ id }) => id === model.id) === true
+  getOfficialVendor('kilo')?.models.find(({ id }) => id === model.id)?.supportsAnonymousAccess ??
+  false
 
 /** Determine whether a saved provider or runtime connection allows anonymous requests. */
 export function providerAllowsAnonymousAccess(provider: {
