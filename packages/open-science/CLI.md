@@ -999,7 +999,11 @@ runs, so disconnecting the client leaves the service running.
 ### Choose your agent
 
 With the service running, register the local stdio adapter using your client's configuration format.
-The npm launch command is `npx --yes @aipoch/open-science@latest mcp`.
+On macOS and Linux the npm launch command is `npx --yes @aipoch/open-science@latest mcp`.
+On Windows, use `cmd.exe` as the executable and
+`["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]` as its arguments.
+In the Codex and Claude registration commands below, use
+`-- cmd.exe /d /c npx --yes @aipoch/open-science@latest mcp` after the server name on Windows.
 
 | Agent                    | Where to configure it                                                                                                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

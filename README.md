@@ -185,8 +185,8 @@ npx --yes @aipoch/open-science@latest start --no-open
 ```
 
 In your agent client's custom MCP settings, add a local **stdio** server. For clients that
-accept `mcpServers` JSON, use the following configuration with Node.js 22.13.0 or later and
-`npx` on the client's PATH:
+accept `mcpServers` JSON, use the following macOS/Linux configuration with Node.js 22.13.0
+or later and npm on the client's PATH:
 
 ```json
 {
@@ -198,6 +198,10 @@ accept `mcpServers` JSON, use the following configuration with Node.js 22.13.0 o
   }
 }
 ```
+
+On Windows, set `"command": "cmd.exe"` and use
+`"args": ["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]`
+so the client can launch npm's command shim.
 
 Ask your agent to **list my Open-Science projects**. A successful `list_projects` call
 confirms it can reach your profile, even if the list is empty. You can then submit a research
