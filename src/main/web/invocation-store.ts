@@ -207,13 +207,13 @@ export class WebInvocationStore {
   }
   cancelUndispatched(record: WebUndispatchedCancellation): Promise<void> {
     const parsed = undispatchedCancellationSchema.parse(record)
-    return this.trackWrite(this.location(parsed, parsed.invocationId) + '.cancelled', () =>
-      this.writeUndispatchedCancellation(parsed)
-    )
-  }
-  private async writeUndispatchedCancellation(record: WebUndispatchedCancellation): Promise<void> {
-    const parsed = undispatchedCancellationSchema.parse(record)
     const path = this.location(parsed, parsed.invocationId) + '.cancelled'
+    return this.trackWrite(path, () => this.writeUndispatchedCancellation(path, parsed))
+  }
+  private async writeUndispatchedCancellation(
+    path: string,
+    parsed: WebUndispatchedCancellation
+  ): Promise<void> {
     await this.ensureScope(parsed)
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     await this.assertActive(dirname(path))
@@ -280,13 +280,10 @@ export class WebInvocationStore {
   }
   create(record: WebInvocationRecord): Promise<void> {
     const parsed = webInvocationRecordSchema.parse(record)
-    return this.trackWrite(this.location(parsed, parsed.invocationId), () =>
-      this.createRecord(parsed)
-    )
-  }
-  private async createRecord(record: WebInvocationRecord): Promise<void> {
-    const parsed = webInvocationRecordSchema.parse(record)
     const path = this.location(parsed, parsed.invocationId)
+    return this.trackWrite(path, () => this.createRecord(path, parsed))
+  }
+  private async createRecord(path: string, parsed: WebInvocationRecord): Promise<void> {
     await this.ensureScope(parsed)
     await mkdir(join(this.directory, hash(JSON.stringify([parsed.projectId, parsed.sessionId]))), {
       recursive: true,
@@ -310,24 +307,14 @@ export class WebInvocationStore {
     signal?: AbortSignal
   ): Promise<WebInvocationRecord> {
     const path = this.location(binding, invocationId)
-    const previous = this.writes.get(path) ?? Promise.resolve()
-    const pending = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const record = webInvocationRecordSchema.parse(
-          update(await this.readPath(path, binding, invocationId))
-        )
-        if (this.location(record, record.invocationId) !== path)
-          throw new Error('Web invocation identity cannot change')
-        await this.publishJson(path, record, { requireActive: true, signal })
-        return record
-      })
-    this.writes.set(path, pending)
-    void pending
-      .finally(() => {
-        if (this.writes.get(path) === pending) this.writes.delete(path)
-      })
-      .catch(() => undefined)
-    return pending
+    return this.trackWrite(path, async () => {
+      const record = webInvocationRecordSchema.parse(
+        update(await this.readPath(path, binding, invocationId))
+      )
+      if (this.location(record, record.invocationId) !== path)
+        throw new Error('Web invocation identity cannot change')
+      await this.publishJson(path, record, { requireActive: true, signal })
+      return record
+    })
   }
 }

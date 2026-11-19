@@ -34,7 +34,8 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false }
 }))
 
-const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
+const fixtures: Fixture[] = []
 const services: SessionPackageService[] = []
 afterEach(async () => {
   await Promise.all(services.splice(0).map((service) => service.close()))
@@ -147,27 +148,56 @@ const allowedPolicy: HostWebDataPolicy = {
     fetch_body: 'allow'
   }
 }
-const fixture = async (): Promise<Awaited<ReturnType<typeof createProvenanceTestFixture>>> => {
+const fixture = async (): Promise<Fixture> => {
   const value = await createProvenanceTestFixture()
   fixtures.push(value)
   await value.client.project.create({ data: { id: 'project-1', name: 'Web research' } })
   return value
 }
-const service = (
-  value: Awaited<ReturnType<typeof fixture>>,
-  allow = false,
-  snapshotValue = snapshot
+const storeSession = async (
+  { storageRoot }: Fixture,
+  input = session()
+): Promise<SessionRepository> => {
+  initDataRoot(storageRoot)
+  const repository = new SessionRepository(storageRoot)
+  await repository.saveSession(input)
+  return repository
+}
+const createService = (
+  value: Fixture,
+  webEvidence: NonNullable<ConstructorParameters<typeof SessionPackageService>[0]['webEvidence']>
 ): SessionPackageService => {
   const instance = new SessionPackageService({
     storageRoot: value.storageRoot,
     getClient: async () => value.client,
-    webEvidence: {
-      ...(allow ? { resolvePolicy: () => allowedPolicy } : {}),
-      loadSnapshot: async () => snapshotValue
-    }
+    webEvidence
   })
   services.push(instance)
   return instance
+}
+const service = (value: Fixture, allow = false, snapshotValue = snapshot): SessionPackageService =>
+  createService(value, {
+    ...(allow ? { resolvePolicy: () => allowedPolicy } : {}),
+    loadSnapshot: async () => snapshotValue
+  })
+const importPackage = (
+  importer: SessionPackageService,
+  archive: string
+): ReturnType<SessionPackageService['importFrom']> =>
+  importer.importFrom(archive, undefined, undefined, undefined, { projectId: 'project-1' })
+const addPngVersion = async (
+  value: Fixture,
+  filename: string,
+  content: string,
+  writeOperationId?: string
+): Promise<void> => {
+  await value.stagePng(content, filename)
+  await value.repository.createVersion(
+    createArtifactVersionRequest({
+      filename,
+      ...(writeOperationId === undefined ? {} : { writeOperationId })
+    })
+  )
 }
 const unpack = async (
   path: string,
@@ -185,12 +215,31 @@ const unpack = async (
   }
 }
 
+const repack = async (
+  directory: string,
+  archive: string,
+  { session, records, manifest }: Awaited<ReturnType<typeof unpack>>,
+  rewriteRecords = false
+): Promise<void> => {
+  await writeFile(join(directory, 'session.json'), JSON.stringify({ version: 2, session }))
+  const replacements = new Map([
+    ['session.json', await packageEntry(directory, 'session.json', 'session')]
+  ])
+  if (rewriteRecords) {
+    await writeFile(join(directory, 'records.json'), JSON.stringify(records))
+    replacements.set('records.json', await packageEntry(directory, 'records.json', 'records'))
+  }
+  manifest.inventory = manifest.inventory.map((entry) => replacements.get(entry.path) ?? entry)
+  const signal = new AbortController().signal
+  await writePackageRoCrateMetadata(directory, manifest, records, signal)
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  await writePackageArchive(directory, archive, signal)
+}
+
 it('round-trips allowed Web bodies with independent IDs, no live grants, and preserves an imported local Fork', async () => {
   const source = await fixture(),
     target = await fixture()
-  initDataRoot(source.storageRoot)
-  const repository = new SessionRepository(source.storageRoot)
-  await repository.saveSession(session())
+  const repository = await storeSession(source)
   const original = await repository.loadSession('project-1', 'session-1')
   const exporter = service(source, true)
   const archive = join(source.storageRoot, 'allowed.science')
@@ -202,9 +251,7 @@ it('round-trips allowed Web bodies with independent IDs, no live grants, and pre
   expect(await repository.loadSession('project-1', 'session-1')).toEqual(original)
   initDataRoot(target.storageRoot)
   const importer = service(target, true)
-  const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
-    projectId: 'project-1'
-  })
+  const imported = await importPackage(importer, archive)
   const local = (await new SessionRepository(target.storageRoot).loadSession(
     imported.projectId,
     imported.sessionId
@@ -249,15 +296,12 @@ it('round-trips allowed Web bodies with independent IDs, no live grants, and pre
 it('reapplies current policy when forwarding and cannot bypass unknown policy with sensitive-content approval', async () => {
   const source = await fixture(),
     target = await fixture()
-  initDataRoot(source.storageRoot)
-  await new SessionRepository(source.storageRoot).saveSession(session())
+  await storeSession(source)
   const allowed = join(source.storageRoot, 'allowed.science')
   await service(source, true).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, allowed)
   initDataRoot(target.storageRoot)
   const importer = service(target)
-  const imported = await importer.importFrom(allowed, undefined, undefined, undefined, {
-    projectId: 'project-1'
-  })
+  const imported = await importPackage(importer, allowed)
   const denied = join(target.storageRoot, 'unknown.science')
   let summary: PackageSelectionSummary | undefined
   const result = await importer.exportTo(imported, denied, {
@@ -282,7 +326,6 @@ it('reapplies current policy when forwarding and cannot bypass unknown policy wi
 
 it('keeps incomplete host Web records fail-closed while retaining legacy external details', async () => {
   const source = await fixture()
-  initDataRoot(source.storageRoot)
   const input = session()
   for (const item of [...input.activities!, ...input.conversationGraph!.activities])
     item.executionInvocationId = undefined
@@ -298,7 +341,7 @@ it('keeps incomplete host Web records fail-closed while retaining legacy externa
     ...input.conversationGraph!.activities[0],
     ...external
   })
-  await new SessionRepository(source.storageRoot).saveSession(input)
+  await storeSession(source, input)
   const archive = join(source.storageRoot, 'incomplete.science')
   const result = await service(source).exportTo(
     { projectId: 'project-1', sessionId: 'session-1' },
@@ -329,8 +372,6 @@ it.each([
   'projects inline %s copies of %s in the serialized Session and excludes only attributable attachments',
   async (operation, fragment) => {
     const source = await fixture()
-    initDataRoot(source.storageRoot)
-    const repository = new SessionRepository(source.storageRoot)
     const input = session()
     const answer = `Observed ${fragment} during analysis.`
     const envelope = result()
@@ -378,7 +419,7 @@ it.each([
     }
     for (const message of [...input.messages, ...input.conversationGraph!.messages])
       if (message.role === 'agent') message.content = answer
-    await repository.saveSession(input)
+    const repository = await storeSession(source, input)
     const before = await repository.loadSession(input.projectId, input.id)
     const unrelated = 'The specimen and sample remain in storage.'
     for (const [filename, content] of [
@@ -402,12 +443,7 @@ it.each([
       )
     }
     const versions = await source.client.artifactVersion.findMany()
-    const exporter = new SessionPackageService({
-      storageRoot: source.storageRoot,
-      getClient: async () => source.client,
-      webEvidence: { resolvePolicy: resolveReviewedWebPolicy }
-    })
-    services.push(exporter)
+    const exporter = createService(source, { resolvePolicy: resolveReviewedWebPolicy })
     const archive = join(source.storageRoot, 'short.science'),
       directory = join(source.storageRoot, 'unpacked-short')
     await exporter.exportTo({ projectId: input.projectId, sessionId: input.id }, archive, {
@@ -453,8 +489,7 @@ it.each([
 
 it('automatically omits optional attachment copies of Web receipts even with sensitive approval', async () => {
   const source = await fixture()
-  initDataRoot(source.storageRoot)
-  await new SessionRepository(source.storageRoot).saveSession(session())
+  await storeSession(source)
   const copies = [
     ['receipt.png', JSON.stringify({ receipt: result() })],
     [
@@ -482,10 +517,7 @@ it('automatically omits optional attachment copies of Web receipts even with sen
     ]
   ]
   for (const [filename, contents] of copies) {
-    await source.stagePng(contents, filename)
-    await source.repository.createVersion(
-      createArtifactVersionRequest({ filename, writeOperationId: `write-${filename}` })
-    )
+    await addPngVersion(source, filename, contents, `write-${filename}`)
   }
   const archive = join(source.storageRoot, 'attachment.science')
   const exportedPreview = await service(source).exportTo(
@@ -509,8 +541,7 @@ it('automatically omits optional attachment copies of Web receipts even with sen
 
 it('blocks required derived checkpoint bytes without weakening scientific hashes or blocking local Fork', async () => {
   const source = await fixture()
-  initDataRoot(source.storageRoot)
-  await new SessionRepository(source.storageRoot).saveSession(session())
+  await storeSession(source)
   const directory = join(source.storageRoot, 'notebooks', 'project-1', 'session-1', 'data')
   await mkdir(directory, { recursive: true })
   const checkpoint = join(directory, 'checkpoint.json')
@@ -534,24 +565,21 @@ it('blocks required derived checkpoint bytes without weakening scientific hashes
 
 it('omits a failed Web request copied far from its execution ID without fabricating successful evidence', async () => {
   const source = await fixture()
-  initDataRoot(source.storageRoot)
   const input = session()
   for (const item of [...input.activities!, ...input.conversationGraph!.activities]) {
     item.status = 'failed'
     item.rawOutput = { message: 'Network unavailable' }
     item.toolContent = undefined
   }
-  await new SessionRepository(source.storageRoot).saveSession(input)
-  await source.stagePng(
+  await storeSession(source, input)
+  await addPngVersion(
+    source,
+    'failed-request.png',
     JSON.stringify({
       invocationId: snapshot.invocationId,
       padding: 'x'.repeat(200000),
       rawInput: { url: snapshot.originalUrl }
-    }),
-    'failed-request.png'
-  )
-  await source.repository.createVersion(
-    createArtifactVersionRequest({ filename: 'failed-request.png' })
+    })
   )
   const archive = join(source.storageRoot, 'failed-request.science')
   await service(source).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
@@ -568,36 +596,18 @@ it('omits a failed Web request copied far from its execution ID without fabricat
 it('does not forward records-only Web bodies after their Session activities have been removed', async () => {
   const source = await fixture(),
     target = await fixture()
-  initDataRoot(source.storageRoot)
-  await new SessionRepository(source.storageRoot).saveSession(session())
+  await storeSession(source)
   const allowed = join(source.storageRoot, 'allowed.science')
   await service(source, true).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, allowed)
   const directory = join(source.storageRoot, 'orphaned')
   const altered = await unpack(allowed, directory)
   altered.session.activities = []
   altered.session.conversationGraph!.activities = []
-  await writeFile(
-    join(directory, 'session.json'),
-    JSON.stringify({ version: 2, session: altered.session })
-  )
-  const sessionEntry = await packageEntry(directory, 'session.json', 'session')
-  altered.manifest.inventory = altered.manifest.inventory.map((entry) =>
-    entry.path === 'session.json' ? sessionEntry : entry
-  )
-  await writePackageRoCrateMetadata(
-    directory,
-    altered.manifest,
-    altered.records,
-    new AbortController().signal
-  )
-  await writeFile(join(directory, 'manifest.json'), JSON.stringify(altered.manifest))
   const archive = join(source.storageRoot, 'records-only.science')
-  await writePackageArchive(directory, archive, new AbortController().signal)
+  await repack(directory, archive, altered)
   initDataRoot(target.storageRoot)
   const importer = service(target)
-  const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
-    projectId: 'project-1'
-  })
+  const imported = await importPackage(importer, archive)
   const forwarded = join(target.storageRoot, 'filtered.science')
   await importer.exportTo(imported, forwarded, { allowSensitiveContent: true })
   const exported = await unpack(forwarded, join(target.storageRoot, 'filtered'))
@@ -611,7 +621,6 @@ it('does not forward records-only Web bodies after their Session activities have
 it('omits a long exact restricted body prefix across stream chunks even without its execution ID', async () => {
   const source = await fixture(),
     target = await fixture()
-  initDataRoot(source.storageRoot)
   const fullBody = '\u0001'.repeat(16 * 1024 - 1) + '😀' + 'protected full body '.repeat(12000)
   const longSnapshot = { ...snapshot, text: fullBody, sha256: webTextHash(fullBody) }
   const input = session()
@@ -623,19 +632,18 @@ it('omits a long exact restricted body prefix across stream chunks even without 
       { type: 'content', content: { type: 'text', text: JSON.stringify(envelope) } }
     ]
   }
-  await new SessionRepository(source.storageRoot).saveSession(input)
+  await storeSession(source, input)
   // The 16 KiB protected prefix serializes to 96 KiB. Starting near the first 64 KiB
   // boundary forces it across three reads; no one 64 KiB overlap contains it whole.
   for (const [filename, invocation] of [
     ['body-copy.png', snapshot.invocationId],
     ['unrelated-body.png', 'unrelated-execution']
   ]) {
-    await source.stagePng(
+    await addPngVersion(
+      source,
+      filename,
       JSON.stringify({ invocationId: invocation, padding: 'x'.repeat(63 * 1024), body: fullBody }),
-      filename
-    )
-    await source.repository.createVersion(
-      createArtifactVersionRequest({ filename, writeOperationId: `write-${filename}` })
+      `write-${filename}`
     )
   }
   const allowed = join(source.storageRoot, 'allowed-long-body.science')
@@ -652,39 +660,11 @@ it('omits a long exact restricted body prefix across stream chunks even without 
   const document = altered.records.webEvidence!.activities[0].document!
   delete document.text
   delete document.projectedSha256
-  await writeFile(
-    join(directory, 'session.json'),
-    JSON.stringify({ version: 2, session: altered.session })
-  )
-  await writeFile(join(directory, 'records.json'), JSON.stringify(altered.records))
-  const replacements = new Map<string, Awaited<ReturnType<typeof packageEntry>>>(
-    await Promise.all(
-      ['session', 'records'].map(
-        async (kind) =>
-          [
-            `${kind}.json`,
-            await packageEntry(directory, `${kind}.json`, kind as 'session' | 'records')
-          ] as const
-      )
-    )
-  )
-  altered.manifest.inventory = altered.manifest.inventory.map(
-    (entry) => replacements.get(entry.path) ?? entry
-  )
-  await writePackageRoCrateMetadata(
-    directory,
-    altered.manifest,
-    altered.records,
-    new AbortController().signal
-  )
-  await writeFile(join(directory, 'manifest.json'), JSON.stringify(altered.manifest))
   const archive = join(source.storageRoot, 'long-body-copy.science')
-  await writePackageArchive(directory, archive, new AbortController().signal)
+  await repack(directory, archive, altered, true)
   initDataRoot(target.storageRoot)
   const importer = service(target)
-  const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
-    projectId: 'project-1'
-  })
+  const imported = await importPackage(importer, archive)
   const forwarded = join(target.storageRoot, 'long-body-filtered.science')
   await importer.exportTo(imported, forwarded, { allowSensitiveContent: true })
   const exported = await unpack(forwarded, join(target.storageRoot, 'long-body-filtered'))
@@ -750,15 +730,8 @@ it('round-trips Exa attribution through a package and read-only fork without exc
       rawOutput: search,
       toolContent: [{ type: 'content', content: { type: 'text', text: JSON.stringify(search) } }]
     })
-  initDataRoot(source.storageRoot)
-  const repository = new SessionRepository(source.storageRoot)
-  await repository.saveSession(input)
-  const exporter = new SessionPackageService({
-    storageRoot: source.storageRoot,
-    getClient: async () => source.client,
-    webEvidence: { resolvePolicy: resolveReviewedWebPolicy }
-  })
-  services.push(exporter)
+  await storeSession(source, input)
+  const exporter = createService(source, { resolvePolicy: resolveReviewedWebPolicy })
   const archive = join(source.storageRoot, 'exa.science')
   await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
   initDataRoot(target.storageRoot)
@@ -783,9 +756,7 @@ it('round-trips Exa attribution through a package and read-only fork without exc
     })
   ).rejects.toThrow(/reader capability/)
   const importer = service(target, true)
-  const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
-    projectId: 'project-1'
-  })
+  const imported = await importPackage(importer, archive)
   const forked = await importer.fork(imported)
   const fork = (await new SessionRepository(target.storageRoot).loadSession(
     forked.projectId,

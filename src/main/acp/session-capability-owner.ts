@@ -472,17 +472,7 @@ export class AcpSessionCapabilityOwner {
           routingIds.sideChat,
           routingIds.literature
         ],
-        usedHttpTransport:
-          ownsStableIdentity &&
-          (request.policy.role === 'side-chat' ||
-            !request.framework.acceptsStdioMcp ||
-            Boolean(
-              (this.options.literature ||
-                this.options.library ||
-                this.options.schedules ||
-                this.options.web) &&
-              this.options.mcpHttpHost
-            )),
+        usedHttpTransport: ownsStableIdentity && this.usesHttpTransport(request),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
@@ -636,17 +626,7 @@ export class AcpSessionCapabilityOwner {
               routingIds.sideChat,
               routingIds.literature
             ],
-            usedHttpTransport:
-              ownsRoutingIds &&
-              (request.policy.role === 'side-chat' ||
-                !request.framework.acceptsStdioMcp ||
-                Boolean(
-                  (this.options.literature ||
-                    this.options.library ||
-                    this.options.schedules ||
-                    this.options.web) &&
-                  this.options.mcpHttpHost
-                )),
+            usedHttpTransport: ownsRoutingIds && this.usesHttpTransport(request),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
@@ -817,17 +797,7 @@ export class AcpSessionCapabilityOwner {
             routingIds.sideChat,
             routingIds.literature
           ],
-          usedHttpTransport:
-            ownsStableIdentity &&
-            (request.policy.role === 'side-chat' ||
-              !request.framework.acceptsStdioMcp ||
-              Boolean(
-                (this.options.literature ||
-                  this.options.library ||
-                  this.options.schedules ||
-                  this.options.web) &&
-                this.options.mcpHttpHost
-              )),
+          usedHttpTransport: ownsStableIdentity && this.usesHttpTransport(request),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
@@ -848,7 +818,21 @@ export class AcpSessionCapabilityOwner {
     })
   }
 
+  private hasSharedHttpCapabilities(): boolean {
+    const { literature, library, schedules, web } = this.options
+    return Boolean(literature || library || schedules || web)
+  }
+
+  private usesHttpTransport(request: ProvisionSessionCapabilitiesRequest): boolean {
+    return (
+      request.policy.role === 'side-chat' ||
+      !request.framework.acceptsStdioMcp ||
+      (this.hasSharedHttpCapabilities() && Boolean(this.options.mcpHttpHost))
+    )
+  }
+
   private createRoutingIds(stableAppSessionId?: string): SessionCapabilityRoutingIds {
+    const usesSharedRoute = this.hasSharedHttpCapabilities()
     if (stableAppSessionId) {
       return Object.freeze({
         artifact: this.options.artifacts ? stableAppSessionId : '',
@@ -856,13 +840,7 @@ export class AcpSessionCapabilityOwner {
         skillImport: this.options.skillImport ? stableAppSessionId : '',
         plan: this.options.plan ? stableAppSessionId : '',
         sideChat: this.options.sideChat ? stableAppSessionId : '',
-        literature:
-          this.options.literature ||
-          this.options.library ||
-          this.options.schedules ||
-          this.options.web
-            ? stableAppSessionId
-            : ''
+        literature: usesSharedRoute ? stableAppSessionId : ''
       })
     }
 
@@ -872,13 +850,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
     if (this.options.sideChat) this.sideChatSessionSequence += 1
-    if (
-      this.options.literature ||
-      this.options.library ||
-      this.options.schedules ||
-      this.options.web
-    )
-      this.literatureSessionSequence += 1
+    if (usesSharedRoute) this.literatureSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -894,13 +866,9 @@ export class AcpSessionCapabilityOwner {
       sideChat: this.options.sideChat
         ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
         : '',
-      literature:
-        this.options.literature ||
-        this.options.library ||
-        this.options.schedules ||
-        this.options.web
-          ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
-          : ''
+      literature: usesSharedRoute
+        ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
+        : ''
     })
   }
 

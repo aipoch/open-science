@@ -684,7 +684,8 @@
         "e2e/startup-performance.spec.ts",
         "e2e/builtin-web-fetch.spec.ts",
         "e2e/builtin-web-evidence-lifecycle.spec.ts",
-        "e2e/builtin-web-package.spec.ts"
+        "e2e/builtin-web-package.spec.ts",
+        "e2e/fixtures/web-model.ts"
       ],
       "capabilities": ["desktop_e2e_source"]
     },

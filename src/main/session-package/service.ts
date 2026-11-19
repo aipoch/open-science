@@ -1413,10 +1413,7 @@ export class SessionPackageService {
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
     let publicRecords = projectWebRecords(records, webProjection)
     let recordsJson = JSON.stringify(publicRecords)
-    let metadataBytes =
-      Buffer.byteLength(sessionJson) +
-      Buffer.byteLength(recordsJson) +
-      Buffer.byteLength(PACKAGE_README)
+    const fixedMetadataBytes = Buffer.byteLength(sessionJson) + Buffer.byteLength(PACKAGE_README)
     diagnostic.phase('select-files')
     const plannedFiles = markRequiredPackageFiles(records, selectable, [
       ...retainedFiles,
@@ -1435,10 +1432,7 @@ export class SessionPackageService {
       this.signal
     )
     recordsJson = JSON.stringify(publicRecords)
-    metadataBytes =
-      Buffer.byteLength(sessionJson) +
-      Buffer.byteLength(recordsJson) +
-      Buffer.byteLength(PACKAGE_README)
+    let metadataBytes = fixedMetadataBytes + Buffer.byteLength(recordsJson)
     const selection = await this.chooseFiles(
       options,
       plannedFiles.filter((file) => !policyExcluded.has(file.storageKey)),
@@ -1462,10 +1456,7 @@ export class SessionPackageService {
       retainInheritedPdfNotes(records, inheritedPdfNotes, excludedKeys)
       publicRecords = projectWebRecords(records, webProjection)
       recordsJson = JSON.stringify(publicRecords)
-      metadataBytes =
-        Buffer.byteLength(sessionJson) +
-        Buffer.byteLength(recordsJson) +
-        Buffer.byteLength(PACKAGE_README)
+      metadataBytes = fixedMetadataBytes + Buffer.byteLength(recordsJson)
     }
     const excludedFiles = [
       ...new Map(

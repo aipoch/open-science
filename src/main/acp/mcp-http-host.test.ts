@@ -17,6 +17,7 @@ import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { z } from 'zod'
 
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -36,12 +37,16 @@ describe('AgentMcpHttpHost', () => {
   let root: string | undefined
   const webClients: Client[] = []
 
-  async function connectWeb(host: AgentMcpHttpHost, fetchImpl?: typeof fetch): Promise<Client> {
+  async function connectWeb(
+    host: AgentMcpHttpHost,
+    options: { route?: string; fetchImpl?: typeof fetch } = {}
+  ): Promise<Client> {
+    const { route = 'route', fetchImpl } = options
     const { token } = await host.ensureStarted()
     const client = new Client({ name: 'test-web-mcp', version: '1' })
     webClients.push(client)
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(host.urlFor('web', 'route')), {
+      new StreamableHTTPClientTransport(new URL(host.urlFor('web', route)), {
         requestInit: { headers: { authorization: `Bearer ${token}` } },
         ...(fetchImpl ? { fetch: fetchImpl } : {})
       })
@@ -65,6 +70,13 @@ describe('AgentMcpHttpHost', () => {
     )
   }
 
+  function readWebReceipt(
+    client: Client,
+    query: ReceiptQuery
+  ): Promise<z.infer<typeof receiptResponseSchema>> {
+    return client.request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
+  }
+
   it('rejects MCP receipt recovery when its route is revoked during ownership repair', async () => {
     root = await mkdtemp(join(tmpdir(), 'web-local-recovery-revoke-'))
     const directory = join(root, 'receipts')
@@ -85,9 +97,7 @@ describe('AgentMcpHttpHost', () => {
     await receipts.begin('scope', query)
     await receipts.complete('scope', query, { content: [] })
     const client = await connectWeb(host)
-    const reading = client
-      .request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
-      .catch((error: unknown) => error)
+    const reading = readWebReceipt(client, query).catch((error: unknown) => error)
     await vi.waitFor(() => expect(receiptCommitted).toHaveBeenCalledOnce())
     revoke()
     release()
@@ -149,7 +159,6 @@ describe('AgentMcpHttpHost', () => {
     root = await mkdtemp(join(tmpdir(), 'web-cancel-reconcile-'))
     const directory = join(root, 'receipts')
     host = new AgentMcpHttpHost({ receiptDirectory: directory })
-    const { token } = await host.ensureStarted()
     const query = {
       invocationId: 'cancelled',
       name: 'web_fetch',
@@ -164,26 +173,12 @@ describe('AgentMcpHttpHost', () => {
     host.registerWeb('route', { fetchPage, reconcileResult })
     host.registerReceiptScope('route', 'scope', 'web')
     await new HarnessToolReceipts(directory).begin('scope', query)
-    const client = new Client({ name: 'cancellation-reconcile', version: '1' })
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(host.urlFor('web', 'route')), {
-        requestInit: { headers: { authorization: `Bearer ${token}` } }
-      })
-    )
-    try {
-      for (let index = 0; index < 2; index++) {
-        expect(
-          await client.request(
-            { method: HARNESS_RECEIPT_METHOD, params: query },
-            receiptResponseSchema
-          )
-        ).toEqual({ status: 'completed', result })
-      }
-      expect(reconcileResult).toHaveBeenCalledExactlyOnceWith(query)
-      expect(fetchPage).not.toHaveBeenCalled()
-    } finally {
-      await client.close()
+    const client = await connectWeb(host)
+    for (let index = 0; index < 2; index++) {
+      expect(await readWebReceipt(client, query)).toEqual({ status: 'completed', result })
     }
+    expect(reconcileResult).toHaveBeenCalledExactlyOnceWith(query)
+    expect(fetchPage).not.toHaveBeenCalled()
   })
 
   it.each(['permission-revocation', 'session-authority', 'branch'] as const)(
@@ -330,12 +325,7 @@ describe('AgentMcpHttpHost', () => {
         else expect(original.status).toBe('unknown')
         // A fresh owner has only its durable journal and the immutable host receipt.
         host.rebindWeb('route', handler(makeOwner()))
-        expect(
-          await client.request(
-            { method: HARNESS_RECEIPT_METHOD, params: query },
-            receiptResponseSchema
-          )
-        ).toEqual(final)
+        expect(await readWebReceipt(client, query)).toEqual(final)
         expect(await receipts.read('scope', query)).toEqual(timing === 'after' ? original : final)
         await expect(
           snapshots.readCommitted('branch', prepared.result!.document!.snapshot_id)
@@ -381,14 +371,16 @@ describe('AgentMcpHttpHost', () => {
           started.resolve()
           await resume.promise
         })
-      const client = await connectWeb(host, async (input, init) => {
-        const response = await fetch(input, init)
-        if (
-          typeof init?.body === 'string' &&
-          JSON.parse(init.body).method === 'notifications/cancelled'
-        )
-          cancellation.resolve()
-        return response
+      const client = await connectWeb(host, {
+        fetchImpl: async (input, init) => {
+          const response = await fetch(input, init)
+          if (
+            typeof init?.body === 'string' &&
+            JSON.parse(init.body).method === 'notifications/cancelled'
+          )
+            cancellation.resolve()
+          return response
+        }
       })
       const abort = new AbortController()
       const query = {
@@ -412,12 +404,7 @@ describe('AgentMcpHttpHost', () => {
         expect(await pending).toBeInstanceOf(Error)
         const recovery = await connectWeb(host)
         await vi.waitFor(async () =>
-          expect(
-            await recovery.request(
-              { method: HARNESS_RECEIPT_METHOD, params: query },
-              receiptResponseSchema
-            )
-          ).toMatchObject({
+          expect(await readWebReceipt(recovery, query)).toMatchObject({
             status: 'completed',
             result: { isError: true, structuredContent: { error: { code: 'CANCELLED' } } }
           })
@@ -475,12 +462,7 @@ describe('AgentMcpHttpHost', () => {
           { invocationId: query.invocationId }
         )
       )
-      expect(
-        await client.request(
-          { method: HARNESS_RECEIPT_METHOD, params: query },
-          receiptResponseSchema
-        )
-      ).toMatchObject({
+      expect(await readWebReceipt(client, query)).toMatchObject({
         status: 'completed',
         result: { isError: true, structuredContent: { error: { code: 'CANCELLED' } } }
       })
@@ -492,7 +474,6 @@ describe('AgentMcpHttpHost', () => {
   it('repairs snapshot ownership from a durable receipt without fetching again', async () => {
     root = await mkdtemp(join(tmpdir(), 'web-receipt-repair-'))
     host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
-    const { token } = await host.ensureStarted()
     const store = new WebSnapshotStore(join(root, 'evidence'))
     const transport = vi.fn(async () => ({
       body: Buffer.from('Durable evidence'),
@@ -513,42 +494,24 @@ describe('AgentMcpHttpHost', () => {
       }
     })
     host.registerReceiptScope('repair-route', 'scope', 'web')
-    const client = new Client({ name: 'receipt-repair', version: '1' })
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(host.urlFor('web', 'repair-route')), {
-        requestInit: { headers: { authorization: `Bearer ${token}` } }
-      })
-    )
-    try {
-      const query = {
-        invocationId: 'repair-invocation',
-        name: 'web_fetch',
-        arguments: { url: 'https://example.org/' }
-      }
-      const result = await client.callTool({
-        ...query,
-        _meta: { [HARNESS_INVOCATION]: query.invocationId }
-      })
-      const snapshotId = parseWebResult(result.structuredContent)!.document!.snapshot_id
-      await expect(store.readCommitted('session', snapshotId)).rejects.toThrow()
-      simulateCrashWindow = false
-      expect(
-        await client.request(
-          { method: HARNESS_RECEIPT_METHOD, params: query },
-          receiptResponseSchema
-        )
-      ).toEqual({ status: 'completed', result })
-      expect((await store.readCommitted('session', snapshotId)).text).toBe('Durable evidence')
-      expect(transport).toHaveBeenCalledOnce()
-    } finally {
-      await client.close()
+    const client = await connectWeb(host, { route: 'repair-route' })
+    const query = {
+      invocationId: 'repair-invocation',
+      name: 'web_fetch',
+      arguments: { url: 'https://example.org/' }
     }
+    const result = await callWeb(client, query)
+    const snapshotId = parseWebResult(result.structuredContent)!.document!.snapshot_id
+    await expect(store.readCommitted('session', snapshotId)).rejects.toThrow()
+    simulateCrashWindow = false
+    expect(await readWebReceipt(client, query)).toEqual({ status: 'completed', result })
+    expect((await store.readCommitted('session', snapshotId)).text).toBe('Durable evidence')
+    expect(transport).toHaveBeenCalledOnce()
   })
 
   it('persists a single bounded search envelope and reads its receipt without another provider request', async () => {
     root = await mkdtemp(join(tmpdir(), 'web-search-receipt-'))
     host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
-    const { token } = await host.ensureStarted()
     const search = vi.fn(async () => ({
       sources: [
         {
@@ -566,42 +529,27 @@ describe('AgentMcpHttpHost', () => {
       search: (input, context) => service.search('session', input, context)
     })
     host.registerReceiptScope('search-route', 'search-session', 'web')
-    const client = new Client({ name: 'search-receipt-test', version: '1' })
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(host.urlFor('web', 'search-route')), {
-        requestInit: { headers: { authorization: `Bearer ${token}` } }
-      })
-    )
-    try {
-      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
-        'web_fetch',
-        'web_search'
-      ])
-      const query = {
-        invocationId: 'search-invocation',
-        name: 'web_search',
-        arguments: { query: 'quantum materials' }
-      }
-      const result = await client.callTool({
-        ...query,
-        _meta: { [HARNESS_INVOCATION]: query.invocationId }
-      })
-      expect(result.content).toEqual([])
-      expect(result.structuredContent).toMatchObject({
-        operation: 'search',
-        status: 'ok',
-        returned_count: 1,
-        provider: { id: 'exa', auth_mode: 'anonymous' }
-      })
-      const recovered = await client.request(
-        { method: HARNESS_RECEIPT_METHOD, params: query },
-        receiptResponseSchema
-      )
-      expect(recovered).toEqual({ status: 'completed', result })
-      expect(search).toHaveBeenCalledOnce()
-    } finally {
-      await client.close()
+    const client = await connectWeb(host, { route: 'search-route' })
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'web_fetch',
+      'web_search'
+    ])
+    const query = {
+      invocationId: 'search-invocation',
+      name: 'web_search',
+      arguments: { query: 'quantum materials' }
     }
+    const result = await callWeb(client, query)
+    expect(result.content).toEqual([])
+    expect(result.structuredContent).toMatchObject({
+      operation: 'search',
+      status: 'ok',
+      returned_count: 1,
+      provider: { id: 'exa', auth_mode: 'anonymous' }
+    })
+    const recovered = await readWebReceipt(client, query)
+    expect(recovered).toEqual({ status: 'completed', result })
+    expect(search).toHaveBeenCalledOnce()
   })
 
   it('serves only the owned Skill allowlist and revokes each HTTP projection independently', async () => {

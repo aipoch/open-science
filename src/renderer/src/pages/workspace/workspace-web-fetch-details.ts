@@ -1,5 +1,5 @@
 import type { ToolActivity } from '@/stores/session-store-contract'
-import { parseWebResult, type WebResult } from '../../../../shared/web-tools'
+import { readWebResultEnvelope, type WebResult } from '../../../../shared/web-tools'
 import { sanitizeToolDetailText } from '../../../../shared/tool-detail-sanitizer'
 
 // The host stamps appOwned after checking the provisioned route. Neither a tool title nor a
@@ -28,36 +28,6 @@ const safeWebUrl = (value: unknown): string | undefined => {
   }
 }
 
-const readEnvelope = (value: unknown, depth = 0): WebResult | undefined => {
-  if (depth > 4) return undefined
-  if (typeof value === 'string') {
-    if (value.length > 16_000) return undefined
-    try {
-      return readEnvelope(JSON.parse(value) as unknown, depth + 1)
-    } catch {
-      return undefined
-    }
-  }
-  const parsed = parseWebResult(value)
-  if (parsed) return parsed
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const wrapper = value as Record<string, unknown>
-  for (const nested of [wrapper.structuredContent, wrapper.result, wrapper.content]) {
-    if (Array.isArray(nested)) {
-      for (const block of nested) {
-        if (block && typeof block === 'object' && 'text' in block) {
-          const result = readEnvelope(block.text, depth + 1)
-          if (result) return result
-        }
-      }
-    } else {
-      const result = readEnvelope(nested, depth + 1)
-      if (result) return result
-    }
-  }
-  return undefined
-}
-
 const readBuiltinWebResult = (
   activity: ToolActivity,
   operation: 'search' | 'fetch'
@@ -69,7 +39,7 @@ const readBuiltinWebResult = (
       candidates.push(entry.content.text)
   }
   for (const candidate of candidates) {
-    const result = readEnvelope(candidate)
+    const result = readWebResultEnvelope(candidate)
     if (result?.operation === operation && result.invocation_id === activity.executionInvocationId)
       return result
   }

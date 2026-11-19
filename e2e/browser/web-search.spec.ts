@@ -1,15 +1,12 @@
 import { expect, test } from '@playwright/test'
+import { captureExternalRequests, useNarrowViewport } from './web-activity-helpers'
 
 test('keeps recorded sources readable through updates and offline reload', async ({
   page
 }, testInfo) => {
-  const externalRequests: string[] = []
-  page.on('request', (request) => {
-    if (!request.url().startsWith('http://127.0.0.1:4178')) externalRequests.push(request.url())
-  })
-  await page.setViewportSize({ width: 375, height: 900 })
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.goto('/web-search.html')
+  const externalRequests = captureExternalRequests(page)
+  await useNarrowViewport(page)
+  await page.goto('/web-activity.html?tool=search')
   const chip = page.getByTestId('tool-chip')
   await expect(chip).toContainText('10 results')
   await expect(chip).toContainText('125 ms')
@@ -55,7 +52,7 @@ test('keeps recorded sources readable through updates and offline reload', async
 test('uses actual pending query, preserves open panel on completion and distinguishes empty and limited', async ({
   page
 }, testInfo) => {
-  await page.goto('/web-search.html?scenario=pending')
+  await page.goto('/web-activity.html?tool=search&scenario=pending')
   const chip = page.getByTestId('tool-chip')
   await expect(chip).toContainText('open science reproducibility')
   await expect(chip).toContainText('Searching the web…')
@@ -66,17 +63,17 @@ test('uses actual pending query, preserves open panel on completion and distingu
   )
   await expect(chip).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByTestId('web-search-source')).toHaveCount(8)
-  await page.goto('/web-search.html?scenario=empty')
+  await page.goto('/web-activity.html?tool=search&scenario=empty')
   await page.getByTestId('tool-chip').click()
   await expect(page.getByTestId('tool-search-details')).toContainText('No results found')
-  await page.goto('/web-search.html?scenario=limited')
+  await page.goto('/web-activity.html?tool=search&scenario=limited')
   await page.getByTestId('tool-chip').click()
   const details = page.getByTestId('tool-search-details')
   await expect(details).toContainText('The search service is temporarily limiting requests.')
   await expect(details).not.toContainText('No results found')
   await expect(details.locator('details').first()).not.toHaveAttribute('open', '')
   await page.screenshot({ path: testInfo.outputPath('search-rate-limited.png'), fullPage: true })
-  await page.goto('/web-search.html?scenario=cancelled')
+  await page.goto('/web-activity.html?tool=search&scenario=cancelled')
   await page.getByTestId('tool-chip').click()
   await expect(page.getByTestId('tool-search-details')).toContainText('Cancelled')
   await expect(page.getByTestId('web-search-source')).toHaveCount(0)
@@ -84,9 +81,8 @@ test('uses actual pending query, preserves open panel on completion and distingu
 
 test('only repeats the full query when the row clips it', async ({ page }) => {
   const query = 'open science reproducibility and reusable computational workflows'
-  await page.setViewportSize({ width: 375, height: 900 })
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.goto('/web-search.html?scenario=ordinary')
+  await useNarrowViewport(page)
+  await page.goto('/web-activity.html?tool=search&scenario=ordinary')
   const chip = page.getByTestId('tool-chip')
   await expect(chip).toContainText(query)
   await chip.click()

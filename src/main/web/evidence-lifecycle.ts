@@ -3,7 +3,7 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
-import { webResultSchema, type WebResult } from '../../shared/web-tools'
+import { readWebResultEnvelope } from '../../shared/web-tools'
 import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
 import { WebSnapshotStore, webTextHash, type PendingWebInheritance } from './snapshot-store'
 import { WebToolError } from './errors'
@@ -26,9 +26,15 @@ export const subscribeWebBranchChanges = (
     branchListeners.delete(listener)
   }
 }
-const selectBranch = (session: PersistedChatSession, branchId: string): PersistedChatSession => {
+const selectBranch = (
+  session: PersistedChatSession,
+  branchId: string,
+  frameId?: string
+): PersistedChatSession => {
   const graph = session.conversationGraph
-  const branch = graph?.branches.find((item) => item.id === branchId)
+  const branch = graph?.branches.find(
+    (item) => item.id === branchId && (frameId === undefined || item.agentFrameId === frameId)
+  )
   if (!graph || !branch) throw new WebToolError('EVIDENCE_UNAVAILABLE')
   const selected = {
     ...graph,
@@ -43,34 +49,6 @@ const selectBranch = (session: PersistedChatSession, branchId: string): Persiste
     messages: resolveActiveConversationMessages(selected),
     activities: resolveActiveConversationActivities(selected).activities
   }
-}
-const readEnvelope = (input: unknown, depth = 0): WebResult | undefined => {
-  if (depth > 4) return undefined
-  if (typeof input === 'string') {
-    if (input.length > 16000) return undefined
-    try {
-      return readEnvelope(JSON.parse(input), depth + 1)
-    } catch {
-      return undefined
-    }
-  }
-  const parsed = webResultSchema.safeParse(input)
-  if (parsed.success) return parsed.data
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
-  const wrapper = input as Record<string, unknown>
-  for (const nested of [wrapper.structuredContent, wrapper.result, wrapper.content]) {
-    if (Array.isArray(nested)) {
-      for (const block of nested)
-        if (block && typeof block === 'object' && 'text' in block) {
-          const result = readEnvelope(block.text, depth + 1)
-          if (result) return result
-        }
-    } else {
-      const result = readEnvelope(nested, depth + 1)
-      if (result) return result
-    }
-  }
-  return undefined
 }
 type EvidenceRecord = { snapshotId: string; fingerprint: string }
 const records = (activities: readonly PersistedToolActivity[]): EvidenceRecord[] =>
@@ -99,7 +77,7 @@ const records = (activities: readonly PersistedToolActivity[]): EvidenceRecord[]
       }
     }
     for (const candidate of candidates) {
-      const result = readEnvelope(candidate)
+      const result = readWebResultEnvelope(candidate)
       if (
         result?.operation === 'fetch' &&
         result.status === 'ok' &&
@@ -164,17 +142,9 @@ export const inheritedWebSnapshotIds = (
     const frame = graph.frames.find((item) => item.id === frameId)
     if (!frame) throw new WebToolError('EVIDENCE_UNAVAILABLE')
     const branchId = source.messageBranchId ?? frame.activeBranchId
-    if (!graph.branches.some((branch) => branch.id === branchId && branch.agentFrameId === frameId))
-      throw new WebToolError('EVIDENCE_UNAVAILABLE')
-    const selected = {
-      ...graph,
-      activeFrameId: frameId,
-      frames: graph.frames.map((item) =>
-        item.id === frameId ? { ...item, activeBranchId: branchId } : item
-      )
-    }
-    messages = resolveActiveConversationMessages(selected)
-    activities = resolveActiveConversationActivities(selected).activities
+    const selected = selectBranch(parent, branchId, frameId)
+    messages = selected.messages
+    activities = selected.activities ?? []
   }
   const head = source.headMessageId
     ? messages.find((message) => message.id === source.headMessageId)
@@ -506,7 +476,7 @@ export class WebEvidenceLifecycle {
     if (session.packageOrigin) return
     const view = selectBranch(session, branchId)
     const graph = view.conversationGraph!
-    const headMessageId = resolveActiveConversationMessages(graph).at(-1)?.id
+    const headMessageId = view.messages.at(-1)?.id
     const proof = {
       ...view,
       branchSource: {

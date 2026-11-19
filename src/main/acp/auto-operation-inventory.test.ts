@@ -216,7 +216,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: strict shared inputs enter the host-owned route. Search sends queries to
         // anonymous Exa and returns one bounded evidence envelope. Required filters are preserved.
         // Receipt hooks observe revocation and return the authoritative cancellation result.
-        'web/mcp-server.ts': '63e8d78a5bfeffb323139a6ad5bd5ee941c19f49fdb5fb7327f6ec27f95664ba'
+        // Both tools share result validation and check cancellation before returning the envelope.
+        'web/mcp-server.ts': '27bccd06a2b18dd547a4454b0f0864dee2a305d5b6b09f744ba9d571512f3154'
       },
       notebookSchemas: {
         // Reviewed: pros/cons are optional trimmed strings capped at 4000 characters; they only
@@ -233,7 +234,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb',
         // Reviewed: strict search/fetch inputs reject provider, network and replay options.
         // Bounded attempts, usage and provenance fields grant no permission or execution authority.
-        webTools: '21c1fa26347228145c4b4cf697bbd6f86fc936937746ba11f0125df9dd2acfdf'
+        // The saved-envelope reader validates results for evidence and presentation.
+        webTools: 'bf80012978d94e4bc68d2e08ff76f5c422b8f4b6bf67dee0faf5690e5ced2ff1'
       }
     })
   })

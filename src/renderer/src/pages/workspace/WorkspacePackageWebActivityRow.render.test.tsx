@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setupWebActivityRender } from './workspace-web-render-test-fixture'
+import { describe, expect, it, vi } from 'vitest'
 import type { PackageWebActivityEvidence } from '../../../../shared/session-package-web'
 import { fetchActivity } from './workspace-web-fetch-test-fixtures'
 import { readPackageWebEvidence } from './workspace-package-web-evidence'
@@ -10,7 +10,6 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { ReplayToolRecord } from './replay/ReplayToolRecord'
 import { PackageWebOmissions } from '@/components/PackageWebOmissions'
 
-;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   useMessageScroller: () => ({ stopAutoScroll: vi.fn() })
@@ -31,41 +30,34 @@ const packet = (): PackageWebActivityEvidence => ({
 })
 
 describe('policy-filtered package Web evidence', () => {
-  let container: HTMLDivElement
-  let root: Root
-  beforeEach(() => {
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-  })
-  afterEach(async () => {
-    await act(async () => root.unmount())
-    container.remove()
-  })
+  const view = setupWebActivityRender()
+  const renderRow = (
+    evidence: PackageWebActivityEvidence,
+    activity = fetchActivity()
+  ): Promise<void> =>
+    view.render(
+      <WorkspacePackageWebActivityRow
+        activity={activity}
+        evidence={evidence}
+        isExpanded
+        onToggle={vi.fn()}
+      />
+    )
 
   it('shows body without inventing a URL when source metadata sharing is denied', async () => {
     const evidence = packet()
     const activity = fetchActivity({ packageWebEvidence: evidence })
     expect(readPackageWebEvidence(activity)).toEqual(evidence)
-    await act(async () =>
-      root.render(
-        <WorkspacePackageWebActivityRow
-          activity={activity}
-          evidence={evidence}
-          isExpanded
-          onToggle={vi.fn()}
-        />
-      )
-    )
-    expect(container.textContent).toContain('Saved allowed body.')
-    expect(container.textContent).toContain('Sharing is not permitted by the data policy')
-    expect(container.textContent).toContain('Read-only')
-    expect(container.textContent).toContain('Page excerpt')
-    expect(container.textContent).toContain('Partial page text')
-    expect(container.querySelector('a, img, script, iframe')).toBeNull()
-    expect(container.textContent).not.toContain('Retry')
-    expect(container.textContent).not.toContain('example.org')
-    expect(container.querySelectorAll('button')).toHaveLength(1)
+    await renderRow(evidence, activity)
+    expect(view.container.textContent).toContain('Saved allowed body.')
+    expect(view.container.textContent).toContain('Sharing is not permitted by the data policy')
+    expect(view.container.textContent).toContain('Read-only')
+    expect(view.container.textContent).toContain('Page excerpt')
+    expect(view.container.textContent).toContain('Partial page text')
+    expect(view.container.querySelector('a, img, script, iframe')).toBeNull()
+    expect(view.container.textContent).not.toContain('Retry')
+    expect(view.container.textContent).not.toContain('example.org')
+    expect(view.container.querySelectorAll('button')).toHaveLength(1)
   })
 
   it('renders allowed source metadata without a body or executable recovery', async () => {
@@ -75,23 +67,14 @@ describe('policy-filtered package Web evidence', () => {
       { sourceId: 'local-source', title: 'Allowed source', url: 'https://example.org/methods' }
     ]
     evidence.omissions = [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
-    await act(async () =>
-      root.render(
-        <WorkspacePackageWebActivityRow
-          activity={fetchActivity()}
-          evidence={evidence}
-          isExpanded
-          onToggle={vi.fn()}
-        />
-      )
-    )
-    expect(container.querySelector('a')?.href).toBe('https://example.org/methods')
-    expect(container.textContent).toContain('Sharing permission has not been confirmed')
-    expect(container.querySelector('[data-testid="package-web-source"]')?.textContent).toBe(
+    await renderRow(evidence)
+    expect(view.container.querySelector('a')?.href).toBe('https://example.org/methods')
+    expect(view.container.textContent).toContain('Sharing permission has not been confirmed')
+    expect(view.container.querySelector('[data-testid="package-web-source"]')?.textContent).toBe(
       'Allowed sourcehttps://example.org/methods'
     )
-    expect(container.querySelector('pre')).toBeNull()
-    expect(container.textContent).not.toContain('Retry')
+    expect(view.container.querySelector('pre')).toBeNull()
+    expect(view.container.textContent).not.toContain('Retry')
   })
 
   it.each(['error', 'unavailable'] as const)(
@@ -101,27 +84,18 @@ describe('policy-filtered package Web evidence', () => {
       evidence.status = status
       delete evidence.document
       if (status === 'error') evidence.errorCode = 'HTTP_ERROR'
-      await act(async () =>
-        root.render(
-          <WorkspacePackageWebActivityRow
-            activity={fetchActivity()}
-            evidence={evidence}
-            isExpanded
-            onToggle={vi.fn()}
-          />
-        )
-      )
-      expect(container.textContent).toContain(
+      await renderRow(evidence)
+      expect(view.container.textContent).toContain(
         status === 'error' ? 'The web page could not be read' : 'Result unavailable'
       )
-      expect(container.textContent).not.toContain('Retry')
-      expect(container.textContent).not.toContain('Saved allowed body.')
+      expect(view.container.textContent).not.toContain('Retry')
+      expect(view.container.textContent).not.toContain('Saved allowed body.')
       if (status === 'error') {
-        const details = container.querySelector('details')
+        const details = view.container.querySelector('details')
         expect(details?.open).toBe(false)
         expect(details?.textContent).toContain('HTTP_ERROR')
       } else {
-        expect(container.querySelector('details')).toBeNull()
+        expect(view.container.querySelector('details')).toBeNull()
       }
     }
   )
@@ -132,19 +106,10 @@ describe('policy-filtered package Web evidence', () => {
   ] as const)(
     'shows recorded $toolDisposition without publishing late evidence',
     async ({ toolDisposition, copy, status }) => {
-      await act(async () =>
-        root.render(
-          <WorkspacePackageWebActivityRow
-            activity={fetchActivity({ toolDisposition })}
-            evidence={{ ...packet(), status }}
-            isExpanded
-            onToggle={vi.fn()}
-          />
-        )
-      )
-      expect(container.querySelector('[role=status]')?.textContent).toBe(copy)
-      expect(container.textContent).not.toContain('The web page could not be read')
-      expect(container.textContent).not.toContain('Saved allowed body.')
+      await renderRow({ ...packet(), status }, fetchActivity({ toolDisposition }))
+      expect(view.container.querySelector('[role=status]')?.textContent).toBe(copy)
+      expect(view.container.textContent).not.toContain('The web page could not be read')
+      expect(view.container.textContent).not.toContain('Saved allowed body.')
     }
   )
 
@@ -179,65 +144,57 @@ describe('policy-filtered package Web evidence', () => {
 
   it('uses the same partial evidence row in the workspace and read-only replay', async () => {
     const activity = fetchActivity({ packageWebEvidence: packet() })
+    await view.render(
+      <WorkspaceActivityGroup
+        group={{
+          id: 'package-group',
+          type: 'activity-group',
+          createdAt: 1,
+          sortIndex: 1,
+          activities: [activity]
+        }}
+        isExpanded
+        onToggleGroup={vi.fn()}
+        onToggleRow={vi.fn()}
+        expansionOverrides={{ [activity.id]: true }}
+      />
+    )
+    expect(
+      view.container.querySelector('[data-testid="package-web-evidence"]')?.textContent
+    ).toContain('Saved allowed body.')
+    expect(view.container.textContent).not.toContain('Saved page text')
+    await view.render(<ReplayToolRecord activity={activity} showResults interactive />)
     await act(async () =>
-      root.render(
-        <WorkspaceActivityGroup
-          group={{
-            id: 'package-group',
-            type: 'activity-group',
-            createdAt: 1,
-            sortIndex: 1,
-            activities: [activity]
-          }}
-          isExpanded
-          onToggleGroup={vi.fn()}
-          onToggleRow={vi.fn()}
-          expansionOverrides={{ [activity.id]: true }}
-        />
-      )
+      view.container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!.click()
     )
-    expect(container.querySelector('[data-testid="package-web-evidence"]')?.textContent).toContain(
-      'Saved allowed body.'
-    )
-    expect(container.textContent).not.toContain('Saved page text')
-    await act(async () =>
-      root.render(<ReplayToolRecord activity={activity} showResults interactive />)
-    )
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!.click()
-    )
-    expect(container.querySelector('[data-testid="package-web-evidence"]')?.textContent).toContain(
-      'Saved allowed body.'
-    )
-    expect(container.textContent).not.toContain('Retry')
-    await act(async () => root.render(<ReplayToolRecord activity={activity} showResults />))
-    expect(container.querySelector('[data-testid="package-web-evidence"]')?.textContent).toContain(
-      'Saved allowed body.'
-    )
-    await act(async () =>
-      root.render(<ReplayToolRecord activity={activity} showResults={false} interactive />)
-    )
-    expect(container.querySelector('[data-testid="package-web-evidence"]')).toBeNull()
-    expect(container.textContent).not.toContain('Saved allowed body.')
+    expect(
+      view.container.querySelector('[data-testid="package-web-evidence"]')?.textContent
+    ).toContain('Saved allowed body.')
+    expect(view.container.textContent).not.toContain('Retry')
+    await view.render(<ReplayToolRecord activity={activity} showResults />)
+    expect(
+      view.container.querySelector('[data-testid="package-web-evidence"]')?.textContent
+    ).toContain('Saved allowed body.')
+    await view.render(<ReplayToolRecord activity={activity} showResults={false} interactive />)
+    expect(view.container.querySelector('[data-testid="package-web-evidence"]')).toBeNull()
+    expect(view.container.textContent).not.toContain('Saved allowed body.')
   })
 
   it('shows typed omission scope and reasons, omitting invalid entries', async () => {
-    await act(async () =>
-      root.render(
-        <PackageWebOmissions
-          omissions={[
-            { component: 'query_history', reason: 'policy-unknown', count: 2 },
-            { component: 'provider_excerpt', reason: 'missing', count: 3 },
-            { component: 'fetch_body', reason: 'invalid', count: 1 }
-          ]}
-        />
-      )
+    await view.render(
+      <PackageWebOmissions
+        omissions={[
+          { component: 'query_history', reason: 'policy-unknown', count: 2 },
+          { component: 'provider_excerpt', reason: 'missing', count: 3 },
+          { component: 'fetch_body', reason: 'invalid', count: 1 }
+        ]}
+      />
     )
-    expect(container.textContent).toContain('Web query history: 2')
-    expect(container.textContent).toContain('Search service excerpts: 3')
-    expect(container.textContent).toContain('Recorded evidence failed validation')
-    expect(container.querySelectorAll('li')).toHaveLength(3)
-    await act(async () => root.render(<PackageWebOmissions omissions={[]} />))
-    expect(container.innerHTML).toBe('')
+    expect(view.container.textContent).toContain('Web query history: 2')
+    expect(view.container.textContent).toContain('Search service excerpts: 3')
+    expect(view.container.textContent).toContain('Recorded evidence failed validation')
+    expect(view.container.querySelectorAll('li')).toHaveLength(3)
+    await view.render(<PackageWebOmissions omissions={[]} />)
+    expect(view.container.innerHTML).toBe('')
   })
 })

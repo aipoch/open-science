@@ -259,12 +259,7 @@ export class WebSnapshotStore {
       snapshot = await this.read(sessionId, snapshotId)
     }
     const key = this.cachePath(sessionId, snapshot.originalUrl, snapshot.extractorVersion)
-    let existing: z.infer<typeof cacheSchema> | undefined
-    try {
-      existing = cacheSchema.parse(JSON.parse(await readFileWithinLimit(key, 4096)))
-    } catch (error) {
-      if (!isMissing(error)) throw new WebToolError('EVIDENCE_UNAVAILABLE')
-    }
+    const existing = await this.readCacheEntry(key)
     // Re-reading old evidence never elects it as the URL's current cache, including when
     // two independent fetches have exactly the same millisecond timestamp.
     const publish =
@@ -272,21 +267,7 @@ export class WebSnapshotStore {
       existing.snapshotId === snapshotId ||
       (!alreadyCommitted && Date.parse(existing.fetchedAt) <= Date.parse(snapshot.fetchedAt))
     if (authorize && !(await authorize())) return
-    if (publish) {
-      const directory = dirname(key)
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      await defaultFileDurability.syncDirectory(dirname(directory))
-      await writeDurableJsonFile(
-        key,
-        JSON.stringify({
-          version: 1,
-          snapshotId,
-          fetchedAt: snapshot.fetchedAt,
-          extractorVersion: snapshot.extractorVersion,
-          policy: WEB_CACHE_POLICY_VERSION
-        })
-      )
-    }
+    if (publish) await this.writeCacheEntry(key, snapshotId, snapshot)
     if (!alreadyCommitted) {
       const directory = join(this.root, ownerHash(sessionId), 'committed')
       await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -353,21 +334,43 @@ export class WebSnapshotStore {
     )
   }
 
+  private async readCacheEntry(path: string): Promise<z.infer<typeof cacheSchema> | undefined> {
+    try {
+      return cacheSchema.parse(JSON.parse(await readFileWithinLimit(path, 4096)))
+    } catch (error) {
+      if (isMissing(error)) return undefined
+      throw new WebToolError('EVIDENCE_UNAVAILABLE')
+    }
+  }
+
+  private async writeCacheEntry(
+    path: string,
+    snapshotId: string,
+    snapshot: WebSnapshot
+  ): Promise<void> {
+    const directory = dirname(path)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await defaultFileDurability.syncDirectory(dirname(directory))
+    await writeDurableJsonFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        snapshotId,
+        fetchedAt: snapshot.fetchedAt,
+        extractorVersion: snapshot.extractorVersion,
+        policy: WEB_CACHE_POLICY_VERSION
+      })
+    )
+  }
+
   async findCached(
     sessionId: string,
     url: string,
     version: string,
     now = Date.now()
   ): Promise<WebSnapshot | undefined> {
-    let cached: z.infer<typeof cacheSchema>
-    try {
-      cached = cacheSchema.parse(
-        JSON.parse(await readFileWithinLimit(this.cachePath(sessionId, url, version), 4096))
-      )
-    } catch (error) {
-      if (isMissing(error)) return undefined
-      throw new WebToolError('EVIDENCE_UNAVAILABLE')
-    }
+    const cached = await this.readCacheEntry(this.cachePath(sessionId, url, version))
+    if (!cached) return undefined
     const age = now - Date.parse(cached.fetchedAt)
     if (age < 0 || age >= WEB_CACHE_TTL_MS) return undefined
     if (cached.policy !== WEB_CACHE_POLICY_VERSION || cached.extractorVersion !== version)
@@ -472,26 +475,9 @@ export class WebSnapshotStore {
             snapshot.originalUrl,
             snapshot.extractorVersion
           )
-          let existing: z.infer<typeof cacheSchema> | undefined
-          try {
-            existing = cacheSchema.parse(JSON.parse(await readFileWithinLimit(cachePath, 4096)))
-          } catch (error) {
-            if (!isMissing(error)) throw new WebToolError('EVIDENCE_UNAVAILABLE')
-          }
-          if (!existing || Date.parse(existing.fetchedAt) < Date.parse(snapshot.fetchedAt)) {
-            await mkdir(dirname(cachePath), { recursive: true, mode: 0o700 })
-            await defaultFileDurability.syncDirectory(dirname(dirname(cachePath)))
-            await writeDurableJsonFile(
-              cachePath,
-              JSON.stringify({
-                version: 1,
-                snapshotId: snapshot.snapshotId,
-                fetchedAt: snapshot.fetchedAt,
-                extractorVersion: snapshot.extractorVersion,
-                policy: WEB_CACHE_POLICY_VERSION
-              })
-            )
-          }
+          const existing = await this.readCacheEntry(cachePath)
+          if (!existing || Date.parse(existing.fetchedAt) < Date.parse(snapshot.fetchedAt))
+            await this.writeCacheEntry(cachePath, snapshot.snapshotId, snapshot)
         }
         const marker = this.commitPath(childScope, reference.snapshotId)
         await mkdir(dirname(marker), { recursive: true, mode: 0o700 })

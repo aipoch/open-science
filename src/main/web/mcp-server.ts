@@ -26,6 +26,25 @@ export type WebMcpHandler = {
   cancelUndispatched?: (query: ReceiptQuery) => Promise<CallToolResult>
 }
 
+const runWebTool = async (
+  { _meta, signal }: { _meta?: Record<string, unknown>; signal: AbortSignal },
+  execute: (context: WebFetchContext) => Promise<WebResult>
+): Promise<CallToolResult> => {
+  const metadata = _meta?.[HARNESS_INVOCATION]
+  const invocationId =
+    typeof metadata === 'string' && metadata.length > 0 && metadata.length <= 512
+      ? metadata
+      : randomUUID()
+  const result = webResultSchema.parse(await execute({ signal, invocationId }))
+  signal.throwIfAborted()
+  // Harness serializes structuredContent once. A second JSON text block would duplicate evidence.
+  return {
+    content: [],
+    structuredContent: result,
+    ...(result.status === 'error' ? { isError: true } : {})
+  }
+}
+
 export const createWebMcpServer = (handler: WebMcpHandler): McpServer => {
   const server = new McpServer({ name: WEB_MCP_SERVER_NAME, version: '1.0.0' })
   server.registerTool(
@@ -36,23 +55,7 @@ export const createWebMcpServer = (handler: WebMcpHandler): McpServer => {
       inputSchema: fetchInputSchema,
       annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true }
     },
-    async (input, extra) => {
-      const metadata = extra._meta?.[HARNESS_INVOCATION]
-      const invocationId =
-        typeof metadata === 'string' && metadata.length > 0 && metadata.length <= 512
-          ? metadata
-          : randomUUID()
-      const result = webResultSchema.parse(
-        await handler.fetchPage(input, { signal: extra.signal, invocationId })
-      )
-      extra.signal.throwIfAborted()
-      // Harness serializes structuredContent once. A second JSON text block would duplicate evidence.
-      return {
-        content: [],
-        structuredContent: result,
-        ...(result.status === 'error' ? { isError: true } : {})
-      }
-    }
+    (input, extra) => runWebTool(extra, (context) => handler.fetchPage(input, context))
   )
   if (handler.search)
     server.registerTool(
@@ -68,22 +71,7 @@ export const createWebMcpServer = (handler: WebMcpHandler): McpServer => {
         inputSchema: searchInputSchema,
         annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false }
       },
-      async (input, extra) => {
-        const metadata = extra._meta?.[HARNESS_INVOCATION]
-        const invocationId =
-          typeof metadata === 'string' && metadata.length > 0 && metadata.length <= 512
-            ? metadata
-            : randomUUID()
-        const result = webResultSchema.parse(
-          await handler.search!(input, { signal: extra.signal, invocationId })
-        )
-        extra.signal.throwIfAborted()
-        return {
-          content: [],
-          structuredContent: result,
-          ...(result.status === 'error' ? { isError: true } : {})
-        }
-      }
+      (input, extra) => runWebTool(extra, (context) => handler.search!(input, context))
     )
   return server
 }

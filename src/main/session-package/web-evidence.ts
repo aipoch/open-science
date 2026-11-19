@@ -155,14 +155,18 @@ const privateRequest = (value: unknown): { query?: string; url?: string } => {
     ...(url.success && url.data.url ? { url: url.data.url } : {})
   }
 }
-const stripWebDetails = <T extends PersistedToolActivity>(activity: T): T => {
+const projectWebDetails = <T extends PersistedToolActivity>(
+  activity: T,
+  packet?: PackageWebActivityEvidence
+): T => {
   const next = clone(activity)
   delete next.rawInput
   delete next.rawOutput
   delete next.toolContent
   delete next.terminalOutput
   delete next.toolLocations
-  delete next.packageWebEvidence
+  if (packet) next.packageWebEvidence = clone(packet)
+  else delete next.packageWebEvidence
   if (next.webInvocation) {
     delete next.webInvocation.retryEligible
     delete next.webInvocation.searchDispatches
@@ -181,16 +185,11 @@ const findResult = (value: unknown, depth = 0): WebResult | undefined => {
       return undefined
     }
   }
-  if (Array.isArray(value))
-    for (const item of value) {
-      const found = findResult(item, depth + 1)
-      if (found) return found
-    }
-  if (record(value))
-    for (const item of Object.values(value)) {
-      const found = findResult(item, depth + 1)
-      if (found) return found
-    }
+  const children = Array.isArray(value) ? value : record(value) ? Object.values(value) : []
+  for (const item of children) {
+    const found = findResult(item, depth + 1)
+    if (found) return found
+  }
   return undefined
 }
 const policyIdentity = (value: WebResult | PackageWebActivityEvidence): WebPolicyIdentity =>
@@ -231,33 +230,28 @@ const corroboratesExaAttribution = (packet: PackageWebActivityEvidence): boolean
     )
   })
 }
-const applyPacket = (
-  activity: PersistedToolActivity,
-  packet: PackageWebActivityEvidence
-): PersistedToolActivity => {
-  const next = clone(activity) as PersistedToolActivity & {
-    packageWebEvidence?: PackageWebActivityEvidence
-  }
-  delete next.rawInput
-  delete next.rawOutput
-  delete next.toolContent
-  delete next.terminalOutput
-  delete next.toolLocations
-  next.packageWebEvidence = clone(packet)
-  if (next.webInvocation) {
-    delete next.webInvocation.retryEligible
-    delete next.webInvocation.searchDispatches
-    delete next.webInvocation.searchAttempts
-  }
-  return next
+const projectSessionActivities = (
+  session: PersistedChatSession,
+  project: <T extends PersistedToolActivity>(activity: T) => T
+): PersistedChatSession => {
+  const result = clone(session)
+  result.activities = result.activities?.map(project)
+  if (result.conversationGraph)
+    result.conversationGraph.activities = result.conversationGraph.activities.map(project)
+  return result
+}
+const omitLocalModelService = <T extends { model_service_id?: string }>(entry: T): T => {
+  const portable = clone(entry)
+  // A sender's local service identity is neither portable provenance nor execution authority.
+  delete portable.model_service_id
+  return portable
 }
 const sessionProjection = (
   session: PersistedChatSession,
   packets: ReadonlyMap<string, PackageWebActivityEvidence>,
   plan: WebEvidenceProjectionPlan
 ): PersistedChatSession => {
-  const result = clone(session)
-  const project = <T extends PersistedToolActivity>(activity: T): T => {
+  return projectSessionActivities(session, (activity) => {
     if (!knownActivity(activity)) {
       // External tools can echo a Web result. Project their output without reclassifying
       // the activity or changing its identity, arguments, or portable evidence.
@@ -270,13 +264,8 @@ const sessionProjection = (
       return { ...activity, ...projectWebDerivedValue(output, plan, true) }
     }
     const packet = packets.get(activity.executionInvocationId ?? '')
-    if (packet) return applyPacket(activity, { ...packet, activityId: activity.id }) as T
-    return stripWebDetails(activity)
-  }
-  result.activities = result.activities?.map(project)
-  if (result.conversationGraph)
-    result.conversationGraph.activities = result.conversationGraph.activities.map(project)
-  return result
+    return projectWebDetails(activity, packet && { ...packet, activityId: activity.id })
+  })
 }
 
 /** Builds independent portable evidence; input execution records and source hashes are immutable. */
@@ -443,26 +432,24 @@ export async function prepareWebEvidence(
         attemptIndex: source.attempt_index
       })) ??
       []
+    const attempts =
+      prior?.attempts ?? matching?.attempts ?? activity.webInvocation?.searchAttempts ?? []
+    const dispatches = prior?.dispatches ?? activity.webInvocation?.searchDispatches
+    const restricted =
+      prior?.sourceSchema === 'open-science.web.v3' || matching?.schema === 'open-science.web.v3'
     const packet: PackageWebActivityEvidence = {
       schema: 'open-science.package-web.v1',
       ...(['open-science.web.v2', 'open-science.web.v3'].includes(prior?.sourceSchema ?? '') ||
       ['open-science.web.v2', 'open-science.web.v3'].includes(matching?.schema ?? '') ||
       !!activity.webInvocation?.searchDispatches?.length
         ? {
-            sourceSchema:
-              prior?.sourceSchema === 'open-science.web.v3' ||
-              matching?.schema === 'open-science.web.v3'
-                ? ('open-science.web.v3' as const)
-                : ('open-science.web.v2' as const),
+            sourceSchema: restricted
+              ? ('open-science.web.v3' as const)
+              : ('open-science.web.v2' as const),
             minReaderVersion:
-              prior?.sourceSchema === 'open-science.web.v3' ||
-              matching?.schema === 'open-science.web.v3' ||
-              usesExtendedSearchProtocol(
-                prior?.attempts ?? matching?.attempts ?? activity.webInvocation?.searchAttempts
-              ) ||
-              usesExtendedSearchProtocol(
-                prior?.dispatches ?? activity.webInvocation?.searchDispatches
-              )
+              restricted ||
+              usesExtendedSearchProtocol(attempts) ||
+              usesExtendedSearchProtocol(dispatches)
                 ? (3 as const)
                 : (2 as const),
             ...(prior?.resultKind || matching?.result_kind
@@ -472,10 +459,8 @@ export async function prepareWebEvidence(
                 }
               : {}),
             routing: clone(prior?.routing ?? matching?.routing),
-            dispatches: clone(prior?.dispatches ?? activity.webInvocation?.searchDispatches),
-            attempts: clone(
-              prior?.attempts ?? matching?.attempts ?? activity.webInvocation?.searchAttempts ?? []
-            )
+            dispatches: dispatches?.map(omitLocalModelService),
+            attempts: attempts.map(omitLocalModelService)
           }
         : {}),
       activityId: activity.id,
@@ -509,19 +494,6 @@ export async function prepareWebEvidence(
       rememberShortContent(invocationId, synthesis.text)
       omissions.push({ component: 'model_synthesis', reason: 'policy-unknown', count: 1 })
     }
-    if (packet.attempts)
-      packet.attempts = packet.attempts.map((attempt) => {
-        const safe = clone(attempt)
-        // A sender's local service identity is neither portable provenance nor execution authority.
-        delete safe.model_service_id
-        return safe
-      })
-    if (packet.dispatches)
-      packet.dispatches = packet.dispatches.map((dispatch) => {
-        const safe = clone(dispatch)
-        delete safe.model_service_id
-        return safe
-      })
     const requestUrl =
       prior?.requestUrl ??
       (matching && 'url' in matching.request ? matching.request.url : undefined) ??
@@ -852,7 +824,7 @@ export function projectWebDerivedValue<T>(
       typeof item.id === 'string' &&
       plan.unidentifiedActivityIds.has(item.id)
     )
-      return stripWebDetails(item as unknown as PersistedToolActivity)
+      return projectWebDetails(item as unknown as PersistedToolActivity)
     // Preserve the journal's function-call shape while removing private request arguments.
     if (item.type === 'function' && typeof item.id === 'string' && record(item.function)) {
       const packet = plan.packets.get(item.id)
@@ -887,7 +859,7 @@ export function projectWebDerivedValue<T>(
     ) {
       const packet = plan.packets.get(invocationId)!
       if (item.kind === 'tool' && knownActivity(item as unknown as PersistedToolActivity))
-        return applyPacket(item as unknown as PersistedToolActivity, {
+        return projectWebDetails(item as unknown as PersistedToolActivity, {
           ...packet,
           activityId: String(item.id)
         })
@@ -1123,16 +1095,9 @@ export function remapWebEvidence(
   evidence: PackageWebEvidence | undefined,
   identities: Readonly<Record<string, string>>
 ): { session: PersistedChatSession; webEvidence?: PackageWebEvidence } {
-  const cleanInline = (session: PersistedChatSession): PersistedChatSession => {
-    const result = clone(session)
-    const strip = <T extends PersistedToolActivity>(activity: T): T =>
-      activity.packageWebEvidence ? stripWebDetails(activity) : activity
-    result.activities = result.activities?.map(strip)
-    if (result.conversationGraph)
-      result.conversationGraph.activities = result.conversationGraph.activities.map(strip)
-    return result
-  }
-  if (!evidence) return { session: cleanInline(mappedSession) }
+  const stripInline = <T extends PersistedToolActivity>(activity: T): T =>
+    activity.packageWebEvidence ? projectWebDetails(activity) : activity
+  if (!evidence) return { session: projectSessionActivities(mappedSession, stripInline) }
   const verified = validatePackageWebEvidence(evidence)
   const mapped = (id: string): string => {
     if (!identities[id]) throw new Error('Missing Web package identity mapping')
@@ -1153,7 +1118,6 @@ export function remapWebEvidence(
     snapshotId: mapped(snapshot.snapshotId),
     invocationId: mapped(snapshot.invocationId)
   }))
-  const result = cleanInline(mappedSession)
   const sourceActivities = [
     ...(sourceSession.conversationGraph?.activities ?? []),
     ...(sourceSession.activities ?? [])
@@ -1161,7 +1125,7 @@ export function remapWebEvidence(
   const sourceByMappedId = new Map(
     sourceActivities.map((activity) => [identities[activity.id] ?? activity.id, activity])
   )
-  const project = <T extends PersistedToolActivity>(activity: T): T => {
+  const session = projectSessionActivities(mappedSession, (activity) => {
     const original = sourceByMappedId.get(activity.id)
     const packet = original?.executionInvocationId
       ? packets.get(original.executionInvocationId)
@@ -1173,17 +1137,14 @@ export function remapWebEvidence(
       packet.activityId !== activity.id ||
       !original.providerToolName?.endsWith(`__web_${packet.operation}`)
     )
-      return activity
+      return stripInline(activity)
     return {
-      ...applyPacket(activity, { ...packet, activityId: activity.id }),
+      ...projectWebDetails(stripInline(activity), packet),
       executionInvocationId: packet.invocationId
-    } as T
-  }
-  result.activities = result.activities?.map(project)
-  if (result.conversationGraph)
-    result.conversationGraph.activities = result.conversationGraph.activities.map(project)
+    }
+  })
   return {
-    session: result,
+    session,
     webEvidence: validatePackageWebEvidence({ ...verified, activities, snapshots })
   }
 }

@@ -1,5 +1,3 @@
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { x as extractArchive } from 'tar'
@@ -7,6 +5,7 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
 import { expectCompletedAssistant, submitPromptViaUi } from './fixtures/conversation'
+import { configureWebModel, startWebModel } from './fixtures/web-model'
 import type { WebResult } from '../src/shared/web-tools'
 
 // Actual public fetch + native package transfer. Unapproved sharing stays omitted; this test
@@ -16,76 +15,32 @@ test('exports unconfirmed Web evidence as omissions and imports it offline witho
 }, testInfo) => {
   test.setTimeout(240_000)
   let modelCalls = 0
-  const gateway = createServer(async (request, response) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    if (request.method !== 'POST') {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ data: [{ id: 'web-package' }] }))
-      return
+  const gateway = await startWebModel(
+    'web-package',
+    (body) => {
+      if (body.messages.at(-1)?.role === 'tool') return 'WEB_PACKAGE_READY'
+      return {
+        id: 'web-package-fetch',
+        name: body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!.function.name,
+        args: { url: 'https://example.org/', max_chars: 240 }
+      }
+    },
+    {
+      probe: 'stop',
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+      onPost: () => {
+        modelCalls++
+      }
     }
-    modelCalls++
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as {
-      stream?: boolean
-      messages: Array<{ role: string }>
-      tools?: Array<{ function: { name: string } }>
-    }
-    if (!body.stream) {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }]
-        })
-      )
-      return
-    }
-    const call = body.messages.at(-1)?.role !== 'tool'
-    const delta = call
-      ? {
-          tool_calls: [
-            {
-              index: 0,
-              id: 'web-package-fetch',
-              type: 'function',
-              function: {
-                name: body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!
-                  .function.name,
-                arguments: JSON.stringify({ url: 'https://example.org/', max_chars: 240 })
-              }
-            }
-          ]
-        }
-      : { content: 'WEB_PACKAGE_READY' }
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20 } })}\n\ndata: [DONE]\n\n`
-    )
-  })
-  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
+  )
   try {
     const page = await app.completeOnboarding()
     const archive = await app.configureSessionPackageDialogs()
-    await page.evaluate(
-      async (baseUrl) => {
-        await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
-
-        const settings = await window.api.settings.upsertProvider({
-          type: 'custom',
-          name: 'Web package acceptance',
-          baseUrl,
-          model: 'web-package',
-          key: 'local-fixture',
-          apiEndpoints: ['chat-completions'],
-          contextWindow: 200000,
-          maxOutputTokens: 4096
-        })
-        const provider = settings.providers.find((item) => item.name === 'Web package acceptance')!
-        await window.api.settings.setActiveProvider({ id: provider.id, model: provider.model! })
-        await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
-        await window.api.settings.setAgentFramework({ id: 'open-science-agent' })
-      },
-      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
-    )
+    await configureWebModel(page, gateway.baseUrl, {
+      name: 'Web package acceptance',
+      model: 'web-package',
+      key: 'local-fixture'
+    })
     const projectId = await createProject(page, 'Web package acceptance')
     await submitPromptViaUi(page, 'Read https://example.org/ and report WEB_PACKAGE_READY.')
     await expect(page.getByText('WEB_PACKAGE_READY', { exact: true })).toBeVisible({
@@ -205,7 +160,6 @@ test('exports unconfirmed Web evidence as omissions and imports it offline witho
     expect(modelCalls).toBe(callsBeforeTransfer)
     await page.screenshot({ path: testInfo.outputPath('web-import-read-only.png') })
   } finally {
-    gateway.closeAllConnections()
-    await new Promise<void>((resolve) => gateway.close(() => resolve()))
+    await gateway.close()
   }
 })

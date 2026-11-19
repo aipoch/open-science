@@ -1,18 +1,12 @@
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject, openProjectSession } from './certification/helpers'
 import { expectCompletedAssistant, submitPromptViaUi } from './fixtures/conversation'
+import { configureWebModel, startWebModel, type ModelRequest } from './fixtures/web-model'
 import type { WebResult } from '../src/shared/web-tools'
 
-type ModelRequest = {
-  stream?: boolean
-  messages: Array<{ role: string; content?: unknown }>
-  tools?: Array<{ function: { name: string } }>
-}
 const prompt = 'Read https://example.org/ with web_fetch and report WEB_FETCH_PUBLIC_OK.'
 const projectName = 'Public webpage evidence acceptance'
 
@@ -23,7 +17,7 @@ test('anonymous Exa search → fetch → citation on the public network', async 
   const domain = 'nasa.gov'
   const bodyMarker = 'black hole'
   test.setTimeout(180_000)
-  const requests: Record<string, unknown>[] = []
+  const requests: ModelRequest[] = []
   const requestPaths: string[] = []
   const evidence: WebResult[] = []
   let networkState: Awaited<ReturnType<typeof app.captureWebNetworkState>> | undefined
@@ -45,114 +39,54 @@ test('anonymous Exa search → fetch → citation on the public network', async 
       } else Object.values(row).forEach(collect)
     }
   }
-  const gateway = createServer(async (request, response) => {
-    if (request.method !== 'POST') {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ data: [{ id: 'web-chain-fixture' }] }))
-      return
-    }
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
-    if (!body.stream) {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }))
-      return
-    }
-    requests.push(body)
-    requestPaths.push(request.url ?? '')
-    collect(body.messages)
-    const search = evidence.find((item) => item.operation === 'search')
-    const fetched = evidence.find((item) => item.operation === 'fetch')
-    const operation = !search
-      ? 'web_search'
-      : search.status === 'ok' && !fetched
-        ? 'web_fetch'
-        : undefined
-    if (search && !selectedUrl)
-      selectedUrl =
-        search.sources.find((source) => new URL(source.url).hostname === domain)?.url ??
-        search.sources[0]?.url ??
-        ''
-    const definitions = body.tools as Array<{ name?: string; function?: { name: string } }>
-    const tool = definitions.find((item) =>
-      (item.name ?? item.function?.name)?.endsWith(`__${operation}`)
-    )
-    const name = tool?.name ?? tool?.function?.name ?? 'missing_web_tool'
-    const args =
-      operation === 'web_search'
-        ? {
-            query,
-            max_results: 3,
-            allowed_domains: [domain]
-          }
-        : { url: selectedUrl, max_chars: 8000 }
-    const answer =
-      fetched?.status === 'ok'
-        ? `${marker}: The fetched page contains “${bodyMarker}”. [source](${selectedUrl}).`
-        : `WEB_CHAIN_FAILED_${label}`
-    const events = [
-      {
-        choices: [
-          {
-            index: 0,
-            delta: operation
-              ? {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: `chain-${requests.length}`,
-                      type: 'function',
-                      function: { name, arguments: JSON.stringify(args) }
-                    }
-                  ]
-                }
-              : { content: answer },
-            finish_reason: null
-          }
-        ]
-      },
-      {
-        choices: [{ index: 0, delta: {}, finish_reason: operation ? 'tool_calls' : 'stop' }],
-        usage: { prompt_tokens: 100, completion_tokens: 10 }
-      }
-    ]
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end(
-      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n'
-    )
-  })
-  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
+  const gateway = await startWebModel(
+    'web-chain-fixture',
+    (body, path) => {
+      requests.push(body)
+      requestPaths.push(path)
+      collect(body.messages)
+      const search = evidence.find((item) => item.operation === 'search')
+      const fetched = evidence.find((item) => item.operation === 'fetch')
+      const operation = !search
+        ? 'web_search'
+        : search.status === 'ok' && !fetched
+          ? 'web_fetch'
+          : undefined
+      if (search && !selectedUrl)
+        selectedUrl =
+          search.sources.find((source) => new URL(source.url).hostname === domain)?.url ??
+          search.sources[0]?.url ??
+          ''
+      const tool = body.tools!.find((item) =>
+        (item.name ?? item.function?.name)?.endsWith(`__${operation}`)
+      )
+      const name = tool?.name ?? tool?.function?.name ?? 'missing_web_tool'
+      const args =
+        operation === 'web_search'
+          ? {
+              query,
+              max_results: 3,
+              allowed_domains: [domain]
+            }
+          : { url: selectedUrl, max_chars: 8000 }
+      const answer =
+        fetched?.status === 'ok'
+          ? `${marker}: The fetched page contains “${bodyMarker}”. [source](${selectedUrl}).`
+          : `WEB_CHAIN_FAILED_${label}`
+      return operation ? { id: `chain-${requests.length}`, name, args } : answer
+    },
+    { probe: 'minimal', usage: { prompt_tokens: 100, completion_tokens: 10 } }
+  )
   try {
     const page = await app.completeOnboarding()
     const initialSettings = await page.evaluate(() => window.api.settings.getSettings())
     networkState = await app.captureWebNetworkState()
     expect(initialSettings.networkProxy?.mode ?? 'system').toBe('system')
-    await page.evaluate(
-      async (baseUrl) => {
-        await window.api.settings.setSessionDetailsModel({
-          configuration: { mode: 'disabled' }
-        })
-        const settings = await window.api.settings.upsertProvider({
-          type: 'custom',
-          name: 'Web chain fixture',
-          baseUrl,
-          model: 'web-chain-fixture',
-          key: 'local-fixture-only',
-          apiEndpoints: ['chat-completions'],
-          contextWindow: 200000,
-          maxOutputTokens: 4096
-        })
-        const provider = settings.providers.find((item) => item.name === 'Web chain fixture')!
-        await window.api.settings.setActiveProvider({
-          id: provider.id,
-          model: 'web-chain-fixture'
-        })
-        await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
-        await window.api.settings.setAgentFramework({ id: 'open-science-agent' })
-      },
-      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
-    )
+    await configureWebModel(page, gateway.baseUrl, {
+      name: 'Web chain fixture',
+      model: 'web-chain-fixture',
+      key: 'local-fixture-only'
+    })
     const projectId = await createProject(page, `Real Web chain ${label}`)
     await submitPromptViaUi(page, `Search for ${query}, fetch a returned source, and cite its URL.`)
     await expect(page.getByText(new RegExp(`WEB_CHAIN_(?:OK|FAILED)_${label}`))).toBeVisible({
@@ -171,12 +105,7 @@ test('anonymous Exa search → fetch → citation on the public network', async 
     expect(requests).toHaveLength(3)
     expect(requestPaths).toEqual(Array(3).fill('/v1/chat/completions'))
     expect(
-      requests.every(
-        (item) =>
-          !(item.tools as Array<{ type?: string }>).some((tool) =>
-            tool.type?.startsWith('web_search')
-          )
-      )
+      requests.every((item) => !item.tools!.some((tool) => tool.type?.startsWith('web_search')))
     ).toBe(true)
     await expect(page.getByTestId('permission-card')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
@@ -254,8 +183,7 @@ test('anonymous Exa search → fetch → citation on the public network', async 
       ),
       contentType: 'application/json'
     })
-    gateway.closeAllConnections()
-    await new Promise<void>((resolve) => gateway.close(() => resolve()))
+    await gateway.close()
   }
 })
 
@@ -267,25 +195,7 @@ test('built-in auto fetch shows public evidence and blocked-target failure, then
 }, testInfo) => {
   test.setTimeout(240_000)
   const requests: ModelRequest[] = []
-  const gateway = createServer(async (request, response) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    if (request.method !== 'POST') {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ data: [{ id: 'web-fetch-acceptance' }] }))
-      return
-    }
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as ModelRequest
-    if (!body.stream) {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
-        })
-      )
-      return
-    }
+  const gateway = await startWebModel('web-fetch-acceptance', (body) => {
     requests.push(body)
     const user = JSON.stringify(
       body.messages.findLast((message) => message.role === 'user')?.content
@@ -310,65 +220,31 @@ test('built-in auto fetch shows public evidence and blocked-target failure, then
     const tool = body.tools?.find(({ function: definition }) =>
       definition.name.endsWith('__web_fetch')
     )
-    const delta = call
-      ? {
-          tool_calls: [
-            {
-              index: 0,
-              id: `fetch-${requests.length}`,
-              type: 'function',
-              function: {
-                name: tool?.function.name ?? 'missing_web_fetch',
-                arguments: JSON.stringify(
-                  continuation
-                    ? {
-                        snapshot_id: previous!.document!.snapshot_id,
-                        cursor: continuation,
-                        max_chars: 8000
-                      }
-                    : {
-                        url: blocked
-                          ? 'http://127.0.0.1/private'
-                          : cancelled
-                            ? 'https://httpbin.org/delay/10?open_science_acceptance=1'
-                            : 'https://example.org/',
-                        ...(!blocked && !cancelled ? { max_chars: 20 } : {})
-                      }
-                )
-              }
-            }
-          ]
+    const args = continuation
+      ? { snapshot_id: previous!.document!.snapshot_id, cursor: continuation, max_chars: 8000 }
+      : {
+          url: blocked
+            ? 'http://127.0.0.1/private'
+            : cancelled
+              ? 'https://httpbin.org/delay/10?open_science_acceptance=1'
+              : 'https://example.org/',
+          ...(!blocked && !cancelled ? { max_chars: 20 } : {})
         }
-      : { content: blocked ? 'WEB_FETCH_BLOCKED_OK' : 'WEB_FETCH_PUBLIC_OK' }
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 20 } })}\n\ndata: [DONE]\n\n`
-    )
+    if (call)
+      return {
+        id: `fetch-${requests.length}`,
+        name: tool?.function.name ?? 'missing_web_fetch',
+        args
+      }
+    return blocked ? 'WEB_FETCH_BLOCKED_OK' : 'WEB_FETCH_PUBLIC_OK'
   })
-  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
   try {
     let page = await app.completeOnboarding()
-    await page.evaluate(
-      async (baseUrl) => {
-        await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
-
-        const settings = await window.api.settings.upsertProvider({
-          type: 'custom',
-          name: 'Web fetch acceptance',
-          baseUrl,
-          model: 'web-fetch-acceptance',
-          key: 'local-fixture',
-          apiEndpoints: ['chat-completions'],
-          contextWindow: 200000,
-          maxOutputTokens: 4096
-        })
-        const provider = settings.providers.find((item) => item.name === 'Web fetch acceptance')!
-        await window.api.settings.setActiveProvider({ id: provider.id, model: provider.model! })
-        await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
-        await window.api.settings.setAgentFramework({ id: 'open-science-agent' })
-      },
-      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
-    )
+    await configureWebModel(page, gateway.baseUrl, {
+      name: 'Web fetch acceptance',
+      model: 'web-fetch-acceptance',
+      key: 'local-fixture'
+    })
     const projectId = await createProject(page, projectName)
     await submitPromptViaUi(page, prompt)
     await expect(page.getByText('WEB_FETCH_PUBLIC_OK', { exact: true })).toBeVisible({
@@ -513,7 +389,6 @@ test('built-in auto fetch shows public evidence and blocked-target failure, then
       contentType: 'application/json'
     })
   } finally {
-    gateway.closeAllConnections()
-    await new Promise<void>((resolve) => gateway.close(() => resolve()))
+    await gateway.close()
   }
 })

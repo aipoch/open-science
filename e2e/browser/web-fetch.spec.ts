@@ -1,15 +1,12 @@
 import { expect, test } from '@playwright/test'
+import { captureExternalRequests, useNarrowViewport } from './web-activity-helpers'
 
 test('reads saved fetch evidence safely at narrow widths and replays offline after reload', async ({
   page
 }, testInfo) => {
-  const externalRequests: string[] = []
-  page.on('request', (request) => {
-    if (!request.url().startsWith('http://127.0.0.1:4178')) externalRequests.push(request.url())
-  })
-  await page.setViewportSize({ width: 375, height: 900 })
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.goto('/web-fetch.html')
+  const externalRequests = captureExternalRequests(page)
+  await useNarrowViewport(page)
+  await page.goto('/web-activity.html?tool=fetch')
   const chip = page.getByTestId('tool-chip')
   await expect(chip).toContainText('Completed · 123 ms')
   await expect(chip).toHaveAttribute('aria-expanded', 'false')
@@ -50,7 +47,7 @@ test('reads saved fetch evidence safely at narrow widths and replays offline aft
 test('shows failure impact before folded diagnostics and retains cancellation despite late success', async ({
   page
 }, testInfo) => {
-  await page.goto('/web-fetch.html?scenario=failure')
+  await page.goto('/web-activity.html?tool=fetch&scenario=failure')
   await page.getByTestId('tool-chip').click()
   const details = page.getByTestId('tool-web-fetch-details')
   await expect(details).toContainText('No readable page text was found.')
@@ -63,7 +60,7 @@ test('shows failure impact before folded diagnostics and retains cancellation de
     path: testInfo.outputPath('fetch-extraction-failure.png'),
     fullPage: true
   })
-  await page.goto('/web-fetch.html?scenario=cancelled')
+  await page.goto('/web-activity.html?tool=fetch&scenario=cancelled')
   await page.getByTestId('tool-chip').click()
   await expect(page.getByTestId('tool-web-fetch-details')).toContainText('Cancelled')
   await expect(page.getByTestId('tool-web-fetch-details')).not.toContainText('Saved evidence')

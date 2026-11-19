@@ -1,18 +1,12 @@
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, type Page } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
 import { expectCompletedAssistant, submitPromptViaUi } from './fixtures/conversation'
+import { configureWebModel, startWebModel, type ModelRequest } from './fixtures/web-model'
 import type { WebResult } from '../src/shared/web-tools'
 
-type ModelRequest = {
-  stream?: boolean
-  messages: Array<{ role: string; content?: unknown }>
-  tools?: Array<{ function: { name: string } }>
-}
 const initial = 'Read https://example.org/ and report PARENT_EVIDENCE_ONE_OK.'
 const projectName = 'Web evidence branch lifecycle'
 const openSession = async (page: Page, id: string): Promise<void> => {
@@ -47,25 +41,7 @@ test('keeps full forks and message branches readable offline after parent deleti
   test.setTimeout(240000)
   const requests: ModelRequest[] = []
   const evidence: WebResult[] = []
-  const gateway = createServer(async (request, response) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    if (request.method !== 'POST') {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ data: [{ id: 'web-lifecycle' }] }))
-      return
-    }
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as ModelRequest
-    if (!body.stream) {
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
-        })
-      )
-      return
-    }
+  const gateway = await startWebModel('web-lifecycle', (body) => {
     requests.push(body)
     const user = JSON.stringify(
       body.messages.findLast((message) => message.role === 'user')?.content
@@ -106,50 +82,17 @@ test('keeps full forks and message branches readable offline after parent deleti
           ...(marker === 'PARENT_LATE_OK' ? { refresh: true } : {})
         }
     const tool = body.tools?.find((item) => item.function.name.endsWith('__web_fetch'))
-    const delta = call
-      ? {
-          tool_calls: [
-            {
-              index: 0,
-              id: `web-${requests.length}`,
-              type: 'function',
-              function: {
-                name: tool?.function.name ?? 'missing_web_fetch',
-                arguments: JSON.stringify(args)
-              }
-            }
-          ]
-        }
-      : { content: marker }
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 20 } })}\n\ndata: [DONE]\n\n`
-    )
+    return call
+      ? { id: `web-${requests.length}`, name: tool?.function.name ?? 'missing_web_fetch', args }
+      : marker
   })
-  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
   try {
     let page = await app.completeOnboarding()
-    await page.evaluate(
-      async (baseUrl) => {
-        await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
-
-        const settings = await window.api.settings.upsertProvider({
-          type: 'custom',
-          name: 'Web lifecycle fixture',
-          baseUrl,
-          model: 'web-lifecycle',
-          key: 'fixture',
-          apiEndpoints: ['chat-completions'],
-          contextWindow: 200000,
-          maxOutputTokens: 4096
-        })
-        const provider = settings.providers.find((item) => item.name === 'Web lifecycle fixture')!
-        await window.api.settings.setActiveProvider({ id: provider.id, model: provider.model! })
-        await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
-        await window.api.settings.setAgentFramework({ id: 'open-science-agent' })
-      },
-      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
-    )
+    await configureWebModel(page, gateway.baseUrl, {
+      name: 'Web lifecycle fixture',
+      model: 'web-lifecycle',
+      key: 'fixture'
+    })
     const projectId = await createProject(page, projectName)
     await submitPromptViaUi(page, initial)
     await expect(page.getByText('PARENT_EVIDENCE_ONE_OK', { exact: true })).toBeVisible({
@@ -307,7 +250,6 @@ test('keeps full forks and message branches readable offline after parent deleti
       }),
       contentType: 'application/json'
     })
-    gateway.closeAllConnections()
-    await new Promise<void>((resolve) => gateway.close(() => resolve()))
+    await gateway.close()
   }
 })

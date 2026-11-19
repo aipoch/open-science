@@ -42,6 +42,19 @@ const fixture = async (
 }
 const request = { url: 'https://example.org/long' }
 
+const fetchCommitted = async (
+  service: WebService,
+  input: { url: string; max_chars?: number } = request
+): Promise<WebResult> => {
+  const result = await service.fetch('session', input)
+  await service.commitSnapshot('session', result.document!.snapshot_id)
+  return result
+}
+const nextPage = ({ document }: WebResult): { snapshot_id: string; cursor: string } => ({
+  snapshot_id: document!.snapshot_id,
+  cursor: document!.next_cursor!
+})
+
 describe('immutable snapshot continuation', () => {
   it('keeps retained tool-result paging separate from unfetched snapshot text under a small model budget', async () => {
     const firstText = 'a'.repeat(3000) + 'RETAINED_FACT=42' + 'b'.repeat(2984)
@@ -299,8 +312,7 @@ describe('immutable snapshot continuation', () => {
 
   it('returns a valid empty EOF page with no next cursor', async () => {
     const { store, service } = await fixture('甲😀\n乙')
-    const first = await service.fetch('session', request)
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service)
     const snapshot = await store.read('session', first.document!.snapshot_id)
     const cursor = await store.createCursor(snapshot, [...snapshot.text].length)
     const result = await service.fetch('session', { snapshot_id: snapshot.snapshotId, cursor })
@@ -365,16 +377,12 @@ describe('immutable snapshot continuation', () => {
 
   it('recovers continuation and short-lived URL cache after restart without a network request', async () => {
     const { root, service } = await fixture('first\nsecond\nthird')
-    const first = await service.fetch('session', { ...request, max_chars: 5 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 5 })
     const transport = vi.fn(async () => {
       throw new Error('offline')
     })
     const restarted = new WebService({ store: new WebSnapshotStore(root), transport })
-    const next = await restarted.fetch('session', {
-      snapshot_id: first.document!.snapshot_id,
-      cursor: first.document!.next_cursor!
-    })
+    const next = await restarted.fetch('session', nextPage(first))
     expect(next).toMatchObject({
       status: 'ok',
       document: { text: '\nsecond\nthird', fetched_at: first.document!.fetched_at }
@@ -390,8 +398,7 @@ describe('immutable snapshot continuation', () => {
 
   it('retains old cursor evidence across refresh and does not let an old continuation replace the newer cache', async () => {
     const { store, service, calls } = await fixture('immutable original body')
-    const first = await service.fetch('session', { ...request, max_chars: 5 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 5 })
     // Make refresh unambiguously newer even on coarse-resolution clocks.
     const old = await store.read('session', first.document!.snapshot_id)
     const newer = await store.write(
@@ -405,10 +412,7 @@ describe('immutable snapshot continuation', () => {
       new AbortController().signal
     )
     await service.commitSnapshot('session', newer.snapshotId)
-    const continuation = await service.fetch('session', {
-      snapshot_id: first.document!.snapshot_id,
-      cursor: first.document!.next_cursor!
-    })
+    const continuation = await service.fetch('session', nextPage(first))
     expect(continuation.document?.text).toBe('able original body')
     await service.commitSnapshot('session', first.document!.snapshot_id)
     const cached = await service.fetch('session', request)
@@ -422,16 +426,12 @@ describe('immutable snapshot continuation', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-11-16T08:00:00.000Z'))
     const { root, service, calls } = await fixture('equal timestamp immutable evidence')
-    const first = await service.fetch('session', { ...request, max_chars: 5 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 5 })
     const refresh = await service.fetch('session', { ...request, refresh: true })
     expect(refresh.document!.fetched_at).toBe(first.document!.fetched_at)
     expect(refresh.document!.snapshot_id).not.toBe(first.document!.snapshot_id)
     await service.commitSnapshot('session', refresh.document!.snapshot_id)
-    const continuation = await service.fetch('session', {
-      snapshot_id: first.document!.snapshot_id,
-      cursor: first.document!.next_cursor!
-    })
+    const continuation = await service.fetch('session', nextPage(first))
     expect(continuation.document?.text).toBe(' timestamp immutable evidence')
     await service.commitSnapshot('session', first.document!.snapshot_id)
     const restartedStore = new WebSnapshotStore(root)
@@ -446,8 +446,7 @@ describe('immutable snapshot continuation', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-11-16T08:00:00.000Z'))
     const { root, service, calls } = await fixture('equal-time refresh recovery')
-    const first = await service.fetch('session', request)
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service)
     const refresh = await service.fetch('session', { ...request, refresh: true })
     const marker = join(
       root,
@@ -484,57 +483,40 @@ describe('immutable snapshot continuation', () => {
 
   it('expires URL cache after five minutes while continuation remains available', async () => {
     const { service, calls } = await fixture('long-lived immutable evidence')
-    const first = await service.fetch('session', { ...request, max_chars: 3 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 3 })
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse(first.document!.fetched_at) + WEB_CACHE_TTL_MS)
     const second = await service.fetch('session', request)
     expect(second.cache?.hit).toBe(false)
     expect(second.document?.snapshot_id).not.toBe(first.document!.snapshot_id)
-    const continuation = await service.fetch('session', {
-      snapshot_id: first.document!.snapshot_id,
-      cursor: first.document!.next_cursor!
-    })
+    const continuation = await service.fetch('session', nextPage(first))
     expect(continuation.status).toBe('ok')
     expect(calls).toHaveLength(2)
   })
 
   it('returns unavailable for missing committed body/cache evidence without silently refetching', async () => {
     const { root, service, calls } = await fixture('missing body')
-    const first = await service.fetch('session', { ...request, max_chars: 1 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 1 })
     await rm(join(root, webTextHash('session'), `${first.document!.snapshot_id}.json`))
-    expect(
-      (
-        await service.fetch('session', {
-          snapshot_id: first.document!.snapshot_id,
-          cursor: first.document!.next_cursor!
-        })
-      ).error?.code
-    ).toBe('EVIDENCE_UNAVAILABLE')
+    expect((await service.fetch('session', nextPage(first))).error?.code).toBe(
+      'EVIDENCE_UNAVAILABLE'
+    )
     expect((await service.fetch('session', request)).error?.code).toBe('EVIDENCE_UNAVAILABLE')
     expect(calls).toHaveLength(1)
   })
 
   it('checks capability state for cached reads and continuation', async () => {
     const { store, service } = await fixture('retained text')
-    const first = await service.fetch('session', { ...request, max_chars: 1 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 1 })
     const disabled = new WebService({ store, isEnabled: async () => false })
     expect((await disabled.fetch('session', request)).error?.code).toBe('CAPABILITY_DISABLED')
-    expect(
-      (
-        await disabled.fetch('session', {
-          snapshot_id: first.document!.snapshot_id,
-          cursor: first.document!.next_cursor!
-        })
-      ).error?.code
-    ).toBe('CAPABILITY_DISABLED')
+    expect((await disabled.fetch('session', nextPage(first))).error?.code).toBe(
+      'CAPABILITY_DISABLED'
+    )
   })
 
   it('rejects cancellation during evidence loading and never returns a late success', async () => {
     const { store, service } = await fixture('retained text')
-    const first = await service.fetch('session', { ...request, max_chars: 1 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 1 })
     const original = store.readCommitted.bind(store)
     const controller = new AbortController()
     vi.spyOn(store, 'readCommitted').mockImplementationOnce(async (...args) => {
@@ -543,28 +525,18 @@ describe('immutable snapshot continuation', () => {
       return snapshot
     })
     await expect(
-      service.fetch(
-        'session',
-        { snapshot_id: first.document!.snapshot_id, cursor: first.document!.next_cursor! },
-        { signal: controller.signal }
-      )
+      service.fetch('session', nextPage(first), { signal: controller.signal })
     ).rejects.toThrow('cancel evidence')
   })
 
   it('fails closed if the persistent signing key is corrupt', async () => {
     const { root, service } = await fixture('key-bound evidence')
-    const first = await service.fetch('session', { ...request, max_chars: 1 })
-    await service.commitSnapshot('session', first.document!.snapshot_id)
+    const first = await fetchCommitted(service, { ...request, max_chars: 1 })
     await writeFile(join(root, 'cursor-key'), 'corrupted')
     const restarted = new WebService({ store: new WebSnapshotStore(root) })
-    expect(
-      (
-        await restarted.fetch('session', {
-          snapshot_id: first.document!.snapshot_id,
-          cursor: first.document!.next_cursor!
-        })
-      ).error?.code
-    ).toBe('EVIDENCE_UNAVAILABLE')
+    expect((await restarted.fetch('session', nextPage(first))).error?.code).toBe(
+      'EVIDENCE_UNAVAILABLE'
+    )
     expect(await readFile(join(root, 'cursor-key'), 'utf8')).toBe('corrupted')
   })
 })

@@ -146,6 +146,12 @@ const policy = (
   }
 })
 
+const prepareAllowedFetch = (): ReturnType<typeof prepareWebEvidence> =>
+  prepareWebEvidence(session(fetchResult()), {
+    resolvePolicy: () => policy(),
+    loadSnapshot: async () => snapshot
+  })
+
 describe('portable Web evidence policy and provenance', () => {
   it('defaults actual services to unknown and excludes all restricted copies without changing private history', async () => {
     const original = session(searchResult(), fetchResult())
@@ -213,10 +219,7 @@ describe('portable Web evidence policy and provenance', () => {
     })
   })
   it('does not promote sender-reported allow decisions on forward export', async () => {
-    const allowed = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const allowed = await prepareAllowedFetch()
     const forwarded = await prepareWebEvidence(allowed.session, {
       existingEvidence: allowed.webEvidence
     })
@@ -227,10 +230,7 @@ describe('portable Web evidence policy and provenance', () => {
     )
   })
   it('reprojects allowed imported bodies using current host policy and preserves immutable source hashes', async () => {
-    const allowed = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const allowed = await prepareAllowedFetch()
     const forwarded = await prepareWebEvidence(allowed.session, {
       existingEvidence: allowed.webEvidence,
       resolvePolicy: () => policy()
@@ -257,10 +257,7 @@ describe('portable Web evidence policy and provenance', () => {
     expect(projected.webEvidence!.activities[0].document?.text).toBeDefined()
   })
   it('rejects body tampering and excerpt tampering while preserving old packages/future extensions', async () => {
-    const projected = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const projected = await prepareAllowedFetch()
     const tampered = structuredClone(projected.webEvidence!)
     tampered.snapshots[0].text += 'tampered'
     expect(() => validatePackageWebEvidence(tampered)).toThrow(/integrity/)
@@ -413,10 +410,7 @@ describe('portable Web evidence policy and provenance', () => {
     expect(projectWebDerivedValue(journal, allowed.plan)).toEqual(journal)
   })
   it('drops unvalidated inline packets when records are absent or do not match', async () => {
-    const projected = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const projected = await prepareAllowedFetch()
     const forged = structuredClone(projected.session)
     for (const row of [...forged.activities!, ...forged.conversationGraph!.activities]) {
       row.packageWebEvidence!.document!.text = 'TAMPERED BODY'
@@ -433,10 +427,7 @@ describe('portable Web evidence policy and provenance', () => {
     }
   })
   it('drops stored orphan evidence on forward export even when no Web activity survives', async () => {
-    const allowed = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const allowed = await prepareAllowedFetch()
     const forwarded = await prepareWebEvidence(session(), { existingEvidence: allowed.webEvidence })
     expect(forwarded.webEvidence).toMatchObject({ activities: [], snapshots: [] })
     expect(forwarded.omissions).toContainEqual({
@@ -451,10 +442,7 @@ describe('portable Web evidence policy and provenance', () => {
     expect(() => assertWebDerivedTextSafe(JSON.stringify(receipt), forwarded.plan)).toThrow()
   })
   it('rejects mismatched operation/provenance, unbound bodies, source identity duplicates and undeclared missing bodies', async () => {
-    const projected = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const projected = await prepareAllowedFetch()
     const original = projected.webEvidence!
     const operation = structuredClone(original)
     operation.activities[0].operation = 'search'
@@ -473,10 +461,7 @@ describe('portable Web evidence policy and provenance', () => {
     expect(() => validatePackageWebEvidence(duplicate)).toThrow(/source identity/)
   })
   it('retains current evidence while safely dropping future packet versions and harmless nested extension fields', async () => {
-    const projected = await prepareWebEvidence(session(fetchResult()), {
-      resolvePolicy: () => policy(),
-      loadSnapshot: async () => snapshot
-    })
+    const projected = await prepareAllowedFetch()
     const future = structuredClone(projected.webEvidence!) as unknown as Record<string, unknown>
     const activities = future.activities as Array<Record<string, unknown>>
     activities[0].harmlessExtension = true

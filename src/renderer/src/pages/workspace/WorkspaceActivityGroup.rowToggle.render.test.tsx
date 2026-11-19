@@ -62,6 +62,25 @@ describe('WorkspaceActivityGroup row toggling', () => {
     vi.clearAllMocks()
   })
 
+  const renderExpandedActivity = (id: string, activity: ToolActivity): Promise<void> =>
+    act(async () =>
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id,
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [activity]
+          }}
+          isExpanded
+          onToggleGroup={vi.fn()}
+          onToggleRow={vi.fn()}
+          expansionOverrides={{ [activity.id]: true }}
+        />
+      )
+    )
+
   it.each([
     ['save_to_inbox', { results: [{ kind: 'candidate', id: 'pending', state: 'pending' }] }, true],
     [
@@ -151,23 +170,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
           }
         ]
       })
-      await act(async () =>
-        root.render(
-          <WorkspaceActivityGroup
-            group={{
-              id: 'fetches',
-              type: 'activity-group',
-              createdAt: 1,
-              sortIndex: 1,
-              activities: [activity]
-            }}
-            isExpanded
-            onToggleGroup={vi.fn()}
-            onToggleRow={vi.fn()}
-            expansionOverrides={{ [activity.id]: true }}
-          />
-        )
-      )
+      await renderExpandedActivity('fetches', activity)
       expect(container.querySelector('[data-testid="tool-web-fetch-details"]')).toBeNull()
       expect(container.querySelector('[data-testid="tool-details"]')).not.toBeNull()
       expect(container.textContent).toContain(text)
@@ -186,23 +189,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
         }
       ]
     })
-    await act(async () =>
-      root.render(
-        <WorkspaceActivityGroup
-          group={{
-            id: 'fetches',
-            type: 'activity-group',
-            createdAt: 1,
-            sortIndex: 1,
-            activities: [activity]
-          }}
-          isExpanded
-          onToggleGroup={vi.fn()}
-          onToggleRow={vi.fn()}
-          expansionOverrides={{ [activity.id]: true }}
-        />
-      )
-    )
+    await renderExpandedActivity('fetches', activity)
     expect(container.querySelector('[data-testid="tool-web-fetch-details"]')).toBeNull()
     expect(container.querySelector('[data-testid="tool-details"]')).not.toBeNull()
     expect(container.textContent).toContain('MCP error: invalid arguments')
@@ -217,23 +204,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
         toolContent: [],
         rawOutput: undefined
       })
-      await act(async () =>
-        root.render(
-          <WorkspaceActivityGroup
-            group={{
-              id: 'fetches',
-              type: 'activity-group',
-              createdAt: 1,
-              sortIndex: 1,
-              activities: [activity]
-            }}
-            isExpanded
-            onToggleGroup={vi.fn()}
-            onToggleRow={vi.fn()}
-            expansionOverrides={{ [activity.id]: true }}
-          />
-        )
-      )
+      await renderExpandedActivity('fetches', activity)
       const details = container.querySelector('[data-testid="tool-web-fetch-details"]')
       expect(details).not.toBeNull()
       expect(details!.textContent).toContain(
@@ -279,23 +250,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
             }
           : {})
       })
-      await act(async () =>
-        root.render(
-          <WorkspaceActivityGroup
-            group={{
-              id: 'searches',
-              type: 'activity-group',
-              createdAt: 1,
-              sortIndex: 1,
-              activities: [activity]
-            }}
-            isExpanded
-            onToggleGroup={vi.fn()}
-            onToggleRow={vi.fn()}
-            expansionOverrides={{ [activity.id]: true }}
-          />
-        )
-      )
+      await renderExpandedActivity('searches', activity)
       const isFallback = payload === 'unknown' || payload?.startsWith('MCP')
       expect(Boolean(container.querySelector('[data-testid="tool-search-details"]'))).toBe(
         !isFallback

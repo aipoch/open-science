@@ -389,6 +389,37 @@ export const parseWebResult = (value: unknown): WebResult | undefined => {
   return parsed.success ? parsed.data : undefined
 }
 
+// Read a saved result from the structured and text wrappers used by tool activity.
+export const readWebResultEnvelope = (value: unknown, depth = 0): WebResult | undefined => {
+  if (depth > 4) return undefined
+  if (typeof value === 'string') {
+    if (value.length > 16_000) return undefined
+    try {
+      return readWebResultEnvelope(JSON.parse(value) as unknown, depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+  const parsed = parseWebResult(value)
+  if (parsed) return parsed
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const wrapper = value as Record<string, unknown>
+  for (const nested of [wrapper.structuredContent, wrapper.result, wrapper.content]) {
+    if (Array.isArray(nested)) {
+      for (const block of nested) {
+        if (block && typeof block === 'object' && 'text' in block) {
+          const result = readWebResultEnvelope(block.text, depth + 1)
+          if (result) return result
+        }
+      }
+    } else {
+      const result = readWebResultEnvelope(nested, depth + 1)
+      if (result) return result
+    }
+  }
+  return undefined
+}
+
 // Main-owned execution provenance, separate from provider results and model tool arguments.
 export const webInvocationMetadataSchema = z
   .object({
