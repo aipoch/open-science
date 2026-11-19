@@ -543,6 +543,7 @@ export function createHarnessAcpAgent(
         }
       }
       const target = config
+      const sessionTracing = tracing?.session(id, target.model, target.protocol)
       const createModel =
         target.protocol === 'responses'
           ? createResponsesModel
@@ -563,6 +564,7 @@ export function createHarnessAcpAgent(
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
+          sessionTracing?.captureModelRequest(init?.body)
           let response = await fetch(url, { ...init, headers })
           if (
             !response.ok &&
@@ -599,7 +601,6 @@ export function createHarnessAcpAgent(
         )
           throw new Error(message)
       }
-      const sessionTracing = tracing?.session(id, target.model, target.protocol)
       const tracedModel = sessionTracing?.wrapModel(model) ?? model
       const sessionModel: AgentModel = {
         ...model,

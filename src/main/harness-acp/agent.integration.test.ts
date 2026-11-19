@@ -176,12 +176,15 @@ it('retrieves a large MCP result through the session reader with no repeated eff
 })
 async function modelServer(
   reply?: (body: WireRequest, response: ServerResponse) => void
-): Promise<{ endpoint: string; requests: WireRequest[] }> {
+): Promise<{ endpoint: string; requests: WireRequest[]; rawRequests: string[] }> {
   const requests: WireRequest[] = []
+  const rawRequests: string[] = []
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []
     for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as WireRequest
+    const raw = Buffer.concat(chunks).toString()
+    const body = JSON.parse(raw) as WireRequest
+    rawRequests.push(raw)
     requests.push(body)
     if (request.url?.endsWith('/messages'))
       expect(request.headers['x-api-key']).toBe('local-test-token')
@@ -198,7 +201,8 @@ async function modelServer(
   })
   return {
     endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`,
-    requests
+    requests,
+    rawRequests
   }
 }
 function finish(
@@ -578,7 +582,8 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
     expect(preview(modelSpan, 'input')).toMatchObject({
       purpose: 'turn',
       messages: expect.any(Number),
-      availableTools: expect.any(Number)
+      availableTools: expect.any(Number),
+      offeredTools: model.requests[index].tools?.map(({ function: tool }) => tool.name)
     })
     expect(preview(modelSpan, 'output')).toMatchObject({
       outcome: index === 0 ? 'tools' : 'complete',
@@ -594,6 +599,9 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
   })
   expect(preview(tool, 'input')).toEqual({ tool: modelToolName })
   expect(preview(tool, 'output')).toEqual({ outcome: 'complete' })
+  expect(modelSpans.map((span) => preview(span, 'output'))).toContainEqual(
+    expect.objectContaining({ requestedTools: [modelToolName] })
+  )
 
   collectorStatus = 503
   const followUp = prompt(f.connection, sessionId, 'private-follow-up')
@@ -701,6 +709,93 @@ it('exports bounded prompt and reply previews when opted in', async () => {
     expect(authorization).toBe('Bearer collector-test-key')
     expect(body).not.toMatch(/private-|collector-test-key/)
   }
+})
+
+it('exports the exact model API JSON before and after a tool call, with a bounded fallback', async () => {
+  type ExportedSpan = {
+    name: string
+    attributes: { key: string; value: { stringValue?: string; intValue?: string } }[]
+  }
+  const spans: ExportedSpan[] = []
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+      resourceSpans: { scopeSpans: { spans: ExportedSpan[] }[] }[]
+    }
+    for (const { scopeSpans } of body.resourceSpans)
+      for (const scope of scopeSpans) spans.push(...scope.spans)
+    response.end('{}')
+  })
+  collector.listen(0, '127.0.0.1')
+  await once(collector, 'listening')
+  cleanup.push(async () => {
+    collector.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      collector.close((error) => (error ? reject(error) : resolve()))
+    )
+  })
+  const directory = await mkdtemp(join(tmpdir(), 'harness-api-trace-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  const collectorUrl = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`
+  await writeFile(
+    envFile,
+    [
+      `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${collectorUrl}`,
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=1',
+      ''
+    ].join('\n'),
+    { mode: 0o600 }
+  )
+  const tracing = createHarnessTracing(undefined, undefined, envFile)!
+  cleanup.push(async () => tracing.dispose())
+  const managed = await mcpServer(false, undefined, false, 'wire-tool-result')
+  let step = 0
+  const model = await modelServer((body, response) => {
+    if (step++ === 0) finish(response, '', body.tools![0].function.name, { value: 7 })
+    else finish(response, 'wire-answer')
+  })
+  const f = await fixture(model.endpoint, directory, true, 2_000_000, undefined, undefined, tracing)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [managed.config],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'wire-system-instructions' }
+  })
+  expect((await prompt(f.connection, sessionId, 'wire-user-prompt')).stopReason).toBe('end_turn')
+  expect(managed.calls).toEqual(['append'])
+  expect(model.requests[0].tools).toHaveLength(2)
+  expect(model.rawRequests[0]).toContain('wire-system-instructions')
+  expect(model.rawRequests[0]).toContain('wire-user-prompt')
+  expect(model.rawRequests[1]).toContain('wire-tool-result')
+  expect(model.requests[0]).not.toHaveProperty('max_tokens')
+  const inputKey = 'langfuse.observation.input'
+  const attribute = (span: ExportedSpan, key: string): string | undefined => {
+    const value = span.attributes.find((entry) => entry.key === key)?.value
+    return value?.stringValue ?? value?.intValue
+  }
+  const generations = (): ExportedSpan[] => spans.filter((span) => span.name === 'harness.model')
+  await vi.waitFor(() => expect(spans).toHaveLength(4))
+  expect(generations().map((span) => attribute(span, inputKey))).toEqual(model.rawRequests)
+  for (const span of generations()) {
+    expect(attribute(span, 'harness.request.body_capture')).toBe('captured')
+    expect(attribute(span, inputKey)).not.toContain('local-test-token')
+  }
+
+  const oversizedPrompt = 'size-limit-body-marker' + 'x'.repeat(1_048_576)
+  expect((await prompt(f.connection, sessionId, oversizedPrompt)).stopReason).toBe('end_turn')
+  await vi.waitFor(() => expect(generations()).toHaveLength(3))
+  const oversized = generations()[2]
+  expect(attribute(oversized, 'harness.request.body_capture')).toBe('size_limit')
+  expect(JSON.parse(attribute(oversized, inputKey)!)).toMatchObject({
+    purpose: 'turn',
+    apiRequest: {
+      status: 'size_limit',
+      bytes: Buffer.byteLength(model.rawRequests[2]),
+      limitBytes: 1_048_576
+    }
+  })
+  expect(JSON.stringify(spans)).not.toContain('size-limit-body-marker')
 })
 
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {
