@@ -283,6 +283,16 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [
+        {
+          agentFrameId: 'frame-old',
+          isRoot: false,
+          runCount: 1,
+          views: [
+            { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+          ]
+        }
+      ],
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({
           runId: `run-${index + 25}`,
@@ -322,6 +332,25 @@ describe('NotebookSessionReadModel', () => {
       undefined,
       undefined
     )
+    const expectedAgents = [
+      {
+        agentFrameId: 'frame-old',
+        isRoot: false,
+        runCount: 1,
+        views: [
+          { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+        ]
+      }
+    ]
+    expect(state.agentSummaries).toEqual(expectedAgents)
+    const imported = await makeReadModel(storageRoot, undefined, repository).importedState(
+      { projectId: session.projectId, sessionId: session.sessionId, workspaceCwd: session.cwd },
+      [],
+      undefined,
+      undefined,
+      100
+    )
+    expect(imported.agentSummaries).toEqual(expectedAgents)
     expect(state.runCount).toBe(125)
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
@@ -359,6 +388,7 @@ describe('NotebookSessionReadModel', () => {
       latestDataKernel: 'r' as const
     }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [],
       runs: [],
       total: 125,
       latestRunEnvironments: {},
@@ -396,6 +426,7 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [],
       runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
       total: 125,
       latestRunEnvironments: {}

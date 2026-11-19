@@ -1,3 +1,4 @@
+import { mergeCitationSourceMetadata } from './citation-provenance'
 import {
   getPublicationCheckDoi,
   literaturePublicationCheckSnapshotSchema,
@@ -702,14 +703,23 @@ const transferSourceRecords = async (
       }
     })
     if (existing) {
-      if (source.fetchedAt > existing.fetchedAt) {
+      const latest = source.fetchedAt > existing.fetchedAt ? source : existing
+      const older = latest === source ? existing : source
+      const rawMetadataJson = canonicalJson(
+        mergeCitationSourceMetadata(
+          source.provider,
+          JSON.parse(older.rawMetadataJson),
+          JSON.parse(latest.rawMetadataJson)
+        )
+      )
+      if (latest === source || rawMetadataJson !== existing.rawMetadataJson) {
         await transaction.literatureSourceRecord.update({
           where: { id: existing.id },
           data: {
-            rawMetadataJson: source.rawMetadataJson,
-            metadataChecksum: source.metadataChecksum,
-            sourceUrl: source.sourceUrl,
-            fetchedAt: source.fetchedAt
+            rawMetadataJson,
+            metadataChecksum: sha256(rawMetadataJson),
+            sourceUrl: latest.sourceUrl,
+            fetchedAt: latest.fetchedAt
           }
         })
       }
@@ -3053,67 +3063,48 @@ class LiteratureCatalog {
       | { source: LiteratureSourceInput; candidateId: string; itemId?: never }
       | { source: LiteratureSourceInput; candidateId?: never; itemId: string }
   ): Promise<void> {
-    const rawMetadataJson = canonicalJson(input.source.rawMetadata)
-    const data = {
-      itemId: input.itemId,
-      inboxCandidateId: input.candidateId,
-      provider: normalizeSpace(input.source.provider),
-      externalId: input.source.externalId,
-      sourceUrl: input.source.sourceUrl,
-      rawMetadataJson,
-      metadataChecksum: sha256(rawMetadataJson)
-    }
-    if (data.externalId) {
-      await transaction.literatureSourceRecord.upsert({
-        where: {
-          ...(input.itemId !== undefined
-            ? {
-                itemId_provider_externalId: {
-                  itemId: input.itemId,
-                  provider: data.provider,
-                  externalId: data.externalId
-                }
-              }
-            : {
-                inboxCandidateId_provider_externalId: {
-                  inboxCandidateId: input.candidateId,
-                  provider: data.provider,
-                  externalId: data.externalId
-                }
-              })
-        },
-        create: data,
-        update: {
-          rawMetadataJson: data.rawMetadataJson,
-          metadataChecksum: data.metadataChecksum,
-          sourceUrl: data.sourceUrl,
-          fetchedAt: new Date()
-        }
-      })
-      return
-    }
+    const provider = normalizeSpace(input.source.provider)
     const existing = await transaction.literatureSourceRecord.findFirst({
       where: {
-        provider: data.provider,
-        externalId: null,
-        sourceUrl: data.sourceUrl ?? null,
-        itemId: data.itemId ?? null,
-        inboxCandidateId: data.inboxCandidateId ?? null
-      },
-      select: { id: true }
+        itemId: input.itemId ?? null,
+        inboxCandidateId: input.candidateId ?? null,
+        provider,
+        externalId: input.source.externalId ?? null,
+        ...(input.source.externalId ? {} : { sourceUrl: input.source.sourceUrl ?? null })
+      }
     })
+    const frozen = input.candidateId !== undefined && existing
+    const previousMetadata = existing ? JSON.parse(existing.rawMetadataJson) : undefined
+    const rawMetadataJson = canonicalJson(
+      mergeCitationSourceMetadata(
+        provider,
+        frozen ? input.source.rawMetadata : previousMetadata,
+        frozen ? previousMetadata : input.source.rawMetadata
+      )
+    )
+    if (frozen && rawMetadataJson === existing.rawMetadataJson) return
+    const data = {
+      rawMetadataJson,
+      metadataChecksum: sha256(rawMetadataJson),
+      sourceUrl: frozen ? existing.sourceUrl : input.source.sourceUrl
+    }
     if (existing) {
       await transaction.literatureSourceRecord.update({
         where: { id: existing.id },
+        // Appending discovery evidence does not refresh the frozen source snapshot.
+        data: { ...data, fetchedAt: frozen ? existing.fetchedAt : new Date() }
+      })
+    } else {
+      await transaction.literatureSourceRecord.create({
         data: {
-          rawMetadataJson: data.rawMetadataJson,
-          metadataChecksum: data.metadataChecksum,
-          fetchedAt: new Date()
+          ...data,
+          itemId: input.itemId,
+          inboxCandidateId: input.candidateId,
+          provider,
+          externalId: input.source.externalId
         }
       })
-      return
     }
-    await transaction.literatureSourceRecord.create({ data })
   }
 }
 

@@ -255,6 +255,10 @@
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
+        "src/main/notebook/memory-policy.ts",
+        "src/main/notebook/memory-policy-platform.ts",
+        "src/main/notebook/resource-memory.ts",
+        "src/main/notebook/resource-release.ts",
         "src/shared/tool-detail-sanitizer.ts",
         "packages/notebook-analysis/src/dependency-analysis-python.ts",
         "packages/notebook-analysis/src/dependency-analysis-repl.ts",
@@ -368,6 +372,7 @@
         "src/main/delegation/production-framework-runtime.ts",
         "src/main/desktop-connection.ts",
         "src/main/backend-startup-log-retention.ts",
+        "src/main/backend-startup-recovery.ts",
         "src/main/desktop-runtime-launcher.ts",
         "src/main/node-entry.ts",
         "src/main/notebook/code-risk-adapter.ts",
@@ -388,7 +393,8 @@
         "src/main/update/verification-process.ts",
         "src/main/agent-framework/harness.ts",
         "src/main/harness-acp/tool-receipts.ts",
-        "src/main/harness-acp/storage-cleanup.ts"
+        "src/main/harness-acp/storage-cleanup.ts",
+        "src/main/web/invocation-store.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -507,6 +513,10 @@
         "e2e/desktop-runtime-restart.spec.ts",
         "e2e/desktop-runtime-preview-recovery.spec.ts",
         "e2e/desktop-runtime-stop.spec.ts",
+        "e2e/literature-citation-graph-live.spec.ts",
+        "e2e/literature-citation-graph.spec.ts",
+        "e2e/fixtures/citation-graph-electron.mjs",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/pdf-annotations.spec.ts",
         "e2e/pdf-translation-pair.spec.ts",
         "e2e/pdf-translation-preparation.spec.ts",
@@ -591,10 +601,16 @@
         "e2e/fixtures/runtime-relaunch-stall.cjs",
         "e2e/fixtures/replay-stage/**",
         "e2e/fixtures/reproducibility-preview/**",
-        "e2e/fixtures/session-outcome-fault.ts",
         "e2e/fixtures/settings-error-transport.ts"
       ],
       "capabilities": ["desktop_e2e_source", "e2e_regressions"]
+    },
+    {
+      "id": "desktop_e2e_session_outcome_fixture",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": ["e2e/fixtures/session-outcome-fault.ts"],
+      "capabilities": ["desktop_e2e_source", "e2e_regressions", "e2e_functional", "e2e_delegation"]
     },
     {
       "id": "desktop_e2e_delegation",
@@ -640,6 +656,7 @@
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
         "e2e/fixtures/local-service-cleanup.ts",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/fake-opencode.mjs",
         "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
@@ -669,7 +686,11 @@
       "paths": [
         "e2e/certification/*.spec.ts",
         "e2e/runtime-performance.spec.ts",
-        "e2e/startup-performance.spec.ts"
+        "e2e/startup-performance.spec.ts",
+        "e2e/builtin-web-fetch.spec.ts",
+        "e2e/builtin-web-evidence-lifecycle.spec.ts",
+        "e2e/builtin-web-package.spec.ts",
+        "e2e/fixtures/web-model.ts"
       ],
       "capabilities": ["desktop_e2e_source"]
     },
@@ -715,6 +736,7 @@
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
       "paths": [
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/localized-settings.ts",
         "e2e/fixtures/settings-preferences.ts",
         "e2e/fixtures/scroll-geometry.ts"

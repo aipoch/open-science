@@ -279,8 +279,8 @@ export async function composeResearchCatalog({
   const literatureRelatedFinder = new LiteratureRelatedFinder({
     catalog: literatureCatalog,
     fetch: netFetchStandard,
-    apiKey: async () =>
-      tryDecryptKey((await settingsService.getConnectors())?.semanticScholarApiKeyRef)
+    onDiagnostic: (diagnostic) =>
+      literatureContextLog.warn('Citation source request diagnostic', diagnostic)
   })
   const literaturePublicationChecker = new LiteraturePublicationChecker({
     catalog: literatureCatalog,

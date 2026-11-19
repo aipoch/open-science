@@ -194,8 +194,22 @@ public static class UninstallHelper {
   // The scripts parsed JSON with ConvertFrom-Json (JavaScriptSerializer underneath) and compared
   // with PowerShell's loose operators. These keep the same verdicts for the values they accept.
 
-  static Dictionary<string, object> ReadJsonObject(string path) {
-    var value = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(path));
+  // Match SETTINGS_RESOURCE_LIMITS.documentBytes in the application settings store.
+  const int SettingsDocumentBytes = 128 * 1024 * 1024;
+
+  static Dictionary<string, object> ReadJsonObject(string path, int? maxBytes = null) {
+    var serializer = new JavaScriptSerializer();
+    string contents;
+    using (var stream = File.OpenRead(path)) {
+      if (maxBytes.HasValue) {
+        if (stream.Length > maxBytes.Value)
+          throw new InvalidDataException("Settings document exceeds the " + maxBytes.Value + " byte limit.");
+        // A UTF-8 document has at most one UTF-16 code unit per byte.
+        serializer.MaxJsonLength = maxBytes.Value;
+      }
+      using (var reader = new StreamReader(stream)) contents = reader.ReadToEnd();
+    }
+    var value = serializer.DeserializeObject(contents);
     var result = value as Dictionary<string, object>;
     if (result == null) throw new InvalidDataException("Expected a JSON object: " + path);
     return result;
@@ -401,7 +415,7 @@ public static class UninstallHelper {
     var settingsPath = Path.Combine(profile, @".open-science\settings.json");
     if (File.Exists(settingsPath)) {
       try {
-        var dataRoot = AsString(Field(ReadJsonObject(settingsPath), "dataRoot"));
+        var dataRoot = AsString(Field(ReadJsonObject(settingsPath, SettingsDocumentBytes), "dataRoot"));
         if (dataRoot.Length > 0 && Path.IsPathRooted(dataRoot)) addRoot(Path.Combine(dataRoot, "runtime"));
       } catch { }
     }
@@ -780,7 +794,7 @@ public static class UninstallHelper {
       var dataRoot = "";
       var settingsPath = Path.Combine(configRoot, "settings.json");
       if (File.Exists(settingsPath)) {
-        var saved = Field(ReadJsonObject(settingsPath), "dataRoot");
+        var saved = Field(ReadJsonObject(settingsPath, SettingsDocumentBytes), "dataRoot");
         if (saved != null) {
           if (!(saved is string)) throw new InvalidDataException("The saved data location is not a path.");
           if (((string)saved).Trim().Length > 0) dataRoot = AbsolutePath((string)saved);

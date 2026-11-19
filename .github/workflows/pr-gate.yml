@@ -28,6 +28,7 @@ on:
           - e2e
           - source-regressions
           - macos-smoke
+          - update-occupancy
       comparison_base_sha:
         description: Test-selection diff base for module-coverage (full SHA; runs dispatch ref)
         type: string
@@ -181,6 +182,13 @@ jobs:
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "update-occupancy" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:update-occupancy"],"lanes":["policy"],"bundles":["policy"],"reasonChains":["workflow_dispatch update-occupancy -> three native launch/admission checks"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "macos-smoke" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:macos-smoke"],"lanes":["policy","build","e2e_smoke_macos"],"bundles":["policy","macos_e2e"],"macosProfile":"smoke","macosGroups":["journeys"],"reasonChains":["focused single-runner macOS smoke"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -1195,6 +1203,8 @@ jobs:
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
         continue-on-error: true
+        env:
+          RUN_KERNEL: '1'
         run: >-
           npx vitest run
           scripts/windows-dev-notebook-host.integration.test.ts
@@ -1226,6 +1236,12 @@ jobs:
           src/main/managed-preview-ipc.test.ts
           src/main/managed-preview-protocol.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/notebook/resource-release.windows.integration.test.ts
+          src/main/notebook/memory-admission.windows.integration.test.ts
+          src/main/notebook/python-lifecycle.windows.integration.test.ts
+          src/main/composition/session-package-lifecycle.integration.test.ts
+          src/main/notebook/host-mcp.integration.test.ts
+          src/main/notebook/host-compute.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
@@ -1776,10 +1792,19 @@ jobs:
             test-results/e2e-timing.md
           retention-days: 5
 
+  # Keep this result inside the required PR Gate, not only the advisory lifecycle workflow.
+  update_occupancy:
+    needs: preflight
+    if: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+    uses: ./.github/workflows/update-occupancy.yml
+    with:
+      platform: all
+
   gate:
     name: PR Gate
     if: ${{ always() }}
     needs:
+      - update_occupancy
       - preflight
       - registration
       - policy
@@ -1820,13 +1845,15 @@ jobs:
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
           RUNTIME_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
+          UPDATE_OCCUPANCY_REQUIRED: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+          UPDATE_OCCUPANCY_RESULT: ${{ needs.update_occupancy.result }}
           RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
           PACKAGE_RESULT: ${{ needs.package_verification.result }}
           PACKAGE_SOURCE_REQUIRED: ${{ needs.preflight.outputs.package_sources }}
           PACKAGE_SOURCE_RESULT: ${{ needs.package_source.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           REGISTRATION_RESULT: ${{ needs.registration.result }}
-          PR_GATE_NEEDS: '{"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"package_source":{"result":"${{ needs.package_source.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          PR_GATE_NEEDS: '{"update_occupancy":{"result":"${{ needs.update_occupancy.result }}"},"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"package_source":{"result":"${{ needs.package_source.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then
@@ -1835,6 +1862,10 @@ jobs:
           fi
           if [[ "$REGISTRATION_RESULT" != "success" ]]; then
             echo "Impact registration ended with $REGISTRATION_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$UPDATE_OCCUPANCY_REQUIRED" == "true" && "$UPDATE_OCCUPANCY_RESULT" != "success" ]]; then
+            echo "Selected update occupancy gate ended with $UPDATE_OCCUPANCY_RESULT" >&2
             exit 1
           fi
           if [[ "$RUNTIME_REQUIRED" == "true" && "$RUNTIME_RESULT" != "success" ]]; then

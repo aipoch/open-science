@@ -89,6 +89,8 @@ describe('fixed impact-registration gate', () => {
               EVENT_NAME: event,
               PREFLIGHT_RESULT: 'success',
               REGISTRATION_RESULT: result,
+              UPDATE_OCCUPANCY_REQUIRED: 'false',
+              UPDATE_OCCUPANCY_RESULT: 'skipped',
               RUNTIME_REQUIRED: 'false',
               PACKAGE_RESULT: 'success',
               PACKAGE_SOURCE_REQUIRED: 'false',

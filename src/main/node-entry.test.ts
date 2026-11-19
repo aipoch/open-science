@@ -1,5 +1,6 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { Socket } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
@@ -31,6 +32,8 @@ const f = vi.hoisted(() => ({
   credentialAccess: undefined as
     typeof import('./credential-identity/access').createCredentialAccess | undefined,
   releaseInstallation: vi.fn(),
+  bindLaunchLogReader:
+    vi.fn<typeof import('../../packages/open-science/launch-log.mjs').bindLaunchLogReader>(),
   writeExit: vi.fn(async () => {}),
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
@@ -175,6 +178,10 @@ vi.mock('./storage/config-root', () => ({
 vi.mock('./storage/electron-profile', () => ({
   resolveElectronProfile: () => '/isolated-fixture/profile'
 }))
+vi.mock('../../packages/open-science/launch-log.mjs', async (original) => ({
+  ...(await original<typeof import('../../packages/open-science/launch-log.mjs')>()),
+  bindLaunchLogReader: f.bindLaunchLogReader
+}))
 vi.mock('./update/installation-protection', () => ({
   installationRootForEntry: () => '/isolated-fixture/app',
   registerInstallationRuntime: () => ({ release: f.releaseInstallation })
@@ -314,6 +321,7 @@ beforeEach(async () => {
   // Keep thrown errors and the reporter on the same module instance after each entry reload.
   f.credentialAccess = (await import('./credential-identity/access')).createCredentialAccess
   vi.clearAllMocks()
+  f.bindLaunchLogReader.mockReset().mockResolvedValue(undefined)
   f.captureUpdateProcesses.mockReturnValue(f.reapUpdateProcesses)
   f.healthyCredentials = false
   f.inventoryFailure = undefined
@@ -441,17 +449,25 @@ it.each([1, 75])(
   async (code) => {
     f.healthyCredentials = true
     const { RuntimeOwnershipConflict } = await import('./runtime-ownership')
+    const { DataDirectoryUnavailableError } = await import('./storage/data-directory-availability')
     f.storageFailure =
       code === 75
         ? new RuntimeOwnershipConflict('isolated storage ownership conflict')
-        : new Error('isolated storage initialization failure')
+        : new DataDirectoryUnavailableError('private data directory')
     vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
     const send = vi.spyOn(process, 'send').mockImplementation(() => true)
     vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
     await import('./node-entry')
     await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
     const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
-    expect(messages).toContainEqual(expect.objectContaining({ kind: 'failed', stage: 'storage' }))
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        kind: 'failed',
+        stage: 'storage',
+        code: code === 75 ? 'startup-failed' : 'data-directory-unavailable'
+      })
+    )
+    expect(JSON.stringify(messages)).not.toContain('private data directory')
     expect(f.verifyDatabase).not.toHaveBeenCalled()
     const failureIndex = f.log.error.mock.calls.findIndex(
       ([message]) => message === 'startup failed'
@@ -836,9 +852,32 @@ it('keeps startup commands bounded until database verification and hands off to 
   callers.dispose()
 })
 
+it('keeps startup and self-restart available when log ownership fails', async () => {
+  f.bindLaunchLogReader.mockRejectedValueOnce(new Error('ownership rejected'))
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  expect(f.log.warn).toHaveBeenCalledWith(
+    'Launch log ownership unavailable; update admission remains protected',
+    expect.any(Object)
+  )
+  f.desktop.requestNative.mockResolvedValueOnce(false)
+  const lifecycle = f.lifecycle.mock.calls[0][0]
+  lifecycle.relaunch()
+  lifecycle.quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+  await vi.dynamicImportSettled()
+  expect(f.spawn).toHaveBeenCalledWith(process.execPath, process.argv.slice(1), {
+    detached: true,
+    stdio: 'inherit',
+    env: process.env
+  })
+})
+
 it.each([true, false])(
   'preserves durability decisions and restarts with desktop acceptance %s',
   async (accepted) => {
+    const launchLogControl = new Socket()
+    f.bindLaunchLogReader.mockResolvedValueOnce(launchLogControl)
     const send = await startHealthyRuntime()
     await waitForReady(send)
     const options = f.createRuntime.mock.calls[0][0]
@@ -868,8 +907,8 @@ it.each([true, false])(
     else
       expect(f.spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, process.argv.slice(1), {
         detached: true,
-        stdio: 'inherit',
-        env: process.env
+        stdio: ['inherit', 'inherit', 'inherit', 'ignore', launchLogControl],
+        env: { ...process.env, OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4' }
       })
   }
 )

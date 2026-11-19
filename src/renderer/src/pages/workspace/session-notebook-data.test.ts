@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   invalidateSessionNotebookCache,
   loadSessionNotebookData,
-  loadSessionNotebookRuns
+  loadSessionNotebookRuns,
+  type SessionNotebookData
 } from './session-notebook-data'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { summarizeNotebookHistory, type NotebookRunRecord } from '../../../../shared/notebook'
 
 const request = { sessionId: 's1', projectId: 'default', workspaceCwd: '/w' }
 
@@ -51,7 +52,10 @@ describe('loadSessionNotebookRuns', () => {
 
   it('returns the durable run total alongside the bounded renderer window', async () => {
     const run = makeRun()
-    const state = vi.fn().mockResolvedValue({ runs: [run], runCount: 125 })
+    const agentSummaries = summarizeNotebookHistory(request.sessionId, [
+      makeRun({ agentFrameId: 'root', rootFrameId: 'root' })
+    ])
+    const state = vi.fn().mockResolvedValue({ runs: [run], runCount: 125, agentSummaries })
 
     await expect(
       loadSessionNotebookData(
@@ -61,7 +65,7 @@ describe('loadSessionNotebookRuns', () => {
         },
         request
       )
-    ).resolves.toEqual({ runs: [run], runCount: 125 })
+    ).resolves.toEqual({ runs: [run], runCount: 125, agentSummaries })
     expect(state).toHaveBeenCalledWith(request)
   })
 
@@ -71,6 +75,7 @@ describe('loadSessionNotebookRuns', () => {
     const state = vi.fn().mockResolvedValue({
       runs: [makeRun({ runId: 'r19', startedAt: 19 })],
       runCount: 40,
+      agentSummaries: [],
       historyPage: {
         hasEarlierRuns: true,
         oldestCursor: { startedAt: 19, runId: 'r19' }
@@ -96,7 +101,7 @@ describe('loadSessionNotebookRuns', () => {
 
   it('invalidates by stable Session identity when the change event has a different path', async () => {
     const pagedRequest = { ...request, sessionId: 's-event' }
-    const state = vi.fn().mockResolvedValue({ runs: [], runCount: 0 })
+    const state = vi.fn().mockResolvedValue({ runs: [], runCount: 0, agentSummaries: [] })
     const api = { getReference: vi.fn().mockResolvedValue({ sessionId: 's-event' }), state }
 
     await loadSessionNotebookData(api, pagedRequest)
@@ -108,21 +113,21 @@ describe('loadSessionNotebookRuns', () => {
 
   it('does not retain a response invalidated while its request is in flight', async () => {
     const pagedRequest = { ...request, sessionId: 's-race' }
-    let resolveFirst!: (value: { runs: NotebookRunRecord[]; runCount: number }) => void
-    const firstState = new Promise<{ runs: NotebookRunRecord[]; runCount: number }>((resolve) => {
+    let resolveFirst!: (value: SessionNotebookData) => void
+    const firstState = new Promise<SessionNotebookData>((resolve) => {
       resolveFirst = resolve
     })
     const state = vi
       .fn()
       .mockReturnValueOnce(firstState)
-      .mockResolvedValue({ runs: [makeRun({ runId: 'fresh' })], runCount: 1 })
+      .mockResolvedValue({ runs: [makeRun({ runId: 'fresh' })], runCount: 1, agentSummaries: [] })
     const api = { getReference: vi.fn().mockResolvedValue({ sessionId: 's-race' }), state }
 
     const staleLoad = loadSessionNotebookData(api, pagedRequest)
     await vi.waitFor(() => expect(state).toHaveBeenCalledTimes(1))
     invalidateSessionNotebookCache(pagedRequest)
     const freshLoad = loadSessionNotebookData(api, pagedRequest)
-    resolveFirst({ runs: [], runCount: 0 })
+    resolveFirst({ runs: [], runCount: 0, agentSummaries: [] })
     await Promise.all([staleLoad, freshLoad])
     await loadSessionNotebookData(api, pagedRequest)
 

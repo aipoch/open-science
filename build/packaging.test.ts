@@ -962,7 +962,7 @@ describe('packaging config', () => {
             : name === 'LICENSE'
               ? 'LICENSE.electron.txt'
               : name
-        if (name === 'version') continue
+        if (name === 'version' || name === 'debug.log') continue
         expect(cleanup, installed).toContain(installed)
       }
       expect(cleanup).not.toMatch(/^\s*RMDir \/r/m)
@@ -1061,6 +1061,31 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
         await createPackageWithOptions(source, join(resources, 'app.asar'), {
           unpackDir: 'resources'
         })
+        if (process.platform === 'win32') {
+          // The Windows worker acquires its request-scoped directory lease before dispatching
+          // an operation, so the packaged fixture must contain the same native publisher that an
+          // installed application places beside its unpacked resources.
+          const nativeDirectory = join(
+            resources,
+            'app.asar.unpacked',
+            'node_modules',
+            '@aipoch',
+            'safe-file-publisher-native',
+            'build',
+            'Release'
+          )
+          mkdirSync(nativeDirectory, { recursive: true })
+          copyFileSync(
+            require.resolve('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node'),
+            join(nativeDirectory, 'safe_file_publisher_native.node')
+          )
+        } else if (process.platform === 'darwin') {
+          cpSync(
+            dirname(require.resolve('@aipoch/process-tree-native')),
+            join(resources, 'app.asar.unpacked', 'node_modules', '@aipoch', 'process-tree-native'),
+            { recursive: true }
+          )
+        }
         const notebook = join(resources, 'app.asar.unpacked', 'resources', 'notebook')
         const run = (script: string, args: string[] = [], input = ''): SpawnSyncReturns<string> =>
           spawnSync(process.execPath, [join(notebook, script), ...args], {

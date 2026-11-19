@@ -125,6 +125,7 @@ describe('Provider runtime projection ownership', () => {
     expect(productionSources().filter(importsOwner).map(portablePath)).toEqual([
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/harness-session-owner.ts',
+      'src/main/settings/lab-account-owner.ts',
       'src/main/settings/provider-accounts.ts'
     ])
     const manifest = loadModuleImpactManifest(manifestPath)

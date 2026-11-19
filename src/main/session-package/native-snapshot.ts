@@ -15,6 +15,7 @@ import {
 } from '../artifacts/execution-evidence-log'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { sessionPackageReceiptSchema } from '../../shared/session-package'
+import { allocateWebEvidenceIdentities, parsePackageWebEvidence } from './web-evidence'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
@@ -312,6 +313,10 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   if ('reproducibility' in value && value.reproducibility !== undefined)
     packageReproducibilitySchema.parse(value.reproducibility)
   if ('history' in value && value.history !== undefined) packageHistorySchema.parse(value.history)
+  const webEvidence =
+    'webEvidence' in value && value.webEvidence !== undefined
+      ? parsePackageWebEvidence(value.webEvidence)
+      : undefined
   if (Object.keys(tables).length !== tableNames.length)
     throw new Error('Unsupported package record tables.')
   let count = 0
@@ -339,7 +344,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   }
   validatePackageLiterature(value as PackageRecords)
   validatePackagePdfNotes(value as PackageRecords)
-  return value as PackageRecords
+  return { ...value, webEvidence } as PackageRecords
 }
 
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
@@ -653,6 +658,7 @@ export const prepareNativeImport = async (
     mapPackageReferences(value, ids, '', checksums, pooledKeys)
   identities[manifest.source.projectId] = projectId
   identities[manifest.source.sessionId] = sessionId
+  allocateWebEvidenceIdentities(records.webEvidence, identities)
   for (const item of records.literature?.items ?? []) identities[item.itemId] ??= randomUUID()
   const context = session?.runtimeContext
   const contextIds = [
@@ -837,6 +843,8 @@ export const prepareNativeImport = async (
       document.workspaceCwd = `$DATA/${rootKey}`
       document.dataRoot = `$DATA/${rootKey}/data`
       document.kernel = { runtimeRoot: '$DATA/runtime' }
+      // Explicit interpreter selections belong to the source installation, not portable history.
+      delete document.runtimeBindings
       if (!Array.isArray(document.runs)) throw new Error('Invalid Notebook run history.')
       for (const run of document.runs) {
         if (run.status === 'running' || run.status === 'queued')

@@ -1099,6 +1099,27 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBeUndefined()
   })
 
+  it('restores the active pointer only when the deleted provider is still selected', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider(provider())
+    await repository.upsertProvider(provider({ id: 'p2', model: 'm2' }))
+    await repository.setActiveProvider('p1')
+
+    const restored = await repository.deleteProvider('p1', 'preserve', {
+      restoreActive: { providerId: 'p2', model: 'm2' }
+    })
+    expect(restored.activeProviderId).toBe('p2')
+    expect(restored.activeModel).toBe('m2')
+
+    await repository.upsertProvider(provider({ id: 'p1' }))
+    await repository.setActiveProvider('p2', 'm2')
+    const userChoice = await repository.deleteProvider('p1', 'preserve', {
+      restoreActive: { providerId: 'p1', model: 'm' }
+    })
+    expect(userChoice.activeProviderId).toBe('p2')
+    expect(userChoice.activeModel).toBe('m2')
+  })
+
   it('atomically resets every affected scenario while deleting a provider', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

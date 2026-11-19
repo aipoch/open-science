@@ -21,6 +21,7 @@ import { NOTEBOOK_TEXT_LIMIT_BYTES, NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES } from './
 import { shellNpmPaths } from './shell-npm-environment'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { healthyNotebookExecutionAdmission } from './memory-policy.test-support'
 
 // Exercise the native platform interpreter through the actual adapter and cleanup owner.
 describe('persistent platform shell cells', () => {
@@ -493,6 +494,7 @@ console.log(JSON.stringify(result))
           )
         ),
         timeoutMs: 50,
+        executionAdmission: healthyNotebookExecutionAdmission(),
         signal: controller.signal
       })
       void run.then(() => {

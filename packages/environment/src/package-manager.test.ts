@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
@@ -24,7 +25,7 @@ import {
 import { defaultSpawn } from './process-test-support'
 import { micromambaCacheLockKey } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
-import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+import { CHILD_UNCONFIRMED, environmentChildCleanup } from './provisioner-runtime'
 import {
   condaActivatedPath,
   envPrefix,
@@ -239,6 +240,48 @@ describe('managed R native lock tool preparation', () => {
 })
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it.each(['abort', 'recording'] as const)(
+    'retains the original installer cleanup after unconfirmed %s',
+    async (failureKind) => {
+      let proofAvailable = false
+      const terminateTree = vi.fn(async (child: import('node:child_process').ChildProcess) => {
+        if (!proofAvailable) return { reaped: false }
+        if (child.exitCode !== null || child.signalCode !== null) return { reaped: true }
+        const closed = once(child, 'close')
+        child.kill('SIGKILL')
+        await closed
+        return { reaped: true }
+      })
+      const controller = new AbortController()
+      const failure = await defaultSpawn(
+        process.execPath,
+        ['-e', 'setInterval(() => {}, 1000)'],
+        undefined,
+        () => {
+          if (failureKind === 'recording') throw new Error('journal unavailable')
+          controller.abort()
+        },
+        undefined,
+        false,
+        undefined,
+        { signal: controller.signal },
+        terminateTree
+      ).catch((error: unknown) => error)
+      const cleanup = environmentChildCleanup(failure)
+      try {
+        expect(failure).toMatchObject({ message: expect.stringContaining(CHILD_UNCONFIRMED) })
+        expect(cleanup?.identity).toBe(terminateTree.mock.calls[0][0])
+        await expect(cleanup!.release()).resolves.toEqual({ reaped: false })
+        proofAvailable = true
+        await expect(cleanup!.release()).resolves.toEqual({ reaped: true })
+        expect(terminateTree.mock.calls.every(([child]) => child === cleanup!.identity)).toBe(true)
+      } finally {
+        proofAvailable = true
+        await terminateTree(terminateTree.mock.calls[0][0])
+      }
+    }
+  )
+
   it('does not spawn when the caller aborts while recording the spawn intent', async () => {
     const controller = new AbortController()
     let childSpawned = false

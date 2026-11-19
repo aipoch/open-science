@@ -231,6 +231,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
+      agentSummaries: runWindow.agentSummaries,
       latestRunEnvironments: runWindow.latestRunEnvironments,
       executionEnvironments: {
         python: this.options.runtimeEnvironment?.(session, 'python') ?? DEFAULT_PY_ENV,
@@ -283,6 +284,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       kernelStatus: 'idle',
       cells: [],
       runCount: window.total,
+      agentSummaries: window.agentSummaries,
       latestRunEnvironments: window.latestRunEnvironments,
       ...(window.historySummary ? { historySummary: window.historySummary } : {}),
       ...(window.historyPage ? { historyPage: window.historyPage } : {}),

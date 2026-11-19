@@ -19,7 +19,11 @@ import {
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionPersistenceCommands
+} from '../session-persistence/coordinator'
 import {
   validateElicitationAnswers,
   agentUserChoiceOutcomes,
@@ -27,7 +31,7 @@ import {
 } from './elicitation-owner'
 
 type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
-  Partial<SessionMutation>
+  Partial<SessionMutation & Pick<SessionPersistenceCommands, 'prepareRuntimeResume'>>
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
@@ -128,6 +132,7 @@ class AcpDurableContinuationContextOwner {
     replacePreviousAnswer?: boolean
     retryContinuation?: boolean
     continuePrepared?: boolean
+    beforeAttachment?: boolean
     recovery?: { error: string }
     replay?: DurableContinuationReplay
     replayIfContextReset?: boolean
@@ -168,6 +173,11 @@ class AcpDurableContinuationContextOwner {
     }
     const answers =
       input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
+    // The cold read normalizes a parked question. Persist that same recovery before
+    // comparing the request against the raw journal within the answer mutation.
+    if (input.beforeAttachment && !saved) {
+      await this.sessions.prepareRuntimeResume?.(input.projectId, input.sessionId)
+    }
     const commit = this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
       const current = this.resolvePendingElicitation(latest, input, saved)

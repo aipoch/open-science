@@ -740,3 +740,10 @@ it.each([
     }
   }
 })
+
+it('treats only closed authentication mode metadata as non-credential fields', () => {
+  for (const mode of ['anonymous', 'api_key', 'platform', 'managed'])
+    expect(isPrivatePackageField('auth_mode', mode)).toBe(false)
+  expect(isPrivatePackageField('auth_mode', 'secret-credential')).toBe(true)
+  expect(isPrivatePackageField('api_key', 'platform')).toBe(true)
+})

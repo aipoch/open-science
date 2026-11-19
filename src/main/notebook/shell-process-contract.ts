@@ -3,6 +3,8 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 
 export type NotebookShellResult = {
+  kernelDispatched?: boolean
+  executionStarted?: boolean
   stdout: string
   stderr: string
   exitCode: number | null
@@ -19,6 +21,7 @@ export type NotebookShellResult = {
 }
 
 export type NotebookShellProcessRequest = {
+  executionAdmission?: import('./execution-admission').NotebookExecutionAdmission
   laneKey?: string
   runId?: string
   command: string

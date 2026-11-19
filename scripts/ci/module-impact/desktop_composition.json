@@ -258,6 +258,7 @@
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
     "src/main/composition/research-film.test.ts",
+    "src/main/composition/session-package-lifecycle.integration.test.ts",
     "src/main/composition/notebook-approvals.test.ts",
     "src/main/composition/image-model.ts",
     "src/main/composition/image-tasks.ts"
@@ -326,7 +327,8 @@
     "src/main/desktop-recovery-readiness.ts",
     "src/main/desktop-runtime-info.ts",
     "src/main/desktop-startup-recovery.ts",
-    "src/main/desktop-update-integration.ts"
+    "src/main/desktop-update-integration.ts",
+    "src/main/composition/session-packages.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -463,6 +465,7 @@
       "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/composition/research-film.test.ts",
       "src/main/composition/background-results.integration.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts",
       "src/main/composition/notebook-approvals.test.ts"
     ],
     "contract": [

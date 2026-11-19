@@ -165,6 +165,7 @@ const applyRuntimePresentationEvent = (
       status: event.status,
       toolDisposition: event.toolDisposition,
       executionInvocationId: event.executionInvocationId,
+      webInvocation: event.webInvocation,
       appOwned: event.appOwned,
       providerToolName: event.providerToolName,
       toolKind: event.toolKind,

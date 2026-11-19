@@ -297,6 +297,7 @@ class NotebookNetworkSandbox {
     return {
       argv: wrapped.argv,
       env: wrapped.env,
+      ...(wrapped.memoryProbe ? { memoryProbe: wrapped.memoryProbe } : {}),
       ...(wrapped.processTreeProof ? { processTreeProof: wrapped.processTreeProof } : {}),
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }

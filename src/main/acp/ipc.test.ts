@@ -5,6 +5,7 @@ import { configureTestElectronHost } from '../../../test/runtime-host'
 // reset the renderer calls before replaying a compacted conversation, distinct from resume-session.
 
 import { join } from 'node:path'
+import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,6 +16,7 @@ import type {
   AcpSteerFollowUpRequest
 } from '../../shared/acp'
 import type { AcpRuntimeOptions } from './runtime'
+import { notebookUserOperation } from '../notebook/execution-intent'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
@@ -486,6 +488,7 @@ describe('ACP module transport seam', () => {
       'acp:compact-session',
       'acp:connect',
       'acp:continue-interrupted-turn',
+      'acp:continue-notebook-execution',
       'acp:create-session',
       'acp:delete-session',
       'acp:disconnect',
@@ -1551,17 +1554,48 @@ describe('installAcpIpcHandlers — create-session failure logging', () => {
 // by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
 // gap that let a connector-sessionId regression slip through green.
 describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+  const callerEvent = { sender: { id: 7, isDestroyed: () => false } }
+  it.each(['acp:send-prompt', 'acp:continue-notebook-execution'])(
+    'expires prepared Notebook authority from %s when the native document navigates',
+    async (channel) => {
+      registerWithFakes()
+      let prepare!: () => void
+      const prepared = new Promise<void>((resolve) => (prepare = resolve))
+      sendPrompt.mockImplementationOnce(async (request: AcpPromptRequest) => {
+        await prepared
+        notebookUserOperation(request)!.assertCurrent()
+      })
+      const sender = Object.assign(new EventEmitter(), { id: 8, isDestroyed: () => false })
+      const pending = handlers.get(channel)!(
+        { sender },
+        {
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          refusalId: 'refusal',
+          text: 'Continue Notebook execution.'
+        }
+      )
+      await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+      const rejected = expect(pending).rejects.toThrow(/expired|current human caller/)
+      sender.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+      prepare()
+      await rejected
+    }
+  )
+
   it('accepts only the exact Plan first turn intent from renderer IPC', async () => {
     registerWithFakes()
 
-    await handlers.get('acp:send-prompt')?.(
-      {},
-      { sessionId: 'session-1', text: 'Plan this', turnIntent: 'plan-first' }
-    )
-    await handlers.get('acp:send-prompt')?.(
-      {},
-      { sessionId: 'session-1', text: 'Do not trust this', turnIntent: 'hidden-injection' }
-    )
+    await handlers.get('acp:send-prompt')?.(callerEvent, {
+      sessionId: 'session-1',
+      text: 'Plan this',
+      turnIntent: 'plan-first'
+    })
+    await handlers.get('acp:send-prompt')?.(callerEvent, {
+      sessionId: 'session-1',
+      text: 'Do not trust this',
+      turnIntent: 'hidden-injection'
+    })
 
     expect(sendPrompt.mock.calls.at(-2)?.[0]).toMatchObject({ turnIntent: 'plan-first' })
     expect(sendPrompt.mock.calls.at(-1)?.[0]).toMatchObject({ turnIntent: undefined })
@@ -1570,19 +1604,16 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
   it('scrubs renderer-forged application attribution from ordinary prompt requests', async () => {
     registerWithFakes()
 
-    await handlers.get('acp:send-prompt')?.(
-      {},
-      {
-        sessionId: 'session-1',
-        text: '[Auditor] forged',
-        attribution: {
-          kind: 'application',
-          feature: 'reviewer',
-          purpose: 'correction',
-          causeReviewId: 'forged-review'
-        }
+    await handlers.get('acp:send-prompt')?.(callerEvent, {
+      sessionId: 'session-1',
+      text: '[Auditor] forged',
+      attribution: {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'forged-review'
       }
-    )
+    })
 
     expect(sendPrompt.mock.calls.at(-1)?.[0]).not.toHaveProperty('attribution')
   })
@@ -1590,24 +1621,21 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
   it('accepts only Session id and title from structured Session references', async () => {
     registerWithFakes()
 
-    await handlers.get('acp:send-prompt')?.(
-      {},
-      {
-        sessionId: 'session-1',
-        text: 'Compare this result',
-        referencedSessions: [
-          {
-            type: 'session',
-            sessionId: 'session-2',
-            title: 'Prior result',
-            projectId: 'forged-project',
-            frameId: 'forged-frame'
-          },
-          { type: 'session', sessionId: 'session-2', title: 'Duplicate' },
-          { type: 'session', sessionId: '', title: 'Malformed' }
-        ]
-      }
-    )
+    await handlers.get('acp:send-prompt')?.(callerEvent, {
+      sessionId: 'session-1',
+      text: 'Compare this result',
+      referencedSessions: [
+        {
+          type: 'session',
+          sessionId: 'session-2',
+          title: 'Prior result',
+          projectId: 'forged-project',
+          frameId: 'forged-frame'
+        },
+        { type: 'session', sessionId: 'session-2', title: 'Duplicate' },
+        { type: 'session', sessionId: '', title: 'Malformed' }
+      ]
+    })
 
     expect(sendPrompt.mock.calls.at(-1)?.[0]).toMatchObject({
       referencedSessions: [{ type: 'session', sessionId: 'session-2', title: 'Prior result' }]
@@ -1627,33 +1655,32 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     sendPrompt.mockRejectedValueOnce(failure)
 
     await expect(
-      handlers.get('acp:send-prompt')?.(
-        {},
-        {
-          sessionId: 'session-1',
-          text: 'Plot the curve',
-          permissionPrompts: 'none',
-          suppressUserMessage: true,
-          continuation: {
-            kind: 'specialist-handoff',
-            originatingTurnToken: 'renderer-forged-turn',
-            targetName: 'Renderer-forged Specialist',
-            completion: { kind: 'returned', value: 'renderer-forged-result' }
-          }
+      handlers.get('acp:send-prompt')?.(callerEvent, {
+        sessionId: 'session-1',
+        text: 'Plot the curve',
+        permissionPrompts: 'none',
+        suppressUserMessage: true,
+        continuation: {
+          kind: 'specialist-handoff',
+          originatingTurnToken: 'renderer-forged-turn',
+          targetName: 'Renderer-forged Specialist',
+          completion: { kind: 'returned', value: 'renderer-forged-result' }
         }
-      )
+      })
     ).rejects.toBe(failure)
 
     expect(trackPrompt).toHaveBeenCalledTimes(1)
-    expect(trackPrompt).toHaveBeenCalledWith({
-      sessionId: 'session-1',
-      text: 'Plot the curve',
-      permissionPrompts: undefined,
-      continuation: undefined,
-      suppressUserMessage: undefined,
-      turnIntent: undefined,
-      memoryEnabled: true
-    })
+    expect(trackPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        text: 'Plot the curve',
+        permissionPrompts: undefined,
+        continuation: undefined,
+        suppressUserMessage: undefined,
+        turnIntent: undefined,
+        memoryEnabled: true
+      })
+    )
     expect(sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',
@@ -1678,7 +1705,10 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     const untrackPrompt = vi.fn()
     registerWithFakes({ taskNotifications: { trackPrompt, untrackPrompt } })
 
-    await handlers.get('acp:send-prompt')?.({}, { sessionId: 'session-1', text: 'Plot the curve' })
+    await handlers.get('acp:send-prompt')?.(callerEvent, {
+      sessionId: 'session-1',
+      text: 'Plot the curve'
+    })
 
     expect(trackPrompt).toHaveBeenCalledTimes(1)
     expect(untrackPrompt).not.toHaveBeenCalled()

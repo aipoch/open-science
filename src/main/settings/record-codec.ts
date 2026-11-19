@@ -24,6 +24,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import type { LabModelCapabilities } from '../../shared/lab'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
@@ -64,7 +65,8 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'codex-shared',
   'codex-isolated',
   'codebuddy-subscription',
-  'xai-subscription'
+  'xai-subscription',
+  'lab'
 ])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
@@ -216,6 +218,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   )
     provider.configRevision = value.configRevision
   const baseUrl = asString(value.baseUrl)
+  const labServerUrl = asString(value.labServerUrl)
+  const labCatalogToken = asString(value.labCatalogToken)
   const model = asString(value.model)
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)
@@ -259,6 +263,65 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     }
   }
 
+  // Per-model protocol declarations for app-managed heterogeneous catalogs (Lab). Only known
+  // protocol ids and bounded keys/values are retained.
+  let modelProtocols: Record<string, ModelProtocol[]> | undefined
+  if (isRecord(value.modelProtocols)) {
+    const entries: Array<[string, ModelProtocol[]]> = []
+    for (const [modelId, rawProtocols] of Object.entries(value.modelProtocols)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !Array.isArray(rawProtocols)
+      )
+        continue
+      const protocols = [
+        ...new Set(
+          rawProtocols
+            .map(decodeStoredModelProtocol)
+            .filter((entry): entry is ModelProtocol => entry !== undefined)
+        )
+      ]
+      if (protocols.length > 0) entries.push([modelId, protocols])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelProtocols = Object.fromEntries(entries)
+  }
+
+  let modelStreaming: Record<string, boolean> | undefined
+  if (isRecord(value.modelStreaming)) {
+    const entries: Array<[string, boolean]> = []
+    for (const [modelId, rawStreaming] of Object.entries(value.modelStreaming)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        typeof rawStreaming !== 'boolean'
+      )
+        continue
+      entries.push([modelId, rawStreaming])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelStreaming = Object.fromEntries(entries)
+  }
+
+  // Raw per-model capability documents are stored alongside the model catalog and narrowed by
+  // readLabModelCapabilities at consumption time. Key/value bounds prevent wildly malformed files.
+  let modelCapabilities: Record<string, LabModelCapabilities> | undefined
+  if (isRecord(value.modelCapabilities)) {
+    const entries: Array<[string, LabModelCapabilities]> = []
+    for (const [modelId, rawCapabilities] of Object.entries(value.modelCapabilities)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !isRecord(rawCapabilities)
+      )
+        continue
+      entries.push([modelId, rawCapabilities])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelCapabilities = Object.fromEntries(entries)
+  }
+
   // Migrate the removed scalar apiType to the explicit endpoint array.
   const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
   const knownEndpoints = rawEndpoints
@@ -276,6 +339,14 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
 
   if (baseUrl && characterCount(baseUrl) <= PROVIDER_RESOURCE_LIMITS.baseUrlCharacters)
     provider.baseUrl = baseUrl
+  if (
+    labServerUrl &&
+    characterCount(labServerUrl) <= PROVIDER_RESOURCE_LIMITS.baseUrlCharacters &&
+    type === 'lab'
+  )
+    provider.labServerUrl = labServerUrl
+  if (labCatalogToken && labCatalogToken.length <= 128 && type === 'lab')
+    provider.labCatalogToken = labCatalogToken
   if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
     provider.model = model
   if (type === 'custom') {
@@ -291,6 +362,9 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.reasoningEffortTransport = reasoningEffortTransport
   }
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
+  if (modelProtocols) provider.modelProtocols = modelProtocols
+  if (modelCapabilities) provider.modelCapabilities = modelCapabilities
+  if (modelStreaming) provider.modelStreaming = modelStreaming
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
@@ -442,8 +516,6 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   }
   const contactEmail = asString(value.contactEmail)
   const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
-  const semanticScholarApiKeyRef = asString(value.semanticScholarApiKeyRef)
-  if (semanticScholarApiKeyRef) connectors.semanticScholarApiKeyRef = semanticScholarApiKeyRef
   const openAlexApiKeyRef = asString(value.openAlexApiKeyRef)
   if (contactEmail) connectors.contactEmail = contactEmail
   if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef

@@ -5,6 +5,7 @@ import { SpeedMeter } from '@aipoch/resilient-download'
 import { PACKAGE_DEFAULT_IO_BYTES_PER_SECOND } from '../../shared/session-package'
 
 const transfers = new AsyncLocalStorage<PackageTransfer>()
+const defaultBytesPerSecond = (): number => PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
 
 class PackageTransfer {
   private readonly controller = new AbortController()
@@ -78,7 +79,7 @@ class PackageTransfer {
 
 export const withPackageTransfer = async <T>(
   work: (transfer: PackageTransfer) => Promise<T>,
-  bytesPerSecond: () => number = () => PACKAGE_DEFAULT_IO_BYTES_PER_SECOND,
+  bytesPerSecond: () => number = defaultBytesPerSecond,
   reportIo?: (speed: number) => void
 ): Promise<T> => {
   const existing = transfers.getStore()

@@ -215,6 +215,41 @@ it('retains main-owned receipt provenance across incremental updates', () => {
   })
 })
 
+it('retains host Web provenance on a tool across incremental updates', () => {
+  const store = createSessionStore()
+  const context = createRuntimePresentationContext()
+  store.getState().appendUserMessage({ sessionId: 'session-1', content: 'Read a web page' })
+  const webInvocation = {
+    attempt: 1,
+    configGeneration: 'generation'
+  }
+  applyRuntimePresentationEvent(
+    event({
+      id: 'web-start',
+      kind: 'tool',
+      toolCallId: 'web-attempt',
+      providerToolName: 'mcp__open_science_web__web_fetch',
+      appOwned: true,
+      executionInvocationId: 'web-attempt',
+      status: 'in_progress',
+      webInvocation
+    }),
+    store,
+    context
+  )
+  applyRuntimePresentationEvent(
+    event({ id: 'web-end', kind: 'tool', toolCallId: 'web-attempt', status: 'failed' }),
+    store,
+    context
+  )
+  expect(store.getState().sessions[0].activities?.[0]).toMatchObject({
+    appOwned: true,
+    status: 'failed',
+    executionInvocationId: 'web-attempt',
+    webInvocation
+  })
+})
+
 const startupFixture = (): {
   session: PersistedChatSession
   scope: Parameters<typeof applyRuntimeSessionEvents>[1]

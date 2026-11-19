@@ -71,6 +71,7 @@ type AcpToolFailureDiagnostic = Readonly<{
 }>
 
 type AcpSessionUpdateProjectorOptions = Readonly<{
+  webToolOperationFor?: (sessionId: string, identity: string) => 'search' | 'fetch' | undefined
   separateProviderNotices?: boolean
   registry: Pick<AcpSessionRegistry, 'lookup'>
   contextUsage: Pick<
@@ -245,6 +246,23 @@ class AcpSessionUpdateProjector {
       routing.timestamp,
       routing.framework === 'claude-code'
     )
+    if (
+      routing.framework === 'open-science-agent' &&
+      runtimeEvent.kind === 'tool' &&
+      runtimeEvent.providerToolName &&
+      runtimeEvent.toolCallId
+    ) {
+      const identity = resolveCanonicalMcpToolIdentity(
+        runtimeEvent.providerToolName,
+        routing.mcpServerNames
+      )
+      if (identity && this.options.webToolOperationFor?.(routed.sessionId, identity)) {
+        runtimeEvent.appOwned = true
+        runtimeEvent.executionInvocationId = runtimeEvent.toolCallId
+        if (routed.update._meta?.['open-science/web-cancelled'] === true)
+          runtimeEvent.toolDisposition = 'cancelled'
+      }
+    }
     const projection = this.codexSkillActivity.projectWithContext(
       this.options.separateProviderNotices === true
         ? normalizeProviderSessionNotice(routed, routing.framework, runtimeEvent)

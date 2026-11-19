@@ -15,6 +15,7 @@ import { NotebookRunRepository } from '../notebook/repository'
 import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
+import { OrgCaseFailure } from './org-cases'
 import { BrowserPackageImport } from './browser-import'
 import { findBrowserImportPort } from './test-helpers/browser-import-port'
 // @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
@@ -1778,6 +1779,21 @@ it.each(['none', 'dialog', 'export'] as const)(
       status: 'idle',
       createdAt: 1,
       updatedAt: 2,
+      activities: [
+        {
+          id: 'incomplete-web',
+          kind: 'tool',
+          title: 'Web Fetch',
+          providerToolName: 'mcp__open_science_web__web_fetch',
+          appOwned: true,
+          rawInput: { url: 'https://example.org/' },
+          status: 'failed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
       messages: []
     })
     const remove = fsPromises.rm
@@ -1820,6 +1836,12 @@ it.each(['none', 'dialog', 'export'] as const)(
       desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
     ).resolves.toEqual({ saved: true, filePath })
     const snapshot = desktop.operations.snapshot!
+    expect(snapshot.result?.webOmissions).toContainEqual({
+      component: 'fetch_body',
+      reason: 'invalid',
+      count: 1
+    })
+    expect(snapshot.summary).toBeUndefined()
     expect(() => sessionPackageCommandContracts.operation.result.parse(snapshot)).not.toThrow()
     expect(() =>
       sessionPackageCommandContracts.operation.args.parse([
@@ -2870,3 +2892,236 @@ it.each(['retry', 'discard'] as const)(
     expect(released).toHaveBeenCalledOnce()
   }
 )
+
+it('exports and uploads directly to an organization case without saving locally, including sensitive-content retry', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  await fixture.client.project.create({ data: { id: 'project-1', name: 'Org upload project' } })
+  const sessions = new SessionRepository(fixture.storageRoot)
+  await sessions.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Sensitive upload session',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'message',
+        role: 'agent',
+        content: 'Authorization: Bearer synthetic-upload-secret',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ]
+  })
+
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+
+  const webOmission = { component: 'fetch_body', reason: 'policy-unknown', count: 1 } as const
+  const exportTo = service.exportTo.bind(service)
+  vi.spyOn(service, 'exportTo').mockImplementation(async (...args) => ({
+    ...(await exportTo(...args)),
+    webOmissions: [webOmission]
+  }))
+  vi.mocked(dialog.showSaveDialog).mockClear()
+
+  let stagedArchiveDuringUpload = ''
+  const phases: string[] = []
+  const uploader = vi.fn(
+    async (input: {
+      archivePath: string
+      filename: string
+      name: string
+      description?: string
+      clientUploadId: string
+      onProgress?: (completed: number, total: number) => void
+    }) => {
+      stagedArchiveDuringUpload = input.archivePath
+      const info = await stat(input.archivePath)
+      expect(info.size).toBeGreaterThan(0)
+      input.onProgress?.(info.size, info.size)
+      return {
+        id: 'case_org_1',
+        name: input.name,
+        code: 'ABCD5678',
+        description: input.description ?? '',
+        size_bytes: info.size,
+        sha256: 'd'.repeat(64),
+        created_at: '2026-11-18T00:00:00Z',
+        owner: { id: 'usr_1', display_name: 'Alice' },
+        can_delete: true,
+        original_filename: input.filename,
+        summary: {
+          schema_version: 1,
+          features: [],
+          file_count: 1,
+          total_bytes: info.size,
+          excluded_files: 0,
+          omission_count: 0,
+          omissions: []
+        }
+      }
+    }
+  )
+
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    onOperationChanged: (snapshot) => {
+      phases.push(`${snapshot.state}:${snapshot.progress.phase}`)
+      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection') {
+        expect(snapshot.sessionTitle).toBe('Sensitive upload session')
+        queueMicrotask(() =>
+          desktop.respond({
+            action: 'select',
+            operationId: snapshot.id,
+            excludedStorageKeys: [],
+            destination: 'org-case',
+            orgCase: {
+              name: 'Renamed Case',
+              description: 'Clean notes'
+            }
+          })
+        )
+      }
+    }
+  })
+  const unregister = desktop.registerOrgCaseUploader(uploader)
+
+  try {
+    await expect(
+      desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
+    ).rejects.toThrow('Sensitive content detected')
+    expect(uploader).not.toHaveBeenCalled()
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+
+    const failed = desktop.operations.snapshot!
+    expect(failed.sensitiveContent).toHaveLength(1)
+
+    await expect(
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+    ).resolves.toMatchObject({
+      state: 'succeeded',
+      exportDestination: 'org-case',
+      result: {
+        uploadedCase: { id: 'case_org_1', name: 'Renamed Case', code: 'ABCD5678' },
+        webOmissions: [webOmission]
+      }
+    })
+
+    expect(uploader).toHaveBeenCalledTimes(1)
+    expect(uploader.mock.calls[0]?.[0]).toMatchObject({
+      name: 'Renamed Case',
+      description: 'Clean notes'
+    })
+    expect(uploader.mock.calls[0]?.[0].filename).toMatch(/Renamed Case-\d{4}-\d{2}-\d{2}\.science$/)
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+    expect(phases).toContain('running:uploading')
+    await expect(stat(stagedArchiveDuringUpload)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    unregister()
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it('maps organization upload errors and cleans up staged archives on failure or cancellation', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  await fixture.client.project.create({ data: { id: 'project-1', name: 'Upload failures' } })
+  const sessions = new SessionRepository(fixture.storageRoot)
+  await sessions.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Plain session',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: []
+  })
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+
+  let stagedArchivePath = ''
+  let cancelResolve: (() => void) | undefined
+  const uploader = vi
+    .fn()
+    .mockImplementationOnce(async (input: { archivePath: string }) => {
+      stagedArchivePath = input.archivePath
+      throw new OrgCaseFailure('package-too-large')
+    })
+    .mockImplementationOnce(
+      async (input: { archivePath: string }, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          stagedArchivePath = input.archivePath
+          signal.addEventListener(
+            'abort',
+            () => {
+              cancelResolve?.()
+              reject(new OrgCaseFailure('cancelled'))
+            },
+            { once: true }
+          )
+        })
+    )
+
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    uploadOrgCase: uploader,
+    onOperationChanged: (snapshot) => {
+      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection') {
+        queueMicrotask(() =>
+          desktop.respond({
+            action: 'select',
+            operationId: snapshot.id,
+            excludedStorageKeys: [],
+            destination: 'org-case',
+            orgCase: { name: 'Plain session', description: '' }
+          })
+        )
+      }
+    }
+  })
+
+  try {
+    await expect(
+      desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
+    ).rejects.toThrow('maximum upload size allowed')
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      exportDestination: 'org-case'
+    })
+    await expect(stat(stagedArchivePath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const cancelled = new Promise<void>((resolve) => {
+      cancelResolve = resolve
+    })
+    const cancellingExport = desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.progress.phase).toBe('uploading'))
+    desktop.operations.cancel()
+    await cancelled
+    await expect(cancellingExport).resolves.toEqual({ saved: false })
+    expect(desktop.operations.snapshot?.state).toBe('cancelled')
+    await expect(stat(stagedArchivePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})

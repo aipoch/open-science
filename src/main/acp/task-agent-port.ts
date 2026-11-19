@@ -6,6 +6,7 @@ import type {
 } from '../../shared/acp'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
+import { notebookExecutionIntent } from '../notebook/execution-intent'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import {
   toSessionAgentConfiguration,
@@ -14,6 +15,7 @@ import {
 } from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
+  captureNotebookTaskIntent?(request: AcpPromptRequest): AcpPromptRequest
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
@@ -111,9 +113,13 @@ const createAcpTaskAgentPort = (
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
   setMemoryEnabled: async (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
   prompt: async (request, observer) => {
-    const acpRequest = toAcpPromptRequest(request)
-    const tracked = notifications?.trackPrompt(acpRequest)
+    const prompt = toAcpPromptRequest(request)
+    // TaskRunner owns this boundary after reserving the Session and accepting its exact root
+    // prompt. Freeze authority before notifications, admission or Provider preparation can yield.
+    const acpRequest = runtime.captureNotebookTaskIntent?.(prompt) ?? prompt
+    let tracked: ReturnType<TaskPromptNotifications['trackPrompt']> | undefined
     try {
+      tracked = notifications?.trackPrompt(acpRequest)
       if (observer?.onProviderPromptAccepted || observer?.onPromptAdmitted) {
         await runtime.sendPromptObserved(
           acpRequest,
@@ -125,6 +131,7 @@ const createAcpTaskAgentPort = (
         await runtime.sendPrompt(acpRequest)
       }
     } catch (error) {
+      notebookExecutionIntent(acpRequest)?.abandonUserExecution()
       if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
       throw error
     }

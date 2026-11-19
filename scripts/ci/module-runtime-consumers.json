@@ -1,4 +1,5 @@
 {
+  "packages/open-science/installation-startup.cjs": ["packages/open-science/launch-log.mjs"],
   "scripts/check-skill-package-boundary.mjs": [
     "src/main/skills/package-boundary.architecture.test.ts"
   ],
@@ -16,8 +17,12 @@
     "src/main/process-tree-native-loading.macos.integration.test.ts",
     "src/main/update/installation-occupancy.ts",
     "src/main/process-birth-identity.ts",
-    "src/main/update/windows-update-handoff.ts",
-    "src/main/windows-process-query.ts"
+    "src/main/windows-process-query.ts",
+    "src/main/notebook/resource-memory.ts",
+    "src/main/notebook/resource-release.windows.integration.test.ts",
+    "src/main/notebook/memory-admission.windows.integration.test.ts",
+    "src/main/notebook/python-lifecycle.windows.integration.test.ts",
+    "src/main/update/windows-update-handoff.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs",

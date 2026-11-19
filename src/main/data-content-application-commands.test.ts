@@ -372,6 +372,18 @@ const createDependencies = () => {
     projectFiles,
     projects,
     sessions,
+    orgCases: {
+      listCases: vi.fn(async () => ({
+        ok: true as const,
+        page: { items: [], total: 0, page: 1, page_size: 20 }
+      })),
+      getCase: vi.fn(async () => ({ ok: false as const, errorCode: 'not-found' as const })),
+      importCase: vi.fn(async (caseId: string) => ({
+        status: 'handed-off' as const,
+        caseId
+      })),
+      cancelImport: vi.fn(() => ({ cancelled: false }))
+    },
     uploads,
     withDataRootWrite
   } as unknown as DataContentApplicationCommandDependencies
@@ -390,6 +402,18 @@ const createDependencies = () => {
     projects,
     session,
     sessions,
+    orgCases: {
+      listCases: vi.fn(async () => ({
+        ok: true as const,
+        page: { items: [], total: 0, page: 1, page_size: 20 }
+      })),
+      getCase: vi.fn(async () => ({ ok: false as const, errorCode: 'not-found' as const })),
+      importCase: vi.fn(async (caseId: string) => ({
+        status: 'handed-off' as const,
+        caseId
+      })),
+      cancelImport: vi.fn(() => ({ cancelled: false }))
+    },
     uploads,
     withDataRootWrite
   }
@@ -427,6 +451,10 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionPackageOperation',
   'useCaseCatalog',
   'useCaseIntroduction',
+  'orgCasesList',
+  'orgCaseDetail',
+  'orgCaseImport',
+  'orgCaseCancelImport',
   'sessionInspectDiagnostics',
   'sessionExportDiagnostics',
   'sessionCancelDiagnostics',
@@ -476,6 +504,83 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
+  it('routes organization case commands to orgCases for local callers and rejects remote or malformed requests', async () => {
+    const deps = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B', page: 1, pageSize: 20 }], electronCaller)
+      )
+    ).resolves.toEqual({ ok: true, page: { items: [], total: 0, page: 1, page_size: 20 } })
+    expect(deps.dependencies.orgCases.listCases).toHaveBeenCalledWith({
+      q: '7Q2M9X4B',
+      page: 1,
+      pageSize: 20
+    })
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B' }], remoteCaller)
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B' }], createTaskCallerContext())
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseImport,
+        invocation(['case_1'], createTaskCallerContext())
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B' }], createWebCallerContext('local-web'))
+      )
+    ).resolves.toEqual({ ok: true, page: { items: [], total: 0, page: 1, page_size: 20 } })
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseDetail,
+        invocation(['../evil'], electronCaller)
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseDetail,
+        invocation(['case_1'], electronCaller)
+      )
+    ).resolves.toEqual({ ok: false, errorCode: 'not-found' })
+    expect(deps.dependencies.orgCases.getCase).toHaveBeenCalledWith('case_1')
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseImport,
+        invocation(['case_1'], electronCaller)
+      )
+    ).resolves.toEqual({ status: 'handed-off', caseId: 'case_1' })
+    expect(deps.dependencies.orgCases.importCase).toHaveBeenCalledWith('case_1')
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseCancelImport,
+        invocation(['case_1'], electronCaller)
+      )
+    ).resolves.toEqual({ cancelled: false })
+    expect(deps.dependencies.orgCases.cancelImport).toHaveBeenCalledWith('case_1')
+  })
+
   it('loads bounded history pages and transports stale cursors without falling back to full reads', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -654,6 +759,10 @@ describe('Data and content application commands', () => {
         'sessions:export-package',
         'sessions:import-package',
         'sessions:package-operation',
+        'sessions:org-cases-list',
+        'sessions:org-case-detail',
+        'sessions:org-case-import',
+        'sessions:org-case-cancel-import',
         'sessions:use-case-catalog',
         'sessions:use-case-introduction',
         'sessions:filter-pdf-context-candidates',

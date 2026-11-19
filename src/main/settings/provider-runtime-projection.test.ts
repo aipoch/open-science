@@ -642,6 +642,50 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 
+  it('projects Lab per-model context, output and image capabilities', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example/v1',
+      labServerUrl: 'https://lab.example.com',
+      fetchedModels: ['lab:vision-model', 'lab:text-model'],
+      modelCapabilities: {
+        'lab:vision-model': {
+          reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+          modalities: { input: ['text', 'image'] },
+          limit: { context: 1_000_000, output: 64_000 }
+        },
+        'lab:text-model': { modalities: { input: ['text'] } }
+      }
+    }
+
+    expect(owner.resolveProvider(provider, 'lab:vision-model')).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 64_000,
+      supportsImageInput: true
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).toMatchObject({
+      supportsImageInput: false
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).not.toHaveProperty('contextWindow')
+    expect(owner.toProviderView(provider, 'lab:vision-model')).toMatchObject({
+      modelCapabilities: provider.modelCapabilities,
+      supportsImageInput: true
+    })
+    expect(owner.toProviderView(provider)).toMatchObject({ supportsImageInput: false })
+    const target = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'lab:vision-model' },
+      getAgentFramework('open-science-agent')
+    )
+    expect(target.reasoningEffortProfile).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+  })
+
   it('projects a configured target without mutating or exposing the stored credential', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -1145,6 +1189,51 @@ describe('ProviderRuntimeProjectionOwner', () => {
       effectiveModel: 'account-model',
       provider: { model: 'account-model' }
     })
+  })
+
+  it.each(['open-science-agent', 'opencode'] as const)(
+    'excludes non-streaming Lab models from the %s runtime catalog',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'builtin-lab',
+        type: 'lab',
+        name: 'Lab',
+        baseUrl: 'https://lab.example.com/v1',
+        model: 'lab:stream',
+        fetchedModels: ['lab:stream', 'lab:batch'],
+        modelStreaming: { 'lab:stream': true, 'lab:batch': false },
+        apiEndpoints: ['chat-completions']
+      }
+      const framework = getAgentFramework(frameworkId)
+      expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([
+        expect.objectContaining({ effectiveModel: 'lab:stream' })
+      ])
+      expect(() =>
+        owner.resolveRuntimeTarget(provider, { kind: 'required', model: 'lab:batch' }, framework)
+      ).toThrow(/does not support streaming/)
+    }
+  )
+
+  it('rejects every Lab runtime target when the fetched catalog is empty', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'lab:removed',
+      fetchedModels: []
+    }
+    const framework = getAgentFramework('open-science-agent')
+    expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([])
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'configured', requestedModel: 'lab:removed' },
+        framework
+      )
+    ).toThrow(/no longer available/)
   })
 
   it('builds a catalog and reasoning profile through the same effective-model policy', () => {

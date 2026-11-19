@@ -84,6 +84,64 @@ describe('configured model catalog', () => {
     })
   })
 
+  it("derives Lab image support from each model's capability profile", () => {
+    const lab = provider('builtin-lab', ['lab:vision', 'lab:text'], {
+      type: 'lab',
+      model: 'lab:vision',
+      modelCapabilities: {
+        'lab:vision': { modalities: { input: ['text', 'image'] } },
+        'lab:text': { modalities: { input: ['text'] } }
+      }
+    })
+    const entries = buildConfiguredModelCatalog({
+      providers: [lab],
+      frameworkId: 'open-science-agent',
+      frameworkEndpoints: ['chat-completions']
+    })
+    expect(entries).toEqual([
+      expect.objectContaining({ model: 'lab:vision', supportsImageInput: true }),
+      expect.objectContaining({ model: 'lab:text', supportsImageInput: false })
+    ])
+  })
+
+  it.each(['open-science-agent', 'opencode'] as const)(
+    'marks a non-streaming Lab model unavailable to streaming framework %s',
+    (frameworkId) => {
+      const lab = provider('builtin-lab', ['lab:stream', 'lab:batch'], {
+        type: 'lab',
+        model: 'lab:stream',
+        modelStreaming: { 'lab:stream': true, 'lab:batch': false }
+      })
+      const entries = buildConfiguredModelCatalog({
+        providers: [lab],
+        frameworkId,
+        frameworkEndpoints: ['chat-completions']
+      })
+      expect(entries).toEqual([
+        expect.objectContaining({ model: 'lab:stream', selectable: true }),
+        expect.objectContaining({
+          model: 'lab:batch',
+          selectable: false,
+          unavailableReason: 'streaming-unsupported'
+        })
+      ])
+    }
+  )
+
+  it('does not synthesize a default entry for an empty Lab catalog', () => {
+    const lab = provider('builtin-lab', [], {
+      type: 'lab',
+      model: 'lab:removed'
+    })
+    expect(
+      buildConfiguredModelCatalog({
+        providers: [lab],
+        frameworkId: 'open-science-agent',
+        frameworkEndpoints: ['chat-completions']
+      })
+    ).toEqual([])
+  })
+
   it('keeps same-named models distinct by compound provider identity', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],

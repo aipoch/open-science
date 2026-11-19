@@ -38,6 +38,7 @@ import {
   type PersistedSessionFile
 } from '../../shared/session-persistence'
 import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
@@ -2162,17 +2163,16 @@ it('rejects a Notebook file changed during export without replacing the destinat
   await writeFile(file, 'Original observation')
   const archive = join(source.storageRoot, 'research.science')
   await writeFile(archive, 'Previous export')
-  let admissions = 0
   const service = new SessionPackageService({
     storageRoot: source.storageRoot,
-    getClient: async () => source.client,
-    isSessionActive: () => {
-      if (++admissions === 2) writeFileSync(file, 'Changed observation')
-      return false
-    }
+    getClient: async () => source.client
   })
   await expect(
-    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
+      onProgress: ({ phase }) => {
+        if (phase === 'copying') writeFileSync(file, 'Changed observation')
+      }
+    })
   ).rejects.toThrow('changed during export')
   await expect(readFile(archive, 'utf8')).resolves.toBe('Previous export')
 })
@@ -3472,6 +3472,7 @@ it.each(['root', 'frame'] as const)(
       throw new Error('An imported Session must never create an executor')
     })
     const notebook = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       projectId: imported.projectId,
       configRoot: target.storageRoot,
       dataRoot: target.storageRoot,
@@ -3592,6 +3593,7 @@ it.each(['root', 'frame'] as const)(
       })
     ).resolves.toBeDefined()
     const continuedNotebook = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       projectId: forked.projectId,
       configRoot: target.storageRoot,
       dataRoot: target.storageRoot,

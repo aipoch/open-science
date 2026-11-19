@@ -35,7 +35,15 @@ export class SessionReproducibilityStore {
     return file
   }
   async save(value: SessionReproducibilityBatch): Promise<void> {
-    const state = sessionReproducibilityBatchSchema.parse(value)
+    // The existing check log records the outcome. Keep live step details out of the v1 batch file.
+    const state = sessionReproducibilityBatchSchema.parse({
+      ...value,
+      targets: value.targets.map((target) => {
+        const saved = { ...target }
+        delete saved.failedStep
+        return saved
+      })
+    })
     const serialized = canonicalJson(state as CanonicalJson)
     await writeDurableJsonFile(
       await this.path(state),

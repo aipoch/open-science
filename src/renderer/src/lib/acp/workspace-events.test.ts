@@ -2402,6 +2402,55 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('applies live Web progress only on its branch and preserves terminal attempt metadata', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    const frame = session.conversationGraph!.frames[0]
+    const invocationId = 'web-search'
+    const webInvocation = { attempt: 1, configGeneration: 'dispatch' }
+    const progress = {
+      kind: 'tool' as const,
+      toolCallId: invocationId,
+      executionInvocationId: invocationId,
+      appOwned: true as const,
+      toolKind: 'search' as const,
+      status: 'in_progress',
+      promptMessageId: session.messages[0].id,
+      agentFrameId: frame.id,
+      messageBranchId: frame.activeBranchId,
+      webInvocation
+    }
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'old-branch-progress', ...progress, messageBranchId: 'other-branch' })
+    )
+    expect(useSessionStore.getState().sessions[0].activities ?? []).toHaveLength(0)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'web-dispatch', ...progress }))
+    expect(useSessionStore.getState().sessions[0].activities).toMatchObject([
+      { status: 'in_progress', webInvocation }
+    ])
+
+    const settled = {
+      ...webInvocation,
+      searchAttempts: [
+        {
+          index: 1 as const,
+          provider: { id: 'exa', auth_mode: 'anonymous' as const, data_policy_version: 'v1' },
+          execution: 'direct_search' as const,
+          started_at: '2026-07-04T08:00:00.000Z',
+          duration_ms: 1,
+          status: 'ok' as const
+        }
+      ]
+    }
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'web-completed', ...progress, status: 'completed', webInvocation: settled })
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'late-web-progress', ...progress }))
+    expect(useSessionStore.getState().sessions[0].activities).toMatchObject([
+      { status: 'completed', webInvocation: settled, eventIds: ['web-dispatch', 'web-completed'] }
+    ])
+  })
+
   it('does not route tool events into preview state', async () => {
     const wasApplied = await applyWorkspaceRuntimeEvent({
       ...createEvent({

@@ -116,6 +116,31 @@ describe('resolveProviderReasoningEffortProfile', () => {
     ],
     ['unpinned Claude subscription', { type: 'claude-shared' }, undefined, { supported: false }],
     [
+      'Lab model with explicit effort values',
+      {
+        type: 'lab',
+        modelCapabilities: {
+          'lab:deepseek-v4.1-flash': {
+            reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }]
+          }
+        }
+      },
+      'lab:deepseek-v4.1-flash',
+      { supported: true, slots: ['low', 'high', 'max', 'max', 'max'] }
+    ],
+    [
+      'Lab toggle-only model',
+      {
+        type: 'lab',
+        modelCapabilities: {
+          'lab:longcat-2.5-free': { reasoning_options: [{ type: 'toggle' }] }
+        }
+      },
+      'lab:longcat-2.5-free',
+      { supported: true, slots: ['none', 'high', 'high', 'high', 'high'] }
+    ],
+    ['Lab model without capabilities', { type: 'lab' }, 'lab:unknown', { supported: false }],
+    [
       'custom model preset',
       { type: 'custom', reasoningEffortPreset: 'none-high' },
       'custom-model',

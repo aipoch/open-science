@@ -831,6 +831,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       runJsonPath: notebookReference.runJsonPath,
       cells: [],
       runCount: 101,
+      agentSummaries: [],
       latestRunEnvironments: {},
       runs,
       recentRuns: runs,
