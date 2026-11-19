@@ -240,6 +240,7 @@ const ProviderStep = ({
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
   // clean. The ref is written only from event handlers/effects, never during render.
+  const quickAuth = useRef<AbortController | undefined>(undefined)
   const codexLoginPendingRef = useRef(false)
   const claudeLoginPendingRef = useRef(false)
   const claudeSharedLoginPendingRef = useRef(false)
@@ -248,6 +249,7 @@ const ProviderStep = ({
 
   useEffect(
     () => () => {
+      quickAuth.current?.abort()
       if (codexLoginPendingRef.current) void cancelCodexLogin()
       if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
       if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
@@ -322,7 +324,10 @@ const ProviderStep = ({
     }
   }
 
-  const handleSaveProvider = async (valueOverride?: ProviderFormValue): Promise<void> => {
+  const handleSaveProvider = async (
+    valueOverride?: ProviderFormValue,
+    signal?: AbortSignal
+  ): Promise<void> => {
     if (!canContinue) return
     const value = valueOverride ?? formValue
     // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
@@ -441,10 +446,12 @@ const ProviderStep = ({
 
       if (value.type === 'claude-shared') {
         const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         claudeSharedLoginPendingRef.current = true
         const validation = await loginSharedClaude().finally(() => {
-          claudeSharedLoginPendingRef.current = false
+          if (!signal?.aborted) claudeSharedLoginPendingRef.current = false
         })
+        signal?.throwIfAborted()
 
         if (validation.cancelled) {
           setValidationOk(false)
@@ -465,6 +472,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
+          signal?.throwIfAborted()
           advanceIfMounted('account')
         }
         return
@@ -472,17 +480,20 @@ const ProviderStep = ({
 
       if (value.type === 'xai-subscription') {
         const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         xaiLoginCancelledRef.current = false
         xaiLoginPendingRef.current = true
         let validation: ValidateProviderResult
         try {
           const session = await beginXaiOAuthLogin()
+          signal?.throwIfAborted()
           if (xaiLoginCancelledRef.current) return
           setXaiSession(session)
           ;({ validation } = await waitXaiOAuthLogin())
         } finally {
-          xaiLoginPendingRef.current = false
+          if (!signal?.aborted) xaiLoginPendingRef.current = false
         }
+        signal?.throwIfAborted()
         if (xaiLoginCancelledRef.current) return
         setXaiSession(undefined)
         if (validation.applied === false) {
@@ -494,14 +505,18 @@ const ProviderStep = ({
         setValidationMessage(describeValidation(validation, tSettings))
         if (validation.ok) {
           await setActiveProvider(providerId)
+          signal?.throwIfAborted()
           advanceIfMounted('account')
         }
         return
       }
 
-      const { providerId, validation } = await saveAndActivateProvider(
-        toUpsertRequest(providerValue, savedProviderId)
-      )
+      const request = toUpsertRequest(providerValue, savedProviderId)
+      // Shared Codex checks the local profile; defer activation until the attempt is still current.
+      const { providerId, validation } = signal
+        ? await currentSettings.saveProvider(request)
+        : await saveAndActivateProvider(request)
+      signal?.throwIfAborted()
       // Persistence survives Back even though this page's permission to navigate does not.
       if (providerId) onProviderSaved?.(providerId)
       if (!mounted.current) return
@@ -519,9 +534,13 @@ const ProviderStep = ({
       setValidationMessage(describeValidation(validation, tSettings))
 
       if (validation.ok) {
+        if (signal && providerId)
+          await setActiveProvider(providerId, providerValue.model || undefined)
+        signal?.throwIfAborted()
         advanceIfMounted(value.type === 'codex-shared' ? 'account' : 'api-key')
       }
     } catch (error) {
+      if (signal?.aborted) return
       if (error instanceof Error && error.message === 'Provider no longer exists.') {
         onProviderSaved?.(undefined)
       }
@@ -534,7 +553,7 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
-      setIsSaving(false)
+      if (!signal) setIsSaving(false)
     }
   }
 
@@ -560,6 +579,8 @@ const ProviderStep = ({
     setFormValue(nextValue)
     if (mode !== 'account') return
 
+    const attempt = new AbortController()
+    quickAuth.current = attempt
     // Quick setup chooses the provider first, so resolve its subscription runtime before login.
     setIsSaving(true)
     setValidationMessage(undefined)
@@ -575,9 +596,10 @@ const ProviderStep = ({
       if (targetFramework !== settings.agentFrameworkId) {
         await settings.setAgentFramework(targetFramework)
       }
-      if (mounted.current) await handleSaveProvider(nextValue)
+      if (mounted.current && !attempt.signal.aborted)
+        await handleSaveProvider(nextValue, attempt.signal)
     } catch (error) {
-      if (!mounted.current) return
+      if (!mounted.current || attempt.signal.aborted) return
       setValidationOk(false)
       setValidationMessage(
         error instanceof Error
@@ -585,6 +607,35 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
+      if (!attempt.signal.aborted) {
+        quickAuth.current = undefined
+        setIsSaving(false)
+      }
+    }
+  }
+
+  const cancelQuickAuthorization = async (): Promise<void> => {
+    const attempt = quickAuth.current
+    if (!attempt || attempt.signal.aborted) return
+    attempt.abort()
+    try {
+      if (claudeSharedLoginPendingRef.current) {
+        claudeSharedLoginPendingRef.current = false
+        await cancelSharedClaudeLogin()
+      } else if (xaiLoginPendingRef.current) {
+        xaiLoginPendingRef.current = false
+        setXaiSession(undefined)
+        await cancelXaiOAuthLogin()
+      }
+    } catch (error) {
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      quickAuth.current = undefined
       setIsSaving(false)
     }
   }
@@ -638,6 +689,8 @@ const ProviderStep = ({
           <div className="onboarding-provider-track">
             {QUICK_PROVIDER_CARDS.map((card) => {
               const isKeyMode = quickCardId === card.id && quickMode === 'key'
+              const isAuthorizing =
+                isSaving && quickCardId === card.id && !isKeyMode && Boolean(card.subscriptionKind)
               const subscriptionAvailable = Boolean(card.subscriptionKind)
               const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
 
@@ -647,7 +700,8 @@ const ProviderStep = ({
                   className={cn(
                     'onboarding-provider-card',
                     `onboarding-provider-card-${card.id}`,
-                    isKeyMode && 'is-key-mode'
+                    isKeyMode && 'is-key-mode',
+                    isAuthorizing && 'is-authorizing'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
                   onPointerEnter={(event) => {
@@ -725,14 +779,28 @@ const ProviderStep = ({
                         <>
                           {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
                           {subscriptionAvailable ? (
-                            <Button
-                              type="button"
-                              onClick={() => void chooseQuickProvider(card, 'account')}
-                              disabled={isSaving}
-                              className="w-full"
-                            >
-                              {t('Continue with {{provider}}', { provider: card.title })}
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => void chooseQuickProvider(card, 'account')}
+                                disabled={isSaving}
+                                className="min-w-0 flex-1"
+                              >
+                                {isAuthorizing
+                                  ? t('Signing in…')
+                                  : t('Continue with {{provider}}', { provider: card.title })}
+                              </Button>
+                              {isAuthorizing && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  aria-label={t('Cancel sign-in')}
+                                  onClick={() => void cancelQuickAuthorization()}
+                                >
+                                  {t('Cancel')}
+                                </Button>
+                              )}
+                            </div>
                           ) : null}
                           <button
                             type="button"
@@ -800,11 +868,7 @@ const ProviderStep = ({
           open={Boolean(xaiSession)}
           session={xaiSession}
           error={validationMessage}
-          onCancel={() => {
-            xaiLoginCancelledRef.current = true
-            setXaiSession(undefined)
-            void cancelXaiOAuthLogin()
-          }}
+          onCancel={() => void cancelQuickAuthorization()}
         />
       </section>
     )

@@ -650,6 +650,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 .onboarding-provider-card:hover .onboarding-provider-card-actions,
 .onboarding-provider-card:focus-within .onboarding-provider-card-actions,
+.onboarding-provider-card.is-authorizing .onboarding-provider-card-actions,
 .onboarding-provider-card.is-key-mode .onboarding-provider-card-actions {
   opacity: 1;
   pointer-events: auto;
