@@ -1950,7 +1950,7 @@ describe('notebook runtime service', () => {
     ])
   })
 
-  it('passes the same-epoch file-analysis context to the executor', async () => {
+  it('passes the run epoch and its file-analysis context to the executor', async () => {
     const root = await createStorageRoot()
     const input: NotebookRunInputFile = {
       inputFileVersionId: 'frozen-upload-version',
@@ -1997,7 +1997,7 @@ describe('notebook runtime service', () => {
       })
     })
 
-    await service.execute({
+    const run = await service.execute({
       sessionId: 'session-1',
       workspaceCwd: root,
       code: 'plt.savefig(output_path)',
@@ -2018,11 +2018,13 @@ describe('notebook runtime service', () => {
         currentRunId: expect.any(String),
         language: 'python',
         environment: 'default-python',
-        kernelEpochId: expect.any(String)
+        kernelEpochId: run.kernelEpochId
       })
     )
+    expect(run.kernelEpochId).toEqual(expect.any(String))
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
+        kernelEpochId: run.kernelEpochId,
         registeredInputFiles: [
           expect.objectContaining({ inputFileVersionId: 'frozen-upload-version' })
         ],

@@ -945,6 +945,7 @@ class NotebookExecutionOwner {
                     .execute({
                       executionAdmission,
                       runId,
+                      kernelEpochId,
                       code: durableAdmission.run.script,
                       ...(helperPlan.injections.length
                         ? { helperModules: helperPlan.injections }
