@@ -48,7 +48,10 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
-import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
+import {
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
+} from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
@@ -255,7 +258,7 @@ export async function composeResearchFilm({
       }
       try {
         filmLog.info('film model request', fields)
-        const modelDeadline = AbortSignal.timeout(10 * 60_000)
+        const modelDeadline = AbortSignal.timeout(RESEARCH_FILM_MODEL_TIMEOUT_MINUTES * 60_000)
         const inferenceSignal = AbortSignal.any([signal, modelDeadline])
         const response = await Promise.resolve()
           .then(() =>
