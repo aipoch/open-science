@@ -1,5 +1,13 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import { callerContextForEvent, canSatisfyHumanApproval } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
+import { withNotebookUserOperation } from './execution-intent'
+import type {
+  NotebookProjectResourcesRequest,
+  NotebookResourceReleaseRequest,
+  ReleaseNotebookSessionResourcesRequest
+} from '../../shared/notebook-resources'
 
 import type {
   AppendNotebookCodeCellRequest,
@@ -27,6 +35,49 @@ const log = createLogger('notebook:ipc')
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
+  const human = (event: Electron.IpcMainInvokeEvent): (() => void) => {
+    const caller = callerContextForEvent(event)
+    const lease = callerLeaseForEvent(event)
+    return () => {
+      if (
+        !canSatisfyHumanApproval(caller) ||
+        lease.signal.aborted ||
+        !lease.isCurrent() ||
+        event.sender.isDestroyed()
+      )
+        throw new Error('Only a current human caller can manage Notebook resources.')
+    }
+  }
+  ipcMainHandle(
+    'notebook:project-resources',
+    async (event, request: NotebookProjectResourcesRequest) => {
+      const assertCurrent = human(event)
+      assertCurrent()
+      const result = await handlers.projectResources(request)
+      assertCurrent()
+      return result
+    }
+  )
+  ipcMainHandle(
+    'notebook:release-session-resources',
+    (event, request: ReleaseNotebookSessionResourcesRequest) =>
+      handlers.releaseSessionResources(request, human(event))
+  )
+  ipcMainHandle(
+    'notebook:resource-release',
+    async (event, request: NotebookResourceReleaseRequest) => {
+      const assertCurrent = human(event)
+      assertCurrent()
+      const result = await handlers.resourceRelease(request)
+      assertCurrent()
+      return result
+    }
+  )
+  ipcMainHandle(
+    'notebook:retry-resource-release',
+    (event, request: NotebookResourceReleaseRequest) =>
+      handlers.retryResourceRelease(request, human(event))
+  )
   ipcMainHandle('notebook:process-monitor', (_event, request?: NotebookProcessMonitorRequest) =>
     handlers.processMonitor(request)
   )
@@ -40,6 +91,11 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   )
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionStateRequest) =>
     handlers.state(request)
+  )
+  ipcMainHandle(
+    'notebook:memory-policy-state',
+    (_event, request: import('../../shared/notebook-memory').NotebookMemoryPolicyStateRequest) =>
+      handlers.memoryPolicyState(request)
   )
   ipcMainHandle('notebook:project-activity', (_event, request: NotebookProjectActivityRequest) =>
     handlers.projectActivity(request)
@@ -65,8 +121,13 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   ipcMainHandle('notebook:run-cell', (_event, request: RunNotebookCellRequest) =>
     handlers.runCell(request)
   )
-  ipcMainHandle('notebook:execute', async (_event, request: ExecuteNotebookCodeRequest) => {
+  ipcMainHandle('notebook:execute', async (event, request: ExecuteNotebookCodeRequest) => {
     try {
+      if (request.source === 'user' && request.inputKind === 'terminal') {
+        const assertCurrent = human(event)
+        assertCurrent()
+        request = withNotebookUserOperation(request, { assertCurrent })
+      }
       const result = await handlers.execute(request)
       if (
         request.source === 'user' &&

@@ -2,6 +2,7 @@ import type { Dirent } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -187,9 +188,10 @@ describe('LocalFsService.openInBrowser', () => {
   it('opens a validated local file URL through the default browser', async () => {
     const service = new LocalFsService()
 
-    await service.openInBrowser('/Users/test/space report.html')
+    const file = join(tmpdir(), 'space report.html')
+    await service.openInBrowser(file)
 
-    expect(shell.openExternal).toHaveBeenCalledWith('file:///Users/test/space%20report.html')
+    expect(shell.openExternal).toHaveBeenCalledWith(pathToFileURL(file).href)
   })
 
   it('rejects malformed paths before invoking the browser', async () => {

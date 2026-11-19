@@ -1,0 +1,17 @@
+{
+  "ownerPaths": ["src/renderer/src/stores/org-cases-store.ts"],
+  "interfacePaths": ["src/renderer/src/stores/org-cases-store.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "consumer": [
+      "src/renderer/src/components/SessionPackageOperation.test.tsx",
+      "src/renderer/src/pages/home/OrgCaseCarousel.test.tsx",
+      "src/renderer/src/pages/home/UseCaseCarousel.test.tsx",
+      "src/renderer/src/pages/marketplace/SharingMarketplacePage.render.test.tsx"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

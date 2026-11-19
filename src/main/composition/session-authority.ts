@@ -48,6 +48,7 @@ import {
   restoreManagedWorkspaceActive
 } from '../storage/managed-workspace-ownership'
 import { createDefaultUploadRepository } from '../uploads/ipc'
+import type { WebEvidenceLifecycle } from '../web/evidence-lifecycle'
 
 export async function composeSessionAuthority({
   uploadRepository,
@@ -58,6 +59,7 @@ export async function composeSessionAuthority({
   projectRepository,
   packagePublicationOwner,
   sessionPackageService,
+  webEvidenceLifecycle,
   immutableInputAuthority,
   artifactProvenanceRepository,
   provenanceMessageSnapshots,
@@ -74,6 +76,7 @@ export async function composeSessionAuthority({
     current?: Pick<SessionPersistenceCoordinator, 'adoptPublishedSession'>
   }
   sessionPackageService: import('../session-package/service').SessionPackageService
+  webEvidenceLifecycle?: WebEvidenceLifecycle
   immutableInputAuthority: ImmutableInputAuthority
   artifactProvenanceRepository: ArtifactProvenanceRepository
   provenanceMessageSnapshots: ProvenanceMessageSnapshotRepository
@@ -361,7 +364,8 @@ export async function composeSessionAuthority({
       restoreActive: restoreManagedWorkspaceActive
     },
     (session) => sessionPackageService.prepareSessionDeletion(session),
-    researchFilmLifecycle
+    researchFilmLifecycle,
+    webEvidenceLifecycle
   )
   packagePublicationOwner.current = sessionPersistenceCoordinator
   return {

@@ -1,7 +1,11 @@
-import { spawnWindowsOwnedProcess } from '../process-tree-windows'
+import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
+import { ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setImmediate as nextTurn } from 'node:timers/promises'
+import { queryObjects } from 'node:v8'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 import type { NotebookNetworkRuntime } from '../../../packages/notebook-network-sandbox/runtime/src/index'
@@ -37,6 +41,59 @@ import { NotebookExecutionStopError } from '../../shared/notebook-execution-erro
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
+
+it.skipIf(process.platform !== 'win32')(
+  'releases listeners after a native Windows child exits without retaining its owner',
+  async () => {
+    class ExitListenerOwner {
+      exited = false
+    }
+    const complete = async (): Promise<WeakRef<ExitListenerOwner>> => {
+      const owner = new ExitListenerOwner()
+      const jobName = `Local\\OpenScience.Notebook.${randomUUID()}`
+      const child = spawnWindowsOwnedProcess(
+        jobName,
+        process.execPath,
+        ['-e', 'process.stdout.write("OWNED_CHILD_EXIT")'],
+        { cwd: process.cwd(), env: process.env, windowsHide: true, stdio: 'pipe' }
+      )
+      try {
+        expect(child).toBeInstanceOf(ChildProcess)
+        expect(child).toMatchObject({
+          connected: false,
+          killed: false,
+          exitCode: null,
+          signalCode: null
+        })
+        child.on('exit', () => {
+          owner.exited = true
+        })
+        child.stdin.end()
+        child.stdout.resume()
+        child.stderr.resume()
+        const exitCode = await new Promise<number | null>((resolve, reject) => {
+          child.once('error', reject)
+          child.once('close', resolve)
+        })
+        expect(exitCode).toBe(0)
+        expect(owner.exited).toBe(true)
+        return new WeakRef(owner)
+      } finally {
+        try {
+          expect(await reapWindowsOwnedJob(jobName)).toBe(true)
+        } finally {
+          child.stdin.destroy()
+          child.stdout.destroy()
+          child.stderr.destroy()
+        }
+      }
+    }
+    const owner = await complete()
+    await nextTurn()
+    expect(queryObjects(ExitListenerOwner)).toBe(0)
+    expect(owner.deref()).toBeUndefined()
+  }
+)
 
 it
   .skipIf(process.platform !== 'win32')

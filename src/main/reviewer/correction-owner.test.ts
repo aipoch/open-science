@@ -59,6 +59,7 @@ describe('ReviewerCorrectionOwner', () => {
         text: expect.stringContaining('[fail] "Unsupported"'),
         provenanceContext: {
           ...provenanceContext,
+          originMessageId: 'originating-message-1',
           promptMessageId: 'correction-message-2'
         }
       }),

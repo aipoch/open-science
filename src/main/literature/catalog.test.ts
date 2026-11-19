@@ -332,33 +332,138 @@ describe('LiteratureCatalog', () => {
     ).toMatchObject({ itemIds: [ids[1]], totalCount: 1 })
   })
 
-  it('deduplicates manually discovered Semantic Scholar papers and preserves dismissal and provenance', async () => {
+  it.each([
+    ['europe-pmc', undefined],
+    ['opencitations', undefined],
+    ['opencitations', 'index']
+  ] as const)(
+    'deduplicates manually discovered %s papers in mode %s and preserves dismissal and provenance',
+    async (provider, lookupMode) => {
+      const catalog = await setup()
+      const externalId =
+        provider === 'opencitations'
+          ? 'opencitations:br/06180349574'
+          : provider === 'europe-pmc'
+            ? 'europe-pmc:MED:10647931'
+            : 'a'.repeat(40)
+      const input = candidate({ provider, externalId })
+      if (lookupMode) input.source.rawMetadata.lookupMode = lookupMode
+      input.origin = { kind: 'manual-discovery' }
+      const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+      expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+      expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+        id: staged.id,
+        state: 'pending'
+      })
+      await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+      expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+        id: staged.id,
+        state: 'dismissed'
+      })
+      await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+        kind: 'item',
+        id: accepted.id,
+        state: 'present'
+      })
+      expect(await catalog.sources(accepted.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            provider,
+            externalId,
+            ...(lookupMode ? { rawMetadata: expect.objectContaining({ lookupMode }) } : {})
+          })
+        ])
+      )
+    }
+  )
+
+  it('retains citation discovery paths across rediscovery, legacy snapshots and acceptance collisions', async () => {
     const catalog = await setup()
-    const input = candidate({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
+    const input = candidate({ provider: 'europe-pmc', externalId: 'europe-pmc:MED:123' })
     input.origin = { kind: 'manual-discovery' }
-    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
-    expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
-    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
-      id: staged.id,
-      state: 'pending'
+    const context = (rootItemId: string): Record<string, unknown> => ({
+      rootItemId,
+      rootMetadataRevision: 1,
+      seedPaperId: 'europe-pmc:MED:100',
+      direction: 'references'
     })
+    input.source.rawMetadata = context('root-A')
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+    // Simulate a source written before citationContexts existed.
+    await client!.literatureSourceRecord.updateMany({
+      where: { inboxCandidateId: staged.id },
+      data: {
+        rawMetadataJson: JSON.stringify(context('root-A')),
+        fetchedAt: new Date('2020-01-01')
+      }
+    })
+    input.source.rawMetadata = context('root-B')
+    for (let i = 0; i < 2; i++)
+      expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+        id: staged.id,
+        state: 'pending'
+      })
+    await catalog.transact({
+      kind: 'stage-candidate',
+      candidate: {
+        ...input,
+        source: {
+          ...input.source,
+          provider: 'opencitations',
+          externalId: 'opencitations:br/456',
+          rawMetadata: { ...context('root-C'), lookupMode: 'index' }
+        }
+      }
+    })
+    expect(
+      await client!.literatureSourceRecord.count({ where: { inboxCandidateId: staged.id } })
+    ).toBe(2)
+    const reviewedJson = (
+      await client!.literatureInboxCandidate.findUniqueOrThrow({ where: { id: staged.id } })
+    ).candidateJson
     await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+    input.source.rawMetadata = context('root-D')
     expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
-      id: staged.id,
       state: 'dismissed'
     })
-    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
-    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
-    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
-      kind: 'item',
-      id: accepted.id,
-      state: 'present'
+    expect(
+      (await client!.literatureInboxCandidate.findUniqueOrThrow({ where: { id: staged.id } }))
+        .candidateJson
+    ).toBe(reviewedJson)
+    // The paper enters Library by another route before this Inbox item is accepted.
+    const existing = await catalog.transact({ kind: 'create-item', item: input.item })
+    input.source.rawMetadata = context('root-E')
+    input.source.sourceUrl = 'https://europepmc.org/article/MED/123?latest=true'
+    await catalog.transact({ kind: 'stage-candidate', candidate: input })
+    await client!.literatureSourceRecord.updateMany({
+      where: { itemId: existing.id, provider: 'europe-pmc' },
+      data: { fetchedAt: new Date('2021-01-01') }
     })
-    expect(await catalog.sources(accepted.id)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
-      ])
-    )
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+    expect(
+      await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    ).toMatchObject({ id: existing.id })
+    const sources = await catalog.sources(existing.id)
+    expect(sources).toHaveLength(2)
+    expect(sources.find((source) => source.provider === 'europe-pmc')).toMatchObject({
+      sourceUrl: input.source.sourceUrl,
+      savedAt: new Date('2021-01-01').getTime(),
+      rawMetadata: { rootItemId: 'root-E' }
+    })
+    const paths = sources.find((source) => source.provider === 'europe-pmc')!.rawMetadata
+      .citationContexts as Array<{ rootItemId: string; directions: string[] }>
+    expect(paths.map((path) => path.rootItemId).sort()).toEqual([
+      'root-A',
+      'root-B',
+      'root-D',
+      'root-E'
+    ])
+    expect(paths.every((path) => JSON.stringify(path.directions) === '["references"]')).toBe(true)
+    expect(
+      await client!.literatureSourceRecord.count({ where: { inboxCandidateId: staged.id } })
+    ).toBe(0)
   })
 
   it('reads current candidate states without changing receipts and follows import, merge, and deletion', async () => {

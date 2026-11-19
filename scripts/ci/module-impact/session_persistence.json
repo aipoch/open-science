@@ -109,7 +109,8 @@
     "src/main/session-persistence/runtime-session-file.ts",
     "src/main/session-persistence/runtime-session-mutation.ts",
     "src/main/session-persistence/session-storage-benchmark.test.ts",
-    "src/main/session-persistence/deferred-recovery.ts"
+    "src/main/session-persistence/deferred-recovery.ts",
+    "src/main/session-persistence/web-evidence.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -200,7 +201,8 @@
       "src/main/session-persistence/repository-pending-import.test.ts",
       "src/main/session-persistence/runtime-business-records.integration.test.ts",
       "src/main/session-persistence/runtime-session-file.test.ts",
-      "src/main/session-persistence/session-storage-benchmark.test.ts"
+      "src/main/session-persistence/session-storage-benchmark.test.ts",
+      "src/main/session-persistence/web-evidence.integration.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
@@ -655,7 +657,8 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

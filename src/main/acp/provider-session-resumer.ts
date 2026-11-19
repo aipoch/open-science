@@ -6,7 +6,14 @@ import {
   PreviousAgentContextUnavailableError
 } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
-import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
+import type {
+  ActiveSession,
+  ClientConnection,
+  McpServer,
+  SessionConfigOption
+} from '@agentclientprotocol/sdk'
+import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
+import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { resolve } from 'node:path'
 import type {
   AcpCreateSessionResponse,
@@ -124,6 +131,139 @@ export class AcpProviderSessionResumer {
     const observers = this.progressObservers.get(providerSessionId)
     if (!observers) return
     for (const observer of observers) observer()
+  }
+
+  // Changes only the attached provider writer's MCP configuration. The active app interaction,
+  // persisted provider identity, scientific namespace and non-Notebook capability owners survive.
+  async refreshNotebookConnection(input: {
+    sessionId: string
+    cwd: string
+    mcpServers: readonly McpServer[]
+    skillRuntimeAllowlist?: readonly string[]
+    shellRuntimeAgentContract?: ShellRuntimeAgentContract
+    signal?: AbortSignal
+    assertCurrent(): void
+  }): Promise<void> {
+    this.assertNoPendingWriterRelease(input.sessionId)
+    const entry = this.deps.registry.lookup(input.sessionId)
+    const attachment = entry?.attachment
+    const snapshot = entry?.aggregate.snapshot()
+    const connection = this.deps.currentConnection()
+    const backend = this.deps.currentBackend()
+    if (!attachment || !snapshot || !connection) throw new Error('ACP Session is not attached.')
+    if (
+      !this.deps.resumeCapabilityAdvertised() ||
+      (backend.framework.id === 'codex' && !this.deps.supportsSessionClose())
+    )
+      throw new Error(
+        'The Agent runtime cannot safely refresh Notebook execution authority. Update or repair the runtime and retry.'
+      )
+    await this.withTimeout(
+      async (timeoutSignal) => {
+        const signal = input.signal ? AbortSignal.any([timeoutSignal, input.signal]) : timeoutSignal
+        const checkpoint = (): void => {
+          signal.throwIfAborted()
+          input.assertCurrent()
+          this.deps.assertCurrentConnection(connection)
+          if (
+            this.deps.registry.lookup(input.sessionId)?.attachment !== attachment ||
+            this.deps.currentBackend() !== backend
+          )
+            throw new Error('Notebook provider refresh was superseded.')
+        }
+        checkpoint()
+        if (backend.framework.beforePromptDispatch) {
+          await backend.framework.beforePromptDispatch({
+            codeBuddySharedSite: backend.adapter.codeBuddySharedSite,
+            connection,
+            providerSessionId: attachment.providerSessionId,
+            cwd: input.cwd,
+            mcpServers: input.mcpServers,
+            ...(input.skillRuntimeAllowlist
+              ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
+              : {})
+          })
+        } else {
+          const [projectContext, specialistIdentity, specialistSkills] = await Promise.all([
+            this.resolveProjectAgentContext(snapshot.projectId ?? this.deps.defaultProjectId),
+            this.resolveSpecialistIdentity(snapshot.specialistId, backend, input.sessionId),
+            this.resolveSpecialistSkills(snapshot.specialistId, backend, input.sessionId)
+          ])
+          checkpoint()
+          const names = input.mcpServers.map(({ name }) => canonicalAppMcpServerName(name))
+          const setup = this.presentation.buildSessionSetup({
+            framework: backend.framework,
+            tooling: {
+              artifacts: names.includes('open-science-artifacts'),
+              notebook: true,
+              skillImport: names.includes('open-science-skills')
+            },
+            role: this.deps.capabilityPolicy.role,
+            shellRuntimeAgentContract: input.shellRuntimeAgentContract,
+            backendSystemPromptAppends: backend.prompt.systemPromptAppends,
+            extraSystemPromptAppends: [projectContext, specialistIdentity?.append].filter(
+              (value): value is string => Boolean(value)
+            ),
+            persistentSystemPrompt: backend.prompt.persistentSystemPrompt,
+            sessionOptions: backend.session.options,
+            specialistSkills
+          })
+          if (backend.framework.id === 'codex') {
+            // Ordinary Codex resume retains old MCP subprocesses, including their old credential.
+            await connection.agent.request(
+              acp.methods.agent.session.close,
+              { sessionId: attachment.providerSessionId },
+              { cancellationSignal: signal }
+            )
+            checkpoint()
+          }
+          const response = await connection.agent.request(
+            acp.methods.agent.session.resume,
+            {
+              sessionId: attachment.providerSessionId,
+              cwd: input.cwd,
+              mcpServers: [...input.mcpServers],
+              ...setup.metaArg,
+              ...(backend.framework.id === 'open-science-agent'
+                ? {
+                    _meta: {
+                      ...setup.metaArg._meta,
+                      [HARNESS_OWNER]: { projectId: snapshot.projectId, sessionId: input.sessionId }
+                    }
+                  }
+                : {})
+            },
+            { cancellationSignal: signal }
+          )
+          checkpoint()
+          if (
+            response &&
+            typeof response === 'object' &&
+            'sessionId' in response &&
+            response.sessionId !== attachment.providerSessionId
+          )
+            throw new Error('Notebook provider refresh changed the provider Session identity.')
+        }
+        checkpoint()
+        // Adapters may recreate their Query during resume; restore the existing permission/model
+        // configuration without replacing the app Session or introducing historical replay.
+        await this.deps.configurator.configure({
+          backend,
+          connection,
+          session: attachment.session,
+          permissionProfile:
+            snapshot.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+          cancellationSignal: signal
+        })
+        checkpoint()
+      },
+      [attachment.providerSessionId],
+      {
+        preserveConnection: true,
+        timeoutMessage: () =>
+          'Notebook execution authority refresh timed out. Execution was not started; retry the new user operation after repairing the Agent runtime.'
+      }
+    )
   }
 
   async resume(

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { initializeWsl2BashPreview } from '../wsl/wsl2-preview-gate'
+import type { MemoryPolicyObservation } from './memory-policy'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
+import { NotebookRuntimeService } from './runtime-service'
+import { createNotebookExecutionAdmission, createNotebookMemoryPolicy } from './execution-admission'
 import { runShellCommand } from './shell-process'
 
 configureTestRuntimeMetadata()
@@ -27,6 +31,11 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
   let fixturePort = 0
   const info = vi.fn()
   const requestDecision = vi.fn().mockResolvedValue('deny')
+  const hostAdmission = (): ReturnType<typeof createNotebookExecutionAdmission> =>
+    createNotebookExecutionAdmission({
+      policy: () => createNotebookMemoryPolicy(root, 'win32'),
+      executionScope: 'windows:host'
+    })
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-wsl-shell-'))
@@ -74,6 +83,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
 
   it('returns bounded output and the real exit code through the existing process sandbox', async () => {
     const result = await runShellCommand({
+      executionAdmission: hostAdmission(),
       command:
         `printf '你好 stdout\\n'; printf 'guest stderr\\n' >&2; ` +
         `/usr/bin/python3 -c 'print("python-result=" + str(6 * 7))'; ` +
@@ -113,6 +123,86 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     expect(diagnosticText).toContain('real-wsl-execution')
   })
 
+  it('requires original-owner guest facts in addition to the Windows host gate', async () => {
+    const manifestRoot = join(root, 'resources', 'notebook-network-sandbox', 'wsl2')
+    await mkdir(manifestRoot, { recursive: true })
+    await copyFile(
+      join(
+        process.cwd(),
+        'packages',
+        'notebook-network-sandbox',
+        'vendor',
+        'wsl2',
+        'manifest.json'
+      ),
+      join(manifestRoot, 'manifest.json')
+    )
+    initializeWsl2BashPreview({
+      platform: 'win32',
+      arch: 'x64',
+      packaged: true,
+      resourcesPath: join(root, 'resources')
+    })
+    const rejections: MemoryPolicyObservation[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-wsl-memory',
+      platform: 'win32',
+      processSandbox: sandbox,
+      callbacks: { onMemoryPolicyRejected: (_context, state) => rejections.push(state) },
+      shellRuntimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'real-profile',
+        distro: distro!,
+        user: user!
+      }
+    })
+    try {
+      const sampled = await (
+        await service.getMemoryPolicy()
+      ).getState({
+        executionScope: 'wsl:real-profile'
+      })
+      expect(sampled).toMatchObject({
+        status: 'unavailable',
+        reason: { code: 'execution-domain-unavailable' }
+      })
+      const result = await service.executeShell({
+        sessionId: 'session-wsl-memory',
+        workspaceCwd: workspace,
+        command: "printf 'wsl-memory-admission-ok\\n'",
+        timeoutMs: 15_000
+      })
+      if (result.errorCode === 'shell-network-transport-unsupported') {
+        // Report an actual production prerequisite blocker without claiming a
+        // healthy guest memory decision or a completed workload.
+        expect(result).toMatchObject({ exitCode: null, recovery: { execution: 'not-started' } })
+        console.info('WSL workload blocked before execution-domain validation', {
+          errorCode: result.errorCode
+        })
+      } else {
+        expect(result, JSON.stringify(result)).toMatchObject({
+          exitCode: 0,
+          stdout: 'wsl-memory-admission-ok\n'
+        })
+      }
+      expect(rejections).toEqual([])
+      console.info('WSL execution-domain admission', {
+        unknownScope: sampled.status,
+        workload: result.errorCode ? 'blocked-before-workload' : 'executed-after-guest-admission',
+        exitCode: result.exitCode,
+        errorCode: result.errorCode
+      })
+    } finally {
+      try {
+        expect(await service.dispose()).toEqual({ reaped: true })
+      } finally {
+        initializeWsl2BashPreview({ platform: 'win32', arch: 'x64', packaged: false })
+      }
+    }
+  }, 30_000)
+
   it.each([
     { reason: 'timeout' as const, timeoutMs: 1_000 },
     { reason: 'cancel' as const, timeoutMs: 5_000 }
@@ -124,6 +214,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
       const startedAt = Date.now()
 
       const result = await runShellCommand({
+        executionAdmission: hostAdmission(),
         command: `printf 'wsl-running\\n'; sleep 30`,
         cwd: workspace,
         handoffDir: handoff,
@@ -166,6 +257,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
 
   it('allows only gateway-mediated outbound access and preserves denial semantics', async () => {
     const allowed = await runShellCommand({
+      executionAdmission: hostAdmission(),
       command: '/usr/bin/curl --silent --show-error --fail http://example.com/',
       cwd: workspace,
       handoffDir: handoff,
@@ -187,6 +279,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     expect(allowed).toMatchObject({ exitCode: 0, stdout: 'wsl-gateway-ok' })
 
     const denied = await runShellCommand({
+      executionAdmission: hostAdmission(),
       command: '/usr/bin/curl --silent --show-error --fail http://example.org/',
       cwd: workspace,
       handoffDir: handoff,
@@ -209,6 +302,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     expect(denied.stderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
 
     const direct = await runShellCommand({
+      executionAdmission: hostAdmission(),
       command:
         'env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy ' +
         `/usr/bin/python3 -c 'import socket; socket.create_connection(("127.0.0.1", ${fixturePort}), 1)'`,
@@ -232,6 +326,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     expect(direct.exitCode).not.toBe(0)
 
     const protectedDestinations = await runShellCommand({
+      executionAdmission: hostAdmission(),
       command:
         '/usr/bin/curl --silent --fail http://169.254.169.254/latest/meta-data/ >/dev/null && exit 31; ' +
         `/usr/bin/curl --silent --fail --proxy http://127.0.0.1:${fixturePort} http://example.com/ >/dev/null && exit 32; ` +

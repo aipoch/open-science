@@ -6,7 +6,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { englishNativeTranslator } from '../locale/main-process-messages'
-import type { SessionPackageRequest } from '../../shared/session-package'
+import type { SessionPackagePreview, SessionPackageRequest } from '../../shared/session-package'
 import { SessionPackageDesktop } from './desktop'
 import { PackageSensitiveContentError, buildSensitiveContentEvidence } from './sensitive-content'
 import type { SessionPackageService } from './service'
@@ -48,7 +48,7 @@ type ExportTo = (
   request: SessionPackageRequest,
   archive: string,
   options: ExportToOptions
-) => Promise<void>
+) => Promise<SessionPackagePreview>
 
 const request = { projectId: 'project-1', sessionId: 'session-1' }
 const stagingDirectory = tmpdir()
@@ -65,8 +65,17 @@ const selectEverything = async (options: ExportToOptions, title: string): Promis
   await options.selectFiles([], options.signal, { retainedFiles: [], metadataBytes: 0 }, title)
 }
 
-const writeArchive = async (archive: string): Promise<void> => {
+const writeArchive = async (archive: string): Promise<SessionPackagePreview> => {
   await writeFile(archive, 'package-bytes')
+  return {
+    title: 'Package fixture',
+    projectName: 'Project fixture',
+    branchCount: 1,
+    messageCount: 0,
+    fileCount: 0,
+    totalBytes: Buffer.byteLength('package-bytes'),
+    omissions: []
+  }
 }
 
 const dateStamp = (now = new Date()): string =>
@@ -122,7 +131,7 @@ it('stages the .science download for stageDownload callers without a native dial
   const exportTo = vi.fn(
     async (_request: SessionPackageRequest, archive: string, options: ExportToOptions) => {
       await selectEverything(options, 'Web Session')
-      await writeArchive(archive)
+      return writeArchive(archive)
     }
   )
   const { desktop, rememberedLastExports } = createDesktop(exportTo)
@@ -167,7 +176,7 @@ it('keeps the sensitive-content retry on the staged path instead of the native d
           )
         )
       await selectEverything(options, 'Private Session')
-      await writeArchive(archive)
+      return writeArchive(archive)
     }
   )
   const { desktop } = createDesktop(exportTo)
@@ -203,7 +212,7 @@ it('keeps the Electron save-dialog path when stageDownload is not requested', as
   const exportTo = vi.fn(
     async (_request: SessionPackageRequest, archive: string, options: ExportToOptions) => {
       await selectEverything(options, 'Desktop Session')
-      await writeArchive(archive)
+      return writeArchive(archive)
     }
   )
   const { desktop } = createDesktop(exportTo)
@@ -222,7 +231,7 @@ it('keeps explicit-destination CLI exports dialog-free and outside the staging d
   const exportTo = vi.fn(
     async (_request: SessionPackageRequest, archive: string, options: ExportToOptions) => {
       expect(options.selectFiles).toBeUndefined()
-      await writeArchive(archive)
+      return writeArchive(archive)
     }
   )
   const { desktop } = createDesktop(exportTo)
@@ -242,7 +251,7 @@ it('keeps explicit-destination CLI exports dialog-free and outside the staging d
 it('isolates hosts and prunes only their own expired export directories', async () => {
   const exportTo: ExportTo = async (_request, archive, options) => {
     await selectEverything(options, 'Same title')
-    await writeArchive(archive)
+    return writeArchive(archive)
   }
   const first = createDesktop(exportTo).desktop
   const second = createDesktop(exportTo).desktop
@@ -270,7 +279,7 @@ it('isolates hosts and prunes only their own expired export directories', async 
 it('reclaims an exited host download root without touching a live host or legacy files', async () => {
   const exportTo: ExportTo = async (_request, archive, options) => {
     await selectEverything(options, 'Web Session')
-    await writeArchive(archive)
+    return writeArchive(archive)
   }
   const previous = createDesktop(exportTo).desktop
   const other = createDesktop(exportTo).desktop
@@ -327,7 +336,7 @@ it('keeps the admitted export policy when a concurrent desktop export is rejecte
   const { desktop } = createDesktop(async (_request, archive, options) => {
     await blocked
     await selectEverything(options, 'Concurrent Session')
-    await writeArchive(archive)
+    return writeArchive(archive)
   })
   try {
     const pending = desktop.export(request, undefined, undefined, { stageDownload: true })

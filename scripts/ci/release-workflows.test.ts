@@ -53,6 +53,34 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('blocks package certification on the candidate updater occupancy check on every native OS', () => {
+    const smoke = workflow('package-smoke.yml').jobs.smoke
+    const evidence = step(smoke, 'Record platform certification evidence')
+    for (const [name, platform] of [
+      ['Certify macOS update occupancy', 'mac'],
+      ['Certify Windows update occupancy', 'win'],
+      ['Smoke test Linux packages', 'linux']
+    ]) {
+      const gate = step(smoke, name)
+      expect(gate.if).toBe(`\${{ !inputs.install_only && matrix.platform == '${platform}' }}`)
+      expect(gate['continue-on-error']).not.toBe(true)
+      expect(gate.run).toContain(
+        'node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json'
+      )
+      expect(gate.run).toContain(
+        'playwright test e2e/certification/update-occupancy.spec.ts --retries=0'
+      )
+      expect(
+        gate.env?.OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT === '1' ||
+          gate.run?.includes('export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1')
+      ).toBe(true)
+      expect(smoke.steps!.indexOf(gate)).toBeLessThan(smoke.steps!.indexOf(evidence))
+    }
+    expect(evidence.if).not.toContain('always()')
+    expect(workflow('release.yml').jobs.publish.needs).toContain('package-smoke')
+    expect(workflow('nightly.yml').jobs.prepare.needs).toContain('package-smoke')
+  })
+
   it('validates a source-only baseline before installing and restores the candidate before packaging', () => {
     const document = workflow('windows-full-test.yml')
     const job = document.jobs.windows_dependencies

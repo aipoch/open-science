@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
 
-import { formatWebSearchDetails, hasWebSearchContentEvidence } from './workspace-web-search-details'
+import { searchActivity, searchResult } from './workspace-web-search-test-fixtures'
+import { sanitizeToolActivity } from '../../../../shared/session-persistence/tool-activity'
+import {
+  readWebSearchResult,
+  isBuiltinWebSearchActivity,
+  formatWebSearchDetails,
+  hasWebSearchContentEvidence
+} from './workspace-web-search-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',
@@ -270,5 +277,70 @@ describe('workspace web search details', () => {
       resultCount: 9,
       results: results.slice(0, 8)
     })
+  })
+})
+
+describe('built-in v1 search details', () => {
+  it('uses validated input while pending and never the MCP title as a query', () => {
+    const pending = searchActivity({ status: 'in_progress', toolContent: [] })
+    expect(formatWebSearchDetails(pending)).toMatchObject({
+      builtin: true,
+      query: 'open science reproducibility',
+      resultCount: 0
+    })
+    expect(
+      formatWebSearchDetails({ ...pending, rawInput: { query: 'x', headers: {} } }).query
+    ).toBe('')
+  })
+  it('requires host ownership, identity and invocation before reading the envelope', () => {
+    expect(readWebSearchResult(searchActivity())).toEqual(searchResult())
+    for (const overrides of [
+      { appOwned: undefined },
+      { providerToolName: 'mcp__external__web_search' },
+      { executionInvocationId: 'other-invocation' }
+    ]) {
+      expect(readWebSearchResult(searchActivity(overrides))).toBeUndefined()
+    }
+    expect(isBuiltinWebSearchActivity(searchActivity({ appOwned: undefined }))).toBe(false)
+  })
+  it('keeps all ten results, source excerpts, and available publication dates', () => {
+    const details = formatWebSearchDetails(searchActivity())
+    expect(details.resultCount).toBe(10)
+    expect(details.results).toHaveLength(10)
+    expect(details.results[0]).toMatchObject({
+      snippet: 'Scientific search excerpt 1',
+      publishedAt: '2026-11-15T00:00:00.000Z'
+    })
+  })
+  it('preserves redacted complete search JSON within wrapper budgets after restart', () => {
+    const value = searchResult(2)
+    value.sources[0].snippet = 'token=x;'.repeat(800)
+    const original = JSON.stringify(value)
+    const saved = sanitizeToolActivity(searchActivity({}, value))!
+    const parsed = readWebSearchResult(saved as ToolActivity)!
+    expect(parsed).toBeDefined()
+    expect(parsed.results_truncated).toBe(true)
+    expect(parsed.returned_count).toBe(parsed.sources.length)
+    expect(parsed.sources[0].snippet).toContain('[redacted]')
+    expect(JSON.stringify(saved.toolContent)).not.toContain('token=x')
+    expect(JSON.stringify(saved.toolContent).length).toBeLessThanOrEqual(32000)
+    expect(JSON.stringify(value)).toBe(original)
+  })
+  it('does not expose credential-bearing or executable source links', () => {
+    const value = searchResult(2)
+    value.sources[0].url = 'https://user:pass@example.org/private'
+    value.sources[1].url = 'javascript:alert(1)'
+    expect(formatWebSearchDetails(searchActivity({}, value)).results).toEqual([])
+  })
+  it('preserves positive results when query redaction expands beyond the input limit', () => {
+    const value = searchResult(2)
+    value.request = { query: 'token=a\n'.repeat(250).trim() }
+    const original = JSON.stringify(value)
+    const saved = sanitizeToolActivity(searchActivity({}, value))!
+    const parsed = readWebSearchResult(saved as ToolActivity)!
+    expect(parsed).toBeDefined()
+    expect(formatWebSearchDetails(saved as ToolActivity).resultCount).toBe(2)
+    expect(JSON.stringify(parsed.request)).not.toContain('token=a')
+    expect(JSON.stringify(value)).toBe(original)
   })
 })

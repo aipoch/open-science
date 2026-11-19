@@ -83,6 +83,28 @@ describe('permission policy', () => {
     }
   )
 
+  it('requires host route authority for automatic built-in Web permissions', () => {
+    const request = withTrustedMcpToolIdentity(
+      createPermissionRequest('fetch', undefined, {
+        providerToolName: 'mcp__open-science-web__web_fetch',
+        rawInput: { url: 'https://example.org' }
+      }),
+      'open-science-web/web_fetch'
+    )
+    const policy = {
+      profile: 'auto' as const,
+      frameworkId: 'open-science-agent' as const,
+      mcpServerNames: ['open-science-web']
+    }
+    expect(resolveAutomaticPermission(request, policy)).toBeUndefined()
+    expect(resolveAutomaticPermission(request, { ...policy, hostWebOperation: 'fetch' })).toBe(
+      'allow'
+    )
+    expect(
+      resolveAutomaticPermission(request, { ...policy, profile: 'ask', hostWebOperation: 'fetch' })
+    ).toBeUndefined()
+  })
+
   it('requires correlated Claude search identity and a text-only search input', () => {
     const raw = createPermissionRequest('fetch', undefined, {
       providerToolName: 'WebSearch',

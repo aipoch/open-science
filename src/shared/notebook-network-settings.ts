@@ -99,7 +99,6 @@ export const OPEN_SCIENCE_DOMAIN_GROUPS: readonly OpenScienceDomainGroup[] = Obj
   {
     id: 'literature',
     domains: [
-      'api.semanticscholar.org',
       'api.biorxiv.org',
       'www.biorxiv.org',
       'api.crossref.org',

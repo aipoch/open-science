@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
+import { useNotebookMemoryNoticeStore } from '@/stores/notebook-memory-notice-store'
+import type { NotebookMemoryRejectedEvent } from '../../../../shared/notebook-memory'
 import { getByRole } from '@testing-library/dom'
 import { installWebRendererContracts } from '../../../web/api-installer'
 import { WEB_INVOKE_CHANNELS } from '../../../../shared/web-api-map.generated'
@@ -27,12 +30,14 @@ vi.mock('@/components/ui/resizable', () => ({
   ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
 }))
 
+const memoryRuntime = vi.hoisted(() => ({ sendMessage: vi.fn() }))
+
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     sessionCleanups: {},
     actionError: null,
     pendingPermissions: [],
-    sendMessage: vi.fn(),
+    sendMessage: memoryRuntime.sendMessage,
     cancelRun: vi.fn(),
     deleteRuntimeSession: vi.fn(),
     respondToPermission: vi.fn()
@@ -45,6 +50,11 @@ vi.mock('./ConversationPanel', () => ({
 
 vi.mock('./PreviewPanel', () => ({
   PreviewPanel: (): React.JSX.Element => <div data-testid="preview-panel" />
+}))
+
+vi.mock('./SessionReproducibilityDialog', () => ({
+  SessionReproducibilityDialog: ({ session }: { session?: { id: string } }) =>
+    session ? <section aria-label="Reproducibility checks">{session.id}</section> : null
 }))
 
 vi.mock('./EditSessionDialog', () => ({
@@ -65,6 +75,17 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    memoryRuntime.sendMessage
+      .mockReset()
+      .mockResolvedValue({ sessionId: 'sess-1', messageId: 'new-prompt' })
+    useNotebookMemoryNoticeStore.setState({
+      rejection: undefined,
+      warning: undefined,
+      pressure: undefined,
+      terminal: undefined,
+      criticalScopes: [],
+      dismissedRefusalIds: []
+    })
     useSessionStore.setState(createInitialSessionState())
     useProjectStore.setState({
       ...createInitialProjectState(),
@@ -97,7 +118,10 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
     })
     window.api = {
       platform: 'linux',
-      acp: { getPlanProjection: vi.fn().mockResolvedValue(null) },
+      acp: {
+        getPlanProjection: vi.fn().mockResolvedValue(null),
+        continueNotebookExecution: vi.fn()
+      },
       notebook: { getReference: vi.fn().mockResolvedValue(null) },
       preview: {
         load: vi.fn().mockResolvedValue(undefined),
@@ -112,6 +136,9 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
     installWebRendererContracts(window.api, {
       availableRpcChannels: new Set([
         WEB_INVOKE_CHANNELS['notebook.getProjectActivity'],
+        WEB_INVOKE_CHANNELS['notebook.getProjectResources'],
+        WEB_INVOKE_CHANNELS['notebook.releaseSessionResources'],
+        WEB_INVOKE_CHANNELS['notebook.retryResourceRelease'],
         WEB_INVOKE_CHANNELS['compute.jobsList']
       ]),
       restrictedRpcChannels: new Set(),
@@ -150,6 +177,59 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
     }) as HTMLButtonElement
   }
 
+  it.each(['agent', 'reproduction'])(
+    'handles a live %s refusal with the Notebook pane closed',
+    async (source) => {
+      let reject!: (event: NotebookMemoryRejectedEvent) => void
+      window.api.notebook.onMemoryRejected = (listener) => {
+        reject = listener
+        return () => undefined
+      }
+      await renderPage()
+      await act(async () =>
+        reject({
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          source,
+          refusalId: 'live-refusal',
+          workspaceCwd: '/workspace/proj-1',
+          memory: {
+            status: 'pressured',
+            reason: 'linux-memory-low',
+            source: 'linux-proc',
+            executionScope: 'linux:host',
+            checkedAt: 1
+          }
+        })
+      )
+      expect(screen.getByRole('dialog', { name: 'System memory is under pressure' })).toBeTruthy()
+      expect(memoryRuntime.sendMessage).not.toHaveBeenCalled()
+      await act(async () =>
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: source === 'reproduction' ? 'Open reproducibility checks' : 'Recheck and retry'
+          })
+        )
+      )
+      if (source === 'reproduction') {
+        expect(screen.getByRole('region', { name: 'Reproducibility checks' }).textContent).toBe(
+          'sess-1'
+        )
+        expect(memoryRuntime.sendMessage).not.toHaveBeenCalled()
+      } else {
+        expect(memoryRuntime.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            projectId: 'proj-1',
+            sessionId: 'sess-1',
+            requireExistingSession: true,
+            notebookContinuation: { refusalId: 'live-refusal' },
+            text: 'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
+          })
+        )
+      }
+    }
+  )
+
   it.each(['Web', 'Electron'])('opens project Compute with %s capabilities', async (surface) => {
     if (surface === 'Electron') {
       window.api.backgroundResultDelivery = { getProjectActivity: vi.fn() } as never
@@ -173,6 +253,9 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
 
   it.each([
     ['notebook', 'getProjectActivity'],
+    ['notebook', 'getProjectResources'],
+    ['notebook', 'releaseSessionResources'],
+    ['notebook', 'retryResourceRelease'],
     ['notebook', 'onChanged'],
     ['compute', 'jobsList'],
     ['compute', 'onJobUpdated']

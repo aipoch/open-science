@@ -52,6 +52,7 @@ export type SessionReproducibilityBatch = {
       | 'insufficient-disk-space'
     attemptId?: string
     receiptChecksum?: string
+    failedStep?: ArtifactReproducibilityCheckState['failedStep']
   }>
 }
 

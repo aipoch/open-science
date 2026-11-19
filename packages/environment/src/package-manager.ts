@@ -45,7 +45,12 @@ import {
 import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
-import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
+import {
+  CHILD_UNCONFIRMED,
+  killAndConfirmExit,
+  retainEnvironmentChildCleanup,
+  type EnvironmentChildCleanup
+} from './provisioner-runtime'
 import type { EnvironmentProcessHost, ProcessTreeKillResult } from './process-host'
 import {
   DEFAULT_PY_ENV,
@@ -1078,6 +1083,11 @@ process.exitCode = 0
       }
       if (platform !== 'win32' && process.platform !== 'win32')
         host.trackOwnership(child, processTreeOwnership.token)
+      const childCleanup: EnvironmentChildCleanup = {
+        identity: child,
+        startedAt: Date.now(),
+        release: () => terminateTree(child)
+      }
       if (child.pid !== undefined) {
         try {
           onChild?.(child.pid)
@@ -1085,22 +1095,27 @@ process.exitCode = 0
           // Recording the PID failed. FAIL CLOSED: kill it and only settle once it is CONFIRMED gone.
           // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
           // recovery evidence (a worker may still be writing) instead of clearing it.
-          void killAndConfirmExit(child, terminateTree).then((confirmed) => {
-            void discardCondaJsonCapture(condaJsonCapture)
-            if (confirmed) {
-              resolve({
-                code: 1,
-                stdout: '',
-                stderr: `Failed to record the installer worker; aborted: ${toErrorMessage(error)}`
-              })
-            } else {
-              reject(
-                new Error(
-                  `${CHILD_UNCONFIRMED}: recording failed and the installer could not be confirmed stopped.`
+          void killAndConfirmExit(child, terminateTree)
+            .catch(() => false)
+            .then((confirmed) => {
+              void discardCondaJsonCapture(condaJsonCapture)
+              if (confirmed) {
+                resolve({
+                  code: 1,
+                  stdout: '',
+                  stderr: `Failed to record the installer worker; aborted: ${toErrorMessage(error)}`
+                })
+              } else {
+                reject(
+                  retainEnvironmentChildCleanup(
+                    new Error(
+                      `${CHILD_UNCONFIRMED}: recording failed and the installer could not be confirmed stopped.`
+                    ),
+                    childCleanup
+                  )
                 )
-              )
-            }
-          })
+              }
+            })
           return
         }
       }
@@ -1184,13 +1199,16 @@ process.exitCode = 0
       }
       const terminate = (reason: 'abort' | 'timeout'): void => {
         terminationReason ??= reason
-        termination ??= killAndConfirmExit(child, terminateTree)
+        termination ??= killAndConfirmExit(child, terminateTree).catch(() => false)
         void termination.then((confirmed) => {
           if (!confirmed) {
             rejectOnce(
-              new Error(
-                `${CHILD_UNCONFIRMED}: the package installer process tree could not be confirmed ` +
-                  `stopped after ${terminationReason}; leaving the operation for recovery to block.`
+              retainEnvironmentChildCleanup(
+                new Error(
+                  `${CHILD_UNCONFIRMED}: the package installer process tree could not be confirmed ` +
+                    `stopped after ${terminationReason}; leaving the operation for recovery to block.`
+                ),
+                childCleanup
               )
             )
           }

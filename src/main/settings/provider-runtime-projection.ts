@@ -23,6 +23,7 @@ import {
   resolveModelContextWindow
 } from '../../shared/provider-model-policy'
 import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import { labModelWireId, readLabModelCapabilities } from '../../shared/lab'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import {
   reasoningProfileFromCapability,
@@ -40,14 +41,17 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isLabProvider,
   isXaiSubscriptionProvider,
   providerEndpoints,
   requiresChatCompletionsBridge
 } from '../../shared/settings-runtime'
 import type { AgentFrameworkId } from '../agent-framework'
+import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
 import type { ResolvedProvider } from './provider-env'
+
 import type { StoredProvider } from './types'
 
 type RuntimeProviderModelSelection =
@@ -91,6 +95,12 @@ class ProviderRuntimeProjectionOwner {
     if (isCodexSubscriptionProvider(provider.type)) return ['responses']
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
+    if (isLabProvider(provider.type)) {
+      return providerEndpoints(
+        provider,
+        activeModel ?? provider.model ?? provider.fetchedModels?.[0]
+      )
+    }
     if (provider.type === 'official' && provider.vendorId) {
       const catalog = resolveOfficialModelCatalog(provider)
       const model = activeModel
@@ -135,6 +145,10 @@ class ProviderRuntimeProjectionOwner {
       modelCatalog: bundled ? undefined : provider.modelCatalog,
       modelCatalogStatus: bundled ? undefined : provider.modelCatalogStatus,
       catalogParameters: provider.catalogParameters,
+      ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
+      ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
+      ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
+      ...(provider.modelStreaming ? { modelStreaming: provider.modelStreaming } : {}),
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,
       hasKey,
@@ -180,6 +194,9 @@ class ProviderRuntimeProjectionOwner {
     target: ProviderRuntimeTarget,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
+    if (!isModelStreamingCompatible(framework.id, target.provider.streaming)) {
+      throw new Error(`The model "${target.effectiveModel}" does not support streaming.`)
+    }
     return {
       ...target,
       frameworkCompatible: isProviderUsableByFramework(
@@ -209,8 +226,13 @@ class ProviderRuntimeProjectionOwner {
         : selection.kind === 'configured'
           ? (selection.requestedModel ?? storedProvider.model)
           : undefined
-    if (storedProvider.modelCatalog && pinned && !availableModels.includes(pinned)) {
-      throw new Error(buildConfiguredModelUnavailableMessage(pinned, storedProvider.name))
+    if (
+      (storedProvider.modelCatalog && pinned && !availableModels.includes(pinned)) ||
+      (storedProvider.type === 'lab' && availableModels.length === 0)
+    ) {
+      throw new Error(
+        buildConfiguredModelUnavailableMessage(pinned ?? storedProvider.name, storedProvider.name)
+      )
     }
     if (
       selection.kind === 'configured' &&
@@ -307,9 +329,13 @@ class ProviderRuntimeProjectionOwner {
           )
         })
     }
-    return this.availableModels(storedProvider).map((model) =>
-      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
-    )
+    return this.availableModels(storedProvider)
+      .filter((model) =>
+        isModelStreamingCompatible(framework.id, storedProvider.modelStreaming?.[model])
+      )
+      .map((model) =>
+        this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+      )
   }
 
   resolveRuntimeReasoningEffortProfile(
@@ -355,6 +381,26 @@ class ProviderRuntimeProjectionOwner {
         contextWindow: resolveModelContextWindow('xai', model),
         apiEndpoints: ['messages', 'chat-completions', 'responses'],
         supportsImageInput: isVendorModelMultimodal('xai', model)
+      }
+    }
+    if (isLabProvider(provider.type)) {
+      const model = modelOverride ?? provider.model ?? provider.fetchedModels?.[0]
+      if (!provider.baseUrl) throw new Error('The Lab provider has no server address.')
+      const capabilities = readLabModelCapabilities(provider.modelCapabilities?.[model ?? ''])
+      return {
+        type: 'lab',
+        baseUrl: provider.baseUrl,
+        ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
+        ...(model ? { model: labModelWireId(model) } : {}),
+        ...(capabilities?.contextWindow !== undefined
+          ? { contextWindow: capabilities.contextWindow }
+          : {}),
+        ...(capabilities?.maxOutputTokens !== undefined
+          ? { maxOutputTokens: capabilities.maxOutputTokens }
+          : {}),
+        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
+        supportsImageInput: capabilities?.inputModalities.includes('image') ?? false,
+        ...(provider.modelStreaming?.[model ?? ''] === false ? { streaming: false } : {})
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
@@ -432,6 +478,15 @@ class ProviderRuntimeProjectionOwner {
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    if (isLabProvider(provider.type)) {
+      // Lab has a heterogeneous catalog; without a selected model there is no single image
+      // capability to advertise. Do not guess from the first catalog entry.
+      return activeModel
+        ? (readLabModelCapabilities(
+            provider.modelCapabilities?.[activeModel]
+          )?.inputModalities.includes('image') ?? false)
+        : false
+    }
     if (isCodexSubscriptionProvider(provider.type)) return true
     if (isClaudeSubscriptionProvider(provider.type)) return true
     if (isXaiSubscriptionProvider(provider.type)) return true
@@ -463,6 +518,8 @@ class ProviderRuntimeProjectionOwner {
         ? provider.fetchedModels
         : getOfficialVendorModelIds('xai')
     }
+    if (isLabProvider(provider.type))
+      return provider.fetchedModels ? [...provider.fetchedModels] : []
     if (provider.type === 'official' && provider.vendorId) {
       return resolveOfficialModelCatalog(provider)
         .filter(isCatalogModelAvailable)

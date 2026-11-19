@@ -33,7 +33,8 @@
     "src/shared/renderer-contract.test.ts",
     "src/shared/renderer-surface-inventory.test.ts",
     "src/shared/renderer-surface-matrix.test.ts",
-    "src/shared/web-rpc-contract.test.ts"
+    "src/shared/web-rpc-contract.test.ts",
+    "src/shared/renderer-contracts/settings-lab.ts"
   ],
   "interfacePaths": [
     "src/shared/renderer-contract-catalog.ts",
@@ -64,7 +65,8 @@
     "src/shared/renderer-contracts/system.ts",
     "src/shared/renderer-contracts/update.ts",
     "src/shared/renderer-contracts/window.ts",
-    "src/shared/renderer-contracts/session-replay.ts"
+    "src/shared/renderer-contracts/session-replay.ts",
+    "src/shared/renderer-contracts/settings-lab.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

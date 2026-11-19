@@ -136,6 +136,13 @@ type SessionStateUploads = {
 }
 
 type SessionPersistenceStateOwnerOptions = {
+  webEvidence?: {
+    withCanonicalPublication(
+      candidate: PersistedChatSession,
+      previous: PersistedChatSession | undefined,
+      save: () => Promise<PersistedChatSession>
+    ): Promise<PersistedChatSession>
+  }
   repository: SessionStateRepository
   fileIndex: SessionStateFileIndex
   assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void
@@ -1007,19 +1014,18 @@ class SessionPersistenceStateOwner {
       ...(options.onJsonCommitted ? { onJsonCommitted: recordJsonCommit } : {})
     }
     try {
-      persisted =
+      const save = (): Promise<PersistedChatSession> =>
         changes || options.onJsonCommitted
-          ? await saveSessionWithRevision(
+          ? saveSessionWithRevision(
               this.options.repository,
               candidate,
               previous.revision ?? 0,
               mutationOptions
             )
-          : await saveSessionWithRevision(
-              this.options.repository,
-              candidate,
-              previous.revision ?? 0
-            )
+          : saveSessionWithRevision(this.options.repository, candidate, previous.revision ?? 0)
+      persisted = this.options.webEvidence
+        ? await this.options.webEvidence.withCanonicalPublication(candidate, previous, save)
+        : await save()
     } catch (error) {
       if (!(error instanceof SessionProjectionAfterCommitError)) throw error
       persisted = error.committedSession
@@ -1824,11 +1830,11 @@ class SessionPersistenceStateOwner {
       if (bindingValidation.status === 'conflict') throw bindingValidation.error
     }
 
-    const persistedSession = await saveSessionWithRevision(
-      this.options.repository,
-      durableSession,
-      expectedRevision
-    )
+    const save = (): Promise<PersistedChatSession> =>
+      saveSessionWithRevision(this.options.repository, durableSession, expectedRevision)
+    const persistedSession = this.options.webEvidence
+      ? await this.options.webEvidence.withCanonicalPublication(durableSession, authority, save)
+      : await save()
     this.recordSession(persistedSession)
     if (bindingValidation.status === 'valid') {
       this.validatedBindingTopologies.set(key, bindingTopology)

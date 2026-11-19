@@ -31,6 +31,7 @@ import type { NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from './artifact-provenance-graph'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import { createNotebookReproductionRuntime } from '../notebook/reproduction-runtime'
+import { healthyNotebookExecutionAdmission } from '../notebook/memory-policy.test-support'
 import { reproductionRecipes } from './reproducibility-host'
 
 import { executeArtifactReproducibility } from '../notebook/reproduction-runtime'
@@ -351,6 +352,7 @@ describe('host reproducibility kernel integration', () => {
         await executor.shutdown()
         const comparison = await executeArtifactReproducibility(
           {
+            createExecutionAdmission: healthyNotebookExecutionAdmission,
             execution,
             frontierId: 'original-inputs',
             storageRoot,
@@ -444,6 +446,7 @@ describe('host reproducibility kernel integration', () => {
 
         const result = await executeArtifactReproducibility(
           {
+            createExecutionAdmission: healthyNotebookExecutionAdmission,
             execution,
             frontierId: 'original-inputs',
             storageRoot,

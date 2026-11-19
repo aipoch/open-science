@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
 
 let root: string | undefined
@@ -22,6 +23,7 @@ describe('NotebookRuntimeService main-process logging', () => {
     const logDir = join(root, 'logs')
     initLogger({ logDir, mirrorToConsole: false })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',

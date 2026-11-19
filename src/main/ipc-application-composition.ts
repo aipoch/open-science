@@ -73,6 +73,8 @@ import {
   createElectronSurfaceAdapter
 } from './desktop-surface-declarations'
 import { LocalePreferenceOwner } from './locale/owner'
+import { netFetchStandard } from './network-fetch'
+import { OrgCaseService } from './session-package/org-cases'
 import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
 import { runtimeMetadata } from './runtime-metadata'
 
@@ -319,6 +321,11 @@ export const createApplicationModules = async (
     ...sessionFoundation,
     getDetectSessionExportBlockingSessions: () =>
       projectLifecycle.detectSessionExportBlockingSessions,
+    getSessionExportOwners: () => ({
+      archiveCoordinator: projectLifecycle.archiveCoordinator,
+      sessionPersistenceCoordinator: sessionAuthority.sessionPersistenceCoordinator,
+      notebookService: notebookRuntime.notebookService
+    }),
     readImageTasks: (scope) => imageTasks.list(scope, true),
     modules
   })
@@ -857,6 +864,51 @@ export const createApplicationModules = async (
     declareElectronAdapter
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
+  const orgCases = new OrgCaseService({
+    getLabView: () => settingsBootstrap.settingsService.getLabView?.() ?? { state: 'unconfigured' },
+    listLabCases: (query, signal) => settingsBootstrap.settingsService.listLabCases(query, signal),
+    getLabCase: (caseId, signal) => settingsBootstrap.settingsService.getLabCase(caseId, signal),
+    getLabCaseDownload: (caseId, signal) =>
+      settingsBootstrap.settingsService.getLabCaseDownload(caseId, signal),
+    uploadLabCase: (input, signal) =>
+      settingsBootstrap.settingsService.uploadLabCase(input, signal),
+    enqueuePackageFile: (path, onReleased, validateBeforeTarget) =>
+      sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(
+        path,
+        onReleased,
+        validateBeforeTarget
+      ),
+    isImportBusy: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.operations.active ||
+      sessionPackageSurfaces.browserPackageImport.active,
+    cancelQueuedFile: (path) =>
+      sessionPackageSurfaces.sessionPackageDesktop.cancelReceivedFile(path),
+    publishDownloadChanged: (snapshot) =>
+      applicationEvents.publish('sessions:org-case-download-changed', snapshot),
+    downloadFetch: netFetchStandard
+  })
+  const unregisterOrgCaseUploader =
+    sessionPackageSurfaces.sessionPackageDesktop.registerOrgCaseUploader?.((input, signal) =>
+      orgCases.uploadCase(input, signal)
+    )
+  const unregisterOrgTransferCheck = sessionPackageSurfaces.registerExternalTransferCheck?.(() =>
+    orgCases.hasActiveDownload()
+  )
+  const unsubscribeOrgCasesLabSync = applicationEvents.subscribe?.((event) => {
+    if (event.channel === 'settings:changed') {
+      orgCases.handleLabViewChanged(event.payload.lab)
+    }
+  })
+  await modules.add(orgCases, (cases) => ({
+    name: 'org-cases',
+    capability: cases,
+    dispose: () => {
+      unregisterOrgCaseUploader?.()
+      unregisterOrgTransferCheck?.()
+      unsubscribeOrgCasesLabSync?.()
+      cases.dispose()
+    }
+  }))
   const commandDependencies = composeCommandDependencies({
     schedules,
     imageTasks,
@@ -894,10 +946,12 @@ export const createApplicationModules = async (
     storageHandoff,
     artifactSurfaces,
     sessionPackageSurfaces,
+    orgCases,
     reviewerCommandOwner,
     listAppIconPreviews
   })
   await composeBackendLifecycle({
+    notebookService: notebookRuntime.notebookService,
     settingsBootstrap,
     managedFiles,
     sessionAuthority,
@@ -1059,7 +1113,8 @@ export const createApplicationModules = async (
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
       sessionPackageSurfaces.browserPackageImport.active ||
-      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
+      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer() ||
+      orgCases.hasActiveDownload(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),

@@ -1,8 +1,28 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { setImmediate as nextTurn } from 'node:timers/promises'
+import { queryObjects } from 'node:v8'
 import { paceFileIo } from '../file-io-pacing'
 import { withPackageTransfer } from './transfer'
 
 afterEach(() => vi.useRealTimers())
+
+it('does not retain completed work through a closed transfer with the default rate', async () => {
+  class WorkPayload {
+    value = 42
+  }
+  const complete = (): Promise<{ signal: AbortSignal }> => {
+    const payload = new WorkPayload()
+    return withPackageTransfer(async (transfer) => {
+      expect(payload.value).toBe(42)
+      return transfer
+    })
+  }
+  const closed = await complete()
+  // A completed async context may still hold its transfer. It must not retain the work payload.
+  await nextTurn()
+  expect(queryObjects(WorkPayload)).toBe(0)
+  expect(closed.signal.aborted).toBe(false)
+})
 
 it('shares a rate budget across streams without slowing unrelated work', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })

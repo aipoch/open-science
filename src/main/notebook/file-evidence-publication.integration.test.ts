@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import * as fs from 'node:fs'
 import {
   appendFile,
   utimes,
@@ -8,13 +9,16 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
+  symlink,
   writeFile
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createInterface } from 'node:readline'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -317,9 +321,10 @@ it(
         hook,
         `
 const fs = require('node:fs')
+const { basename } = require('node:path')
 const rename = fs.renameSync
 fs.renameSync = (from, to) => {
-  if (from !== 'staging-run' || to !== 'activity-run') return rename(from, to)
+  if (basename(from) !== 'staging-run' || basename(to) !== 'activity-run') return rename(from, to)
   if (!fs.existsSync('stop-after-rename')) {
     fs.mkdirSync(to)
     fs.writeFileSync(to + '/foreign', 'keep')
@@ -534,7 +539,7 @@ fs.openSync = (file, flags, ...rest) => {
 };
 fs.renameSync = (from, to) => {
   renameSync(from, to);
-  if (from === 'activity-settling' && to.startsWith('deleting-')) {
+  if (require('node:path').basename(from) === 'activity-settling' && require('node:path').basename(to).startsWith('deleting-')) {
     fs.writeFileSync('settlement-scans', String(scans));
     process.exit(83);
   }
@@ -629,6 +634,225 @@ fs.renameSync = (from, to) => {
 )
 
 describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publication', () => {
+  const publisher = (): typeof import('@aipoch/safe-file-publisher-native') =>
+    require('@aipoch/safe-file-publisher-native')
+
+  it('pins the directory and its ancestors until the lease closes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'evidence-binding-'))
+    try {
+      const parent = join(root, 'parent')
+      const lane = join(parent, 'lane')
+      await mkdir(lane, { recursive: true })
+      const metadata = await stat(lane, { bigint: true })
+      const native = publisher()
+      const lease = native.openDirectoryLease(lane, metadata.dev, metadata.ino)
+      try {
+        for (const directory of [root, parent, lane]) {
+          expect(() => fs.renameSync(directory, directory + '-replaced')).toThrow()
+          expect((await stat(directory, { bigint: true })).isDirectory()).toBe(true)
+        }
+        expect(() => native.closeDirectoryLease({} as typeof lease)).toThrow()
+      } finally {
+        native.closeDirectoryLease(lease)
+        native.closeDirectoryLease(lease)
+      }
+      await rename(parent, parent + '-released')
+      await rename(root, root + '-released')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(root + '-released', { recursive: true, force: true })
+    }
+  })
+
+  it('rejects stale directory identities and junction ancestors without leaking handles', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'evidence-unsafe-binding-'))
+    try {
+      const target = join(root, 'target')
+      await mkdir(join(target, 'lane'), { recursive: true })
+      const metadata = await stat(target, { bigint: true })
+      const native = publisher()
+      expect(() => native.openDirectoryLease(target, metadata.dev, metadata.ino + 1n)).toThrow(
+        'Evidence directory changed before binding.'
+      )
+      const junction = join(root, 'junction')
+      await symlink(target, junction, 'junction')
+      const lane = join(junction, 'lane')
+      const throughJunction = await stat(lane, { bigint: true })
+      expect(() =>
+        native.openDirectoryLease(lane, throughJunction.dev, throughJunction.ino)
+      ).toThrow('Unsafe evidence directory.')
+      await rename(target, target + '-released')
+      expect((await readdir(root)).sort()).toEqual(['junction', 'target-released'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('publishes evidence from a long data root without relying on a long process cwd', async () => {
+    const root = await mkdtemp(join(tmpdir(), `file-evidence-long-root-${'r'.repeat(150)}`))
+    await mkdir(join(root, 'blobs'), { recursive: true })
+    try {
+      const metadata = await stat(root)
+      const blobMetadata = await stat(join(root, 'blobs'))
+      const result = await runChild(
+        process.execPath,
+        [workerPath],
+        root,
+        JSON.stringify({
+          operation: 'begin',
+          expectedRootIdentity: metadata,
+          blobRoot: join(root, 'blobs'),
+          expectedBlobRootIdentity: blobMetadata,
+          blobStorageKeyPrefix: 'project/blobs',
+          activityId: 'long-root-run',
+          activityKind: 'notebook-run',
+          evidenceId: 'long-root-evidence',
+          receiptName: 'receipt-long-root-run.json',
+          stagingName: `staging-long-root-${'x'.repeat(180)}`,
+          finalName: 'activity-long-root-run',
+          storageKeyPrefix: 'project/session',
+          maxEvidenceBytes: 65536,
+          maxActivityBytes: 65536,
+          maxGenerationBytes: 1024,
+          availableBytes: 1048576,
+          diskReserveBytes: 0,
+          rootKinds: ['data'],
+          rootsAvailable: true,
+          reasonCodes: [],
+          readPaths: [],
+          changes: [],
+          scientificOutputs: [],
+          initialViewState: 'complete',
+          initialFiles: []
+        })
+      )
+      expect(result.code, result.stdout + result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('publishes, settles, reconciles and cleans a long resident root with no binding between requests', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'evidence-resident-'))
+    const root = join(fixture, 'long-'.repeat(30), 'lane-'.repeat(30))
+    const pool = join(root, '..', 'blobs')
+    await mkdir(root, { recursive: true })
+    await mkdir(pool)
+    const input = join(fixture, 'input.txt')
+    await writeFile(input, 'safe fixture bytes')
+    const inputMetadata = await stat(input)
+    expect(root.length).toBeGreaterThan(260)
+    const metadata = await stat(root)
+    const blobMetadata = await stat(pool)
+    const request = {
+      expectedRootIdentity: { dev: metadata.dev, ino: metadata.ino },
+      blobRoot: pool,
+      expectedBlobRootIdentity: { dev: blobMetadata.dev, ino: blobMetadata.ino },
+      blobStorageKeyPrefix: 'execution-file-evidence/project/blobs',
+      poolAddressed: true,
+      activityId: 'resident-run',
+      activityKind: 'notebook-run',
+      evidenceId: 'resident-evidence',
+      receiptName: 'receipt-resident-run.json',
+      stagingName: 'staging-resident',
+      finalName: 'activity-resident-run',
+      storageKeyPrefix: 'execution-file-evidence/project/' + 'lane-'.repeat(30),
+      maxEvidenceBytes: 65536,
+      maxActivityBytes: 65536,
+      maxGenerationBytes: 1024,
+      availableBytes: 1048576,
+      diskReserveBytes: 0,
+      rootKinds: ['data'],
+      rootsAvailable: true,
+      reasonCodes: [],
+      readPaths: ['data/input.txt'],
+      changes: [],
+      scientificOutputs: [],
+      initialViewState: 'complete',
+      initialFiles: [
+        {
+          file: { ...inputMetadata, physicalPath: input, relativePath: 'data/input.txt' },
+          generation: { generationId: 'input-generation', capturedAt: '2026-11-14T00:00:00Z' }
+        }
+      ]
+    }
+    const worker = spawn(process.execPath, [workerPath, '--serve'], {
+      cwd: fixture,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: childTimeoutMs
+    })
+    let stderr = ''
+    worker.stderr.on('data', (chunk) => (stderr += chunk))
+    const closed = new Promise<number | null>((resolve, reject) => {
+      worker.on('error', reject)
+      worker.on('close', resolve)
+    })
+    const lines = createInterface({ input: worker.stdout })
+    const call = (extra: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const response = new Promise<string>((resolve) => lines.once('line', resolve))
+      worker.stdin.write(JSON.stringify({ root, request: { ...request, ...extra } }) + '\n')
+      return response.then((line) => {
+        const value = JSON.parse(line)
+        expect(value, line).toMatchObject({ ok: true })
+        return value
+      })
+    }
+    try {
+      await call({ operation: 'begin' })
+      // A live resident worker must keep neither the lane nor any ancestor pinned between calls.
+      await rename(root, root + '-moved')
+      await rename(root + '-moved', root)
+      const publication = await call({ operation: 'persist' })
+      const summary = publication.fileEvidence as Record<string, unknown>
+      expect(summary).toMatchObject({
+        schemaVersion: 1,
+        activityId: request.activityId,
+        generationCount: 1
+      })
+      await call({ operation: 'complete', ...summary })
+      expect(await readFile(join(root, '.shadow-evidence', 'log.jsonl'), 'utf8')).toContain(
+        'resident-run'
+      )
+      await expect(stat(join(root, request.receiptName))).rejects.toMatchObject({ code: 'ENOENT' })
+      const abandoned = {
+        activityId: 'abandoned',
+        receiptName: 'receipt-abandoned.json',
+        finalName: 'activity-abandoned'
+      }
+      await call({ operation: 'begin', ...abandoned })
+      await call({
+        operation: 'reconcile',
+        retained: [],
+        deferredActivityIds: [],
+        deferredActivityKinds: []
+      })
+      await expect(stat(join(root, request.stagingName))).rejects.toMatchObject({ code: 'ENOENT' })
+      await call({ operation: 'begin', ...abandoned })
+      await call({ operation: 'cleanup', preservePublished: false, ...abandoned })
+      await expect(stat(join(root, request.stagingName))).rejects.toMatchObject({ code: 'ENOENT' })
+      // A rejected request also releases its binding and leaves the worker usable.
+      const rejected = new Promise<string>((resolve) => lines.once('line', resolve))
+      worker.stdin.write(JSON.stringify({ root, request: { operation: 'unsupported' } }) + '\n')
+      expect(JSON.parse(await rejected)).toMatchObject({ ok: false })
+      await rename(root, root + '-moved')
+      await rename(root + '-moved', root)
+      await call({ operation: 'ensure-project', projectName: 'owned' })
+      await call({ operation: 'delete-project', projectName: 'owned' })
+      await expect(stat(join(root, 'owned'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      worker.stdin.end()
+      try {
+        expect(await closed, stderr).toBe(0)
+      } finally {
+        lines.close()
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  })
+
   describe.each(['source Node', 'packaged Electron'] as const)('%s', (mode) => {
     let packageRoot: string | undefined
     let runtime: WorkerRuntime
@@ -657,6 +881,20 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
       await createPackageWithOptions(source, join(resources, 'app.asar'), {
         unpackDir: 'resources'
       })
+      const nativeDirectory = join(
+        resources,
+        'app.asar.unpacked',
+        'node_modules',
+        '@aipoch',
+        'safe-file-publisher-native',
+        'build',
+        'Release'
+      )
+      await mkdir(nativeDirectory, { recursive: true })
+      await copyFile(
+        require.resolve('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node'),
+        join(nativeDirectory, 'safe_file_publisher_native.node')
+      )
       runtime = {
         executable: require('electron') as string,
         worker: join(

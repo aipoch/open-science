@@ -1,6 +1,7 @@
 import type { NotebookExecutionContext } from './execution-context'
 import type {
   ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityFailedStep,
   ArtifactReproducibilityRecipeStep,
   NotebookHelperModuleEvidence
 } from './evidence'
@@ -40,6 +41,7 @@ export type NotebookReproductionRuntime = {
     stderr: string
     traceback: string
     truncated?: boolean
+    recovery?: Pick<ArtifactReproducibilityFailedStep, 'execution'>
   }>
   shutdown(): Promise<{ reaped: boolean }>
 }

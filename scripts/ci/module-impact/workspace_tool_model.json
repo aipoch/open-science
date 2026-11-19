@@ -23,10 +23,15 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
+    "src/renderer/src/pages/workspace/workspace-web-fetch-details.test.ts",
+    "src/renderer/src/pages/workspace/workspace-web-fetch-details.ts",
+    "src/renderer/src/pages/workspace/workspace-web-fetch-test-fixtures.ts",
     "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
     "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
     "src/renderer/src/pages/workspace/image-tool-presentation.ts",
-    "src/renderer/src/pages/workspace/image-tool-presentation.test.ts"
+    "src/renderer/src/pages/workspace/image-tool-presentation.test.ts",
+    "src/renderer/src/pages/workspace/workspace-web-search-test-fixtures.ts",
+    "src/renderer/src/pages/workspace/workspace-package-web-evidence.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/agent-loading-message.ts",
@@ -42,8 +47,12 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
+    "src/renderer/src/pages/workspace/workspace-web-fetch-details.ts",
+    "src/renderer/src/pages/workspace/workspace-web-fetch-test-fixtures.ts",
     "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
-    "src/renderer/src/pages/workspace/image-tool-presentation.ts"
+    "src/renderer/src/pages/workspace/image-tool-presentation.ts",
+    "src/renderer/src/pages/workspace/workspace-web-search-test-fixtures.ts",
+    "src/renderer/src/pages/workspace/workspace-package-web-evidence.ts"
   ],
   "testFiles": {
     "owner": [
@@ -57,6 +66,7 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
+      "src/renderer/src/pages/workspace/workspace-web-fetch-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
       "src/renderer/src/pages/workspace/image-tool-presentation.test.ts"
     ],

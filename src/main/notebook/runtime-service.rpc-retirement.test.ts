@@ -9,6 +9,7 @@ import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
   NotebookRuntimeService,
   type NotebookControlResult,
@@ -56,6 +57,7 @@ async function harness(
   const lifecycles: NotebookExecutorLifecycleCallbacks[] = []
   const repository = new NotebookRunRepository(root)
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: root,
     dataRoot: root,
     projectId: 'default-project',

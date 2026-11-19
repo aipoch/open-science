@@ -76,7 +76,12 @@ export class ReviewerCorrectionOwner {
     }
 
     const promptMessageId = this.options.createPromptMessageId?.() ?? `prompt-${randomUUID()}`
-    const provenanceContext = { ...input.provenanceContext, promptMessageId }
+    const provenanceContext = {
+      ...input.provenanceContext,
+      originMessageId:
+        input.provenanceContext?.originMessageId ?? input.provenanceContext?.promptMessageId,
+      promptMessageId
+    }
     const text = buildAuditorMessage(openChecks)
     this.options.onCorrectionPrompt?.(text)
     log.info('sending Reviewer Correction application turn', {

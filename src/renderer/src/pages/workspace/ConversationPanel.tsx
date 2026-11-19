@@ -996,6 +996,14 @@ const ConversationPanel = ({
   )
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
   const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
+  const labStateExpired = useSettingsStore((state) => state.lab?.state === 'expired')
+  const providers = useSettingsStore((state) => state.providers)
+  const labSignInExpired =
+    labStateExpired &&
+    Boolean(
+      modelConfiguration?.providerId &&
+      providers.find((provider) => provider.id === modelConfiguration.providerId)?.type === 'lab'
+    )
   const optimizationModelConfiguration =
     promptOptimizationModel.mode === 'fixed'
       ? {
@@ -1026,7 +1034,7 @@ const ConversationPanel = ({
   const fileDropError = fileMentionDrop.error ? t('Could not resolve file version.') : undefined
   const composerNotices = useComposerNotices({
     sessionId: activeSession?.id,
-    authenticationResolved: view.authenticationRecovery?.required === false,
+    authenticationResolved: !labSignInExpired && view.authenticationRecovery?.required === false,
     compacting: activeSession?.compacting,
     turn: isImported ? undefined : currentTurnOutcome,
     recovery: showSessionRecovery ? (sessionRecovery ?? {}) : undefined,
@@ -1099,6 +1107,21 @@ const ConversationPanel = ({
         id: 'authentication',
         message: view.authenticationRecovery?.required ? 'Authentication required' : undefined,
         blocksSend: true
+      },
+      {
+        id: 'lab-auth-expired',
+        message: labSignInExpired ? t('Lab sign-in expired. Sign in again.') : undefined,
+        blocksSend: true,
+        ...(labSignInExpired
+          ? {
+              failure: {
+                category: 'configuration' as const,
+                reason: 'configuration/auth-failed' as const,
+                diagnostics: {},
+                responseMessage: t('Lab sign-in expired. Sign in again.')
+              }
+            }
+          : {})
       },
       {
         id: 'reconfigure',
@@ -1315,6 +1338,7 @@ const ConversationPanel = ({
     }
   }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
+    conversation.runtimeInteractionInFlight ||
     blockingInteraction ||
     actionability?.activity === 'running' ||
     activeSession?.compacting ||
@@ -1398,16 +1422,26 @@ const ConversationPanel = ({
     },
     'open-provider-settings': {
       run: (notice) => {
+        if (labSignInExpired) {
+          openSettingsToPanel('lab')
+          return
+        }
         if (notice.failure.reason === 'configuration/auth-failed' && view.authenticationRecovery)
           view.authenticationRecovery.openSettings()
-        else
+        else {
+          const failedProvider = useSettingsStore
+            .getState()
+            .providers.find((provider) => provider.id === modelConfiguration?.providerId)
           openSettingsToPanel(
-            notice.failure.reason === 'configuration/claude-cli' ||
-              notice.failure.reason === 'configuration/codex-cli' ||
-              notice.failure.reason === 'configuration/codex-adapter'
-              ? 'agent'
-              : 'model'
+            failedProvider?.type === 'lab'
+              ? 'lab'
+              : notice.failure.reason === 'configuration/claude-cli' ||
+                  notice.failure.reason === 'configuration/codex-cli' ||
+                  notice.failure.reason === 'configuration/codex-adapter'
+                ? 'agent'
+                : 'model'
           )
+        }
       }
     },
     'open-environment': {

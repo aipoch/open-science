@@ -11,6 +11,13 @@ type AppMcpServerDefinition = {
 // only at the agent-facing seam so permissions, grants, policy, and diagnostics keep one stable key.
 const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
   {
+    canonicalName: 'open-science-web',
+    openCodeName: 'open_science_web',
+    tools: ['web_search', 'web_fetch'],
+    // Host-route admission maps these to builtin capabilities, never remembered MCP grants.
+    rememberedPermission: false
+  },
+  {
     canonicalName: 'open-science-activity',
     openCodeName: 'open_science_activity',
     tools: ['begin_activity_group']

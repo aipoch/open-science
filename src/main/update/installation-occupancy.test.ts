@@ -962,6 +962,37 @@ describe('AppImage runtime parent ownership', () => {
     expect(inspectOwnedLinuxAppImageLauncher()).toEqual([process.ppid])
     expect(mocks.readlink).toHaveBeenCalledWith(`/proc/${process.ppid}/exe`)
   })
+  it.each(['owned', 'different pipe', 'read end', 'missing fuse', 'ambiguous'] as const)(
+    'requires the current mount and opposite keepalive endpoint (%s)',
+    (scenario) => {
+      const daemon = process.pid + 1000
+      const descriptors = new Map<string, string>([
+        ['/proc/self/fd/1023', process.env.APPDIR!],
+        [`/proc/${process.pid}/fd/7`, 'pipe:[101]'],
+        [`/proc/${daemon}/exe`, process.env.APPIMAGE!],
+        [`/proc/${daemon}/fd/7`, process.env.APPIMAGE!],
+        [`/proc/${daemon}/fd/8`, scenario === 'different pipe' ? 'pipe:[202]' : 'pipe:[101]'],
+        [`/proc/${daemon}/fd/9`, scenario === 'missing fuse' ? '/dev/null' : '/dev/fuse']
+      ])
+      if (scenario === 'ambiguous') descriptors.set(`/proc/${process.pid}/fd/10`, 'pipe:[303]')
+      mocks.readdir.mockImplementation((path: string) =>
+        path === '/proc'
+          ? [String(daemon)]
+          : [...descriptors.keys()]
+              .filter((name) => name.startsWith(path + '/'))
+              .map((name) => name.slice(path.length + 1))
+      )
+      mocks.readlink.mockImplementation(
+        (name: string) => descriptors.get(name) ?? '/usr/bin/launcher'
+      )
+      mocks.readFile.mockImplementation((name: string) =>
+        name === `/proc/${daemon}/fdinfo/8` && scenario !== 'read end'
+          ? 'flags:\t01\n'
+          : 'flags:\t00\n'
+      )
+      expect(inspectOwnedLinuxAppImageLauncher()).toEqual(scenario === 'owned' ? [daemon] : [])
+    }
+  )
   it('does not accept another executable even with matching environment variables', () => {
     mocks.readlink.mockReturnValue('/usr/bin/node')
     expect(inspectOwnedLinuxAppImageLauncher()).toEqual([])

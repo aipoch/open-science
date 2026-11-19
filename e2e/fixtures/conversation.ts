@@ -21,3 +21,29 @@ export const activatePermissionDecisionViaDom = async (
     element.click()
   })
 }
+
+// Match durable assistant output rather than the submitted user prompt or an in-flight chunk.
+export const expectCompletedAssistant = async (
+  page: Page,
+  marker: string,
+  options: { projectId?: string; timeout?: number } = {}
+): Promise<string> => {
+  let answer = ''
+  await expect
+    .poll(
+      async () => {
+        const sessions = (await page.evaluate(() => window.api.sessions.loadAll())).sessions
+        answer =
+          sessions
+            .filter((session) => !options.projectId || session.projectId === options.projectId)
+            .flatMap((session) => session.messages)
+            .filter((message) => message.role === 'agent' && message.status === 'complete')
+            .map((message) => message.content)
+            .find((content) => content.includes(marker)) ?? ''
+        return answer.length > 0
+      },
+      { timeout: options.timeout ?? 30_000 }
+    )
+    .toBe(true)
+  return answer
+}
