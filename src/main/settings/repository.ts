@@ -2,11 +2,14 @@ import {
   providerCatalogState,
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
+import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
+import { defaultVendorModel } from '../../shared/provider-model-policy'
+import { getOfficialVendor } from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -55,7 +58,7 @@ import {
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { assertProviderCapacity, PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch, reconcileCatalogHealth } from './provider-validation-state'
 import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
 import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
@@ -120,6 +123,22 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
   }
 }
 
+const kiloVendor = getOfficialVendor('kilo')!
+const kiloDefaultModel = defaultVendorModel('kilo')!
+const isKiloProvider = (provider: StoredProvider): boolean =>
+  provider.type === 'official' && provider.vendorId === kiloVendor.id
+
+const createDefaultKiloProvider = (settings: StoredSettings): StoredProvider => {
+  assertProviderCapacity(settings.providers.length, false)
+  return {
+    id: randomUUID(),
+    type: 'official',
+    vendorId: kiloVendor.id,
+    name: kiloVendor.label,
+    configRevision: 1
+  }
+}
+
 const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean =>
   left.type === right.type &&
   left.vendorId === right.vendorId &&
@@ -163,6 +182,50 @@ class SettingsRepository {
   // Reads and sanitizes the settings document, returning empty settings when nothing is stored yet.
   async getSettings(): Promise<StoredSettings> {
     return this.store.read()
+  }
+
+  /** 记录首次桌面启动。旧配置仅补齐供应商，主模型仍由用户选择。 */
+  async initializeDesktopKiloDefaults(upgrading: boolean): Promise<void> {
+    const current = await this.getSettings()
+    if (current.kiloDefaultInitialized) return
+    if (
+      upgrading &&
+      current.providers.length >= PROVIDER_RESOURCE_LIMITS.providers &&
+      !current.providers.some(isKiloProvider)
+    )
+      return
+    await this.store.mutate(
+      (settings) => {
+        if (settings.kiloDefaultInitialized) return settings
+        if (!upgrading || settings.providers.some(isKiloProvider)) {
+          return { ...settings, kiloDefaultInitialized: true }
+        }
+        if (settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) return settings
+        return {
+          ...settings,
+          kiloDefaultInitialized: true,
+          providers: [...settings.providers, createDefaultKiloProvider(settings)]
+        }
+      },
+      undefined,
+      upgrading ? ['providers', 'kiloDefaultInitialized'] : undefined
+    )
+  }
+
+  /** 跳过模型配置时原子化地创建并选中免费模型，重复调用复用已选配置。 */
+  async useOnboardingDefaultModel(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined || settings.activeProviderId) return settings
+      const existing = settings.providers.find(isKiloProvider)
+      const provider = existing ?? createDefaultKiloProvider(settings)
+      return {
+        ...settings,
+        kiloDefaultInitialized: true,
+        providers: existing ? settings.providers : [...settings.providers, provider],
+        activeProviderId: provider.id,
+        activeModel: kiloDefaultModel
+      }
+    })
   }
 
   async selectBootstrapCodex(): Promise<void> {

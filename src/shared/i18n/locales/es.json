@@ -7648,7 +7648,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "Se ha denegado el permiso para leer este archivo. Compruebe los permisos de acceso y vuelva a intentarlo.",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "El navegador no ha podido mostrar esta imagen. Puede estar dañada, no ser compatible o superar la memoria disponible. Descargue el original para verla.",
     "Could not mark messages as read.": "No se pudieron marcar los mensajes como leídos.",
-    "Connect and test a model to finish setup. The agent needs this connection to respond to your requests.": "Conecte y pruebe un modelo para finalizar la configuración. El agente necesita esta conexión para responder a sus solicitudes.",
+    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "Este paso es opcional. Puede omitirlo para usar un modelo gratuito de Kilo sin clave de API. Se aplican límites de uso.",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "Descarga cancelada. Se conservaron los archivos completados; los restantes siguen seleccionados.",
     "Download cancelled. No archive was replaced.": "Descarga cancelada. No se reemplazó ningún archivo comprimido.",
     "Cancelling download…": "Cancelando descarga…",

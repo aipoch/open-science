@@ -7322,7 +7322,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "このファイルの読み取りが拒否されました。アクセス権を確認して再試行してください。",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "ブラウザーでこの画像を表示できませんでした。破損、非対応の形式、またはメモリ不足の可能性があります。元のファイルをダウンロードして表示してください。",
     "Could not mark messages as read.": "メッセージを既読にできませんでした。",
-    "Connect and test a model to finish setup. The agent needs this connection to respond to your requests.": "モデルに接続してテストすると設定が完了します。エージェントがリクエストに応答するには、この接続が必要です。",
+    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "この手順は任意です。スキップすると、API キーなしで Kilo の無料モデルを使用できます。利用制限があります。",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "ダウンロードをキャンセルしました。完了したファイルは保持され、残りのファイルは選択されたままです。",
     "Download cancelled. No archive was replaced.": "ダウンロードをキャンセルしました。アーカイブは置き換えられていません。",
     "Cancelling download…": "ダウンロードをキャンセル中…",

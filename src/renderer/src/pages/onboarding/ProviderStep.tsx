@@ -86,6 +86,11 @@ const ProviderStep = ({
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const selectOnboardingDefault = useSettingsStore((state) => state.useOnboardingDefaultModel)
+  const existingKiloId = useSettingsStore(
+    (state) =>
+      state.providers.find(({ type, vendorId }) => type === 'official' && vendorId === 'kilo')?.id
+  )
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
@@ -100,6 +105,9 @@ const ProviderStep = ({
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
   const [isSaving, setIsSaving] = useState(false)
+  const [isSkipping, setIsSkipping] = useState(false)
+  const operationInFlight = useRef(false)
+  const busy = isSaving || isSkipping
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -206,7 +214,30 @@ const ProviderStep = ({
     }
   }
 
+  const handleSkip = async (): Promise<void> => {
+    if (operationInFlight.current) return
+    operationInFlight.current = true
+    setIsSkipping(true)
+    setValidationMessage(undefined)
+    try {
+      await selectOnboardingDefault()
+      advanceIfMounted()
+    } catch (error) {
+      if (!mounted.current) return
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      operationInFlight.current = false
+      setIsSkipping(false)
+    }
+  }
+
   const handleSaveProvider = async (): Promise<void> => {
+    if (operationInFlight.current) return
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(formErrors)) {
       setShowProviderErrors(true)
@@ -241,6 +272,7 @@ const ProviderStep = ({
       return
     }
 
+    operationInFlight.current = true
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -377,7 +409,10 @@ const ProviderStep = ({
       }
 
       const { providerId, validation } = await saveAndActivateProvider(
-        toUpsertRequest(providerValue, savedProviderId)
+        toUpsertRequest(
+          providerValue,
+          (providerValue.vendorId === 'kilo' ? existingKiloId : undefined) ?? savedProviderId
+        )
       )
       // Persistence survives Back even though this page's permission to navigate does not.
       if (providerId) onProviderSaved?.(providerId)
@@ -411,6 +446,7 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
+      operationInFlight.current = false
       setIsSaving(false)
     }
   }
@@ -428,7 +464,7 @@ const ProviderStep = ({
         </CardDescription>
         <p className="text-xs leading-5 text-muted-foreground">
           {t(
-            'Connect and test a model to finish setup. The agent needs this connection to respond to your requests.'
+            'This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.'
           )}
         </p>
       </CardHeader>
@@ -453,7 +489,7 @@ const ProviderStep = ({
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
             }
             errors={showProviderErrors ? formErrors : undefined}
-            disabled={isSaving}
+            disabled={busy}
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={
               agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
@@ -508,6 +544,7 @@ const ProviderStep = ({
           <Button
             type="button"
             variant="outline"
+            disabled={isSkipping}
             onClick={() => {
               mounted.current = false
               onBack()
@@ -518,8 +555,17 @@ const ProviderStep = ({
         )}
         <Button
           type="button"
+          variant="outline"
+          onClick={() => void handleSkip()}
+          disabled={busy}
+          aria-busy={isSkipping}
+        >
+          {t('Skip')}
+        </Button>
+        <Button
+          type="button"
           onClick={() => void handleSaveProvider()}
-          disabled={isSaving}
+          disabled={busy}
           className="px-4"
           aria-busy={Boolean(isSaving)}
         >

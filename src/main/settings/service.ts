@@ -1728,6 +1728,10 @@ class SettingsService {
   }
 
   // Records that first-run onboarding finished so later launches skip the wizard.
+  async useOnboardingDefaultModel(): Promise<void> {
+    await this.repository.useOnboardingDefaultModel()
+  }
+
   async markOnboardingComplete(): Promise<SettingsSnapshot> {
     await this.preferences.markOnboardingComplete()
     return this.getSettingsView()

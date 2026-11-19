@@ -7322,7 +7322,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "讀取此檔案的權限遭拒。請檢查存取權限後重試。",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "瀏覽器無法顯示此圖片。圖片可能已損壞、格式不受支援，或超出可用記憶體。請下載原始檔案查看。",
     "Could not mark messages as read.": "無法將訊息標記為已讀。",
-    "Connect and test a model to finish setup. The agent needs this connection to respond to your requests.": "連線並測試模型以完成設定。智能體需要此連線來回應你的請求。",
+    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "此步驟可跳過。跳過後可使用 Kilo 免費模型，無需 API 金鑰，但有用量限制。",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "下載已取消。已完成的檔案予以保留，其餘檔案保持選取。",
     "Download cancelled. No archive was replaced.": "下載已取消。未取代任何壓縮檔。",
     "Cancelling download…": "正在取消下載…",

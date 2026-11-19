@@ -535,6 +535,9 @@ async function main(): Promise<void> {
     const { prepareApplicationLocations } = await import('./storage/initialize-location')
     abortStartupIfStopping()
     const { settingsStore, repository } = await prepareApplicationLocations(configRoot)
+    const launchingDesktop = process.argv.includes('--desktop')
+    const hasPriorDesktopSettings =
+      launchingDesktop && (await settingsStore.readExisting()) !== undefined
     abortStartupIfStopping()
     const startupSettings = await repository.getSettings()
     abortStartupIfStopping()
@@ -808,6 +811,7 @@ async function main(): Promise<void> {
     if (state.phase === 'blocked' && !process.argv.includes('--desktop'))
       throw Object.assign(new Error(state.error.message), state.error)
     await waitForVerifiedDatabaseStartup(databaseStartup, startupCancellation.signal)
+    if (launchingDesktop) await repository.initializeDesktopKiloDefaults(hasPriorDesktopSettings)
 
     abortStartupIfStopping()
     startupReporter.phase('runtime')

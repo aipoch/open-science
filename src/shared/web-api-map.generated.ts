@@ -447,6 +447,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.updateImageModels': 'settings:update-image-models',
   'settings.updateSkill': 'settings:update-skill',
   'settings.upsertProvider': 'settings:upsert-provider',
+  'settings.useOnboardingDefaultModel': 'settings:use-onboarding-default-model',
   'settings.useWsl2Bash': 'settings:use-wsl2-bash',
   'settings.validateOpenAlexCredential': 'settings:validate-openalex-credential',
   'settings.validateProvider': 'settings:validate-provider',

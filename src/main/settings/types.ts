@@ -294,6 +294,8 @@ export type StoredSettings = {
   // Set once the first-run onboarding wizard has been completed (or auto-completed for an
   // already-configured install). Absent means onboarding has never finished.
   onboardingCompletedAt?: number
+  // 记录桌面端已处理过 Kilo 默认项，避免重启后恢复用户删除的供应商。
+  kiloDefaultInitialized?: true
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]

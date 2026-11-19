@@ -7320,7 +7320,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "이 파일에 대한 읽기 권한이 거부되었습니다. 접근 권한을 확인하고 다시 시도하세요.",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "브라우저에서 이 이미지를 표시할 수 없습니다. 이미지가 손상되었거나 지원되지 않는 형식이거나 사용 가능한 메모리를 초과했을 수 있습니다. 원본을 다운로드하여 확인하세요.",
     "Could not mark messages as read.": "메시지를 읽음으로 표시하지 못했습니다.",
-    "Connect and test a model to finish setup. The agent needs this connection to respond to your requests.": "설정을 완료하려면 모델을 연결하고 테스트하세요. 에이전트가 요청에 응답하려면 이 연결이 필요합니다.",
+    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "이 단계는 선택 사항입니다. 건너뛰면 API 키 없이 Kilo 무료 모델을 사용할 수 있습니다. 사용량 제한이 적용됩니다.",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "다운로드를 취소했습니다. 완료된 파일은 유지되며 나머지 파일은 선택된 상태로 남습니다.",
     "Download cancelled. No archive was replaced.": "다운로드를 취소했습니다. 압축 파일은 교체되지 않았습니다.",
     "Cancelling download…": "다운로드 취소 중…",
