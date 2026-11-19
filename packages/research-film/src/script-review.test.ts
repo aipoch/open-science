@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { filmScriptIssue, FILM_CLOSING_LINE, scoreFilmScript } from './script-review.js'
+import { checkFilmScript, FILM_CLOSING_LINE, scoreFilmScript } from './script-review.js'
 import { buildVideoTimeline, type VideoSpec } from './timeline.js'
 
 const spec: VideoSpec = {
@@ -25,13 +25,13 @@ const passes = {
   true: null
 }
 
-it('checks the exact spoken close, a preceding answer, and an end card timed to that line', () => {
+it('requires the exact spoken close, a preceding answer, and an end card timed to that line', () => {
   const draft = structuredClone(spec)
-  expect(filmScriptIssue(draft)).toBeUndefined()
+  expect(() => checkFilmScript(draft)).not.toThrow()
   draft.scenes[0].panels[0].at = '0'
-  expect(filmScriptIssue(draft)).toContain('end_card')
+  expect(() => checkFilmScript(draft)).toThrow('end_card')
   draft.scenes[0].lines.pop()
-  expect(filmScriptIssue(draft)).toContain('exact closing')
+  expect(() => checkFilmScript(draft)).toThrow('exact closing')
 })
 it('scores each criterion, returns precise failures, and only reuses the score for identical lines', async () => {
   const memory = new Map<string, string>()

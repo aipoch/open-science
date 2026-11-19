@@ -9,6 +9,7 @@ import {
 } from './authoring.js'
 import { buildVideoTimeline, type VideoPanel } from './timeline.js'
 import { parseResearchVideoScreenplay } from './screenplay.js'
+import { FILM_CLOSING_LINE } from './script-review.js'
 import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 
 const source = {
@@ -200,10 +201,7 @@ it.each([0, undefined])('finishes a valid screenplay with advisory score %s', as
         spec.scenes[0],
         {
           ...spec.scenes[1],
-          lines: [
-            { caption: 'The evidence remains uncertain.' },
-            { caption: 'Thanks for watching.' }
-          ],
+          lines: [{ caption: 'The evidence remains uncertain.' }, FILM_CLOSING_LINE],
           panels: [{ type: 'end_card', at: '1' }]
         }
       ]

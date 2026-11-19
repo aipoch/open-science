@@ -15,7 +15,12 @@ import type { ResearchVideoSessionSource } from './source.js'
 import type { FilmVisualIssue } from './visual-review.js'
 import type { VideoSpec } from './timeline.js'
 import { researchFilmResources } from './resources.js'
-import { FILM_SCRIPT_REVIEW_PROMPT, scoreFilmScript, type FilmNarration } from './script-review.js'
+import {
+  checkFilmScript,
+  FILM_SCRIPT_REVIEW_PROMPT,
+  scoreFilmScript,
+  type FilmNarration
+} from './script-review.js'
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
   writeWithResearchFilmCorrection,
@@ -249,6 +254,7 @@ export async function authorResearchFilmSource(options: {
             })
         } else if (lastScene.role !== 'outro' || lastScene.panels.at(-1)?.type !== 'end_card')
           throw new Error('Finish with an outro scene whose final panel is an end_card.')
+        if (author.reviewScript) checkFilmScript(parsed)
         researchVideoAnimationPlan(parsed)
         const libs = parsed.libs
         if (

@@ -6,7 +6,7 @@ These resources describe the `video.json` and `anims/*.js` format used by the Re
 
 1. The user selects **Research film** from a session action, or the research-film action in an imported session.
 2. The host freezes the selected branch and supported images. If a branch-visible managed ZIP contains an offline ES-module app, the user can choose to feature that app or use a drawn illustration.
-3. The configured model writes the screenplay and scores its narration against the nine criteria in [SCRIPT.md](SCRIPT.md). The preview shows the available score from 0 to 9. Any score can proceed to animation, and an unscorable response leaves the score empty.
+3. The configured model writes the screenplay and scores its narration against the nine criteria in [SCRIPT.md](SCRIPT.md). The screenplay format requires the closing line and its end-card cue. The preview shows the available score from 0 to 9. Any score can proceed to animation, and an unscorable response leaves the score empty.
 4. Owned workers generate English narration, align captions, assemble the timeline, and build a standalone HTML player and source archive.
 5. The host opens the built HTML in the desktop renderer. An unavailable embedded session app falls back to a drawn illustration.
 6. The preview offers **Render video (MP4)** and **Save shareable HTML**. Saving HTML copies the self-contained player with its narration and visual assets. Rendering a video is a separate desktop action. The host captures the stage through Electron and encodes it with FFmpeg. The current export is 1280 × 720, 16:9.
