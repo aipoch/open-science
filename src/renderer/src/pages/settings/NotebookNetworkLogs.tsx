@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger
+} from '@/components/ui/split-button'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -55,7 +61,8 @@ function NetworkLogContent(): React.JSX.Element {
     [confirm, setConfirm] = useState(false)
   const mounted = useRef(true),
     sequence = useRef(0),
-    applied = useRef<NotebookNetworkAuditQuery>(queryRange(range))
+    applied = useRef<NotebookNetworkAuditQuery>(queryRange(range)),
+    form = useRef<HTMLFormElement>(null)
   const load = useCallback(
     async (query: NotebookNetworkAuditQuery, append = false) => {
       const id = ++sequence.current
@@ -135,13 +142,14 @@ function NetworkLogContent(): React.JSX.Element {
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <form
+          ref={form}
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
             void load({ ...filters, ...queryRange(range) })
           }}
         >
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <Select
               value={filters.mode ?? 'all'}
               onValueChange={(value) =>
@@ -203,25 +211,6 @@ function NetworkLogContent(): React.JSX.Element {
                   ))}
               </SelectContent>
             </Select>
-            {!advanced ? (
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 w-full"
-                  aria-expanded={advanced}
-                  aria-controls="network-log-advanced"
-                  onClick={() => setAdvanced(true)}
-                >
-                  {t('Advanced options')}
-                  <ChevronDown aria-hidden="true" className="size-4" />
-                </Button>
-                <Button type="submit" size="sm" disabled={busy} className="h-8 w-full">
-                  {busy ? t('Loading…') : t('Search')}
-                </Button>
-              </div>
-            ) : null}
           </div>
           {advanced ? (
             <div id="network-log-advanced" className="space-y-3">
@@ -231,7 +220,7 @@ function NetworkLogContent(): React.JSX.Element {
                 {field('projectId', t('Project ID'))}
                 {field('notebookRunId', t('Notebook run ID'))}
               </div>
-              <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className="min-w-0 space-y-1">
                   <label htmlFor="network-log-from" className="text-xs">
                     {t('From')}
@@ -257,28 +246,36 @@ function NetworkLogContent(): React.JSX.Element {
                     onChange={(e) => setRange({ ...range, to: e.target.value })}
                   />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-full"
-                    aria-expanded={advanced}
-                    aria-controls="network-log-advanced"
-                    onClick={(event) => {
-                      if (event.currentTarget.form?.reportValidity()) setAdvanced(false)
-                    }}
-                  >
-                    {t('Advanced options')}
-                    <ChevronDown aria-hidden="true" className="size-4 rotate-180" />
-                  </Button>
-                  <Button type="submit" size="sm" disabled={busy} className="h-8 w-full">
-                    {busy ? t('Loading…') : t('Search')}
-                  </Button>
-                </div>
               </div>
             </div>
           ) : null}
+          {/* Keep search and advanced controls connected as one full-width action row. */}
+          <SplitButton
+            kind="popover"
+            open={advanced}
+            onOpenChange={(next) => {
+              if (!next && form.current && !form.current.reportValidity()) return
+              setAdvanced(next)
+            }}
+            busy={busy}
+          >
+            <SplitButtonGroup className="w-full">
+              <SplitButtonPrimary type="submit" size="sm" className="h-8 min-w-0 flex-1">
+                {busy ? t('Loading…') : t('Search')}
+              </SplitButtonPrimary>
+              <SplitButtonTrigger
+                size="icon-sm"
+                variant={advanced ? 'secondary' : 'ghost'}
+                className="h-8 w-9"
+                aria-label={t('Advanced options')}
+                aria-controls="network-log-advanced"
+                aria-pressed={advanced}
+                title={t('Advanced options')}
+              >
+                <SlidersHorizontal aria-hidden="true" />
+              </SplitButtonTrigger>
+            </SplitButtonGroup>
+          </SplitButton>
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
         {page?.warnings.length ? (

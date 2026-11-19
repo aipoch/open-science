@@ -31,9 +31,9 @@ it('loads on entry as a secondary page with the last seven local dates and advan
     from: new Date(2025, 11, 28).getTime(),
     to: new Date(2026, 0, 3, 23, 59, 59, 999).getTime()
   })
-  expect(container.querySelector('[aria-expanded="false"][aria-controls]')?.textContent).toContain(
-    'Advanced options'
-  )
+  expect(
+    container.querySelector('[aria-expanded="false"][aria-controls]')?.getAttribute('aria-label')
+  ).toBe('Advanced options')
   expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('No matching network records.')
   expect(document.body.textContent).toContain('Retention days')

@@ -84,16 +84,22 @@ test('queries daily network logs on demand and confirms retention changes', asyn
     await expect(settings.getByLabel(label, { exact: true })).toBeHidden()
   await expect(olderCell).toHaveCount(0)
   const submit = settings.getByRole('button', { name: 'Search', exact: true })
-  const expectStackedActions = async (): Promise<{
+  const splitGroup = settings.locator('[data-split-group]')
+  const expectComboActions = async (): Promise<{
     x: number
     y: number
     width: number
     height: number
   }> => {
-    const [toggle, search] = await Promise.all([advanced.boundingBox(), submit.boundingBox()])
-    expect(search!.y).toBeGreaterThanOrEqual(toggle!.y + toggle!.height)
-    expect(search!.x).toBeCloseTo(toggle!.x, 0)
-    expect(search!.width).toBeCloseTo(toggle!.width, 0)
+    const [group, toggle, search] = await Promise.all([
+      splitGroup.boundingBox(),
+      advanced.boundingBox(),
+      submit.boundingBox()
+    ])
+    expect(toggle!.y).toBeCloseTo(search!.y, 0)
+    expect(toggle!.height).toBeCloseTo(search!.height, 0)
+    expect(toggle!.x).toBeGreaterThan(search!.x)
+    expect(group!.width).toBeCloseTo(search!.width + toggle!.width, 0)
     return toggle!
   }
   const retentionFilter = settings.getByRole('combobox', { name: 'Retention days', exact: true })
@@ -113,20 +119,22 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await table.evaluate((node) => {
     node.parentElement!.scrollTop = 0
   })
-  await expectStackedActions()
+  await expectComboActions()
+  await expect(advanced).toHaveAttribute('data-variant', 'ghost')
   await settings.screenshot({ path: testInfo.outputPath('network-logs.png') })
   await advanced.click()
   for (const label of advancedLabels)
     await expect(settings.getByLabel(label, { exact: true })).toBeVisible()
   const end = await settings.getByLabel('To', { exact: true }).boundingBox()
-  const collapse = await expectStackedActions()
-  expect(collapse.x).toBeGreaterThanOrEqual(end!.x + end!.width)
-  expect(collapse.y).toBeLessThan(end!.y + end!.height)
+  const expandedActions = await expectComboActions()
+  expect(expandedActions.y).toBeGreaterThanOrEqual(end!.y + end!.height)
+  await expect(advanced).toHaveAttribute('data-variant', 'secondary')
+  await expect(advanced).toHaveAttribute('aria-pressed', 'true')
   for (const label of ['Network mode', 'Decision', 'Result', ...advancedLabels]) {
     const box = await settings.getByLabel(label, { exact: true }).boundingBox()
-    expect(box!.height).toBeCloseTo(collapse.height, 0)
+    expect(box!.height).toBeCloseTo(expandedActions.height, 0)
   }
-  expect((await submit.boundingBox())!.height).toBeCloseTo(collapse.height, 0)
+  expect((await submit.boundingBox())!.height).toBeCloseTo(expandedActions.height, 0)
   await settings.screenshot({ path: testInfo.outputPath('advanced-options.png') })
   await settings
     .getByLabel('From', { exact: true })
