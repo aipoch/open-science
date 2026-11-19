@@ -163,6 +163,9 @@ export class ComparisonCsvReader {
 const quote = (value: unknown): string =>
   '"' +
   String(value ?? '')
+    // Some CSV readers reject raw NUL. Make it visible only in the export;
+    // never remove it or infer a scientific symbol in the stored evidence.
+    .replaceAll('\u0000', '\\u0000')
     .replaceAll('"', '""')
     .replace(/^(\s*)([=+@\-\t\r])/, "'$1$2") +
   '"'

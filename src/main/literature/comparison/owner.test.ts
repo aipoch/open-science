@@ -191,6 +191,98 @@ it.each(['source', 'rule'] as const)(
     }
   }
 )
+it.each(['matrix', 'evidence'] as const)(
+  'visibly escapes NUL in %s CSV without changing stored evidence or manual values',
+  async (kind) => {
+    const quote = 'Between \u0000 1.35 and \u0000 0.05, "效果"\nLiteral \\u0000 stays literal.'
+    const machineValue = 'Estimate \u0000 1.35'
+    const manualValue = '=1+1\u0000'
+    const f = await fixture(
+      vi.fn(async () => ({
+        ...ready(),
+        value: machineValue,
+        evidence: [{ quote, pageStart: 6, pageEnd: 6 }]
+      }))
+    )
+    try {
+      await f.owner.run({ action: 'run', tableId: f.table.id })
+      await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+      await f.owner.run({
+        action: 'edit-cell',
+        tableId: f.table.id,
+        cellId: f.table.cells[0].id,
+        value: manualValue,
+        confirmed: false,
+        expectedFieldVersion: 1,
+        expectedSourceKey: 'source-1'
+      })
+      const stored = await readFile(f.path, 'utf8')
+      const before = await f.read()
+      const result = await f.owner.run({ action: 'export', tableId: f.table.id, kind })
+      expect(result.csv).not.toContain('\u0000')
+      const parsed = Papa.parse<Record<string, string>>(result.csv!, {
+        header: true,
+        skipEmptyLines: true
+      })
+      expect(parsed.errors).toEqual([])
+      expect(parsed.data).toHaveLength(2)
+      if (kind === 'evidence') {
+        expect(parsed.data[0].quote).toBe(
+          'Between \\u0000 1.35 and \\u0000 0.05, "效果"\nLiteral \\u0000 stays literal.'
+        )
+        expect(parsed.data[0].value).toBe('Estimate \\u0000 1.35')
+        expect(parsed.data[0].manual).toBe("'=1+1\\u0000")
+        expect(parsed.data[0].pageStart).toBe('6')
+      } else {
+        const headers = parsed.meta.fields!
+        expect(parsed.data[0][headers[2]]).toBe("'=1+1\\u0000")
+        expect(parsed.data[0][headers[3]]).toBe('Estimate \\u0000 1.35')
+        expect(parsed.data[0][headers[4]]).toBe("'=1+1\\u0000")
+      }
+      expect(await readFile(f.path, 'utf8')).toBe(stored)
+      expect(await f.read()).toEqual(before)
+      expect(before.cells[0].history[0].evidence[0].quote).toBe(quote)
+      expect(before.cells[0].manual?.value).toBe(manualValue)
+    } finally {
+      await f.owner.dispose()
+    }
+  }
+)
+it('pages evidence CSV after NUL escaping expands quotes beyond one export page', async () => {
+  const quote = '\u0000'.repeat(12000)
+  const f = await fixture(
+    vi.fn(async () => ({ ...ready(), evidence: [{ quote, pageStart: 1, pageEnd: 1 }] }))
+  )
+  try {
+    await f.owner.run({ action: 'run', tableId: f.table.id })
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    const stored = await readFile(f.path, 'utf8')
+    let page = await f.owner.run({ action: 'export', tableId: f.table.id, kind: 'evidence' })
+    expect(page.nextOffset).toBeDefined()
+    let csv = page.csv!
+    while (page.nextOffset !== undefined) {
+      expect(page.nextOffset).toBe(csv.length)
+      page = await f.owner.run({
+        action: 'export',
+        tableId: f.table.id,
+        kind: 'evidence',
+        exportToken: page.exportToken,
+        offset: page.nextOffset
+      })
+      csv += page.csv!
+    }
+    expect(csv).not.toContain('\u0000')
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true })
+    expect(parsed.errors).toEqual([])
+    expect(parsed.data.map((row) => row.quote)).toEqual([
+      '\\u0000'.repeat(12000),
+      '\\u0000'.repeat(12000)
+    ])
+    expect(await readFile(f.path, 'utf8')).toBe(stored)
+  } finally {
+    await f.owner.dispose()
+  }
+})
 it('exports unique matrix column identities for metadata names, derived suffixes and unusual IDs', async () => {
   const fields = [
     { id: 'field', name: 'Result', rule: 'Extract result' },
