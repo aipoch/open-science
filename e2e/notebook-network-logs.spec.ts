@@ -95,8 +95,9 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   ])
   expect(collapse!.x).toBeGreaterThanOrEqual(end!.x + end!.width)
   expect(collapse!.y).toBeLessThan(end!.y + end!.height)
-  expect(search!.y).toBeGreaterThanOrEqual(end!.y + end!.height)
-  expect(search!.x + search!.width).toBeCloseTo(end!.x + end!.width, 0)
+  expect(search!.y).toBeGreaterThanOrEqual(collapse!.y + collapse!.height)
+  expect(search!.x).toBeCloseTo(collapse!.x, 0)
+  expect(search!.width).toBeCloseTo(collapse!.width, 0)
   await settings.screenshot({ path: testInfo.outputPath('advanced-options.png') })
   await settings
     .getByLabel('From', { exact: true })

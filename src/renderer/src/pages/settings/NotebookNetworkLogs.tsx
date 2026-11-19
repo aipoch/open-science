@@ -129,7 +129,7 @@ function NetworkLogContent(): React.JSX.Element {
       size="sm"
       variant="outline"
       disabled={busy}
-      className={advanced ? 'col-start-1 justify-self-end sm:col-span-2' : undefined}
+      className={advanced ? 'col-start-2 w-full sm:col-start-3' : undefined}
     >
       {busy ? t('Loading…') : t('Search')}
     </Button>
@@ -236,7 +236,7 @@ function NetworkLogContent(): React.JSX.Element {
             type="button"
             size="sm"
             variant="ghost"
-            className="ms-auto"
+            className={advanced ? 'w-full' : 'ms-auto'}
             aria-expanded={advanced}
             aria-controls="network-log-advanced"
             onClick={(event) => {
