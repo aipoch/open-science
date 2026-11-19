@@ -36,7 +36,10 @@ class NotebookSandboxPreparationError extends Error {
   // Certifies only this request: other commands may still own unresolved cleanup debt.
   readonly cleanupComplete = true
 
-  constructor(cause: unknown) {
+  constructor(
+    cause: unknown,
+    readonly retryAdmission?: () => Promise<void>
+  ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
     this.name = 'NotebookSandboxPreparationError'
   }
@@ -59,6 +62,7 @@ type ActiveCommand = {
   preparation: Promise<void>
   prepared: boolean
   cleanupTask?: Promise<NotebookSandboxCleanupResult>
+  completedCleanup?: NotebookSandboxCleanupResult
   detachSignal?: () => void
   cleanupRequest?: Readonly<{
     reason: 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
@@ -213,11 +217,15 @@ class NotebookNetworkSandbox {
     try {
       if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
       target = normalizedTarget(command.target)
+    } catch (error) {
+      throw new NotebookSandboxPreparationError(error)
+    }
+    try {
       await this.#reconcilePendingCommands(target)
     } catch (error) {
       // No command has been registered or passed to the runtime. The caller may release this
       // request's unused resources, but the commands blocking admission retain their own debt.
-      throw new NotebookSandboxPreparationError(error)
+      throw new NotebookSandboxPreparationError(error, () => this.#reconcilePendingCommands(target))
     }
     const commandId = randomUUID()
     const shell = command.shell as string | WindowsShell | undefined
@@ -320,6 +328,7 @@ class NotebookNetworkSandbox {
       },
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: (reason, processOutcome) => {
+        if (activeCommand.completedCleanup) return Promise.resolve(activeCommand.completedCleanup)
         if (cleanupPromise) return cleanupPromise
         cleanupPromise = this.#releaseCommand(commandId, processOutcome, reason).then(
           (result) => {
@@ -544,7 +553,12 @@ class NotebookNetworkSandbox {
             )
           : { processesTerminated: processesTerminatedForOutcome(processOutcome) }
       )
-      if (cleanupComplete(result)) this.#forgetCommand(commandId)
+      if (cleanupComplete(result)) {
+        // A different command's admission can finish this cleanup before the original
+        // handle retries. Keep the exact result, including any newly verified termination.
+        command.completedCleanup = result
+        this.#forgetCommand(commandId)
+      }
       return result
     })().finally(() => {
       command.cleanupTask = undefined

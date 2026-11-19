@@ -51,6 +51,15 @@ const cancelledResult = (): NotebookShellResult => ({
   cancelled: true
 })
 
+const cleanupBlockedResult = (): NotebookShellResult => ({
+  stdout: '',
+  stderr: 'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.',
+  exitCode: null,
+  ownedTreeReaped: false,
+  errorCode: 'shell-cleanup-incomplete',
+  recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+})
+
 // One real interpreter per Notebook lane. Transport state lives only in memory; requests are
 // serialized and never replayed. The existing process adapter still owns native tree cleanup.
 export class ShellCellSession {
@@ -61,6 +70,7 @@ export class ShellCellSession {
   private lastProcessIdentity?: object
   private cleanupInProgress = false
   private cleanupAttemptFailed = false
+  private shutdownTask?: Promise<{ reaped: boolean }>
 
   get monitoredProcess():
     | {
@@ -71,9 +81,10 @@ export class ShellCellSession {
       }
     | undefined {
     const failed =
-      this.cleanupAttemptFailed ||
-      this.processResult?.ownedTreeReaped === false ||
-      this.processResult?.errorCode === 'shell-cleanup-incomplete'
+      !this.cleanupVerified &&
+      (this.cleanupAttemptFailed ||
+        this.processResult?.ownedTreeReaped === false ||
+        this.processResult?.errorCode === 'shell-cleanup-incomplete')
     if ((!this.isLive && !failed && !this.cleanupInProgress) || !this.lastProcessIdentity)
       return undefined
     return {
@@ -143,7 +154,14 @@ export class ShellCellSession {
     })
   }
 
-  async shutdown(): Promise<{ reaped: boolean }> {
+  shutdown(): Promise<{ reaped: boolean }> {
+    this.shutdownTask ??= this.shutdownInternal().finally(() => {
+      this.shutdownTask = undefined
+    })
+    return this.shutdownTask
+  }
+
+  private async shutdownInternal(): Promise<{ reaped: boolean }> {
     this.closed = true
     this.lifetime.abort()
     this.cleanupInProgress = true
@@ -152,6 +170,9 @@ export class ShellCellSession {
       await this.completion
       const reaped = await this.verifyCleanup()
       this.cleanupAttemptFailed = !reaped
+      // The interpreter ended, but retained cleanup is still pending. An explicit next cell can
+      // retry that cleanup and launch a fresh interpreter; it cannot reuse the stopped process.
+      if (!reaped) this.closed = false
       return { reaped }
     } catch (error) {
       this.cleanupAttemptFailed = true
@@ -169,6 +190,7 @@ export class ShellCellSession {
     )
       return true
     this.cleanupVerified = (await this.retryCleanup?.().catch(() => false)) === true
+    if (this.cleanupVerified) this.cleanupAttemptFailed = false
     return this.cleanupVerified
   }
 
@@ -281,7 +303,8 @@ export class ShellCellSession {
   }
 
   private async run(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
-    if (!(await this.verifyCleanup())) return this.processResult!
+    if (this.closed || request.signal?.aborted) return cancelledResult()
+    if (!(await this.verifyCleanup())) return cleanupBlockedResult()
     if (this.closed || request.signal?.aborted) return cancelledResult()
     const context = JSON.stringify([
       request.cwd,
@@ -297,7 +320,7 @@ export class ShellCellSession {
     if (reset) {
       this.lifetime.abort()
       await this.completion
-      if (!(await this.verifyCleanup())) return this.processResult!
+      if (!(await this.verifyCleanup())) return cleanupBlockedResult()
     }
     request = { ...request, cwd: this.cwd ?? request.cwd }
     try {

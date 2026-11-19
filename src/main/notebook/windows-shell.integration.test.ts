@@ -344,6 +344,229 @@ $raw = & cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 7' 2>$null
         await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }, 60_000)
+
+    it('isolates a verified Windows temp lock and recovers the original Shell after a failed restart', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-standard-locked-temp-'))
+      const commands = join(root, 'commands')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const info = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: commands,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny',
+        logger: { debug: vi.fn(), info, warn: vi.fn(), error: vi.fn() }
+      })
+      const registry = new ShellProcessOwnershipRegistry(root)
+      const adapter = new NotebookShellProcessAdapter('win32', owner, registry)
+      const a = {
+        ...shellRequest(root),
+        runtimeRoot: join(root, 'runtime'),
+        executionReference: 'temp-lock-A',
+        runId: 'temp-lock-A',
+        sessionId: 'A'
+      }
+      const b = { ...a, executionReference: 'temp-lock-B', runId: 'temp-lock-B', sessionId: 'B' }
+      const aCleanupAttempts = (): number =>
+        info.mock.calls.filter(
+          ([event, fields]) =>
+            event === 'sandbox cleanup completed' && fields.executionReference === 'temp-lock-A'
+        ).length
+      let holder: ReturnType<typeof spawn> | undefined
+      let closed: Promise<unknown> | undefined
+      try {
+        expect(await owner.windowsProtectionConfigured()).toBe(false)
+        const prepared = await adapter.execute({
+          ...a,
+          command: `$p = Join-Path $env:TEMP 'test-lock.txt'; [IO.File]::WriteAllText($p, 'fixture'); [Console]::Write($p)`
+        })
+        expect(prepared, JSON.stringify(prepared)).toMatchObject({ exitCode: 0 })
+        const path = prepared.stdout.trim()
+        const commandName = (await readdir(commands)).find(
+          (entry) => join(commands, entry, 'test-lock.txt') === path
+        )
+        expect(commandName).toBeDefined()
+        const receipt = join(commands, `${commandName}.receipt`)
+        const receiptContent = await readFile(receipt, 'utf8')
+        expect(receiptContent).toMatch(/^v1 command-/u)
+        holder = spawn(
+          join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            '$handle = [IO.File]::Open($env:TEST_LOCK_PATH, "Open", "Read", "ReadWrite"); try { [Console]::WriteLine("locked"); [void][Console]::In.ReadLine() } finally { $handle.Dispose() }'
+          ],
+          { env: { ...process.env, TEST_LOCK_PATH: path }, windowsHide: true }
+        )
+        closed = once(holder, 'close')
+        const ready = await Promise.race([
+          once(holder.stdout!, 'data').then(([output]) => String(output)),
+          closed.then(() => 'holder exited before locking')
+        ])
+        expect(ready.trim()).toBe('locked')
+
+        const timeout = await adapter.execute({
+          ...a,
+          command: 'Start-Sleep -Seconds 30',
+          timeoutMs: 750
+        })
+        expect(timeout).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+        })
+        expect(info).toHaveBeenCalledWith(
+          'sandbox cleanup completed',
+          expect.objectContaining({
+            processState: 'started-and-reaped',
+            networkClosed: true,
+            temporaryResourcesRemoved: false,
+            admission: 'independent-command-allowed',
+            temporaryCleanupErrorCode: expect.stringMatching(/^(EBUSY|EPERM|ENOTEMPTY|EACCES)$/u)
+          })
+        )
+        await expect(adapter.shutdown({ sessionId: 'A' })).resolves.toEqual({ reaped: false })
+        await expect(
+          adapter.execute({ ...a, command: '[Console]::Write("MUST_NOT_RUN")' })
+        ).resolves.toMatchObject({
+          stdout: '',
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'not-started' }
+        })
+        const attemptsBeforeIndependentLaunch = aCleanupAttempts()
+        await expect(
+          adapter.execute({ ...b, command: '[Console]::Write("B_RAN"); exit 0' })
+        ).resolves.toMatchObject({
+          exitCode: 0,
+          stdout: 'B_RAN'
+        })
+        expect(await readFile(path, 'utf8')).toBe('fixture')
+        expect(await readFile(receipt, 'utf8')).toBe(receiptContent)
+
+        await writeFile(receipt, 'unexpected receipt content')
+        try {
+          await expect(
+            adapter.execute({ ...b, command: '[Console]::Write("MUST_NOT_RUN"); exit 0' })
+          ).resolves.toMatchObject({
+            stdout: '',
+            errorCode: 'shell-cleanup-incomplete',
+            recovery: { execution: 'not-started' }
+          })
+          expect(await readFile(receipt, 'utf8')).toBe('unexpected receipt content')
+        } finally {
+          await writeFile(receipt, receiptContent)
+        }
+        await expect(
+          adapter.execute({ ...b, command: '[Console]::Write("B_RECHECKED"); exit 0' })
+        ).resolves.toMatchObject({
+          exitCode: 0,
+          stdout: 'B_RECHECKED'
+        })
+        expect(await readFile(path, 'utf8')).toBe('fixture')
+        expect(aCleanupAttempts()).toBe(attemptsBeforeIndependentLaunch)
+
+        holder.stdin!.end('\n')
+        await closed
+        await expect(
+          adapter.execute({
+            ...a,
+            runId: 'temp-lock-A-recovered',
+            command: '[Console]::Write("A_RECOVERED"); exit 0'
+          })
+        ).resolves.toMatchObject({
+          exitCode: 0,
+          stdout: 'A_RECOVERED'
+        })
+        await expect(adapter.shutdown({ sessionId: 'B' })).resolves.toEqual({ reaped: true })
+        expect(await readdir(commands)).toEqual([])
+        expect(registry.hasReceipts()).toBe(false)
+      } finally {
+        if (holder?.stdin && !holder.stdin.writableEnded) holder.stdin.end('\n')
+        await closed
+        try {
+          const shutdown = await adapter.shutdown()
+          await owner.dispose()
+          expect(shutdown.reaped).toBe(true)
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      }
+    }, 60_000)
+
+    it('recovers the original Windows Shell when its pre-spawn temp cleanup finishes', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-standard-preparation-cleanup-'))
+      const commands = join(root, 'commands')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: commands,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const registry = new ShellProcessOwnershipRegistry(root)
+      const adapter = new NotebookShellProcessAdapter('win32', owner, registry)
+      const a = { ...shellRequest(root), runId: 'prep-A', sessionId: 'A' }
+      const b = { ...a, runId: 'prep-B', sessionId: 'B' }
+      let lockedRoot: string | undefined
+      const remove = fsPromises.rm
+      const removeSpy = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+        if (lockedRoot && path === lockedRoot) {
+          throw Object.assign(new Error('fixture temporarily denies deletion'), { code: 'EBUSY' })
+        }
+        return remove(path, options)
+      })
+      const wrapSpy = vi
+        .spyOn(NotebookNetworkSandbox.prototype, 'wrap')
+        .mockImplementationOnce(async (command) => {
+          // Backend resources were reconciled, but the owner's own temp removal can still fail.
+          lockedRoot = command.env?.TEMP
+          throw Object.assign(new Error('fixture fails before process launch'), {
+            name: 'NotebookSandboxPreparationError',
+            cleanupComplete: true
+          })
+        })
+      try {
+        await expect(
+          adapter.execute({ ...a, command: '[Console]::Write("MUST_NOT_RUN"); exit 0' })
+        ).resolves.toMatchObject({
+          stdout: '',
+          stderr: expect.stringContaining('Command temporary cleanup could not be verified'),
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'not-started' }
+        })
+        expect(lockedRoot).toBeDefined()
+        expect(await readFile(`${lockedRoot}.receipt`, 'utf8')).toMatch(/^v1 command-/u)
+        expect(registry.hasReceipts()).toBe(false)
+        lockedRoot = undefined
+
+        await expect(
+          adapter.execute({ ...b, command: '[Console]::Write("B_RAN"); exit 0' })
+        ).resolves.toMatchObject({ exitCode: 0, stdout: 'B_RAN' })
+        expect(await readdir(commands)).toEqual([])
+        await expect(
+          adapter.execute({
+            ...a,
+            runId: 'prep-A-recovered',
+            command: '[Console]::Write("A_RECOVERED"); exit 0'
+          })
+        ).resolves.toMatchObject({ exitCode: 0, stdout: 'A_RECOVERED' })
+        expect(registry.hasReceipts()).toBe(false)
+      } finally {
+        wrapSpy.mockRestore()
+        removeSpy.mockRestore()
+        try {
+          await adapter.shutdown()
+          await owner.dispose()
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      }
+    }, 45_000)
   }
 )
 

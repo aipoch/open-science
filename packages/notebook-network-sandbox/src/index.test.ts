@@ -104,6 +104,14 @@ describe('NotebookNetworkSandbox', () => {
     confirm(true)
     const commands = await next
     expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(2)
+    // The original handle must see the evidence obtained by the admission path, even
+    // after that path has removed the command from the active index.
+    await expect(first.cleanup('exit', { processesTerminated: false })).resolves.toMatchObject({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(2)
     await Promise.all(
       commands.map((wrapped) => wrapped.cleanup('exit', { processesTerminated: true }))
     )

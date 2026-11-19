@@ -2926,6 +2926,96 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
+  it('rechecks late sandbox admission without replaying the blocked Windows Shell', async () => {
+    const { NotebookNetworkSandbox } = await vi.importActual<
+      typeof import('../../../packages/notebook-network-sandbox/src/index')
+    >('../../../packages/notebook-network-sandbox/src/index')
+    const { NotebookNetworkRuntime } =
+      await import('../../../packages/notebook-network-sandbox/runtime/src/index')
+    const fixture = await mkdtemp(join(tmpdir(), 'os-network-late-admission-'))
+    fixtureDirectories.push(fixture)
+    const commands = join(fixture, 'commands')
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: '/resources' }
+    })
+    const owner = new NotebookNetworkSandboxOwner({
+      platform: 'win32',
+      resourceRoot: '/resources',
+      temporaryRoot: commands,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    const status = vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    const initialize = vi.spyOn(NotebookNetworkRuntime, 'initialize').mockResolvedValue(undefined)
+    const runtimeWrap = vi.spyOn(NotebookNetworkRuntime, 'wrap').mockResolvedValue({
+      argv: ['sandboxed'],
+      env: {}
+    })
+    const cleanup = vi
+      .spyOn(NotebookNetworkRuntime, 'cleanupAfterCommand')
+      .mockImplementation(async (_id, _reason, outcome) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: outcome.processesTerminated
+      }))
+    const reset = vi.spyOn(NotebookNetworkRuntime, 'reset').mockResolvedValue(undefined)
+    const confirmTermination = vi.fn().mockResolvedValue(false)
+    try {
+      await sandbox.initialize()
+      backend.wrap.mockImplementation((command) => sandbox.wrap(command))
+      // Simulate a cleanup becoming visible in the backend after the owner's admission check.
+      const predecessor = await sandbox.wrap({
+        command: 'previous',
+        cwd: fixture,
+        onNetworkAccessRequest: async () => false
+      })
+      await predecessor.cleanup('cancel', { processesTerminated: false, confirmTermination })
+      const invocation: NotebookSandboxInvocation = {
+        executable: process.execPath,
+        args: [],
+        env: {},
+        cwd: fixture,
+        commandText: 'next',
+        sessionId: 'successor',
+        projectId: 'project',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [fixture],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      }
+      const blocked = await owner.wrap(invocation).catch((error) => error)
+      expect(blocked).toMatchObject({
+        message: expect.stringMatching(/^SHELL_CLEANUP_INCOMPLETE:/u),
+        retryCleanup: expect.any(Function)
+      })
+      expect(await readdir(commands)).toEqual([])
+      await expect(blocked.retryCleanup()).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+      confirmTermination.mockResolvedValue(true)
+      await expect(blocked.retryCleanup()).resolves.toBe(true)
+      expect(runtimeWrap).toHaveBeenCalledOnce()
+      const next = await owner.wrap(invocation)
+      expect(runtimeWrap).toHaveBeenCalledTimes(2)
+      await next.cleanup('exit', { processesTerminated: true })
+    } finally {
+      confirmTermination.mockResolvedValue(true)
+      try {
+        await owner.dispose()
+        await sandbox.dispose()
+      } finally {
+        reset.mockRestore()
+        cleanup.mockRestore()
+        runtimeWrap.mockRestore()
+        initialize.mockRestore()
+        status.mockRestore()
+      }
+    }
+  })
+
   it.each(['directory', 'receipt'] as const)(
     'preserves production package cleanup proof while retrying a locked command %s',
     async (lockedResource) => {
@@ -4708,9 +4798,10 @@ describe('R startup authorization admission', () => {
   })
 })
 
-describe('macOS retained cleanup admission', () => {
+describe('native retained cleanup admission', () => {
   const makeFixture = async (
-    onGrantedRoots?: () => void | Promise<void>
+    onGrantedRoots?: () => void | Promise<void>,
+    platform: NodeJS.Platform = 'darwin'
   ): Promise<{
     owner: NotebookNetworkSandboxOwner
     invocation: NotebookSandboxInvocation
@@ -4723,7 +4814,7 @@ describe('macOS retained cleanup admission', () => {
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
       temporaryRoot: managed,
-      platform: 'darwin',
+      platform,
       getGrantedLocalRoots: async () => {
         await onGrantedRoots?.()
         return []
@@ -4758,6 +4849,62 @@ describe('macOS retained cleanup admission', () => {
       admission: 'independent-command-allowed'
     })
   }
+
+  it('fences Windows Shell launches on preparation debt without a cleanup capability', async () => {
+    const { owner, invocation, managed } = await makeFixture(undefined, 'win32')
+    try {
+      backend.wrap.mockRejectedValueOnce(new Error('unverified preparation'))
+      await expect(owner.wrap(invocation)).rejects.toThrow('unverified preparation')
+      const entries = await readdir(managed)
+      expect(entries).toHaveLength(2)
+      await expect(owner.wrap({ ...invocation, sessionId: 'successor' })).rejects.toThrow(
+        'SHELL_CLEANUP_INCOMPLETE'
+      )
+      expect(backend.wrap).toHaveBeenCalledOnce()
+      expect(await readdir(managed)).toEqual(entries)
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('shares in-flight Windows cleanup with a successor rather than admitting it before proof', async () => {
+    const { owner, invocation } = await makeFixture(undefined, 'win32')
+    const first = await owner.wrap(invocation)
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    const complete = {
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+    backend.cleanup.mockImplementationOnce(async () => {
+      started.resolve()
+      await finish.promise
+      return { ...complete, networkClosed: false }
+    })
+    const cleanup = first.cleanup('cancel', { processesTerminated: true })
+    try {
+      await started.promise
+      const next = owner.wrap({ ...invocation, sessionId: 'successor' })
+      const rejected = expect(next).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+      void rejected.catch(() => undefined)
+      // Start the successor while the first cleanup is still waiting for backend proof.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      finish.resolve()
+      await expect(cleanup).resolves.toMatchObject({ networkClosed: false })
+      await rejected
+      expect(backend.wrap).toHaveBeenCalledOnce()
+      expect(backend.cleanup).toHaveBeenCalledOnce()
+      await expect(first.cleanup('cancel', { processesTerminated: true })).resolves.toEqual(
+        complete
+      )
+      await expect(owner.wrap({ ...invocation, sessionId: 'successor' })).resolves.toBeDefined()
+    } finally {
+      finish.resolve()
+      await cleanup
+      await owner.dispose()
+    }
+  })
 
   it('allows healthy concurrent command registration', async () => {
     const { owner, invocation } = await makeFixture()
