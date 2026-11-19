@@ -591,7 +591,7 @@ export function createResearchVideoPresentationOwner(options: {
         (!options.reviewPlayer || request.mode === 'operation-replay' || resumable.visualChecked) &&
         (!options.reviewScript ||
           request.mode === 'operation-replay' ||
-          resumable.built.scriptScore === 9) &&
+          (resumable.built.scriptScore ?? 0) >= 7) &&
         resumable.outputFingerprint &&
         resumable.outputFingerprint ===
           (await diskStep(() =>

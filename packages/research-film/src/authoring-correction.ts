@@ -16,7 +16,8 @@ export async function writeWithResearchFilmCorrection<T>(
   signal: AbortSignal,
   checkpoint?: FilmAuthoringCheckpoint,
   key = 'screenplay',
-  feedback?: string
+  feedback?: string,
+  draft?: string
 ): Promise<T> {
   const saved = await checkpoint?.read(key)
   if (saved !== undefined && !feedback) {
@@ -27,7 +28,7 @@ export async function writeWithResearchFilmCorrection<T>(
     }
   }
   let correction: ResearchFilmCorrection | undefined = feedback
-    ? { draft: saved ?? '', error: feedback }
+    ? { draft: saved ?? draft ?? '', error: feedback }
     : undefined
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted()

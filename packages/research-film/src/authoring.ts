@@ -268,13 +268,13 @@ export async function authorResearchFilmSource(options: {
   }
   const writeSpec = async (
     feedback?: string,
-    narration = false
+    narration?: ResearchVideoScreenplay
   ): Promise<ResearchVideoScreenplay> => {
     const result = await writeWithResearchFilmCorrection(
       (correction) => author.writeScreenplay(source, signal, correction),
       (output) => {
         const parsed = parseResearchVideoScreenplay(
-          mergeRepair(output, narration),
+          mergeRepair(output, Boolean(narration)),
           source.messages.length
         )
         const lastScene = parsed.scenes.at(-1)!
@@ -340,11 +340,13 @@ export async function authorResearchFilmSource(options: {
       previous && options.checkpoint
         ? {
             read: options.checkpoint.read,
-            save: (key, value) => options.checkpoint!.save(key, mergeRepair(value, narration))
+            save: (key, value) =>
+              options.checkpoint!.save(key, mergeRepair(value, Boolean(narration)))
           }
         : options.checkpoint,
       'screenplay',
-      feedback
+      feedback,
+      narration && JSON.stringify(narration)
     )
     if (previous) previous = JSON.stringify(result)
     return result
@@ -360,6 +362,7 @@ export async function authorResearchFilmSource(options: {
   )
   let scriptScore: number | undefined
   if (author.reviewScript) {
+    let requestedClarityRevision = false
     for (let pass = 0; ; pass++) {
       const review = await scoreFilmScript(
         spec,
@@ -368,17 +371,16 @@ export async function authorResearchFilmSource(options: {
         signal,
         options.checkpoint
       )
-      if (!review.findings.length) {
+      if (!review.findings.length || (requestedClarityRevision && !review.hasBlockingFindings)) {
         scriptScore = review.score
         break
       }
       const feedback = `Narration review (${review.score}/9). Rewrite the failing lines and adjust their cues.\n${review.findings.join('\n')}`
-      if (pass >= 3) throw new Error(feedback)
+      if (review.hasBlockingFindings && pass >= 3) throw new Error(feedback)
+      if (!review.hasBlockingFindings) requestedClarityRevision = true
       spec = await writeSpec(
-        previous
-          ? `${feedback}\nKeep the existing scenes, panels, and visual layout. Change only narration and timing cues.`
-          : feedback,
-        true
+        `${feedback}\nKeep the existing scenes, panels, and visual layout. Change only narration and timing cues. Preserve the source comparisons and qualifications, including when a suggested rewrite would change a claim.`,
+        spec
       )
     }
   }

@@ -50,6 +50,7 @@ it('scores each criterion, returns precise failures, and only reuses the score f
   const signal = new AbortController().signal
   expect(await scoreFilmScript(spec, score, signal, checkpoint)).toEqual({
     score: 8,
+    hasBlockingFindings: true,
     findings: ['spine: Answer the question in the first outro line.']
   })
   await scoreFilmScript(spec, score, signal, checkpoint)

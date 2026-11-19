@@ -319,6 +319,59 @@ it('preserves repaired visuals while applying later narration and cue correction
   }
 })
 
+it.each([false, true])(
+  'rechecks a clarity revision and gates it by factual findings (factual issue: %s)',
+  async (factualIssue) => {
+    const directory = await mkdtemp(join(tmpdir(), 'film-clarity-'))
+    const screenplay = {
+      ...spec,
+      scenes: [
+        spec.scenes[0],
+        {
+          ...spec.scenes[1],
+          lines: [{ caption: 'The evidence remains uncertain.' }, FILM_CLOSING_LINE],
+          panels: [{ type: 'end_card', at: '1' }]
+        }
+      ]
+    }
+    const clarity = {
+      spine: null,
+      catch: null,
+      thread: null,
+      numbers: null,
+      lineCraft: null,
+      clean: null,
+      true: null,
+      audioOnly: 'Name the two scores.',
+      plainWords: 'Explain the first term.'
+    }
+    const writeScreenplay = vi.fn().mockResolvedValue(JSON.stringify(screenplay))
+    const reviewScript = vi
+      .fn()
+      .mockResolvedValueOnce(JSON.stringify(clarity))
+      .mockResolvedValue(
+        JSON.stringify(
+          factualIssue
+            ? { ...clarity, audioOnly: null, true: 'Keep the original comparison.' }
+            : clarity
+        )
+      )
+    try {
+      const result = authorResearchFilmSource({
+        source,
+        author: { writeScreenplay, reviewScript, writeAnimation: async () => '// drawing' },
+        directory,
+        signal: new AbortController().signal
+      })
+      if (factualIssue) await expect(result).rejects.toThrow('true: Keep the original comparison.')
+      else await expect(result).resolves.toMatchObject({ scriptScore: 7 })
+      expect(writeScreenplay).toHaveBeenCalledTimes(factualIssue ? 4 : 2)
+      expect(JSON.parse(writeScreenplay.mock.calls[1][2].draft).title).toBe('Evidence')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
 it('uses the default comparison reveal for malformed timing while preserving content validation', () => {
   const parse = (right: Record<string, unknown>): VideoPanel =>
     parseResearchVideoScreenplay(

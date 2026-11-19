@@ -127,7 +127,7 @@ export async function scoreFilmScript(
   ) => Promise<string>,
   signal: AbortSignal,
   checkpoint?: FilmAuthoringCheckpoint
-): Promise<{ score: number; findings: string[] }> {
+): Promise<{ score: number; findings: string[]; hasBlockingFindings: boolean }> {
   const narration = filmNarration(spec)
   const key =
     'script-rubric-v1:' + createHash('sha256').update(JSON.stringify(narration)).digest('hex')
@@ -143,6 +143,10 @@ export async function scoreFilmScript(
   )
   const introduction = agentIntroductionIssue(narration)
   if (introduction) report.clean = [introduction, report.clean].filter(Boolean).join(' ')
-  const findings = criteria.filter((k) => report[k] !== null).map((k) => k + ': ' + report[k])
-  return { score: criteria.length - findings.length, findings }
+  const failed = criteria.filter((key) => report[key] !== null)
+  return {
+    score: criteria.length - failed.length,
+    findings: failed.map((key) => key + ': ' + report[key]),
+    hasBlockingFindings: failed.some((key) => key !== 'audioOnly' && key !== 'plainWords')
+  }
 }
