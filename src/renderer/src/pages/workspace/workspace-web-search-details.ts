@@ -13,6 +13,7 @@ type WebSearchResult = {
   title: string
   url: string
   snippet?: string
+  publishedAt?: string
 }
 
 type WebSearchDetails = {
@@ -392,7 +393,8 @@ const formatBuiltinWebSearchDetails = (activity: ToolActivity): WebSearchDetails
             {
               url,
               title: sanitizeToolDetailText(source.title ?? new URL(url).hostname),
-              ...(source.snippet ? { snippet: sanitizeToolDetailText(source.snippet) } : {})
+              ...(source.snippet ? { snippet: sanitizeToolDetailText(source.snippet) } : {}),
+              ...(source.published_at ? { publishedAt: source.published_at } : {})
             }
           ]
         : []

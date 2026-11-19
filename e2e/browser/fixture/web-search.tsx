@@ -18,8 +18,16 @@ const initialActivity = (): ToolActivity => {
   const saved = localStorage.getItem(storageKey)
   if (saved)
     return normalizeActivityAfterRestore(sanitizeToolActivity(JSON.parse(saved))!) as ToolActivity
-  const result = searchResult(scenario === 'empty' || scenario === 'limited' ? 0 : 10)
-  if (result.sources[0]) {
+  const ordinary = scenario === 'ordinary'
+  const result = searchResult(
+    ordinary ? 1 : scenario === 'empty' || scenario === 'limited' ? 0 : 10
+  )
+  if (ordinary) {
+    result.request = {
+      query: 'open science reproducibility and reusable computational workflows',
+      max_results: 1
+    }
+  } else if (result.sources[0]) {
     result.sources[0].url = 'https://example.org/' + 'long-source-path/'.repeat(35)
     result.sources[0].snippet =
       '<img src="https://tracker.example/pixel"><script>alert(1)</script>\nScientific source text. ' +

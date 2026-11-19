@@ -127,7 +127,7 @@ describe('built-in search row', () => {
     expect(container.querySelector('details')).toBeNull()
   })
 
-  it('renders all ten sources with inert excerpts and accessible toggle behavior', async () => {
+  it('shows eight sources initially and expands to all ten with inert excerpts', async () => {
     const result = searchResult()
     result.sources[0].snippet = '<img src="https://tracker.example/pixel"><script>alert(1)</script>'
     const activity = searchActivity({}, result)
@@ -143,12 +143,25 @@ describe('built-in search row', () => {
         />
       )
     )
-    expect(container.querySelectorAll('[data-testid="web-search-source"]')).toHaveLength(10)
+    expect(container.querySelectorAll('[data-testid="web-search-source"]')).toHaveLength(8)
     expect(container.querySelector('img, script, iframe')).toBeNull()
     expect(container.querySelector('article a')?.getAttribute('href')).toBe(result.sources[0].url)
+    expect(container.querySelector('article time')?.getAttribute('datetime')).toBe(
+      result.sources[0].published_at
+    )
     expect(container.textContent).toContain(result.sources[0].snippet)
+    expect(
+      container.querySelector('time[datetime="2026-11-16T12:00:00.000Z"]')?.parentElement
+        ?.textContent
+    ).toMatch(/^Exa · /)
     const button = container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!
+    expect(button.textContent).toContain('10 results · 125 ms')
     expect(button.getAttribute('aria-expanded')).toBe('true')
+    const showAll = Array.from(container.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Show all results'
+    )!
+    await act(async () => showAll.click())
+    expect(container.querySelectorAll('[data-testid="web-search-source"]')).toHaveLength(10)
     button.focus()
     await act(async () => button.click())
     expect(onToggleSearch).toHaveBeenCalledWith(activity.id, false)

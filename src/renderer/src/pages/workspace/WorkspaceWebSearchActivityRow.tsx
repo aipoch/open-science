@@ -1,8 +1,13 @@
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Button } from '@/components/ui/button'
+import { formatDateTime } from '@/lib/format-datetime'
+import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolActivity } from '@/stores/session-store-contract'
+import { resolveLocaleFromTags } from '../../../../shared/locale'
 
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
@@ -106,6 +111,50 @@ const renderSearchDetailsBody = (
   )
 }
 
+const SearchExcerpt = ({ text }: { text: string }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const id = useId()
+  const excerptRef = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
+  useLayoutEffect(() => {
+    const excerpt = excerptRef.current
+    if (!excerpt || expanded) return
+    const measure = (): void => setOverflows(excerpt.scrollHeight > excerpt.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(excerpt)
+    return () => observer.disconnect()
+  }, [expanded, text])
+
+  return (
+    <>
+      <p
+        id={id}
+        ref={excerptRef}
+        className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', !expanded && 'line-clamp-3')}
+      >
+        {text}
+      </p>
+      {overflows ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="link"
+          className="mt-0.5 h-auto min-h-6 px-0 py-0 text-[11px]"
+          aria-controls={id}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? t('Show less') : t('Show more')}
+        </Button>
+      ) : null}
+    </>
+  )
+}
+
 // Renders one web-search activity row with an optional expandable result summary.
 const WorkspaceWebSearchActivityRow = ({
   activity,
@@ -115,8 +164,24 @@ const WorkspaceWebSearchActivityRow = ({
   onToggleSearch,
   annotationPort
 }: WorkspaceWebSearchActivityRowProps): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
   const { builtin, query, webResult, resultCount, results } = details
+  const subtitleRef = useRef<HTMLSpanElement>(null)
+  const [queryTruncated, setQueryTruncated] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+
+  useLayoutEffect(() => {
+    const subtitle = subtitleRef.current
+    if (!isExpanded || !subtitle) return
+    const measure = (): void => setQueryTruncated(subtitle.scrollWidth > subtitle.clientWidth)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(subtitle)
+    return () => observer.disconnect()
+  }, [builtin, isExpanded, query])
+
   const cancelled = phase === 'cancelled' || webResult?.error?.code === 'CANCELLED'
   const stopped = cancelled || phase === 'declined' || phase === 'closed' || phase === 'interrupted'
   const failed = !stopped && (phase === 'failed' || webResult?.status === 'error')
@@ -141,6 +206,9 @@ const WorkspaceWebSearchActivityRow = ({
           'The search service is temporarily limiting requests. Wait a moment, then ask to try again.'
         )
       : t('The web search could not finish. Check the connection, then ask to try again.')
+  const duration = webResult ? `${Math.round(webResult.duration_ms)} ms` : undefined
+  const visibleResults = showAll ? results : results.slice(0, 8)
+  const searchService = webResult?.provider?.id === 'exa' ? 'Exa' : undefined
 
   return (
     <WorkspaceToolActivityRowButton
@@ -148,16 +216,20 @@ const WorkspaceWebSearchActivityRow = ({
       phase={phase}
       label={t('Web Search')}
       subtitle={query || undefined}
+      subtitleRef={builtin ? subtitleRef : undefined}
       metaLabel={
         builtin
-          ? status
+          ? [status, duration].filter(Boolean).join(' · ')
           : phase === 'closed'
             ? t('request ended')
             : formatResultCountLabel(resultCount, t)
       }
       isExpanded={isExpanded}
       canExpand={Boolean(builtin || query || resultCount)}
-      panelClassName="mx-1 mb-1.5 min-w-0 space-y-2 rounded-[10px] border border-border-200 bg-bg-000 px-3.5 py-3 text-[12.5px] leading-5 shadow-card md:ml-[30px]"
+      panelClassName={cn(
+        'mx-1 mb-1.5 min-w-0 space-y-2 border border-border-200 bg-bg-000 text-[12.5px] leading-5 md:ml-[30px]',
+        builtin ? 'rounded-lg px-2.5 py-2' : 'rounded-[10px] px-3.5 py-3 shadow-card'
+      )}
       panelTestId="tool-search-details"
       onToggle={onToggleSearch}
     >
@@ -172,7 +244,7 @@ const WorkspaceWebSearchActivityRow = ({
           ) : stopped ? (
             <p role="status">{status}</p>
           ) : null}
-          {query ? (
+          {queryTruncated && query ? (
             <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">
               <span className="mr-1 text-text-100">{t('Query')}</span>
               {query}
@@ -186,31 +258,63 @@ const WorkspaceWebSearchActivityRow = ({
             ) : (
               <>
                 <div className="divide-y divide-border-200">
-                  {results.map((source) => (
-                    <article
-                      key={source.url}
-                      data-testid="web-search-source"
-                      className="min-w-0 space-y-0.5 py-2 first:pt-0 last:pb-0"
-                    >
-                      <ExternalTextLink href={source.url} className="[overflow-wrap:anywhere]">
-                        {source.title}
-                      </ExternalTextLink>
-                      <p className="text-xs text-text-100 [overflow-wrap:anywhere]">
-                        {new URL(source.url).hostname}
-                      </p>
-                      {source.snippet ? (
-                        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                          {source.snippet}
+                  {visibleResults.map((source) => {
+                    const publishedDate = source.publishedAt
+                      ? formatDateTime(source.publishedAt, locale, 'date')
+                      : ''
+                    return (
+                      <article
+                        key={source.url}
+                        data-testid="web-search-source"
+                        className="min-w-0 space-y-0.5 py-2 first:pt-0 last:pb-0"
+                      >
+                        <ExternalTextLink
+                          href={source.url}
+                          className="inline [overflow-wrap:anywhere] [&>svg]:ml-0.5 [&>svg]:inline-block [&>svg]:align-text-bottom"
+                        >
+                          {source.title}
+                        </ExternalTextLink>
+                        <p className="text-xs text-text-100 [overflow-wrap:anywhere]">
+                          {new URL(source.url).hostname}
+                          {publishedDate ? (
+                            <>
+                              {' · '}
+                              <time dateTime={source.publishedAt} title={source.publishedAt}>
+                                {publishedDate}
+                              </time>
+                            </>
+                          ) : null}
                         </p>
-                      ) : null}
-                    </article>
-                  ))}
+                        {source.snippet ? <SearchExcerpt text={source.snippet} /> : null}
+                      </article>
+                    )
+                  })}
                 </div>
+                {!showAll && results.length > visibleResults.length ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="link"
+                    className="px-0"
+                    onClick={() => setShowAll(true)}
+                  >
+                    {t('Show all results')}
+                  </Button>
+                ) : null}
                 {webResult.results_truncated ? (
                   <p className="text-text-100">{t('The returned search results are truncated.')}</p>
                 ) : null}
               </>
             )
+          ) : null}
+          {webResult && !unavailable && !stopped && !pending ? (
+            <p className="text-xs text-text-100 [overflow-wrap:anywhere]">
+              {searchService ? `${searchService} · ` : null}
+              <time dateTime={webResult.retrieved_at} title={webResult.retrieved_at}>
+                {formatDateTime(webResult.retrieved_at, locale, 'dateTime') ||
+                  webResult.retrieved_at}
+              </time>
+            </p>
           ) : null}
           {failed && webResult?.error ? (
             <WorkspaceWebActivityDetails>

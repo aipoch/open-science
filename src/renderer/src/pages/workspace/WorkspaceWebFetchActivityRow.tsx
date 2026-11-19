@@ -44,6 +44,7 @@ const WorkspaceWebFetchActivityRow = ({
   const finalUrl = safeWebUrl(document?.final_url)
   const target = originalUrl ?? finalUrl
   const sourceUrl = finalUrl ?? originalUrl
+  const duration = result ? `${Math.round(result.duration_ms)} ms` : undefined
   const status =
     phase === 'declined'
       ? t('Declined')
@@ -75,6 +76,12 @@ const WorkspaceWebFetchActivityRow = ({
                 : t(
                     'The web page could not be read. Check the address and connection, then ask to try again.'
                   )
+  const extractionMethod =
+    document?.extraction_method === 'main_content'
+      ? t('Main content')
+      : document?.extraction_method === 'semantic_dom'
+        ? t('Semantic page text')
+        : t('Plain text')
   const source = (url: string): React.JSX.Element => (
     <ExternalTextLink
       href={url}
@@ -97,7 +104,7 @@ const WorkspaceWebFetchActivityRow = ({
       phase={phase}
       label={t('Web Fetch')}
       subtitle={target ? new URL(target).hostname : undefined}
-      metaLabel={status}
+      metaLabel={[status, duration].filter(Boolean).join(' · ')}
       isExpanded={isExpanded}
       onToggle={onToggle}
       panelClassName="mx-1 mb-1.5 min-w-0 space-y-2 rounded-lg border border-border-200 bg-bg-000 px-2.5 py-2 text-[12.5px] leading-5 md:ml-[30px]"
@@ -142,7 +149,7 @@ const WorkspaceWebFetchActivityRow = ({
       {phase === 'completed' && !stopped && !failed && !document ? (
         <p className="text-text-100">{t('Content unavailable')}</p>
       ) : null}
-      {!stopped && (originalUrl || document || error) ? (
+      {!stopped && (originalUrl || result) ? (
         <WorkspaceWebActivityDetails>
           <dl className="grid min-w-0 gap-x-6 gap-y-2 sm:grid-cols-2">
             {originalUrl ? (
@@ -155,10 +162,38 @@ const WorkspaceWebFetchActivityRow = ({
                 {source(finalUrl)}
               </WorkspaceWebActivityFact>
             ) : null}
-            {document ? (
-              <WorkspaceWebActivityFact label={t('Fetched at')}>
-                {timestamp(document.fetched_at)}
+            {result ? (
+              <WorkspaceWebActivityFact label={t('Requested at')}>
+                {timestamp(result.retrieved_at)}
               </WorkspaceWebActivityFact>
+            ) : null}
+            {document ? (
+              <>
+                <WorkspaceWebActivityFact label={t('Fetched at')}>
+                  {timestamp(document.fetched_at)}
+                </WorkspaceWebActivityFact>
+                <WorkspaceWebActivityFact label={t('Extraction method')}>
+                  {extractionMethod}
+                  {' · '}
+                  {document.extraction_quality === 'degraded' ? t('Degraded') : t('Normal')}
+                </WorkspaceWebActivityFact>
+                {result?.cache ? (
+                  <WorkspaceWebActivityFact label={t('Cache')}>
+                    {result.cache.hit
+                      ? result.cache.age_ms === undefined
+                        ? t('Cached')
+                        : t('Cached · {{age}} ms old', { age: Math.round(result.cache.age_ms) })
+                      : t('Fetched from website')}
+                  </WorkspaceWebActivityFact>
+                ) : null}
+                <WorkspaceWebActivityFact label={t('Returned lines')}>
+                  {t('{{start}}–{{end}} of {{total}}', {
+                    start: document.start_line,
+                    end: document.end_line,
+                    total: document.total_lines
+                  })}
+                </WorkspaceWebActivityFact>
+              </>
             ) : null}
             {failed && error ? (
               <WorkspaceWebActivityFact label={t('Error')}>{error.code}</WorkspaceWebActivityFact>

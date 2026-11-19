@@ -303,12 +303,13 @@ describe('built-in v1 search details', () => {
     }
     expect(isBuiltinWebSearchActivity(searchActivity({ appOwned: undefined }))).toBe(false)
   })
-  it('keeps all ten results and source excerpts', () => {
+  it('keeps all ten results, source excerpts, and available publication dates', () => {
     const details = formatWebSearchDetails(searchActivity())
     expect(details.resultCount).toBe(10)
     expect(details.results).toHaveLength(10)
     expect(details.results[0]).toMatchObject({
-      snippet: 'Scientific search excerpt 1'
+      snippet: 'Scientific search excerpt 1',
+      publishedAt: '2026-11-15T00:00:00.000Z'
     })
   })
   it('preserves redacted complete search JSON within wrapper budgets after restart', () => {
