@@ -3,6 +3,8 @@ name: Windows Upgrade Smoke
 # Advisory post-release validation. It consumes published assets, so it cannot extend or block the
 # stable Release workflow. A failure is intentionally red here and can be rerun for the same tag.
 on:
+  schedule:
+    - cron: '23 19 * * *'
   repository_dispatch:
     types:
       - windows-upgrade-smoke
@@ -18,6 +20,15 @@ on:
         type: boolean
         default: false
 
+      candidate_dry_run:
+        description: Exercise the daily test-signed upgrade on this ref, without publication or issue reporting
+        type: boolean
+        default: false
+      signed_run_id:
+        description: Exercise the pre-publication gate on an existing signed Release artifact instead
+        type: string
+        default: ''
+
 permissions:
   contents: read
 
@@ -26,8 +37,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  candidate-upgrade:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.candidate_dry_run || inputs.signed_run_id != ''))
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/daily-windows-upgrade.yml
+    with:
+      signed_run_id: ${{ inputs.signed_run_id || '' }}
+
   windows-upgrade-smoke:
-    if: ${{ !inputs.dry_run }}
+    if: ${{ github.event_name != 'schedule' && !inputs.dry_run && !inputs.candidate_dry_run && !inputs.signed_run_id }}
     runs-on: windows-latest
     # Four full installers plus the orphaned-lock probe can spend about 22.5 minutes, and the two
     # current-phase Notebook provisions can spend 16 minutes. Keep the five-cycle launch/close
@@ -247,3 +267,31 @@ jobs:
         run: npx prisma generate
       - name: Test actual Windows baseline selection and installer observation
         run: npx vitest run scripts/windows-upgrade-baseline.test.ts scripts/windows-updater-certification.test.ts
+
+  report:
+    needs: candidate-upgrade
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["success","failure"]'), needs.candidate-upgrade.result) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ needs.candidate-upgrade.result }}
+        with:
+          script: |
+            const {reportScheduledOutcome} = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github, repo: context.repo, workflowFile: 'windows-upgrade-smoke.yml',
+              workflowName: 'Daily Windows Upgrade', runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), headSha: context.sha,
+              conclusion: process.env.CONCLUSION, log: core.info
+            })

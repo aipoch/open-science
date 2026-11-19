@@ -28,7 +28,9 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  installApplication,
   installAndProbe,
+  launchAndExpectDatabaseBlocked,
   launchAndProbe,
   launchUninstallerLockHolder,
   runProcess,
@@ -97,6 +99,7 @@ const parseArguments = (argv) => {
     currentDirectory: resolve(currentDirectory),
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
+    ...(argv.includes('--rollback') ? { rollback: true } : {}),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
     ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
     ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
@@ -944,6 +947,33 @@ const main = async () => {
     await profileGuard.verifyCycle('current', currentConfigRoot)
     Object.assign(observation, successor)
     observation.installedVersionVerified = currentVersion
+    if (options.rollback) {
+      await installApplication(previousInstaller, installDirectory, env)
+      if (profileGuard.shouldExpectDowngradeBlock()) {
+        const record = await launchAndExpectDatabaseBlocked({
+          installDirectory,
+          env,
+          configRoot: currentConfigRoot,
+          expectedVersion: previousVersion
+        })
+        if (!record) throw new Error('Missing structured database block from the rollback launch.')
+        observation.rollback = {
+          version: previousVersion,
+          code: record.data.code,
+          runId: record.runId
+        }
+        await profileGuard.verifyCycle('rollback', currentConfigRoot)
+      } else {
+        const root = await launchAndProbe({
+          installDirectory,
+          env,
+          expectedVersion: previousVersion,
+          legacyConfigRoots
+        })
+        await profileGuard.verifyCycle('rollback', root)
+        observation.rollback = { version: previousVersion, healthy: true }
+      }
+    }
     await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
     console.log('Windows electron-updater differential certification completed successfully.')
   } catch (error) {
