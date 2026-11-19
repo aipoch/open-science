@@ -4,8 +4,9 @@
 // lazily, only once the flag matches, so the UI path acquires the single-instance lock before any
 // backend module loads.
 export const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
+export const IMAGE_MCP_SERVER_ARG = '--open-science-image-mcp'
 export const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 export const REVIEWER_MCP_PROXY_ARG = '--open-science-reviewer-mcp-proxy'
 export const SKILL_IMPORT_MCP_SERVER_ARG = '--open-science-skill-import-mcp'
-export const SKILL_RUNTIME_MCP_SERVER_ARG = '--open-science-skill-runtime-mcp'
 export const PLAN_MCP_SERVER_ARG = '--open-science-plan-mcp'
+export const SKILL_RUNTIME_MCP_SERVER_ARG = '--open-science-skill-runtime-mcp'

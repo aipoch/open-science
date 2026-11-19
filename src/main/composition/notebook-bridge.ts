@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { runtimeMetadata } from '../runtime-metadata'
 import { bindNotebookApprovals } from './notebook-approvals'
@@ -32,6 +34,7 @@ import { HostLineageService } from '../notebook/host-lineage-service'
 import { HostModelService } from '../notebook/host-model-service'
 import { HostSessionsService } from '../notebook/host-sessions-service'
 import { HostViewImageService } from '../notebook/host-view-image-service'
+import type { ImageModelService } from '../image-model/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
@@ -50,6 +53,9 @@ import { WslSetupOwner } from '../wsl/wsl-setup-owner'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 import { openWslSetupPowerShellTerminal } from '../wsl/wsl-setup-terminal'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
+
+const imageWriteOperationId = (invocationId: string): string =>
+  `image-${createHash('sha256').update(invocationId).digest('hex')}`
 
 export async function composeNotebookBridge({
   wslSetupSessions,
@@ -70,6 +76,7 @@ export async function composeNotebookBridge({
   visionEvidenceRepository,
   notebookService,
   notebookLocalRpc,
+  imageModel,
   grantedRootsRepository,
   specialistService,
   memoryService,
@@ -106,6 +113,7 @@ export async function composeNotebookBridge({
   notebookService: NotebookRuntimeService
   grantedRootsRepository: GrantedLocalRootsRepository
   notebookLocalRpc: ReturnType<typeof createNotebookApplicationModule>['capability']['localRpc']
+  imageModel: ImageModelService
   specialistService: SpecialistService
   memoryService: MemoryService
   removeResourceTags: (resources: Parameters<TagService['removeResources']>[0]) => Promise<void>
@@ -323,6 +331,72 @@ export async function composeNotebookBridge({
             () => artifactProvenanceRepository.replayVersion(request)
           )
       },
+      imageModel,
+      readImageArtifact: (binding, invocationId) =>
+        artifactProvenanceRepository.readImageInvocationVersion({
+          ...binding,
+          invocationId,
+          writeOperationId: imageWriteOperationId(invocationId)
+        }),
+      writeImageArtifact: (binding, input) =>
+        sessionPersistenceCoordinator.runSessionMutation(
+          binding.projectId,
+          binding.appSessionId,
+          async () => {
+            await assertResearchSessionWritable(
+              resolveDataRoot(),
+              binding.projectId,
+              binding.appSessionId
+            )
+            const loaded = await sessionRepository.loadSessionWithDiagnostics(
+              binding.projectId,
+              binding.appSessionId,
+              { mode: 'read-only' }
+            )
+            const graph = loaded.status === 'found' ? loaded.session.conversationGraph : undefined
+            if (
+              !graph?.frames.some(({ id }) => id === binding.agentFrameId) ||
+              !graph.branches.some(
+                ({ id, agentFrameId }) =>
+                  id === binding.messageBranchId && agentFrameId === binding.agentFrameId
+              )
+            )
+              throw new Error('Image result owner is unavailable.')
+            const publication = new AbortController()
+            const owner = {
+              appSessionId: binding.appSessionId,
+              artifactRunId: binding.artifactRunId,
+              rootFrameId: binding.rootFrameId,
+              agentFrameId: binding.agentFrameId,
+              messageBranchId: binding.messageBranchId,
+              runtimeSegmentId: binding.runtimeSegmentId,
+              promptMessageId: binding.promptMessageId
+            }
+            try {
+              return await artifactProvenanceRepository.writeAppGeneratedVersion({
+                ...owner,
+                projectId: binding.projectId,
+                artifactStorageSessionId: binding.artifactStorageSessionId,
+                messageBranchAncestry: binding.messageBranchAncestry
+                  ? [...binding.messageBranchAncestry]
+                  : undefined,
+                messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
+                agentName: binding.agentName,
+                writeOperationId: imageWriteOperationId(input.producer.invocationId),
+                filename: input.filename,
+                content: input.content,
+                contentType: input.mimeType,
+                producer: {
+                  ...input.producer,
+                  // A same-turn source can be validated while this admitted publication drains.
+                  inputScope: { ...owner, assertActive: () => publication.signal.throwIfAborted() }
+                }
+              })
+            } finally {
+              publication.abort()
+            }
+          }
+        ),
       hostArtifacts: new HostArtifactsService(projectFilesRepository, immutableInputAuthority),
       delegationInputCatalog: projectFilesRepository,
       hostLineage: new HostLineageService({

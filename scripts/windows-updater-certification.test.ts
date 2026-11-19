@@ -17,6 +17,8 @@ import {
   parseSingleRange,
   redactPackagedAppOutput,
   rewriteFeedPaths,
+  sha512Base64,
+  verifyCachedInstaller,
   observeInstaller,
   startAssetServer
 } from './windows-updater-certification.mjs'
@@ -334,6 +336,17 @@ describe('Windows updater certification', () => {
     expect(load(result.source)).toHaveProperty('publisherName', 'Old Signer')
   })
 
+  it('upgrades the legacy Windows publisher name to the full certificate DN', () => {
+    const result = buildLocalUpdaterConfig(
+      'provider: generic\nurl: https://example.test\nupdaterCacheDirName: app-updater\npublisherName: AIPOCH PTE. LTD.\n',
+      'http://127.0.0.1:4321'
+    )
+
+    expect(load(result.source)).toHaveProperty('publisherName', [
+      'CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
+    ])
+  })
+
   it('accepts one bounded HTTP range and rejects multipart ranges', () => {
     expect(parseSingleRange('bytes=10-19', 100)).toEqual({ start: 10, end: 19 })
     expect(parseSingleRange('bytes=90-', 100)).toEqual({ start: 90, end: 99 })
@@ -372,6 +385,23 @@ describe('Windows updater certification', () => {
     expect(() =>
       assertDifferentialObservation({ ...observation, downloadedInstallerBytes: 100 })
     ).toThrow(/complete differential path/)
+  })
+
+  it('uses the exact previous installer bytes for differential reconstruction', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'updater-cache-hash-'))
+    const source = join(root, 'source.exe')
+    const cached = join(root, 'cached.exe')
+    try {
+      await writeFile(source, Buffer.from('previous installer'))
+      await copyFile(source, cached)
+      await expect(verifyCachedInstaller(source, cached)).resolves.toBe(await sha512Base64(source))
+      await writeFile(cached, Buffer.from('different installer'))
+      await expect(verifyCachedInstaller(source, cached)).rejects.toThrow(
+        'unexpected installer cache'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('requires both release artifact directories and an evidence output', () => {

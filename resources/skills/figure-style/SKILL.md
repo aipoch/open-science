@@ -8,8 +8,10 @@ license: Apache-2.0
 
 _A checklist for correct, legible, internally-consistent scientific figures. This
 skill does not impose a visual house style — frame, font, and palette are
-parameters. Before plotting, follow the Notebook call below and invoke
-`apply_figure_style()`._
+parameters. When rendering a data plot with Notebook, follow the call below and invoke
+`apply_figure_style()`. For generated mechanism illustrations, use the configured images MCP
+`generate_image` / `edit_image` tools directly and apply these correctness and legibility rules
+to the prompt and visual review. Those calls do not require a Notebook runtime or Host SDK lookup._
 
 ## Open-Science Notebook call
 

@@ -206,6 +206,16 @@ function reviewEnv(overrides: Record<string, string> = {}): Record<string, strin
 }
 
 describe('apply_review_outcome', () => {
+  it('removes ready-to-merge for a draft even when the review succeeded', async () => {
+    const { github, added, removed } = makeGithub({
+      pr: { draft: true },
+      labels: ['ready-to-merge']
+    })
+    await runJob('apply_review_outcome', reviewContext(), github, reviewEnv())
+    expect(added).toEqual([])
+    expect(removed).toEqual(['ready-to-merge'])
+  })
+
   it('labels ready-to-merge when the combined reviewer is mergeable', async () => {
     const { github, added, removed } = makeGithub()
     await runJob('apply_review_outcome', reviewContext(), github, reviewEnv())

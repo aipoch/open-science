@@ -95,6 +95,7 @@ export type TagsView =
 
 export type ModelView =
   | ClassificationView
+  | ImageServicesView
   | { kind: 'list'; recoveryProviderId?: string; recoveryModel?: string }
   | { kind: 'local-models' }
   | { kind: 'create' }
@@ -120,6 +121,11 @@ export type SpecialistMarketplaceView =
       /** One-shot card action; ordinary details navigation never starts installation. */
       installRequested?: boolean
     }
+
+export type ImageServicesView =
+  | { kind: 'image-services' }
+  | { kind: 'image-service-create' }
+  | { kind: 'image-service-edit'; serviceId: string }
 
 export type ClassificationView =
   | { kind: 'classification' }

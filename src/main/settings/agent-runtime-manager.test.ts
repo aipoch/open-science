@@ -97,6 +97,24 @@ const buildManagedClaudeTgz = (content: Buffer): Buffer => {
 const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
 
+const descendantProbeSource = (pidFile: string): string =>
+  [
+    "const { spawn } = require('node:child_process')",
+    "const { writeFileSync } = require('node:fs')",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+    `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
+    'setInterval(() => {}, 1000)'
+  ].join('\n')
+
+const killFixtureProcess = (pid: number | undefined): void => {
+  if (!pid) return
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // The production teardown should already have reaped it.
+  }
+}
+
 const createClaudeDeps = (inventory: RuntimeInventory): ClaudeDetectDeps => ({
   env: {},
   homePath: '/home',
@@ -133,6 +151,98 @@ const createCodexDeps = (
 })
 
 describe('AgentRuntimeManager', () => {
+  it
+    .skipIf(process.platform === 'win32')
+    .each([
+      'shared status',
+      'shared status input',
+      'shared login',
+      'isolated login',
+      'subscription'
+    ] as const)('releases real Claude %s processes before returning', async (scenario) => {
+    const { ClaudeSharedAuthController } = await import('./claude-shared-auth')
+    const { ClaudeIsolatedAuthController } = await import('./claude-isolated-auth')
+    const executable = join(storageRoot, 'resource-cli.mjs')
+    const pidFile = join(storageRoot, 'resource-pids.json')
+    const login = scenario.endsWith('login')
+    let pids: number[] = []
+    let pending: Promise<unknown> | undefined
+    let cancel: (() => void) | undefined
+    try {
+      await writeFile(
+        executable,
+        "import { spawn } from 'node:child_process';\n" +
+          "import { writeFileSync } from 'node:fs';\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+          (login
+            ? 'setInterval(() => {}, 1000);\n'
+            : scenario === 'shared status input'
+              ? 'child.unref(); process.stdin.on("end", () => process.exit(3)); process.stdin.resume(); setTimeout(() => { console.log(JSON.stringify({ loggedIn: true })); process.exit(0) }, 50);\n'
+              : 'child.unref(); console.log(JSON.stringify({ loggedIn: true }));\n')
+      )
+      if (scenario === 'subscription') {
+        const settings = {
+          ...(await repository.getSettings()),
+          claude: { resolvedPath: executable, version: '2.1.309' }
+        }
+        pending = manager.runClaudeSubscriptionProbe({ type: 'claude-shared', key: '' }, settings)
+      } else if (scenario === 'isolated login') {
+        const ctrl = new ClaudeIsolatedAuthController({
+          claudePath: executable,
+          configDir: storageRoot,
+          store: {
+            loadToken: async () => undefined,
+            saveToken: async () => {},
+            clearToken: async () => {},
+            isEncryptionAvailable: () => true
+          }
+        })
+        cancel = () => ctrl.cancelLogin()
+        pending = ctrl.loginIsolatedBrowser()
+      } else {
+        const ctrl = new ClaudeSharedAuthController({
+          claudePath: executable,
+          configDir: storageRoot
+        })
+        cancel = () => ctrl.cancelLogin()
+        pending = login ? ctrl.loginShared() : ctrl.getStatus()
+      }
+      if (login) {
+        await vi.waitFor(
+          async () => {
+            pids = JSON.parse(await readFile(pidFile, 'utf8'))
+          },
+          { timeout: 5000 }
+        )
+      } else {
+        await pending
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      }
+      if (login) cancel!()
+      expect(await pending).toMatchObject(
+        login
+          ? { cancelled: true }
+          : scenario === 'subscription'
+            ? { ok: true }
+            : { authenticated: true }
+      )
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      cancel?.()
+      await pending
+      if (!pids.length) {
+        try {
+          pids = JSON.parse(await readFile(pidFile, 'utf8'))
+        } catch {
+          /* No spawn. */
+        }
+      }
+      for (const pid of pids) killFixtureProcess(pid)
+    }
+  })
+
   it.each(['detectCodex', 'bootstrapCodex', 'checkEnvironment'] as const)(
     'upgrades the installed adapter before %s starts its nested process',
     async (operation) => {
@@ -774,6 +884,35 @@ describe('AgentRuntimeManager', () => {
     expect(Date.now() - startedAt).toBeLessThan(750)
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'reaps the default Codex JavaScript probe descendants on cancellation',
+    async () => {
+      const pidFile = join(storageRoot, 'codex-probe-pid')
+      await mkdir(dirname(managedAdapterPath), { recursive: true })
+      await writeFile(managedAdapterPath, descendantProbeSource(pidFile))
+      inventory.opencode.set(managedAdapterPath, 'unused')
+      manager = createManager({ codexDetectDeps: undefined })
+      const controller = new AbortController()
+      const result = manager.detectCodex(controller.signal).catch((error: unknown) => error)
+      let descendant: number | undefined
+      try {
+        await vi.waitFor(async () => {
+          descendant = Number(await readFile(pidFile, 'utf8'))
+          expect(descendant).toBeGreaterThan(0)
+        })
+        controller.abort()
+        expect(await result).toMatchObject({ name: 'AbortError' })
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        controller.abort()
+        await result
+        killFixtureProcess(descendant)
+      }
+    }
+  )
+
   it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {
     const codebuddyPath = posix.join('/detected', 'codebuddy')
     await repository.setCodeBuddyInfo(codebuddyPath, '2.139.0')
@@ -1169,7 +1308,7 @@ describe('AgentRuntimeManager', () => {
         return {
           result: { installId: options.installId, ok: true },
           resolvedPath: join(storageRoot, 'installed', 'codebuddy'),
-          version: '2.138.0'
+          version: CODEBUDDY_VERSION
         }
       })
     const claudePath = join(storageRoot, 'installed', 'claude')

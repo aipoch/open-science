@@ -992,6 +992,40 @@ const streamPreviewResource = async (
   }
 }
 
+const isHtmlArtifact = (artifact: { name: string; mimeType?: string }): boolean => {
+  const extension = artifact.name.slice(artifact.name.lastIndexOf('.')).toLowerCase()
+  const mimeType = artifact.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+  return extension === '.html' || extension === '.htm' || mimeType === 'text/html'
+}
+
+const artifactContentResponseOverrides = (
+  artifact: { name: string; mimeType?: string },
+  disposition: string | null
+): Record<string, string> => {
+  if (disposition === 'inline') {
+    if (!isHtmlArtifact(artifact)) {
+      throw new TaskApiError(
+        'invalid_request',
+        'Inline artifact display is only supported for HTML files.'
+      )
+    }
+    return {
+      'content-disposition': 'inline',
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer'
+    }
+  }
+  if (disposition !== null && disposition !== 'attachment') {
+    throw new TaskApiError(
+      'invalid_request',
+      'Artifact disposition must be either attachment or inline.'
+    )
+  }
+  return {
+    'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
+  }
+}
+
 const handleTaskApiRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -1347,7 +1381,30 @@ const handleTaskApiRequest = async (
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
       if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
+        const artifactId = decodeURIComponent(artifactMatch[1])
+        const inline = url.searchParams.get('disposition') === 'inline'
+        const versionParam = url.searchParams.get('version')
+        let versionNumber: number | undefined
+        if (inline && versionParam !== null) {
+          versionNumber = Number(versionParam)
+          if (
+            !/^\d+$/u.test(versionParam) ||
+            !Number.isSafeInteger(versionNumber) ||
+            versionNumber < 1
+          ) {
+            throw new TaskApiError(
+              'invalid_request',
+              'Artifact version must be a positive integer.'
+            )
+          }
+        }
+        // Scoped browser reads must not change the default Task artifact download contract.
+        const artifact = inline
+          ? await tasks.acquireArtifact(
+              artifactId,
+              versionNumber === undefined ? {} : { versionNumber }
+            )
+          : await tasks.acquireArtifact(artifactId)
         try {
           await streamPreviewResource(
             request,
@@ -1355,9 +1412,7 @@ const handleTaskApiRequest = async (
             fetchPreview,
             artifact.url,
             externalAuthorization,
-            {
-              'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
-            }
+            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition'))
           )
         } finally {
           await artifact.release()

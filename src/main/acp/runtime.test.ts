@@ -1734,6 +1734,7 @@ describe('ACP runtime migration write-gate', () => {
             text: expect.stringContaining(capacityError),
             failure: {
               category: 'service',
+              reason: 'service/unavailable',
               responseMessage: capacityError,
               diagnostics: { code: 'overloaded_error', raw: `Internal error: ${capacityError}` }
             }
@@ -2130,7 +2131,7 @@ describe('ACP runtime migration write-gate', () => {
 
     try {
       await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-        'The selected model "gpt-subscription" is not available for this Codex account.'
+        'The selected model "gpt-subscription" is not available for this account.'
       )
     } finally {
       disposeSpy.mockRestore()
@@ -2259,6 +2260,37 @@ describe('ACP runtime migration write-gate', () => {
     } finally {
       disposeSpy.mockRestore()
     }
+  })
+
+  it('refuses to start a CodeBuddy subscription reviewer on a different model', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/codebuddy',
+        env: {},
+        modelRoute: 'codebuddy-subscription',
+        sessionModel: 'requested-model',
+        sessionModelRequired: true
+      }),
+      framework: codeBuddyFramework
+    })
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('not available for this account')
   })
 
   it('skips set_config_option when a required subscription model already matches currentValue', async () => {
@@ -5994,13 +6026,11 @@ describe('ACP runtime session management', () => {
       scheduleDelivery: (expectedCommandId) =>
         (
           runtime as unknown as {
-            scheduleQueuedPlanDelivery: (
-              projectId: string,
-              sessionId: string,
-              expectedCommandId?: string
-            ) => void
+            planContinuations: {
+              schedule: (projectId: string, sessionId: string, expectedCommandId?: string) => void
+            }
           }
-        ).scheduleQueuedPlanDelivery('project-1', 'restored-plan-session', expectedCommandId)
+        ).planContinuations.schedule('project-1', 'restored-plan-session', expectedCommandId)
     }
   }
 
@@ -9996,6 +10026,7 @@ describe('ACP runtime session management', () => {
         'end-while-running',
         'timeout',
         'unknown',
+        'opaque-code',
         'post-dispatch',
         'prepared',
         'prepared-attachment-failed-write',
@@ -10065,7 +10096,7 @@ describe('ACP runtime session management', () => {
               admissionEntered = true
               await admission.promise
             } else {
-              throw Object.assign(new Error('temporary admission failure'), {
+              const error = Object.assign(new Error('temporary admission failure'), {
                 code:
                   scenario === 'timeout'
                     ? 'ETIMEDOUT'
@@ -10073,6 +10104,14 @@ describe('ACP runtime session management', () => {
                       ? undefined
                       : 'EAGAIN'
               })
+              if (scenario === 'opaque-code') {
+                Object.defineProperty(error, 'code', {
+                  get() {
+                    throw new Error('Unreadable provider error code')
+                  }
+                })
+              }
+              throw error
             }
           }
           return structuredClone(persisted)
@@ -10304,10 +10343,13 @@ describe('ACP runtime session management', () => {
         expect(persisted.status).toBe('waiting-for-user')
         expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
         expect(persisted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBe(
-          scenario === 'timeout' || scenario === 'unknown' ? undefined : true
+          ['timeout', 'unknown', 'opaque-code'].includes(scenario) ? undefined : true
         )
       })
-      if (scenario === 'timeout' || scenario === 'unknown') {
+      if (['timeout', 'unknown', 'opaque-code'].includes(scenario)) {
+        await vi.waitFor(() =>
+          expect(runtime.resourceDiagnosticSnapshot().additionalActivity).toBe(false)
+        )
         await expect(
           coordinator.respondToElicitation({ ...response, retryContinuation: true })
         ).rejects.toThrow('cannot be retried safely')
@@ -27115,7 +27157,7 @@ describe('ACP runtime session management', () => {
       'Claude Code explicit 4xx',
       { errorKind: 'unknown' },
       'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid',
-      'service'
+      'configuration'
     ],
     [
       'Claude Code API connection refused',
@@ -33162,6 +33204,7 @@ describe('Specialist Skill scoping', () => {
       writeAppGeneratedVersion: async (
         input: Parameters<ArtifactProvenanceRepository['writeAppGeneratedVersion']>[0]
       ): Promise<ArtifactVersionFile> => {
+        if (typeof input.content !== 'string') throw new Error('Expected serialized Plan text.')
         serializedPlan = input.content
         await writeFile(planPath, serializedPlan, 'utf8')
         return {

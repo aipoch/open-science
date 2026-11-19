@@ -12,6 +12,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'schedule-invalid-change',
   'schedule-target-unavailable',
   'schedule-request-conflict',
+  'SESSION_HISTORY_CURSOR_STALE',
   'desktop-runtime-disconnected',
   'desktop-runtime-not-submitted',
   'settings-storage-unavailable',

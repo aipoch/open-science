@@ -19,7 +19,11 @@
     "src/shared/session-runtime-context.ts",
     "src/shared/session-turn-outcome-contract.ts",
     "src/shared/side-chat-entry-contract.ts",
-    "src/shared/side-chat.ts"
+    "src/shared/side-chat.ts",
+    "src/shared/image-edit-contract.ts",
+    "src/shared/image-edit-contract.test.ts",
+    "src/shared/image-task.ts",
+    "src/shared/image-model-error.ts"
   ],
   "interfacePaths": [
     "src/shared/harness-turn-contract.ts",
@@ -28,11 +32,18 @@
     "src/shared/preview-state.ts",
     "src/shared/runtime-message-identity.ts",
     "src/shared/session-reproducibility.ts",
-    "src/shared/side-chat.ts"
+    "src/shared/side-chat.ts",
+    "src/shared/image-edit-contract.ts",
+    "src/shared/image-task.ts",
+    "src/shared/image-model-error.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {
-    "owner": ["src/shared/harness-turn-contract.test.ts", "src/shared/preview-state.test.ts"],
+    "owner": [
+      "src/shared/harness-turn-contract.test.ts",
+      "src/shared/preview-state.test.ts",
+      "src/shared/image-edit-contract.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/main/notebook/harness-tools.integration.test.ts",

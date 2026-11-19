@@ -21,6 +21,7 @@ import type {
   ArtifactVersionProvenance,
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest,
+  ImageVersionDependency,
   PersistedArtifactExecutionSnapshot,
   ProvenanceExecutionInputFile
 } from '../../shared/artifact-provenance'
@@ -55,7 +56,7 @@ import {
 import { projectPublicArtifactExecutionSnapshot } from './provenance-execution-projection'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { requireGeneratedArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -220,8 +221,119 @@ type ArtifactProvenanceReadModelOptions = {
   }) => Promise<ArtifactVersionProvenance['contentStatus']>
 }
 
+const IMAGE_DEPENDENCY_PAGE_SIZE = 32
+const imageContentTypes = ['image/png', 'image/jpeg', 'image/webp'] as const
+const isImageContentType = (mime: string | null): mime is (typeof imageContentTypes)[number] =>
+  imageContentTypes.some((value) => value === mime)
+
 class ArtifactProvenanceReadModel {
   constructor(private readonly options: ArtifactProvenanceReadModelOptions) {}
+
+  private async imageDependencies(
+    client: PrismaClient,
+    projectId: string,
+    anchorIds: string[],
+    sourceKind: 'artifact-version' | 'upload-version',
+    { cursor, inputOfArtifactId }: { cursor?: string; inputOfArtifactId?: string } = {}
+  ): Promise<Pick<ArtifactLineageProvenance, 'imageDependencies' | 'nextImageCursor'>> {
+    const rows = await client.artifactVersionInput.findMany({
+      where: {
+        ...(cursor ? { id: { gt: cursor } } : {}),
+        sourceProjectId: projectId,
+        contentType: { in: [...imageContentTypes] },
+        artifactVersion: {
+          state: 'finalized',
+          managedVisibleAt: { not: null },
+          artifact: { projectId },
+          artifactId: inputOfArtifactId,
+          evidenceJson: { contains: '"connector_id":"image-model"' }
+        },
+        OR: inputOfArtifactId
+          ? [{ artifactVersionId: { in: anchorIds } }]
+          : sourceKind === 'artifact-version'
+            ? [
+                { artifactVersionId: { in: anchorIds } },
+                { sourceArtifactVersionId: { in: anchorIds } }
+              ]
+            : [{ sourceUploadVersionId: { in: anchorIds } }]
+      },
+      orderBy: { id: 'asc' },
+      take: IMAGE_DEPENDENCY_PAGE_SIZE + 1,
+      include: {
+        artifactVersion: { include: { artifact: true } },
+        sourceArtifactVersion: { include: { artifact: true } },
+        sourceUploadVersion: { include: { uploadFile: true } }
+      }
+    })
+    const dependencies: ImageVersionDependency[] = []
+    for (const row of rows.slice(0, IMAGE_DEPENDENCY_PAGE_SIZE)) {
+      const output = row.artifactVersion
+      if (!output.evidenceJson || !isImageContentType(output.contentType)) continue
+      let proof: ArtifactVersionEvidence
+      try {
+        proof = JSON.parse(output.evidenceJson) as ArtifactVersionEvidence
+      } catch {
+        continue
+      }
+      const producer = proof?.producer
+      if (
+        producer?.state !== 'available' ||
+        !('kind' in producer) ||
+        producer.connector_id !== 'image-model' ||
+        producer.tool_id !== 'edit_image' ||
+        proof.connector_execution?.normalized_arguments.sourceVersionId !== row.inputFileVersionId
+      )
+        continue
+      const artifact = row.sourceArtifactVersion
+      const upload = row.sourceUploadVersion
+      const input = artifact ?? upload
+      const owner = artifact?.artifact ?? upload?.uploadFile
+      const inputKind = artifact ? 'artifact-version' : 'upload-version'
+      if (
+        !input ||
+        !owner ||
+        owner.projectId !== projectId ||
+        owner.sessionId !== row.sourceSessionId ||
+        row.sourceKind !== inputKind ||
+        row.sourceFileId !== owner.id ||
+        row.inputFileVersionId !== input.id ||
+        input.checksum !== row.checksum ||
+        input.contentStorageKey !== row.storageKey ||
+        input.versionNumber !== row.sourceVersionNumber ||
+        input.contentType !== row.contentType ||
+        (artifact &&
+          (artifact.state !== 'finalized' ||
+            (artifact.originKind === 'agent_generated' && !artifact.managedVisibleAt))) ||
+        (upload && upload.state !== 'ready') ||
+        !isImageContentType(input.contentType)
+      )
+        continue
+      dependencies.push({
+        output: await this.options.projectVersionDescriptor(
+          output,
+          projectId,
+          output.artifact.sessionId
+        ),
+        input: {
+          sourceKind: inputKind,
+          projectId,
+          sourceSessionId: owner.sessionId,
+          sourceFileId: owner.id,
+          sourceVersionId: input.id,
+          versionNumber: input.versionNumber,
+          name: row.filename,
+          mimeType: input.contentType
+        }
+      })
+    }
+    return {
+      imageDependencies: dependencies,
+      nextImageCursor:
+        rows.length > IMAGE_DEPENDENCY_PAGE_SIZE
+          ? rows[IMAGE_DEPENDENCY_PAGE_SIZE - 1].id
+          : undefined
+    }
+  }
 
   async getLineage(
     request: GetArtifactLineageRequest
@@ -235,7 +347,36 @@ class ArtifactProvenanceReadModel {
       return undefined
     }
     const before = parseVersionHistoryCursor(request.cursor)
+    const imageCursor =
+      request.imageCursor === undefined
+        ? undefined
+        : assertSafeSegment(request.imageCursor, 'image history cursor')
     const client = await this.options.getClient()
+    if (request.imageSourceKind === 'upload-version') {
+      if (!request.versionId) return undefined
+      const upload = await client.uploadVersion.findFirst({
+        where: {
+          id: request.versionId,
+          uploadFileId: artifactId,
+          state: 'ready',
+          uploadFile: { projectId, sessionId: appSessionId }
+        },
+        include: { uploadFile: { include: { originSession: true } } }
+      })
+      if (!upload) return undefined
+      return {
+        artifactId,
+        filename: upload.originalFilename || upload.filename,
+        originSession: {
+          sessionId: appSessionId,
+          state: upload.uploadFile.originSession.state as 'active' | 'deleting' | 'deleted'
+        },
+        versions: [],
+        ...(await this.imageDependencies(client, projectId, [upload.id], 'upload-version', {
+          cursor: imageCursor
+        }))
+      }
+    }
     const visible = {
       artifactId,
       artifact: { is: { projectId, sessionId: appSessionId } },
@@ -257,6 +398,30 @@ class ArtifactProvenanceReadModel {
       lineage = await findLineage()
     }
     if (!lineage) return undefined
+    const originSession: ArtifactLineageProvenance['originSession'] = {
+      sessionId: lineage.sessionId,
+      state: lineage.originSession.state as 'active' | 'deleting' | 'deleted',
+      title: lineage.originSession.titleSnapshot ?? undefined,
+      deletedAt: lineage.originSession.deletedAt?.toISOString()
+    }
+    if (request.imageInputOnly) {
+      if (!request.versionId || request.imageSourceKind !== 'artifact-version') return undefined
+      return {
+        artifactId,
+        filename: lineage.filename,
+        originSession,
+        versions: [],
+        ...(await this.imageDependencies(
+          client,
+          projectId,
+          [request.versionId],
+          'artifact-version',
+          {
+            inputOfArtifactId: artifactId
+          }
+        ))
+      }
+    }
     const [records, head, exact] = await Promise.all([
       client.artifactVersion.findMany({
         where: { ...visible, ...(before === undefined ? {} : { versionNumber: { lt: before } }) },
@@ -310,13 +475,24 @@ class ArtifactProvenanceReadModel {
     return {
       artifactId: lineage.id,
       filename: lineage.filename,
-      originSession: {
-        sessionId: lineage.sessionId,
-        state: lineage.originSession.state as 'active' | 'deleting' | 'deleted',
-        title: lineage.originSession.titleSnapshot ?? undefined,
-        deletedAt: lineage.originSession.deletedAt?.toISOString()
-      },
+      originSession,
       versions: await Promise.all(page.versions.map(project)),
+      ...(request.imageSourceKind === 'artifact-version'
+        ? await this.imageDependencies(
+            client,
+            projectId,
+            [
+              ...new Set([
+                ...page.versions.map(({ id }) => id),
+                ...(before === undefined
+                  ? [selected, basedOn].flatMap((version) => (version ? [version.id] : []))
+                  : [])
+              ])
+            ],
+            'artifact-version',
+            { cursor: imageCursor }
+          )
+        : {}),
       nextCursor: page.nextCursor,
       previousVersion: previous ? await project(previous) : undefined,
       nextVersion: next ? await project(next) : undefined,
@@ -382,7 +558,7 @@ class ArtifactProvenanceReadModel {
       version = await findVersion()
     }
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-    const agentVersion = requireAgentArtifactVersion(version)
+    const agentVersion = requireGeneratedArtifactVersion(version)
 
     const evidenceMirror = await this.readCanonicalMirror(
       resolveStorageKey(this.options.storageRoot, agentVersion.evidenceStorageKey),
@@ -403,6 +579,8 @@ class ArtifactProvenanceReadModel {
       | PersistedArtifactExecutionSnapshot
       | undefined
     if (
+      agentVersion.promptMessageId &&
+      agentVersion.runtimeSegmentId &&
       sections.execution &&
       version.executionSnapshotJson &&
       version.executionSnapshotChecksum &&

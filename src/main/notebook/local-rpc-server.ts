@@ -1,3 +1,7 @@
+import { imageArtifactContent } from '../image-model/contract'
+import { isPixelLimitedRasterMimeType, readRasterImageDimensions } from '../raster-image-safety'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
+import type { ImageModelBinding } from '../../shared/image-model-settings'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -8,6 +12,14 @@ import {
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
+import type { NotebookRunInputFile } from '../../shared/notebook'
+import {
+  ImageModelError,
+  ImageRequestConflictError,
+  type ImageModelRequest,
+  type ImageModelResult
+} from '../image-model/contract'
+import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
@@ -23,6 +35,7 @@ import {
 import type {
   ArtifactRpcCapabilityBinding,
   ArtifactRpcMethod,
+  ArtifactVersionCoreProvenance,
   ArtifactVersionFile,
   ArtifactWriteReservation,
   ArtifactWriteSourceScope,
@@ -32,6 +45,7 @@ import type {
   ReserveArtifactWriteRequest,
   SaveArtifactVersionRequest
 } from '../../shared/artifact-provenance'
+import type { ArtifactFile } from '../../shared/artifacts'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
@@ -268,8 +282,21 @@ type NotebookLocalRpcServerOptions = {
     }): Promise<void>
     releaseAllWriteReservations?(): Promise<void>
   }
+  readImageArtifact?: (
+    binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
+    invocationId: string
+  ) => Promise<ArtifactVersionCoreProvenance | undefined>
+  writeImageArtifact?: (
+    binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
+    input: ReturnType<typeof imageArtifactContent>
+  ) => Promise<ArtifactFile>
+  imageModel?: {
+    capture(
+      selection?: ImageModelBinding
+    ): (request: ImageModelRequest) => Promise<ImageModelResult>
+  }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
-    Partial<Pick<NotebookInputRegistry, 'openRun' | 'prepareTurn'>>
+    Partial<Pick<NotebookInputRegistry, 'openTurnContent' | 'openRun' | 'prepareTurn'>>
   hostArtifacts?: {
     list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
     resolvePath(
@@ -396,8 +423,10 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
   isOwnerActive?: () => boolean
+  revoked: boolean
   inFlightRequests: number
   drainWaiters: Set<() => void>
+  executeImage?: (request: ImageModelRequest) => Promise<ImageModelResult>
 }
 
 type NotebookRpcSessionBinding = {
@@ -522,11 +551,29 @@ class BackgroundHostMethodUnsafeError extends RpcHttpError {
 
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactSaveVersion',
+  'imageGenerate',
   'artifactReserveWrite',
   'artifactReleaseWrite',
   'artifactCreateVersion',
   'artifactReplayVersion'
 ])
+
+const imageGenerateRequestSchema = z.object({
+  operation: z.enum(['generate', 'edit']),
+  prompt: z.string().trim().min(1).max(32_000),
+  idempotencyKey: z.string().trim().min(1).max(256),
+  filename: z.string().trim().min(1).max(256).optional(),
+  options: z.unknown().optional(),
+  source: z
+    .object({
+      projectId: z.string().min(1),
+      sourceKind: z.enum(['upload-version', 'artifact-version']),
+      sourceFileId: z.string().min(1),
+      inputFileVersionId: z.string().min(1)
+    })
+    .strict()
+    .optional()
+})
 
 // Live turn-owned capabilities follow their owner, including long executions. Capabilities issued
 // without an owner remain time-bounded; all capabilities still support explicit revoke and drain.
@@ -680,6 +727,9 @@ class NotebookLocalRpcServer {
   private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
+  private readonly readImageArtifact: NotebookLocalRpcServerOptions['readImageArtifact']
+  private readonly writeImageArtifact: NotebookLocalRpcServerOptions['writeImageArtifact']
+  private readonly imageModel: NotebookLocalRpcServerOptions['imageModel']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
   private readonly delegationInputCatalog: NotebookLocalRpcServerOptions['delegationInputCatalog']
@@ -727,6 +777,14 @@ class NotebookLocalRpcServer {
   private static readonly artifactRequestBudget = new PendingRequestBudget()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
+  private readonly generatedImagePreviews = new Map<
+    string,
+    { artifactId: string; capability: ArtifactRpcCapability }
+  >()
+  private readonly imageGenerationInvocations = new Map<
+    string,
+    { fingerprint: string; result: Promise<unknown>; recheck?: boolean }
+  >()
   private readonly runtimeBindingAdmissions = new Map<
     string,
     Map<
@@ -779,6 +837,9 @@ class NotebookLocalRpcServer {
     this.planService = options.planService
     this.requestUserInput = options.requestUserInput
     this.artifactProvenance = options.artifactProvenance
+    this.readImageArtifact = options.readImageArtifact
+    this.writeImageArtifact = options.writeImageArtifact
+    this.imageModel = options.imageModel
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
     this.delegationInputCatalog = options.delegationInputCatalog
@@ -804,6 +865,9 @@ class NotebookLocalRpcServer {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
       throw new Error('Artifact RPC capability lifetime must be positive.')
     }
+    const executeImage = binding.allowedMethods?.includes('imageGenerate')
+      ? this.imageModel?.capture.bind(this.imageModel)
+      : undefined
     const token = randomUUID()
     this.artifactRpcCapabilities.set(token, {
       ...binding,
@@ -818,12 +882,63 @@ class NotebookLocalRpcServer {
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
+      executeImage: executeImage?.(),
       expiresAt: this.now() + ttlMs,
       isOwnerActive,
+      revoked: false,
       inFlightRequests: 0,
       drainWaiters: new Set()
     })
     return token
+  }
+
+  captureImageGenerationPreviewScope(request: {
+    projectId: string
+    sessionId: string
+    artifactId: string
+    versionId: string
+  }): ArtifactProducerInputScope | undefined {
+    const entry = this.generatedImagePreviews.get(request.versionId)
+    if (
+      !entry ||
+      entry.artifactId !== request.artifactId ||
+      entry.capability.projectId !== request.projectId ||
+      entry.capability.appSessionId !== request.sessionId
+    )
+      return undefined
+    const capability = entry.capability
+    const turn = this.activeArtifactTurnBindings.get(request.sessionId)
+    if (
+      !turn ||
+      turn.projectId !== request.projectId ||
+      turn.artifactRunId !== capability.artifactRunId ||
+      (
+        [
+          'rootFrameId',
+          'agentFrameId',
+          'messageBranchId',
+          'runtimeSegmentId',
+          'promptMessageId'
+        ] as const
+      ).some((key) => turn.provenanceContext[key] !== capability[key])
+    )
+      return undefined
+    const assertActive = (): void => {
+      this.assertImageGenerationActive(capability)
+      if (this.activeArtifactTurnBindings.get(request.sessionId) !== turn)
+        throw new Error('Image preview producer turn is no longer active.')
+    }
+    assertActive()
+    return {
+      appSessionId: capability.appSessionId,
+      artifactRunId: capability.artifactRunId,
+      rootFrameId: capability.rootFrameId,
+      agentFrameId: capability.agentFrameId,
+      messageBranchId: capability.messageBranchId,
+      runtimeSegmentId: capability.runtimeSegmentId,
+      promptMessageId: capability.promptMessageId,
+      assertActive
+    }
   }
 
   async revokeArtifactRunCapability(token: string): Promise<void> {
@@ -833,6 +948,14 @@ class NotebookLocalRpcServer {
     const capability = this.artifactRpcCapabilities.get(token)
     this.artifactRpcCapabilities.delete(token)
     if (!capability) return
+    capability.revoked = true
+    for (const [versionId, entry] of this.generatedImagePreviews) {
+      if (entry.capability === capability) this.generatedImagePreviews.delete(versionId)
+    }
+    for (const key of this.imageGenerationInvocations.keys()) {
+      if (key.startsWith(`${capability.artifactRunId}\0`))
+        this.imageGenerationInvocations.delete(key)
+    }
     const releaseReservations = (): Promise<void> =>
       this.artifactProvenance?.releaseRunWriteReservations?.({
         projectId: capability.projectId,
@@ -912,6 +1035,8 @@ class NotebookLocalRpcServer {
     this.serverLifecycle = undefined
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
+    this.generatedImagePreviews.clear()
+    this.imageGenerationInvocations.clear()
     for (const binding of this.sessionRpcCapabilities.values()) {
       if (binding.activeControlInvocation) {
         this.hostViewImage?.discard(binding.activeControlInvocation.toolInvocationId)
@@ -1871,6 +1996,9 @@ class NotebookLocalRpcServer {
   }
 
   private assertArtifactCapabilityActive(token: string, capability: ArtifactRpcCapability): void {
+    if (capability.revoked) {
+      throw new RpcHttpError(401, 'Artifact RPC capability is no longer active.')
+    }
     if (capability.isOwnerActive ? capability.isOwnerActive() : capability.expiresAt > this.now()) {
       return
     }
@@ -1896,13 +2024,13 @@ class NotebookLocalRpcServer {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
 
-    if (method !== 'artifactSaveVersion') {
+    if (method !== 'artifactSaveVersion' && method !== 'imageGenerate') {
       throw new RpcHttpError(
         409,
         'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact save protocol changed. Do not retry this turn; tell the user to start a new conversation turn.'
       )
     }
-    if (!capability.sourceScope)
+    if (method === 'artifactSaveVersion' && !capability.sourceScope)
       throw new RpcHttpError(403, 'Artifact save requires a trusted source scope.')
     const boundFields = [
       'projectId',
@@ -1917,7 +2045,15 @@ class NotebookLocalRpcServer {
     ] as const
     for (const field of boundFields) {
       const expected = capability[field as keyof ArtifactRpcCapabilityBinding]
-      if (params[field] !== expected) {
+      // Artifact saves are emitted by the existing host protocol and must carry
+      // every binding field. Image requests are also exposed to MCP callers,
+      // so the runtime identity is injected from the bearer capability; reject
+      // an explicitly supplied conflicting value without requiring callers to
+      // know the internal turn envelope.
+      if (method === 'artifactSaveVersion' && params[field] !== expected) {
+        throw new RpcHttpError(403, `Artifact RPC capability does not match ${field}.`)
+      }
+      if (method === 'imageGenerate' && params[field] !== undefined && params[field] !== expected) {
         throw new RpcHttpError(403, `Artifact RPC capability does not match ${field}.`)
       }
     }
@@ -1954,6 +2090,256 @@ class NotebookLocalRpcServer {
           capability.drainWaiters.clear()
         }
       }
+    }
+  }
+
+  private async readImageInput(
+    source: z.infer<typeof imageGenerateRequestSchema>['source'],
+    capability: ArtifactRpcCapability,
+    metadataOnly = false
+  ): Promise<{ bytes: Buffer; input: NotebookRunInputFile; pixels?: number }> {
+    const { projectId } = capability
+    if (!source) throw new RpcHttpError(400, 'Image editing requires a source Version.')
+    if (source.projectId !== projectId) {
+      throw new ImageModelError(
+        'SOURCE_UNAVAILABLE',
+        'Image source Version belongs to another Project. Use the source object returned by image generation or resolve the exact image Version in the current Project.',
+        403
+      )
+    }
+    if (!this.inputRegistry?.openTurnContent)
+      throw new Error('Image input resolution is unavailable.')
+    const opened = await this.inputRegistry.openTurnContent({
+      ...source,
+      scope: {
+        appSessionId: capability.appSessionId,
+        artifactRunId: capability.artifactRunId,
+        rootFrameId: capability.rootFrameId,
+        agentFrameId: capability.agentFrameId,
+        messageBranchId: capability.messageBranchId,
+        runtimeSegmentId: capability.runtimeSegmentId,
+        promptMessageId: capability.promptMessageId,
+        assertActive: () => this.assertImageGenerationActive(capability)
+      }
+    })
+    if (!opened)
+      throw new ImageModelError(
+        'SOURCE_UNAVAILABLE',
+        'Image source Version is not available in this turn. Ask the user to mention the exact image Version in this conversation, or use the right-side image editor.',
+        403
+      )
+    const { input, lease } = opened
+    try {
+      if (lease.size > 64 * 1024 * 1024) {
+        throw new RpcHttpError(413, 'Image source exceeds the 64 MiB limit.')
+      }
+      const bytes = Buffer.from(
+        await lease.readRange(0, metadataOnly ? Math.min(lease.size, 1024 * 1024) : lease.size)
+      )
+      const mime = input.contentType
+      const dimensions =
+        metadataOnly && mime && isPixelLimitedRasterMimeType(mime)
+          ? readRasterImageDimensions(bytes, mime)
+          : undefined
+      await lease.verifyUnchanged()
+      return {
+        bytes: metadataOnly ? Buffer.alloc(0) : bytes,
+        input,
+        pixels: dimensions ? dimensions.width * dimensions.height : undefined
+      }
+    } finally {
+      await lease.close()
+    }
+  }
+
+  private async imageGenerate(
+    params: Record<string, unknown>,
+    capability: ArtifactRpcCapability,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    if (!capability.executeImage || !this.writeImageArtifact) {
+      throw new Error('Image generation is unavailable.')
+    }
+    const request = parseRpcParams(() => imageGenerateRequestSchema.parse(params))
+    if ((request.operation === 'edit') !== Boolean(request.source)) {
+      throw new RpcHttpError(400, 'Image editing requires exactly one source Version.')
+    }
+    this.assertImageGenerationActive(capability)
+    const invocationId = `${capability.artifactRunId}:${request.idempotencyKey}`
+    const fingerprint = createHash('sha256')
+      .update(
+        JSON.stringify([
+          // Legacy service receipts omitted the requested filename and full source reference.
+          'image-rpc',
+          request.operation,
+          request.prompt,
+          request.options ?? null,
+          request.source ?? null,
+          request.filename ?? null
+        ])
+      )
+      .digest('hex')
+    const key = `${capability.artifactRunId}\0${request.idempotencyKey}`
+    const existing = this.imageGenerationInvocations.get(key)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new RpcHttpError(409, 'Image idempotency key was reused with different arguments.')
+      }
+      if (!existing.recheck || !this.readImageArtifact) return existing.result
+      try {
+        const recovered = await this.readImageArtifact(capability, invocationId)
+        this.assertImageGenerationActive(capability)
+        const args = recovered?.evidence.connector_execution?.normalized_arguments
+        if (
+          recovered &&
+          args &&
+          typeof args.width === 'number' &&
+          typeof args.height === 'number' &&
+          typeof args.model === 'string' &&
+          typeof args.presetId === 'string'
+        ) {
+          const descriptor = recovered.descriptor
+          this.generatedImagePreviews.set(descriptor.versionId, {
+            artifactId: descriptor.artifactId,
+            capability
+          })
+          const result = {
+            source: {
+              sourceKind: 'artifact-version',
+              sourceFileId: descriptor.artifactId,
+              inputFileVersionId: descriptor.versionId
+            },
+            artifactId: descriptor.artifactId,
+            versionId: descriptor.versionId,
+            versionNumber: descriptor.versionNumber,
+            filename: descriptor.name,
+            mimeType: descriptor.mimeType,
+            sizeBytes: descriptor.size,
+            width: args.width,
+            height: args.height,
+            model: args.model,
+            presetId: args.presetId,
+            parameters: args.parameters ?? {},
+            ...(args.usage ? { usage: args.usage } : {}),
+            ...(typeof args.generatedImages === 'number'
+              ? { generatedImages: args.generatedImages }
+              : {})
+          }
+          existing.recheck = false
+          existing.result = Promise.resolve(result)
+          return result
+        }
+      } catch (error) {
+        if (error instanceof RpcHttpError) throw error
+        // A failed local lookup preserves the original outcome. The provider is never called again.
+      }
+      return existing.result
+    }
+    const result = (async (): Promise<unknown> => {
+      const sourceMetadata = request.source
+        ? await this.readImageInput(request.source, capability, true)
+        : undefined
+      let sourceEvidence = sourceMetadata?.input
+      const publishResult = async (
+        generated: ImageModelResult
+      ): Promise<{ artifactId: string; versionId: string } & Record<string, unknown>> => {
+        const artifact = await this.writeImageArtifact!(
+          capability,
+          imageArtifactContent(generated, {
+            filename: request.filename ?? sourceEvidence?.filename ?? 'generated-image',
+            operation: request.operation,
+            invocationId,
+            prompt: request.prompt,
+            inputFiles: sourceEvidence ? [sourceEvidence] : undefined
+          })
+        )
+        if (!artifact.versionId) throw new Error('Image result was not published.')
+        if (artifact.versionId && !capability.revoked)
+          this.generatedImagePreviews.set(artifact.versionId, {
+            artifactId: artifact.artifactId ?? artifact.id,
+            capability
+          })
+        return {
+          source: {
+            sourceKind: 'artifact-version',
+            sourceFileId: artifact.artifactId ?? artifact.id,
+            inputFileVersionId: artifact.versionId
+          },
+          artifactId: artifact.artifactId ?? artifact.id,
+          versionId: artifact.versionId,
+          versionNumber: artifact.versionNumber,
+          filename: artifact.name,
+          mimeType: generated.mime,
+          width: generated.width,
+          height: generated.height,
+          sizeBytes: generated.bytes.length,
+          model: generated.model,
+          presetId: generated.presetId,
+          parameters: generated.parameters,
+          ...(generated.usage ? { usage: generated.usage } : {}),
+          ...(generated.generatedImages !== undefined
+            ? { generatedImages: generated.generatedImages }
+            : {})
+        }
+      }
+      let published: Awaited<ReturnType<typeof publishResult>> | undefined
+      await capability.executeImage!({
+        requestFingerprint: fingerprint,
+        onResult: async (result) => {
+          published = await publishResult(result)
+          return { artifactId: published.artifactId, versionId: published.versionId }
+        },
+        operation: request.operation,
+        prompt: request.prompt,
+        options: request.options,
+        ...(request.source
+          ? {
+              sourceIdentity: request.source.inputFileVersionId,
+              sourceSizeBytes: sourceEvidence?.sizeBytes,
+              sourcePixels: sourceMetadata?.pixels,
+              source: async () => {
+                const { input, bytes } = await this.readImageInput(request.source, capability)
+                sourceEvidence = input
+                return bytes
+              }
+            }
+          : {}),
+        signal,
+        context: {
+          projectId: capability.projectId,
+          sessionId: capability.appSessionId,
+          invocationId,
+          frameworkId: capability.agentName ?? 'open-science'
+        }
+      })
+
+      if (!published) throw new Error('Image result was not published.')
+      return published
+    })()
+    const invocation = { fingerprint, result, recheck: false }
+    this.imageGenerationInvocations.set(key, invocation)
+    try {
+      return await result
+    } catch (error) {
+      if (error instanceof ImageRequestConflictError) {
+        if (this.imageGenerationInvocations.get(key) === invocation)
+          this.imageGenerationInvocations.delete(key)
+      } else if (error instanceof ImageModelError && error.code === 'OUTCOME_UNKNOWN') {
+        invocation.recheck = true
+      }
+      throw error
+    }
+  }
+
+  private assertImageGenerationActive(capability: ArtifactRpcCapability): void {
+    const active = capability.isOwnerActive
+      ? capability.isOwnerActive()
+      : capability.expiresAt > this.now()
+    if (!active || capability.revoked) {
+      throw new RpcHttpError(
+        409,
+        'OUTCOME_UNKNOWN: The image request may have completed, but the turn ended before the result could be published. Do not retry automatically.'
+      )
     }
   }
 
@@ -2044,6 +2430,18 @@ class NotebookLocalRpcServer {
     response: ServerResponse
   ): Promise<void> {
     const disconnect = new AbortController()
+    let terminationScope: { projectId: string; sessionId: string } | undefined
+    const terminationMetadata = (): {
+      manualKernelTerminations?: import('../../shared/notebook-process-monitor').ManualKernelTermination[]
+    } => {
+      const events =
+        terminationScope &&
+        this.service.manualKernelTerminations?.(
+          terminationScope.projectId,
+          terminationScope.sessionId
+        )
+      return events?.length ? { manualKernelTerminations: events } : {}
+    }
     let writeProducerSignal: AbortSignal | undefined
     let artifactAdmission: ReturnType<PendingRequestBudget['acquire']> | undefined
     let settle!: () => void
@@ -2382,6 +2780,7 @@ class NotebookLocalRpcServer {
               ? {
                   executionCwd: sessionBinding.executionCwd,
                   controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId,
+                  promptMessageId: sessionBinding.activeControlInvocation?.originatingUserMessageId,
                   agentFrameId: sessionBinding.agentFrameId,
                   attemptId: sessionBinding.delegatedWorkAttemptId,
                   role: sessionBinding.delegatedWorkRole ?? 'main'
@@ -2567,6 +2966,16 @@ class NotebookLocalRpcServer {
         )
       }
       writeProducerSignal?.throwIfAborted()
+      // Host/control methods remain independent of the Notebook runtime, including feedback reads.
+      if (
+        isNotebookLocalRpcMethod(method) &&
+        typeof resolvedParams.projectId === 'string' &&
+        typeof resolvedParams.sessionId === 'string'
+      )
+        terminationScope = {
+          projectId: resolvedParams.projectId,
+          sessionId: resolvedParams.sessionId
+        }
       const dispatchSignals = [
         disconnect.signal,
         ...(writeProducerSignal ? [writeProducerSignal] : []),
@@ -2592,7 +3001,8 @@ class NotebookLocalRpcServer {
                         recordStopFailure(error)
                         activeRequest.settle()
                       }
-                    : undefined
+                    : undefined,
+                  artifactCapability
                 )
               )
             : await this.dispatch(
@@ -2600,10 +3010,12 @@ class NotebookLocalRpcServer {
                 resolvedParams,
                 dispatchSignal,
                 checkMemoryAccess,
-                artifactAdmission?.addBytes
+                artifactAdmission?.addBytes,
+                undefined,
+                artifactCapability
               )
 
-      writeJson(response, 200, { result })
+      writeJson(response, 200, { result, ...terminationMetadata() })
     } catch (error) {
       recordStopFailure(error)
       // A captured control completion belongs to the approved handoff, not to this legacy RPC
@@ -2622,8 +3034,12 @@ class NotebookLocalRpcServer {
           ? { ...error.detail, message }
           : error instanceof BackgroundHostMethodUnsafeError
             ? error.detail
-            : error instanceof PlanCommandError
-              ? { code: error.code, message }
+            : error instanceof PlanCommandError || error instanceof ImageModelError
+              ? {
+                  code: error.code,
+                  message,
+                  ...(error instanceof ImageModelError ? { imageError: error.detail } : {})
+                }
               : error instanceof StructuredOutputError
                 ? {
                     code: error.code,
@@ -2648,16 +3064,20 @@ class NotebookLocalRpcServer {
         response,
         error instanceof RpcHttpError
           ? error.statusCode
-          : MEMORY_RPC_METHODS.has(activeRequest.method ?? '') &&
-              error instanceof Error &&
-              error.message === 'Memory is turned off.'
-            ? 403
-            : error instanceof ResourceBudgetExceededError
-              ? 413
-              : error instanceof PendingRequestLimitError
-                ? 429
-                : 500,
-        { error: serializedError }
+          : error instanceof ImageModelError &&
+              error.httpStatus !== undefined &&
+              error.httpStatus >= 400
+            ? error.httpStatus
+            : MEMORY_RPC_METHODS.has(activeRequest.method ?? '') &&
+                error instanceof Error &&
+                error.message === 'Memory is turned off.'
+              ? 403
+              : error instanceof ResourceBudgetExceededError
+                ? 413
+                : error instanceof PendingRequestLimitError
+                  ? 429
+                  : 500,
+        { error: serializedError, ...terminationMetadata() }
       )
     } finally {
       request.off('aborted', abortDisconnectedRequest)
@@ -2678,7 +3098,8 @@ class NotebookLocalRpcServer {
     signal: AbortSignal,
     checkMemoryAccess?: () => Promise<void>,
     onArtifactMetadataBytes?: (bytes: number) => void,
-    onExecutionSettled?: (error?: unknown) => void
+    onExecutionSettled?: (error?: unknown) => void,
+    artifactCapability?: ArtifactRpcCapability
   ): Promise<unknown> {
     if (WSL_SETUP_RPC_METHODS.has(method)) {
       if (!this.wslSetup || !this.wslSetupSessions) {
@@ -2801,6 +3222,12 @@ class NotebookLocalRpcServer {
         signal,
         onArtifactMetadataBytes
       )
+    }
+
+    if (method === 'imageGenerate') {
+      const capability = artifactCapability
+      if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
+      return this.imageGenerate(params, capability, signal)
     }
 
     if (method === 'skillImport') {
@@ -3011,7 +3438,25 @@ class NotebookLocalRpcServer {
       if (isRecord(params.source) && Object.hasOwn(params.source, 'path') && !executionCwd) {
         throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
+      const boundTurn = this.activeArtifactTurnBindings.get(sessionId)
+      const producerScope =
+        params.role !== 'delegate' &&
+        boundTurn?.artifactRunId &&
+        params.promptMessageId === boundTurn.provenanceContext.promptMessageId &&
+        (!params.agentFrameId || params.agentFrameId === boundTurn.provenanceContext.agentFrameId)
+          ? {
+              ...boundTurn.provenanceContext,
+              appSessionId: sessionId,
+              artifactRunId: boundTurn.artifactRunId,
+              assertActive: (): void => {
+                signal.throwIfAborted()
+                if (this.activeArtifactTurnBindings.get(sessionId) !== boundTurn)
+                  throw new Error('Image inspection producer turn is no longer active.')
+              }
+            }
+          : undefined
       return this.hostViewImage.stage(params.source, params.options, {
+        producerScope,
         projectId,
         sessionId,
         agentFrameId: typeof params.agentFrameId === 'string' ? params.agentFrameId : undefined,

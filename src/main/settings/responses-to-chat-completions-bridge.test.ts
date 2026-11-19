@@ -1,9 +1,11 @@
-import { request as httpRequest } from 'node:http'
-import { createConnection } from 'node:net'
+import { createServer, request as httpRequest, type ServerResponse } from 'node:http'
+import { createConnection, type AddressInfo } from 'node:net'
 
+import { Agent, fetch as nodeFetch } from 'undici'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
+import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
@@ -968,6 +970,123 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('"name":"notebook_execute"')
       expect(output).toContain('"call_id":"call-notebook-1"')
       expect(output).not.toContain('"name":"mcp__open_science_notebook__notebook_execute"')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('projects image calls and replay only for a mounted session, then removes the catalog', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const source = {
+      projectId: 'p',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'file',
+      inputFileVersionId: 'version'
+    }
+    const args = JSON.stringify({
+      prompt: 'recolor',
+      source,
+      options: { size: 'auto' },
+      idempotencyKey: 'image-call'
+    })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      {
+        baseUrl: 'https://vendor.example/v1',
+        namespacedTools: codexBridgeStaticMcpTools()
+      },
+      async (_url, init) => {
+        const request = JSON.parse(String(init?.body))
+        requests.push(request)
+        return Response.json({
+          id: 'chat-image',
+          model: 'model-a',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-image',
+                    type: 'function',
+                    function: { name: 'mcp__open_science_images__edit_image', arguments: args }
+                  }
+                ]
+              },
+              finish_reason: 'tool_calls'
+            }
+          ]
+        })
+      }
+    )
+    const connection = await bridge.start()
+    const post = async (
+      session?: string,
+      input: unknown = 'edit image'
+    ): Promise<{ output: Array<{ type: string; [key: string]: unknown }> }> => {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'model-a', prompt_cache_key: session, input, stream: false })
+      })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    const imageNames = (): string[] =>
+      (requests.at(-1)!.tools as Array<{ function: { name: string } }>)
+        .map((tool: { function: { name: string } }) => tool.function.name)
+        .filter((name: string) => name.startsWith('mcp__open_science_images__'))
+    try {
+      await post()
+      expect(imageNames()).toEqual([])
+      bridge.registerMcpSession('image-session', createCodexBridgeMcpTools({ images: true }), [
+        'mcp__open_science_images'
+      ])
+      await post('other-session')
+      expect(imageNames()).toEqual([])
+      const result = await post('image-session')
+      expect(imageNames()).toEqual([
+        'mcp__open_science_images__generate_image',
+        'mcp__open_science_images__edit_image'
+      ])
+      const call = result.output.find((item: { type: string }) => item.type === 'function_call')
+      expect(call).toMatchObject({
+        namespace: 'mcp__open_science_images',
+        name: 'edit_image',
+        call_id: 'call-image',
+        arguments: args
+      })
+      await post('image-session', [
+        call,
+        { type: 'function_call_output', call_id: 'call-image', output: '{"versionId":"next"}' }
+      ])
+      expect(requests.at(-1)!.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            tool_calls: [
+              expect.objectContaining({
+                id: 'call-image',
+                function: { name: 'mcp__open_science_images__edit_image', arguments: args }
+              })
+            ]
+          }),
+          expect.objectContaining({
+            role: 'tool',
+            tool_call_id: 'call-image',
+            content: '{"versionId":"next"}'
+          })
+        ])
+      )
+      bridge.registerMcpSession('image-session', [], ['mcp__open_science_images'])
+      await post('image-session')
+      expect(imageNames()).toEqual([])
+      bridge.unregisterMcpSession('image-session')
+      await post('image-session')
+      expect(imageNames()).toEqual([])
     } finally {
       await bridge.close()
     }
@@ -1972,6 +2091,82 @@ describe('Responses bridge Skill selector', () => {
     { name: 'statistics', description: 'Analyze numerical data.', path: '/private/stats/SKILL.md' },
     { name: 'writing', description: 'Improve prose.', path: '/private/writing/SKILL.md' }
   ]
+
+  it.each(['empty', 'throw'] as const)(
+    'closes real upstream error responses after %s-mode selection and fallback',
+    async (failureMode) => {
+      const active = new Set<ServerResponse>()
+      let requests = 0
+      const upstream = createServer((request, response) => {
+        request.resume()
+        requests++
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        response.writeHead(503, { 'content-type': 'text/plain' })
+        response.write('unavailable')
+        // Leave the body open: returning from selection must release it without waiting for EOF.
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const bridge = new ResponsesToChatCompletionsBridge(
+        { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'model-a' },
+        fetch,
+        { skillSelectorFailureMode: failureMode }
+      )
+      try {
+        const selecting = bridge.selectSkills('analyze numerical data', catalog)
+        if (failureMode === 'throw') {
+          await expect(selecting).rejects.toThrow('Skill selector failed (invalid-response).')
+        } else {
+          await expect(selecting).resolves.toEqual([])
+        }
+        expect(requests).toBe(2)
+        await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1_000 })
+      } finally {
+        await bridge.close()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
+  it('releases a real failed response before retrying through a single-connection pool', async () => {
+    let requests = 0
+    const upstream = createServer((request, response) => {
+      request.resume()
+      requests++
+      if (requests === 1) {
+        response.writeHead(503, { 'content-type': 'text/plain' })
+        response.write('unavailable')
+      } else {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({ choices: [{ message: { content: '{"skill_names":["statistics"]}' } }] })
+        )
+      }
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const { port } = upstream.address() as AddressInfo
+    const pool = new Agent({ connections: 1, pipelining: 1 })
+    const pooledFetch: typeof nodeFetch = (input, init) =>
+      nodeFetch(input, { ...init, dispatcher: pool })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'model-a' },
+      pooledFetch as unknown as typeof fetch,
+      { skillSelectorTimeoutMs: 2_000 }
+    )
+    try {
+      await expect(bridge.selectSkills('analyze numerical data', catalog)).resolves.toEqual([
+        { name: 'statistics', path: '/private/stats/SKILL.md' }
+      ])
+      expect(requests).toBe(2)
+    } finally {
+      await bridge.close()
+      await pool.destroy()
+      upstream.closeAllConnections()
+      await new Promise<void>((resolve) => upstream.close(() => resolve()))
+    }
+  })
 
   it('fails open and cancels an oversized successful selector response', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined

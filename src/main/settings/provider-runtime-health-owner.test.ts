@@ -1,3 +1,4 @@
+import type { CatalogSnapshot } from '@aipoch/providers'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -67,7 +68,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       }
     )
     const before = await repository.getSettings()
-    await new ProviderRuntimeHealthOwner(repository).observe(oldTarget, {
+    await new ProviderRuntimeHealthOwner(repository, projection).observe(oldTarget, {
       category: 'model-not-found',
       status: 404,
       startedAt: 2,
@@ -81,7 +82,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     const published = vi.fn(async () => {
       expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
     })
-    const owner = new ProviderRuntimeHealthOwner(repository, published)
+    const owner = new ProviderRuntimeHealthOwner(repository, projection, published)
     await owner.observe(target(), {
       category: 'auth',
       status: 401,
@@ -94,6 +95,88 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(stored.lastValidationFailure?.target).toBeUndefined()
     expect(published).toHaveBeenCalledOnce()
   })
+  it('applies failures from a retained official connection across renames and fences a vendor round trip', async () => {
+    const account: StoredProvider = {
+      id: 'account',
+      name: 'Account',
+      type: 'official',
+      vendorId: 'deepseek',
+      configRevision: 1
+    }
+    await repository.upsertProvider(account)
+    const connected = target(account)
+    const owner = new ProviderRuntimeHealthOwner(repository, projection)
+    const edit = (
+      name: string,
+      vendorId: StoredProvider['vendorId'],
+      revision: number
+    ): ReturnType<SettingsRepository['upsertProvider']> =>
+      repository.upsertProvider({ ...account, name, vendorId }, account.id, {
+        expectedConfigRevision: revision
+      })
+    const failure = {
+      category: 'auth',
+      status: 401,
+      startedAt: Date.now(),
+      endpoint: 'chat-completions'
+    } as const
+    await edit('Renamed', 'deepseek', 1)
+    await edit('Renamed again', 'deepseek', 2)
+    await owner.observe(connected, failure)
+    expect(
+      (await repository.getSettings()).providers.find((p) => p.id === account.id)
+        ?.lastValidationFailure?.status
+    ).toBe(401)
+    await edit('Changed', 'anthropic', 3)
+    await edit('Restored', 'deepseek', 4)
+    await edit('Renamed again', 'deepseek', 5)
+    await owner.observe(connected, failure)
+    expect(
+      (await repository.getSettings()).providers.find((p) => p.id === account.id)
+        ?.lastValidationFailure
+    ).toBeUndefined()
+  })
+
+  it.each([
+    ['messages', 'auth', 401],
+    ['responses', 'model-not-found', 404],
+    ['chat-completions', 'auth', 403]
+  ] as const)(
+    'applies %s failures only from the current catalog route',
+    async (endpoint, category, status) => {
+      const catalog = (path: string): CatalogSnapshot => ({
+        fetchedAt: 1,
+        models: [{ id: 'model-a', routes: { [endpoint]: 'https://opencode.ai/' + path } }]
+      })
+      const account: StoredProvider = {
+        id: 'zen',
+        type: 'official',
+        vendorId: 'opencode',
+        name: 'Zen',
+        configRevision: 1,
+        modelCatalog: catalog('first')
+      }
+      await repository.upsertProvider(account)
+      const connected = target(account)
+      await repository.updateProviderModelCatalogIfTargetMatches(account, ['model-a'], {
+        modelCatalog: catalog('second')
+      })
+      const current = (await repository.getSettings()).providers.find(
+        ({ id }) => id === account.id
+      )!
+      const published = vi.fn()
+      const health = new ProviderRuntimeHealthOwner(repository, projection, published)
+      const failure = { model: 'model-a', endpoint, category, status, startedAt: Date.now() }
+      await health.observe(connected, failure)
+      expect(published).not.toHaveBeenCalled()
+      expect(
+        (await repository.getSettings()).providers.find(({ id }) => id === account.id)
+      ).toEqual(current)
+      await health.observe(target(current), failure)
+      expect(published).toHaveBeenCalledOnce()
+    }
+  )
+
   it('does not invalidate a replacement configuration when an old request fails late', async () => {
     const oldTarget = target()
     await repository.upsertProvider({ ...original, model: 'model-b' }, original.id, {
@@ -101,7 +184,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     })
     const before = await repository.getSettings()
     const published = vi.fn()
-    await new ProviderRuntimeHealthOwner(repository, published).observe(oldTarget, {
+    await new ProviderRuntimeHealthOwner(repository, projection, published).observe(oldTarget, {
       category: 'auth',
       status: 401,
       startedAt: 2,
@@ -120,7 +203,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       { model: 'model-a', endpoint: 'chat-completions' }
     )
     const before = await repository.getSettings()
-    await new ProviderRuntimeHealthOwner(repository).observe(oldTarget, {
+    await new ProviderRuntimeHealthOwner(repository, projection).observe(oldTarget, {
       category: 'auth',
       status: 401,
       startedAt: 2,
@@ -143,7 +226,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       await repository.upsertProvider(provider)
       const active = target(provider)
       const published = vi.fn()
-      const health = new ProviderRuntimeHealthOwner(repository, published)
+      const health = new ProviderRuntimeHealthOwner(repository, projection, published)
       const transports = new ProviderTransportOwner({
         onProviderFailure: (source, failure) => health.observe(source, failure),
         createProtocolForwardingBridge: (targets, initial) =>
@@ -183,7 +266,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       keyRef: 'enc:' + Buffer.from('replacement').toString('base64')
     })
     const before = await repository.getSettings()
-    await new ProviderRuntimeHealthOwner(repository).observe(target(), {
+    await new ProviderRuntimeHealthOwner(repository, projection).observe(target(), {
       category: 'auth',
       status: 401,
       startedAt: 2,
@@ -208,7 +291,7 @@ describe('ProviderRuntimeHealthOwner', () => {
         conversationSkillImportEnabled: false
       })
       const published = vi.fn()
-      const health = new ProviderRuntimeHealthOwner(repository, published)
+      const health = new ProviderRuntimeHealthOwner(repository, projection, published)
       const transports = new ProviderTransportOwner({
         onProviderFailure: (source, failure) => health.observe(source, failure),
         createMessagesBridge: (targets, initial) =>
@@ -265,7 +348,7 @@ describe('ProviderRuntimeHealthOwner', () => {
         conversationSkillImportEnabled: false
       })
       const published = vi.fn()
-      const health = new ProviderRuntimeHealthOwner(repository, published)
+      const health = new ProviderRuntimeHealthOwner(repository, projection, published)
       const upstream = async (): Promise<Response> =>
         Response.json({ error: { message: 'invalid key' } }, { status })
       const transports = new ProviderTransportOwner({
@@ -314,7 +397,7 @@ describe('ProviderRuntimeHealthOwner', () => {
   )
 
   it('limits missing-model failures to the actual model and protocol, including background models', async () => {
-    await new ProviderRuntimeHealthOwner(repository).observe(target(), {
+    await new ProviderRuntimeHealthOwner(repository, projection).observe(target(), {
       category: 'model-not-found',
       status: 404,
       startedAt: 2,
@@ -336,7 +419,7 @@ describe('ProviderRuntimeHealthOwner', () => {
   it('does not recreate a deleted provider on a late failure', async () => {
     await repository.deleteProvider(original.id)
     const published = vi.fn()
-    await new ProviderRuntimeHealthOwner(repository, published).observe(target(), {
+    await new ProviderRuntimeHealthOwner(repository, projection, published).observe(target(), {
       category: 'auth',
       status: 401,
       startedAt: 2,
@@ -347,7 +430,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(published).not.toHaveBeenCalled()
   })
   it('never narrows an existing account authentication failure on a later model error', async () => {
-    const health = new ProviderRuntimeHealthOwner(repository)
+    const health = new ProviderRuntimeHealthOwner(repository, projection)
     await health.observe(target(), {
       category: 'auth',
       status: 401,
@@ -372,7 +455,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     ).toBe(true)
   })
   it('keeps independent model failures when another model is validated successfully', async () => {
-    const health = new ProviderRuntimeHealthOwner(repository)
+    const health = new ProviderRuntimeHealthOwner(repository, projection)
     const failure = {
       category: 'model-not-found' as const,
       status: 404,
@@ -412,7 +495,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     ).toBe(true)
   })
   it('does not undo an earlier model recovery after a different model was also validated', async () => {
-    const health = new ProviderRuntimeHealthOwner(repository)
+    const health = new ProviderRuntimeHealthOwner(repository, projection)
     for (const model of ['model-a', 'model-b']) {
       await repository.updateProviderValidationIfTargetMatches(
         original.id,

@@ -1,0 +1,26 @@
+{
+  "consumerModules": ["agent_harness", "harness_acp"],
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime",
+  "ownerPaths": [
+    "packages/agent-harness/src/errors/normalize-upstream-error.ts",
+    "packages/agent-harness/src/errors/normalize-upstream-error.test.ts",
+    "packages/agent-harness/src/fixtures/chat-completions/README.md",
+    "packages/agent-harness/src/fixtures/chat-completions/empty-choices.sse",
+    "packages/agent-harness/src/fixtures/chat-completions/repeated-stop.sse",
+    "packages/agent-harness/src/fixtures/chat-completions/repeated-tool-calls.sse"
+  ],
+  "interfacePaths": ["packages/agent-harness/src/errors/normalize-upstream-error.ts"],
+  "testFiles": {
+    "owner": ["packages/agent-harness/src/errors/normalize-upstream-error.test.ts"],
+    "contract": [
+      "packages/agent-harness/src/chat-completions.test.ts",
+      "packages/agent-harness/src/chat-completions.integration.test.ts",
+      "packages/agent-harness/src/protocol-adapters.test.ts"
+    ],
+    "consumer": [
+      "src/main/harness-acp/agent.integration.test.ts",
+      "src/shared/failure/classify.test.ts"
+    ]
+  }
+}

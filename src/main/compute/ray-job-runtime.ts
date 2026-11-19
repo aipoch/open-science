@@ -12,11 +12,11 @@ import {
   readRayJobLogs,
   stopRayJob,
   deleteRayJob,
-  shellSingleQuote,
   type RayJobsTarget,
   type RayJobClaim,
   type RayJobObservation
-} from '@aipoch/compute/node'
+} from '@aipoch/compute/ray'
+import { shellSingleQuote } from '@aipoch/compute/node'
 import { z } from 'zod'
 import type { ComputeJob } from '../../shared/compute'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'

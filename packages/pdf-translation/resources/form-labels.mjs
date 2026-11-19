@@ -741,6 +741,7 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
     output = await generate({
       data: await layout.save(),
       units: mapped,
+      formLabels: true,
       preserveUnsupported: true,
       pages: selected.map(({ bbox }) => ({ width: bbox[2] - bbox[0], height: bbox[3] - bbox[1] }))
     })

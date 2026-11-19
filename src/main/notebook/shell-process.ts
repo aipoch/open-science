@@ -22,6 +22,7 @@ import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
   ProcessTreeUnavailableError,
   assertProcessTreeSupport,
+  capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
@@ -71,6 +72,7 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
+  monitoredProcesses?: () => import('./process-monitor').MonitoredInterpreter[]
   idleProcesses?: () => Array<IdleInterpreter & { laneKey?: string }>
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
   prepareEnvironment?(
@@ -706,29 +708,45 @@ const runShellCommand = (
       hosted: platform === 'win32' && Boolean(sandboxed?.confirmProcessTreeTermination)
     })
     const ownershipHost = launchOwnership?.host
+    // A fast macOS command can exit before native identity capture. Keep the detached leader alive
+    // until it is tracked, using a separate pipe so persistent interpreters retain their stdin.
+    const gateLaunch = platform === 'darwin' && process.platform === 'darwin'
     let child: ChildProcessWithoutNullStreams
     try {
       processTreeOwnership = createPosixProcessTreeOwnership(sandboxed?.env ?? baseEnv, platform)
+      const executable = ownershipHost
+        ? process.execPath
+        : (sandboxed?.executable ?? invocation.executable)
+      const args = ownershipHost
+        ? [
+            '--disable-warning=UNDICI-EHPA',
+            ownershipHost.path,
+            ownershipHost.pendingPath,
+            ownershipHost.receiptId,
+            '--restore-electron-run-as-node',
+            JSON.stringify(processTreeOwnership.env?.ELECTRON_RUN_AS_NODE ?? null),
+            sandboxed?.executable ?? invocation.executable,
+            ...(sandboxed?.args ?? invocation.args)
+          ]
+        : (sandboxed?.args ?? invocation.args)
       child = spawn(
-        ownershipHost ? process.execPath : (sandboxed?.executable ?? invocation.executable),
-        ownershipHost
+        gateLaunch ? '/bin/sh' : executable,
+        gateLaunch
           ? [
-              '--disable-warning=UNDICI-EHPA',
-              ownershipHost.path,
-              ownershipHost.pendingPath,
-              ownershipHost.receiptId,
-              '--restore-electron-run-as-node',
-              JSON.stringify(processTreeOwnership.env?.ELECTRON_RUN_AS_NODE ?? null),
-              sandboxed?.executable ?? invocation.executable,
-              ...(sandboxed?.args ?? invocation.args)
+              '-c',
+              'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+              'open-science-shell-start',
+              executable,
+              ...args
             ]
-          : (sandboxed?.args ?? invocation.args),
+          : args,
         {
           cwd: options.cwd,
           env: ownershipHost
             ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
             : processTreeOwnership.env,
           windowsHide: true,
+          stdio: gateLaunch ? ['pipe', 'pipe', 'pipe', 'pipe'] : 'pipe',
           // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
           // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
           detached: platform !== 'win32'
@@ -763,6 +781,10 @@ const runShellCommand = (
     return new Promise((resolve) => {
       let releaseProcessOwnership: (() => void) | undefined
       try {
+        if (gateLaunch && child.pid !== undefined && !capturePosixProcessTreeIdentity(child)) {
+          child.stdio[3]?.destroy()
+          throw new Error('Shell launch ownership could not be confirmed.')
+        }
         releaseProcessOwnership = launchOwnership
           ? launchOwnership.claim(child, platform)
           : options.claimProcess?.(child, platform)
@@ -1045,8 +1067,8 @@ const runShellCommand = (
           }
         )
       })
-      child.once('error', (error) => {
-        if (timedOut || cancelled || exited || failed) return
+      const processError = (error: Error): void => {
+        if (settled || timedOut || cancelled || exited || failed) return
         failed = true
         timeoutTimer.cancel()
         void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
@@ -1068,7 +1090,10 @@ const runShellCommand = (
             )
           )
         })
-      })
+      }
+      child.once('error', processError)
+      const launchGate = gateLaunch ? child.stdio[3] : undefined
+      launchGate?.once('error', processError)
       child.once('exit', (code) => {
         if (timedOut || cancelled || exited || failed) return
         exited = true
@@ -1100,6 +1125,10 @@ const runShellCommand = (
           )
         })
       })
+      if (gateLaunch && !cancelled) {
+        if (launchGate && 'end' in launchGate) launchGate.end('start\n')
+        else processError(new Error('Shell launch ownership pipe is unavailable.'))
+      }
       if (options.onProcess) {
         timeoutTimer.cancel()
         options.onProcess(child)
@@ -1121,6 +1150,34 @@ const runShellCommand = (
 // Each lane owns a live interpreter; runShellCommand remains the one-shot spawn/cleanup owner.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
   private readonly sessions = new Map<string, ShellCellSession>()
+  monitoredProcesses(): import('./process-monitor').MonitoredInterpreter[] {
+    return [...this.sessions].flatMap(([key, session]) => {
+      const observed = session.monitoredProcess
+      if (!observed) return []
+      return [
+        {
+          processKey: 'shell',
+          projectId: session.identity.projectId,
+          sessionId: session.identity.sessionId,
+          lane: session.identity.laneKey ?? 'root',
+          kind: 'shell' as const,
+          environment: session.identity.runtimeBinding?.kind,
+          startedAt: session.startedAt,
+          ...observed,
+          terminate: async () => {
+            if (
+              this.sessions.get(key) !== session ||
+              session.monitoredProcess?.identity !== observed.identity
+            )
+              throw new Error('Shell process changed. Refresh the list.')
+            const result = await session.shutdown()
+            if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
+            if (this.sessions.get(key) === session) this.sessions.delete(key)
+          }
+        }
+      ]
+    })
+  }
   idleProcesses(): Array<IdleInterpreter & { laneKey?: string }> {
     return [...this.sessions]
       .filter(([, session]) => session.isLive)

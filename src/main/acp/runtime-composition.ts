@@ -42,10 +42,8 @@ import type { LiteratureAttachmentAuthority } from '../literature/attachment-aut
 import type { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
-import {
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
-  type LiteratureLibraryScope
-} from '../literature/library-mcp-server'
+import { LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT } from '../literature/library-mcp-contract'
+import type { LiteratureLibraryScope } from '../literature/library-mcp-contract'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { netFetchStandard } from '../network-fetch'
@@ -363,8 +361,8 @@ const createAcpRuntime = ({
               scope.projectId,
               scope.sessionId
             ),
-          mutateSession: (scope, mutate, onJsonCommitted) =>
-            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, onJsonCommitted),
+          mutateSession: (scope, mutate, options) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, options),
           finalizeArtifacts: finalizeRuntimeArtifacts,
           onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
             sessionPersistenceCoordinator.recordRuntimeTerminalFailure?.(
@@ -783,6 +781,13 @@ const createAcpRuntime = ({
                 dataRoot,
                 projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
+                enableImageGeneration: true,
+                imageMcp: {
+                  getPresetId: () =>
+                    settingsService.imageModels
+                      .resolve()
+                      .then((resolved) => resolved?.model.presetId)
+                },
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,

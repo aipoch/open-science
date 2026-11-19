@@ -1,0 +1,27 @@
+{
+  "consumerModules": ["providers_package", "shared_provider_policy", "settings_provider_accounts"],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime",
+  "ownerPaths": [
+    "packages/providers/src/protocols/catalog.ts",
+    "packages/providers/src/providers/catalog-configurations.ts"
+  ],
+  "interfacePaths": [
+    "packages/providers/src/protocols/catalog.ts",
+    "packages/providers/src/providers/catalog-configurations.ts"
+  ],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "packages/providers/src/providers/create.test.ts",
+      "packages/providers/src/providers/lookup.test.ts",
+      "packages/providers/src/boundaries.test.ts"
+    ],
+    "consumer": [
+      "src/shared/configured-model-catalog.test.ts",
+      "src/main/settings/provider-accounts.test.ts",
+      "src/main/settings/service.test.ts",
+      "src/main/settings/provider-runtime-projection.test.ts"
+    ]
+  }
+}

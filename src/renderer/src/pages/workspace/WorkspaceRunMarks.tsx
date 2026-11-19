@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { useMessageScroller } from '@/components/ui/message-scroller'
 
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import {
@@ -54,6 +55,7 @@ const WorkspaceRunMarks = ({
   onRevealMessage
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const { stopAutoScroll, scrollToMessage } = useMessageScroller()
   const marks = useMemo(() => createRunMarks(items), [items])
   const markIndexByItemId = useMemo(() => createRunMarkItemIndex(items, marks), [items, marks])
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
@@ -75,6 +77,11 @@ const WorkspaceRunMarks = ({
   } | null>(null)
   const pointerFrameRef = useRef<number | undefined>(undefined)
   const pointerPositionRef = useRef(0)
+  const pointerFocusRef = useRef(false)
+  const pendingRevealRef = useRef<{ id: string } | undefined>(undefined)
+  const pendingRevealRetryFrameRef = useRef<number | undefined>(undefined)
+  const pendingRevealRetryCountRef = useRef(0)
+  const [pendingRevealRetry, setPendingRevealRetry] = useState(0)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -276,26 +283,77 @@ const WorkspaceRunMarks = ({
     updateRailScroll(currentPositionRef.current)
   }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
-  const scrollToRun = (mark: RunMark, index: number): void => {
-    if (!viewport) return
-    const target = findMessageTarget(viewport, mark.id)
-    onRevealMessage?.(mark.id)
-    if (!target) {
+  const scrollToMountedRun = useCallback(
+    (mark: RunMark, index: number): boolean => {
+      if (!viewport) return false
+      const target = findMessageTarget(viewport, mark.id)
+      if (!target) return false
+
+      if (
+        !scrollToMessage(mark.id, {
+          align: 'start',
+          scrollMargin: RUN_MARK_TOP_OFFSET_PX,
+          behavior: 'instant'
+        })
+      )
+        return false
       setCurrentIndex(index)
+      return true
+    },
+    [viewport, scrollToMessage]
+  )
+
+  const scrollToRun = (mark: RunMark, index: number): void => {
+    // Release the primitive's following/turn anchor, then commit the history window
+    // before navigating. Otherwise its observers or the window restore undo the jump.
+    flushSync(() => {
+      stopAutoScroll()
+      onRevealMessage?.(mark.id)
+    })
+    const targetMounted = viewport ? findMessageTarget(viewport, mark.id) !== undefined : false
+    pendingRevealRef.current = { id: mark.id }
+    pendingRevealRetryCountRef.current = 0
+    if (targetMounted) {
+      if (scrollToMountedRun(mark, index)) pendingRevealRef.current = undefined
+      else setPendingRevealRetry((revision) => revision + 1)
       return
     }
-
-    const viewportTop = viewport.getBoundingClientRect().top
-    const targetTop = target.getBoundingClientRect().top
-    const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    const nextScrollTop = Math.min(
-      Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
-      maximumScrollTop
-    )
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    viewport.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' })
     setCurrentIndex(index)
   }
+
+  useLayoutEffect(() => {
+    const pending = pendingRevealRef.current
+    if (!onRevealMessage) {
+      pendingRevealRef.current = undefined
+      return
+    }
+    if (!pending) return
+    const pendingIndex = marks.findIndex((mark) => mark.id === pending.id)
+    if (pendingIndex < 0) {
+      pendingRevealRef.current = undefined
+      return
+    }
+    const pendingMark = marks[pendingIndex]!
+    if (scrollToMountedRun(pendingMark, pendingIndex)) {
+      pendingRevealRef.current = undefined
+      pendingRevealRetryCountRef.current = 0
+    } else if (
+      pendingRevealRetryCountRef.current < 3 &&
+      pendingRevealRetryFrameRef.current === undefined
+    ) {
+      pendingRevealRetryCountRef.current += 1
+      pendingRevealRetryFrameRef.current = window.requestAnimationFrame(() => {
+        pendingRevealRetryFrameRef.current = undefined
+        setPendingRevealRetry((revision) => revision + 1)
+      })
+    }
+    return () => {
+      if (pendingRevealRetryFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(pendingRevealRetryFrameRef.current)
+        pendingRevealRetryFrameRef.current = undefined
+      }
+    }
+  }, [items, marks, onRevealMessage, pendingRevealRetry, scrollToMountedRun, visibleIndices])
 
   if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 
@@ -354,7 +412,7 @@ const WorkspaceRunMarks = ({
           }}
           onPointerLeave={() => {
             cancelPointerFrame()
-            if (!railRef.current?.contains(document.activeElement)) setHighlightedIndex(null)
+            if (!railRef.current?.contains(document.activeElement)) schedulePreviewClose()
           }}
           onScroll={updateRailWindow}
           style={railStyle}
@@ -404,9 +462,16 @@ const WorkspaceRunMarks = ({
                       setFocusedId(null)
                       schedulePreviewClose()
                     }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) return
+                      // Keep the pressed target still until click; keyboard focus may scroll it.
+                      pointerFocusRef.current = true
+                      event.currentTarget.focus({ preventScroll: true })
+                      pointerFocusRef.current = false
+                    }}
                     onFocus={(event) => {
                       setFocusedId(mark.id)
-                      updateRailScroll(index)
+                      if (!pointerFocusRef.current) updateRailScroll(index)
                       showPreview(mark, index, event.currentTarget)
                     }}
                     onKeyDown={(event) => {

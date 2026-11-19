@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { area, intersection as intersect, union } from './literature-pdf-page-geometry.mjs'
-import { classifyTableRuleEdge, joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import {
+  classifyTableRuleEdge,
+  joinHorizontalTableRules,
+  clusterTableRulePositions
+} from './literature-pdf-table-rules.mjs'
+import { measuredSourceRanges } from './literature-pdf-source-segments.mjs'
 import { inside, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import { hasWitnessedLineEndHyphen, sourceWordSpellings } from './literature-pdf-caption-group.mjs'
 import { recoverNativeStackedUncertainty } from './literature-pdf-native-stacked-uncertainty.mjs'
@@ -259,7 +264,9 @@ export function rejectNativeLetterFractionScriptMetadata(cells, rules) {
 // Keep this deliberately narrow: only reconstruct lists of scientific-notation
 // values over a letter or integer denominator, with a complete centered bar.
 export function recoverNativeStackedScientificFractions(items, rules, runs) {
-  if (!Array.isArray(items) || !Array.isArray(rules) || !Array.isArray(runs)) return
+  if (!Array.isArray(items) || !Array.isArray(rules) || !rules.length || !Array.isArray(runs))
+    return
+  items = items.filter((item) => item.text.replaceAll(BACKSPACE, '').trim())
   const proofs = []
   for (const [x1, y1, x2, y2] of rules) {
     if (y1 !== y2 || !(x2 > x1)) continue
@@ -296,6 +303,7 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
     const numerator = above.map((item) => item.text.trim()).join(''),
       denominator = below[0].text.trim()
     proofs.push({
+      items: [...above, below[0]],
       malformed: [
         ...new Set([
           /^\p{L}$/u.test(denominator)
@@ -311,7 +319,46 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
   let text = runs
     .map((run) => run.text)
     .join('')
+    .replaceAll(BACKSPACE, '')
     .replace(/\s+/gu, '')
+  // Reading order may put every numerator before every denominator. Rebuild
+  // complete native fractions as atomic values before horizontal ordering.
+  // Require exact token ownership and character conservation; unrelated text
+  // must never be discarded by this whole-cell serialization.
+  const provedItems = proofs.flatMap((proof) => proof.items)
+  const owned = new Set(provedItems)
+  const punctuation = items.filter((item) => !owned.has(item))
+  // Horizontal order is meaningful only when one horizontal line intersects
+  // every fraction (between its baselines) and every punctuation glyph.
+  const rowTop = Math.max(
+    ...proofs.map((proof) => proof.items[0].baseline),
+    ...punctuation.map((item) => item.rect?.[1])
+  )
+  const rowBottom = Math.min(
+    ...proofs.map((proof) => proof.items.at(-1).baseline),
+    ...punctuation.map((item) => item.rect?.[3])
+  )
+  const characters = (value) => [...value.replace(/\s+/gu, '')].sort().join('')
+  if (
+    rowTop <= rowBottom &&
+    owned.size === provedItems.length &&
+    punctuation.every((item) => /^[[\](),;]+$/u.test(item.text.trim())) &&
+    characters(text) === characters(items.map((item) => item.text).join(''))
+  ) {
+    const values = proofs.map((proof) => ({
+      x: Math.min(...proof.items.map((item) => item.rect[0])),
+      text: proof.corrected
+    }))
+    values.push(...punctuation.map((item) => ({ x: item.rect[0], text: item.text.trim() })))
+    return [
+      {
+        text: values
+          .sort((a, b) => a.x - b.x)
+          .map((value) => value.text)
+          .join('')
+      }
+    ]
+  }
   if (
     proofs.length !==
     (text.match(/(?:\d+e\p{L}[−-]\d+|\d+e[−-]\d+(?:\p{L}|\d{2,}))/gu) ?? []).length
@@ -428,6 +475,247 @@ export function recoverNativeIndexedReciprocal(items, paintBounds, runs) {
   ]
 }
 
+// Two printed tiers occupy only the metric columns. The stub starts at the
+// body divider; the four closed parent faces prove the repeated leaf lanes.
+function reconcileFramedTripletHeaders({
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  pageItems,
+  rules,
+  unassigned,
+  repairs,
+  measuredRuns
+}) {
+  if (columnRects.length !== 13 || headerRows.length !== 2 || rows.length < 5 || !unassigned.length)
+    return 0
+  const left = columnRects[0][0],
+    right = columnRects.at(-1)[2],
+    metric = columnRects[1][0]
+  const height = rows[0].rect[3] - rows[0].rect[1]
+  if (!(height > 0)) return 0
+  const rulesHorizontal = joinHorizontalTableRules(rules)
+  const partial = rulesHorizontal
+    .filter(
+      (r) =>
+        Math.abs(r[0] - metric) < height * 0.35 &&
+        Math.abs(r[2] - right) < height * 0.35 &&
+        r[1] >= rows[0].rect[1] - height * 0.2 &&
+        r[1] < rows[1].rect[3]
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    partial.length !== 2 ||
+    Math.abs(partial[0][0] - partial[1][0]) > 0.02 ||
+    Math.abs(partial[0][2] - partial[1][2]) > 0.02
+  )
+    return 0
+  const [top, middle] = partial.map((r) => r[1])
+  if (middle - top < height * 0.9 || middle - top > height * 1.5) return 0
+  const dividers = rulesHorizontal.filter(
+    (r) =>
+      Math.abs(r[0] - left) < height &&
+      Math.abs(r[2] - right) < height * 0.35 &&
+      Math.abs(r[1] - (middle + (middle - top))) < 0.02
+  )
+  if (dividers.length !== 1) return 0
+  const bottom = dividers[0][1]
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[3] > top &&
+      r[1] < bottom &&
+      r[0] >= partial[0][0] - 1 &&
+      r[0] <= partial[0][2] + 1
+  )
+  const walls = clusterTableRulePositions(vertical.map((r) => r[0]))
+  if (
+    walls.length !== 5 ||
+    Math.abs(walls[0] - partial[0][0]) > 1 ||
+    Math.abs(walls.at(-1) - partial[0][2]) > 1 ||
+    walls.some(
+      (x, i) =>
+        Math.abs(x - (columnRects[1 + i * 3]?.[0] ?? right)) > height * 0.4 ||
+        [top, middle].some(
+          (y, band) =>
+            classifyTableRuleEdge(vertical, 0, x, y + 0.6, [middle, bottom][band] - 0.6) !== 1
+        )
+    )
+  )
+    return 0
+  if (
+    cells.some(
+      (c) =>
+        c.rowSpan !== 1 ||
+        (c.row < 2 &&
+          ((c.text?.trim() && !c.sourceRects?.length) ||
+            (c.sourceRects ?? []).some((r) => r[3] > bottom + 0.05))) ||
+        (c.row >= 2 && (c.sourceRects ?? []).some((r) => r[3] <= bottom))
+    )
+  )
+    return 0
+  const source = pageItems.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.baseline > top &&
+      i.baseline < bottom &&
+      i.rect[2] > left &&
+      i.rect[0] < right
+  )
+  if (
+    !nativeWholeFontOrigins(source) ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        i.rect[0] < walls[0] ||
+        i.rect[2] > walls.at(-1) ||
+        Math.abs(i.height - height) > height * 0.05
+    ) ||
+    [...new Set(unassigned)].some(
+      (text) =>
+        source.filter((i) => i.text === text).length <
+        unassigned.filter((value) => value === text).length
+    )
+  )
+    return 0
+  const parents = source.filter((i) => i.baseline < middle).sort((a, b) => a.rect[0] - b.rect[0])
+  const children = source.filter((i) => i.baseline > middle)
+  if (
+    parents.length !== 4 ||
+    !children.length ||
+    parents.some(
+      (i, n) =>
+        Math.abs(i.baseline - parents[0].baseline) > 0.02 ||
+        i.rect[0] < walls[n] ||
+        i.rect[2] > walls[n + 1] ||
+        Math.abs((i.rect[0] + i.rect[2] - walls[n] - walls[n + 1]) / 2) > height * 0.35
+    ) ||
+    children.some((i) => Math.abs(i.baseline - children[0].baseline) > 0.02)
+  )
+    return 0
+  const leaves = []
+  for (const item of children) {
+    const words = item.text.trim().split(/\s+/u)
+    if (words.length === 1) {
+      leaves.push(item)
+      continue
+    }
+    const observed = measuredRuns.filter(
+      (r) =>
+        r.text === item.text &&
+        r.baseline === item.baseline &&
+        r.rect?.length === 4 &&
+        r.rect.every((v, n) => v === item.rect[n])
+    )
+    if (observed.length !== 1) return 0
+    const run = observed[0]
+    const ranges = measuredSourceRanges({ str: item.text, sourceItem: item.sourceItem }, words)
+    if (
+      !ranges ||
+      run.literalGlyphs?.join('') !== words.join('') ||
+      run.glyphRuns?.length !== words.join('').length ||
+      !run.glyphRuns.every(Number.isInteger) ||
+      run.gaps?.length !== words.length - 1
+    )
+      return 0
+    let offset = 0
+    for (let n = 0; n < words.length; n++) {
+      offset += words[n].length
+      const before = run.gaps[n - 1],
+        after = run.gaps[n]
+      const rect = [
+        before?.right ?? item.rect[0],
+        item.rect[1],
+        after?.left ?? item.rect[2],
+        item.rect[3]
+      ]
+      if (
+        !rect.every(Number.isFinite) ||
+        rect[2] <= rect[0] ||
+        (after &&
+          (after.index !== offset || !(after.right > after.left) || after.right > item.rect[2]))
+      )
+        return 0
+      leaves.push({
+        ...item,
+        text: words[n],
+        rect,
+        sourceItem: undefined,
+        sourceToken: item,
+        sourceSegment: { ...ranges[n], rect }
+      })
+    }
+  }
+  leaves.sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    leaves.length !== 12 ||
+    new Set(leaves.slice(0, 3).map((i) => i.text)).size !== 3 ||
+    leaves.some((i, n) => {
+      const lane = columnRects[n + 1],
+        group = Math.floor(n / 3),
+        x = (i.rect[0] + i.rect[2]) / 2
+      return (
+        !/\p{L}/u.test(i.text) ||
+        i.text !== leaves[n % 3].text ||
+        (n && leaves[n - 1].rect[2] > i.rect[0]) ||
+        i.rect[0] < walls[group] - 0.02 ||
+        i.rect[2] > walls[group + 1] + 0.02 ||
+        x < lane[0] ||
+        x >= lane[2] ||
+        i.rect[0] < lane[0] - height * 0.15 ||
+        i.rect[2] > lane[2] + height * 0.15
+      )
+    })
+  )
+    return 0
+  const make = (row, column, colSpan, item) => {
+    const rect = [
+      columnRects[column][0],
+      [top, middle][row],
+      columnRects[column + colSpan - 1][2],
+      [middle, bottom][row]
+    ]
+    return {
+      row,
+      column,
+      rowSpan: 1,
+      colSpan,
+      text: item.text,
+      rect,
+      sourceTokens: [item],
+      sourceRects: [item.rect],
+      ...(item.sourceSegment
+        ? { sourceSegments: [item.sourceSegment] }
+        : { sourceItems: [item.sourceItem] })
+    }
+  }
+  for (let n = cells.length - 1; n >= 0; n--) if (cells[n].row < 2) cells.splice(n, 1)
+  cells.push(
+    {
+      row: 0,
+      column: 0,
+      rowSpan: 2,
+      colSpan: 1,
+      text: '',
+      rect: [left, top, metric, bottom],
+      sourceTokens: [],
+      sourceRects: []
+    },
+    ...parents.map((i, n) => make(0, 1 + 3 * n, 3, i)),
+    ...leaves.map((i, n) => make(1, 1 + n, 1, i))
+  )
+  rows.splice(
+    0,
+    2,
+    { rect: [left, top, right, middle], origin: 'source-tiered-header' },
+    { rect: [left, middle, right, bottom], origin: 'source-tiered-header' }
+  )
+  unassigned.length = 0
+  repairs.push('native-framed-triplet-headers-recovered')
+  return 1
+}
+
 export function reconcileNativeTieredHeader({
   cells,
   rows,
@@ -443,6 +731,20 @@ export function reconcileNativeTieredHeader({
   measuredRuns = []
 }) {
   if (!rows.length || !columnRects.length || headerRows.some((r, i) => r !== i)) return 0
+  if (
+    reconcileFramedTripletHeaders({
+      cells,
+      rows,
+      columnRects,
+      headerRows,
+      pageItems,
+      rules,
+      unassigned,
+      repairs,
+      measuredRuns
+    })
+  )
+    return 1
   // Preserve an already complete native grouped header. A fallback based on
   // the parent word's width must not narrow its independently proved children.
   const headerCells = cells.filter((c) => headerRows.includes(c.row)),
@@ -607,7 +909,20 @@ export function reconcileNativeTieredHeader({
     // native divider owns only the rows above it; preserve those body cells
     // and their baselines rather than discarding their text with the header.
     count = 0
-    while (count < rows.length && rows[count].rect[1] < plan.headerBottom - 0.05) count++
+    while (count < rows.length && rows[count].rect[1] < plan.headerBottom - 0.05) {
+      if (plan.segmentedDivider) {
+        const textCells = cells.filter((c) => c.row === count && c.text?.trim())
+        if (
+          textCells.length &&
+          textCells.every(
+            (c) =>
+              c.sourceRects?.length && c.sourceRects.every((r) => r[1] > plan.headerBottom + 0.05)
+          )
+        )
+          break
+      }
+      count++
+    }
   }
   if (!count) {
     while (count < rows.length && rows[count].rect[1] < plan.headerBottom) count++
@@ -3819,6 +4134,106 @@ export function recoverDenseNumericAssignedRows({
   return recovered
 }
 
+// A shifted model cut can collect two otherwise independent printed scalars.
+// Three complete, left-aligned records inside the same native rule band
+// establish the column order without guessing through gaps or wrapped text.
+export function recoverNativeAlignedNumericRecords({
+  items,
+  cells,
+  rows,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  rules,
+  splitSourceItems,
+  repairs
+}) {
+  const columns = cells.filter((cell) => cell.row === 0).length
+  if (
+    columns < 8 ||
+    rows.length < 4 ||
+    headerRows.length !== 1 ||
+    headerRows[0] !== 0 ||
+    cells.length !== rows.length * columns ||
+    cells.some((cell) => cell.colSpan !== 1 || cell.rowSpan !== 1)
+  )
+    return
+  const [left, top, right] = rows[1].rect
+  const bottom = rows.at(-1).rect[3]
+  const horizontal = joinHorizontalTableRules(rules ?? []).filter(
+    (rule) => Math.min(right, rule[2]) - Math.max(left, rule[0]) >= (right - left) * 0.9
+  )
+  if (
+    !horizontal.some((rule) => rule[1] < top && rule[1] >= rows[0].rect[1]) ||
+    !horizontal.some((rule) => rule[1] > bottom) ||
+    (rules ?? []).some(
+      (rule) =>
+        rule[0] === rule[2] &&
+        rule[0] > left &&
+        rule[0] < right &&
+        Math.min(bottom, rule[3]) - Math.max(top, rule[1]) > 0
+    )
+  )
+    return
+  const numeric = /^[−+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:e[−+-]?\d+)?$/iu
+  const derived = new Set(splitSourceItems)
+  const records = []
+  for (const [row, slot] of rows.entries()) {
+    if (!row) continue
+    const values = items
+      .filter(
+        (item) =>
+          Math.min(slot.rect[3], item.rect[3]) - Math.max(slot.rect[1], item.rect[1]) >
+          (item.rect[3] - item.rect[1]) / 2
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const leaves = cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+    if (
+      values.length !== columns ||
+      slot.rect[1] < rows[row - 1].rect[3] ||
+      leaves.length !== columns ||
+      leaves.some((leaf, index) => leaf.column !== index)
+    )
+      return
+    const { height, baseline } = values[0]
+    if (
+      !(height > 0) ||
+      values.some((item, column) => {
+        const prior = assignments.get(item)
+        const target = leaves[column]
+        return (
+          !item.horizontal ||
+          !numeric.test(item.text.trim()) ||
+          derived.has(item) ||
+          item.sourceItem?.text !== item.text ||
+          Math.abs(item.baseline - baseline) > height * 0.12 ||
+          Math.abs(item.height - height) > height * 0.12 ||
+          (column && item.rect[0] - values[column - 1].rect[2] < height * 0.5) ||
+          (prior && (prior.row !== row || Math.abs(prior.column - column) > 1)) ||
+          (target.rect[0] + target.rect[2]) / 2 < item.rect[0] ||
+          target.rect[0] - item.rect[0] > (target.rect[2] - target.rect[0]) * 0.25 ||
+          (records.length &&
+            Math.abs(item.rect[0] - records[0].values[column].rect[0]) > height * 0.12)
+        )
+      })
+    )
+      return
+    records.push({ values, leaves })
+  }
+  if (
+    !records.some(({ values, leaves }) =>
+      values.some((item, n) => assignments.get(item) !== leaves[n])
+    )
+  )
+    return
+  for (const { values, leaves } of records)
+    for (const [column, item] of values.entries()) {
+      assignments.set(item, leaves[column])
+      ambiguousAssignments.delete(item)
+    }
+  repairs.push('native-aligned-numeric-records-recovered')
+}
+
 // Recover only two source gaps whose target is uniquely determined by the
 // printed grid. Everything else remains unassigned so a plausible nearest
 // cell can never silently become a wrong cell.
@@ -6137,6 +6552,18 @@ export function populateTableCellText({
       rows,
       headerRows,
       assignments,
+      splitSourceItems,
+      repairs
+    })
+  if (!rotatedContinuation)
+    recoverNativeAlignedNumericRecords({
+      items,
+      cells,
+      rows,
+      headerRows,
+      assignments,
+      ambiguousAssignments,
+      rules,
       splitSourceItems,
       repairs
     })

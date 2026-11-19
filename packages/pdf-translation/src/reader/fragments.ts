@@ -54,19 +54,34 @@ export function pdfTranslationLayoutFragments(
         } else otherContent = true
       }
     }
+    const openingPanel =
+      previous.items.length === 2 && previous.items[1].text === '-'
+        ? /^\p{Ll}{3,} \(([a-z])$/u.exec(previous.items[0].text)
+        : null
+    const closingPanel = openingPanel && /^([a-z])\)\s+\p{Ll}/u.exec(fragment.items[0]?.text ?? '')
+    const splitCaptionPanelRow =
+      !!openingPanel &&
+      !!closingPanel &&
+      !unit.sourceOnly &&
+      isPdfTranslationCaption(unit.source) &&
+      unit.source.includes(`(${openingPanel[1]}-${closingPanel[1]})`) &&
+      Math.abs(a.y - b.y) * page.height <= 0.1 &&
+      Math.abs(a.height - b.height) * page.height <= 0.1 &&
+      Math.abs(b.x - a.x - a.width) * page.width <= 0.25
     if (
-      b.y > a.y &&
-      // Tall inline fractions can overlap the next line's font box. Merge
-      // only a minority of the shorter box; neighbor ownership is checked above.
-      gap >= -Math.max(2, Math.min(a.height, b.height) * page.height * 0.5) &&
-      gap <= 2 &&
-      // A paragraph can narrow beside a figure. Keep that change in footprint
-      // instead of filling its bounding rectangle across the neighboring graphic.
-      (overlap >= Math.max(a.width, b.width) * 0.8 ||
-        (isPdfTranslationCaption(unit.source) &&
-          fragment === unit.fragments.at(-1) &&
-          Math.abs(a.x - b.x) * page.width <= 1 &&
-          b.width < a.width)) &&
+      (splitCaptionPanelRow ||
+        (b.y > a.y &&
+          // Tall inline fractions can overlap the next line's font box. Merge
+          // only a minority of the shorter box; neighbor ownership is checked above.
+          gap >= -Math.max(2, Math.min(a.height, b.height) * page.height * 0.5) &&
+          gap <= 2 &&
+          // A paragraph can narrow beside a figure. Keep that change in footprint
+          // instead of filling its bounding rectangle across the neighboring graphic.
+          (overlap >= Math.max(a.width, b.width) * 0.8 ||
+            (isPdfTranslationCaption(unit.source) &&
+              fragment === unit.fragments.at(-1) &&
+              Math.abs(a.x - b.x) * page.width <= 1 &&
+              b.width < a.width)))) &&
       !otherContent
     ) {
       result[result.length - 1] = {

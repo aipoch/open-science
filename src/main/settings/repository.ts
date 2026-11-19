@@ -1,3 +1,7 @@
+import {
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -52,8 +56,9 @@ import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { buildProviderValidationPatch } from './provider-validation-state'
-import { sanitizePackageMirror } from './record-codec'
+import { buildProviderValidationPatch, reconcileCatalogHealth } from './provider-validation-state'
+import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
+import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
 import {
   buildPromptOptimizationModelMutation,
   buildReviewerModelMutation,
@@ -85,6 +90,7 @@ type LocalShellRuntimeWrite = Readonly<{
 }>
 
 type ProviderValidationHistory = {
+  firstCompatibleRevision: number
   configRevision: number
   keyRef?: string
   latestAt: number
@@ -97,9 +103,41 @@ type ProviderValidationHistory = {
 const validationScopeKey = (target: ProviderValidationTarget): string =>
   JSON.stringify([target.model, target.endpoint])
 
+const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
+  const binding = settings.imageModel
+  const service = settings.imageServices?.find((entry) => entry.id === binding?.serviceId)
+  const model = service?.models.find((entry) => entry.id === binding?.modelId)
+  if (!service || !model) return undefined
+  const provider = settings.providers.find((entry) => entry.id === service.providerId)
+  return {
+    binding,
+    adapter: service.adapter,
+    providerId: service.providerId,
+    baseUrl: service.baseUrl ?? (provider && imageProviderConfiguration(provider)?.baseUrl),
+    keyRef: provider ? provider.keyRef : service.keyRef,
+    wireModelId: model.wireModelId,
+    presetId: model.presetId
+  }
+}
+
+const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean =>
+  left.type === right.type &&
+  left.vendorId === right.vendorId &&
+  left.region === right.region &&
+  left.keyRef === right.keyRef &&
+  isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
+
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly providerListeners = new Set<(changes: readonly ProviderChange[]) => void>()
+  private readonly imageModelListeners = new Set<() => void>()
+
+  subscribeImageModels(listener: () => void): () => void {
+    this.imageModelListeners.add(listener)
+    return () => {
+      this.imageModelListeners.delete(listener)
+    }
+  }
 
   // Commit notifications must stay synchronous; observers schedule drains without awaiting them.
   subscribeProviders(listener: (changes: readonly ProviderChange[]) => void): () => void {
@@ -199,6 +237,8 @@ class SettingsRepository {
     existingId?: string,
     configEdit?: {
       expectedConfigRevision?: number
+      catalogBaseline?: ProviderCatalogState
+      validationMatches?: (merged: StoredProvider) => boolean
       expectedValidationState?: Pick<
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
@@ -247,14 +287,22 @@ class SettingsRepository {
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
-        if (
-          existing.type === provider.type &&
-          existing.vendorId === provider.vendorId &&
-          existing.region === provider.region &&
-          existing.keyRef === provider.keyRef &&
-          existing.fetchedModels
-        )
-          provider = { ...provider, fetchedModels: existing.fetchedModels }
+        const catalog = providerCatalogState(existing)
+        // A same-target preview may replace only the catalog it was based on.
+        const keepCatalog = configEdit?.catalogBaseline
+          ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
+          : sameCatalogTarget(existing, provider) &&
+            (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
+        // CodeBuddy sign-in and sign-out own that subscription’s model list.
+        if (provider.type !== 'codebuddy-subscription' && keepCatalog) {
+          provider = reconcileCatalogHealth(provider, { ...provider, ...catalog })
+          // A concurrent refresh can move the model while its old route is being tested.
+          if (configEdit?.validationMatches && !configEdit.validationMatches(provider)) {
+            provider.lastValidatedAt = existing.lastValidatedAt
+            provider.lastValidatedTarget = existing.lastValidatedTarget
+            provider.lastValidationFailure = existing.lastValidationFailure
+          }
+        }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -288,7 +336,8 @@ class SettingsRepository {
   // are preserved, and a deleted provider can never be recreated by a stale completion.
   async updateProviderModelCatalogIfTargetMatches(
     expectedProvider: StoredProvider,
-    fetchedModels: string[]
+    fetchedModels: string[] | undefined,
+    catalogPatch: Pick<StoredProvider, 'modelCatalog' | 'modelCatalogStatus'> = {}
   ): Promise<boolean> {
     let applied = false
 
@@ -298,16 +347,18 @@ class SettingsRepository {
 
       const currentProvider = settings.providers[index]
       if (
-        currentProvider.type !== expectedProvider.type ||
-        currentProvider.vendorId !== expectedProvider.vendorId ||
-        currentProvider.region !== expectedProvider.region ||
-        currentProvider.keyRef !== expectedProvider.keyRef
+        !sameCatalogTarget(currentProvider, expectedProvider) ||
+        (currentProvider.configRevision ?? 0) !== (expectedProvider.configRevision ?? 0)
       ) {
         return settings
       }
 
       const providers = [...settings.providers]
-      providers[index] = { ...currentProvider, fetchedModels }
+      providers[index] = reconcileCatalogHealth(currentProvider, {
+        ...currentProvider,
+        ...(fetchedModels ? { fetchedModels } : {}),
+        ...catalogPatch
+      })
       applied = true
       return { ...settings, providers }
     })
@@ -318,7 +369,11 @@ class SettingsRepository {
   // Check the live target and generation in the same serialized mutation as the field-only patch.
   async updateProviderValidationIfTargetMatches(
     id: string,
-    matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
+    matches: (
+      provider: StoredProvider,
+      settings: StoredSettings,
+      firstCompatibleRevision: number
+    ) => boolean,
     result: ValidateProviderResult,
     target: ProviderValidationTarget | undefined,
     observationStartedAt?: number
@@ -327,8 +382,9 @@ class SettingsRepository {
     await this.mutate((settings) => {
       const index = settings.providers.findIndex((provider) => provider.id === id)
       const current = settings.providers[index]
-      if (!current || !matches(current, settings)) return settings
-      const history = this.rememberProviderRecovery(current, settings)
+      if (!current) return settings
+      const history = this.rememberProviderRecovery(current)
+      if (!matches(current, settings, history.firstCompatibleRevision)) return settings
       if (observationStartedAt !== undefined) {
         const recoveredAt = target
           ? Math.max(history.unscopedAt, history.scopes.get(validationScopeKey(target)) ?? 0)
@@ -343,14 +399,7 @@ class SettingsRepository {
     return applied
   }
 
-  private rememberProviderRecovery(
-    provider: StoredProvider,
-    settings: StoredSettings
-  ): ProviderValidationHistory {
-    for (const id of this.providerValidationHistory.keys()) {
-      if (!settings.providers.some((current) => current.id === id))
-        this.providerValidationHistory.delete(id)
-    }
+  private rememberProviderRecovery(provider: StoredProvider): ProviderValidationHistory {
     let history = this.providerValidationHistory.get(provider.id)
     if (
       !history ||
@@ -358,6 +407,7 @@ class SettingsRepository {
       history.keyRef !== provider.keyRef
     ) {
       history = {
+        firstCompatibleRevision: provider.configRevision ?? 0,
         configRevision: provider.configRevision ?? 0,
         keyRef: provider.keyRef,
         latestAt: 0,
@@ -635,6 +685,10 @@ class SettingsRepository {
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
       }
+
+      delete next.imageServices
+      delete next.imageModel
+      Object.assign(next, sanitizeImageSettings(settings, providers))
 
       if (scenarioModelHandling === 'inherit') {
         if (
@@ -1167,6 +1221,18 @@ class SettingsRepository {
     })
   }
 
+  async mutateImageModels(
+    update: (settings: StoredSettings) => Pick<StoredSettings, 'imageServices' | 'imageModel'>
+  ): Promise<StoredSettings> {
+    return this.mutate((current) => {
+      const imageSettings = sanitizeImageSettings(update(current), current.providers)
+      const next = { ...current }
+      delete next.imageServices
+      delete next.imageModel
+      return Object.assign(next, imageSettings)
+    })
+  }
+
   async mutateClassification(
     update: (
       value: StoredClassificationSettings | undefined,
@@ -1328,17 +1394,40 @@ class SettingsRepository {
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
   private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
+    let previousImageConfiguration: unknown
     return this.store
       .mutate((settings) => {
         previous = structuredClone(settings.providers)
+        previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
         return update(settings)
       })
       .then((settings) => {
+        if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
+          for (const listener of this.imageModelListeners) {
+            try {
+              listener()
+            } catch {
+              createLogger('settings:repository').error('Image model change listener failed')
+            }
+          }
+        }
         const before = new Map(previous.map((provider) => [provider.id, provider]))
         const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
         const changes = [...new Set([...before.keys(), ...after.keys()])]
           .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
           .map((id) => ({ id, current: after.get(id) }))
+        for (const { id, current } of changes) {
+          const prior = before.get(id)
+          if (!current) this.providerValidationHistory.delete(id)
+          // A display edit keeps existing official connections and their recovery watermarks valid.
+          else if (
+            prior?.type === 'official' &&
+            current.configRevision !== prior.configRevision &&
+            sameCatalogTarget(prior, current)
+          ) {
+            this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+          }
+        }
         if (changes.length) {
           for (const listener of this.providerListeners) {
             try {

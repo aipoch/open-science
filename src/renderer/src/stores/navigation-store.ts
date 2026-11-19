@@ -242,6 +242,38 @@ const navigationState = (
 const findMostRecentSessionId = (projectId: string): string | undefined =>
   findMostRecentProjectSessionId(useSessionStore.getState().sessions, projectId)
 
+const selectSessionForNavigation = (session: {
+  projectId: string
+  id: string
+  contentLoaded?: boolean
+  needsStartupRecovery?: boolean
+}): void => {
+  const request = { projectId: session.projectId, sessionId: session.id }
+  const recoverSessionDetails = session.needsStartupRecovery === true
+  if (session.contentLoaded === false) {
+    useSessionStore.setState({
+      selectedSessionId: session.id,
+      sessionDetailsRecoveryRequest: recoverSessionDetails ? request : undefined
+    })
+    return
+  }
+  useSessionStore.getState().selectSession(session.id)
+  useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+  if (!recoverSessionDetails) return
+  const loadOne = typeof window === 'undefined' ? undefined : window.api?.sessions?.loadOne
+  if (typeof loadOne !== 'function') return
+  void loadOne({ ...request, recoverSessionDetails: true })
+    .then((loaded) => {
+      if (!loaded) return
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? { ...candidate, needsStartupRecovery: false } : candidate
+        )
+      }))
+    })
+    .catch(() => undefined)
+}
+
 const isActiveProject = (projectId: string): boolean =>
   useProjectStore
     .getState()
@@ -452,7 +484,11 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
       const mostRecentSessionId = findMostRecentSessionId(projectId)
 
       if (mostRecentSessionId) {
-        useSessionStore.getState().selectSession(mostRecentSessionId)
+        const session = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === mostRecentSessionId)
+        if (session && origin !== 'automatic') selectSessionForNavigation(session)
+        else useSessionStore.getState().selectSession(mostRecentSessionId)
       } else {
         useSessionStore.getState().clearSelection()
       }
@@ -474,7 +510,13 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     if (!isActiveSession(projectId, sessionId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       if (!isActiveSession(projectId, sessionId)) return false
-      useSessionStore.getState().selectSession(sessionId)
+      const session = useSessionStore
+        .getState()
+        .sessions.find(
+          (candidate) => candidate.projectId === projectId && candidate.id === sessionId
+        )
+      if (session) selectSessionForNavigation(session)
+      else useSessionStore.getState().selectSession(sessionId)
 
       if (origin === 'user') recordLastOpenedProject(projectId)
 

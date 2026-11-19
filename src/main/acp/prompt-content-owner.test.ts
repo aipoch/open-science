@@ -990,6 +990,79 @@ describe('AcpPromptContentOwner', () => {
     expect(trustedLease.close).toHaveBeenCalledOnce()
   })
 
+  it('passes an exact managed image reference to a text-only Agent without reading pixels', async () => {
+    const path = join(await createRoot(), 'figure.png')
+    await writeFile(path, 'image fixture')
+    const trustedLease = {
+      size: 13,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      copyTo: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close: vi.fn(async () => {})
+    }
+    const reference = {
+      id: 'figure-mention',
+      source: 'artifact' as const,
+      sourceFileId: 'figure',
+      versionId: 'figure-first',
+      path: 'artifact-version:figure-first',
+      name: 'figure.png'
+    }
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () => ({
+            absolutePath: path,
+            name: reference.name,
+            mimeType: 'image/png',
+            allowSkillImportReference: false,
+            sourceFileId: 'figure',
+            sourceSessionId: 'session-1',
+            versionId: 'figure-first',
+            trustedLease
+          })
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'Change the region to blue',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [reference],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      imageReferencesOnly: true
+    })
+
+    expect(result.turnInputs?.references).toEqual([reference])
+    expect(result.content).toEqual([
+      { type: 'text', text: 'Change the region to blue' },
+      {
+        type: 'text',
+        text: expect.stringContaining(
+          JSON.stringify({
+            name: 'figure.png',
+            source: {
+              sourceKind: 'artifact-version',
+              sourceFileId: 'figure',
+              inputFileVersionId: 'figure-first'
+            }
+          })
+        )
+      }
+    ])
+    expect(trustedLease.readRange).not.toHaveBeenCalled()
+    expect(trustedLease.copyTo).not.toHaveBeenCalled()
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+    result.close()
+  })
+
   it('registers the exact head identity resolved at Agent turn start', async () => {
     const root = await createRoot()
     const path = join(root, 'head.csv')

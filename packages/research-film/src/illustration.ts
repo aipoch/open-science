@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
-export const videoCuePattern = /^(end|\d+(?:\.end|:[^\s+-]+)?)(?:[+-]\d+(?:\.\d+)?)?$/
+export const videoCuePattern =
+  /^(end|\d+(?:\.end|:[^\s+-]+(?:-[^\s+\d-][^\s+-]*)*)?)(?:[+-]\d+(?:\.\d+)?)?$/
 
 // Timing hints are optional presentation metadata; malformed hints use the player's defaults.
 export const videoCueSchema = z.preprocess(

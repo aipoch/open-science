@@ -16,6 +16,7 @@ import { loadSessionMutationAuthority, SessionRepository } from './repository'
 import { SessionPersistenceStateOwner } from './state-owner'
 import { RuntimeSessionOwner } from './runtime-session-owner'
 import { SessionPersistenceCoordinator } from './coordinator'
+import { sessionJournalPath, SessionJournalStore } from './journal'
 import { createForkSession } from '../session-package/fork-session'
 
 const roots: string[] = []
@@ -735,11 +736,14 @@ it('rejects a prepare-prompt whose caller lease already ended', async () => {
   )
 })
 
-it('loads a future-version file as found and still rolls back its preparation on restart', async () => {
+it('loads future optional fields and still rolls back its preparation on restart', async () => {
   const h = await harness('new', 'main')
   const file = join(h.root, 'sessions', 'p', 's.json')
-  const raw = JSON.parse(await readFile(file, 'utf8')) as {
+  const journal = new SessionJournalStore({ maxBytes: 1024 * 1024 })
+  const stored = (await journal.read(file))!
+  const raw = structuredClone(stored.document) as {
     session: {
+      revision: number
       messages: { id: string; turnOutcome?: Record<string, unknown> }[]
       conversationGraph: { messages: { id: string; turnOutcome?: Record<string, unknown> }[] }
       promptPreparation: Record<string, unknown> & { expectedState: object }
@@ -752,7 +756,11 @@ it('loads a future-version file as found and still rolls back its preparation on
     ...raw.session.promptPreparation.expectedState,
     futureState: 1
   }
-  await writeFile(file, JSON.stringify(raw))
+  raw.session.revision = stored.revision + 1
+  await journal.write(file, {
+    document: raw,
+    expectedRevision: stored.revision
+  })
 
   const reopened = new SessionRepository(h.root)
   const loaded = await loadSessionMutationAuthority(reopened, 'p', 's')
@@ -764,4 +772,24 @@ it('loads a future-version file as found and still rolls back its preparation on
   expect(recovered.resumeRecovery).toBeUndefined()
   expect(recovered.messages[1].turnOutcome).toBeUndefined()
   expect(recovered.messages[0].turnOutcome).toEqual(h.initial.messages[0].turnOutcome)
+})
+
+it('preserves an unknown journal format instead of rolling back its preparation on restart', async () => {
+  const h = await harness('new', 'main')
+  const file = sessionJournalPath(join(h.root, 'sessions', 'p', 's.json'))
+  const lines = (await readFile(file, 'utf8')).trimEnd().split('\n')
+  const first = JSON.parse(lines[0])
+  first.document.version = 999
+  lines[0] = JSON.stringify(first)
+  const futureContents = lines.join('\n') + '\n'
+  await writeFile(file, futureContents)
+
+  const reopened = new SessionRepository(h.root)
+  await expect(loadSessionMutationAuthority(reopened, 'p', 's')).resolves.toMatchObject({
+    status: 'unreadable'
+  })
+  await expect(
+    stateOwner(reopened).prepareRuntimeResume({ projectId: 'p', sessionId: 's' })
+  ).rejects.toThrow('Session could not be loaded for Resume.')
+  expect(await readFile(file, 'utf8')).toBe(futureContents)
 })

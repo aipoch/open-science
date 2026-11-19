@@ -52,7 +52,7 @@ const openLocalFile = async (page: Page, name: string): Promise<void> => {
     .getByRole('button')
     .filter({ hasText: name })
     .click()
-  await expect(page.getByRole('tab').filter({ hasText: name })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute(
     'aria-selected',
     'true'
   )
@@ -91,7 +91,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   await expect(page.getByRole('menu').getByText('Copied', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
 
-  const localTab = page.getByRole('tab').filter({ hasText: TEXT_FILE_NAME })
+  const localTab = page.getByRole('tab', { name: TEXT_FILE_NAME, exact: true })
   await localTab.click({ button: 'right' })
   const tabMenu = page.getByTestId('preview-tab-context-menu')
   await expect(tabMenu.getByText('Close', { exact: true })).toBeVisible()
@@ -179,11 +179,11 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   )
   await page.getByTestId('preview-content-context-menu').getByText('Close', { exact: true }).click()
   await expect(page.getByRole('dialog', { name: `Preview ${PDF_FILE_NAME}` })).toBeHidden()
-  await expect(page.getByRole('tab').filter({ hasText: PDF_FILE_NAME })).toBeVisible()
+  await expect(page.getByRole('tab', { name: PDF_FILE_NAME, exact: true })).toBeVisible()
 
   await pdfRegion.click({ button: 'right', position: pdfPageClick })
   await page.getByTestId('preview-content-context-menu').getByText('Close', { exact: true }).click()
-  await expect(page.getByRole('tab').filter({ hasText: PDF_FILE_NAME })).toBeHidden()
+  await expect(page.getByRole('tab', { name: PDF_FILE_NAME, exact: true })).toBeHidden()
 
   await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(

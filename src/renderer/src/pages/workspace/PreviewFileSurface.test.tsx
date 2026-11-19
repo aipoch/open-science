@@ -15,6 +15,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useProjectStore } from '@/stores/project-store'
 import { i18next } from '@/i18n'
+import { installWebRendererContracts } from '../../../web/api-installer'
 import { createNotebookInputPreviewKey } from '../../../../shared/notebook'
 import {
   createInitialSessionState,
@@ -271,6 +272,8 @@ beforeEach(() => {
     value: {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       artifacts: {
+        openFile: vi.fn().mockResolvedValue(undefined),
+        openInBrowser: vi.fn().mockResolvedValue(undefined),
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
           filename: 'sin.png',
@@ -4742,6 +4745,38 @@ const localItem: PreviewFileItem = {
   source: 'local'
 }
 
+const localHtmlItem: PreviewFileItem = {
+  ...localItem,
+  id: 'local:/Users/example/reports/report.html',
+  title: 'report.html',
+  name: 'report.html',
+  path: '/Users/example/reports/report.html',
+  format: 'html'
+}
+
+const managedHtmlItem: PreviewFileItem = {
+  ...item,
+  id: 'artifact-html-1',
+  artifactId: undefined,
+  managedFileId: 'artifact-html-1',
+  projectId: 'project-1',
+  versionNumber: 1,
+  title: 'immersive-showcase.html',
+  name: 'immersive-showcase.html',
+  path: 'artifact-version:project-1/session-1/artifact-html-1/version-1',
+  format: 'html',
+  source: 'artifact'
+}
+
+const managedExtensionlessHtmlItem: PreviewFileItem = {
+  ...managedHtmlItem,
+  title: 'report',
+  name: 'report',
+  path: 'artifact-version:project-1/session-1/artifact-html-1/version-1',
+  format: 'html',
+  mimeType: 'text/html; charset=UTF-8'
+}
+
 const setupLocalApi = (): void => {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
@@ -4749,7 +4784,8 @@ const setupLocalApi = (): void => {
   })
   window.api.localFs = {
     reveal: vi.fn(),
-    openPath: vi.fn()
+    openPath: vi.fn(),
+    openInBrowser: vi.fn()
   } as unknown as typeof window.api.localFs
   window.api.saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
   window.api.uploads = {
@@ -4775,7 +4811,7 @@ const clickHeaderAction = async (label: string): Promise<void> => {
   await click(button)
 }
 
-describe('PreviewFileSurface local file header', () => {
+describe('PreviewFileSurface file header actions', () => {
   beforeEach(() => {
     setupLocalApi()
   })
@@ -4851,6 +4887,29 @@ describe('PreviewFileSurface local file header', () => {
     })
   })
 
+  it('offers browser and containing-folder actions only for local HTML files', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localHtmlItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Open in browser')
+    expect(menu?.textContent).toContain('Reveal in folder')
+    expect(
+      [...(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? [])].map(
+        (item) => item.dataset.actionId
+      )
+    ).toEqual(['copy-path', 'open-in-browser', 'reveal-in-folder', 'download', 'save-as-artifact'])
+
+    await clickMenuItem('Open in browser')
+    expect(window.api.localFs.openInBrowser).toHaveBeenCalledWith(localHtmlItem.path)
+
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Reveal in folder')
+    expect(window.api.localFs.reveal).toHaveBeenCalledWith(localHtmlItem.path)
+  })
+
   it('opens the local file capabilities from the preview content context menu', async () => {
     await act(async () => {
       root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
@@ -4874,6 +4933,229 @@ describe('PreviewFileSurface local file header', () => {
     expect(menu?.textContent).toContain('Save as artifact')
     expect(menu?.textContent).not.toContain('On this machine')
   })
+
+  it('shows the browser action before download for managed HTML previews', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const browserButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open in browser"]'
+    )
+    const downloadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Download immersive-showcase.html"]'
+    )
+    expect(browserButton).not.toBeNull()
+    expect(downloadButton).not.toBeNull()
+    expect(
+      browserButton!.compareDocumentPosition(downloadButton!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await click(browserButton)
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionNumber: 1
+    })
+
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-testid="preview-content-context-menu"]')?.textContent
+    ).toContain('Open in browser')
+    await clickMenuItem('Open in browser')
+    expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionNumber: 1
+    })
+  })
+
+  it.each(['local', 'remote'] as const)(
+    'hides unavailable browser actions on %s Web while keeping downloads usable',
+    async (location) => {
+      // Older or partial Web adapters must not expose an action they cannot execute.
+      const webApi: Record<string, unknown> = {}
+      const saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+      installWebRendererContracts(webApi, {
+        availableRpcChannels: new Set(location === 'local' ? ['artifacts:open-file'] : []),
+        restrictedRpcChannels: new Set(location === 'remote' ? ['artifacts:open-file'] : []),
+        invoke: vi.fn(),
+        subscribe: () => () => undefined,
+        nativeAdapters: { saveManagedFile }
+      })
+      window.api.artifacts = webApi.artifacts as typeof window.api.artifacts
+      window.api.saveManagedFile = webApi.saveManagedFile as typeof window.api.saveManagedFile
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          source: 'artifact',
+          fileId: 'artifact-html-1',
+          headVersionId: 'html-v1',
+          selectedVersionId: 'html-v1',
+          canEdit: false,
+          versions: [
+            {
+              ...managedInspect.versions[0],
+              id: 'html-v1',
+              source: 'artifact',
+              fileId: 'artifact-html-1',
+              displayName: 'immersive-showcase.html',
+              contentType: 'text/html'
+            }
+          ]
+        }
+      })
+      await act(async () => {
+        root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      })
+
+      expect(container.querySelector('[aria-label="Open in browser"]')).toBeNull()
+      await click(container.querySelector('[aria-label="Download immersive-showcase.html"]'))
+      expect(saveManagedFile).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        container
+          .querySelector('[data-testid="preview-content"]')
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      })
+      const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+      expect(menu).not.toBeNull()
+      expect(menu?.textContent).not.toContain('Open in browser')
+      await clickMenuItem('Download')
+      expect(saveManagedFile).toHaveBeenCalledTimes(2)
+      expect(saveManagedFile).toHaveBeenLastCalledWith({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-html-1',
+        versionId: 'html-v1',
+        suggestedName: 'immersive-showcase.html'
+      })
+      expect(container.querySelector('[aria-label="Saved immersive-showcase.html"]')).not.toBeNull()
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).toBeNull()
+    }
+  )
+
+  it.each(['local', 'remote'] as const)(
+    'opens managed HTML from the %s Web header and menu',
+    async (location) => {
+      const webApi: Record<string, unknown> = {}
+      const openInBrowser = vi.fn().mockResolvedValue(undefined)
+      installWebRendererContracts(webApi, {
+        availableRpcChannels: new Set(location === 'local' ? ['artifacts:open-file'] : []),
+        restrictedRpcChannels: new Set(location === 'remote' ? ['artifacts:open-file'] : []),
+        invoke: vi.fn(),
+        subscribe: () => () => undefined,
+        nativeAdapters: { 'artifacts.openInBrowser': openInBrowser }
+      })
+      window.api.artifacts = webApi.artifacts as typeof window.api.artifacts
+      await act(async () => {
+        root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      })
+      await click(container.querySelector('[aria-label="Open in browser"]'))
+      await act(async () => {
+        container
+          .querySelector('[data-testid="preview-content"]')
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      })
+      await clickMenuItem('Open in browser')
+      expect(openInBrowser).toHaveBeenCalledTimes(2)
+      expect(openInBrowser).toHaveBeenLastCalledWith({
+        projectId: 'project-1',
+        artifactId: 'artifact-html-1',
+        versionNumber: 1
+      })
+    }
+  )
+
+  it('shows the browser action for extensionless managed HTML MIME previews', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedExtensionlessHtmlItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Open in browser"]')).not.toBeNull()
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionNumber: 1
+    })
+  })
+
+  it('opens the latest managed HTML version when no version is selected', async () => {
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...managedExtensionlessHtmlItem,
+            selectedVersionId: undefined,
+            versionNumber: undefined
+          }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1'
+    })
+  })
+
+  it.each([undefined, 'html-v1'])(
+    'opens the rendered managed HTML Version with selection %s',
+    async (selection) => {
+      const versions = managedInspect.versions.map((version, index) => ({
+        ...version,
+        id: `html-v${index + 1}`,
+        fileId: 'artifact-html-1',
+        source: 'artifact' as const,
+        displayName: 'immersive-showcase.html',
+        contentType: 'text/html'
+      }))
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          source: 'artifact',
+          fileId: 'artifact-html-1',
+          headVersionId: 'html-v2',
+          selectedVersionId: selection ?? 'html-v2',
+          versions
+        }
+      })
+      await act(async () => {
+        root.render(
+          <PreviewFileSurface
+            item={{ ...managedHtmlItem, selectedVersionId: selection, path: '/stale/report.html' }}
+            onClose={vi.fn()}
+          />
+        )
+      })
+      const renderedVersion = previewContentSpy.mock.lastCall?.[0].item.selectedVersionId
+      expect(renderedVersion).toBe(selection ?? 'html-v2')
+      await click(container.querySelector('[aria-label="Open in browser"]'))
+      expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        artifactId: 'artifact-html-1',
+        versionNumber: selection ? 1 : 2
+      })
+    }
+  )
 
   it('leaves context-menu events outside the preview content region untouched', async () => {
     await act(async () => {
@@ -5014,6 +5296,30 @@ describe('PreviewFileSurface local file header', () => {
     expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
       'Save as artifact'
     )
+  })
+
+  it('retries browser opening with the same immutable Version after a launch failure', async () => {
+    vi.mocked(window.api.artifacts.openInBrowser).mockRejectedValueOnce(
+      new Error('browser unavailable')
+    )
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+    })
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not open this file.')
+    expect(toast?.textContent).toContain('browser unavailable')
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledTimes(2)
+    expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      artifactId: 'artifact-html-1',
+      versionNumber: 1
+    })
   })
 
   it('shows a retryable toast when a local file download fails', async () => {

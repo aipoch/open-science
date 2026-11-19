@@ -11,17 +11,15 @@ const powershell = join(
 )
 const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
 let root: string
-let script: string
+let helper: string
 
 beforeAll(() => {
   if (process.platform !== 'win32') return
   root = mkdtempSync(join(tmpdir(), 'program-cleanup-diagnostics-'))
-  script = join(root, 'windows-program-cleanup.ps1')
-  writeFileSync(script, readFileSync(resolve('build/windows-program-cleanup.ps1')))
-  createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs')(
-    resolve('build/windows-install-publication.cs'),
-    join(root, 'windows-install-publication.dll')
-  )
+  helper = join(root, 'windows-uninstall-helper.exe')
+  createRequire(import.meta.url)(
+    '../build/compile-windows-install-publication.cjs'
+  ).uninstallHelper(helper)
 }, 30_000)
 
 afterAll(() => {
@@ -43,6 +41,31 @@ function run(command: string): SpawnSyncReturns<Buffer> {
   )
 }
 
+// The native helper replaces the cleanup script. PowerShell stays only where a test must hold a
+// file lock or change an ACL around the call.
+function cleanupCommand(
+  stage: string,
+  report: string,
+  upgrade: boolean,
+  executable = helper
+): string {
+  return `& ${quote(executable)} program-cleanup --staging-path ${quote(stage)} --report ${quote(report)}${upgrade ? ' --upgrade' : ''}; exit $LASTEXITCODE`
+}
+
+function diagnosticsCommand(action: 'record' | 'finalize', options: string): string {
+  return `& ${quote(helper)} diagnostics --action ${action} ${options}`
+}
+
+function compileInjectedHelper(fixture: string, source: string): string {
+  const injectedSource = join(fixture, 'injected.cs')
+  writeFileSync(injectedSource, source)
+  const executable = join(fixture, 'windows-uninstall-helper.exe')
+  createRequire(import.meta.url)(
+    '../build/compile-windows-install-publication.cjs'
+  ).uninstallHelper(executable, [], injectedSource, false)
+  return executable
+}
+
 describe.skipIf(process.platform !== 'win32')('Windows program cleanup diagnostics', () => {
   it('continues an upgrade after a controlled lock is released during the first retry wait', () => {
     const stage = join(root, 'transient-stage')
@@ -50,7 +73,7 @@ describe.skipIf(process.platform !== 'win32')('Windows program cleanup diagnosti
     const path = join(stage, 'busy.dll')
     const report = join(root, 'transient.json')
     writeFileSync(path, 'old program bytes')
-    const command = `& ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; exit $LASTEXITCODE`
+    const command = cleanupCommand(stage, report, true)
     const encoded = Buffer.from(command, 'utf16le').toString('base64')
     const result = run(`
 $stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete')
@@ -89,7 +112,7 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
     const observed = join(root, 'replacement-result.json')
     writeFileSync(path, 'old program bytes')
     writeFileSync(join(replacement, 'keep.txt'), 'replacement bytes')
-    const command = `& ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; exit $LASTEXITCODE`
+    const command = cleanupCommand(stage, report, true)
     const encoded = Buffer.from(command, 'utf16le').toString('base64')
     const result = run(`
 $stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete')
@@ -126,7 +149,7 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
     const report = join(root, 'locked.json')
     writeFileSync(path, 'old program bytes')
     const result = run(
-      `$stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      `$stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete'); try { ${cleanupCommand(stage, report, false)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
     )
     expect(result.error).toBeUndefined()
     expect(result.status, String(result.stderr)).toBe(2)
@@ -160,7 +183,7 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
     writeFileSync(path, 'unchanged bytes')
     const started = Date.now()
     const result = run(
-      `$stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      `$stream=[IO.File]::Open(${quote(path)},'Open','Read','ReadWrite,Delete'); try { ${cleanupCommand(stage, report, true)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
     )
     expect(result.error).toBeUndefined()
     expect(result.status, String(result.stderr)).toBe(2)
@@ -203,17 +226,10 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
           `errors.Add(failure); errors.Add(${extra});`
         )
       }
-      const injectedSource = join(fixture, 'injected.cs')
-      writeFileSync(injectedSource, source)
-      createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs')(
-        injectedSource,
-        join(fixture, 'windows-install-publication.dll')
-      )
-      const cleanup = join(fixture, 'windows-program-cleanup.ps1')
-      writeFileSync(cleanup, readFileSync(script))
+      const cleanup = compileInjectedHelper(fixture, source)
       const report = join(fixture, 'report.json')
       const result = run(
-        `$stream=[IO.File]::Open(${quote(busy)},'Open','Read','ReadWrite,Delete'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(cleanup)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+        `$stream=[IO.File]::Open(${quote(busy)},'Open','Read','ReadWrite,Delete'); try { ${cleanupCommand(stage, report, true, cleanup)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
       )
       expect(result.status, String(result.stderr)).toBe(2)
       const diagnostic = JSON.parse(readFileSync(report, 'utf8'))
@@ -240,9 +256,7 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
 
   it('reports an invalid staging directory once without retrying even in upgrade mode', () => {
     const report = join(root, 'invalid-staging.json')
-    const result = run(
-      `& ${quote(script)} -StagingPath ${quote(join(root, 'not-present'))} -ReportPath ${quote(report)} -Upgrade; exit $LASTEXITCODE`
-    )
+    const result = run(cleanupCommand(join(root, 'not-present'), report, true))
     expect(result.status, String(result.stderr)).toBe(2)
     const diagnostic = JSON.parse(readFileSync(report, 'utf8'))
     expect(diagnostic.attempts).toHaveLength(1)
@@ -260,9 +274,7 @@ if (!$child.WaitForExit(20000)) { $child.Kill(); throw 'Cleanup did not finish.'
     mkdirSync(stage)
     writeFileSync(join(stage, 'old.dll'), 'old program bytes')
     const report = join(root, 'uncontended.json')
-    const result = run(
-      `& ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; exit $LASTEXITCODE`
-    )
+    const result = run(cleanupCommand(stage, report, true))
     expect(result.status, String(result.stderr)).toBe(0)
     expect(readdirSync(stage)).toEqual([])
     expect(String(result.stdout)).not.toContain('retry')
@@ -287,7 +299,7 @@ $rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.Win
 $acl.AddAccessRule($rule)
 try {
   Set-Acl -LiteralPath ${quote(stage)} -AclObject $acl
-  & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade
+  ${cleanupCommand(stage, report, true)}
   $code=$LASTEXITCODE
 } finally { Set-Acl -LiteralPath ${quote(stage)} -AclObject $original }
 exit $code`)
@@ -303,7 +315,10 @@ exit $code`)
       ])
     )
     const finalized = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )
     )
     expect(finalized.status, String(finalized.stderr)).toBe(0)
     const message = finalized.stdout.toString('utf16le')
@@ -313,7 +328,10 @@ exit $code`)
     expect(message).toContain('contact support before removing them')
     expect(message).not.toContain('An application file is in use.')
     const restored = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )}`
     )
     expect(restored.status, String(restored.stderr)).toBe(0)
     const restoredMessage = restored.stdout.toString('utf16le')
@@ -341,7 +359,7 @@ $acl.AddAccessRule($rule)
 [IO.File]::SetAttributes(${quote(denied)},[IO.FileAttributes]::ReadOnly)
 try {
   Set-Acl -LiteralPath ${quote(denied)} -AclObject $acl
-  & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade
+  ${cleanupCommand(stage, report, true)}
   $code=$LASTEXITCODE
   if (!([IO.File]::GetAttributes(${quote(first)}) -band [IO.FileAttributes]::ReadOnly)) { throw 'First file lost its readonly attribute.' }
 } finally {
@@ -388,10 +406,12 @@ exit $code`)
         ]
       })
     )
-    const diagnostics = resolve('build/windows-install-diagnostics.ps1')
     const saved = join(root, 'saved-logs')
     const result = run(
-      `& ${quote(diagnostics)} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(diagnostics)} -Action finalize -ReportPath ${quote(report)} -ReportsDirectory ${quote(reports)} -LogDirectory ${quote(saved)} -ExitCode 2 -AppVersion 1.2.0 -Language 1033`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --reports-directory ${quote(reports)} --log-directory ${quote(saved)} --exit-code 2 --app-version 1.2.0 --language 1033`
+      )}`
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -425,7 +445,10 @@ exit $code`)
     const blockedLogDirectory = join(root, 'not-a-directory')
     writeFileSync(blockedLogDirectory, 'preserve')
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(blockedLogDirectory)} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(blockedLogDirectory)} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -453,18 +476,11 @@ exit $code`)
         'try { SetAttributes(entry.AttributeHandle, entry.OriginalAttributes); }',
         'try { throw new Win32Exception(5); }'
       )
-    const injectedSource = join(fixture, 'injected.cs')
-    writeFileSync(injectedSource, source)
     // Inject only at the existing helper boundary. No production flag can enable these faults.
-    createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs')(
-      injectedSource,
-      join(fixture, 'windows-install-publication.dll')
-    )
-    const cleanup = join(fixture, 'windows-program-cleanup.ps1')
-    writeFileSync(cleanup, readFileSync(script))
+    const cleanup = compileInjectedHelper(fixture, source)
     const report = join(fixture, 'report.json')
     const result = run(
-      `[IO.File]::SetAttributes(${quote(first)},[IO.FileAttributes]::ReadOnly); $stream=[IO.File]::Open(${quote(busy)},'Open','Read','ReadWrite,Delete'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(cleanup)} -StagingPath ${quote(stage)} -ReportPath ${quote(report)} -Upgrade; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      `[IO.File]::SetAttributes(${quote(first)},[IO.FileAttributes]::ReadOnly); $stream=[IO.File]::Open(${quote(busy)},'Open','Read','ReadWrite,Delete'); try { ${cleanupCommand(stage, report, true, cleanup)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
     )
     expect(result.status, String(result.stderr)).toBe(2)
     const diagnostic = JSON.parse(readFileSync(report, 'utf8'))
@@ -493,7 +509,10 @@ exit $code`)
 
   it('uses the selected installer language and Pro branding for a missing final report', () => {
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(join(root, 'missing.json'))} -LogDirectory ${quote(join(root, 'localized-log'))} -Language 2052 -ProductName 'Open-Science Pro' -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(join(root, 'missing.json'))} --log-directory ${quote(join(root, 'localized-log'))} --language 2052 --product-name ${quote('Open-Science Pro')} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -526,9 +545,12 @@ describe.skipIf(process.platform !== 'win32' || !compiler)(
         const app = join(install, 'open-science.exe')
         writeFileSync(app, 'application bytes')
         writeFileSync(join(install, 'resources/library.dll'), 'library bytes')
-        const helper = join(fixture, 'out/windows-installer/ia32/windows-install-publication.dll')
-        mkdirSync(dirname(helper), { recursive: true })
-        writeFileSync(helper, readFileSync(join(root, 'windows-install-publication.dll')))
+        const stagedHelper = join(
+          fixture,
+          'out/windows-installer/ia32/windows-uninstall-helper.exe'
+        )
+        mkdirSync(dirname(stagedHelper), { recursive: true })
+        writeFileSync(stagedHelper, readFileSync(helper))
         const compile = (name: string, body: string): string => {
           const executable = join(fixture, `${name}.exe`)
           const source = `${executable}.nsi`
@@ -588,7 +610,7 @@ SectionEnd`
         const parent = compile(
           'parent',
           `
-!include "${resolve('build/windows-install-diagnostics.nsh')}"
+!include "${resolve('build/windows-program-cleanup.nsh')}"
 ${outcome === 'visible-failed' ? 'SilentInstall normal' : ''}
 Function .onInit
 InitPluginsDir
@@ -607,9 +629,11 @@ FileOpen $8 "${resultFile}" w
 FileWrite $8 "$R0"
 FileClose $8
 ${!recovered ? "System::Call 'kernel32::CloseHandle(p R6)'" : ''}
-\${if} $R0 != 0
+${outcome === 'missing-child-report' ? 'StrCpy $R0 "launch-failed"' : ''}
+${outcome === 'missing-child-report' ? '${if} $R0 == "launch-failed"' : '${if} $R0 != 0'}
 Call showCleanupFailure
-CopyFiles /SILENT "$installDiagnosticMessagePath" "${join(fixture, 'notice.txt')}"
+CopyFiles /SILENT "$installDiagnosticMessagePath" "${fixture}"
+Rename "${join(fixture, 'cleanup-notice.txt')}" "${join(fixture, 'notice.txt')}"
 SetErrorLevel 2
 Quit
 \${endif}
@@ -720,6 +744,9 @@ $start=[Diagnostics.ProcessStartInfo]::new(${quote(parent)}); $start.UseShellExe
         if (recovered) {
           expect(readdirSync(fixture)).not.toContain('logs')
         } else {
+          const notice = readFileSync(join(fixture, 'notice.txt'), 'utf16le')
+          expect(notice).toContain('Diagnostic:')
+          expect(notice).not.toContain('The diagnostic could not be saved.')
           const logs = readdirSync(logDirectory)
           expect(logs).toHaveLength(1)
           const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')

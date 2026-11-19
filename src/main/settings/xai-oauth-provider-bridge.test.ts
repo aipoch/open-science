@@ -71,6 +71,37 @@ describe('xAI OAuth provider bridge', () => {
     }
   )
 
+  it('marks a rejected upstream fetch and preserves a real upstream HTTP 502', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(Response.json({ error: { message: 'unavailable' } }, { status: 502 }))
+    const bridge = createXaiOAuthProviderBridge(
+      [{ id: 'active', model: 'grok-4.6' }],
+      'active',
+      'responses',
+      async () => 'token',
+      upstream
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello' })
+      })
+    const rejected = await send()
+    expect(rejected.status).toBe(502)
+    expect(rejected.headers.get('x-open-science-provider-failure')).toBe('connection')
+    const unavailable = await send()
+    expect(unavailable.status).toBe(502)
+    expect(unavailable.headers.get('x-open-science-provider-failure')).toBeNull()
+  })
+
   it('rejects an oversized successful response before reading its body', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined
     const upstream = vi.fn<typeof fetch>(async () => {
@@ -97,6 +128,7 @@ describe('xAI OAuth provider bridge', () => {
     })
 
     expect(response.status).toBe(502)
+    expect(response.headers.get('x-open-science-provider-failure')).toBeNull()
     expect(cancelBody).toHaveBeenCalledOnce()
   })
 

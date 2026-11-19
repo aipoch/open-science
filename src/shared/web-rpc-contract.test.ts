@@ -175,6 +175,7 @@ describe('Web RPC contract', () => {
       'notebook.exportIpynbAll',
       'notebook.finishCodeCell',
       'notebook.getBackgroundRun',
+      'notebook.getProcessMonitor',
       'notebook.getProjectActivity',
       'notebook.getReference',
       'notebook.inspectNamespace',
@@ -183,7 +184,8 @@ describe('Web RPC contract', () => {
       'notebook.runCell',
       'notebook.runIndex',
       'notebook.shutdown',
-      'notebook.state'
+      'notebook.state',
+      'notebook.terminateMonitoredProcess'
     ])
     expect(invokePaths.filter((path) => path.startsWith('notebookEnv.'))).toEqual([
       'notebookEnv.cancel',

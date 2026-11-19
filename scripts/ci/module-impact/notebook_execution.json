@@ -26,6 +26,8 @@
     "src/main/notebook/kernel-process-identity.ts",
     "src/main/notebook/kernel-process-identity.test.ts",
     "src/main/notebook/kernel-process-lifecycle.windows-posix.ts",
+    "src/main/notebook/kernel-process-recovery.darwin.ts",
+    "src/main/notebook/kernel-process-recovery.darwin.test.ts",
     "src/main/notebook/kernel-protocol.test.ts",
     "src/main/notebook/kernel-protocol.ts",
     "src/main/notebook/kernel-startup-retry.integration.test.ts",
@@ -139,7 +141,9 @@
     "src/main/notebook/execution-deadline.ts",
     "src/main/notebook/managed-skill-read-roots.ts",
     "src/main/notebook/managed-skill-read-roots.test.ts",
-    "src/main/notebook/managed-skill-read.integration.test.ts"
+    "src/main/notebook/managed-skill-read.integration.test.ts",
+    "src/main/notebook/process-monitor.ts",
+    "src/main/notebook/process-monitor.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -230,7 +234,8 @@
     "src/main/notebook/shell-process-ownership.windows-posix.ts",
     "src/main/notebook/shell-process.ts",
     "src/main/notebook/trust-bundle.ts",
-    "src/main/notebook/working-file-observer.ts"
+    "src/main/notebook/working-file-observer.ts",
+    "src/main/notebook/process-monitor.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -246,6 +251,7 @@
       "src/main/notebook/kernel-exit-diagnostics.test.ts",
       "src/main/notebook/windows-launch-diagnostics.test.ts",
       "src/main/notebook/kernel-process-lifecycle.test.ts",
+      "src/main/notebook/kernel-process-recovery.darwin.test.ts",
       "src/main/notebook/kernel-protocol.test.ts",
       "src/main/notebook/kernel-startup-retry.integration.test.ts",
       "src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts",
@@ -283,7 +289,8 @@
       "src/main/notebook/execution-deadline.test.ts",
       "src/main/notebook/kernel-process-identity.test.ts",
       "src/main/notebook/managed-skill-read-roots.test.ts",
-      "src/main/notebook/managed-skill-read.integration.test.ts"
+      "src/main/notebook/managed-skill-read.integration.test.ts",
+      "src/main/notebook/process-monitor.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

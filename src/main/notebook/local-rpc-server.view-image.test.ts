@@ -68,6 +68,65 @@ const workspace = async (): Promise<string> => {
 }
 
 describe('host.viewImage caller and request ownership', () => {
+  it('binds pending-image readback to the trusted current prompt and invalidates it on branch replacement', async () => {
+    const stage = vi.fn(async (_source, _options, context) => {
+      if (context.producerScope) context.producerScope.assertActive()
+      return { attached: true }
+    })
+    server = new NotebookLocalRpcServer({ shutdown: vi.fn() } as never, {
+      transport: 'tcp',
+      hostViewImage: { stage, discard: vi.fn(), shutdown: vi.fn() } as never
+    })
+    const binding = {
+      projectId: 'project-1',
+      ownerExecutionId: 'execution-1',
+      artifactRunId: 'artifact-run-1',
+      provenanceContext: {
+        rootFrameId: 'root',
+        agentFrameId: 'root',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1'
+      }
+    }
+    server.setArtifactTurnBinding('session-1', binding)
+    const control = await server.issueControlConnection('session-1', 'project-1', 'root')
+    control.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'run-1',
+      originatingUserMessageId: 'prompt-1'
+    })
+    expect(
+      (await call(control, 'viewImageCall', { source: { versionId: 'generated-version' } })).status
+    ).toBe(200)
+    const scope = stage.mock.calls[0][2].producerScope
+    expect(scope).toMatchObject({ artifactRunId: 'artifact-run-1', messageBranchId: 'branch-1' })
+    server.setArtifactTurnBinding('session-1', {
+      ...binding,
+      ownerExecutionId: 'execution-2',
+      provenanceContext: {
+        ...binding.provenanceContext,
+        messageBranchId: 'branch-2',
+        promptMessageId: 'prompt-2'
+      }
+    })
+    expect(() => scope.assertActive()).toThrow('no longer active')
+    expect(
+      (await call(control, 'viewImageCall', { source: { versionId: 'generated-version' } })).status
+    ).toBe(200)
+    expect(stage.mock.calls[1][2].producerScope).toBeUndefined()
+    expect(
+      (
+        await call(control, 'viewImageCall', {
+          source: { versionId: 'generated-version' },
+          promptMessageId: 'prompt-2'
+        })
+      ).status
+    ).toBe(400)
+    control.release()
+  })
+
   it.each([false, true])(
     'uses the child Attempt model when parent image support is %s',
     async (parentVisual) => {

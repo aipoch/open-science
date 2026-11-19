@@ -53,18 +53,18 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.2.2 — Novedades
+### 💡 AIPOCH Open-Science v1.3.0 — Novedades
 
-_12 de noviembre de 2026_
+_18 de noviembre de 2026_
 
-- **Modo de red estricto**: Active un modo Strict con lista blanca para la red de Notebook — las solicitudes deben coincidir con sus reglas por protocolo, host y puerto; las solicitudes sin coincidencia se bloquean sin solicitud de autorización.
-- **Reanudación de películas**: La generación interrumpida de una película de investigación continúa desde puntos de control validados con una vista de progreso de cinco pasos; las escenas completadas y la narración se reutilizan.
-- **Fidelidad de PDF**: Los PDF externos conservan figuras nativas, tablas, pies de figura y orden de lectura, y los documentos traducidos preservan la estructura y el diseño originales.
-- **Concesiones más seguras en Windows**: Las concesiones de carpetas en modo protegido se comprueban antes de guardar, y los flujos de actualización, desinstalación y entrega se recuperan con más fiabilidad conservando los diagnósticos.
-- **Actualizaciones de proveedores**: Qwen4 Max Preview se suma a Bailian Token Plans en Pekín y Singapur, y los modelos predeterminados de las conexiones oficiales se actualizan.
-- **Correcciones de fiabilidad**: Las importaciones de sesiones informan de su resultado, la recuperación del servicio bloquea el espacio de trabajo hasta que la conexión vuelve y el contraste del modo oscuro se conserva en todas las superficies.
+- **Tareas de investigación programadas**: Configura programaciones recurrentes o puntuales que lanzan sesiones y tareas de Notebook por sí solas; cada ejecución se abre en el espacio de trabajo con su propio registro.
+- **Generación y edición de imágenes**: Genera imágenes con tu proveedor configurado e itera con ediciones posteriores; cada variante es una nueva versión que puedes comparar, revisitar y reutilizar.
+- **Presentaciones editables**: Los archivos PowerPoint se abren para editar texto en el lugar — fuentes, tamaños, colores y alineación — conservando la estructura de diapositivas.
+- **Películas rehechas**: Repite las operaciones de una película en nuevas ramas con resultados independientes, abre las películas directamente desde el menú de sesión y consulta el uso de tokens antes de generar.
+- **Preguntas del agente más inteligentes**: Cuando el agente pide tu entrada, las opciones ahora muestran sus compromisos para decidir conociendo las consecuencias.
+- **Fiabilidad y velocidad**: Los historiales largos de sesión persisten de forma incremental, las películas y transferencias de paquetes detenidas se recuperan solas, las instalaciones y actualizaciones de Windows son más ligeras y la aplicación llega a tu proyecto antes al iniciar.
 
-[Notas completas v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[Notas completas v1.3.0](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
 
 <a id="share-your-research"></a>
 

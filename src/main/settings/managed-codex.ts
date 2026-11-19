@@ -1,7 +1,7 @@
 import { patchCodexAcpAuthenticationStatusSource } from './codex-authentication-status'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { randomUUID } from 'node:crypto'
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -21,7 +21,6 @@ import { arch as osArch } from 'node:os'
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { promisify } from 'node:util'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
@@ -47,16 +46,25 @@ import {
 } from './managed-claude'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { stripCodexCredentialEnv } from './process-tree'
-import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
+import {
+  onProcessTreeReaped,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
 import { toErrorMessage } from '../error-message'
-
-const execFileAsync = promisify(execFile)
+import {
+  runVerificationProcess,
+  VerificationProcessExitError
+} from '../update/verification-process'
 
 export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = MANAGED_CODEX_VERSION
 
 const log = createLogger('managed-codex')
 const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
+// Match the existing Pi readiness budget; initialization contains metadata, not turn content.
+export const MAX_ACP_INITIALIZE_RESPONSE_CHARS = 256 * 1024
 
 export const CODEX_ACP_INTEGRITY =
   'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
@@ -1054,6 +1062,7 @@ class TarSubtreeExtractor extends Writable {
   private remaining = 0
   private padding = 0
   private currentFile: FileHandle | undefined
+  private pendingWrite: Promise<void> | undefined
   private currentPath: string | undefined
   private currentMode = 0o644
   private entries = 0
@@ -1076,7 +1085,8 @@ class TarSubtreeExtractor extends Writable {
   ): Promise<void> {
     try {
       this.leftover = Buffer.concat([this.leftover, chunk])
-      await this.consume()
+      this.pendingWrite = this.consume()
+      await this.pendingWrite
       callback()
     } catch (error) {
       callback(error as Error)
@@ -1084,12 +1094,13 @@ class TarSubtreeExtractor extends Writable {
   }
 
   _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
-    if (!this.currentFile) {
-      callback(error)
-      return
-    }
-
-    this.currentFile.close().then(() => callback(error), callback)
+    // Cancellation can arrive while mkdir/open/write is pending. Settle that work before closing
+    // so a late open cannot escape cleanup or keep the installation staging tree in use.
+    void (async () => {
+      await this.pendingWrite?.catch(() => undefined)
+      await this.currentFile?.close()
+      this.currentFile = undefined
+    })().then(() => callback(error), callback)
   }
 
   private outputPath(entryName: string): string | undefined {
@@ -1264,13 +1275,18 @@ export type ManagedCodexVersionSpawn = (
 
 const spawnManagedCodexVersion: ManagedCodexVersionSpawn = async (executable, args, options) => {
   try {
-    const { stdout } = await execFileAsync(executable, args, options)
+    const { stdout } = await runVerificationProcess(executable, [...args], {
+      signal: options.signal,
+      timeoutMs: options.timeout,
+      maxBytes: 1024 * 1024,
+      env: options.env,
+      shell: options.shell
+    })
     return { status: 0, stdout }
   } catch (error) {
-    const failure = error as { code?: string | number; stdout?: string }
     return {
-      status: typeof failure.code === 'number' ? failure.code : null,
-      stdout: typeof failure.stdout === 'string' ? failure.stdout : ''
+      status: error instanceof VerificationProcessExitError ? error.exitCode : null,
+      stdout: ''
     }
   }
 }
@@ -1357,17 +1373,21 @@ export const verifyManagedCodexPair: PairVerifier = async (
       clientInfo: { name: 'open-science-installer', version: '0.0.0' }
     }
   })
+  const ownership = createPosixProcessTreeOwnership({
+    ...stripCodexCredentialEnv(process.env),
+    ...nodeRuntimeEnvironment(),
+    CODEX_HOME: codexHome,
+    CODEX_PATH: codexPath,
+    NO_BROWSER: '1'
+  })
   const child = spawn(process.execPath, [adapterPath], {
     windowsHide: true,
+    detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: {
-      ...stripCodexCredentialEnv(process.env),
-      ...nodeRuntimeEnvironment(),
-      CODEX_HOME: codexHome,
-      CODEX_PATH: codexPath,
-      NO_BROWSER: '1'
-    }
+    env: ownership.env
   })
+  // Retain group ownership even if the adapter exits before the first ACP response.
+  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
 
   let initialized = false
   let stdoutLineCount = 0
@@ -1415,6 +1435,16 @@ export const verifyManagedCodexPair: PairVerifier = async (
 
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk: string) => {
+    if (spawnError || initialized) return
+    if (stdoutBuffer.length + chunk.length > MAX_ACP_INITIALIZE_RESPONSE_CHARS) {
+      stdoutBuffer = ''
+      spawnError = new Error('ACP initialize response exceeded its limit')
+      child.stdin.destroy()
+      child.stdout.destroy()
+      child.stderr.destroy()
+      void reapTree()
+      return
+    }
     stdoutBuffer += chunk
     for (;;) {
       const newline = stdoutBuffer.indexOf('\n')
@@ -1470,6 +1500,11 @@ export const verifyManagedCodexPair: PairVerifier = async (
         finish(child.exitCode, child.signalCode)
       })
       child.once('exit', finish)
+      // The write callback does not consume the stream's separate EPIPE/error event.
+      child.stdin.once('error', (error) => {
+        spawnError = error
+        finish(child.exitCode, child.signalCode)
+      })
       child.stdin.write(`${initialize}\n`, (error) => {
         if (!error) return
         spawnError = error

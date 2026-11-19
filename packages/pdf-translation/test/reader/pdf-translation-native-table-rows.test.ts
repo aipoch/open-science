@@ -113,6 +113,39 @@ test('first-column labels keep their native left edge while using empty space on
   assert.deepEqual(runs, before, 'table padding must not change native glyph positions')
 })
 
+test.each([103.5, 106.5])(
+  'bounds the first header cell only when a neighbor overlaps at baseline %s',
+  (headerBaseline) => {
+    const row = (y: number, summary: string): PdfLayoutTextItem[] => [
+      item(
+        Array.from({ length: 15 }, (_, i) => `${60 + i}.25`).join(' '),
+        201,
+        y,
+        312,
+        7.5,
+        false,
+        'values'
+      ),
+      item(summary, 521, y, 17, 7.5, false, 'values')
+    ]
+    const runs = [
+      item('Input', 172, 99.4, 18, 7.5),
+      item('Mean', 517, 99.4, 26, 7.5, true),
+      item('Aa', 206, headerBaseline, 7, 7.5),
+      item('Ba', 226, headerBaseline, 8, 7.5),
+      item('Ca', 500, headerBaseline, 7, 7.5, true),
+      item('Overall', 166, 123.8, 26, 7.5),
+      ...row(123.8, '61.20'),
+      ...row(132, '62.10')
+    ]
+    const label = extract(runs).find((entry) => entry.tableCell && entry.source === 'Input')
+    assert.ok(label)
+    assert.equal(label.rect.x, 172)
+    assert.equal(label.rect.right, headerBaseline === 103.5 ? 198.5 : 509.5)
+    assert.deepEqual(label.originalStrings, ['Input'])
+  }
+)
+
 test.each([
   ['2h45', '3h30', '4h15'],
   ['Conv dw / s2', 'Conv dw / s1', 'Conv / s1'],

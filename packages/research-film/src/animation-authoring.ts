@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Script } from 'node:vm'
 import type { VideoSpec } from './timeline.js'
+import type { FilmVisualIssue } from './visual-review.js'
 import {
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint
@@ -49,7 +50,9 @@ export async function writeResearchVideoAnimations(
   writer: ResearchVideoAnimationWriter | undefined,
   parentSignal: AbortSignal,
   checkpoint?: FilmAuthoringCheckpoint,
-  progress?: (completed: number, total: number) => void
+  progress?: (completed: number, total: number) => void,
+  visualIssues?: FilmVisualIssue[],
+  reviewedScripts?: ReadonlyMap<string, string>
 ): Promise<void> {
   const { panels, shared, scripts } = researchVideoAnimationPlan(spec)
   const total = shared.length + scripts.length
@@ -80,14 +83,29 @@ export async function writeResearchVideoAnimations(
       new Script(`(function(k){${helpers}\n;\n${code}\n})`, { filename: name })
       return code
     }
+    const key = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+    const reviewed = reviewedScripts?.get(name)
+    const units =
+      checkpoint && reviewed !== undefined
+        ? {
+            read: async () => reviewed,
+            save: checkpoint.save
+          }
+        : checkpoint
     const code = await writeWithResearchFilmCorrection(
       (correction) => writer(input, signal, correction),
       validate,
       signal,
-      checkpoint,
-      createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      units,
+      key,
+      visualIssues
+        ?.filter((issue) => issue.script === name)
+        .map((issue) => `Scene ${issue.scene}: ${issue.message}`)
+        .join('\n')
     )
     signal.throwIfAborted()
+    // A layout edit can change the cache key of an otherwise identical drawing.
+    if (reviewed !== undefined && code === reviewed) await checkpoint?.save(key, code)
     await writeFile(join(directory, name), code, { flag: 'wx', mode: 0o600, signal })
     files[name] = code
     progress?.(++completed, total)

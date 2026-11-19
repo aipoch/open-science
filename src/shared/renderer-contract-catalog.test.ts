@@ -186,7 +186,13 @@ describe('renderer contract catalog', () => {
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
-    ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
+    ).toEqual([
+      'artifacts.openInBrowser',
+      'getRuntimeVersions',
+      'saveBlobFile',
+      'saveManagedFile',
+      'window.close'
+    ])
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
         ['saveBlobFile', 'window.close'].includes(publicPath)
@@ -630,8 +636,10 @@ describe('renderer contract catalog', () => {
       'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.packageOperation',
+      'sessions.rename',
       'sessions.retryRuntimeTerminalCommit',
       'sessions.setDelegationPolicy',
+      'sessions.setPinned',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'sessions.useCaseCatalog',
@@ -744,8 +752,10 @@ describe('renderer contract catalog', () => {
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:rename',
       'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
+      'sessions:set-pinned',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',

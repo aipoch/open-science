@@ -42,6 +42,19 @@ describe('preview registry Office routing', () => {
     expect(rendered?.type).toBe(PlanJsonPreview)
   })
 
+  it('forwards image editor version controls through the preview registry', () => {
+    const onPinImageSource = vi.fn()
+    const onImageEditorVersionChange = vi.fn()
+    const rendered = renderPreviewFile({
+      item: createItem('image'),
+      onPinImageSource,
+      onImageEditorVersionChange
+    })
+
+    expect(rendered?.props.onPinImageSource).toBe(onPinImageSource)
+    expect(rendered?.props.onImageEditorVersionChange).toBe(onImageEditorVersionChange)
+  })
+
   it('forwards the PDF reading-position observer to the PDF renderer', () => {
     const onPdfReadingPositionChange = vi.fn()
     const onPdfTranslationChange = vi.fn()

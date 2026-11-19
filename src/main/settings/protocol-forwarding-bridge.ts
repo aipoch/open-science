@@ -7,9 +7,12 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import {
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -30,19 +33,6 @@ const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
 } as const
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-encoding',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -76,7 +66,8 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
     if (
-      HOP_BY_HOP_HEADERS.has(normalized) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(normalized) ||
+      normalized === 'content-encoding' ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       normalized === 'accept-encoding' ||
       normalized === 'authorization' ||
@@ -94,14 +85,6 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   }
   if (key) headers.set('authorization', `Bearer ${key}`)
   headers.set('content-type', 'application/json')
-  return headers
-}
-
-const responseHeaders = (source: Headers): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
-  }
   return headers
 }
 
@@ -249,12 +232,16 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    const upstream = await fetchProviderRequest(transport, endpoint, {
-      method: 'POST',
-      headers: headersToForward,
-      body,
-      signal: request.signal
-    })
+    const upstream = await fetchProviderRequest(
+      withProviderConnectionMarker(transport, response),
+      endpoint,
+      {
+        method: 'POST',
+        headers: headersToForward,
+        body,
+        signal: request.signal
+      }
+    )
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       let code = 'provider_error'
@@ -284,7 +271,7 @@ export class ProtocolForwardingBridge {
     }
     const headers = connection
       ? { 'content-type': upstream.headers.get('content-type') ?? 'text/event-stream' }
-      : responseHeaders(upstream.headers)
+      : copyProviderResponseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal

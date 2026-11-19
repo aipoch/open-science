@@ -4,6 +4,7 @@ import { nativePageTextPacketInventory } from './literature-pdf-figure-native-pl
 import { completeNativeNodeGlyphProgram } from './literature-pdf-figure-native-plot-bands.mjs'
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
 const valid = (r) =>
   Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
 // Equality tolerance only for serialized native/work coordinate arithmetic.
@@ -608,4 +609,105 @@ export function proveNativeTerminalFencedSection(input) {
   } catch {
     return undefined
   }
+}
+
+// Recover a printed section only when a native closed face spans a wholly
+// empty interior model band. Body cells and crop geometry remain untouched.
+export function recoverRuledInteriorSectionRows({ cells, rows, items, rules, grid, unassigned }) {
+  const width = grid[0]?.length ?? 0,
+    horizontal = rules.filter((rule) => rule[1] === rule[3]),
+    vertical = rules.filter((rule) => rule[0] === rule[2]),
+    at = (row) => cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column),
+    complete = (record, empty) =>
+      record.length === width &&
+      record.every(
+        (cell, n) =>
+          cell.column === n &&
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          (empty
+            ? !cell.text && !cell.sourceRects.length && !cell.sourceTokens?.length
+            : cell.text && cell.sourceRects.length)
+      )
+  if (width < 3 || !unassigned.length || rows.length !== grid.length) return 0
+  let recovered = 0
+  for (let row = 1; row + 1 < rows.length; row++) {
+    const slots = at(row)
+    if (
+      grid[row].length !== width ||
+      grid[row].some((value) => value !== '') ||
+      !complete(slots, true) ||
+      !complete(at(row - 1), false) ||
+      !complete(at(row + 1), false)
+    )
+      continue
+    const band = union(slots.map((cell) => cell.rect))
+    const borders = (y) =>
+      horizontal.filter(
+        (rule) =>
+          Math.abs(rule[0] - band[0]) <= 1.5 &&
+          Math.abs(rule[2] - band[2]) <= 1.5 &&
+          Math.abs(rule[1] - y) <= 2
+      )
+    const faces = []
+    for (const a of borders(band[1]))
+      for (const b of borders(band[3])) {
+        const [left, top, right] = a,
+          bottom = b[1]
+        if (
+          bottom - top <= 3 ||
+          !near(left, b[0]) ||
+          !near(right, b[2]) ||
+          [left, right].some((x) => classifyTableRuleEdge(vertical, 0, x, top, bottom) !== 1) ||
+          vertical.some(
+            (rule) =>
+              rule[0] > left + 1 && rule[0] < right - 1 && rule[1] < bottom - 1 && rule[3] > top + 1
+          )
+        )
+          continue
+        faces.push([left, top, right, bottom])
+      }
+    if (faces.length !== 1) continue
+    const [left, top, right, bottom] = faces[0],
+      owned = items.filter(
+        (item) => item.baseline > top && item.baseline < bottom && over(item.rect, faces[0])
+      ),
+      [label] = owned
+    if (
+      owned.length !== 1 ||
+      !label.horizontal ||
+      !valid(label.rect) ||
+      !Number.isFinite(label.height) ||
+      label.height <= 0 ||
+      label.rect[1] < top - label.height * 0.15 ||
+      label.rect[3] > bottom ||
+      label.rect[0] <= left ||
+      label.rect[2] >= right ||
+      Math.abs(label.rect[0] + label.rect[2] - left - right) > label.height * 0.2 ||
+      !/^\p{L}[\p{L}\p{N} -]{2,59}$/u.test(label.text) ||
+      label.sourceItem?.text !== label.text ||
+      !Number.isSafeInteger(label.sourceItem.pageNumber) ||
+      label.sourceItem.pageNumber < 1 ||
+      !Number.isSafeInteger(label.sourceItem.index) ||
+      label.sourceItem.index < 0 ||
+      unassigned.filter((value) => value === label.text).length !== 1 ||
+      items.filter((item) => item.text === label.text).length !== 1 ||
+      cells.some((cell) => cell.sourceRects.some((r) => over(r, label.rect)))
+    )
+      continue
+    const [first, ...empty] = slots
+    Object.assign(first, {
+      colSpan: width,
+      rect: band,
+      text: label.text,
+      sourceRects: [label.rect],
+      sourceTokens: [label],
+      sourceItems: [label.sourceItem]
+    })
+    for (const cell of empty) cells.splice(cells.indexOf(cell), 1)
+    grid[row][0] = label.text
+    unassigned.splice(unassigned.indexOf(label.text), 1)
+    recovered++
+  }
+  return recovered
 }

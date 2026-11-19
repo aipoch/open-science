@@ -88,6 +88,10 @@ const PUBLIC_METHODS = [
   'getVersionProvenance',
   'getReviewerVersionTrace',
   'resolveVersionDescriptors',
+  'publishImageTaskVersion',
+  'recoverImageTaskVersion',
+  'readImageInvocationVersion',
+  'verifyImageTaskResults',
   'getVersionCore',
   'getVersionLiterature',
   'readDependencyRelations',
@@ -129,6 +133,76 @@ describe('artifact provenance public write contract', () => {
 })
 
 describe('artifact provenance allocation and write identity', () => {
+  it('records an image edit input from the same turn before that source is public', async () => {
+    const { client, repository, storageRoot } = await fixture()
+    const owner = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      ...provenanceGraph
+    }
+    await client.project.create({ data: { id: owner.projectId, name: 'Project one' } })
+    const source = await repository.writeAppGeneratedVersion({
+      ...owner,
+      filename: 'source.png',
+      contentType: 'image/png',
+      content: createPngBytes('source')
+    })
+    expect(source.isPublished).toBe(false)
+    const publication = new AbortController()
+    const inputScope = { ...owner, assertActive: () => publication.signal.throwIfAborted() }
+    const authority = new ImmutableInputAuthority({
+      storageRoot,
+      managedFileVersions: new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+    })
+    const input = await authority.resolveVersion({
+      projectId: owner.projectId,
+      sourceKind: 'artifact-version',
+      inputFileVersionId: source.versionId,
+      producerScope: inputScope
+    })
+    expect(input).toBeDefined()
+    const producer = {
+      kind: 'connector' as const,
+      connectorId: 'image-model',
+      toolId: 'edit_image',
+      invocationId: 'image-edit',
+      implementationVersion: '1',
+      normalizedArguments: { operation: 'edit' },
+      inputFiles: [input!]
+    }
+    const edit = {
+      ...owner,
+      filename: 'edited.png',
+      contentType: 'image/png',
+      content: createPngBytes('edited')
+    }
+    await expect(
+      repository.writeAppGeneratedVersion({
+        ...edit,
+        producer: {
+          ...producer,
+          inputScope: { ...inputScope, messageBranchId: 'unrelated-branch' }
+        }
+      })
+    ).rejects.toThrow('Connector Artifact input identity is corrupt')
+    const result = await repository.writeAppGeneratedVersion({
+      ...edit,
+      producer: { ...producer, inputScope }
+    })
+    publication.abort()
+    await expect(
+      client.artifactVersionInput.findMany({
+        where: { artifactVersionId: result.versionId },
+        select: { inputFileVersionId: true }
+      })
+    ).resolves.toEqual([{ inputFileVersionId: source.versionId }])
+  })
+
   it('advances one case-folded lineage while preserving immutable bytes and canonical evidence', async () => {
     const { client, repository, stagePng, storageRoot } = await fixture()
     await stagePng('version one', 'Plot.PNG')

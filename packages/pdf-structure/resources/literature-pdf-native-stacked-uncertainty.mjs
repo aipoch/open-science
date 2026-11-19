@@ -317,6 +317,51 @@ export function recoverNativeStackedUncertainty(items, rules, equalFontStacks) {
       row.push(i)
     else rows.push([i])
   }
+  // A solar unit has its own lowered glyph after both signed error lanes.
+  if (rows.length === 4) {
+    const [upper, main, unitSuffix, lower] = rows
+    const unit = main.at(-1)
+    const [qualifier] = unitSuffix
+    const em = unit.height
+    if (
+      main.length > 1 &&
+      /^[LMR]$/u.test(unit.text) &&
+      unitSuffix.length === 1 &&
+      qualifier.text === '⊙' &&
+      Math.abs(qualifier.rect[0] - unit.rect[2]) < em * 0.05 &&
+      qualifier.baseline - unit.baseline > em * 0.08 &&
+      qualifier.baseline - unit.baseline < em * 0.3 &&
+      qualifier.height >= em * 0.55 &&
+      qualifier.height <= em * 0.751
+    ) {
+      const packet = [...upper, ...main.slice(0, -1), ...lower]
+      const stackBox = bounds(packet)
+      const gap = unit.rect[0] - stackBox[2]
+      if (
+        gap >= em * 0.2 &&
+        gap <= em * 0.7 &&
+        !rules.some(
+          (r) =>
+            r[0] === r[2] &&
+            r[0] >= stackBox[2] &&
+            r[0] < qualifier.rect[2] &&
+            r[1] < qualifier.rect[3] &&
+            r[3] > unit.rect[1]
+        )
+      ) {
+        const numeric = recoverNativeStackedUncertainty(packet, rules, equalFontStacks)
+        if (numeric)
+          return {
+            runs: [
+              ...numeric.runs,
+              { text: ' ' + unit.text, position: 'normal' },
+              { text: qualifier.text, position: 'subscript' }
+            ],
+            ownedTokens: new Set(items)
+          }
+      }
+    }
+  }
   if (rows.length !== 3) return
   for (const row of rows) row.sort((a, b) => a.rect[0] - b.rect[0])
   const [upper, main, lower] = rows,

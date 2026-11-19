@@ -1,5 +1,7 @@
 import type { PdfLayoutPage, PdfLayoutTextItem } from './layout.js'
 
+const familyFirst = /^\[\d{1,4}\]\s+\p{Lu}[\p{L}'’ -]+,\s+(?:\p{Lu}\.\s*){1,4}/u
+
 // A printed native divider can close an unheaded bibliography without relying
 // on the preceding paragraph's wording or interpreting its hyphenated source.
 // Keep all owners and risks verbatim; only a complete, unique suffix is returned.
@@ -8,7 +10,8 @@ export function nativeDividedReferenceSuffix<
 >(
   units: T[],
   pages: PdfLayoutPage[],
-  nativeContentsUpright: (item: PdfLayoutTextItem) => boolean
+  nativeContentsUpright: (item: PdfLayoutTextItem) => boolean,
+  pageCount?: number
 ): T[] {
   if (
     !pages.length ||
@@ -25,23 +28,72 @@ export function nativeDividedReferenceSuffix<
         item.str.trim() ? [{ page: page.page, item, index, key: page.page + ':' + index }] : []
       )
     ),
-    starts = all.filter((e) => /^\[1\]\s+\p{Lu}\./u.test(e.item.str)),
+    starts = all.filter(
+      (e) =>
+        /^\[1\]\s+\p{Lu}\./u.test(e.item.str) ||
+        (e.page === pageCount && e.item.str.startsWith('[1] ') && familyFirst.test(e.item.str))
+    ),
     passes: T[][] = []
   for (const start of starts) {
-    const result = one(start)
+    const result = one(start) ?? beforeSupplement(start)
     if (result) passes.push(result)
   }
   return passes.length === 1 ? passes[0] : []
-  function one(start: (typeof all)[number]): T[] | undefined {
+  function beforeSupplement(start: (typeof all)[number]): T[] | undefined {
+    const opener = pages.find((page) => page.page > start.page && isSupplementOpener(page))
+    return opener ? one(start, opener.page) : undefined
+  }
+
+  function one(start: (typeof all)[number], endPage?: number): T[] | undefined {
+    const bounded = endPage !== undefined
     const page = pages.find((p) => p.page === start.page)!,
       h = start.item.height,
       raw = page.items
+    const terminalFamilyNames = page.page === pageCount && familyFirst.test(start.item.str)
     if (!nativeContentsUpright(start.item) || page.rotation !== 0) return
     const evidence = page.nativeReferenceEvidence
     if (!evidence?.complete) return
     const preceding = raw.slice(0, start.index).filter((i) => i.str.trim())
     const following = raw.slice(start.index).filter((i) => i.str.trim())
     if (!preceding.length || !following.length) return
+    const folio = preceding[0],
+      previousFolio = pages[page.page - 2]?.items.find((item) => item.str.trim())
+    const repeatedFolio = (): boolean =>
+      pages.length === pageCount &&
+      page.page === pageCount &&
+      folio.str === String(page.page) &&
+      folio.height >= h * 1.05 &&
+      folio.transform[4] >= page.width * 0.85 &&
+      folio.transform[5] >= page.height * 0.94 &&
+      !!previousFolio &&
+      previousFolio.str === String(page.page - 1) &&
+      nativeContentsUpright(previousFolio) &&
+      previousFolio.fontName === folio.fontName &&
+      previousFolio.height === folio.height &&
+      previousFolio.transform[5] === folio.transform[5] &&
+      Math.abs(
+        previousFolio.transform[4] + previousFolio.width - folio.transform[4] - folio.width
+      ) <=
+        h * 0.05
+    if (terminalFamilyNames && (preceding.length !== 1 || !repeatedFolio())) return
+    // A complete ordinary two-column body may end above the divider on the same page.
+    const body = preceding.slice(1),
+      bodySplit = body.findIndex((item) => item.transform[4] > page.width / 2)
+    const terminalPreprints =
+      !terminalFamilyNames &&
+      !bounded &&
+      repeatedFolio() &&
+      bodySplit >= 2 &&
+      body.length - bodySplit >= 2 &&
+      /[.!?]$/.test(body.at(-1)!.str) &&
+      body.every(
+        (item, index) =>
+          item.fontName === folio.fontName &&
+          item.height === folio.height &&
+          (index < bodySplit
+            ? item.transform[4] + item.width < page.width / 2
+            : item.transform[4] > page.width / 2)
+      )
     const matching = evidence.rules.filter(
       (rule) =>
         rule.left < page.width / 2 - h &&
@@ -78,7 +130,7 @@ export function nativeDividedReferenceSuffix<
               Math.abs(i.transform[4] + i.width - e.item.transform[4] - e.item.width) < h * 0.05
           )
       ).length > 0
-    const tail = all.slice(all.indexOf(start)),
+    const tail = all.slice(all.indexOf(start)).filter((entry) => !endPage || entry.page < endPage),
       headers = tail.filter(
         (e) =>
           e.page !== start.page &&
@@ -90,7 +142,7 @@ export function nativeDividedReferenceSuffix<
       headerKeys = new Set(headers.map((e) => e.key)),
       packet = tail.filter((e) => !headerKeys.has(e.key))
     if (
-      headers.length !== pages.at(-1)!.page - start.page ||
+      headers.length !== (endPage ?? pages.length + 1) - start.page - 1 ||
       packet.some(
         (e) =>
           !nativeContentsUpright(e.item) ||
@@ -147,7 +199,10 @@ export function nativeDividedReferenceSuffix<
         packet.slice(m.index, markers[n + 1]?.index ?? packet.length)
       ),
       rows: NativeRow[] = [],
-      publicationRoles: { kind: string; roleFonts?: string[] }[] = []
+      publicationRoles: Publication[] = [],
+      confirmed = new Set<string>()
+    let terminalPreprintCount = 0,
+      usesTerminalPublicationFallback = false
     for (let n = 0; n < records.length; n++) {
       const record = records[n],
         text = record.map((e) => e.item.str).join(' '),
@@ -156,17 +211,72 @@ export function nativeDividedReferenceSuffix<
         if (ch === '(') stack.push(ch)
         if (ch === ')' && !stack.pop()) return
       }
-      const publication = publicationStructureProof(record, start.item.fontName!)
-      if (stack.length || !publication) return
-      publicationRoles.push(publication)
+      const publication = terminalFamilyNames
+        ? undefined
+        : publicationStructureProof(record, start.item.fontName!)
+      if (stack.length) return
+      let typedPreprint = false
+      if (!publication && !bounded && !terminalFamilyNames) {
+        if (
+          !terminalPreprints ||
+          !/^\[\d{1,4}\]\s+(?:\p{Lu}\.(?:-\p{L}\.)?\s*){1,4}\p{Lu}[\p{L}'’-]+/u.test(text)
+        )
+          return
+        typedPreprint =
+          /(?:, |\b)arXiv:\d{4}\.\d{4,5}(?:v\d+)?\s+\[[a-z]+(?:-\s*[a-z]+)?(?:\.[A-Z]{2})?\]\.$/iu.test(
+            text
+          )
+        const datedVolume =
+          /\((?:18|19|20)\d{2}\)\.$/u.test(text) &&
+          record.some(
+            ({ item }) => item.fontName !== start.item.fontName && /^\d{1,4}$/u.test(item.str)
+          )
+        if ((!typedPreprint && !datedVolume) || (text.match(/\p{L}{2,}/gu)?.length ?? 0) < 8) return
+        usesTerminalPublicationFallback = true
+        if (typedPreprint) terminalPreprintCount++
+      }
+      if (terminalFamilyNames) {
+        const quoted = /^([^“]+)“(\p{L}[^“”]+)”\s*([^“”]+)\.$/u.exec(text),
+          alternate = record.filter(({ item }) => item.fontName !== start.item.fontName),
+          publicationTail = quoted?.[3] ?? ''
+        const dated =
+          alternate.length === 1 &&
+          /^\d{1,4}$/u.test(alternate[0].item.str) &&
+          /\((?:18|19|20)\d{2}\)/u.test(publicationTail) &&
+          /(?:\b\d{1,8}(?:[–-]\d{1,8})?|\((?:18|19|20)\d{2}\))$/u.test(publicationTail)
+        const preprint =
+          alternate.length === 0 &&
+          /^\[arXiv:\d{4}\.\d{4,5}(?:v\d+)?(?:\s+\[[a-z-]+(?:\.[A-Z]{2})?\])?\]$/iu.test(
+            publicationTail
+          )
+        if (
+          !quoted ||
+          !familyFirst.test(quoted[1]) ||
+          (quoted[2].match(/\p{L}{2,}/gu)?.length ?? 0) < 2 ||
+          (!dated && !preprint)
+        )
+          return
+      }
+      if (publication) {
+        publicationRoles.push(publication)
+        for (const entry of record) confirmed.add(entry.key)
+      }
       for (const e of record) {
         const row = rows.at(-1)
         if (row && row.page === e.page && Math.abs(row.baseline - e.item.transform[5]) < h * 0.45) {
           const last = row.entries.at(-1)!.item
+          const distance = e.item.transform[4] - last.transform[4]
+          const overlapsAccent =
+            bounded &&
+            /^[´¸\p{M}]$/u.test(last.str) &&
+            last.fontName === e.item.fontName &&
+            Math.abs(last.height - e.item.height) < h * 0.01 &&
+            Math.abs(last.transform[5] - e.item.transform[5]) > h * 0.15 &&
+            distance > -h * 0.1
           if (
             last.hasEOL === true ||
-            e.item.transform[4] <= last.transform[4] ||
-            e.item.transform[4] - last.transform[4] - last.width > h * 1.5
+            (distance <= 0 && !overlapsAccent) ||
+            distance - last.width > h * (bounded ? 2.1 : typedPreprint ? 1.7 : 1.5)
           )
             return
           row.entries.push(e)
@@ -182,6 +292,12 @@ export function nativeDividedReferenceSuffix<
         }
       }
     }
+    if (
+      usesTerminalPublicationFallback &&
+      (records.length < 12 || !terminalPreprintCount || publicationRoles.length < 2)
+    )
+      return
+    if (bounded && (records.length < 12 || publicationRoles.length < records.length / 2)) return
     const numeric = new Set(
       publicationRoles.filter((r) => r.kind === 'journal-volume').flatMap((r) => r.roleFonts ?? [])
     )
@@ -201,7 +317,7 @@ export function nativeDividedReferenceSuffix<
       if (continuations.length < 4) return
       const x = continuations[0]
       if (
-        continuations.some((v) => Math.abs(v - x) > h * 0.05) ||
+        continuations.some((v) => Math.abs(v - x) > h * (bounded ? 0.1 : 0.05)) ||
         lane
           .filter((r) => r.first)
           .some(
@@ -257,10 +373,7 @@ export function nativeDividedReferenceSuffix<
             return (
               !keys.has(k) ||
               pages.find((p) => p.page === page)!.items[index]?.str !== u.originalStrings[n] ||
-              (n &&
-                (page < Number(u.items[n - 1].split(':')[0]) ||
-                  (page === Number(u.items[n - 1].split(':')[0]) &&
-                    index <= Number(u.items[n - 1].split(':')[1]))))
+              (n > 0 && outOfOrderWithinOwner(u, n, page, index))
             )
           })
       ) ||
@@ -276,7 +389,24 @@ export function nativeDividedReferenceSuffix<
       )
     )
       return
-    return owners
+    return bounded
+      ? owners.filter((owner) => owner.items.every((key) => confirmed.has(key)))
+      : owners
+
+    function outOfOrderWithinOwner(owner: T, n: number, page: number, index: number): boolean {
+      const [priorPage, priorIndex] = owner.items[n - 1].split(':').map(Number)
+      if (page !== priorPage) return page < priorPage
+      if (index > priorIndex) return false
+      return (
+        !bounded ||
+        !rows.some(
+          (row) =>
+            row.page === page &&
+            row.entries.some((entry) => entry.index === priorIndex) &&
+            row.entries.some((entry) => entry.index === index)
+        )
+      )
+    }
   }
 }
 
@@ -356,4 +486,38 @@ function publicationStructureProof(
     /\([^()]*\p{L}[^()]*(?:18|19|20)\d{2}\)(?:\s+pp\.\s+\d+[–-]\d+)?\.$/u.test(text)
   )
     return { kind: 'book-publication', roleFonts: [...new Set(other.map((e) => e.item.fontName!))] }
+}
+
+// A separately printed supplement opener can close a bibliography before the
+// final file page. A generic page heading or a body mention grants no boundary.
+function isSupplementOpener(page: PdfLayoutPage): boolean {
+  if (page.rotation !== 0) return false
+  const [folio, ...text] = page.items.filter((item) => item.str.trim())
+  const first = text[0]
+  if (
+    folio?.str !== String(page.page) ||
+    folio.transform[5] <= page.height * 0.94 ||
+    !first ||
+    first.height < folio.height * 1.1 ||
+    first.transform[5] <= page.height * 0.89 ||
+    first.transform[5] >= folio.transform[5] - folio.height
+  )
+    return false
+  const row = text.filter(
+    (item) =>
+      item.transform[4] < page.width / 2 &&
+      Math.abs(item.transform[5] - first.transform[5]) < first.height * 0.02
+  )
+  return (
+    row.length <= 20 &&
+    row.every(
+      (item) =>
+        item.fontName === first.fontName &&
+        item.height === first.height &&
+        item.dir === 'ltr' &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0
+    ) &&
+    /^Supplementary Material for\s+“?\p{Lu}/u.test(row.map((item) => item.str).join(' '))
+  )
 }

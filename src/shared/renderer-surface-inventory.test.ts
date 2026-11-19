@@ -211,6 +211,7 @@ const GENERATED_SOURCE_OMISSIONS = [
 ] as const
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'artifacts.openInBrowser',
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
@@ -218,6 +219,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
+  'artifacts:open-in-browser',
   'file:artifact-save-progress',
   'file:cancel-artifact-save',
   'file:save-blob',
@@ -273,13 +275,14 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'granted-roots:set-access',
     'list-dir',
     'list-drives',
+    'open-in-browser',
     'open-path',
     'read-preview',
     'reveal'
   ],
   logs: ['get-status', 'open-file', 'reveal-in-folder'],
   'notebook-env': ['cancel', 'provision', 'repair'],
-  notebook: ['export-ipynb', 'export-ipynb-all'],
+  notebook: ['export-ipynb', 'export-ipynb-all', 'process-monitor', 'terminate-monitored-process'],
   'remote-access': ['probe'],
   sessions: [
     'fork',
@@ -309,11 +312,13 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'cancel-device-credential-authentication',
     'cancel-isolated-claude-login',
     'cancel-xai-oauth-login',
+    'codebuddy-account',
     'create-device-credential',
     'create-wsl-support-handoff',
     'disconnect-custom-server',
     'disconnect-device-credential',
     'get-classification',
+    'get-image-models',
     'get-github-token-status',
     'get-local-shell-runtime-preference',
     'get-notebook-network-status',
@@ -364,12 +369,14 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-project-files-filter',
     'switch-local-shell-to-powershell',
     'test-classification',
+    'test-image-model',
     'uninstall-claude',
     'uninstall-codebuddy',
     'uninstall-codex',
     'uninstall-opencode',
     'uninstall-pi',
     'update-classification',
+    'update-image-models',
     'update-custom-server',
     'update-device-credential',
     'use-wsl2-bash',

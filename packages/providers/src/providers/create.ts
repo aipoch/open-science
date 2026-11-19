@@ -1,3 +1,4 @@
+import { resolveVendorModelCatalog, getOfficialVendor, isOfficialVendorId } from './lookup'
 import { getProviderDefinition } from './definitions'
 import { createTextGenerationModel, type TextGenerationModel } from '../models/text-generation'
 import { createClassificationModel, type ClassificationModel } from '../models/classification'
@@ -17,7 +18,7 @@ export type ProviderConfiguration = Readonly<{
   key?: string
   fetch?: typeof fetch
   region?: string
-  discovery?: Readonly<{ url: string }>
+  discovery?: Readonly<{ url?: string; parameters?: Readonly<Record<string, string>> }>
   textGeneration?: TextGenerationConfiguration
   classification?: Readonly<{ url?: string; maxResponseBytes?: number; maxRequestBytes?: number }>
 }>
@@ -49,14 +50,30 @@ export function createProvider(configuration: ProviderConfiguration): Provider {
     ? Object.freeze({ ...configuration.classification })
     : undefined
   const definition = getProviderDefinition(id)
-  const modelsUrl = configuration.discovery?.url ?? resolveModelDiscoveryUrl(id, region)
+  const catalog = isOfficialVendorId(id) ? resolveVendorModelCatalog(id, region) : undefined
+  const modelsUrl =
+    configuration.discovery?.url ??
+    catalog?.url ??
+    (id === 'xai' ? resolveModelDiscoveryUrl(id, region) : undefined)
   return Object.freeze({
     id,
     supportsModelDiscovery: Boolean(modelsUrl),
     listModels(options?: ListModelsOptions) {
       if (!modelsUrl)
         return Promise.resolve({ ok: false, message: 'This provider has no model-list endpoint.' })
-      return listProviderModels({ url: modelsUrl, vendorId: id, key }, { ...options, fetchImpl })
+      return listProviderModels(
+        {
+          url: modelsUrl,
+          vendorId: id,
+          key,
+          options: configuration.discovery?.url ? undefined : catalog?.options,
+          parameters: configuration.discovery?.parameters,
+          knownModelIds: isOfficialVendorId(id)
+            ? getOfficialVendor(id)?.models.map((m) => m.id)
+            : undefined
+        },
+        { ...options, fetchImpl }
+      )
     },
     supportsTextGeneration(modelId: string) {
       try {

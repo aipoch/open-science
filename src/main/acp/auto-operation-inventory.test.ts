@@ -18,6 +18,8 @@ const registrations: Record<
   'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
+  "image-model/mcp-server.ts:'generate_image'": 'allow_once',
+  "image-model/mcp-server.ts:'edit_image'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME': 'allow_once',
@@ -171,16 +173,21 @@ describe('Auto operation completeness against real tool registrations', () => {
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
+        // Image tools use the current turn capability and the configured model's operation schema.
+        'image-model/mcp-server.ts':
+          'a83381424a1c34c05d37c2a3fe9efc71ef47c08dfd561861170d4f165fae893c',
         // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
         // candidate schema now validates inline records in the handler before any save or download.
         // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
-        // allow-once disposition are unchanged.
+        // allow-once disposition are unchanged. Shared contracts were extracted from the runtime
+        // handlers without changing the automatically handled operation branches.
         'literature/library-mcp-server.ts':
-          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
+          'a243f2ab289a861466bb203213f8ee747224345c52220aacfe758a3f119ee3ef',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
+        // Presentation helpers and contracts were extracted without changing handler branches.
         'literature/mcp-server.ts':
-          '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
+          '10a2eec347f763a29d87725b2dca1676814b387e4603defbfff4a4f37574b1ab',
         // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
@@ -190,8 +197,10 @@ describe('Auto operation completeness against real tool registrations', () => {
           '3bd949c59a19ad322a31d9c3274600e5d4c46023ffe5190115952c8029bda4bb',
         // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
+        // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
+        // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '264cd74550b1708888c177ae42e13766a30298575e0715b42465a2040c0774d4',
+          '5dd96acc425304cc6c75989dc99420e61899733b2ad1423a0df547ea9a5868a6',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

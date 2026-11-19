@@ -1,5 +1,11 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
-import { dataEvents } from './chat-completions'
+import { ChatCompletionsError, dataEvents } from './chat-completions'
+import {
+  normalizeProviderError,
+  normalizeUpstreamError,
+  responseErrorDiagnostics,
+  type UpstreamErrorDiagnostics
+} from './errors/normalize-upstream-error'
 import { frozen, json } from './session-state'
 import type {
   AgentModel,
@@ -24,6 +30,7 @@ export type ResponsesModelOptions = {
   inputCapabilities?: InputCapabilities
 }
 export class ResponsesError extends Error {
+  readonly diagnostics: UpstreamErrorDiagnostics
   constructor(
     public readonly code:
       | 'http'
@@ -34,10 +41,15 @@ export class ResponsesError extends Error {
       | 'rate_limit_exceeded'
       | 'model_not_found'
       | 'authentication_error',
-    public readonly status?: number
+    public readonly status?: number,
+    diagnostics: UpstreamErrorDiagnostics = {}
   ) {
     super(status === undefined ? `Responses ${code} error` : `Responses HTTP ${status}`)
     this.name = 'ResponsesError'
+    this.diagnostics = Object.freeze({
+      phase: code === 'http' || code === 'network' ? 'response' : 'provider',
+      ...diagnostics
+    })
   }
 }
 const fail = (): never => {
@@ -195,9 +207,15 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
         signal.throwIfAborted()
         throw new ResponsesError('network')
       }
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined)
-        throw new ResponsesError('http', response.status)
+      if (
+        !response.ok ||
+        !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
+      ) {
+        const diagnostics = await normalizeUpstreamError(response, signal)
+        throw new ResponsesError(response.ok ? 'protocol' : 'http', response.status, {
+          ...diagnostics,
+          phase: 'response'
+        })
       }
       let text = '',
         reasoning = '',
@@ -208,157 +226,167 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
       const calls = new Map<string, { id: string; name: string; arguments: string }>()
       const reasoningItems: Json[] = []
       const callAliases = new Map<string, string>()
-      for await (const raw of dataEvents(response, limit, signal)) {
-        if (raw === '[DONE]') continue
-        const event = object(JSON.parse(raw)),
-          type = event.type
-        if (type === 'response.created') {
-          responseId =
-            typeof object(event.response).id === 'string'
-              ? (object(event.response).id as string)
-              : undefined
-          continue
-        }
-        if (type === 'response.output_text.delta') {
-          const delta = event.delta
-          if (typeof delta !== 'string') return fail()
-          text += delta
-          yield { type: 'text-delta', text: delta }
-          continue
-        }
-        if (type === 'response.reasoning_summary_text.delta') {
-          const delta = event.delta
-          if (typeof delta !== 'string') return fail()
-          reasoning += delta
-          yield { type: 'reasoning-delta', text: delta }
-          continue
-        }
-        if (type === 'response.output_item.added' || type === 'response.output_item.done') {
-          const item = object(event.item)
-          if (type === 'response.output_item.done' && item.type === 'reasoning') {
-            json(item)
-            reasoningItems.push(item as Json)
-          }
-          if (item.type === 'function_call') {
-            const callId = typeof item.call_id === 'string' ? item.call_id : ''
-            const itemId = typeof item.id === 'string' ? item.id : ''
-            const id = callId || itemId
-            const name = typeof item.name === 'string' ? item.name : ''
-            if (!id || !name) return fail()
-            if (itemId) callAliases.set(itemId, id)
-            if (callId) callAliases.set(callId, id)
-            const prior = calls.get(id) ?? { id, name, arguments: '' }
-            if (typeof item.arguments === 'string') prior.arguments = item.arguments
-            calls.set(id, prior)
-          }
-          continue
-        }
-        if (type === 'response.function_call_arguments.delta') {
-          const delta = event.delta
-          if (typeof delta !== 'string') return fail()
-          const rawId =
-            typeof event.item_id === 'string'
-              ? event.item_id
-              : typeof event.call_id === 'string'
-                ? event.call_id
-                : ''
-          const id = callAliases.get(rawId) ?? rawId
-          const prior = calls.get(id) ?? { id, name: '', arguments: '' }
-          prior.arguments += delta
-          calls.set(id, prior)
-          yield {
-            type: 'tool-delta',
-            index: calls.size - 1,
-            arguments: delta,
-            id: prior.id,
-            ...(prior.name ? { name: prior.name } : {})
-          }
-          continue
-        }
-        if (type === 'response.completed' || type === 'response.incomplete') {
-          const response = object(event.response)
-          const status =
-            type === 'response.completed' ? 'completed' : object(response.incomplete_details).reason
-          if (status === 'content_filter') throw new ResponsesError('limit')
-          finish = true
-          finishReason =
-            status === 'max_output_tokens' ? 'length' : calls.size ? 'tools' : 'complete'
-          const value = response.usage
-          if (value) {
-            const u = object(value)
-            const details = u.input_tokens_details
-            const cached =
-              details && typeof details === 'object' && !Array.isArray(details)
-                ? (details as Record<string, unknown>).cached_tokens
+      let phase: NonNullable<UpstreamErrorDiagnostics['phase']> = 'stream'
+      try {
+        for await (const raw of dataEvents(response, limit, signal)) {
+          if (raw === '[DONE]') continue
+          phase = 'event-json'
+          const event = object(JSON.parse(raw)),
+            type = event.type
+          phase = type === 'error' || type === 'response.failed' ? 'provider' : 'choice'
+          if (type === 'response.created') {
+            responseId =
+              typeof object(event.response).id === 'string'
+                ? (object(event.response).id as string)
                 : undefined
-            usage = {
-              inputTokens: count(u.input_tokens),
-              outputTokens: count(u.output_tokens),
-              ...(cached === undefined ? {} : { cacheReadTokens: count(cached) })
-            }
+            continue
           }
-          continue
-        }
-        if (type === 'response.failed' || type === 'error') {
-          const detail = object(
-            type === 'response.failed' ? object(event.response).error : (event.error ?? event)
-          )
-          // Only known codes cross the adapter boundary; provider prose can contain private data.
-          const codes = [detail.code, detail.type]
-          if (
-            codes.some((code) =>
-              [
-                'insufficient_quota',
-                'quota_exceeded',
-                'usage_limit_reached',
-                'subscription_sharing_usage_limit_exceeded',
-                'billing_error'
-              ].includes(String(code))
-            )
-          )
-            throw new ResponsesError('insufficient_quota')
-          if (
-            codes.some((code) => ['rate_limit_exceeded', 'rate_limit_error'].includes(String(code)))
-          )
-            throw new ResponsesError('rate_limit_exceeded', 429)
-          if (codes.some((code) => ['model_not_found', 'model_unavailable'].includes(String(code))))
-            throw new ResponsesError('model_not_found', 404)
-          if (
-            codes.some((code) =>
-              ['authentication_error', 'invalid_api_key', 'unauthorized', 'token_expired'].includes(
-                String(code)
-              )
-            )
-          )
-            throw new ResponsesError('authentication_error', 401)
-          return fail()
-        }
-      }
-      if (!finish) return fail()
-      const finalCalls: ToolCall[] = []
-      if (finishReason === 'tools') {
-        for (const call of calls.values()) {
-          if (!call.name) return fail()
-          const args = JSON.parse(call.arguments)
-          json(args)
-          finalCalls.push({ id: call.id, name: call.name, arguments: args })
-        }
-      }
-      yield {
-        type: 'finish',
-        reason: finishReason,
-        content: text ? [{ type: 'text', text }] : [],
-        ...(finalCalls.length ? { calls: finalCalls } : {}),
-        ...(usage ? { usage } : {}),
-        ...(reasoning || responseId || reasoningItems.length
-          ? {
-              providerState: {
-                ...(reasoning ? { reasoning_content: reasoning } : {}),
-                ...(responseId ? { response_id: responseId } : {}),
-                ...(reasoningItems.length ? { reasoning_items: reasoningItems } : {})
+          if (type === 'response.output_text.delta') {
+            const delta = event.delta
+            if (typeof delta !== 'string') return fail()
+            text += delta
+            yield { type: 'text-delta', text: delta }
+            continue
+          }
+          if (type === 'response.reasoning_summary_text.delta') {
+            const delta = event.delta
+            if (typeof delta !== 'string') return fail()
+            reasoning += delta
+            yield { type: 'reasoning-delta', text: delta }
+            continue
+          }
+          if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+            const item = object(event.item)
+            if (type === 'response.output_item.done' && item.type === 'reasoning') {
+              json(item)
+              reasoningItems.push(item as Json)
+            }
+            if (item.type === 'function_call') {
+              const callId = typeof item.call_id === 'string' ? item.call_id : ''
+              const itemId = typeof item.id === 'string' ? item.id : ''
+              const id = callId || itemId
+              const name = typeof item.name === 'string' ? item.name : ''
+              if (!id || !name) return fail()
+              if (itemId) callAliases.set(itemId, id)
+              if (callId) callAliases.set(callId, id)
+              const prior = calls.get(id) ?? { id, name, arguments: '' }
+              if (typeof item.arguments === 'string') prior.arguments = item.arguments
+              calls.set(id, prior)
+            }
+            continue
+          }
+          if (type === 'response.function_call_arguments.delta') {
+            phase = 'tool-delta'
+            const delta = event.delta
+            if (typeof delta !== 'string') return fail()
+            const rawId =
+              typeof event.item_id === 'string'
+                ? event.item_id
+                : typeof event.call_id === 'string'
+                  ? event.call_id
+                  : ''
+            const id = callAliases.get(rawId) ?? rawId
+            const prior = calls.get(id) ?? { id, name: '', arguments: '' }
+            prior.arguments += delta
+            calls.set(id, prior)
+            yield {
+              type: 'tool-delta',
+              index: calls.size - 1,
+              arguments: delta,
+              id: prior.id,
+              ...(prior.name ? { name: prior.name } : {})
+            }
+            continue
+          }
+          if (type === 'response.completed' || type === 'response.incomplete') {
+            const response = object(event.response)
+            const status =
+              type === 'response.completed'
+                ? 'completed'
+                : object(response.incomplete_details).reason
+            if (status === 'content_filter') throw new ResponsesError('limit')
+            finish = true
+            finishReason =
+              status === 'max_output_tokens' ? 'length' : calls.size ? 'tools' : 'complete'
+            phase = 'usage'
+            const value = response.usage
+            if (value) {
+              const u = object(value)
+              const details = u.input_tokens_details
+              const cached =
+                details && typeof details === 'object' && !Array.isArray(details)
+                  ? (details as Record<string, unknown>).cached_tokens
+                  : undefined
+              usage = {
+                inputTokens: count(u.input_tokens),
+                outputTokens: count(u.output_tokens),
+                ...(cached === undefined ? {} : { cacheReadTokens: count(cached) })
               }
             }
-          : {})
+            continue
+          }
+          if (type === 'response.failed' || type === 'error') {
+            const detail = object(
+              type === 'response.failed' ? object(event.response).error : (event.error ?? event)
+            )
+            // Preserve the four existing semantic codes; use protocol and fixed enums for other reasons.
+            const diagnostics = normalizeProviderError({ error: detail })
+            const reason = diagnostics.reason
+            const code =
+              reason === 'insufficient_quota' ||
+              reason === 'rate_limit_exceeded' ||
+              reason === 'model_not_found' ||
+              reason === 'authentication_error'
+                ? reason
+                : 'protocol'
+            throw new ResponsesError(code, response.status, diagnostics)
+          }
+        }
+        phase = 'missing-finish'
+        if (!finish) return fail()
+        phase = 'tool-arguments'
+        const finalCalls: ToolCall[] = []
+        if (finishReason === 'tools') {
+          for (const call of calls.values()) {
+            if (!call.name) return fail()
+            const args = JSON.parse(call.arguments)
+            json(args)
+            finalCalls.push({ id: call.id, name: call.name, arguments: args })
+          }
+        }
+        yield {
+          type: 'finish',
+          reason: finishReason,
+          content: text ? [{ type: 'text', text }] : [],
+          ...(finalCalls.length ? { calls: finalCalls } : {}),
+          ...(usage ? { usage } : {}),
+          ...(reasoning || responseId || reasoningItems.length
+            ? {
+                providerState: {
+                  ...(reasoning ? { reasoning_content: reasoning } : {}),
+                  ...(responseId ? { response_id: responseId } : {}),
+                  ...(reasoningItems.length ? { reasoning_items: reasoningItems } : {})
+                }
+              }
+            : {})
+        }
+      } catch (error) {
+        signal.throwIfAborted()
+        if (error instanceof ResponsesError)
+          throw new ResponsesError(error.code, error.status, {
+            ...error.diagnostics,
+            ...responseErrorDiagnostics(response),
+            phase
+          })
+        if (error instanceof ChatCompletionsError)
+          throw new ResponsesError(error.code, error.status, {
+            ...responseErrorDiagnostics(response),
+            phase: error.diagnostics?.phase ?? phase
+          })
+        throw new ResponsesError('protocol', undefined, {
+          ...responseErrorDiagnostics(response),
+          phase
+        })
       }
     }
   }

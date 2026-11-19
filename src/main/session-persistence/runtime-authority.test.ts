@@ -4,8 +4,12 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import { SessionPersistenceStateOwner } from './state-owner'
-import { SessionProjectionAfterCommitError } from './save-session'
-import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
+import { SessionProjectionAfterCommitError, type MainSessionSaveOptions } from './save-session'
+import {
+  applyRuntimeSessionEvents,
+  applyRuntimeSessionEventsWithChanges,
+  type RuntimeSessionChanges
+} from '../../shared/runtime-session-projection'
 import { forkEditedConversationMessage } from '../../shared/conversation-graph'
 
 const fixture = (): PersistedChatSession =>
@@ -41,20 +45,29 @@ const harness = (
 ) => {
   let durable = structuredClone(initial)
   let projectionFailure = false
-  const saveSession = vi.fn(async (candidate: PersistedChatSession, expected?: number) => {
-    expect(expected ?? candidate.revision).toBe(durable.revision)
-    durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
-    if (projectionFailure) throw new SessionProjectionAfterCommitError(durable, new Error('secret'))
-    return structuredClone(durable)
-  })
+  const saveSession = vi.fn(
+    async (
+      candidate: PersistedChatSession,
+      expected?: number,
+      _options?: MainSessionSaveOptions
+    ) => {
+      void _options
+      expect(expected ?? candidate.revision).toBe(durable.revision)
+      durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+      if (projectionFailure)
+        throw new SessionProjectionAfterCommitError(durable, new Error('secret'))
+      return structuredClone(durable)
+    }
+  )
   const syncSession = vi.fn(async () => [])
   const publish = vi.fn()
+  const loadSessionWithDiagnostics = vi.fn(async () => ({
+    status: 'found' as const,
+    session: structuredClone(durable)
+  }))
   const owner = new SessionPersistenceStateOwner({
     repository: {
-      loadSessionWithDiagnostics: async () => ({
-        status: 'found',
-        session: structuredClone(durable)
-      }),
+      loadSessionWithDiagnostics,
       saveSession
     },
     fileIndex: { syncSession },
@@ -67,6 +80,7 @@ const harness = (
   })
   return {
     owner,
+    loadSessionWithDiagnostics,
     saveSession,
     syncSession,
     publish,
@@ -78,7 +92,156 @@ const harness = (
 }
 const scope = { projectId: 'p', sessionId: 's' }
 
+const freezeDeep = (value: unknown): void => {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeDeep(child)
+  Object.freeze(value)
+}
+
 describe('Main runtime Session authority', () => {
+  it('forwards reducer evidence with the authority used by the same immutable mutation', async () => {
+    const initial = fixture()
+    freezeDeep(initial)
+    const h = harness(initial)
+    h.loadSessionWithDiagnostics.mockResolvedValue({ status: 'found', session: initial })
+    let changes: RuntimeSessionChanges | undefined
+    const getChanges = vi.fn(() => changes)
+    await h.owner.mutateRuntimeSession(
+      scope,
+      (latest) => {
+        const prompt = latest.conversationGraph!.messages[0]
+        const result = applyRuntimeSessionEventsWithChanges(
+          latest,
+          {
+            promptMessageId: prompt.id,
+            agentFrameId: prompt.agentFrameId,
+            messageBranchId: prompt.introducedOnBranchId,
+            runtimeSegmentId: prompt.runtimeSegmentId!
+          },
+          [
+            {
+              id: 'chunk',
+              kind: 'message',
+              level: 'info',
+              timestamp: 3,
+              sessionId: initial.id,
+              role: 'assistant',
+              text: 'Answer'
+            }
+          ]
+        )
+        changes = result.changes
+        return result.session
+      },
+      { immutableCanonicalTranscript: true, getChanges }
+    )
+    expect(getChanges).toHaveBeenCalledOnce()
+    expect(h.saveSession.mock.calls[0][2]?.runtimeChanges?.previous).toBe(initial)
+    expect(h.saveSession.mock.calls[0][2]?.runtimeChanges?.changes).toBe(changes)
+    expect(h.saveSession.mock.calls[0][1]).toBe(7)
+  })
+
+  it('does not trust business hints from mutable compatibility callbacks', async () => {
+    const h = harness()
+    const getChanges = vi.fn(() => ({
+      messages: [],
+      activities: [],
+      activityGroups: [],
+      branches: []
+    }))
+    await h.owner.mutateRuntimeSession(
+      scope,
+      (latest) => ({ ...latest, updatedAt: latest.updatedAt + 1 }),
+      { getChanges }
+    )
+    expect(getChanges).not.toHaveBeenCalled()
+    expect(h.saveSession.mock.calls[0][2]).toBeUndefined()
+  })
+
+  it.each(['commit', 'throw'] as const)(
+    'isolates mutable compatibility callbacks from the loaded authority on %s',
+    async (outcome) => {
+      const initial = fixture()
+      const h = harness(initial)
+      const before = structuredClone(initial)
+      freezeDeep(initial)
+      h.loadSessionWithDiagnostics.mockResolvedValue({ status: 'found', session: initial })
+      const operation = h.owner.mutateRuntimeSession(scope, (latest) => {
+        expect(latest).not.toBe(initial)
+        expect(latest.conversationGraph).not.toBe(initial.conversationGraph)
+        latest.messages[0].content = 'Changed'
+        latest.conversationGraph!.messages[0].content = 'Changed'
+        latest.conversationGraph!.messages[0].eventIds.push('compatibility-update')
+        if (outcome === 'throw') throw new Error('mutation rejected')
+        return latest
+      })
+      if (outcome === 'throw') {
+        await expect(operation).rejects.toThrow('mutation rejected')
+        expect(h.saveSession).not.toHaveBeenCalled()
+      } else {
+        const result = await operation
+        expect(result.messages[0].content).toBe('Changed')
+        expect(result.conversationGraph!.messages[0].eventIds).toEqual(['compatibility-update'])
+        expect(h.saveSession).toHaveBeenCalledTimes(1)
+      }
+      expect(initial).toEqual(before)
+    }
+  )
+
+  it('passes canonical immutable authority through runtime projection with shared history', async () => {
+    const seed = fixture()
+    const initial = materializeSessionConversationGraph({
+      ...seed,
+      conversationGraph: undefined,
+      messages: [
+        { ...seed.messages[0], id: 'history', content: 'Earlier history' },
+        ...seed.messages
+      ]
+    })
+    const h = harness(initial)
+    const before = structuredClone(initial)
+    freezeDeep(initial)
+    h.loadSessionWithDiagnostics.mockResolvedValue({ status: 'found', session: initial })
+    const prompt = initial.conversationGraph!.messages.at(-1)!
+    const result = await h.owner.mutateRuntimeSession(
+      scope,
+      (latest) => {
+        expect(latest).toBe(initial)
+        return applyRuntimeSessionEvents(
+          latest,
+          {
+            promptMessageId: prompt.id,
+            agentFrameId: prompt.agentFrameId,
+            messageBranchId: prompt.introducedOnBranchId,
+            runtimeSegmentId: prompt.runtimeSegmentId!
+          },
+          [
+            {
+              id: 'chunk',
+              kind: 'message',
+              level: 'info',
+              sessionId: initial.id,
+              messageId: 'stream',
+              role: 'assistant',
+              text: 'Answer',
+              timestamp: 3
+            },
+            { id: 'stop', kind: 'stop', level: 'info', sessionId: initial.id, timestamp: 4 }
+          ]
+        )
+      },
+      { immutableCanonicalTranscript: true }
+    )
+    expect(initial).toEqual(before)
+    const persistedCandidate = h.saveSession.mock.calls[0][0]
+    expect(persistedCandidate.conversationGraph!.messages[0]).toBe(
+      initial.conversationGraph!.messages[0]
+    )
+    expect(result.messages.at(-1)?.content).toBe('Answer')
+    expect(result.status).toBe('idle')
+    expect(result.runtimeTranscriptLastRun).toEqual(initial.activeRun)
+  })
+
   it('rejects stale snapshot replacement while applying only explicit preference intent', async () => {
     const h = harness()
     const stale = h.durable()

@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { installManagedCodex, managedCodexAdapterEntry, managedCodexBinary } from './managed-codex'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -1265,6 +1267,125 @@ describe('CodexAuthController', () => {
 })
 
 describe('Codex authentication install admission', () => {
+  it('contains real adapter launch failures and releases installation admission', async () => {
+    // Keep an unhandled child-process event isolated from the test worker itself.
+    const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/codex-auth-launch-'))
+    try {
+      const adapter = join(root, 'adapter.cjs')
+      const exited = join(root, 'exited.cjs')
+      const denied = join(root, 'not-executable')
+      await writeFile(
+        adapter,
+        [
+          "require('node:readline').createInterface({ input: process.stdin }).on('line', line => {",
+          '  const request = JSON.parse(line)',
+          "  const result = request.method === 'initialize'",
+          '    ? { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }',
+          "    : { type: 'chat-gpt' }",
+          "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n')",
+          '})'
+        ].join('\n')
+      )
+      await writeFile(exited, 'process.exit(1)')
+      await writeFile(denied, '#!/bin/sh\nexit 0\n', { mode: 0o600 })
+      const runner = join(root, 'runner.cjs')
+      buildSync({
+        stdin: {
+          contents: `
+            import { CodexAuthController, openCodexAuthSession } from './src/main/settings/codex-auth';
+            import { installManagedCodex, managedCodexBinary } from './src/main/settings/managed-codex';
+            const storageRoot = process.argv[2];
+            const controller = new CodexAuthController({
+              statusTimeoutMs: 1000,
+              openSession: mode => openCodexAuthSession({
+                mode, storageRoot, adapterPath: process.argv[3], nativePath: managedCodexBinary(storageRoot)
+              })
+            });
+            (async () => {
+              let status;
+              try { status = await controller.getStatus('isolated') }
+              catch (error) { status = { errorCode: error.code, message: error.message } }
+              const install = await installManagedCodex({
+                dataRoot: storageRoot, installId: 'after-auth', onEvent() {}, registries: []
+              });
+              console.log('AUTH_LAUNCH_RESULT', JSON.stringify({ status, installError: install.result.error }));
+            })().catch(error => { console.error(error); process.exitCode = 2 });
+          `,
+          resolveDir: resolve('.')
+        },
+        outfile: runner,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external'
+      })
+      const scenarios = [
+        { name: 'valid', path: adapter, expected: { authenticated: true } },
+        { name: 'missing', path: join(root, 'missing-adapter'), expected: { errorCode: 'ENOENT' } },
+        { name: 'exited', path: exited, expected: { message: 'ACP connection closed' } },
+        ...(process.platform === 'win32'
+          ? []
+          : [{ name: 'denied', path: denied, expected: { errorCode: 'EACCES' } }])
+      ]
+      for (const scenario of scenarios) {
+        const child = spawnSync(
+          process.execPath,
+          [runner, join(root, scenario.name), scenario.path],
+          {
+            encoding: 'utf8',
+            timeout: 5_000
+          }
+        )
+        expect(child.error, scenario.name).toBeUndefined()
+        expect(child.status, `${scenario.name}: ${child.stderr}`).toBe(0)
+        const output = child.stdout
+          .split('\n')
+          .find((line) => line.startsWith('AUTH_LAUNCH_RESULT '))
+        expect(output, scenario.name).toBeDefined()
+        const result = JSON.parse(output!.slice('AUTH_LAUNCH_RESULT '.length))
+        expect(result.status, scenario.name).toMatchObject(scenario.expected)
+        expect(result.installError, `${scenario.name}: ${child.stderr}`).toBe(
+          'no registries configured'
+        )
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('drains adapter diagnostics while completing a real authentication status exchange', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-stderr-'))
+    const adapterPath = join(root, 'adapter.cjs')
+    try {
+      await writeFile(
+        adapterPath,
+        [
+          "const { createInterface } = require('node:readline')",
+          "createInterface({ input: process.stdin }).on('line', (line) => {",
+          '  const request = JSON.parse(line)',
+          '  if (request.id === undefined) return',
+          "  const result = request.method === 'initialize'",
+          "    ? { protocolVersion: 1, agentCapabilities: {}, authMethods: [{ id: 'chat-gpt', name: 'ChatGPT' }] }",
+          "    : { type: 'chat-gpt' }",
+          "  process.stderr.write('diagnostic\\n'.repeat(256 * 1024), () => {",
+          "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n')",
+          '  })',
+          '})'
+        ].join('\n')
+      )
+      const controller = new CodexAuthController({
+        statusTimeoutMs: 2_000,
+        openSession: (mode) => openCodexAuthSession({ adapterPath, mode, storageRoot: root })
+      })
+      await expect(controller.getStatus('isolated')).resolves.toMatchObject({
+        supported: true,
+        authenticated: true
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('blocks replacement while authentication owns the runtime and releases after tree teardown', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-admission-'))
     const adapterPath = managedCodexAdapterEntry(root)

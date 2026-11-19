@@ -23,8 +23,8 @@ type WritableKeys<Value> = {
 }[keyof Value]
 
 describe('ACP provider turn adapter interface', () => {
-  it('exposes only the turn-scoped probe lifecycle', () => {
-    expectTypeOf<keyof AcpProviderTurnAdapter>().toEqualTypeOf<'begin'>()
+  it('exposes turn observation and optional terminal error detection', () => {
+    expectTypeOf<keyof AcpProviderTurnAdapter>().toEqualTypeOf<'begin' | 'getPromptError'>()
     expectTypeOf<keyof AcpProviderTurnProbe>().toEqualTypeOf<'observe' | 'finalize' | 'cancel'>()
   })
 

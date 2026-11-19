@@ -32,7 +32,7 @@ import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { renderConnectorInstructions } from '../connectors/skill-document-renderer'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
 import { BackendRoutePlanner } from './backend-route-planner'
 import {
@@ -540,6 +540,8 @@ export class AgentBackendResolver {
     ) {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
+    if (target.providerType === 'codebuddy-subscription' && target.disconnectedAt !== undefined)
+      throw new Error('Connect your CodeBuddy CLI account in Settings.')
     const plan = this.planner.planBackend({
       settings,
       frameworkId,
@@ -697,6 +699,9 @@ export class AgentBackendResolver {
         framework,
         providerId: target.providerId,
         providerName: target.providerName,
+        ...(provider.codeBuddyAuthMode === 'shared' && provider.codeBuddySite
+          ? { codeBuddySharedSite: provider.codeBuddySite }
+          : {}),
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
@@ -734,6 +739,9 @@ export class AgentBackendResolver {
           : {}),
         sessionModel,
         ...((framework.id === 'pi' ||
+          (modelRoute === 'codebuddy-subscription' &&
+            (modelSelection.kind === 'required' ||
+              (modelSelection.kind === 'configured' && modelSelection.requestedModel))) ||
           (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type))) &&
         sessionModel
           ? { sessionModelRequired: true }

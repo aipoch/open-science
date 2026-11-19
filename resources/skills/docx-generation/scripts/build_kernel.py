@@ -23,6 +23,7 @@ def prepare_docx_conversion(directory="."):
     import base64
     from pathlib import Path
     import shutil
+    import sys
     import tempfile
 
     parent = Path(directory).resolve(strict=True)
@@ -35,7 +36,10 @@ def prepare_docx_conversion(directory="."):
     except BaseException:
         shutil.rmtree(root, ignore_errors=True)
         raise
+    prefix = Path(sys.prefix)
+    pandoc = prefix / "Library/bin/pandoc.exe" if sys.platform == "win32" else prefix / "bin/pandoc"
     return {
+        "pandoc_path": str(pandoc) if pandoc.is_file() else None,
         "script_path": str(root / "scripts/convert.py"),
         "reference_path": str(root / "assets/reference.docx"),
         "workflow_directory": str(root),

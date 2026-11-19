@@ -333,6 +333,7 @@ async function generate({
   pages,
   preserveUnsupported = false,
   preserveUnmatched = false,
+  formLabels = false,
   selectedPages
 }) {
   const fontBytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url))
@@ -355,7 +356,7 @@ async function generate({
         if (/^[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]$/u.test(char)) return char
         // A source mathematical alphabet must reach native anchor matching
         // unchanged; folding it here erases its original script/font identity.
-        if (/^[\u{1D400}-\u{1D7CB}]$/u.test(char) && source.includes(char)) return char
+        if (/^[ℑℜ\u{1D400}-\u{1D7CB}]$/u.test(char) && source.includes(char)) return char
         const normalized = char.normalize('NFKC')
         return [...normalized].every((value) => face.hasGlyphForCodePoint(value.codePointAt(0)))
           ? normalized
@@ -1393,6 +1394,7 @@ async function generate({
       let sourceSize, sourcePoint, sourceColor, sourceBaseline, cos, sin
       let mixedSizes = false
       const proseColors = new Map()
+      const nativePoints = new Map()
       {
         let selected = objects.filter(
           (o) =>
@@ -2125,7 +2127,10 @@ async function generate({
               unit.source
             )
           : []
+        const expectsPlanckSymbol = unit.source.includes('ℏ') && !unit.source.includes('~')
         const matchingObjects = selected.map((native) => {
+          const fontName = nativeFontName(native)
+          const mathText = nativeMathSymbolText(native, fontName, expectsPlanckSymbol)
           // A numeric glyph name proves the reader's spelling, not the glyph's
           // meaning. Preserve the complete unit instead of repainting an alias.
           check(unchanged || !native.numericGlyphSource, 'unsupported-layout')
@@ -2141,7 +2146,7 @@ async function generate({
                     ? 'ᵀ'
                     : latinAccents.some((accent) => accent.indices.includes(native.i))
                       ? latinText.get(native.i)
-                      : nativeMathSymbolText(native, nativeFontName(native)))
+                      : mathText)
           }
 
           const accent = [...accents, ...fractions].find((candidate) =>
@@ -2155,11 +2160,9 @@ async function generate({
           check(
             unchanged ||
               accent ||
-              nativeMathAlphabet(native, nativeFontName(native)) ||
-              nativeMathSymbolText(native, nativeFontName(native)) !== native.text ||
-              !/^(?:[A-Z]{6}\+)?(?:TeX-math[a-z]*|CMSY|CMEX)(?:5|6|7|8|9|10|12)$/u.test(
-                nativeFontName(native)
-              ) ||
+              nativeMathAlphabet(native, fontName) ||
+              mathText !== native.text ||
+              !/^(?:[A-Z]{6}\+)?(?:TeX-math[a-z]*|CMSY|CMEX)(?:5|6|7|8|9|10|12)$/u.test(fontName) ||
               !/[A-Za-z0-9]/u.test(native.text),
             'unsupported-layout'
           )
@@ -2516,6 +2519,71 @@ async function generate({
             right = Math.max(...selected.map((o) => o.bounds[2])),
             bottom = Math.min(...selected.map((o) => o.bounds[1])),
             top = Math.max(...selected.map((o) => o.bounds[3])),
+            crossingSideRule = (rule) => {
+              // A side may cut through a native separator's stroke width.
+              // Return only borrowed whitespace; never reclaim native text.
+              if (
+                rule.type !== 2 ||
+                rule.bounds[2] - rule.bounds[0] > 1 ||
+                rule.bounds[1] > bottom ||
+                rule.bounds[3] < top ||
+                !(
+                  (rule.bounds[0] <= sourceRect.x && rule.bounds[2] >= sourceRect.x) ||
+                  (rule.bounds[0] <= sourceRect.x + sourceRect.width &&
+                    rule.bounds[2] >= sourceRect.x + sourceRect.width)
+                ) ||
+                p.FPDFPath_CountSegments(rule.obj) !== 2 ||
+                p.FPDFPageObj_GetLineCap(rule.obj) !== 0 ||
+                p.FPDFPageObj_GetDashCount(rule.obj) !== 0
+              )
+                return false
+              const clip = p.FPDFPageObj_GetClipPath(rule.obj)
+              if (clip && p.FPDFClipPath_CountPaths(clip) !== -1) return false
+              const at = e.alloc(24)
+              try {
+                if (
+                  !p.FPDFPageObj_GetIsActive(rule.obj, at) ||
+                  !e.m.HEAP32[at / 4] ||
+                  !p.FPDFPath_GetDrawMode(rule.obj, at, at + 4) ||
+                  e.m.HEAP32[at / 4] ||
+                  !e.m.HEAP32[at / 4 + 1] ||
+                  !p.FPDFPageObj_GetStrokeColor(rule.obj, at, at + 4, at + 8, at + 12) ||
+                  e.m.HEAPU32[at / 4 + 3] !== 255 ||
+                  !p.FPDFPageObj_GetMatrix(rule.obj, at)
+                )
+                  return false
+                const matrix = [...e.m.HEAPF32.slice(at / 4, at / 4 + 6)]
+                if (
+                  !matrix.every(Number.isFinite) ||
+                  matrix[0] <= 0 ||
+                  matrix[3] <= 0 ||
+                  matrix[1] !== 0 ||
+                  matrix[2] !== 0
+                )
+                  return false
+                const points = []
+                for (let n = 0; n < 2; n++) {
+                  const segment = p.FPDFPath_GetPathSegment(rule.obj, n)
+                  if (
+                    !segment ||
+                    p.FPDFPathSegment_GetType(segment) !== (n ? 0 : 2) ||
+                    p.FPDFPathSegment_GetClose(segment) ||
+                    !p.FPDFPathSegment_GetPoint(segment, at, at + 4)
+                  )
+                    return false
+                  const [x, y] = e.m.HEAPF32.slice(at / 4, at / 4 + 2)
+                  points.push([matrix[0] * x + matrix[4], matrix[3] * y + matrix[5]])
+                }
+                return (
+                  points.flat().every(Number.isFinite) &&
+                  points[0][0] === points[1][0] &&
+                  Math.min(points[0][1], points[1][1]) <= bottom &&
+                  Math.max(points[0][1], points[1][1]) >= top
+                )
+              } finally {
+                e.free(at)
+              }
+            },
             rules = objects.filter(
               (o) =>
                 o.type === 2 &&
@@ -2526,10 +2594,10 @@ async function generate({
                   (o.bounds[2] - o.bounds[0] <= 1 ||
                     o.bounds[0] > right + 0.02 ||
                     o.bounds[2] < left - 0.02) &&
-                  o.bounds[0] > sourceRect.x &&
-                  o.bounds[2] < sourceRect.x + sourceRect.width &&
                   o.bounds[1] <= bottom &&
-                  o.bounds[3] >= top) ||
+                  o.bounds[3] >= top &&
+                  ((o.bounds[0] > sourceRect.x && o.bounds[2] < sourceRect.x + sourceRect.width) ||
+                    crossingSideRule(o))) ||
                   // A thin rule spanning the complete native label bounds its
                   // row. Return borrowed space below it even when the new
                   // glyphs would sit on opposite sides without touching it.
@@ -2624,6 +2692,121 @@ async function generate({
                 y = points[0][1]
               if (x0 <= left && x1 >= right && (y >= top || y <= bottom))
                 rowRails.push({ left: x0, right: x1, y })
+            }
+            // Keep separate native rows when their text was grouped into
+            // one source unit. Reflow would redistribute text across the rule.
+            const next = unit.fragments[index + 1]
+            if (!unchanged && next?.pageNumber === fragment.pageNumber) {
+              const nextRect = fragmentBounds(next)
+              const point = sizes.get(selected[0].i)
+              const rowRight = Math.max(right, nextRect.x + nextRect.width)
+              const adjacentCell = (rail, low, high) =>
+                objects.some(
+                  (object) =>
+                    object.type === 1 &&
+                    object.bounds[0] > rowRight &&
+                    object.bounds[2] <= rail.right &&
+                    object.bounds[1] >= low &&
+                    object.bounds[3] <= high
+                )
+              check(
+                !(
+                  Math.abs(nextRect.x - sourceRect.x) <= 0.02 &&
+                  rowRails.some(
+                    (rail) =>
+                      rail.left <= left - point &&
+                      rail.y < sourceRect.bottom &&
+                      rail.y > nextRect.top &&
+                      sourceRect.bottom - rail.y <= point &&
+                      rail.y - nextRect.top <= point &&
+                      adjacentCell(rail, rail.y, top + point) &&
+                      adjacentCell(rail, nextRect.bottom, rail.y)
+                  )
+                ),
+                'unsupported-layout'
+              )
+            }
+            // A compact table can paint the three heading cells as one object.
+            // Two native data rows inside the same frame prove cell separation.
+            if (
+              !unchanged &&
+              unit.fragments.length === 1 &&
+              selected.length === 1 &&
+              Array.isArray(fragment.items) &&
+              fragment.items.length === 3 &&
+              fragment.items.every(
+                (item) =>
+                  typeof item?.text === 'string' && /^\p{L}{3,18}\.?$/u.test(item.text.trim())
+              ) &&
+              fragment.items.map(({ text }) => text.trim()).join(' ') === selected[0].text.trim()
+            ) {
+              const point = sizes.get(selected[0].i)
+              const frame = rowRails.some((upper) => {
+                if (
+                  !Number.isFinite(point) ||
+                  point <= 0 ||
+                  upper.y < top ||
+                  upper.y - top > point ||
+                  left - upper.left < point * 4
+                )
+                  return false
+                const rails = rowRails
+                  .filter(
+                    (rail) =>
+                      rail.left === upper.left &&
+                      rail.right === upper.right &&
+                      rail.y < upper.y &&
+                      upper.y - rail.y <= point * 6
+                  )
+                  .sort((a, b) => b.y - a.y)
+                if (rails.length !== 3 || rails[0].y > bottom) return false
+                const edges = [upper, ...rails]
+                return rails.every((rail, row) => {
+                  const ceiling = edges[row].y
+                  if (ceiling - rail.y < point || ceiling - rail.y > point * 2) return false
+                  const contents = objects
+                    .filter(
+                      (object) =>
+                        object.type === 1 &&
+                        object.text.trim() &&
+                        object.bounds[0] >= upper.left &&
+                        object.bounds[2] <= upper.right &&
+                        object.bounds[1] > rail.y &&
+                        object.bounds[3] < ceiling
+                    )
+                    .sort((a, b) => a.bounds[0] - b.bounds[0])
+                  if (row === 0) return contents.length === 1 && contents[0] === selected[0]
+                  const [key, values] = contents
+                  return (
+                    contents.length === 2 &&
+                    key.bounds[2] < left &&
+                    /\p{L}{3,}/u.test(key.text) &&
+                    (values.text.match(/\d+/gu)?.length ?? 0) >= 3 &&
+                    values.bounds[0] < left + point * 2 &&
+                    values.bounds[2] > right - point * 2 &&
+                    objects.some(
+                      (divider) =>
+                        divider.type === 2 &&
+                        p.FPDFPath_CountSegments(divider.obj) === 2 &&
+                        p.FPDFPageObj_GetLineCap(divider.obj) === 0 &&
+                        p.FPDFPageObj_GetDashCount(divider.obj) === 0 &&
+                        divider.bounds[0] > key.bounds[2] &&
+                        divider.bounds[2] < values.bounds[0] &&
+                        divider.bounds[2] - divider.bounds[0] < point * 0.25 &&
+                        divider.bounds[1] < Math.min(key.bounds[1], values.bounds[1]) &&
+                        divider.bounds[3] > Math.max(key.bounds[3], values.bounds[3]) &&
+                        divider.bounds[1] > rail.y &&
+                        divider.bounds[3] < ceiling &&
+                        p.FPDFPath_GetDrawMode(divider.obj, at, at + 4) &&
+                        !e.m.HEAP32[at / 4] &&
+                        e.m.HEAP32[at / 4 + 1] &&
+                        p.FPDFPageObj_GetStrokeColor(divider.obj, at, at + 4, at + 8, at + 12) &&
+                        e.m.HEAPU32[at / 4 + 3] === 255
+                    )
+                  )
+                })
+              })
+              check(!frame, 'unsupported-layout')
             }
             for (const upper of rowRails.filter((r) => r.y >= top)) {
               if (
@@ -3423,7 +3606,7 @@ async function generate({
           .map((o) => {
             const baseline = objectBaselines.get(o.i),
               sourceOffset = offsets.get(o.i),
-              nativeLabel = o.text.trim(),
+              nativeLabel = nativeMathSymbolText(o, nativeFontName(o)).trim(),
               spelling = unit.source.slice(sourceOffset, sourceOffset + nativeLabel.length),
               // PDFium and PDF.js can use different same-width mu spellings.
               nativeAlias =
@@ -3669,6 +3852,31 @@ async function generate({
             movable: true
           })
         }
+        // A newly recognized compound index must keep its complete exact token.
+        for (const span of resolveScientificScriptSpans(
+          unit.source,
+          unit.source,
+          markers.filter(
+            (marker) =>
+              !region.anchors.some(
+                (anchor) =>
+                  anchor.mathGroup &&
+                  marker.sourceIndices.some((index) => anchor.indices.includes(index))
+              )
+          )
+        )) {
+          const label = unit.source.slice(span.start, span.end)
+          if (!label.includes(':') && !/^\([^()]*,[^()]*\)$/u.test(label)) continue
+          check(
+            region.anchors.some(
+              (anchor) =>
+                anchor.generated &&
+                anchor.label === label &&
+                anchor.indices.length === span.sourceIndices.length &&
+                span.sourceIndices.every((index) => anchor.indices.includes(index))
+            )
+          )
+        }
         // A reconciled native script must acquire script typography or retain
         // its source paragraph; an unmatched alias must never become flat prose.
         for (const marker of markers)
@@ -3724,6 +3932,7 @@ async function generate({
             })
           }
         }
+        let privateSymbolOrderMatches
         for (const object of selected) {
           const label = object.text.trim(),
             sourceOffset = offsets.get(object.i),
@@ -3732,8 +3941,9 @@ async function generate({
             // An owned math-font run may include an ellipsis/comma with its
             // letter. Keep the complete run only with exact target identity.
             mathematicalRun =
-              /^[\u{1D400}-\u{1D7CB}\d., ()]+$/u.test(label) &&
-              /[\u{1D400}-\u{1D7CB}]/u.test(label),
+              /^[ℑℜ]$/u.test(label) ||
+              (/^[\u{1D400}-\u{1D7CB}\d., ()]+$/u.test(label) &&
+                /[\u{1D400}-\u{1D7CB}]/u.test(label)),
             loweredIndexOperator =
               /^[+−-](?:\d{1,2})?$/u.test(label) &&
               marker?.scale > 0.6 &&
@@ -3751,6 +3961,13 @@ async function generate({
               /^[\p{Sm}\p{Cc}\s]+$/u.test(label) &&
               object.bounds[2] > object.bounds[0] &&
               object.bounds[3] > object.bounds[1],
+            // Windows Symbol private-use codes keep their existing painter and
+            // encoding when the complete source object and target order agree.
+            nativePrivateSymbol =
+              /^(?:[A-Z]{6}\+)?SymbolMT$/u.test(nativeFontName(object)) &&
+              /^[\uf020-\uf0ff]+$/u.test(label) &&
+              object.bounds[2] > object.bounds[0] &&
+              object.bounds[3] > object.bounds[1],
             // Some CMSY objects paint the slash and its relation together.
             // Keep that complete native run only; a detached combining mark
             // or a reordered target is not a rendering substitute.
@@ -3765,6 +3982,7 @@ async function generate({
               mathematicalRun ||
               loweredIndexOperator ||
               nativeEncodedSymbol ||
+              nativePrivateSymbol ||
               registeredMarks.has(object.i) ||
               ((/^[\p{L}\p{Sm}\p{So}⟨⟩]$/u.test(label) ||
                 /^[\p{Sm}]\s*[A-Za-z\p{Script=Greek}]$/u.test(label)) &&
@@ -3840,9 +4058,16 @@ async function generate({
           }
           // Publisher-encoded glyphs require exact source identity. If the target
           // changes or ambiguously duplicates them, retain the verified paragraph.
+          if (nativePrivateSymbol) {
+            privateSymbolOrderMatches ??=
+              unit.source.replace(/[^\uf020-\uf0ff]/gu, '') ===
+              unit.translation.replace(/[^\uf020-\uf0ff]/gu, '')
+            check(privateSymbolOrderMatches, 'annotations')
+          }
           if (
             nativeAlphabet ||
             nativeEncodedSymbol ||
+            nativePrivateSymbol ||
             nativeNegatedRelation ||
             mathematicalRun ||
             loweredIndexOperator
@@ -3958,16 +4183,17 @@ async function generate({
               label.length > 0 &&
               !/[\p{C}]/u.test(label) &&
               !region.anchors.some((anchor) => anchor.indices.includes(o.i)) &&
-              // A generated, complete supporting-file link already replaces its
-              // literal S-number prefix. Keeping that native prefix separately
-              // would give the same source/target span two overlapping anchors.
+              // A regenerated partial link already owns the intersecting
+              // text in both versions. Copying the unchanged native run would
+              // paint that linked text twice.
               !region.anchors.some(
                 (anchor) =>
                   anchor.generated &&
                   anchor.sourceLabel &&
                   anchor.sourceIndices?.includes(o.i) &&
-                  pdfLinkLabelKey(anchor.sourceLabel)?.startsWith('supplementary-file:') &&
-                  pdfLinkLabelKey(anchor.sourceLabel) === pdfLinkLabelKey(anchor.label) &&
+                  (anchor.sourceLabel === anchor.label ||
+                    (pdfLinkLabelKey(anchor.sourceLabel)?.startsWith('supplementary-file:') &&
+                      pdfLinkLabelKey(anchor.sourceLabel) === pdfLinkLabelKey(anchor.label))) &&
                   sourceOffset < anchor.sourceOffset + anchor.sourceLabel.length &&
                   sourceOffset + label.length > anchor.sourceOffset &&
                   retainedTargetOffset < anchor.targetOffset + anchor.label.length &&
@@ -4070,16 +4296,19 @@ async function generate({
               u = Math.round(Math.cos((direction * Math.PI) / 2)),
               v = Math.round(Math.sin((direction * Math.PI) / 2)),
               verticalScale = -v * c + u * d,
-              oblique = (u * c + v * d) / verticalScale
+              oblique = (u * c + v * d) / verticalScale,
+              uniformHorizontal =
+                u === 1 && v === 0 && Math.abs(scale - verticalScale) <= scale * 0.001
             // Synthetic italics shear glyphs along an unchanged baseline. Measure
             // font height perpendicular to it; retain quarter-turn axes and reject
-            // reflections, tilted baselines and excessive shear.
+            // reflections, tilted baselines and excessive shear. A uniform horizontal
+            // font transform can include a slightly stronger synthetic italic shear.
             check(
               scale > 0 &&
                 verticalScale > 0 &&
                 Math.abs(a / scale - u) < 0.000001 &&
                 Math.abs(b / scale - v) < 0.000001 &&
-                Math.abs(oblique) <= 0.3 &&
+                Math.abs(oblique) <= (uniformHorizontal ? 0.35 : 0.3) &&
                 (cos === undefined || (cos === u && sin === v))
             )
             cos = u
@@ -4179,6 +4408,7 @@ async function generate({
             check(p.FPDFTextObj_GetFontSize(o.obj, at))
             const point = explicitPowers.has(o.i) ? bodySize : e.m.HEAPF32[at / 4] * verticalScale
             check(point > 0 && point <= 100)
+            nativePoints.set(o.i, point)
             mixedSizes ||= sourcePoint !== undefined && Math.abs(point - sourcePoint) >= 0.01
             sourcePoint = Math.min(sourcePoint ?? point, point)
             sourceSize = Math.max(8, sourcePoint)
@@ -4193,6 +4423,36 @@ async function generate({
             sourceColor = [...proseColors.values()].reduce((a, b) =>
               a.count >= b.count ? a : b
             ).color
+          }
+          // Three independent colored legend entries on a Form keep their
+          // native row/style mapping. A single translated paragraph cannot.
+          if (
+            formLabels &&
+            regions.length === 1 &&
+            unit.fragments.length === 1 &&
+            !region.anchors.length &&
+            selected.length === 3 &&
+            proseColors.size === selected.length &&
+            !mixedSizes &&
+            sourcePoint &&
+            [...proseColors.values()].every(
+              ({ color: [r, g, b] }) => Math.max(r, g, b) - Math.min(r, g, b) >= 64
+            )
+          ) {
+            const [first, second, last] = selected.toSorted(
+                (a, b) => objectBaselines.get(b.i) - objectBaselines.get(a.i)
+              ),
+              leading = objectBaselines.get(first.i) - objectBaselines.get(second.i),
+              lastLeading = objectBaselines.get(second.i) - objectBaselines.get(last.i)
+            check(
+              leading < sourcePoint ||
+                leading > sourcePoint * 1.6 ||
+                Math.abs(leading - lastLeading) >= sourcePoint * 0.03 ||
+                selected.some(
+                  (entry) => Math.abs(entry.bounds[0] - first.bounds[0]) >= sourcePoint * 0.1
+                ),
+              'unsupported-layout'
+            )
           }
           check(sourceSize !== undefined, 'annotations')
           // Headings and prose can use different sizes on ordinary text lines.
@@ -4269,6 +4529,19 @@ async function generate({
             // publisher rounding into a second overlapping line or a script.
             const proseRows = []
             const tolerance = Math.min(0.1, bodySize * 0.01)
+            const retainedScripts = region.anchors
+              .filter((anchor) => anchor.mathGroup)
+              .flatMap((anchor) =>
+                selected
+                  .filter(
+                    (object) =>
+                      anchor.indices.includes(object.i) &&
+                      sizes.get(object.i) < bodySize * 0.9 &&
+                      Math.abs(objectBaselines.get(object.i) - anchor.baseline) >
+                        sizes.get(object.i) * 0.1
+                  )
+                  .map((object) => ({ anchor, object }))
+              )
             // The metrics pass already maps proven explicit powers to their
             // body row. Their raised native baselines are not separate prose
             // rows; keep that admission policy before clustering body jitter.
@@ -4277,21 +4550,46 @@ async function generate({
                 (baseline) => Math.abs(objectBaselines.get(object.i) - baseline) < 0.01
               )
             )
-            for (const object of admittedProse.sort(
-              (a, b) => objectBaselines.get(b.i) - objectBaselines.get(a.i)
+            const positionedProse = admittedProse.map((object) => {
+              // An adjacent script operator can remain generated while its
+              // operand is retained. Only that native continuation belongs on
+              // the anchor's body row; unrelated prose keeps its own baseline.
+              const scriptOwner = retainedScripts.find(
+                ({ object: script }) =>
+                  object.i === script.i + 1 &&
+                  /^[+−-]$/u.test(object.text.trim()) &&
+                  Math.abs(sizes.get(object.i) - sizes.get(script.i)) < 0.01 &&
+                  Math.abs(objectBaselines.get(object.i) - objectBaselines.get(script.i)) <
+                    tolerance &&
+                  object.bounds[0] >= script.bounds[2] &&
+                  object.bounds[0] - script.bounds[2] < sizes.get(script.i) * 0.3
+              )
+              return {
+                object,
+                baseline: scriptOwner?.anchor.baseline ?? objectBaselines.get(object.i)
+              }
+            })
+            for (const { object, baseline } of positionedProse.sort(
+              (a, b) => b.baseline - a.baseline
             )) {
-              const baseline = objectBaselines.get(object.i),
-                previous = proseRows.at(-1)
+              const previous = proseRows.at(-1)
               if (previous && previous.top - baseline <= tolerance) {
                 previous.bottom = baseline
                 previous.objects.push(object)
               } else proseRows.push({ top: baseline, bottom: baseline, objects: [object] })
             }
+            // Source row spacing uses native type size; the target fit starts at least at 8 pt.
             const baselinesFit = proseRows.every(
               (row, i) =>
                 !i ||
                 (proseRows[i - 1].bottom - row.top >=
-                  (mixedSizes ? bodySize * 0.8 : sourceSize) - 0.01 &&
+                  (mixedSizes
+                    ? Math.max(
+                        ...proseRows[i - 1].objects.map((object) => nativePoints.get(object.i)),
+                        ...row.objects.map((object) => nativePoints.get(object.i))
+                      ) * 0.8
+                    : sourcePoint) -
+                    0.01 &&
                   Math.min(
                     ...proseRows[i - 1].objects.map((o) =>
                       Math.min(
@@ -4309,12 +4607,7 @@ async function generate({
                       )
                     ))
             )
-            // A linked formula may leave a smaller native script on its own
-            // baseline. Final glyph collision and annotation bounds still prove
-            // the replacement; do not discard the surrounding prose solely for
-            // this intermediate baseline envelope.
-            if (!baselinesFit && !/(?:[=√∑βθ]|\u0302)/u.test(unit.source))
-              check(false, 'annotations')
+            check(baselinesFit, 'annotations')
           }
           // A full-size URL on its own native row is ordinary text. Since
           // anchor objects are excluded from prose baselines, their line spacing
@@ -4474,6 +4767,47 @@ async function generate({
           anchor.local.width += anchor.local.x - anchor.origin
           anchor.local.x = anchor.origin
         }
+        // The ink of a native terminal operator ends before its advance.
+        // The reader validates that advance, so reserve it during line fitting.
+        if (
+          cos === 1 &&
+          sin === 0 &&
+          !anchor.generated &&
+          !anchor.annotation &&
+          anchor.label === '×' &&
+          anchor.indices.length === 1 &&
+          unit.source.slice(anchor.sourceOffset).trimEnd() === '×' &&
+          unit.translation.slice(anchor.targetOffset).trimEnd() === '×'
+        ) {
+          const snapshot = planningPage(fragment.pageNumber),
+            object = snapshot.objects[anchor.indices[0]]
+          if (object?.text?.trim() === '×') {
+            const text = p.FPDFText_LoadPage(snapshot.page),
+              at = e.alloc(16)
+            try {
+              const matches = []
+              for (let i = 0; text && i < p.FPDFText_CountChars(text); i++)
+                if (
+                  p.FPDFText_GetTextObject(text, i) === object.obj &&
+                  p.FPDFText_GetUnicode(text, i) === 0xd7 &&
+                  p.FPDFText_GetLooseCharBox(text, i, at)
+                ) {
+                  const [left, , right] = e.m.HEAPF32.slice(at / 4, at / 4 + 4)
+                  if (
+                    Math.abs(left - anchor.origin) < 0.01 &&
+                    right >= object.bounds[2] &&
+                    right <= layoutRight + 0.01
+                  )
+                    matches.push(right)
+                }
+              if (matches.length === 1)
+                anchor.local.width = Math.max(anchor.local.width, matches[0] - anchor.local.x)
+            } finally {
+              if (text) p.FPDFText_ClosePage(text)
+              e.free(at)
+            }
+          }
+        }
         // A complete URI on its own proven native row can have a click box
         // wider than its text region. Budget its original glyph advance here;
         // keep the click padding intact for linkFits and final paint preflight.
@@ -4549,6 +4883,7 @@ async function generate({
         cos,
         sin,
         sourceSize,
+        nativeProseSize: mixedSizes ? undefined : sourcePoint,
         minimumPoint: Math.min(8, sourcePoint),
         // Keep dense reference lists close to their source leading without
         // reducing font size or allowing adjacent glyphs to overlap.
@@ -5037,6 +5372,56 @@ async function generate({
       if (!separated) overlappingCandidate = true
       return separated
     }
+    const fitPlainLines = (region, point, start, limit, lines) => {
+      const rect = region.local
+      while (start < limit) {
+        let stop = start,
+          ink
+        for (const end of ends) {
+          if (end <= start) continue
+          if (end > limit) break
+          const next = measure(unit.translation.slice(start, end), point)
+          if (next.width > rect.width) break
+          stop = end
+          ink = next
+        }
+        if (stop === start) break
+        let baseline = lines.length
+          ? lines.at(-1).y - point * region.lineHeight
+          : Math.min(region.sourceBaseline, rect.top - ink.top)
+        // CJK descenders can need more room than the source's Latin baseline.
+        // Use spare space above this block without enlarging its owned rectangle.
+        const lift = Math.max(0, rect.bottom - baseline - ink.bottom)
+        if (lift) {
+          if (
+            baseline + lift + ink.top > rect.top ||
+            lines.some((line) => line.y + lift + measure(line.text, point).top > rect.top)
+          )
+            break
+          for (const line of lines) line.y += lift
+          baseline += lift
+        }
+        lines.push({
+          text: unit.translation.slice(start, stop),
+          x: rect.x - ink.left,
+          y: baseline
+        })
+        start = stop
+      }
+      if (
+        region.compactLeading &&
+        lines.some(
+          (line, index) =>
+            index &&
+            lines[index - 1].y +
+              measure(lines[index - 1].text, point).bottom -
+              (line.y + measure(line.text, point).top) <
+              0.01
+        )
+      )
+        return undefined
+      return start
+    }
     let fitted,
       overlappingCandidate = false
     const compactLeading =
@@ -5045,7 +5430,11 @@ async function generate({
       ) && regions.every((region) => !region.anchors.length && region.baselines.length > 1)
     // Normal leading remains the first choice. Dense native cells can fit CJK
     // ink at the same readable font size with a smaller, still positive row gap.
-    for (const compact of compactLeading ? [false, true] : [false]) {
+    const leadingOptions = compactLeading
+      ? [undefined, 1.1, ...(regions.length === 1 ? [1.15] : [])]
+      : [undefined]
+    for (const leading of leadingOptions) {
+      const compact = leading !== undefined
       if (fitted) break
       for (
         let point = Math.min(...regions.map((r) => r.sourceSize));
@@ -5057,7 +5446,9 @@ async function generate({
         let start = 0
         const flowed = []
         for (const original of regions) {
-          const region = compact ? { ...original, lineHeight: 1.1, compactLeading: true } : original
+          const region = compact
+            ? { ...original, lineHeight: leading, compactLeading: true }
+            : original
           const rect = region.local,
             lines = []
           if (region.anchors.length) {
@@ -5098,7 +5489,10 @@ async function generate({
                 for (const o of sourceStarts) {
                   let area = areas.at(-1)
                   if (!area || Math.abs(area.y - o.y) >= 0.01) {
-                    check(!area || area.y - o.y >= region.sourceSize - 0.01, 'annotations')
+                    check(
+                      !area || area.y - o.y >= (region.nativeProseSize ?? region.sourceSize) - 0.01,
+                      'annotations'
+                    )
                     area = {
                       x: o.x,
                       lastX: o.x,
@@ -5194,51 +5588,9 @@ async function generate({
             flowed.push({ ...region, point, lines })
             continue
           }
-          while (start < unit.translation.length) {
-            let stop = start,
-              ink
-            for (const end of ends) {
-              if (end <= start) continue
-              const next = measure(unit.translation.slice(start, end), point)
-              if (next.width > rect.width) break
-              stop = end
-              ink = next
-            }
-            if (stop === start) break
-            let baseline = lines.length
-              ? lines.at(-1).y - point * region.lineHeight
-              : Math.min(region.sourceBaseline, rect.top - ink.top)
-            // CJK descenders can need more room than the source's Latin baseline.
-            // Use spare space above this block without enlarging its owned rectangle.
-            const lift = Math.max(0, rect.bottom - baseline - ink.bottom)
-            if (lift) {
-              if (
-                baseline + lift + ink.top > rect.top ||
-                lines.some((line) => line.y + lift + measure(line.text, point).top > rect.top)
-              )
-                break
-              for (const line of lines) line.y += lift
-              baseline += lift
-            }
-            lines.push({
-              text: unit.translation.slice(start, stop),
-              x: rect.x - ink.left,
-              y: baseline
-            })
-            start = stop
-          }
-          if (
-            compact &&
-            lines.some(
-              (line, index) =>
-                index &&
-                lines[index - 1].y +
-                  measure(lines[index - 1].text, point).bottom -
-                  (line.y + measure(line.text, point).top) <
-                  0.01
-            )
-          )
-            break
+          const stop = fitPlainLines(region, point, start, unit.translation.length, lines)
+          if (stop === undefined) break
+          start = stop
           flowed.push({ ...region, point, lines })
         }
         if (
@@ -6035,6 +6387,65 @@ async function generate({
           : 'multi-region'
         : 'overflow'
     )
+    // A dense translation may fit entirely in the first column. Where a
+    // proven clause break fits both original regions, keep the return visible.
+    if (fitted.length === 2 && unit.fragments.length === 2) {
+      const [head, tail] = fitted,
+        last = head.lines.at(-1)
+      if (
+        !tail.lines.length &&
+        last?.text &&
+        head.fragment.pageNumber === tail.fragment.pageNumber &&
+        head.rect.x + head.rect.width + head.point <= tail.rect.x &&
+        tail.rect.bottom > head.rect.top &&
+        [head, tail].every(
+          (region) =>
+            region.sourceInk && !region.anchors.length && region.cos === 1 && region.sin === 0
+        ) &&
+        head.lines.every(
+          (line) =>
+            line.text &&
+            !line.anchor &&
+            !line.indices &&
+            !line.rect &&
+            line.point === undefined &&
+            line.horizontalScale === undefined
+        )
+      ) {
+        const end = unit.translation.length,
+          lastStart = end - last.text.length,
+          split =
+            (end * head.matchingSource.length) /
+            (head.matchingSource.length + tail.matchingSource.length),
+          allowed = new Set(ends),
+          boundaries = [...unit.translation.matchAll(/[，。；！？]|[;,!?](?=\s)/gu)]
+            .map((mark) => mark.index + mark[0].length)
+            .filter((at) => at < end && allowed.has(at))
+            .sort((a, b) => Math.abs(a - split) - Math.abs(b - split))
+            .filter((at, index) => index < 12 || at > lastStart)
+        for (const at of boundaries) {
+          const headLines = [],
+            tailLines = []
+          if (
+            unit.translation.slice(at).trim().length < 4 ||
+            fitPlainLines(head, head.point, 0, at, headLines) !== at ||
+            fitPlainLines(tail, tail.point, at, end, tailLines) !== end ||
+            !tailLines.some(
+              (line) => measure(line.text, tail.point).width >= tail.local.width * 0.2
+            )
+          )
+            continue
+          const candidate = [
+            { ...head, lines: headLines },
+            { ...tail, lines: tailLines }
+          ]
+          if (regionsFit(candidate)) {
+            fitted = candidate
+            break
+          }
+        }
+      }
+    }
     // Repair only a dictionary word split across adjacent physical prose regions.
     for (let index = 1; index < fitted.length; index++) {
       const head = fitted[index - 1],
@@ -6954,17 +7365,18 @@ try {
     timings.generationMs = performance.now() - generationStarted
     const labelsStarted = performance.now()
     const formFailures = new Map()
-    let data = workerData.preserveUnsupported
-      ? await translateFormLabels(
-          generated,
-          units,
-          workerData.pages,
-          (input) => generate({ ...input, preserveUnmatched: workerData.preserveUnmatched }),
-          (unit, localUnit) => {
-            formFailures.set(unit, formFailures.get(unit) ?? retainedUnitObjects.get(localUnit))
-          }
-        )
-      : generated
+    let data =
+      workerData.preserveUnsupported && !workerData.skipFormLabels
+        ? await translateFormLabels(
+            generated,
+            units,
+            workerData.pages,
+            (input) => generate({ ...input, preserveUnmatched: workerData.preserveUnmatched }),
+            (unit, localUnit) => {
+              formFailures.set(unit, formFailures.get(unit) ?? retainedUnitObjects.get(localUnit))
+            }
+          )
+        : generated
     timings.formLabelsMs = performance.now() - labelsStarted
     if (workerData.incremental) {
       const mergeStarted = performance.now()

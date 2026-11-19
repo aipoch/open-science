@@ -27,9 +27,7 @@ test('records first renderer readiness before the fixture reload', async ({ app 
   }
 })
 
-test('loads the Session catalog once without hydrating idle history on restart', async ({
-  app
-}, testInfo) => {
+test('keeps idle Session history out of startup detail recovery', async ({ app }, testInfo) => {
   const page = await app.completeOnboarding()
   const cwd = await app.createTestDirectory('startup-history')
   const count = Number(process.env.OPEN_SCIENCE_STARTUP_HISTORY_COUNT ?? 80)
@@ -88,9 +86,11 @@ test('loads the Session catalog once without hydrating idle history on restart',
     expect(compositions).toHaveLength(1)
     const run = records.filter((record) => record.runId === compositions[0].runId)
     const catalogs = run.filter((record) => record.msg === 'startup Session catalog hydrated')
-    expect(catalogs).toHaveLength(1)
-    expect(catalogs[0].data.summaryCount).toBeGreaterThanOrEqual(count)
-    expect(catalogs[0].data).toMatchObject({ rebuiltCatalog: false, hydratedCount: 0 })
+    expect(catalogs).toHaveLength(0)
+    const summaryCount = await app.page.evaluate(
+      async () => (await window.api.sessions.list()).sessions.length
+    )
+    expect(summaryCount).toBeGreaterThanOrEqual(count)
     await testInfo.attach(`startup-history-${mode}-phases`, {
       body: JSON.stringify(
         run.filter(

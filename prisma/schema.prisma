@@ -223,6 +223,37 @@ model SessionProjectionState {
   completedAt       DateTime
 }
 
+// Rebuildable display history. File identity invalidates this index after external changes.
+// No Session FK: lazy indexing also works before the summary projection is repaired.
+model SessionHistoryIndex {
+  sessionId         String               @id
+  projectId         String
+  revision          BigInt
+  sourceFingerprint String
+  scopeKey          String
+  headerJson        String
+  totalItems        Int
+  items             SessionHistoryItem[]
+
+  @@index([projectId])
+}
+
+// Messages and complete tools share one chronological ordinal. Groups/artifact references have
+// no ordinal and are fetched only when the requested page refers to them.
+model SessionHistoryItem {
+  sessionId       String
+  kind            String
+  itemId          String
+  ordinal         Int?
+  promptMessageId String?
+  groupId         String?
+  payloadJson     String
+  history         SessionHistoryIndex @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  @@id([sessionId, kind, itemId])
+  @@index([sessionId, ordinal])
+}
+
 // Durable cross-store write intent. Deliberately has no foreign key: it must survive a missing or
 // deleted projection row long enough to reconcile that Session from its authoritative JSON file.
 model PendingSessionReconciliation {

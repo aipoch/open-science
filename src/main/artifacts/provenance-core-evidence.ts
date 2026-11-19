@@ -115,8 +115,14 @@ const validateArtifactCoreEvidence = (
     evidence.conversation.root_frame_id !== version.rootFrameId ||
     evidence.conversation.agent_frame_id !== version.agentFrameId ||
     evidence.conversation.message_branch_id !== version.messageBranchId ||
-    evidence.conversation.runtime_segment_id !== version.runtimeSegmentId ||
-    evidence.conversation.prompt_message_id !== version.promptMessageId ||
+    (evidence.conversation.runtime_segment_id ?? null) !== version.runtimeSegmentId ||
+    (evidence.conversation.prompt_message_id ?? null) !== version.promptMessageId ||
+    (evidence.image_task_id !== undefined &&
+      (evidence.image_task_id !== version.artifactRunId ||
+        version.promptMessageId !== null ||
+        version.runtimeSegmentId !== null ||
+        !connectorProducer ||
+        producer.connector_id !== 'image-model')) ||
     evidence.is_user_upload !== false ||
     (evidence.agent_name !== undefined && typeof evidence.agent_name !== 'string') ||
     !producerValid ||

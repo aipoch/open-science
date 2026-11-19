@@ -1,4 +1,11 @@
 import type {
+  ImageTask,
+  ImageTaskStart,
+  ImageTaskList,
+  ImageTaskIdentity,
+  ImageTaskStartResult
+} from '../image-task'
+import type {
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
@@ -6,7 +13,8 @@ import type {
 } from '../research-video-presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
@@ -152,6 +160,22 @@ export const pptxDraftContracts = {
 } as const
 
 export const previewDeleteContracts = {
+  'imageTasks.start': callable<(request: ImageTaskStart) => Promise<ImageTaskStartResult>>()(
+    'preview-resources',
+    ['image-tasks:start']
+  ),
+  'imageTasks.get': callable<(request: ImageTaskIdentity) => Promise<ImageTask | undefined>>()(
+    'preview-resources',
+    ['image-tasks:get']
+  ),
+  'imageTasks.list': callable<(request: ImageTaskList) => Promise<ImageTask[]>>()(
+    'preview-resources',
+    ['image-tasks:list']
+  ),
+  'imageTasks.cancel': callable<(request: ImageTaskIdentity) => Promise<void>>()(
+    'preview-resources',
+    ['image-tasks:cancel']
+  ),
   'preview.delete': callable<(request: DeletePreviewStateRequest) => Promise<void>>()('preview', [
     'preview:delete'
   ]),
@@ -172,7 +196,10 @@ export const previewDeleteContracts = {
     (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
   >()('preview-resources', ['preview-resources:read-range']),
   'previewResources.exportResearchVideo': callable<
-    (request: { resourceId: string }) => Promise<ResearchVideoExportResult>
+    (request: {
+      resourceId: string
+      resolution?: ResearchVideoResolution
+    }) => Promise<ResearchVideoExportResult>
   >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
   'researchVideo.start': callable<
     (request: ResearchVideoStartRequest) => Promise<ResearchVideoPresentationStatus>

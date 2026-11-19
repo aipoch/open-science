@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import {
   appendFile,
   chmod,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -21,7 +22,9 @@ import {
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { macAcceptance } from './macos-acceptance.mjs'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
+import { fencePrompt, retryFencePrompt, exerciseKernelFence } from './kernel-fence.mjs'
 
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
@@ -103,6 +106,7 @@ const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fen
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.'
+const OFFICIAL_SCIENCE_UI_STREAM_PROMPT = 'Run the official science UI storage stream.'
 const MARKDOWN_PARSER_PROMPT = 'Run the native Markdown parser journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
@@ -209,12 +213,85 @@ const holdFirstSessionCreateWhenRequested = async (sessionId) => {
 }
 
 const suspendSessionWrites = async () => {
-  const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
+  const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+  if (
+    !storageRoot ||
+    storageRoot !== process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT ||
+    !storageRoot.includes('open-science-electron-e2e-')
+  )
+    throw new Error('Session write faults require isolated E2E storage.')
+  const sessionsRoot = join(storageRoot, 'sessions')
+  for (const path of [storageRoot, sessionsRoot]) {
+    const stat = await lstat(path)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('Session write faults require real E2E storage directories.')
+  }
   const projects = await readdir(sessionsRoot, { withFileTypes: true })
-  const directories = projects
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(sessionsRoot, entry.name))
-  await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
+  const directories = []
+  const files = []
+  for (const project of projects) {
+    if (project.isSymbolicLink()) throw new Error('Session write faults cannot follow symlinks.')
+    if (!project.isDirectory()) continue
+    const directory = join(sessionsRoot, project.name)
+    const stat = await lstat(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('Session write faults cannot follow symlinks.')
+    directories.push({ path: directory, mode: stat.mode & 0o7777, dev: stat.dev, ino: stat.ino })
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error('Session write faults cannot follow symlinks.')
+      if (!entry.isFile()) continue
+      const path = join(directory, entry.name)
+      const stat = await lstat(path)
+      if (!stat.isFile() || stat.isSymbolicLink())
+        throw new Error('Session write faults require regular Session files.')
+      files.push({ path, mode: stat.mode & 0o7777, dev: stat.dev, ino: stat.ino })
+    }
+  }
+  const changed = []
+  let restored = false
+  const restore = async () => {
+    if (restored) return
+    const errors = []
+    for (const original of [...changed].reverse()) {
+      try {
+        const current = await lstat(original.path)
+        // Never apply an old file's permissions to a replacement or a symlink target.
+        if (
+          !current.isSymbolicLink() &&
+          current.dev === original.dev &&
+          current.ino === original.ino
+        )
+          await chmod(original.path, original.mode)
+      } catch (error) {
+        if (error.code !== 'ENOENT') errors.push(error)
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, 'Failed to restore E2E Session modes.')
+    restored = true
+  }
+  try {
+    // Directory permissions block replacement/new generations. Existing JSONL files must also
+    // lose their write bits, because append does not require a writable parent directory.
+    for (const target of [...directories, ...files]) {
+      await chmod(target.path, target.mode & ~0o222)
+      changed.push(target)
+    }
+  } catch (error) {
+    try {
+      await restore()
+    } catch (restoreError) {
+      throw new AggregateError([error, restoreError], 'E2E Session write fault setup failed.')
+    }
+    throw error
+  }
+  return restore
+}
+
+// A fixture gate occupies one line. The provider may receive more context after the user text.
+const releaseGateFromPrompt = (prompt, marker) => {
+  const start = prompt.indexOf(marker)
+  if (start < 0) throw new Error(`Missing fixture gate: ${marker.trim()}`)
+  return JSON.parse(prompt.slice(start + marker.length).split(/\r?\n/u, 1)[0])
 }
 
 const stringEnvironment = (overrides = []) => {
@@ -841,6 +918,47 @@ const inlineThinkingModelOptions = () => {
   ]
 }
 
+// Only the provider is deterministic; the MCP bridge, runtimes, monitor and cleanup are real.
+const verifyComputeMonitor = async (sessionId, feedback = false) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    if (feedback) {
+      const response = await client.callTool({ name: 'notebook_state', arguments: {} })
+      const text = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n')
+      if (!text.includes('Use smaller batches') || !text.includes('"status":"stopped"'))
+        throw new Error(`Missing settled user stop feedback: ${text}`)
+      return 'Compute stop feedback received: Use smaller batches; stopped.'
+    }
+    const call = async (name, args = {}) =>
+      toolResult(
+        name,
+        await client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 })
+      )
+    const listed = await call('list_notebook_runtimes')
+    for (const language of ['python', 'r']) {
+      const runtime = listed.runtimes.find((row) => row.language === language && row.runnable)
+      if (!runtime) continue
+      await call('notebook_bind_runtime', { language, runtimeId: runtime.runtimeId })
+      const result = await call('notebook_execute', {
+        language,
+        code:
+          language === 'r'
+            ? '# Compute monitor preview\n'.repeat(40) +
+              'monitor_values <- c(19, 23); print(sum(monitor_values))'
+            : 'monitor_values = [19, 23]\nprint(sum(monitor_values))'
+      })
+      if (result.status !== 'completed' || !result.stdout?.includes('42'))
+        throw new Error(`Compute ${language} failed: ${JSON.stringify(result)}`)
+    }
+    await call('repl_execute', {
+      code: "var monitorValues = [19, 23]; console.log('monitor REPL', monitorValues)"
+    })
+    await call('bash_execute', { command: "printf 'monitor shell\\n'" })
+    return 'Compute kernels ready.'
+  })
+
 const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
@@ -1402,7 +1520,9 @@ const createLongFilenameArtifacts = async (sessionId) => {
       stem + '.md',
       stem + '.docx',
       '研究'.repeat(30) + '.md',
-      'a'.repeat(252) + '.md'
+      'a'.repeat(252) + '.md',
+      'demo_chart.md',
+      'study_analysis_results.docx'
     ]) {
       const word = filename.endsWith('.docx')
       const stored = toolResult(
@@ -1654,6 +1774,31 @@ if (process.argv.includes('--version')) {
             ? rawPrompt.slice(controlStart)
             : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      // Keep real imported history in the request, but route this opt-in performance turn before
+      // any historical text can match another fixture. This branch never executes a tool.
+      if (rawPrompt.includes(OFFICIAL_SCIENCE_UI_STREAM_PROMPT)) {
+        const messageId = `e2e-official-ui-${fixtureInstanceId}${nextMessageId++}`
+        for (let chunk = 0; chunk < 64; chunk += 1) {
+          const prefix =
+            chunk === 0
+              ? 'Official science UI stream begins.\n\n'
+              : `### Observation ${chunk + 1}\n\n`
+          const suffix = chunk === 63 ? '\n\nOfficial science UI stream complete.\n' : '\n\n'
+          const sentence = 'The recorded analysis remains available while this response is saved. '
+          const text =
+            prefix + sentence.repeat(10).slice(0, 512 - prefix.length - suffix.length) + suffix
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId,
+              content: { type: 'text', text }
+            }
+          })
+          await delay(250)
+        }
+        return { stopReason: 'end_turn' }
+      }
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         await context.client.notify(acp.methods.client.session.update, {
@@ -2676,7 +2821,7 @@ if (process.argv.includes('--version')) {
             })
             await delay(50)
           }
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           reply = 'Native Markdown parser journey complete.'
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
           const stressMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
@@ -2750,7 +2895,7 @@ if (process.argv.includes('--version')) {
           await streamSegment(1, 12)
           // Let scroll-intent tests release the remaining stream after real reader input.
           if (prompt.includes('Release file: '))
-            await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+            await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -2791,7 +2936,7 @@ if (process.argv.includes('--version')) {
             await delay(50)
           }
           // Hold only the fake stream until the test has queued the follow-up through the UI.
-          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const releaseFile = releaseGateFromPrompt(prompt, 'Release file: ')
           await waitForReleaseFile(releaseFile)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
@@ -2842,6 +2987,8 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = 'Compaction preview complete.'
+        } else if (prompt.includes('MACOS_ACCEPTANCE_REQUEST:')) {
+          reply = await macAcceptance(context.params.sessionId, prompt, withMcpClient, toolResult)
         } else if (prompt.includes('Verify Runtime approval ')) {
           reply = await verifyRuntimeApproval(context, prompt)
         } else if (prompt.includes('Verify risky code Home wait status.')) {
@@ -2988,8 +3135,56 @@ if (process.argv.includes('--version')) {
               return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
             }
           )
+        } else if (
+          prompt.includes(fencePrompt) ||
+          prompt.includes(retryFencePrompt) ||
+          (() => {
+            const normalized = prompt.replace(/\s+/gu, '')
+            return (
+              normalized.includes('inspect_packages') &&
+              normalized.includes('reportlab') &&
+              normalized.includes('PyMuPDF')
+            )
+          })()
+        ) {
+          const normalized = prompt.replace(/\s+/gu, '')
+          const retry =
+            prompt.includes(retryFencePrompt) ||
+            (!normalized.includes('manage_packages') && !normalized.includes('manage_environments'))
+          reply = await withMcpClient(context.params.sessionId, 'open-science-notebook', (client) =>
+            exerciseKernelFence(client, retry)
+          )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
+        } else if (prompt.includes('Start busy Compute kernel.')) {
+          reply = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) => {
+              const response = await client.callTool(
+                {
+                  name: 'bash_execute',
+                  arguments: { command: "printf 'busy monitor kernel\\n'; sleep 120" }
+                },
+                undefined,
+                { timeout: 150_000 }
+              )
+              const text = response.content
+                .filter((block) => block.type === 'text')
+                .map((block) => block.text)
+                .join('\n')
+              if (
+                !text.includes('Use smaller batches') ||
+                !text.includes('User manually requested kernel termination.')
+              )
+                throw new Error(`Missing in-flight stop feedback: ${text}`)
+              return 'Compute running stop feedback received.'
+            }
+          )
+        } else if (prompt.includes('Start Compute monitor kernels.')) {
+          reply = await verifyComputeMonitor(context.params.sessionId)
+        } else if (prompt.includes('Read Compute stop feedback.')) {
+          reply = await verifyComputeMonitor(context.params.sessionId, true)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {
@@ -3100,7 +3295,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT)) {
           reply = await runArtifactVersionInputDelegation(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_BOUNDED_COLLECT_PROMPT)) {
-          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const releaseFile = releaseGateFromPrompt(prompt, 'Release file: ')
           const slowTask = `${DELEGATED_BOUNDED_SLOW_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`
           const dispatched = controlResultValue(
             await executeControlCode(
@@ -3146,7 +3341,7 @@ if (process.argv.includes('--version')) {
           }
           reply = 'Production bounded collect journey completed.'
         } else if (prompt.includes(DELEGATION_SCROLL_INTENT_PROMPT)) {
-          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const releaseFiles = releaseGateFromPrompt(prompt, 'Release files: ')
           await runProductionDelegationRequest(
             context.params.sessionId,
             {
@@ -3280,7 +3475,7 @@ if (process.argv.includes('--version')) {
               content: { type: 'text', text: 'Two upward lanes are starting.' }
             }
           })
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           reply = 'Reliable fairness source turn completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_BATCH_PROMPT)) {
           const delegated = controlResultValue(
@@ -3469,10 +3664,10 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_FAIRNESS_USER_PROMPT)) {
           reply = 'Concurrent real user prompt completed.'
         } else if (prompt.includes(DELEGATED_BOUNDED_SLOW_TASK)) {
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '), 120_000)
           reply = 'Delayed bounded child completed.'
         } else if (prompt.includes(DELEGATED_SCROLL_INTENT_TASK)) {
-          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const releaseFiles = releaseGateFromPrompt(prompt, 'Release files: ')
           const messageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           const emit = async (text) =>
             context.client.notify(acp.methods.client.session.update, {

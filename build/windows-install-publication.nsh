@@ -13,7 +13,6 @@ Var publicationDirectory
 Var publicationState
 Var publicationResult
 Var publicationOutput
-Var publicationPowerShell
 Var publicationPhase
 Var publicationSource
 Var publicationReport
@@ -25,19 +24,14 @@ Var publicationFailurePrompted
 Var publicationMessage
 
 !macro runInstallPublication ACTION
-  StrCpy $publicationPowerShell "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
-  # NSIS is 32-bit: Sysnative avoids WOW64 redirection on native AMD64 Windows.
-  # Keep the existing host on other architectures or when the alias is unavailable.
-  ${If} ${IsNativeAMD64}
-    IfFileExists "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" 0 +2
-      StrCpy $publicationPowerShell "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
-  ${EndIf}
+  # The native helper replaces the per-phase powershell.exe launch. It writes the staging
+  # path and status lines as UTF-16LE, which nsExec::ExecToStack returns directly.
   !if "${ACTION}" == "cleanup"
     !define PUBLICATION_ACTION_REPORT "$publicationCleanupReport"
   !else
     !define PUBLICATION_ACTION_REPORT "$publicationReport"
   !endif
-  nsExec::ExecToStack /TIMEOUT=120000 '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-publication.ps1" -Action ${ACTION} -InstallPath "$INSTDIR" -StatePath "$publicationState" -ReportPath "${PUBLICATION_ACTION_REPORT}"'
+  nsExec::ExecToStack /TIMEOUT=120000 '"$PLUGINSDIR\windows-install-helper.exe" ${ACTION} --install-path "$INSTDIR" --state "$publicationState" --report "${PUBLICATION_ACTION_REPORT}"'
   !undef PUBLICATION_ACTION_REPORT
   Pop $publicationResult
   Pop $publicationOutput
@@ -81,7 +75,7 @@ Function recordInstallPublicationFailure
   IfErrors +3
     FileWriteUTF16LE $0 "$publicationOutput"
     FileClose $0
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action record -ReportPath "$publicationReport" -Phase "$publicationPhase" -ErrorSource "$publicationSource" -ExitCode "$publicationResult" -OutputPath "$PLUGINSDIR\publication-output.txt"'
+  nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" diagnostics --action record --report-path "$publicationReport" --phase "$publicationPhase" --error-source "$publicationSource" --exit-code "$publicationResult" --output-path "$PLUGINSDIR\publication-output.txt"'
   Pop $0
   Pop $0
   Pop $0
@@ -91,7 +85,7 @@ Function describeInstallPublicationFailure
   Push $0
   StrCpy $installDiagnosticMessagePath "$PLUGINSDIR\publication-notice.txt"
   Delete "$installDiagnosticMessagePath"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action finalize -ReportPath "$publicationReport" -CleanupReportPath "$publicationCleanupReport" -CleanupExitCode "$publicationCleanupResult" -CleanupOutputPath "$PLUGINSDIR\publication-cleanup-output.txt" -ReportsDirectory "$PLUGINSDIR" -InstallPath "$INSTDIR" -Phase "$publicationPhase" -ExitCode "$publicationResult" -AppVersion "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" -ProductName "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" -Language $LANGUAGE -LogDirectory "$installDiagnosticDirectory" -MessagePath "$installDiagnosticMessagePath"'
+  nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" diagnostics --action finalize --report-path "$publicationReport" --cleanup-report-path "$publicationCleanupReport" --cleanup-exit-code "$publicationCleanupResult" --cleanup-output-path "$PLUGINSDIR\publication-cleanup-output.txt" --reports-directory "$PLUGINSDIR" --install-path "$INSTDIR" --phase "$publicationPhase" --exit-code "$publicationResult" --app-version "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" --product-name "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" --language $LANGUAGE --log-directory "$installDiagnosticDirectory" --message-path "$installDiagnosticMessagePath"'
   Pop $0
   Pop $publicationMessage
   Call readInstallDiagnosticMessage
@@ -114,8 +108,6 @@ Function showInstallPublicationFailure
 FunctionEnd
 
 !macro customExtractAppPackage FILE
-  File /oname=$PLUGINSDIR\windows-install-publication.ps1 "${BUILD_RESOURCES_DIR}\windows-install-publication.ps1"
-  File /oname=$PLUGINSDIR\windows-install-diagnostics.ps1 "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.ps1"
   StrCpy $publicationState "$PLUGINSDIR\publication-state.json"
   StrCpy $publicationReport "$PLUGINSDIR\publication-failure.json"
   StrCpy $publicationCleanupReport "$PLUGINSDIR\publication-cleanup.json"
@@ -129,18 +121,24 @@ FunctionEnd
   StrCpy $publicationSource "publication-helper"
   # Keep the current directory outside staging so failed extraction cannot block cleanup.
   SetOutPath "$INSTDIR"
+  # Stage the helper before architecture checks so unsupported-host failures can still record
+  # and finalize diagnostics before jumping to publication_failed.
+  !ifdef APP_64
+    File /oname=$PLUGINSDIR\windows-install-helper.exe "${PROJECT_DIR}\out\windows-installer\x64\windows-install-helper.exe"
+  !else ifdef APP_ARM64
+    File /oname=$PLUGINSDIR\windows-install-helper.exe "${PROJECT_DIR}\out\windows-installer\arm64\windows-install-helper.exe"
+  !else ifdef APP_32
+    File /oname=$PLUGINSDIR\windows-install-helper.exe "${PROJECT_DIR}\out\windows-installer\ia32\windows-install-helper.exe"
+  !endif
   !ifdef APP_ARM64
     ${If} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\arm64\7za.exe"
-      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\arm64\windows-install-publication.dll"
     ${Else}
   !endif
   !ifdef APP_64
     ${If} ${RunningX64}
     ${OrIf} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
-      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
-      File /oname=$PLUGINSDIR\windows-extract-payload.ps1 "${BUILD_RESOURCES_DIR}\windows-extract-payload.ps1"
       File /oname=$PLUGINSDIR\all-files.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-files.txt"
       File /oname=$PLUGINSDIR\all-directories.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-directories.txt"
       File /oname=$PLUGINSDIR\files-2-0.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-0.txt"
@@ -149,7 +147,6 @@ FunctionEnd
   !endif
   !ifdef APP_32
     File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\ia32\7za.exe"
-      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\ia32\windows-install-publication.dll"
   !else
     StrCpy $publicationResult "unsupported-architecture"
     Goto publication_failed
@@ -175,7 +172,9 @@ FunctionEnd
   !ifdef APP_64
     ${If} ${IsNativeAMD64}
       StrCpy $publicationSource "powershell-extractor"
-      nsExec::ExecToStack '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-extract-payload.ps1" -Extractor "$PLUGINSDIR\7za.exe" -Archive "${FILE}" -Target "$publicationDirectory" -ListDirectory "$PLUGINSDIR" -ReportPath "$publicationReport"'
+      # Parallel partitioned extraction. The helper owns the 7za processes and reports their
+      # failures; only its exit 0 permits publication.
+      nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" extract --extractor "$PLUGINSDIR\7za.exe" --archive "${FILE}" --target "$publicationDirectory" --lists "$PLUGINSDIR" --report "$publicationReport"'
     ${Else}
   !endif
       nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$publicationDirectory" "${FILE}"'
@@ -228,7 +227,7 @@ FunctionEnd
       # A user Retry succeeded: retain useful evidence with an explicit recovered result,
       # without a final error notice or an earlier log that still looks like a failed update.
       Push $0
-      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action finalize -Outcome recovered -ReportPath "$publicationReport" -CleanupReportPath "$publicationCleanupReport" -CleanupExitCode "$publicationCleanupResult" -InstallPath "$INSTDIR" -Phase "$publicationPhase" -ExitCode 0 -AppVersion "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" -ProductName "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" -Language $LANGUAGE -LogDirectory "$installDiagnosticDirectory"'
+      nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" diagnostics --action finalize --outcome recovered --report-path "$publicationReport" --cleanup-report-path "$publicationCleanupReport" --cleanup-exit-code "$publicationCleanupResult" --install-path "$INSTDIR" --phase "$publicationPhase" --exit-code 0 --app-version "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" --product-name "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" --language $LANGUAGE --log-directory "$installDiagnosticDirectory"'
       Pop $0
       Pop $0
       Pop $0

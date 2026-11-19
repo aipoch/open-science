@@ -1,9 +1,14 @@
 import {
+  sharedCodeBuddySiteMatches,
+  codeBuddyAccountEnvironment,
+  codeBuddyHostEnvironment
+} from '../settings/codebuddy-profile'
+import {
   spawn,
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio
 } from 'node:child_process'
-import { cp, mkdir } from 'node:fs/promises'
+import { copyFile, cp, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
@@ -19,10 +24,8 @@ import {
 } from '@aipoch/providers/protocol'
 import type { ResolvedProvider } from '../settings/provider-env'
 import { augmentedPathEnv } from '../settings/shell-path'
-import {
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
-  narrowSkillRuntimeAcpServers
-} from '../skills/runtime-mcp-server'
+import { narrowSkillRuntimeAcpServers } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
 import type {
@@ -86,10 +89,25 @@ const CODEBUDDY_NETWORK_DENY_RULES = [
 export const codeBuddyStorageDir = (storageRoot: string): string => join(storageRoot, 'codebuddy')
 
 export const isolateCodeBuddyEnvironment = async (
-  env: Readonly<Record<string, string>>,
-  configDir: string
+  backend: ResolvedAgentBackend,
+  configDir: string,
+  allowSubscription = false
 ): Promise<Record<string, string>> => {
+  const env = backend.env
   const sourceConfigDir = env.CODEBUDDY_CONFIG_DIR
+  if (backend.modelRoute === 'codebuddy-subscription') {
+    if (!allowSubscription) throw new Error('This task does not support CodeBuddy subscriptions.')
+    if (backend.codeBuddySharedSite && !sharedCodeBuddySiteMatches(backend.codeBuddySharedSite))
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
+    // The CLI finds credentials through HOME/platform data. Sessions, logs and caches stay local.
+    const site = env.CODEBUDDY_INTERNET_ENVIRONMENT
+    if (!sourceConfigDir || (site !== 'internal' && site !== 'external'))
+      throw new Error('CodeBuddy subscription profile is unavailable.')
+    const target = join(configDir, site)
+    await mkdir(target, { recursive: true, mode: 0o700 })
+    await copyFile(join(sourceConfigDir, 'settings.json'), join(target, 'settings.json'))
+    return { ...env, CODEBUDDY_CONFIG_DIR: target }
+  }
   if (sourceConfigDir && sourceConfigDir !== configDir) {
     await cp(sourceConfigDir, configDir, { recursive: true })
   } else {
@@ -122,7 +140,12 @@ export const createCodeBuddyFramework = ({
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       args,
       {
-        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
+        env: {
+          ...(input.env.CODEBUDDY_INTERNET_ENVIRONMENT && input.env.USERPROFILE
+            ? codeBuddyHostEnvironment(sourceEnv)
+            : augmentedPathEnv(sourceEnv)),
+          ...input.env
+        },
         stdio: 'pipe',
         windowsHide: true,
         shell: needsShell
@@ -134,21 +157,34 @@ export const createCodeBuddyFramework = ({
     backend: ResolvedAgentBackend,
     runtimeHome: string
   ): Promise<AgentSpawnInput> {
+    const env = await isolateCodeBuddyEnvironment(backend, join(runtimeHome, 'codebuddy'), true)
+    const args = [...(backend.args ?? [])]
+    const promptFlag = args.indexOf('--system-prompt-file')
+    if (backend.modelRoute === 'codebuddy-subscription' && promptFlag !== -1) {
+      const target = join(env.CODEBUDDY_CONFIG_DIR!, 'system-prompt.md')
+      if (!backend.persistentSystemPrompt)
+        throw new Error('CodeBuddy system prompt is unavailable.')
+      await writeFile(target, backend.persistentSystemPrompt, { mode: 0o600 })
+      args[promptFlag + 1] = target
+    }
     return {
       executablePath: backend.executablePath,
-      args: [...(backend.args ?? [])],
-      env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
+      args,
+      env,
       proxyEnvironmentMode: backend.proxyEnvironmentMode
     }
   },
 
   async beforePromptDispatch({
+    codeBuddySharedSite,
     connection,
     providerSessionId,
     cwd,
     mcpServers,
     skillRuntimeAllowlist
   }): Promise<void> {
+    if (codeBuddySharedSite && !sharedCodeBuddySiteMatches(codeBuddySharedSite))
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
     await connection.agent.request(acp.methods.agent.session.resume, {
       sessionId: providerSessionId,
       cwd,
@@ -159,11 +195,26 @@ export const createCodeBuddyFramework = ({
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
     const baseUrl = resolveChatCompletionsBaseUrl(provider)
     const chatCompletionsUrl = resolveChatCompletionsUrl(provider)
-    if (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model) {
+    const account =
+      provider.type === 'codebuddy-subscription' && provider.codeBuddySite
+        ? codeBuddyAccountEnvironment(
+            ctx.storageRoot,
+            provider.codeBuddySite,
+            provider.codeBuddyAuthMode
+          )
+        : undefined
+    if (
+      provider.codeBuddyAuthMode === 'shared' &&
+      provider.codeBuddySite &&
+      !sharedCodeBuddySiteMatches(provider.codeBuddySite)
+    ) {
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
+    }
+    if (!account && (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model)) {
       throw new Error('CodeBuddy requires an OpenAI-compatible base URL, API key, and model.')
     }
 
-    const configDir = codeBuddyStorageDir(ctx.storageRoot)
+    const configDir = account?.CODEBUDDY_CONFIG_DIR ?? codeBuddyStorageDir(ctx.storageRoot)
     const persistentSystemPrompt = ctx.systemPromptAppends
       ?.filter((append): append is string => Boolean(append))
       .map((append) => renderAppMcpToolReferences('codebuddy', append))
@@ -185,10 +236,12 @@ export const createCodeBuddyFramework = ({
     return {
       env: {
         CODEBUDDY_CONFIG_DIR: configDir,
-        CODEBUDDY_API_KEY: provider.key,
-        CODEBUDDY_BASE_URL: baseUrl,
-        CODEBUDDY_MODEL: provider.model,
-        OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: chatCompletionsUrl,
+        ...(account ?? {
+          CODEBUDDY_API_KEY: provider.key!,
+          CODEBUDDY_BASE_URL: baseUrl!,
+          CODEBUDDY_MODEL: provider.model!,
+          OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: chatCompletionsUrl!
+        }),
         CODEBUDDY_SKIP_BUILTIN_MARKETPLACE: '1',
         CODEBUDDY_DISABLE_HOT_RELOAD: '1',
         CODEBUDDY_DISABLE_AUTO_MEMORY: '1',
@@ -204,15 +257,19 @@ export const createCodeBuddyFramework = ({
         NO_BROWSER: '1'
       },
       configFiles: [
-        {
-          path: join(configDir, 'models.json'),
-          mode: 0o600,
-          content: `${JSON.stringify(
-            { models: [modelConfig], availableModels: [provider.model] },
-            null,
-            2
-          )}\n`
-        },
+        ...(account
+          ? []
+          : [
+              {
+                path: join(configDir, 'models.json'),
+                mode: 0o600,
+                content: `${JSON.stringify(
+                  { models: [modelConfig], availableModels: [provider.model] },
+                  null,
+                  2
+                )}\n`
+              }
+            ]),
         {
           path: join(configDir, 'settings.json'),
           mode: 0o600,

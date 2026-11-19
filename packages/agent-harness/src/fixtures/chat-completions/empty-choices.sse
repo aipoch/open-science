@@ -1,0 +1,10 @@
+data: {"id":"probe-id-002","object":"chat.completion.chunk","created":1794559307,"model":"glm-5.3-flash","choices":[{"index":0,"finish_reason":null,"logprobs":null,"delta":{"role":"assistant","content":""}}]}
+
+data: {"id":"probe-id-002","object":"chat.completion.chunk","created":1794559307,"model":"glm-5.3-flash","choices":[{"index":0,"finish_reason":null,"logprobs":null,"delta":{"content":"PROBE_OK"}}]}
+
+data: {"id":"probe-id-002","object":"chat.completion.chunk","created":1794559307,"model":"glm-5.3-flash","choices":[{"index":0,"finish_reason":"stop","logprobs":null,"delta":{}}]}
+
+data: {"id":"probe-id-002","object":"chat.completion.chunk","created":1794559307,"model":"glm-5.3-flash","choices":[],"usage":{"prompt_tokens":35,"completion_tokens":5,"total_tokens":40,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0},"cost":0,"opencode":{"billing_source":"go","list_cost":0.00000775,"allowance":0.00000775,"tokens":{"input":35,"output":5,"reasoning":0,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0}}}}
+
+data: [DONE]
+

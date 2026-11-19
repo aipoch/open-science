@@ -99,6 +99,7 @@ type TargetOptions = {
   authMode?: 'api-key' | 'subscription'
   event?: 'pull_request_target' | 'workflow_dispatch'
   enabled?: string
+  isDraft?: boolean
   isFork?: boolean
   forkMode?: 'disabled' | 'manual' | 'automatic'
   reviewMode?: 'both' | 'correctness' | 'architecture' | 'disabled'
@@ -144,6 +145,7 @@ printf '%s' "$PR_JSON"
           headRefOid: 'head-sha',
           baseRefOid: 'base-sha',
           title: 'ci(review): replace Claude with dual Codex reviews',
+          isDraft: options.isDraft ?? false,
           isCrossRepository: options.isFork ?? false,
           state: 'OPEN',
           mergeCommit: null
@@ -391,6 +393,7 @@ function writeJsonLines(path: string, events: unknown[]): void {
 
 async function runPublisher({
   currentHead = 'head-sha',
+  isDraft = false,
   comments = [] as ReviewComment[],
   maxRounds = '20'
 } = {}): Promise<{ postedBodies: string[]; output: string }> {
@@ -400,7 +403,7 @@ async function runPublisher({
   let output = ''
   const github = {
     rest: {
-      pulls: { get: vi.fn(async () => ({ data: { head: { sha: currentHead } } })) },
+      pulls: { get: vi.fn(async () => ({ data: { draft: isDraft, head: { sha: currentHead } } })) },
       issues: {
         listComments: vi.fn(),
         createComment: vi.fn(async ({ body }: { body: string }) => postedBodies.push(body))
@@ -438,6 +441,31 @@ async function runPublisher({
 }
 
 describe('single Codex workflow contract', () => {
+  it('listens for ready transitions and subsequent commits', () => {
+    expect(
+      (load(mainText) as { on: { pull_request_target: { types: string[] } } }).on
+        .pull_request_target.types
+    ).toEqual(['opened', 'synchronize', 'reopened', 'ready_for_review', 'converted_to_draft'])
+  })
+
+  pit.each(['pull_request_target', 'workflow_dispatch'] as const)(
+    'skips draft reviews for %s and permits ready PRs',
+    (event) => {
+      for (const isDraft of [true, false]) {
+        const result = runTarget({ event, isDraft })
+        expect(result.status, result.stderr).toBe(0)
+        expect(result.outputs.review_allowed).toBe(String(!isDraft))
+      }
+    }
+  )
+
+  it('does not publish feedback after a PR becomes a draft', async () => {
+    await expect(runPublisher({ isDraft: true })).resolves.toMatchObject({
+      output: 'false',
+      postedBodies: []
+    })
+  })
+
   it('parses all review workflows as YAML', () => {
     expect(() => load(mainText)).not.toThrow()
     expect(() => load(codexText)).not.toThrow()
@@ -608,6 +636,16 @@ describe('single Codex workflow contract', () => {
       CODEX_BASE_URL:
         "${{ (needs.review_target.outputs.credential_scope == 'review' && secrets.CODEX_REVIEW_BASE_URL) || (needs.review_target.outputs.credential_scope == 'correctness' && secrets.CODEX_CORRECTNESS_BASE_URL) || (needs.review_target.outputs.credential_scope == 'architecture' && secrets.CODEX_ARCHITECTURE_BASE_URL) || (needs.review_target.outputs.credential_scope == 'shared' && secrets.CODEX_BASE_URL) || '' }}"
     })
+  })
+
+  it('opts authorized fork reviews into checkout while keeping the review job read-only', () => {
+    const checkout = getStep(codexWorkflow, 'review', 'Checkout pull request review commit')
+    expect(checkout.with).toMatchObject({
+      'allow-unsafe-pr-checkout':
+        "${{ inputs.is_fork && inputs.review_event == 'pull_request_target' }}",
+      'persist-credentials': false
+    })
+    expect(codexWorkflow.jobs.review.permissions).toEqual({ contents: 'read' })
   })
 
   pit('bootstraps managed subscription auth on a GitHub-hosted runner', () => {

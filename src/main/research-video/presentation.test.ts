@@ -126,6 +126,48 @@ async function fixture(): Promise<{
     }
   }
 }
+it('keeps the previous film available while reviewing a replacement, and withholds failed revisions', async () => {
+  const f = await fixture()
+  const first = Promise.withResolvers<[]>()
+  const issue = { scene: 'scene-1', message: 'Panel covers the caption' }
+  const reviewPlayer = vi
+    .fn()
+    .mockResolvedValueOnce([])
+    .mockImplementationOnce(() => first.promise)
+    .mockResolvedValue([issue])
+  const owner = createResearchVideoPresentationOwner({ ...f.options, reviewPlayer })
+  try {
+    await owner.start(request)
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    const original = (await owner.status(request)).result!
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(1))
+    await owner.start(request)
+    await vi.waitFor(() => expect(reviewPlayer).toHaveBeenCalledTimes(2))
+    expect(await owner.status(request)).toMatchObject({
+      result: original,
+      progress: { phase: 'verifying' }
+    })
+    first.resolve([])
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).result?.id).not.toBe(original.id)
+    )
+    const approved = (await owner.status(request)).result!
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
+    await owner.start(request)
+    await vi.waitFor(async () =>
+      expect(await owner.status(request)).toMatchObject({
+        result: approved,
+        progress: { phase: 'failed' },
+        error: expect.stringContaining(issue.message)
+      })
+    )
+    expect(reviewPlayer).toHaveBeenCalledTimes(6)
+  } finally {
+    first.resolve([])
+    await owner.close()
+  }
+})
+
 it('generates a persistent presentation directly from read-only history without changing it', async () => {
   const f = await fixture(),
     owner = createResearchVideoPresentationOwner(f.options)
@@ -366,6 +408,13 @@ it('resumes an interrupted scene after restart using the validated screenplay an
               box: 'plain'
             }
           ]
+        },
+        {
+          id: 'outro',
+          role: 'outro',
+          msg: 1,
+          lines: [{ caption: 'Made with Open-Science.' }],
+          panels: [{ type: 'end_card' }]
         }
       ]
     })
@@ -964,9 +1013,14 @@ it('keeps a known Film playable and allows regeneration with a corrupt latest re
   }
 })
 
-it.each(['player.html', 'sources.zip'])(
-  'rebuilds an empty %s while keeping the screenplay checkpoint and old Film',
-  async (emptyFile) => {
+it.each([
+  ['player.html', 'same size'],
+  ['sources.zip', 'same size'],
+  ['player.html', 'empty'],
+  ['sources.zip', 'legacy receipt']
+])(
+  'rebuilds %s (%s) while keeping the screenplay checkpoint and old Film',
+  async (filename, damage) => {
     const f = await fixture()
     const lookup = Promise.withResolvers<PersistedChatSession>()
     const entered = Promise.withResolvers<void>()
@@ -979,7 +1033,6 @@ it.each(['player.html', 'sources.zip'])(
       const build = f.options.generate.getMockImplementation()!
       f.options.generate.mockImplementationOnce(async (...args) => {
         const result = await build(...args)
-        await writeFile(emptyFile === 'player.html' ? result.playerPath : result.sourcePath, '')
         vi.mocked(f.options.loadSession).mockImplementationOnce(() => {
           entered.resolve()
           return lookup.promise
@@ -992,8 +1045,20 @@ it.each(['player.html', 'sources.zip'])(
       owner.cancel(request)
       await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
       expect((await owner.status(request)).result).toEqual(old)
-      if (emptyFile === 'sources.zip') {
-        const base = dirname(dirname(dirname(old.playerPath)))
+      const base = dirname(dirname(dirname(old.playerPath)))
+      const damaged = join(base, 'pending', 'output', filename)
+      if (damage === 'legacy receipt') {
+        const pointer = join(base, 'pending.json')
+        const pending = JSON.parse(await readFile(pointer, 'utf8'))
+        delete pending.outputFingerprint
+        await writeFile(pointer, JSON.stringify(pending))
+      } else {
+        await writeFile(
+          damaged,
+          Buffer.alloc(damage === 'empty' ? 0 : (await readFile(damaged)).length, 0x78)
+        )
+      }
+      if (filename === 'sources.zip') {
         const pending = JSON.parse(await readFile(join(base, 'pending.json'), 'utf8'))
         await rename(join(base, 'pending'), join(base, pending.id))
       }

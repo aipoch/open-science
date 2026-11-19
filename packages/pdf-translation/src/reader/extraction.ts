@@ -1,3 +1,4 @@
+import { unreliablyDecodedDisplayOwners } from './native-unreliably-decoded-displays.js'
 import { readNativeFormClippedText } from './native-form-clipped-text.js'
 import { rememberPdfTranslationSourceParser } from './snapshot.js'
 import { readNativeOccludedText } from './native-occluded-text.js'
@@ -20,7 +21,9 @@ import {
   readNativeReferenceEvidence,
   readNativeTableNoteEvidence,
   readNativeDisplayEquationEvidence,
+  readNativeDerivativeRuleEvidence,
   readNativeNumberedPacketEvidence,
+  readNativeCompactAlgorithmEvidence,
   bindNativeReferenceRolePage,
   nativeReferenceRolePagesCurrent
 } from './native-reference-evidence.js'
@@ -31,6 +34,11 @@ import {
   createAuxiliaryNativeDisplayInkReader
 } from './auxiliary-native-ink.js'
 import { hasNativeDisplaySequence, nativeScopedDisplayOwners } from './native-display-packets.js'
+import {
+  hasNativeShortMathContinuation,
+  nativeShortMathContinuations
+} from './native-short-math-continuation.js'
+import { hasNativeLiteralMathCandidate, nativeLiteralMathOwners } from './native-literal-math.js'
 import {
   hasNativeMatrixCandidate,
   createNativeMatrixReader,
@@ -223,6 +231,8 @@ async function readPdfTranslationSource({
     viewport: ReturnType<PDFPageProxy['getViewport']>
     pageNumber: number
   }[] = []
+  const shortMathPages: typeof scopedDisplays = []
+  const literalMathPages: typeof scopedDisplays = []
   const nativeMatrices: typeof scopedDisplays = []
   const nativeFunctions: typeof scopedDisplays = []
   const mathDiagrams: PdfMathDiagram[] = []
@@ -341,6 +351,7 @@ async function readPdfTranslationSource({
           viewport.height - (mb * x + md * y + my)
         ],
         fontName: item.fontName,
+        fontFamily: content.styles?.[item.fontName]?.fontFamily,
         fontAscent: content.styles?.[item.fontName]?.ascent,
         fontDescent: content.styles?.[item.fontName]?.descent,
         fontVertical: content.styles?.[item.fontName]?.vertical,
@@ -355,6 +366,10 @@ async function readPdfTranslationSource({
     )
     if (!nativeDisplayMathEvidence.complete && hasNativeDisplaySequence(content))
       scopedDisplays.push({ page, content, viewport, pageNumber })
+    if (hasNativeShortMathContinuation(content))
+      shortMathPages.push({ page, content, viewport, pageNumber })
+    if (hasNativeLiteralMathCandidate(content))
+      literalMathPages.push({ page, content, viewport, pageNumber })
     if (hasNativeFunctionDisplay(content))
       nativeFunctions.push({ page, content, viewport, pageNumber })
     if (hasNativeMatrixCandidate(content))
@@ -397,6 +412,12 @@ async function readPdfTranslationSource({
       ),
       nativeReferenceEvidence,
       nativeDisplayMathEvidence,
+      nativeDerivativeRuleEvidence: await readNativeDerivativeRuleEvidence(
+        page,
+        content,
+        nativeDisplayMathEvidence
+      ),
+      nativeCompactAlgorithmEvidence: await readNativeCompactAlgorithmEvidence(page, content),
       nativeNumberedPacketEvidence: await readNativeNumberedPacketEvidence(
         page,
         content,
@@ -644,10 +665,14 @@ async function readPdfTranslationSource({
       const unreliable = fragments.some((fragment) =>
         fragment.items.some((item) => unreliableItems.has(`${fragment.pageNumber}:${item.index}`))
       )
+      const opaqueControlRun =
+        unit.source.includes('\u0000') &&
+        unit.originalStrings.every((text) => /^[\p{Cc}\s]*$/u.test(text))
       // Keep a proved missing-Unicode symbol on its existing original navigation.
       // Ordinary words and mixed prose retain their established admission.
       const sourceOnly =
         unit.sourceOnly ||
+        opaqueControlRun ||
         (unreliable &&
           [...unit.source].length <= 32 &&
           !/[\p{L}\p{M}]{2}/u.test(unit.source) &&
@@ -683,7 +708,7 @@ async function readPdfTranslationSource({
       })
       terminalSource?.observe(unit, units.at(-1)!)
       const reasons = [...unit.risks]
-      if (unreliable) reasons.push('unreliable-font-unicode')
+      if (unreliable || opaqueControlRun) reasons.push('unreliable-font-unicode')
       if (reasons.length)
         warnings.push(Object.freeze({ unitId: unit.id, reasons: Object.freeze(reasons) }))
     }
@@ -703,6 +728,18 @@ async function readPdfTranslationSource({
     pages,
     document.numPages
   )
+  for (const context of shortMathPages) {
+    signal.throwIfAborted()
+    finalUnits = [
+      ...(await nativeShortMathContinuations(
+        finalUnits,
+        context.page,
+        context.content,
+        context.viewport,
+        context.pageNumber
+      ))
+    ]
+  }
   if (scopedDisplays.length) {
     const auxiliary = createAuxiliaryNativeDisplayInkReader({
         document,
@@ -731,6 +768,23 @@ async function readPdfTranslationSource({
     finalUnits = finalUnits.map((unit) =>
       protectedOwners.has(unit.id) && !unit.sourceOnly && !unit.preserve
         ? { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+        : unit
+    )
+  }
+  // This monotone branch withdraws translation eligibility only. It does not
+  // grant formula ink evidence or change native owners, fragments or geometry.
+  for (const context of literalMathPages) {
+    signal.throwIfAborted()
+    const protectedOwners = await nativeLiteralMathOwners(
+      finalUnits,
+      context.page,
+      context.content,
+      context.viewport,
+      context.pageNumber
+    )
+    finalUnits = finalUnits.map((unit) =>
+      protectedOwners.has(unit.id) && !unit.sourceOnly && !unit.preserve
+        ? { ...unit, sourceOnly: true as const, preserve: 'literal' as const }
         : unit
     )
   }
@@ -819,6 +873,11 @@ async function readPdfTranslationSource({
     !nativeOwnedReferenceRolesCurrent(pages)
   )
     throw new Error('Native reference sources changed during extraction')
+  const undecodedDisplays = unreliablyDecodedDisplayOwners(pages, finalUnits, unreliableItems)
+  if (undecodedDisplays.size)
+    finalUnits = finalUnits.map((unit) =>
+      undecodedDisplays.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+    )
   const sourceInput = { resourceRequestKey, fingerprint, pages, units: finalUnits }
   const source = terminalSource?.create(sourceInput) ?? createPdfTranslationSource(sourceInput)
   rememberNativeCaptionEligibility(source, tableCaptionOwners)

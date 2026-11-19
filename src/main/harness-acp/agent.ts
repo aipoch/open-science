@@ -15,9 +15,12 @@ import {
   type ModelUsage,
   type Json
 } from '@aipoch/agent-harness'
-import { createChatCompletionsModel } from '@aipoch/agent-harness/chat-completions'
+import {
+  createChatCompletionsModel,
+  ChatCompletionsError
+} from '@aipoch/agent-harness/chat-completions'
 import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/responses'
-import { createMessagesModel } from '@aipoch/agent-harness/messages'
+import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
@@ -224,6 +227,7 @@ export function createToolResultClearing(
 }
 
 type Entry = {
+  model: string
   setScheduleTurn(ref: string | undefined): void
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
@@ -514,7 +518,26 @@ export function createHarnessAcpAgent(directory: string): {
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
-          const response = await fetch(url, { ...init, headers })
+          let response = await fetch(url, { ...init, headers })
+          if (
+            !response.ok &&
+            response.headers.get('x-open-science-provider-failure') === 'connection'
+          ) {
+            void response.body?.cancel().catch(() => undefined)
+            throw new Error('Model provider connection failed')
+          }
+          // The endpoint is restricted to host loopback; only here trust the bridge's original status.
+          const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
+          if (
+            !response.ok &&
+            Number.isInteger(upstreamStatus) &&
+            upstreamStatus >= 400 &&
+            upstreamStatus <= 599
+          )
+            response = new Response(response.body, {
+              status: upstreamStatus,
+              headers: response.headers
+            })
           if (!response.ok && (await isContextOverflowResponse(response, init?.signal))) {
             overflow = true
             meter.overflowed(target.contextWindow)
@@ -583,6 +606,7 @@ export function createHarnessAcpAgent(directory: string): {
       }
       signal.throwIfAborted()
       entries.set(id, {
+        model: target.model,
         session,
         setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
@@ -736,19 +760,35 @@ export function createHarnessAcpAgent(directory: string): {
                 await entry.flush()
                 if (!entry.cancelled) assertKnown(await entry.session.inspect())
                 if (
-                  error instanceof ResponsesError &&
-                  [
-                    'insufficient_quota',
-                    'rate_limit_exceeded',
-                    'model_not_found',
-                    'authentication_error'
-                  ].includes(error.code)
-                )
+                  error instanceof ChatCompletionsError ||
+                  error instanceof ResponsesError ||
+                  error instanceof MessagesError
+                ) {
+                  const protocol =
+                    error instanceof ChatCompletionsError
+                      ? 'chat-completions'
+                      : error instanceof ResponsesError
+                        ? 'responses'
+                        : 'messages'
+                  const diagnostics = error.diagnostics ?? {}
+                  const phase =
+                    'phase' in diagnostics && typeof diagnostics.phase === 'string'
+                      ? diagnostics.phase
+                      : error.code === 'http' || error.code === 'network'
+                        ? 'response'
+                        : 'provider'
                   throw new acp.RequestError(-32603, error.message, {
                     errorName: 'APIError',
-                    errorKind: error.code,
-                    ...(error.status === undefined ? {} : { status: error.status })
+                    errorKind: 'provider-error',
+                    model: entry.model,
+                    protocol,
+                    adapterCode: error.code,
+                    ...(error.status === undefined ? {} : { status: error.status }),
+                    ...(diagnostics.reason ? { code: diagnostics.reason } : {}),
+                    ...(diagnostics.requestId ? { requestId: diagnostics.requestId } : {}),
+                    phase
                   })
+                }
                 throw error
               })
             await entry.flush()

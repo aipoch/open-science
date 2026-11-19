@@ -1,5 +1,5 @@
 import { prepareNativeResponsesRequest } from '@aipoch/providers/protocol'
-import { createServer } from 'node:http'
+import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { gzipSync } from 'node:zlib'
 
@@ -26,6 +26,111 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it.each(['headers', 'body'] as const)(
+    'closes a real Skill selection still waiting for upstream %s',
+    async (phase) => {
+      const active = new Set<ServerResponse>()
+      let complete = false
+      const upstream = createServer((request, response) => {
+        request.resume()
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        if (complete) {
+          response.setHeader('content-type', 'application/json')
+          response.end(
+            JSON.stringify({
+              output: [
+                {
+                  type: 'function_call',
+                  name: 'select_skills',
+                  arguments: '{"skill_names":["statistics"]}'
+                }
+              ]
+            })
+          )
+          return
+        }
+        if (phase === 'body') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.write('{')
+        }
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const proxy = new NativeResponsesCompatibilityProxy({
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        model: 'model-a'
+      })
+      const caller = new AbortController()
+      let settled = false
+      const selecting = proxy
+        .selectSkills(
+          'analyze numerical data',
+          [{ name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }],
+          caller.signal
+        )
+        .finally(() => {
+          settled = true
+        })
+      try {
+        await vi.waitFor(() => expect(active.size).toBe(1), { timeout: 1_000 })
+        await proxy.close()
+        await vi.waitFor(
+          () => {
+            expect(active.size).toBe(0)
+            expect(settled).toBe(true)
+          },
+          { timeout: 1_000 }
+        )
+        await expect(selecting).resolves.toEqual([])
+        complete = true
+        await expect(
+          proxy.selectSkills('analyze numerical data', [
+            { name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }
+          ])
+        ).resolves.toEqual([{ name: 'statistics', path: '/statistics' }])
+      } finally {
+        caller.abort()
+        await selecting
+        await proxy.close()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
+  it('closes a real upstream error response after Skill selection returns', async () => {
+    const active = new Set<ServerResponse>()
+    let requests = 0
+    const upstream = createServer((request, response) => {
+      request.resume()
+      requests++
+      active.add(response)
+      response.once('close', () => active.delete(response))
+      response.writeHead(503, { 'content-type': 'text/plain' })
+      response.write('unavailable')
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const { port } = upstream.address() as AddressInfo
+    const proxy = new NativeResponsesCompatibilityProxy({
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      model: 'model-a'
+    })
+    try {
+      await expect(
+        proxy.selectSkills('analyze numerical data', [
+          { name: 'statistics', description: 'Analyze data.', path: '/skills/stats/SKILL.md' }
+        ])
+      ).resolves.toEqual([])
+      expect(requests).toBe(1)
+      await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1_000 })
+    } finally {
+      await proxy.close()
+      upstream.closeAllConnections()
+      await new Promise<void>((resolve) => upstream.close(() => resolve()))
+    }
+  })
+
   it('normalizes MiniMax M3.1 effort on the forwarded model and stops after retargeting', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>
@@ -493,6 +598,42 @@ describe('native Responses compatibility', () => {
       expect(nextObserver).not.toHaveBeenCalled()
     } finally {
       await bridge.close()
+    }
+  })
+
+  it('distinguishes a rejected fetch after credential refresh from an upstream HTTP 502', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(Response.json({ error: { type: 'api_error' } }, { status: 502 }))
+    const proxy = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://provider.example.test/v1',
+        model: 'model-a',
+        resolveKey: async () => 'key'
+      },
+      upstream
+    )
+    const connection = await proxy.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello' })
+      })
+    try {
+      const rejected = await send()
+      expect(rejected.status).toBe(502)
+      expect(rejected.headers.get('x-open-science-provider-failure')).toBe('connection')
+      const unavailable = await send()
+      expect(unavailable.status).toBe(502)
+      expect(unavailable.headers.get('x-open-science-provider-failure')).toBeNull()
+    } finally {
+      await proxy.close()
     }
   })
 
@@ -1332,6 +1473,7 @@ describe('native Responses compatibility', () => {
         }
       })
       expect(upstreamSignal?.aborted).toBe(true)
+      expect(response.headers.get('x-open-science-provider-failure')).toBeNull()
       expect(logSpies.warn.mock.calls).toContainEqual([
         'native Responses compatibility request failed',
         expect.objectContaining({
@@ -1806,7 +1948,11 @@ describe('native Responses compatibility', () => {
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { message: privateUpstreamDetail } }), {
           status: 502,
-          headers: { 'content-type': 'application/json' }
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-upstream-status': 'vendor-metadata',
+            'x-open-science-provider-failure': 'vendor-metadata'
+          }
         })
       )
     )
@@ -1833,6 +1979,8 @@ describe('native Responses compatibility', () => {
         })
       })
       expect(response.status).toBe(502)
+      expect(response.headers.has('x-open-science-upstream-status')).toBe(false)
+      expect(response.headers.has('x-open-science-provider-failure')).toBe(false)
       await response.text()
 
       const received = logSpies.info.mock.calls.find(

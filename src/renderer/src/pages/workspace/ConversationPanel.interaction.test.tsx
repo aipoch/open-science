@@ -1807,6 +1807,25 @@ describe('ConversationPanel whole-window find', () => {
 })
 
 describe('ConversationPanel session loading presentation', () => {
+  it('shows a history page while retaining its incomplete-authority marker', () => {
+    const partial: ChatSession = {
+      id: 'paged-session',
+      projectId: 'project-a',
+      title: 'Paged',
+      cwd: '/workspace',
+      status: 'idle',
+      contentLoaded: false,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      historyPage: { revision: 1, hasMore: true, beforeCursor: 'older', totalItems: 180 }
+    }
+    renderPanel({ view: { activeSession: partial } })
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
+    expect(partial.contentLoaded).toBe(false)
+  })
+
   it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
     const loadingSession: ChatSession = {
       id: 'session-loading',
@@ -4077,7 +4096,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model provider credentials need attention' : failure
       )
       renderPanel({
         view: {
@@ -4097,7 +4116,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model provider credentials need attention')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -5652,6 +5671,41 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
+  it('keeps Side chat provider diagnostics in the notice above the composer', () => {
+    renderSidePanel({
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          entries: [],
+          draft: 'my follow-up',
+          running: false,
+          error: 'Invalid credentials',
+          errorDetails: {
+            message: 'Invalid credentials',
+            failure: {
+              category: 'configuration',
+              reason: 'configuration/auth-failed',
+              responseMessage: 'Invalid credentials',
+              diagnostics: { status: 401, provider: 'Test provider', model: 'test-model' }
+            }
+          }
+        }
+      }
+    })
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.textContent).toContain('Model provider error')
+    expect(notice?.textContent).toContain('status: 401')
+    expect(notice?.textContent).toContain('provider: Test provider')
+    expect(notice?.textContent).toContain('model: test-model')
+    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+      'side-chat-composer'
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+  })
+
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
@@ -5719,8 +5773,12 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.textContent).toContain('Historical answer')
     expect(container.textContent).not.toContain('Flow')
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not save Side chat: Disk full'
+    )
+    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+      'side-chat-composer'
     )
     expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
 
@@ -9919,6 +9977,51 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.dataset.noticeCategory).toBe('session')
   })
 
+  it('preserves provider interruption details while resuming the existing session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    const revise = vi.fn()
+    const failure = {
+      category: 'service' as const,
+      reason: 'service/response-interrupted' as const,
+      diagnostics: {
+        protocol: 'chat-completions' as const,
+        phase: 'stream',
+        requestId: 'cut-stream'
+      }
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle',
+          failure,
+          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume',
+                failure
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { resume, revise } }
+    })
+    expect(slot()?.textContent).toContain('The model response was interrupted')
+    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(action('retry')).toBeNull()
+    await act(async () => action('resume')?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'keeps full operation diagnostics, copy retry and optional export (%s)',
     async (canExport) => {
@@ -10094,6 +10197,72 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
       .getState()
       .items.filter((item) => item.type === 'tool' && item.toolKind === 'replay')
   ).toHaveLength(1)
+})
+
+it('opens an imported replay-only film from the history footer', async () => {
+  window.api.researchVideo = {
+    status: vi.fn(async (scope: { mode?: string }) =>
+      scope.mode === 'operation-replay'
+        ? {
+            result: {
+              id: 'film-1',
+              title: 'Imported film',
+              playerPath: '/imported/player.html',
+              sourcePath: '/imported/sources.zip',
+              duration: 12
+            }
+          }
+        : {}
+    ),
+    start: vi.fn()
+  } as unknown as typeof window.api.researchVideo
+  const activeSession: ChatSession = {
+    id: 'imported-session',
+    projectId: 'project-a',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  renderPanel({ view: { activeSession } })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  const footer = container.querySelector('[aria-label="Imported research history"]')!
+  const open = [...footer.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('View research film')
+  )
+  expect(open).toBeDefined()
+  await act(async () => {
+    open!.click()
+  })
+  const dialog = document.querySelector('[role="dialog"]')!
+  const play = [...dialog.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Play research film')
+  )
+  expect(play).toBeDefined()
+  expect(dialog.textContent).toContain('Generate again')
+  await act(async () => {
+    play!.click()
+  })
+  expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+    expect.objectContaining({
+      id: 'research-video-film-1-player',
+      path: '/imported/player.html',
+      title: 'Imported film'
+    })
+  )
+  expect(window.api.researchVideo.start).not.toHaveBeenCalled()
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
 })
 
 it('shows the branch source chat number and opens that source session', () => {
@@ -10467,7 +10636,9 @@ describe('prompt optimization admission', () => {
 })
 
 const selectAdditionalNotice = (index = 0): void => {
-  const slot = container.querySelector('[data-testid="composer-notice-slot"]')
-  act(() => slot?.querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click())
+  const slot = [...container.querySelectorAll('[data-testid="composer-notice-slot"]')].find(
+    (notice) => notice.querySelector('button[aria-expanded="false"]')
+  )
+  act(() => slot?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click())
   act(() => slot?.querySelectorAll<HTMLButtonElement>('[data-select-notice]')[index]?.click())
 }

@@ -88,6 +88,7 @@ type PrepareAcpPromptContentInput = {
   codexSkillInputs: ReadonlyArray<CodexSkillInput>
   skillImportEnabled: boolean
   imageCompatibilityRelay?: boolean
+  imageReferencesOnly?: boolean
   fileTextBudget?: number
   skillImportTurnToken?: string
   onSkillImportAttachmentEligible?: (attachmentUri: string) => void
@@ -622,6 +623,44 @@ class AcpPromptContentOwner {
       },
       reference
     )
+
+    const { sourceFileId, versionId, sourceSessionId, name, mimeType } = resolvedReference
+    if (
+      input.imageReferencesOnly &&
+      (reference.source === 'artifact' || reference.source === 'upload') &&
+      reference.versionId === versionId &&
+      versionId &&
+      sourceFileId &&
+      sourceSessionId === input.appSessionId &&
+      resolvedReference.trustedLease &&
+      imageAttachmentMimeType(name, mimeType)
+    ) {
+      const source = {
+        sourceKind: reference.source === 'artifact' ? 'artifact-version' : 'upload-version',
+        sourceFileId,
+        inputFileVersionId: versionId
+      }
+      await resolvedReference.trustedLease.close()
+      return {
+        blocks: [
+          {
+            type: 'text',
+            text: [
+              'The user referenced this exact image Version. Only its identity is available to you.',
+              'For a requested edit, pass source to the edit_image MCP tool if available. For visual inspection, explain that you cannot see this image.',
+              JSON.stringify({ name, source })
+            ].join('\n')
+          }
+        ],
+        reference: {
+          ...reference,
+          name,
+          sourceFileId,
+          versionId,
+          ...(resolvedReference.checksum ? { checksum: resolvedReference.checksum } : {})
+        }
+      }
+    }
 
     let prepared: { blocks: ContentBlock[]; reference: FileReference }
     try {

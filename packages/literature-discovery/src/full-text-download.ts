@@ -1,15 +1,12 @@
 import { LiteratureProviderError } from './provider-error.js'
-import { lookup } from 'node:dns/promises'
-import { Agent, get } from 'node:https'
-import { connect as connectTls } from 'node:tls'
-import type { Duplex } from 'node:stream'
-export type ProxyTunnel = (
-  proxy: URL,
-  address: string,
-  port: number,
-  signal: AbortSignal
-) => Promise<Duplex>
-import { BlockList, isIP } from 'node:net'
+import {
+  publicDownloadUrl as fullTextUrl,
+  isPublicDownloadAddress as isPublicFullTextAddress,
+  requestPublicHttps,
+  type PublicDownloadTunnel
+} from '@aipoch/resilient-download'
+export { fullTextUrl, isPublicFullTextAddress }
+export type ProxyTunnel = PublicDownloadTunnel
 import type { LiteratureFullTextProgress } from './contracts.js'
 
 export class FullTextRateLimitError extends Error {
@@ -20,53 +17,6 @@ export class FullTextRateLimitError extends Error {
   }
 }
 const retryAfterByOrigin = new Map<string, number>()
-
-const privateAddresses = new BlockList()
-for (const [address, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4]
-] as const)
-  privateAddresses.addSubnet(address, prefix, 'ipv4')
-
-export const isPublicFullTextAddress = (address: string): boolean =>
-  isIP(address) === 4
-    ? !privateAddresses.check(address, 'ipv4')
-    : isIP(address) === 6 && /^[23][0-9a-f]{3}:/iu.test(address)
-
-const fakeIpPlaceholderAddresses = new BlockList()
-fakeIpPlaceholderAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
-
-// Mihomo/Clash commonly allocates placeholders here. A separate upstream proxy may
-// not share the local hostname mapping, so it needs the hostname instead.
-const isFakeIpPlaceholder = (address: string): boolean =>
-  isIP(address) === 4 && fakeIpPlaceholderAddresses.check(address, 'ipv4')
-
-export const fullTextUrl = (value: string): URL => {
-  const url = new URL(value)
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    (url.port && url.port !== '443') ||
-    isIP(url.hostname.replace(/^\[|\]$/gu, '')) ||
-    !url.hostname.includes('.') ||
-    /\.(localhost|local|internal)$/iu.test(url.hostname)
-  )
-    throw new Error('Full-text links must use public HTTPS URLs.')
-  return url
-}
 
 // Pin public DNS answers, including after redirects. Uniform fake-IP answers delegate
 // resolution and final-address policy to the configured proxy. Never send application
@@ -101,71 +51,11 @@ export const downloadFullText = async (
     }
     const retryAt = retryAfterByOrigin.get(url.origin) ?? retryAfterByOrigin.get(origin)
     if (retryAt && retryAt > Date.now()) throw new FullTextRateLimitError(retryAt)
-    const proxy = await resolveProxy?.(url.href)
-    signal.throwIfAborted()
-    const agent = proxy ? new Agent({ keepAlive: false }) : undefined
-    if (agent && proxy) {
-      const target = url
-      agent.createConnection = (_options, callback) => {
-        void lookup(target.hostname, { all: true })
-          .then(async (addresses) => {
-            signal.throwIfAborted()
-            if (!addresses.length)
-              throw new Error('Full-text host did not resolve to a public address.')
-            const publicAddresses = addresses.filter(
-              ({ address }) => isPublicFullTextAddress(address) && !isFakeIpPlaceholder(address)
-            )
-            if (publicAddresses.length) {
-              if (publicAddresses.length !== addresses.length)
-                throw new Error('Full-text host did not resolve to a public address.')
-            } else if (!addresses.every(({ address }) => isFakeIpPlaceholder(address))) {
-              // A mixed or private answer must not enable proxy-side resolution.
-              throw new Error('Full-text host did not resolve to a public address.')
-            }
-            if (!tunnel)
-              throw new Error('A proxy tunnel adapter is required for proxied downloads.')
-            // A uniform fake-ip answer carries no routable address, so CONNECT to the
-            // publisher hostname and let the upstream proxy resolve it remotely.
-            const destination = publicAddresses[0]?.address ?? target.hostname
-            const socket = await tunnel(new URL(proxy), destination, 443, signal)
-            // TLS authenticates the publisher hostname, not whether its final IP is public.
-            return connectTls({ socket, servername: target.hostname })
-          })
-          .then(
-            (socket) => callback?.(null, socket),
-            (error: Error) => callback?.(error, undefined!)
-          )
-        return undefined
-      }
-    }
-    const response = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
-      const request = get(
-        url,
-        {
-          signal,
-          ...(agent ? { agent } : {}),
-          headers: {
-            Accept: options.accept ?? 'application/pdf',
-            'User-Agent': 'Open-Science/1.0'
-          },
-          lookup: (hostname, options, callback) => {
-            void lookup(hostname, { all: true }).then(
-              (addresses) => {
-                const address = addresses.find((entry) => isPublicFullTextAddress(entry.address))
-                if (
-                  !address ||
-                  addresses.some((entry) => !isPublicFullTextAddress(entry.address))
-                ) {
-                  callback(new Error('Full-text host did not resolve to a public address.'), '', 4)
-                } else callback(null, options.all ? addresses : address.address, address.family)
-              },
-              (error: Error) => callback(error, '', 4)
-            )
-          }
-        },
-        resolve
-      )
-      request.on('error', reject)
+    const response = await requestPublicHttps(url.href, signal, {
+      accept: options.accept ?? 'application/pdf',
+      resolveProxy,
+      tunnel,
+      allowProxyHostnameResolution: true
     })
     if ([301, 302, 303, 307, 308].includes(response.statusCode ?? 0)) {
       response.destroy()

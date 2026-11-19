@@ -9,10 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { LifecycleObserver, identityKey } from './observer.mjs'
 import { runVerificationProcess } from '../../../src/main/update/verification-process'
 import { DelegatedProcessOwnership } from '../../../src/main/delegation/process-ownership'
-import {
-  registerOwnedPosixProcessGroup,
-  terminateProcessTree
-} from '../../../src/main/process-tree'
+import { trackOwnedPosixProcessTree, terminateProcessTree } from '../../../src/main/process-tree'
 import { KernelProcessLifecycleOwner } from '../../../src/main/notebook/kernel-process-lifecycle.windows-posix'
 import { ShellProcessOwnershipRegistry } from '../../../src/main/notebook/shell-process-ownership.windows-posix'
 import { startOrAttachDesktopBackend } from '../../../src/main/desktop-runtime-launcher'
@@ -451,14 +448,18 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
               ['-c', '"$1" "$2"', 'lifecycle-shell', process.execPath, target.entry],
               { detached: true, stdio: 'ignore' }
             )
-        if (!host) {
-          registerOwnedPosixProcessGroup(child)
-          launch.claim(child, process.platform)
+        try {
+          if (!host) {
+            trackOwnedPosixProcessTree(child)
+            launch.claim(child, process.platform)
+          }
+          await target.observe(observer, child.pid)
+          await target.release()
+          await new ShellProcessOwnershipRegistry(root).recover()
+          await observer.checkpoint('shell-recovered')
+        } finally {
+          if (!host) await terminateProcessTree(child)
         }
-        await target.observe(observer, child.pid)
-        await target.release()
-        await new ShellProcessOwnershipRegistry(root).recover()
-        await observer.checkpoint('shell-recovered')
       }),
     30000
   )

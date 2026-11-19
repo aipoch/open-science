@@ -22,6 +22,7 @@ type ProviderCommands = Pick<
   | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -105,6 +106,7 @@ const createCommands = (): CommandMocks => ({
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
+  codeBuddyAccount: vi.fn(),
   loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   loginSharedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -425,6 +427,20 @@ describe('provider auth slice: authentication and catalogs', () => {
     await store.getState().refreshProviderModels('saved')
     expect(commands.getSettings).toHaveBeenCalledTimes(2)
     expect(reconcileSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a successful preview without reading settings and preserves a committed refresh on read failure', async () => {
+    const result = { ok: true, category: 'ok' as const, models: ['new'] }
+    commands.refreshProviderModels.mockResolvedValue(result)
+    commands.getSettings.mockRejectedValue(new Error('settings unavailable'))
+    await expect(
+      store.getState().refreshProviderModels({ draft: { type: 'official', vendorId: 'anthropic' } })
+    ).resolves.toEqual(result)
+    expect(commands.getSettings).not.toHaveBeenCalled()
+    await expect(store.getState().refreshProviderModels('saved')).resolves.toEqual({
+      ...result,
+      refreshFailed: true
+    })
   })
 
   it('preserves a discarded model refresh error when snapshot reconciliation fails', async () => {

@@ -1,6 +1,12 @@
+import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
+import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
 import type { ClassificationBinding } from '../../shared/classification'
+import type {
+  ImageModelBinding,
+  ImageServiceConfiguration
+} from '../../shared/image-model-settings'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
@@ -52,6 +58,7 @@ type StoredClassificationService = {
   keyMask?: string
 }
 type StoredClassificationBinding = ClassificationBinding & { modelId?: string }
+export type StoredImageService = ImageServiceConfiguration & { keyRef?: string; keyMask?: string }
 export type StoredClassificationSettings = {
   revision: number
   services: StoredClassificationService[]
@@ -74,6 +81,7 @@ export type StoredProvider = {
   type: ProviderType
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
   // behavior still keys on the normalized codex-isolated provider type.
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   // Transport preference for the app-owned Codex subscription profile. Absence is Auto.
   codexTransport?: CodexSubscriptionTransport
@@ -102,6 +110,9 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string
@@ -118,7 +129,7 @@ export type StoredProvider = {
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
-  // claude-shared credentials live in the user's global profile and cannot be removed safely by the
+  // Shared Claude and CodeBuddy credentials live in the user's personal profile and cannot be removed safely by the
   // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number
@@ -229,6 +240,8 @@ export type StoredSettings = {
   huggingFaceRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
   version: typeof SETTINGS_FILE_VERSION
   classification?: StoredClassificationSettings
+  imageServices?: StoredImageService[]
+  imageModel?: ImageModelBinding
   claude?: ClaudeInfo
   // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId

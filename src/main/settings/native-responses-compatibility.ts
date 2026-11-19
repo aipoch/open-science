@@ -38,8 +38,11 @@ import {
 
 import {
   writeProviderLoopbackJson as json,
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 
@@ -222,19 +225,6 @@ const responsesUrl = (baseUrl: string): string =>
     .replace(/\/+$/, '')
     .replace(/\/responses$/i, '')}/responses`
 
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
-
 const upstreamHeaders = (
   request: ProviderLoopbackHttpRequest,
   key: string | undefined
@@ -244,7 +234,7 @@ const upstreamHeaders = (
     // Node fetch adds Fetch Metadata headers to the loopback request. Chromium owns these headers and
     // rejects callers that pass them explicitly to Electron net.fetch with ERR_INVALID_ARGUMENT.
     if (
-      HOP_BY_HOP_HEADERS.has(name) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(name) ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       name === 'accept-encoding' ||
       name === 'authorization' ||
@@ -257,16 +247,6 @@ const upstreamHeaders = (
   }
   headers['content-type'] = 'application/json'
   if (key) headers.authorization = `Bearer ${key}`
-  return headers
-}
-
-const copyResponseHeaders = (upstream: Response): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  upstream.headers.forEach((value, name) => {
-    // Fetch decodes compressed bodies. Forwarding the original encoding after rewriting would make
-    // Codex try to decompress already-decoded bytes.
-    if (!HOP_BY_HOP_HEADERS.has(name) && name !== 'content-encoding') headers[name] = value
-  })
   return headers
 }
 
@@ -573,7 +553,7 @@ const streamResponse = async (
 
   const writeHeaders = (): void => {
     if (headersWritten) return
-    response.writeHead(upstream.status, copyResponseHeaders(upstream))
+    response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
     headersWritten = true
   }
   const flushEvent = (): void => {
@@ -663,6 +643,7 @@ const namespaceToolDeclarations = (tools: ResponsesNamespacedTool[]): JsonObject
 }
 
 export class NativeResponsesCompatibilityProxy {
+  private skillSelectionAbort = new AbortController()
   private readonly host: ProviderLoopbackHttpHost<ResponsesConnection>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
@@ -729,7 +710,10 @@ export class NativeResponsesCompatibilityProxy {
     signal?: AbortSignal,
     observeUsage?: (observation: SkillSelectorUsageObservation) => void
   ): Promise<ResponsesSkillInput[]> {
-    if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const selectionSignal = signal
+      ? AbortSignal.any([signal, this.skillSelectionAbort.signal])
+      : this.skillSelectionAbort.signal
+    if (!text.trim() || catalog.length === 0 || selectionSignal.aborted) return []
     const explicit = selectExplicitConnectorSkills(text, catalog)
     if (explicit.length > 0) return explicit
     const selectorCatalog = boundedSkillSelectorCatalog(catalog)
@@ -738,8 +722,8 @@ export class NativeResponsesCompatibilityProxy {
 
     const timeout = new AbortController()
     let timedOut = false
-    const abortFromCaller = (): void => timeout.abort(signal?.reason)
-    signal?.addEventListener('abort', abortFromCaller, { once: true })
+    const abortSelection = (): void => timeout.abort(selectionSignal.reason)
+    selectionSignal.addEventListener('abort', abortSelection, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
       timeout.abort()
@@ -786,6 +770,7 @@ export class NativeResponsesCompatibilityProxy {
         signal: timeout.signal
       })
       if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined)
         log.warn('native Responses Skill selection failed', {
           model: this.target.model,
           reason: 'upstream-http',
@@ -826,12 +811,12 @@ export class NativeResponsesCompatibilityProxy {
     } catch {
       log.warn('native Responses Skill selection failed', {
         model: this.target.model,
-        reason: timedOut ? 'timeout' : signal?.aborted ? 'cancelled' : 'invalid-response'
+        reason: timedOut ? 'timeout' : selectionSignal.aborted ? 'cancelled' : 'invalid-response'
       })
       return []
     } finally {
       clearTimeout(timer)
-      signal?.removeEventListener('abort', abortFromCaller)
+      selectionSignal.removeEventListener('abort', abortSelection)
     }
   }
 
@@ -877,6 +862,9 @@ export class NativeResponsesCompatibilityProxy {
   }
 
   async close(): Promise<void> {
+    // Standalone Skill selection bypasses the loopback host's request ownership.
+    this.skillSelectionAbort.abort()
+    this.skillSelectionAbort = new AbortController()
     this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
@@ -1053,7 +1041,8 @@ export class NativeResponsesCompatibilityProxy {
         'Native Responses upstream did not return response headers in time.'
       )
       const providerRequestStartedAt = Date.now()
-      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+      const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
+      let upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -1061,7 +1050,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+        upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,
@@ -1116,7 +1105,7 @@ export class NativeResponsesCompatibilityProxy {
               })
             )
         const headers = {
-          ...copyResponseHeaders(upstream),
+          ...copyProviderResponseHeaders(upstream.headers),
           ...(bodyIsReplayable ? {} : { 'content-type': 'application/json' }),
           'content-length': String(bodyToReplay.byteLength),
           'x-open-science-upstream-status': String(upstream.status)
@@ -1162,7 +1151,7 @@ export class NativeResponsesCompatibilityProxy {
             )
           )
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(JSON.stringify(payload))
       } else {
         const body = await readBoundedResponseBytes(
@@ -1170,7 +1159,7 @@ export class NativeResponsesCompatibilityProxy {
           responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
           'Native Responses upstream binary response'
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(body)
       }
       log.info('native Responses compatibility request completed', {

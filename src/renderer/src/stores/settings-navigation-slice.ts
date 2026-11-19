@@ -27,6 +27,7 @@ export type SettingsNavigationActions = {
   openSettingsToProvider: (providerId: string, model?: string) => void
   openSettingsToConnector: (id: string) => void
   openSettingsToClassification: () => void
+  openSettingsToImageServices: () => void
   openSettingsToOpenAlex: () => void
   closeSettings: () => void
   openSettingsToSkill: (skillId: string) => void
@@ -98,6 +99,7 @@ export const createSettingsNavigationSlice = ({
     },
     openSettingsToClassification: () =>
       openTo({ panel: 'model', view: { kind: 'classification' } }),
+    openSettingsToImageServices: () => openTo({ panel: 'model', view: { kind: 'image-services' } }),
     openSettingsToOpenAlex: () =>
       openTo({ panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }),
 

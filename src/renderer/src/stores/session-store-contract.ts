@@ -105,8 +105,17 @@ export type ChatSession = Omit<
   liveInteractionState?: Pick<SessionInteractionState, 'permission' | 'elicitation'> & {
     presentationOnly?: true
   }
-  // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
+  // False for a catalog row or a display-only history page. Neither is a save authority.
   contentLoaded?: false
+  // Transient projection fact. Details recovery is requested only when the Session is opened.
+  needsStartupRecovery?: boolean
+  historyPage?: {
+    revision: number
+    beforeCursor?: string
+    hasMore: boolean
+    totalItems: number
+    messageBranchId?: string
+  }
   activeMessageCount?: number
   artifactCount?: number
   presentedActivityAt?: number
