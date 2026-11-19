@@ -129,20 +129,24 @@ Add `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to the repository's gitignored `.e
 active config root, which defaults to `~/.open-science`. Restart the backend after changing
 configuration. A missing or invalid endpoint leaves tracing off.
 
-For Langfuse, encode `public_key:secret_key` as Base64 and use the result after `Basic `.
-This example uses the EU region. Replace the host with your region or self-hosted instance.
-[Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
+For Langfuse, paste both project API keys into `.env`. The Agent builds Basic Auth and sets the
+v4 ingestion header for `/api/public/otel/v1/traces`. This example uses the EU region. Replace the
+host with your region or self-hosted instance. [Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
 
 ```dotenv
 OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
-OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='{"Authorization":"Basic YOUR_BASE64_CREDENTIALS","x-langfuse-ingestion-version":"4"}'
+LANGFUSE_PUBLIC_KEY=pk-lf-your-public-key
+LANGFUSE_SECRET_KEY=sk-lf-your-secret-key
 ```
 
-The Agent reads these settings without adding them to the process environment. To store the
-headers in a separate JSON file, set `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE` to its absolute
-path. When both are present, the headers file takes precedence. An unreadable or invalid file
-disables trace uploads. An endpoint explicitly set in the launch environment overrides the
-`.env` configuration and uses only a headers file explicitly set in that environment.
+For a collector that uses Bearer authentication, set `OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY` to
+its API key. The Agent reads these settings without adding them to the process environment.
+For custom headers such as `X-API-Key`, use the JSON object
+`OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS` or set `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE`
+to an absolute path to a JSON file. The headers file takes precedence over inline headers,
+and either takes precedence over API keys. An unreadable or invalid file disables trace uploads.
+An endpoint explicitly set in the launch environment overrides the `.env` configuration and
+uses a headers file only if its path is also set in that environment.
 
 Send a turn with the Open-Science Agent and look for a `harness.turn` span with a
 `harness.model` child under the `open-science-agent` service in the collector. A turn that

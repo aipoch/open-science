@@ -423,7 +423,7 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
 })
 
-it('exports correlated OTLP spans with Basic Auth and completes a turn when the collector fails', async () => {
+it('uses raw Langfuse keys for correlated OTLP spans and completes turns when the collector fails', async () => {
   type Attribute = { key: string; value: { stringValue?: string; intValue?: string } }
   type Span = {
     name: string
@@ -480,13 +480,14 @@ it('exports correlated OTLP spans with Basic Auth and completes a turn when the 
   const envFile = join(directory, '.env')
   const tracePath = '/api/public/otel/v1/traces'
   const endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}${tracePath}`
-  const headers = JSON.stringify({
-    Authorization: `Basic ${credentials}`,
-    'x-langfuse-ingestion-version': '4'
-  })
   await writeFile(
     envFile,
-    `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}\nOPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='${headers}'\n`,
+    [
+      `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
+      'LANGFUSE_PUBLIC_KEY=pk-lf-test',
+      'LANGFUSE_SECRET_KEY=sk-lf-test',
+      ''
+    ].join('\n'),
     { mode: 0o600 }
   )
   const tracing = createHarnessTracing(undefined, undefined, envFile)!
@@ -575,8 +576,38 @@ it('exports correlated OTLP spans with Basic Auth and completes a turn when the 
     expect(request.authorization).toBe(`Basic ${credentials}`)
     expect(request.ingestionVersion).toBe('4')
     expect(request.body).not.toContain(credentials)
-    expect(request.body).not.toMatch(/private-|local-test-token|sk-lf-test/)
+    expect(request.body).not.toMatch(/private-|local-test-token|[ps]k-lf-test/)
   }
+})
+
+it('uses a raw API key as a Bearer token for an OTLP collector', async () => {
+  let authorization: string | undefined
+  const collector = createServer((request, response) => {
+    authorization = request.headers.authorization
+    request.resume()
+    response.end('{}')
+  })
+  collector.listen(0, '127.0.0.1')
+  await once(collector, 'listening')
+  cleanup.push(async () => {
+    collector.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      collector.close((error) => (error ? reject(error) : resolve()))
+    )
+  })
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  const endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`
+  await writeFile(
+    envFile,
+    `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}\nOPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY=collector-test-key\n`,
+    { mode: 0o600 }
+  )
+  const tracing = createHarnessTracing(undefined, undefined, envFile)!
+  cleanup.push(async () => tracing.dispose())
+  tracing.session('test-session', 'test-model', 'responses').startTurn()?.('end_turn', 0)
+  await vi.waitFor(() => expect(authorization).toBe('Bearer collector-test-key'))
 })
 
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {
