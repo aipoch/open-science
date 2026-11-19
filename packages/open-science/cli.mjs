@@ -51,7 +51,7 @@ Commands:
   stop --force  Stop the local service even with an App connected; running tasks may be interrupted
   status      Show local service status, App sessions, and persistent running
   url         Print the authenticated web URL
-  mcp         Serve research tools over MCP stdio (--config-root <path> or --profile <path>)
+  mcp         Start or reuse the local service and serve research tools over MCP stdio (--profile <path>)
   doctor --json  Inspect headless readiness
   runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
@@ -2500,7 +2500,17 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'mcp') {
     const { runResearchMcpServer } = await import('./mcp.mjs')
     const { version } = await readCliMetadata()
-    await runResearchMcpServer({ configRoot: options.configRoot, version })
+    await runResearchMcpServer({
+      version,
+      startService: async () => {
+        // stdout belongs to the MCP transport. The persistent service has its own startup log.
+        const { state } = await startCommand(
+          { configRoot: options.configRoot, open: false },
+          { ...DEFAULT_DEPS, log: () => {} }
+        )
+        return state.configRoot
+      }
+    })
   } else if (command === 'init') await initCommand(options)
   else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)

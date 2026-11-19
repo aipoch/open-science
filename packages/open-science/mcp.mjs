@@ -62,6 +62,8 @@ const toolError = (error) => {
   const messages = {
     daemon_unavailable:
       'Open-Science is not running. Start it with "open-science start" for the selected profile, then retry.',
+    startup_unconfirmed:
+      'Could not confirm standalone startup. Check "open-science status" and the startup log for the selected profile, then retry the tool call.',
     unsupported_capability:
       'The service does not support this operation. Update the service before retrying.',
     project_not_found: 'Project not found. Refresh list_projects.',
@@ -430,8 +432,30 @@ export const createResearchMcpServer = ({
   return server
 }
 
-export const runResearchMcpServer = async (options) => {
-  const server = createResearchMcpServer(options)
+export const runResearchMcpServer = async ({ version, startService }) => {
+  // The handshake and tool catalog stay responsive while the standalone backend starts.
+  let startup
+  const serviceRoot = () => (startup ??= startService())
+  const server = createResearchMcpServer({
+    version,
+    connect: async ({ signal }) => {
+      const attempt = serviceRoot()
+      let configRoot
+      try {
+        configRoot = await attempt
+      } catch {
+        // A later call may retry startup. No business operation has been submitted yet.
+        if (startup === attempt) startup = undefined
+        throw new OpenScienceApiError('Could not confirm startup.', { code: 'startup_unconfirmed' })
+      }
+      signal.throwIfAborted()
+      return connectToOpenScience({ configRoot, signal })
+    }
+  })
+  server.server.oninitialized = () => {
+    // Tool calls receive the startup failure through the MCP error envelope.
+    void serviceRoot().catch(() => {})
+  }
   const transport = new StdioServerTransport()
   let closing
   const close = () => {

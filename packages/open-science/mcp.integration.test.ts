@@ -17,6 +17,8 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
   const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-'))
   cleanup.push(() => rm(profile, { recursive: true, force: true }))
   const requests: Array<{ url: string; method: string; body: unknown }> = []
+  const startupRequested = Promise.withResolvers<void>()
+  const allowStartup = Promise.withResolvers<void>()
   const token = 'mcp-fixture-secret'
   const run = { id: 'r1', sessionId: 's1', projectId: 'p1', status: 'running' }
   const http = createServer(async (req, res) => {
@@ -29,6 +31,8 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
     requests.push({ url: req.url!, method: req.method!, body: body ? JSON.parse(body) : undefined })
     res.setHeader('content-type', 'application/json')
     if (req.url === '/api/bootstrap') {
+      startupRequested.resolve()
+      await allowStartup.promise
       res.end('{}')
       return
     }
@@ -55,13 +59,28 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
   })
   const client = new Client({ name: 'external-agent', version: '1.0.0' })
   cleanup.push(() => client.close())
+  cleanup.push(async () => allowStartup.resolve())
   let stderr = ''
   transport.stderr?.on('data', (data) => {
     stderr += data.toString()
   })
   await client.connect(transport)
+  // Initialization starts the service before any tool call; discovery stays usable meanwhile.
+  await startupRequested.promise
   expect((await client.listTools()).tools).toHaveLength(27)
-  expect(requests).toHaveLength(0)
+  const ownerPath = join(profile, 'runtime-owner.json')
+  await writeFile(ownerPath, '{}')
+  allowStartup.resolve()
+  const blocked = await client.callTool({
+    name: 'start_run',
+    arguments: { projectId: 'p1', prompt: 'Research' }
+  })
+  expect(blocked.isError).toBe(true)
+  expect(blocked.content).toEqual([
+    { type: 'text', text: expect.stringContaining('startup_unconfirmed') }
+  ])
+  expect(requests.some((request) => request.method === 'POST')).toBe(false)
+  await rm(ownerPath)
   const started = await client.callTool({
     name: 'start_run',
     arguments: { projectId: 'p1', prompt: 'Research' }
