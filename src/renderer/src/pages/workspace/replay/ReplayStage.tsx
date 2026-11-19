@@ -360,7 +360,7 @@ const HistoricalAskButton = ({ onClick }: { onClick: () => void }): React.JSX.El
           size="icon"
           variant="ghost"
           aria-label={t('Ask')}
-          className="pointer-events-none absolute top-2 right-0 text-text-300 opacity-0 transition-opacity group-hover/replay-record:pointer-events-auto group-hover/replay-record:opacity-100 group-focus-within/replay-record:pointer-events-auto group-focus-within/replay-record:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:size-11 [@media(hover:none)]:opacity-100"
+          className="pointer-events-none absolute top-2 right-0 text-text-300 opacity-0 transition-opacity group-hover/replay-record:pointer-events-auto group-hover/replay-record:opacity-100 group-focus-within/replay-record:pointer-events-auto group-focus-within/replay-record:opacity-100 [@media(hover:none),(any-pointer:coarse)]:pointer-events-auto [@media(hover:none),(any-pointer:coarse)]:size-11 [@media(hover:none),(any-pointer:coarse)]:opacity-100"
           onClick={onClick}
         >
           <MessageSquare size={16} aria-hidden="true" />
@@ -423,7 +423,8 @@ const StepConversation = memo(function StepConversation({
         interactive
           ? cn(
               'min-w-0 py-2',
-              onAskHistorical && 'group/replay-record relative pr-12 [@media(hover:none)]:min-h-13'
+              onAskHistorical &&
+                'group/replay-record relative pr-12 [@media(hover:none),(any-pointer:coarse)]:min-h-13'
             )
           : `rounded-xl border p-4 ${active ? 'border-border-100 bg-bg-000' : 'border-border-200 bg-bg-10'}`
       }
