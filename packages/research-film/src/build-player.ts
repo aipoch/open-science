@@ -308,7 +308,12 @@ export async function buildResearchVideoPlayer(options: {
   }
   const reviewedScore = options.provenance?.scriptScore
   const score =
-    reviewedScore === 7 || reviewedScore === 8 || reviewedScore === 9 ? reviewedScore : undefined
+    typeof reviewedScore === 'number' &&
+    Number.isInteger(reviewedScore) &&
+    reviewedScore >= 0 &&
+    reviewedScore <= 9
+      ? reviewedScore
+      : undefined
   const data = {
     meta: {
       title: spec.title,
@@ -371,7 +376,8 @@ export async function buildResearchVideoPlayer(options: {
     : options.provenance?.sessionAppSha256 || options.provenance?.sessionAppMode === 'drawn'
       ? 'drawn'
       : ''
-  const card = score || app ? `<!--open-science-film-card:${score ?? ''}:${app}-->` : ''
+  const card =
+    score !== undefined || app ? `<!--open-science-film-card:${score ?? ''}:${app}-->` : ''
   const inner = `<!doctype html>${card}<html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><meta name="open-science-research-video" content="1"><title>${attr(spec.title)}</title><!-- Third-party licenses: ${notices.join('\n\n').replace(/--/g, '—')} --><style>${css}</style><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></html>`
   const html = inner
 

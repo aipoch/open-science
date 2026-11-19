@@ -15,12 +15,7 @@ import type { ResearchVideoSessionSource } from './source.js'
 import type { FilmVisualIssue } from './visual-review.js'
 import type { VideoSpec } from './timeline.js'
 import { researchFilmResources } from './resources.js'
-import {
-  checkFilmScript,
-  FILM_SCRIPT_REVIEW_PROMPT,
-  scoreFilmScript,
-  type FilmNarration
-} from './script-review.js'
+import { FILM_SCRIPT_REVIEW_PROMPT, scoreFilmScript, type FilmNarration } from './script-review.js'
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
   writeWithResearchFilmCorrection,
@@ -203,10 +198,9 @@ export async function authorResearchFilmSource(options: {
       )
   )
   const layoutIssues = options.visualIssues?.filter((issue) => !issue.script)
-  let previous = layoutIssues?.length ? await options.checkpoint?.read('screenplay') : undefined
-  // Layout repairs preserve approved narration. Later script repairs preserve the
-  // latest visual fields and change only narration and its existing timing cues.
-  const mergeRepair = (output: string, narration: boolean): string => {
+  const previous = layoutIssues?.length ? await options.checkpoint?.read('screenplay') : undefined
+  // Layout repairs preserve narration outside the reported lines.
+  const mergeRepair = (output: string): string => {
     if (!previous || !layoutIssues?.length) return output
     const parse = (
       raw: string
@@ -222,42 +216,11 @@ export async function authorResearchFilmSource(options: {
     const original = parse(previous)
     const revised = parse(output)
     for (const [i, scene] of original.scenes.entries()) {
-      if (
-        !narration &&
-        !layoutIssues.some((issue) => issue.scene === (scene.id ?? `scene-${i + 1}`))
-      )
-        continue
+      if (!layoutIssues.some((issue) => issue.scene === (scene.id ?? `scene-${i + 1}`))) continue
       const replacement = scene.id
         ? revised.scenes.find((item) => item.id === scene.id)
         : revised.scenes[i]
       if (!replacement) throw new Error('Return the affected scene with its original id.')
-      if (narration) {
-        scene.lines = replacement.lines
-        const cueError = 'Keep the existing panels and items when rewriting narration and cues.'
-        if (scene.panels.length !== replacement.panels.length) throw new Error(cueError)
-        for (const [index, panel] of scene.panels.entries()) {
-          const revisedPanel = replacement.panels[index]
-          if (panel.type !== revisedPanel.type) throw new Error(cueError)
-          panel.at = revisedPanel.at
-          panel.until = revisedPanel.until
-          for (const field of ['note_at', 'badge_at', 'total_at', 'foot_at'])
-            panel[field] = revisedPanel[field]
-          for (const field of ['items', 'rows', 'marks', 'elements'] as const) {
-            const items = panel[field]
-            if (!items) continue
-            const revisedItems = revisedPanel[field]
-            if (items.length !== revisedItems?.length) throw new Error(cueError)
-            for (const [itemIndex, item] of items.entries()) item.at = revisedItems[itemIndex].at
-          }
-          for (const field of ['left', 'right', 'band'] as const) {
-            const item = panel[field]
-            if (!item) continue
-            if (!revisedPanel[field]) throw new Error(cueError)
-            item.at = revisedPanel[field].at
-          }
-        }
-        continue
-      }
       scene.panels = replacement.panels
       for (const field of ['layout', 'highlight'] as const) scene[field] = replacement[field]
       for (const issue of layoutIssues)
@@ -266,17 +229,11 @@ export async function authorResearchFilmSource(options: {
     }
     return JSON.stringify(original)
   }
-  const writeSpec = async (
-    feedback?: string,
-    narration?: ResearchVideoScreenplay
-  ): Promise<ResearchVideoScreenplay> => {
-    const result = await writeWithResearchFilmCorrection(
+  const writeSpec = async (feedback?: string): Promise<ResearchVideoScreenplay> => {
+    return writeWithResearchFilmCorrection(
       (correction) => author.writeScreenplay(source, signal, correction),
       (output) => {
-        const parsed = parseResearchVideoScreenplay(
-          mergeRepair(output, Boolean(narration)),
-          source.messages.length
-        )
+        const parsed = parseResearchVideoScreenplay(mergeRepair(output), source.messages.length)
         const lastScene = parsed.scenes.at(-1)!
         // Older illustration screenplays have no scene roles. Supply the fixed
         // user-profile sign-off when resuming one through the generation path.
@@ -292,7 +249,6 @@ export async function authorResearchFilmSource(options: {
             })
         } else if (lastScene.role !== 'outro' || lastScene.panels.at(-1)?.type !== 'end_card')
           throw new Error('Finish with an outro scene whose final panel is an end_card.')
-        if (author.reviewScript) checkFilmScript(parsed)
         researchVideoAnimationPlan(parsed)
         const libs = parsed.libs
         if (
@@ -340,50 +296,33 @@ export async function authorResearchFilmSource(options: {
       previous && options.checkpoint
         ? {
             read: options.checkpoint.read,
-            save: (key, value) =>
-              options.checkpoint!.save(key, mergeRepair(value, Boolean(narration)))
+            save: (key, value) => options.checkpoint!.save(key, mergeRepair(value))
           }
         : options.checkpoint,
       'screenplay',
-      feedback,
-      narration && JSON.stringify(narration)
+      feedback
     )
-    if (previous) previous = JSON.stringify(result)
-    return result
   }
   const layoutFeedback = layoutIssues
     ?.map((issue) => `Scene ${issue.scene}: ${issue.message}`)
     .join('\n')
-  let spec = await writeSpec(
+  const spec = await writeSpec(
     layoutFeedback ||
       (options.drawSessionApp === 'switch'
         ? 'The session app could not run. Omit libs and use a self-contained drawing of the subject. Keep the source facts and approved narration.'
         : undefined)
   )
-  let scriptScore: number | undefined
-  if (author.reviewScript) {
-    let requestedClarityRevision = false
-    for (let pass = 0; ; pass++) {
-      const review = await scoreFilmScript(
-        spec,
-        (lines, warnings, correction) =>
-          author.reviewScript!(source, lines, warnings, signal, correction),
-        signal,
-        options.checkpoint
-      )
-      if (!review.findings.length || (requestedClarityRevision && !review.hasBlockingFindings)) {
-        scriptScore = review.score
-        break
-      }
-      const feedback = `Narration review (${review.score}/9). Rewrite the failing lines and adjust their cues.\n${review.findings.join('\n')}`
-      if (review.hasBlockingFindings && pass >= 3) throw new Error(feedback)
-      if (!review.hasBlockingFindings) requestedClarityRevision = true
-      spec = await writeSpec(
-        `${feedback}\nKeep the existing scenes, panels, and visual layout. Change only narration and timing cues. Preserve the source comparisons and qualifications, including when a suggested rewrite would change a claim.`,
-        spec
-      )
-    }
-  }
+  const review = author.reviewScript
+  const scriptScore = review
+    ? (
+        await scoreFilmScript(
+          spec,
+          (lines, warnings) => review(source, lines, warnings, signal),
+          signal,
+          options.checkpoint
+        )
+      )?.score
+    : undefined
   await writeResearchVideoAnimations(
     spec,
     directory,

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { checkFilmScript, FILM_CLOSING_LINE, scoreFilmScript } from './script-review.js'
+import { filmScriptIssue, FILM_CLOSING_LINE, scoreFilmScript } from './script-review.js'
 import { buildVideoTimeline, type VideoSpec } from './timeline.js'
 
 const spec: VideoSpec = {
@@ -25,13 +25,13 @@ const passes = {
   true: null
 }
 
-it('requires the exact spoken close, a preceding answer, and an end card timed to that line', () => {
+it('checks the exact spoken close, a preceding answer, and an end card timed to that line', () => {
   const draft = structuredClone(spec)
-  expect(() => checkFilmScript(draft)).not.toThrow()
+  expect(filmScriptIssue(draft)).toBeUndefined()
   draft.scenes[0].panels[0].at = '0'
-  expect(() => checkFilmScript(draft)).toThrow('end_card')
+  expect(filmScriptIssue(draft)).toContain('end_card')
   draft.scenes[0].lines.pop()
-  expect(() => checkFilmScript(draft)).toThrow('exact closing')
+  expect(filmScriptIssue(draft)).toContain('exact closing')
 })
 it('scores each criterion, returns precise failures, and only reuses the score for identical lines', async () => {
   const memory = new Map<string, string>()
@@ -50,13 +50,12 @@ it('scores each criterion, returns precise failures, and only reuses the score f
   const signal = new AbortController().signal
   expect(await scoreFilmScript(spec, score, signal, checkpoint)).toEqual({
     score: 8,
-    hasBlockingFindings: true,
     findings: ['spine: Answer the question in the first outro line.']
   })
   await scoreFilmScript(spec, score, signal, checkpoint)
   const newer = structuredClone(spec)
   newer.scenes[0].lines[0].caption = 'The fixed route was ten percent longer.'
-  expect((await scoreFilmScript(newer, score, signal, checkpoint)).score).toBe(9)
+  expect((await scoreFilmScript(newer, score, signal, checkpoint))?.score).toBe(9)
   expect(score).toHaveBeenCalledTimes(2)
 })
 it('requires an introduction on both tracks even when the model passes all nine criteria', async () => {
@@ -82,14 +81,14 @@ it('requires an introduction on both tracks even when the model passes all nine 
     caption: 'How close did an Open-Science agent come?',
     say: 'How close did the agent come?'
   }
-  expect((await scoreFilmScript(draft, review, signal)).score).toBe(8)
+  expect((await scoreFilmScript(draft, review, signal))?.score).toBe(8)
   draft.scenes[0].lines[0].say = 'How close did it come?'
-  expect((await scoreFilmScript(draft, review, signal)).score).toBe(8)
+  expect((await scoreFilmScript(draft, review, signal))?.score).toBe(8)
   draft.scenes[0].lines = [
     { caption: 'How close did an Open-Science agent come?' },
     { caption: 'The agent saved its route.' }
   ]
-  expect((await scoreFilmScript(draft, review, signal)).score).toBe(9)
+  expect((await scoreFilmScript(draft, review, signal))?.score).toBe(9)
 })
 it('breaks wide phrases for the two aspect ratios while keeping every timed word', () => {
   const draft = structuredClone(spec)

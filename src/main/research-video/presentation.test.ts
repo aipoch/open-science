@@ -945,7 +945,7 @@ it('cancels a stalled prepublication session read without discarding the built F
       },
       { timeout: 400 }
     )
-    // Restore a built film whose narration was accepted with clarity findings.
+    // Restore a built film whose narration was accepted with an advisory zero score.
     await owner.close()
     const pointer = join(
       f.options.dataRoot(),
@@ -954,7 +954,7 @@ it('cancels a stalled prepublication session read without discarding the built F
       'pending.json'
     )
     const pending = JSON.parse(await readFile(pointer, 'utf8'))
-    pending.built.scriptScore = 7
+    pending.built.scriptScore = 0
     await writeFile(pointer, JSON.stringify(pending))
     const reviewScript = vi.fn()
     owner = createResearchVideoPresentationOwner({ ...f.options, reviewScript })

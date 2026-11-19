@@ -49,8 +49,6 @@ import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
 import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
-import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
-import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
@@ -149,7 +147,6 @@ export async function composeResearchFilm({
   ): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
-    supportsImages: boolean
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
@@ -161,7 +158,6 @@ export async function composeResearchFilm({
     const model = target.model.kind === 'required' ? target.model.id : provider.model
     return {
       target,
-      supportsImages: provider.supportsImageInput,
       budget: researchFilmInputBudget(provider, model),
       count: researchFilmTokenCounter({
         ...target,
@@ -208,8 +204,7 @@ export async function composeResearchFilm({
     source: ResearchVideoSessionSource,
     systemPrompt: string,
     payload: unknown,
-    signal: AbortSignal,
-    images?: AcpMessageImage[]
+    signal: AbortSignal
   ): Promise<string> => {
     signal.throwIfAborted()
     const targetDeadline = AbortSignal.timeout(30_000)
@@ -252,9 +247,7 @@ export async function composeResearchFilm({
               ? 'screenplay'
               : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
                 ? 'script-review'
-                : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
-                  ? 'visual-review'
-                  : 'animation',
+                : 'animation',
         purpose: correction ? 'correction' : undefined,
         frameworkId: target.frameworkId,
         providerId: target.providerId
@@ -269,7 +262,6 @@ export async function composeResearchFilm({
               target,
               prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
               systemPrompt,
-              images,
               agentName:
                 source.provenance.mode === 'operation-replay'
                   ? 'Operation replay'
@@ -345,6 +337,7 @@ export async function composeResearchFilm({
             signal
           )
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && response.stopReason === 'refusal') return ''
         if (response.stopReason === 'max_tokens')
           throw new ResearchFilmOutputLimitError(
             'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
@@ -494,33 +487,14 @@ export async function composeResearchFilm({
       )
       return result.response === 1
     },
-    reviewPlayer: async (source, htmlPath, spec, signal) => {
+    reviewPlayer: async (_source, htmlPath, _spec, signal) => {
       const check = desktopFileInteraction().checkResearchVideoHtml
       if (!check) throw new Error('The desktop HTML film checker is unavailable.')
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
-      const { issues, frames } = await check({ htmlPath, includeFrames: supportsImages }, signal)
+      const { issues } = await check({ htmlPath, includeFrames: false }, signal)
       signal.throwIfAborted()
-      filmLog.info('film HTML checked', {
-        ...currentFilmAttempt(),
-        issues: issues.length,
-        frames: frames.length
-      })
-      if (issues.length || !supportsImages) return issues
-      if (
-        frames.length !== spec.scenes.length ||
-        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
-      )
-        throw new Error('The desktop returned incomplete film review frames.')
-      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
-        inferResearchVideo(
-          source,
-          FILM_VISUAL_REVIEW_PROMPT,
-          { frames: positions, correction },
-          signal,
-          images
-        )
-      )
+      filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+      // A failed session app has a drawing fallback. Layout observations are advisory.
+      return issues.filter((issue) => issue.app)
     },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
