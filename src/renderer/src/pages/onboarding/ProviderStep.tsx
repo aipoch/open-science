@@ -21,7 +21,7 @@ import {
   useSettingsStore
 } from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
-import { ProviderForm } from '../settings/ProviderForm'
+import { CodexAuthSelect, ProviderForm, type CodexAuthMode } from '../settings/ProviderForm'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
 import {
@@ -224,6 +224,9 @@ const ProviderStep = ({
   const [quickCardId, setQuickCardId] = useState<string>()
   const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
   const [quickMode, setQuickMode] = useState<'key' | undefined>()
+  const [codexAuthMode, setCodexAuthMode] = useState<CodexAuthMode>(
+    formValue.type === 'codex-isolated' ? 'codex-isolated' : 'codex-shared'
+  )
   const [quickKeys, setQuickKeys] = useState<Record<string, string>>(() =>
     formValue.type === 'official' && formValue.vendorId
       ? { [formValue.vendorId]: formValue.key }
@@ -378,11 +381,13 @@ const ProviderStep = ({
         // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
         // unverified, so the user can retry without re-entering anything.
         const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         // Arm the unmount teardown for exactly the duration of the main-process login.
         codexLoginPendingRef.current = true
         const validation = await loginIsolatedCodex().finally(() => {
-          codexLoginPendingRef.current = false
+          if (!signal?.aborted) codexLoginPendingRef.current = false
         })
+        signal?.throwIfAborted()
 
         // A discarded sign-in (the provider was switched/edited while the browser flow was open) can
         // report ok but was never recorded on the stored provider — advancing would finish onboarding
@@ -400,6 +405,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
+          signal?.throwIfAborted()
           advanceIfMounted('account')
         }
         return
@@ -571,6 +577,7 @@ const ProviderStep = ({
 
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(kindKey)),
+      ...(kindKey === 'codex-subscription' ? { type: codexAuthMode } : {}),
       key: mode === 'key' ? (quickKeys[card.id] ?? '') : '',
       providerFormTouched: true
     }
@@ -619,7 +626,10 @@ const ProviderStep = ({
     if (!attempt || attempt.signal.aborted) return
     attempt.abort()
     try {
-      if (claudeSharedLoginPendingRef.current) {
+      if (codexLoginPendingRef.current) {
+        codexLoginPendingRef.current = false
+        await cancelCodexLogin()
+      } else if (claudeSharedLoginPendingRef.current) {
         claudeSharedLoginPendingRef.current = false
         await cancelSharedClaudeLogin()
       } else if (xaiLoginPendingRef.current) {
@@ -778,6 +788,13 @@ const ProviderStep = ({
                       ) : (
                         <>
                           {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
+                          {card.subscriptionKind === 'codex-subscription' && (
+                            <CodexAuthSelect
+                              value={codexAuthMode}
+                              disabled={isSaving}
+                              onChange={setCodexAuthMode}
+                            />
+                          )}
                           {subscriptionAvailable ? (
                             <div className="flex items-center gap-2">
                               <Button
@@ -820,11 +837,23 @@ const ProviderStep = ({
           </div>
         </div>
 
-        {validationMessage ? (
-          <p className={cn('onboarding-provider-validation', validationOk && 'is-ok')} role="alert">
-            {validationMessage}
-          </p>
-        ) : null}
+        {validationMessage &&
+          (validationOk ? (
+            <p className="mt-3 text-xs text-primary" role="status">
+              {validationMessage}
+            </p>
+          ) : (
+            <ErrorNotice
+              level="warning"
+              role="alert"
+              description={validationMessage}
+              className="mt-3 border-status-warning-foreground/30 bg-status-warning-surface dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface"
+              secondaryButton={{
+                label: t('Dismiss'),
+                onClick: () => setValidationMessage(undefined)
+              }}
+            />
+          ))}
 
         <footer className="onboarding-quick-footer">
           <Button type="button" variant="ghost" onClick={onBack} disabled={isSaving}>

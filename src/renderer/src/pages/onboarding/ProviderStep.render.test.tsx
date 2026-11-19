@@ -315,6 +315,60 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledWith('account')
   })
 
+  it('allows dismissing a failed Codex import and manually switching to cancellable browser sign-in', async () => {
+    let finishLogin!: (result: ValidateProviderResult) => void
+    const loginIsolatedCodex = vi.fn(
+      () =>
+        new Promise<ValidateProviderResult>((resolve) => {
+          finishLogin = resolve
+        })
+    )
+    const saveProvider = vi.fn().mockRejectedValue(new Error('Missing auth.json'))
+    const persistProvider = vi.fn().mockResolvedValue('builtin-codex-isolated')
+    const cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      saveProvider,
+      persistProvider,
+      loginIsolatedCodex,
+      cancelCodexLogin,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-openai')!
+    const picker = card.querySelector<HTMLButtonElement>('[aria-label="Codex authentication"]')!
+    expect(picker.textContent).toContain('Import existing Codex sign-in')
+    await clickButton(/Continue with OpenAI/)
+    const warning = container.querySelector('[data-notice-level="warning"]')!
+    expect(warning.querySelector('[role="alert"]')?.textContent).toContain('Missing auth.json')
+    expect(warning.querySelector('svg')).not.toBeNull()
+    expect(loginIsolatedCodex).not.toHaveBeenCalled()
+    await clickButton(/^Dismiss$/)
+    expect(container.contains(warning)).toBe(false)
+    expect(picker.textContent).toContain('Import existing Codex sign-in')
+    await selectOption('Codex authentication', 'Sign in with Open-Science')
+    expect(loginIsolatedCodex).not.toHaveBeenCalled()
+    await clickButton(/Continue with OpenAI/)
+    expect(saveProvider).toHaveBeenCalledTimes(1)
+    expect(persistProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-isolated' })
+    )
+    expect(loginIsolatedCodex).toHaveBeenCalledOnce()
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    expect(picker.disabled).toBe(true)
+    const cancel = card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!
+    await act(async () => cancel.click())
+    expect(cancelCodexLogin).toHaveBeenCalledOnce()
+    await act(async () => finishLogin({ ok: true, category: 'ok' }))
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(picker.disabled).toBe(false)
+    expect(picker.textContent).toContain('Sign in with Open-Science')
+  })
+
   it('keeps the Claude API-key option without changing the framework', async () => {
     const setAgentFramework = vi.fn()
     useSettingsStore.setState({ agentFrameworkId: 'open-science-agent', setAgentFramework })
