@@ -313,7 +313,9 @@ describe('notebook run repository', () => {
           status: 'completed',
           script: `print("${record.id}")`,
           rootFrameId: record.root,
-          agentFrameId: record.frame
+          agentFrameId: record.frame,
+          messageBranchId: `branch-${index}`,
+          environment: index === 1 ? 'analysis' : 'default-python'
         })
       })
     }
@@ -321,6 +323,35 @@ describe('notebook run repository', () => {
     for (const frameId of [provisionalRoot, canonicalRoot, 'child-frame']) {
       const expectedIds = frameId === 'child-frame' ? ['child'] : ['manual', 'agent']
       const window = await repository.readSessionRunWindow(projectId, sessionId, 1, [], frameId)
+      expect(window.historyAgents).toEqual([
+        {
+          agentFrameId: canonicalRoot,
+          isRoot: true,
+          runCount: 2,
+          views: [
+            { kernelKind: 'python', environment: 'analysis', runCount: 1, latestRunId: 'agent' },
+            {
+              kernelKind: 'python',
+              environment: 'default-python',
+              runCount: 1,
+              latestRunId: 'manual'
+            }
+          ]
+        },
+        {
+          agentFrameId: 'child-frame',
+          isRoot: false,
+          runCount: 1,
+          views: [
+            {
+              kernelKind: 'python',
+              environment: 'default-python',
+              runCount: 1,
+              latestRunId: 'child'
+            }
+          ]
+        }
+      ])
       expect(window.historySummary).toMatchObject({
         agentFrameId: frameId,
         runCount: expectedIds.length,
@@ -1208,6 +1239,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
+      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1222,6 +1254,7 @@ describe('notebook run repository', () => {
         expect.objectContaining({ runId: 'child' })
       ],
       total: 3,
+      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1233,6 +1266,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
+      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1253,6 +1287,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'legacy' })],
       total: 3,
+      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,

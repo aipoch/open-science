@@ -1,6 +1,10 @@
 import type { TFunction } from 'i18next'
 
-import type { NotebookRunHistorySummary, NotebookRunRecord } from '../../../../shared/notebook'
+import type {
+  NotebookHistoryAgent,
+  NotebookRunHistorySummary,
+  NotebookRunRecord
+} from '../../../../shared/notebook'
 import type { ChatSession, ToolActivity } from '@/stores/session-store-contract'
 import { resolveActiveConversationMessages } from '../../../../shared/conversation-graph'
 import {
@@ -94,23 +98,65 @@ const normalizeNotebookRootFrameRuns = (
 const notebookFrameLabels = (
   session: Pick<ChatSession, 'id' | 'conversationGraph'>,
   t: TFunction,
-  runs: readonly NotebookRunRecord[] = []
+  runs: readonly NotebookRunRecord[] = [],
+  historyAgents: readonly NotebookHistoryAgent[] = []
 ): Record<string, string> => {
   const graph = session.conversationGraph
-  if (!graph) return { [notebookRootFrameId(session, runs)]: t('Main Agent') }
-  return Object.fromEntries(
-    graph.frames.flatMap((frame) => {
-      if (frame.id === graph.rootFrameId) return [[frame.id, t('Main Agent')]]
-      if (frame.kind !== 'delegate' || !frame.delegateName) return []
-      return [[frame.id, frame.delegateName]]
+  const rootFrameId = notebookRootFrameId(session, runs)
+  const labels: Record<string, string> = { [rootFrameId]: t('Main Agent') }
+  let ordinal = 0
+  for (const agent of historyAgents) {
+    if (agent.isRoot) continue
+    ordinal += 1
+    const frame = graph?.frames.find((candidate) => candidate.id === agent.agentFrameId)
+    if (frame && frame.kind !== 'delegate') continue
+    labels[agent.agentFrameId] =
+      frame?.delegateName ?? t('Subagent {{number}}', { number: ordinal })
+  }
+  for (const frame of graph?.frames ?? []) {
+    if (frame.kind === 'delegate' && frame.delegateName) labels[frame.id] = frame.delegateName
+  }
+  return labels
+}
+
+const notebookHistoryAgentsForSession = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  runs: readonly NotebookRunRecord[],
+  agents: readonly NotebookHistoryAgent[]
+): NotebookHistoryAgent[] => {
+  const rootFrameId = notebookRootFrameId(session, runs)
+  return agents.map((agent) => (agent.isRoot ? { ...agent, agentFrameId: rootFrameId } : agent))
+}
+
+const notebookHistorySummaries = (
+  agents: readonly NotebookHistoryAgent[]
+): ReadonlyMap<string, NotebookRunHistorySummary> =>
+  new Map(
+    agents.map((agent) => {
+      const summary: NotebookRunHistorySummary = {
+        agentFrameId: agent.agentFrameId,
+        runCount: agent.runCount,
+        kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
+      }
+      for (const view of agent.views) {
+        summary.kernelCounts[view.kernelKind] += view.runCount
+        if (
+          !summary.latestDataKernel &&
+          (view.kernelKind === 'python' || view.kernelKind === 'r')
+        ) {
+          summary.latestDataKernel = view.kernelKind
+        }
+      }
+      return [agent.agentFrameId, summary]
     })
   )
-}
 
 export {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
+  notebookHistoryAgentsForSession,
+  notebookHistorySummaries,
   normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame
 }

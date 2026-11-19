@@ -12,6 +12,7 @@ import { i18next } from '@/i18n'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type { ToolActivity } from '@/stores/session-store'
 
+import { summarizeNotebookHistory } from '../../../../shared/notebook'
 import type {
   NotebookEnvironmentStatus,
   NotebookRunRecord,
@@ -1855,6 +1856,156 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
   })
 
+  it('discovers graph-free delegates outside the recent window and reads their historical environment', async () => {
+    useSessionStore.setState({ sessions: [{ id: 'session-1', contentLoaded: false }] } as never)
+    const old = makeRun({
+      runId: 'old-child',
+      agentFrameId: 'frame-child',
+      environment: 'analysis',
+      script: 'print("old child")',
+      messageBranchId: 'other-branch'
+    })
+    const recent = makeRun({ runId: 'recent', startedAt: 100 })
+    await mountWithRuns([recent], [], {}, 'idle', {
+      runCount: 2,
+      historyAgents: summarizeNotebookHistory('session-1', [old, recent]),
+      historyPage: { hasEarlierRuns: true, oldestCursor: { startedAt: 100, runId: 'recent' } }
+    })
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    state.mockResolvedValue({ ...initial, runs: [old], recentRuns: [] })
+    await selectAgentHistory('Subagent 1')
+    for (let i = 0; i < 3; i++)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    expect(state).toHaveBeenLastCalledWith(expect.objectContaining({ runIds: ['old-child'] }))
+    expect(container.textContent).toContain('print("old child")')
+    expect(
+      container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent
+    ).toContain('analysis · history only')
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(false)
+  })
+
+  it('loads earlier records across branches and retains them after a live refresh', async () => {
+    const recent = makeRun({
+      runId: 'recent',
+      startedAt: 100,
+      script: 'print("recent")',
+      messageBranchId: 'branch-new'
+    })
+    const old = makeRun({
+      runId: 'old',
+      startedAt: 1,
+      script: 'print("old")',
+      messageBranchId: 'branch-old'
+    })
+    await mountWithRuns([recent], [], {}, 'idle', {
+      runCount: 2,
+      historyAgents: summarizeNotebookHistory('session-1', [old, recent]),
+      historyPage: { hasEarlierRuns: true, oldestCursor: { startedAt: 100, runId: 'recent' } }
+    })
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    state.mockResolvedValueOnce({ ...initial, runs: [old], historyPage: { hasEarlierRuns: false } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Load earlier runs' }))
+    })
+    expect(state).toHaveBeenLastCalledWith(
+      expect.objectContaining({ historyBefore: { startedAt: 100, runId: 'recent' } })
+    )
+    expect(container.textContent).toContain('print("old")')
+    state.mockResolvedValueOnce({
+      ...initial,
+      runs: [makeRun({ runId: 'newest', startedAt: 101, script: 'print("newest")' })]
+    })
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls.at(-1)![0](item.notebook)
+    })
+    expect(container.textContent).toContain('print("old")')
+    expect(container.textContent).toContain('print("recent")')
+    expect(container.textContent).toContain('print("newest")')
+    expect(screen.queryByRole('button', { name: 'Load earlier runs' })).toBeNull()
+  })
+
+  it.each(['recovery', 'session'] as const)(
+    'rejects an earlier-page response after %s changes',
+    async (change) => {
+      const recent = makeRun({ runId: 'recent', startedAt: 100 })
+      await mountWithRuns([recent], [], {}, 'idle', {
+        historyPage: { hasEarlierRuns: true, oldestCursor: { startedAt: 100, runId: 'recent' } }
+      })
+      const state = vi.mocked(window.api.notebook.state)
+      const initial = await state.mock.results[0].value
+      let resolveHistory!: (value: NotebookSessionState) => void
+      const pending = new Promise<NotebookSessionState>((resolve) => {
+        resolveHistory = resolve
+      })
+      state.mockImplementation((request) =>
+        request.historyBefore
+          ? pending
+          : Promise.resolve({ ...initial, sessionId: request.sessionId })
+      )
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Load earlier runs' }))
+      })
+      await act(async () => {
+        if (change === 'recovery') useDesktopRuntimeRecoveryStore.setState({ epoch: 1 })
+        else
+          root.render(
+            <NotebookPreview
+              item={{ ...item, notebook: { ...item.notebook, sessionId: 'session-2' } }}
+            />
+          )
+      })
+      for (let i = 0; i < 3; i++)
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        })
+      if (change === 'session') {
+        await act(async () => root.render(<NotebookPreview item={item} />))
+        for (let i = 0; i < 3; i++)
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          })
+      }
+      await act(async () => {
+        resolveHistory({
+          ...initial,
+          runs: [makeRun({ runId: 'stale', script: 'print("stale attachment")' })]
+        })
+      })
+      expect(container.textContent).not.toContain('print("stale attachment")')
+      expect(
+        screen.getByRole('button', { name: 'Load earlier runs' }).hasAttribute('disabled')
+      ).toBe(false)
+    }
+  )
+
+  it('reveals a requested old run with a targeted read instead of transcript hydration', async () => {
+    const old = makeRun({
+      runId: 'old-focus',
+      environment: 'analysis',
+      script: 'print("focused old")'
+    })
+    const recent = makeRun({ runId: 'recent', startedAt: 100 })
+    await mountWithRuns([recent])
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    state.mockImplementation(async (request) =>
+      request.runIds ? { ...initial, runs: [old] } : initial
+    )
+    await act(async () =>
+      root.render(<NotebookPreview item={{ ...item, notebookRunId: 'old-focus' }} />)
+    )
+    for (let i = 0; i < 5; i++)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    expect(state).toHaveBeenCalledWith(expect.objectContaining({ runIds: ['old-focus'] }))
+    expect(container.textContent).toContain('print("focused old")')
+  })
+
   it('projects named Main Agent and Subagent Runs without All, legacy, or Frame IDs', async () => {
     await mountWithRuns([
       makeRun({
@@ -2841,7 +2992,7 @@ describe('NotebookPreview per-environment selector', () => {
     )
   })
 
-  it('shows the selector across two python envs, defaults labeled "default", and filters on selection', async () => {
+  it('defaults to the latest historical environment and preserves explicit environment selection', async () => {
     await mountWithRuns([
       makeRun({ runId: 'p1', kernelKind: 'python', script: 'print("default")' }),
       makeRun({
@@ -2864,13 +3015,6 @@ describe('NotebookPreview per-environment selector', () => {
     expect(defaultOption.textContent).toContain('default')
     expect(analysisOption.textContent).toContain('my-analysis')
 
-    // Default env selected initially (default-first ordering).
-    expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(1)
-    expect(container.textContent).toContain('print("default")')
-    expect(container.textContent).not.toContain('print("analysis")')
-
-    act(() => analysisOption.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-
     expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(1)
     expect(container.textContent).toContain('print("analysis")')
     expect(container.textContent).not.toContain('print("default")')
@@ -2878,6 +3022,10 @@ describe('NotebookPreview per-environment selector', () => {
     expect(container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent).toBe(
       'my-analysis · history only; new code runs in default-python2 cells'
     )
+
+    act(() => defaultOption.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(container.textContent).toContain('print("default")')
+    expect(container.textContent).not.toContain('print("analysis")')
   })
 
   it('groups a legacy run with no environment field under default-python', async () => {
@@ -2899,7 +3047,8 @@ describe('NotebookPreview per-environment selector', () => {
     const selector = container.querySelector('[data-testid="env-selector"]') as HTMLElement
     expect(selector.querySelector('[data-testid="env-option-default-python"]')).not.toBeNull()
 
-    // Legacy run (no `environment`) is visible under the default-python option, selected by default.
+    act(() => fireEvent.click(selector.querySelector('[data-testid="env-option-default-python"]')!))
+    // Missing environment evidence retains the existing language-default interpretation.
     expect(container.textContent).toContain('print("legacy")')
     expect(container.textContent).not.toContain('print("analysis")')
   })

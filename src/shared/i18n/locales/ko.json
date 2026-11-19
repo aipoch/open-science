@@ -8440,6 +8440,8 @@
     "Test generation": "생성 테스트",
     "Image generation test passed.": "이미지 생성 테스트에 성공했습니다.",
     "Test image generation?": "이미지 생성을 테스트하시겠습니까?",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} 모델로 테스트 이미지 한 장을 생성합니다. 모델 제공업체가 이 요청에 요금을 청구할 수 있습니다."
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} 모델로 테스트 이미지 한 장을 생성합니다. 모델 제공업체가 이 요청에 요금을 청구할 수 있습니다.",
+    "Subagent {{number}}": "서브에이전트 {{number}}",
+    "Notebook run not found.": "Notebook 실행 기록을 찾을 수 없습니다."
   }
 }

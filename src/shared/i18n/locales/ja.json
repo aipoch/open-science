@@ -8442,6 +8442,8 @@
     "Test generation": "生成をテスト",
     "Image generation test passed.": "画像生成テストに成功しました。",
     "Test image generation?": "画像生成をテストしますか？",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} でテスト画像を1枚生成します。このリクエストに対してプロバイダーから料金が請求される場合があります。"
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} でテスト画像を1枚生成します。このリクエストに対してプロバイダーから料金が請求される場合があります。",
+    "Subagent {{number}}": "サブエージェント {{number}}",
+    "Notebook run not found.": "Notebook の実行記録が見つかりません。"
   }
 }

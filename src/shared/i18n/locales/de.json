@@ -8613,6 +8613,8 @@
     "Test generation": "Bilderzeugung testen",
     "Image generation test passed.": "Test der Bilderzeugung erfolgreich.",
     "Test image generation?": "Bilderzeugung testen?",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "Ein Testbild mit {{model}} erzeugen. Ihr Anbieter kann diese Anfrage berechnen."
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Ein Testbild mit {{model}} erzeugen. Ihr Anbieter kann diese Anfrage berechnen.",
+    "Subagent {{number}}": "Unteragent {{number}}",
+    "Notebook run not found.": "Notebook-Ausführung nicht gefunden."
   }
 }

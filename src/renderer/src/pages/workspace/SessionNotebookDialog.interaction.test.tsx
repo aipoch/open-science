@@ -115,6 +115,37 @@ it.each([false, true])('opens mixed-root history with a canonical graph: %s', as
   })
 })
 
+it('keeps complete-history summary discovery when an older host omits historyAgents', async () => {
+  const sessionId = 'session-legacy-host'
+  const frameId = `root-frame-${sessionId}`
+  const state = vi.fn(async (request: { historySummaryFrameId?: string }) => ({
+    runs: [{ ...run, agentFrameId: frameId, rootFrameId: frameId }],
+    runCount: 2,
+    ...(request.historySummaryFrameId
+      ? {
+          historySummary: {
+            agentFrameId: frameId,
+            runCount: 2,
+            kernelCounts: { python: 1, r: 1, repl: 0, bash: 0 },
+            latestDataKernel: 'python'
+          }
+        }
+      : {})
+  }))
+  vi.stubGlobal('api', {
+    notebook: { getReference: vi.fn().mockResolvedValue({ sessionId }), state }
+  })
+  await act(async () =>
+    root.render(<SessionNotebookDialog session={{ id: sessionId } as never} onClose={vi.fn()} />)
+  )
+  await waitFor(() => {
+    expect(state).toHaveBeenCalledWith(expect.objectContaining({ historySummaryFrameId: frameId }))
+    expect(
+      document.body.querySelector('button[aria-label="Download separate notebooks by kernel (2)"]')
+    ).not.toBeNull()
+  })
+})
+
 describe('SessionNotebookContent export', () => {
   it('loads the previous page when the near-top sentinel intersects', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined

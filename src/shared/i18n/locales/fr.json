@@ -8792,6 +8792,8 @@
     "Test generation": "Tester la génération",
     "Image generation test passed.": "Le test de génération d’image a réussi.",
     "Test image generation?": "Tester la génération d’image ?",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "Générer une image de test avec {{model}}. Votre fournisseur peut facturer cette requête."
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Générer une image de test avec {{model}}. Votre fournisseur peut facturer cette requête.",
+    "Subagent {{number}}": "Sous-agent {{number}}",
+    "Notebook run not found.": "Exécution du Notebook introuvable."
   }
 }

@@ -8944,6 +8944,8 @@
     "Test generation": "Проверить генерацию",
     "Image generation test passed.": "Проверка генерации изображений пройдена.",
     "Test image generation?": "Проверить генерацию изображений?",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "Будет создано одно тестовое изображение с помощью {{model}}. Поставщик может взимать плату за этот запрос."
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Будет создано одно тестовое изображение с помощью {{model}}. Поставщик может взимать плату за этот запрос.",
+    "Subagent {{number}}": "Субагент {{number}}",
+    "Notebook run not found.": "Запись выполнения Notebook не найдена."
   }
 }

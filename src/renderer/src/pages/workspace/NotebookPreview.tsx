@@ -11,6 +11,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject
@@ -43,14 +44,17 @@ import type {
   NotebookNamespaceSnapshot,
   NotebookNamespaceVariable,
   NotebookRunRecord,
+  NotebookRunPage,
+  NotebookRunCursor,
   NotebookRunStaleness,
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { summarizeNotebookHistory } from '../../../../shared/notebook'
 import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
-import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
+import { isCurrentSessionNotebookView, prependAnchoredScrollTop } from './follow-notebook-scroll'
 import { shouldProvisionR } from './lazy-r'
 import {
   resolveRunErrorLine,
@@ -70,6 +74,8 @@ import {
   createNotebookFrameFilterOptions,
   normalizeNotebookRootFrameRuns,
   notebookFrameLabels,
+  notebookHistoryAgentsForSession,
+  notebookHistorySummaries,
   pendingNotebookCode,
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
@@ -536,6 +542,17 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const restartTrigger = useRef<HTMLButtonElement>(null)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
+  const [extraHistory, setExtraHistory] = useState<{
+    scope: string
+    runs: NotebookRunRecord[]
+    page?: NotebookRunPage
+    loading: boolean
+    error?: string
+    failedRunId?: string
+  }>()
+  const historyReadInFlight = useRef<string | undefined>(undefined)
+  const historyGeneration = useRef(0)
+  const prependSnapshot = useRef<{ scrollTop: number; scrollHeight: number } | undefined>(undefined)
   const viewSelectionVersion = useRef(0)
   const [showVariables, setShowVariables] = useState(false)
   const [showPrivateVariables, setShowPrivateVariables] = useState(false)
@@ -555,6 +572,12 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const notebookItemInWorkbench = usePreviewWorkbenchStore((state) =>
     state.items.some((entry) => entry.id === item.id)
   )
+  const notebookRequest = createNotebookRequest(item.notebook)
+  const notebookRequestKey = JSON.stringify(notebookRequest)
+  const historyScope = JSON.stringify([notebookRequestKey, recoveryEpoch])
+  const history = extraHistory?.scope === historyScope ? extraHistory : undefined
+  // Do not resurrect an invalidated pending request when navigation returns from A -> B -> A.
+  if (extraHistory && extraHistory.scope !== historyScope) setExtraHistory(undefined)
   const followEnabled = isCurrentSessionNotebookView({
     notebookSessionId: item.notebook.sessionId,
     selectedSessionId,
@@ -563,19 +586,22 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     previewActiveItemId,
     notebookItemInWorkbench
   })
-  const cellsViewportRef = useFollowScrollBottom(followEnabled)
+  const cellsViewportRef = useFollowScrollBottom(followEnabled && !history?.loading)
   const terminalViewportRef = useFollowScrollBottom(followEnabled)
-  // Selected environment within the active python/r pane; undefined lets the effective-env
-  // computation below default to the first (canonical-default-first) environment.
+  // An explicit environment selection wins; otherwise show the latest historical environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
   const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
   const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
   const stateReloadQueued = useRef(false)
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
   const lastRevealedRunRequest = useRef<string | undefined>(undefined)
-  const notebookRequest = createNotebookRequest(item.notebook)
-  const notebookRequestKey = JSON.stringify(notebookRequest)
   const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
+
+  useLayoutEffect(() => {
+    historyGeneration.current += 1
+    historyReadInFlight.current = undefined
+    prependSnapshot.current = undefined
+  }, [historyScope])
 
   useEffect(() => {
     if (latestNotebookRequest.current.key !== notebookRequestKey) {
@@ -606,6 +632,23 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
+    const previousRuns = latestNotebookState.current?.runs ?? []
+    const scope = JSON.stringify([latestNotebookRequest.current.key, getDesktopRuntimeEpoch()])
+    setExtraHistory((previous) =>
+      previous?.scope === scope
+        ? {
+            ...previous,
+            runs: [
+              ...new Map(
+                [...previous.runs, ...previousRuns, ...nextState.runs].map((run) => [
+                  run.runId,
+                  run
+                ])
+              ).values()
+            ]
+          }
+        : previous
+    )
     latestNotebookState.current = nextState
     setNotebookState(nextState)
   }, [])
@@ -696,14 +739,22 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     })
   }, [item.notebook.sessionId, loadNotebookState])
 
-  const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
+  const recentRuns = notebookState?.runs ?? notebookState?.recentRuns ?? []
+  const runs = [
+    ...new Map([...(history?.runs ?? []), ...recentRuns].map((run) => [run.runId, run])).values()
+  ].sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
   const notebookSession = session ?? { id: item.notebook.sessionId }
   const frameRuns = normalizeNotebookRootFrameRuns(runs, notebookSession)
+  const historyAgents = notebookHistoryAgentsForSession(
+    notebookSession,
+    runs,
+    notebookState?.historyAgents ?? summarizeNotebookHistory(notebookSession.id, runs)
+  )
   const pendingCode = pendingNotebookCode(session, frameRuns)
   const frameOptions = createNotebookFrameFilterOptions(
     frameRuns,
-    notebookFrameLabels(notebookSession, t, frameRuns),
-    undefined,
+    notebookFrameLabels(notebookSession, t, frameRuns, historyAgents),
+    notebookHistorySummaries(historyAgents),
     false,
     pendingCode[0]?.frameId
   )
@@ -713,6 +764,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const projectedRuns = effectiveFrameFilter
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
+  const agentHistory = historyAgents.find(
+    (agent) => `frame:${agent.agentFrameId}` === effectiveFrameFilter
+  )
 
   const framePendingCode = pendingCode.filter(
     (entry) => `frame:${entry.frameId}` === effectiveFrameFilter
@@ -727,6 +781,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
           : 'python'
   // Received code can make a kernel tab visible before its first Run is admitted.
   const kindsWithRuns = new Set([
+    ...(agentHistory?.views.map((view) => view.kernelKind) ?? []),
     ...projectedRuns.map(resolveRunKernelKind),
     ...framePendingCode.map((entry) => pendingKernelKind(entry.code.language))
   ])
@@ -780,6 +835,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         new Set(
           [
             ...kindRuns.map(resolveRunEnvironment),
+            ...(agentHistory?.views
+              .filter((view) => view.kernelKind === activeDataLanguage)
+              .map((view) => view.environment) ?? []),
             ...(notebookState?.environments.flatMap((entry) =>
               entry.kind === activeDataLanguage && entry.environment ? [entry.environment] : []
             ) ?? []),
@@ -800,7 +858,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const effectiveActiveEnv = activeDataLanguage
     ? envNames.includes(activeEnv ?? '')
       ? (activeEnv as string)
-      : (executionEnvironment ?? envNames[0])
+      : (agentHistory?.views.find((view) => view.kernelKind === activeDataLanguage)?.environment ??
+        executionEnvironment ??
+        envNames[0])
     : undefined
   const visibleRuns = activeDataLanguage
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
@@ -808,6 +868,122 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const focusedRun = item.notebookRunId
     ? frameRuns.find((run) => run.runId === item.notebookRunId)
     : undefined
+
+  const loadHistory = useCallback(
+    async (target: { cursor?: NotebookRunCursor; runId?: string }): Promise<void> => {
+      if (
+        !isActive ||
+        !['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase)
+      )
+        return
+      const requested = latestNotebookRequest.current
+      const epoch = getDesktopRuntimeEpoch()
+      const scope = JSON.stringify([requested.key, epoch])
+      const generation = historyGeneration.current
+      if (historyReadInFlight.current === scope) return
+      historyReadInFlight.current = scope
+      const current = (): boolean =>
+        latestNotebookRequest.current.key === requested.key &&
+        getDesktopRuntimeEpoch() === epoch &&
+        historyGeneration.current === generation
+      setExtraHistory((previous) => ({
+        ...(previous?.scope === scope ? previous : { scope, runs: [] }),
+        loading: true,
+        error: undefined
+      }))
+      try {
+        const loaded = await window.api.notebook.state({
+          ...requested.request,
+          ...(target.cursor ? { historyBefore: target.cursor } : {}),
+          ...(target.runId ? { runIds: [target.runId] } : {})
+        })
+        if (!current()) return
+        if (target.runId && !loaded.runs.some((run) => run.runId === target.runId)) {
+          throw new Error(t('Notebook run not found.'))
+        }
+        const viewport = cellsViewportRef.current
+        if (target.cursor && viewport)
+          prependSnapshot.current = {
+            scrollTop: viewport.scrollTop,
+            scrollHeight: viewport.scrollHeight
+          }
+        setExtraHistory((previous) => ({
+          scope,
+          runs: [
+            ...new Map(
+              [
+                ...(previous?.scope === scope ? previous.runs : []),
+                ...(latestNotebookState.current?.runs ?? []),
+                ...loaded.runs
+              ].map((run) => [run.runId, run])
+            ).values()
+          ],
+          page: target.cursor
+            ? loaded.historyPage
+            : previous?.scope === scope
+              ? previous.page
+              : undefined,
+          loading: false
+        }))
+      } catch (error) {
+        if (current())
+          setExtraHistory((previous) => ({
+            ...(previous?.scope === scope ? previous : { scope, runs: [] }),
+            loading: false,
+            failedRunId: target.runId,
+            error: getErrorMessage(error)
+          }))
+      } finally {
+        if (current() && historyReadInFlight.current === scope)
+          historyReadInFlight.current = undefined
+      }
+    },
+    [cellsViewportRef, isActive, t]
+  )
+
+  const historyPage =
+    history?.page ??
+    (notebookState?.sessionId === item.notebook.sessionId ? notebookState.historyPage : undefined)
+  const selectedView = agentHistory?.views.find(
+    (view) => view.kernelKind === effectiveActiveKind && view.environment === effectiveActiveEnv
+  )
+  const requestedRunId =
+    item.notebookRunId && !focusedRun
+      ? item.notebookRunId
+      : visibleRuns.length === 0
+        ? selectedView?.latestRunId
+        : undefined
+  useEffect(() => {
+    if (
+      !notebookState ||
+      notebookState.sessionId !== item.notebook.sessionId ||
+      !requestedRunId ||
+      history?.loading ||
+      (history?.error && history.failedRunId === requestedRunId) ||
+      runs.some((run) => run.runId === requestedRunId)
+    )
+      return
+    const timer = window.setTimeout(() => {
+      void loadHistory({ runId: requestedRunId })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [
+    notebookState,
+    item.notebook.sessionId,
+    requestedRunId,
+    history?.loading,
+    history?.error,
+    history?.failedRunId,
+    runs,
+    loadHistory
+  ])
+
+  useLayoutEffect(() => {
+    const viewport = cellsViewportRef.current
+    if (!viewport || !prependSnapshot.current) return
+    viewport.scrollTop = prependAnchoredScrollTop(prependSnapshot.current, viewport.scrollHeight)
+    prependSnapshot.current = undefined
+  }, [cellsViewportRef, history?.runs])
 
   useEffect(() => {
     if (!focusedRun?.agentFrameId) return
@@ -1192,6 +1368,29 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
       data-testid="notebook-cells"
     >
       <div className="divide-y divide-border-100">
+        {historyPage?.hasEarlierRuns && historyPage.oldestCursor ? (
+          <button
+            type="button"
+            className="w-full px-3 py-2 text-xs text-text-300 hover:bg-bg-200"
+            disabled={history?.loading}
+            onClick={() => void loadHistory({ cursor: historyPage.oldestCursor })}
+          >
+            {history?.loading ? t('Loading earlier runs…') : t('Load earlier runs')}
+          </button>
+        ) : null}
+        {history?.error ? (
+          <ErrorNotice
+            inline
+            description={history.error}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () =>
+                void loadHistory(
+                  requestedRunId ? { runId: requestedRunId } : { cursor: historyPage?.oldestCursor }
+                )
+            }}
+          />
+        ) : null}
         {visibleRuns.map((run, index) => {
           const staleness = visibleStalenessForRun(run)
           return (
@@ -1230,7 +1429,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         ))}
         {visibleRuns.length === 0 && visiblePendingCode.length === 0 ? (
           <div role="status" className="px-4 py-6 text-sm text-text-300">
-            {isLoading ? t('Loading notebook…') : t('No code has run in this view yet.')}
+            {isLoading || history?.loading
+              ? t('Loading notebook…')
+              : t('No code has run in this view yet.')}
           </div>
         ) : null}
       </div>
@@ -1466,6 +1667,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
               onValueChange={(value) => {
                 viewSelectionVersion.current += 1
                 setFrameFilter(value as NotebookFrameFilterValue)
+                setActiveEnv(undefined)
               }}
             >
               <SelectTrigger

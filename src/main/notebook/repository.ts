@@ -9,6 +9,7 @@ import type {
   NotebookKernelInstanceIdentity,
   NotebookRunDocument,
   NotebookRunHistorySummary,
+  NotebookHistoryAgent,
   NotebookRunCursor,
   NotebookRunRecord,
   NotebookRunStatus,
@@ -17,6 +18,7 @@ import type {
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import {
   createNotebookFrameRunFilter,
+  summarizeNotebookHistory,
   NOTEBOOK_RUN_FILE,
   NOTEBOOKS_DIR
 } from '../../shared/notebook'
@@ -1449,6 +1451,7 @@ class NotebookRunRepository {
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
     historySummary?: NotebookRunHistorySummary
+    historyAgents: NotebookHistoryAgent[]
     historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
   }> {
     const documents = await this.readSessionDocuments(projectId, sessionId)
@@ -1527,6 +1530,10 @@ class NotebookRunRepository {
     return {
       runs: [...mergedRuns.values()].sort(compareRuns),
       total,
+      historyAgents: summarizeNotebookHistory(
+        sessionId,
+        documents.flatMap((document) => document.runs)
+      ),
       latestRunEnvironments: Object.fromEntries(
         [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
       ),
