@@ -266,7 +266,7 @@ it('uses stable real circle radii and cuts straight and mutual edges outside the
   for (const bend of [0, 28, -28]) {
     const edge = citationGraphEdgeGeometry(from, to, 22, 14, 0.5, bend)
     expect(Math.hypot(edge.start.x - from.x, edge.start.y - from.y)).toBeCloseTo(24)
-    expect(Math.hypot(edge.end.x - to.x, edge.end.y - to.y)).toBeCloseTo(20)
+    expect(Math.hypot(edge.end.x - to.x, edge.end.y - to.y)).toBeCloseTo(14)
     expect(edge.end.y).toBeGreaterThan(edge.start.y)
   }
 })

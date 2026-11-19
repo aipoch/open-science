@@ -8452,7 +8452,7 @@
     "Both directions": "雙向關係",
     "Current center": "目前中心",
     "A → B means A cites B.": "A → B 表示 A 引用了 B。",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "新文獻位於目前檢視範圍之外。調整圖譜大小以查看所有已載入文獻。",
+    "New papers off-screen. Fit graph.": "新文獻在視野外。點擊「調整圖譜」查看。",
     "Center paper: {{title}}": "中心文獻：{{title}}",
     "No year": "年份未知",
     "View selected paper": "查看所選文獻",

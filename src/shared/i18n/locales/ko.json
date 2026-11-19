@@ -8450,7 +8450,7 @@
     "Both directions": "양방향",
     "Current center": "현재 중심",
     "A → B means A cites B.": "A → B는 A가 B를 인용했음을 나타냅니다.",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "새 논문이 현재 보기 바깥에 있습니다. 그래프를 맞추면 불러온 모든 논문을 볼 수 있습니다.",
+    "New papers off-screen. Fit graph.": "새 논문이 현재 보기 바깥에 있습니다. 그래프 맞추기.",
     "Center paper: {{title}}": "중심 논문: {{title}}",
     "No year": "연도 없음",
     "View selected paper": "선택한 논문 보기",

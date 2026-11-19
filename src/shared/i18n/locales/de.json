@@ -8623,7 +8623,7 @@
     "Both directions": "Beide Richtungen",
     "Current center": "Aktueller Mittelpunkt",
     "A → B means A cites B.": "A → B bedeutet, dass A B zitiert.",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "Neue Publikationen liegen außerhalb der aktuellen Ansicht. Passen Sie den Graphen ein, um alle geladenen Publikationen zu sehen.",
+    "New papers off-screen. Fit graph.": "Neue Publikationen außerhalb der Ansicht. Graph anpassen.",
     "Center paper: {{title}}": "Zentrale Publikation: {{title}}",
     "No year": "Ohne Jahr",
     "View selected paper": "Ausgewählte Publikation anzeigen",
