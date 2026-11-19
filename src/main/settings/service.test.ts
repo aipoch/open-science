@@ -5899,6 +5899,23 @@ describe('installClaude (app-managed source)', () => {
     expect(disposed).toBe(true)
   })
 
+  it('cancels only the managed install owned by the sign-in attempt', async () => {
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        await new Promise<void>((resolve) =>
+          signal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return { result: { ok: false, installId, error: 'Cancelled' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed', signInAttemptId: 'card-1' }, vi.fn())
+    await service.cancelClaudeLogin('other-card')
+    expect(service.hasActiveInstall()).toBe(true)
+    await service.cancelClaudeLogin('card-1')
+    expect((await install).ok).toBe(false)
+    expect(service.hasActiveInstall()).toBe(false)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({
@@ -5914,7 +5931,7 @@ describe('installClaude (app-managed source)', () => {
     const snapshot = await service.getSettingsView()
     expect(snapshot.claude).toEqual({
       resolvedPath: '/data/claude-code/bin/claude',
-      version: '2.1.209'
+      version: '2.1.118'
     })
   })
 

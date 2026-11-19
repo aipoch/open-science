@@ -222,7 +222,7 @@ const settingsCoreApplicationCommands = Object.freeze({
   >('settings:get-skill-marketplace-detail'),
   cancelClaudeLogin: defineApplicationCommand<
     'settings:cancel-claude-login',
-    readonly [],
+    readonly [signInInstallId?: string],
     StoreResult<'cancelClaudeLogin'>
   >('settings:cancel-claude-login'),
   cancelCodexLogin: defineApplicationCommand<
@@ -731,9 +731,9 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.service.previewCustomServerTemplateExport(args[0])
       },
 
-      'settings:cancel-claude-login': ({ callerContext }) => {
+      'settings:cancel-claude-login': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-claude-login')
-        return dependencies.service.cancelClaudeLogin()
+        return dependencies.service.cancelClaudeLogin(...args)
       },
       'settings:cancel-codex-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-codex-login')

@@ -42,7 +42,7 @@ export type ProviderAuthActions = {
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
   loginSharedClaude: () => Promise<ValidateProviderResult>
-  cancelSharedClaudeLogin: () => Promise<void>
+  cancelSharedClaudeLogin: (signInInstallId?: string) => Promise<void>
   logoutSharedClaude: () => Promise<ValidateProviderResult>
   loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
   loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
@@ -56,7 +56,10 @@ export type ProviderAuthActions = {
     request: string | RefreshProviderModelsRequest
   ) => Promise<RefreshProviderModelsResult & { refreshFailed?: boolean }>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
-  setAgentFramework: (id: AgentFrameworkId) => Promise<void>
+  setAgentFramework: (
+    id: AgentFrameworkId,
+    options?: { runtimeAlreadyDetected: true }
+  ) => Promise<void>
   deleteProvider: (
     providerId: string,
     scenarioModelHandling?: ProviderDeletionScenarioModelHandling
@@ -235,8 +238,8 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     return result
   },
 
-  cancelSharedClaudeLogin: async () => {
-    await getCommands().cancelClaudeLogin()
+  cancelSharedClaudeLogin: async (...args) => {
+    await getCommands().cancelClaudeLogin(...args)
   },
 
   logoutSharedClaude: async () => {
@@ -325,7 +328,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     await refreshPreflight()
   },
 
-  setAgentFramework: async (id) => {
+  setAgentFramework: async (id, options) => {
     const write = writeCoordinator.begin('agentFramework')
     let snapshot: SettingsSnapshot
     try {
@@ -341,7 +344,8 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     write.succeed()
 
     try {
-      await refreshFrameworkStatus(id)
+      if (options?.runtimeAlreadyDetected) await refreshPreflight()
+      else await refreshFrameworkStatus(id)
     } catch (error) {
       console.error('Failed to refresh agent framework status', error)
     }

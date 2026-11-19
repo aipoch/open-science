@@ -1321,6 +1321,7 @@
     "Could not load version history.": "Не удалось загрузить историю версий.",
     "Could not load token usage.": "Не удалось загрузить данные об использовании токенов.",
     "Could not load runtimes.": "Не удалось загрузить среды выполнения.",
+    "Could not install Claude Code. Try again.": "Не удалось установить Claude Code. Попробуйте ещё раз.",
     "Could not mark as read. Try again.": "Не удалось отметить как прочитанный. Попробуйте снова.",
     "Could not mark this completed session as read. Try again.": "Не удалось отметить завершённую сессию как прочитанную. Попробуйте снова.",
     "Could not open the log file.": "Не удалось открыть файл журнала.",

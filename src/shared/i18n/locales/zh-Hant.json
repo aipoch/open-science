@@ -1364,6 +1364,7 @@
     "Could not load version history.": "無法載入版本歷史記錄。",
     "Could not load token usage.": "無法載入詞元用量。",
     "Could not load runtimes.": "無法載入執行環境。",
+    "Could not install Claude Code. Try again.": "無法安裝 Claude Code。請重試。",
     "Could not mark as read. Try again.": "無法標記為已讀。請重試。",
     "Could not mark this completed session as read. Try again.": "無法將此已完成的工作階段標記為已讀。請重試。",
     "Could not open the log file.": "無法開啟記錄檔。",

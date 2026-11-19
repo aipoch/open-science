@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { LoaderCircle, Settings2, Zap } from 'lucide-react'
 import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
 
+import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
+import { describeInstallProgress } from '../settings/claude-install-progress'
 import { Button } from '@/components/ui/button'
 import { ProviderSilkBackground } from '@/components/react-bits/ProviderSilkBackground'
 import { ErrorNotice } from '@/components/error-notice'
@@ -207,6 +209,14 @@ const ProviderStep = ({
   const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
+  const [claudeStage, setClaudeStage] = useState<'detect' | 'install' | 'auth'>()
+  const [claudeInstallError, setClaudeInstallError] = useState<string>()
+  const progress = useSettingsStore((state) => state.installStates['claude-code'].installProgress)
+  const installProgress =
+    claudeStage === 'install' && progress ? describeInstallProgress(progress, t) : undefined
+  const pendingClaudeInstall = useRef<{ id: string; settled: Promise<unknown> } | undefined>(
+    undefined
+  )
   const [isSaving, setIsSaving] = useState(false)
   const mounted = useRef(false)
   useEffect(() => {
@@ -275,6 +285,8 @@ const ProviderStep = ({
   useEffect(
     () => () => {
       quickAuth.current?.abort()
+      if (pendingClaudeInstall.current)
+        void cancelSharedClaudeLogin(pendingClaudeInstall.current.id)
       if (codexLoginPendingRef.current) void cancelCodexLogin()
       if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
       if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
@@ -593,6 +605,81 @@ const ProviderStep = ({
     }
   }
 
+  // Use the shared CLI profile for both OAuth and ACP. Only a local launch failure can
+  // retry via installation; an OAuth rejection or failed subscription probe must stay visible.
+  const connectQuickClaude = async (
+    value: ProviderFormValue,
+    signal: AbortSignal
+  ): Promise<void> => {
+    const settings = useSettingsStore.getState()
+    setClaudeStage('detect')
+    let installed = false
+    const install = async (): Promise<void> => {
+      signal.throwIfAborted()
+      installed = true
+      setClaudeStage('install')
+      const id = crypto.randomUUID()
+      const operation = settings.installClaude('managed', undefined, id)
+      pendingClaudeInstall.current = { id, settled: operation }
+      try {
+        const result = await operation
+        signal.throwIfAborted()
+        if (!result.ok)
+          throw new Error(result.error || t('Could not install Claude Code. Try again.'))
+      } catch (error) {
+        if (!signal.aborted)
+          setClaudeInstallError(
+            error instanceof Error ? error.message : t('Could not install Claude Code. Try again.')
+          )
+        throw error
+      } finally {
+        if (pendingClaudeInstall.current?.id === id) pendingClaudeInstall.current = undefined
+      }
+    }
+    const detected = await settings.detectClaude()
+    signal.throwIfAborted()
+    if (!detected.found || !detected.path || !isSupportedClaudeCliVersion(detected.version))
+      await install()
+    signal.throwIfAborted()
+    if (useSettingsStore.getState().agentFrameworkId !== 'claude-code') {
+      await settings.setAgentFramework('claude-code', { runtimeAlreadyDetected: true })
+      signal.throwIfAborted()
+    }
+    const providerId = await persistProvider(toUpsertRequest(value))
+    signal.throwIfAborted()
+    const signIn = async (): Promise<ValidateProviderResult> => {
+      setClaudeStage('auth')
+      claudeSharedLoginPendingRef.current = true
+      try {
+        return await loginSharedClaude()
+      } finally {
+        if (!signal.aborted) claudeSharedLoginPendingRef.current = false
+      }
+    }
+    let validation = await signIn()
+    signal.throwIfAborted()
+    if (
+      !installed &&
+      !validation.cancelled &&
+      validation.applied !== false &&
+      validation.cliLaunchFailed
+    ) {
+      await install()
+      signal.throwIfAborted()
+      validation = await signIn()
+      signal.throwIfAborted()
+    }
+    if (validation.cancelled) return
+    if (validation.applied === false)
+      throw new Error(
+        t('The Claude provider changed during sign-in. Review the selection and try again.')
+      )
+    if (!validation.ok) throw new Error(describeValidation(validation, tSettings))
+    await setActiveProvider(providerId)
+    signal.throwIfAborted()
+    advanceIfMounted('account')
+  }
+
   const chooseQuickProvider = async (
     card: QuickProviderCard,
     mode: 'account' | 'key' | CodexAuthMode
@@ -611,6 +698,7 @@ const ProviderStep = ({
       key: mode === 'key' ? (quickKeys[card.id] ?? '') : '',
       providerFormTouched: true
     }
+    setClaudeInstallError(undefined)
     setQuickCardId(card.id)
     setQuickMode(mode === 'key' ? 'key' : undefined)
     setFormValue(nextValue)
@@ -622,14 +710,16 @@ const ProviderStep = ({
     setIsSaving(true)
     setValidationMessage(undefined)
     try {
+      if (card.subscriptionKind === 'claude-subscription') {
+        await connectQuickClaude(nextValue, attempt.signal)
+        return
+      }
       const settings = useSettingsStore.getState()
       const targetFramework =
-        card.subscriptionKind === 'claude-subscription'
-          ? 'claude-code'
-          : card.subscriptionKind === 'codex-subscription' &&
-              settings.agentFrameworkId !== 'open-science-agent'
-            ? 'codex'
-            : settings.agentFrameworkId
+        card.subscriptionKind === 'codex-subscription' &&
+        settings.agentFrameworkId !== 'open-science-agent'
+          ? 'codex'
+          : settings.agentFrameworkId
       if (targetFramework !== settings.agentFrameworkId) {
         await settings.setAgentFramework(targetFramework)
       }
@@ -651,6 +741,7 @@ const ProviderStep = ({
     } finally {
       if (!attempt.signal.aborted) {
         quickAuth.current = undefined
+        setClaudeStage(undefined)
         setIsSaving(false)
       }
     }
@@ -661,7 +752,11 @@ const ProviderStep = ({
     if (!attempt || attempt.signal.aborted) return
     attempt.abort()
     try {
-      if (codexLoginPendingRef.current) {
+      const install = pendingClaudeInstall.current
+      if (install) {
+        await cancelSharedClaudeLogin(install.id)
+        await install.settled.catch(() => undefined)
+      } else if (codexLoginPendingRef.current) {
         codexLoginPendingRef.current = false
         await cancelCodexLogin()
       } else if (claudeSharedLoginPendingRef.current) {
@@ -681,6 +776,7 @@ const ProviderStep = ({
       )
     } finally {
       quickAuth.current = undefined
+      setClaudeStage(undefined)
       setIsSaving(false)
     }
   }
@@ -745,7 +841,8 @@ const ProviderStep = ({
                     'onboarding-provider-card',
                     `onboarding-provider-card-${card.id}`,
                     isKeyMode && 'is-key-mode',
-                    isAuthorizing && 'is-authorizing'
+                    (isAuthorizing || (card.id === 'anthropic' && claudeInstallError)) &&
+                      'is-authorizing'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
                   onPointerEnter={(event) => {
@@ -821,6 +918,31 @@ const ProviderStep = ({
                         </form>
                       ) : (
                         <>
+                          {card.id === 'anthropic' && claudeInstallError && (
+                            <ErrorNotice
+                              level="warning"
+                              role="alert"
+                              description={claudeInstallError}
+                              secondaryButton={{
+                                label: t('Dismiss'),
+                                onClick: () => {
+                                  setClaudeInstallError(undefined)
+                                  setValidationMessage(undefined)
+                                }
+                              }}
+                            />
+                          )}
+                          {isAuthorizing && claudeStage === 'install' && (
+                            <div role="status" className="text-xs">
+                              <span>{installProgress?.label ?? t('Installing…')}</span>
+                              <progress
+                                aria-label={t('Installing…')}
+                                max={1}
+                                value={installProgress?.fraction}
+                                className="block w-full"
+                              />
+                            </div>
+                          )}
                           {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
                           {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
                             <div
@@ -857,7 +979,11 @@ const ProviderStep = ({
                                 className="min-w-0 flex-1"
                               >
                                 {isAuthorizing
-                                  ? t('Signing in…')
+                                  ? claudeStage === 'detect'
+                                    ? t('Detecting…')
+                                    : claudeStage === 'install'
+                                      ? t('Installing…')
+                                      : t('Signing in…')
                                   : t('Continue with {{provider}}', { provider: card.title })}
                               </Button>
                               {isAuthorizing && (
@@ -892,6 +1018,7 @@ const ProviderStep = ({
         </div>
 
         {validationMessage &&
+          !claudeInstallError &&
           (validationOk ? (
             <p className="mt-3 text-xs text-primary" role="status">
               {validationMessage}

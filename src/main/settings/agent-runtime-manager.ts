@@ -362,6 +362,7 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
+  private signInInstallId?: string
   private activeInstallAbort: AbortController | undefined
   private activeInstallCompletion: Promise<Error | undefined> | undefined
   private readonly installCoordinator: SettingsInstallCoordinator
@@ -839,6 +840,7 @@ export class AgentRuntimeManager {
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
+        this.signInInstallId = request.signInAttemptId
         const registries =
           request.managedRegistry === 'npmmirror'
             ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
@@ -862,12 +864,16 @@ export class AgentRuntimeManager {
             return { installId, ok: false, error }
           }
 
+          if (request.signInAttemptId && !isSupportedClaudeCliVersion(installedVersion))
+            return { installId, ok: false, error: CLAUDE_CLI_INCOMPATIBLE_MESSAGE }
           await this.repository.setClaudeInfo({
             resolvedPath: outcome.resolvedPath,
-            version: outcome.version
+            version: installedVersion
           })
         }
 
+        if (request.signInAttemptId && outcome.result.ok && !outcome.resolvedPath)
+          return { installId, ok: false, error: CLAUDE_EXECUTABLE_MISSING_MESSAGE }
         return outcome.result
       }
 
@@ -1015,6 +1021,12 @@ export class AgentRuntimeManager {
     })
   }
 
+  async cancelSignInInstall(id: string): Promise<void> {
+    if (!id || id !== this.signInInstallId) return
+    this.activeInstallAbort?.abort()
+    await this.activeInstallCompletion
+  }
+
   private async runExclusiveInstall(
     installId: string,
     install: (
@@ -1048,6 +1060,7 @@ export class AgentRuntimeManager {
         cleanupFailure = error
       })
     } finally {
+      this.signInInstallId = undefined
       this.activeInstallAbort = undefined
       this.activeInstallCompletion = undefined
       lease.release()
