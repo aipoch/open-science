@@ -9053,7 +9053,7 @@
     "Both directions": "Оба направления",
     "Current center": "Текущий центр",
     "A → B means A cites B.": "A → B означает, что A ссылается на B.",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "Новые работы находятся за пределами текущего вида. Впишите граф, чтобы увидеть все загруженные работы.",
+    "New papers off-screen. Fit graph.": "Новые работы вне вида. Впишите граф.",
     "Center paper: {{title}}": "Центральная работа: {{title}}",
     "No year": "Без года",
     "View selected paper": "Показать выбранную работу",

@@ -8901,7 +8901,7 @@
     "Both directions": "Dans les deux sens",
     "Current center": "Centre actuel",
     "A → B means A cites B.": "A → B signifie que A cite B.",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "De nouvelles publications se trouvent hors de la vue actuelle. Ajustez le graphe pour voir toutes les publications chargées.",
+    "New papers off-screen. Fit graph.": "Nouvelles publications hors de vue. Ajustez le graphe.",
     "Center paper: {{title}}": "Publication centrale : {{title}}",
     "No year": "Sans date",
     "View selected paper": "Voir la publication sélectionnée",

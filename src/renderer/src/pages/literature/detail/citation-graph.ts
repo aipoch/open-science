@@ -378,9 +378,9 @@ export function citationGraphEdgeGeometry(
     const ratio = (radius + gap / scale) / Math.hypot(x, y)
     return { x: point.x + x * ratio, y: point.y + y * ratio }
   }
-  // Leave a small screen-space gap so the arrowhead stays clear of the node stroke.
+  // End the arrowhead at the node boundary so the relationship reads as continuous.
   const start = boundary(from, fromRadius, 1)
-  const end = boundary(to, toRadius, 3)
+  const end = boundary(to, toRadius, 0)
   return {
     start,
     control: bend ? control : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },

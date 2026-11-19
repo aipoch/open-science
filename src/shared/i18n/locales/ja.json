@@ -8551,7 +8551,7 @@
     "Both directions": "双方向",
     "Current center": "現在の中心",
     "A → B means A cites B.": "A → B は、A が B を引用していることを示します。",
-    "New papers are outside the current view. Fit the graph to see all loaded papers.": "新しい論文は現在の表示範囲外にあります。グラフを全体表示すると、読み込み済みの論文をすべて確認できます。",
+    "New papers off-screen. Fit graph.": "新しい論文が表示範囲外です。グラフを全体表示。",
     "Center paper: {{title}}": "中心の論文：{{title}}",
     "No year": "年不明",
     "View selected paper": "選択した論文を表示",
