@@ -14,6 +14,8 @@ import {
 } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from './provider-model-policy'
 
+export const KILO_FREE_MODEL_ID = 'kilo-auto/free'
+
 export type OfficialCatalogSource = {
   vendorId?: OfficialVendorId
   region?: string
@@ -76,7 +78,7 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
       : [...(source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))]
   // Keep Kilo’s free auto-routing model first after a catalog refresh.
   if (vendorId === 'kilo') {
-    const freeRoute = ids.indexOf('kilo-auto/free')
+    const freeRoute = ids.indexOf(KILO_FREE_MODEL_ID)
     if (freeRoute > 0) ids.unshift(...ids.splice(freeRoute, 1))
   }
   if (vendorId === 'deepseek' && modelCatalog) {

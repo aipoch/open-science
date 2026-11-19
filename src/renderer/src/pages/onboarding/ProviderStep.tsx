@@ -89,7 +89,6 @@ const ProviderStep = ({
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
-  const saveValidatedProvider = useSettingsStore((state) => state.saveValidatedProvider)
   const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
   const existingKiloId = useSettingsStore(
     (state) =>
@@ -411,8 +410,7 @@ const ProviderStep = ({
       }
 
       const isKilo = providerValue.type === 'official' && providerValue.vendorId === 'kilo'
-      const save = isKilo ? saveValidatedProvider : saveAndActivateProvider
-      const { providerId, validation } = await save(
+      const { providerId, validation } = await saveAndActivateProvider(
         toUpsertRequest(providerValue, (isKilo ? existingKiloId : undefined) ?? savedProviderId)
       )
       // Persistence survives Back even though this page's permission to navigate does not.

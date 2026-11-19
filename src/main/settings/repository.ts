@@ -2,6 +2,11 @@ import {
   providerCatalogState,
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
+import {
+  isCatalogModelAvailable,
+  KILO_FREE_MODEL_ID,
+  resolveOfficialModelCatalog
+} from '../../shared/provider-model-catalog'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
@@ -186,19 +191,30 @@ class SettingsRepository {
   async initializeDesktopKiloDefaults(upgrading: boolean): Promise<void> {
     const current = await this.getSettings()
     if (current.kiloDefaultInitialized) return
+    const logCapacitySkip = (providerCount: number): void => {
+      createLogger('settings:repository').warn(
+        'Skipped adding Kilo Gateway on desktop upgrade because the provider limit was reached.',
+        { providerCount, providerLimit: PROVIDER_RESOURCE_LIMITS.providers }
+      )
+    }
     if (
       upgrading &&
       current.providers.length >= PROVIDER_RESOURCE_LIMITS.providers &&
       !current.providers.some(isKiloProvider)
-    )
+    ) {
+      logCapacitySkip(current.providers.length)
       return
+    }
     await this.store.mutate(
       (settings) => {
         if (settings.kiloDefaultInitialized) return settings
         if (!upgrading || settings.providers.some(isKiloProvider)) {
           return { ...settings, kiloDefaultInitialized: true }
         }
-        if (settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) return settings
+        if (settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) {
+          logCapacitySkip(settings.providers.length)
+          return settings
+        }
         return {
           ...settings,
           kiloDefaultInitialized: true,
@@ -210,15 +226,24 @@ class SettingsRepository {
     )
   }
 
-  /** Add Kilo when users skip onboarding and leave the model choice to them. */
+  /** Provision Kilo and select its free route when users skip onboarding. */
   async addOnboardingKiloProvider(): Promise<void> {
     await this.mutate((settings) => {
-      if (settings.onboardingCompletedAt !== undefined || settings.providers.some(isKiloProvider))
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      const existing = settings.providers.find(isKiloProvider)
+      const provider = existing ?? createDefaultKiloProvider(settings)
+      if (
+        !resolveOfficialModelCatalog(provider).some(
+          (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
+        )
+      )
         return settings
       return {
         ...settings,
         kiloDefaultInitialized: true,
-        providers: [...settings.providers, createDefaultKiloProvider(settings)]
+        providers: existing ? settings.providers : [...settings.providers, provider],
+        activeProviderId: provider.id,
+        activeModel: KILO_FREE_MODEL_ID
       }
     })
   }
