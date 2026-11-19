@@ -28,6 +28,7 @@ export type OfficialVendorId =
   | 'opencode'
   | 'openrouter'
   | 'requesty'
+  | 'kilo'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -113,6 +114,8 @@ export type OfficialVendor = {
   readonly chatCompletionsBaseUrl?: string
   readonly responsesBaseUrl?: string
   readonly regions?: readonly VendorRegion[]
+  // 免费模型允许省略认证头。其他供应商仍要求密钥。
+  readonly supportsAnonymousAccess?: boolean
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
   readonly apiKeyUrl?: string
   // Full URL of a live model-list endpoint (OpenAI-style `{ data: [{ id }] }`). Set only for vendors

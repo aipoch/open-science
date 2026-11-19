@@ -772,6 +772,7 @@
     "Paste API key": "Collez la clé API",
     "Show API key": "Afficher la clé API",
     "API key is required.": "La clé API est requise.",
+    "Free models work without an API key.": "Les modèles gratuits fonctionnent sans clé API.",
     "API key — models provided": "Clé API — modèles fournis",
     "About": "À propos",
     "Manual install or update": "Installer ou mettre à jour manuellement",

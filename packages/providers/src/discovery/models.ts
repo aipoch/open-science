@@ -166,7 +166,7 @@ export const listProviderModels = async (
       prefix: target.vendorId === 'anthropic' ? '' : 'Bearer '
     }
   }
-  if (target.options && options.auth !== 'none' && !target.key)
+  if (target.options && options.auth !== 'none' && options.auth.required !== false && !target.key)
     return { ok: false, code: 'missing-key', message: 'API key is required.' }
   const controller = new AbortController()
   const signal = callerSignal
@@ -304,6 +304,12 @@ export const listProviderModels = async (
             `The vendor returned a model ID longer than ${limits.modelIdCharacters} characters.`
           )
         if (options.filter && fieldValue(item, options.filter) !== true) continue
+        if (target.vendorId === 'kilo') {
+          // 公开目录包含付费模型和媒体模型，免费调用只展示可匿名使用的文本模型。
+          if (!target.key && at(item, 'isFree') !== true) continue
+          const outputs = at(item, 'architecture.output_modalities')
+          if (!Array.isArray(outputs) || outputs.length !== 1 || outputs[0] !== 'text') continue
+        }
         const model = describe(item, id, options.fields)
         model.source = root.toString()
         if (options.knownModelsOnly && !target.knownModelIds?.includes(id)) model.routes = {}

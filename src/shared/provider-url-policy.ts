@@ -1,3 +1,5 @@
+import { getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
+import type { ProviderType } from './settings-types'
 import { isSensitiveUrlQueryKey } from '@aipoch/diagnostics'
 import {
   PROVIDER_TRANSPORT_ERROR,
@@ -11,6 +13,22 @@ import {
 // servers serve without one.
 export const customProviderRequiresKey = (baseUrl: string | undefined): boolean =>
   !isLoopbackProviderBaseUrl((baseUrl ?? '').trim())
+
+/** 判断已保存的供应商或运行时连接能否匿名调用。 */
+export function providerAllowsAnonymousAccess(provider: {
+  type: ProviderType
+  vendorId?: OfficialVendorId
+  baseUrl?: string
+}): boolean {
+  if (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl)) return true
+  const vendor = provider.vendorId && getOfficialVendor(provider.vendorId)
+  // 主进程会把内置供应商投影为 custom，运行时仍须匹配其注册的地址。
+  return (
+    vendor?.supportsAnonymousAccess === true &&
+    (provider.type === 'official' ||
+      (provider.type === 'custom' && provider.baseUrl === vendor.baseUrl))
+  )
+}
 
 export type CustomProviderBaseUrlError =
   | typeof PROVIDER_TRANSPORT_ERROR

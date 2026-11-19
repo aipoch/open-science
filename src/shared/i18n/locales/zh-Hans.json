@@ -826,6 +826,7 @@
     "Paste API key": "粘贴 API 密钥",
     "Show API key": "显示 API 密钥",
     "API key is required.": "必须填写 API 密钥。",
+    "Free models work without an API key.": "免费模型无需 API 密钥。",
     "API key — models provided": "API 密钥 —— 已内置模型列表",
     "About": "关于",
     "Manual install or update": "手动安装或更新",

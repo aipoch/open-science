@@ -74,6 +74,11 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     : modelCatalog
       ? [...live.keys()]
       : [...(source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))]
+  // 刷新目录后，免费自动路由仍作为 Kilo 的默认模型。
+  if (vendorId === 'kilo') {
+    const freeRoute = ids.indexOf('kilo-auto/free')
+    if (freeRoute > 0) ids.unshift(...ids.splice(freeRoute, 1))
+  }
   if (vendorId === 'deepseek' && modelCatalog) {
     for (const alias of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
       if (!live.has(alias)) ids.push(alias)

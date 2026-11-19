@@ -781,6 +781,7 @@
     "Paste API key": "Вставьте API-ключ",
     "Show API key": "Показать API-ключ",
     "API key is required.": "Укажите API-ключ.",
+    "Free models work without an API key.": "Бесплатные модели работают без API-ключа.",
     "API key — models provided": "API-ключ — доступные модели",
     "About": "О программе",
     "Manual install or update": "Установить или обновить вручную",

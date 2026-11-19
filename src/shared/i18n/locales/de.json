@@ -728,6 +728,7 @@
     "Paste API key": "API-Schlüssel einfügen",
     "Show API key": "API-Schlüssel anzeigen",
     "API key is required.": "Der API-Schlüssel ist erforderlich.",
+    "Free models work without an API key.": "Kostenlose Modelle können ohne API-Schlüssel verwendet werden.",
     "API key — models provided": "API-Schlüssel – Modelle bereitgestellt",
     "About": "Über",
     "Manual install or update": "Manuell installieren oder aktualisieren",

@@ -17,7 +17,7 @@ import {
   getOfficialVendorModelIds
 } from '../../../../shared/provider-model-policy'
 import {
-  customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-url-policy'
@@ -277,18 +277,14 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
-    // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
-    // remote gateway requires one.
-    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
-      errors.key = 'API key is required.'
-    }
-  } else if (value.type === 'official') {
-    // No model is chosen at add time: the vendor catalog + the global model selection cover that.
-    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
-  } else if (value.type === 'claude-isolated') {
-    // claude-isolated has no add-time fields: the type alone provisions the provider card, and the
-    // token paste lives in a separate sign-in modal (loginIsolatedClaude). Rejecting here would
-    // block the renderer from even creating the record, which contradicts the UX.
+  }
+  if (
+    (value.type === 'custom' || value.type === 'official') &&
+    !value.key.trim() &&
+    !options.hasStoredKey &&
+    !providerAllowsAnonymousAccess(value)
+  ) {
+    errors.key = 'API key is required.'
   }
 
   return errors
@@ -314,6 +310,7 @@ export type ProviderKindDescriptionKey =
   | 'Use an existing Claude profile or sign in with a separate Open-Science profile.'
   | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
+  | 'Free models work without an API key.'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
 
 // Group headers shown in the provider-type picker and dropdown, in display order. The two
@@ -377,7 +374,9 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    descriptionKey: 'API key — models provided',
+    descriptionKey: vendor.supportsAnonymousAccess
+      ? 'Free models work without an API key.'
+      : 'API key — models provided',
     group: 'api'
   })),
   {

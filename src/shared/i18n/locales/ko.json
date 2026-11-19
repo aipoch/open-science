@@ -754,6 +754,7 @@
     "Paste API key": "API 키 붙여넣기",
     "Show API key": "API 키 표시",
     "API key is required.": "API 키가 필요합니다.",
+    "Free models work without an API key.": "무료 모델은 API 키 없이 사용할 수 있습니다.",
     "API key — models provided": "API 키 — 모델 제공됨",
     "About": "소개",
     "Manual install or update": "수동 설치 또는 업데이트",

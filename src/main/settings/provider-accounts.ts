@@ -20,6 +20,7 @@ import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
@@ -452,7 +453,9 @@ class ProviderAccountsModule {
       ) {
         Object.assign(provider, providerCatalogState(existing))
       }
-      if (!carryKey()) throw new Error('API key is required for an official provider.')
+      if (!carryKey() && !providerAllowsAnonymousAccess(provider)) {
+        throw new Error('API key is required for an official provider.')
+      }
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
