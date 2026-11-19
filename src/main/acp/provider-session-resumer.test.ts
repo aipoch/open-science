@@ -141,6 +141,7 @@ type ResumerHarness = {
   request: ReturnType<typeof vi.fn>
   releaseForTransfer: () => Promise<string | undefined>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  refreshNotebookConnection: AcpProviderSessionResumer['refreshNotebookConnection']
   resume: (
     request?: Partial<AcpResumeSessionRequest>,
     writerTransfer?: AcpSessionWriterTransfer
@@ -427,6 +428,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     request,
     releaseForTransfer: () => resumer.releaseForTransfer('stable-app-session'),
     reconfigure,
+    refreshNotebookConnection: (request) => resumer.refreshNotebookConnection(request),
     resume,
     sessionSetupAppends,
     setTimer,
@@ -435,6 +437,54 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('preserves the selected CodeBuddy subscription site when refreshing Notebook credentials', async () => {
+    const beforePromptDispatch = vi.fn().mockResolvedValue(undefined)
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...backend,
+        backendId: 'codebuddy',
+        modelRoute: 'codebuddy-subscription',
+        framework: { ...backend.framework, id: 'codebuddy', beforePromptDispatch },
+        adapter: { ...backend.adapter, codeBuddySharedSite: 'internal' }
+      }
+    })
+    await harness.refreshNotebookConnection({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace',
+      mcpServers: [],
+      assertCurrent: () => undefined
+    })
+    expect(beforePromptDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ codeBuddySharedSite: 'internal' })
+    )
+  })
+
+  it('refreshes only a Codex writer with new Notebook credentials without reprovisioning capabilities or replacing history', async () => {
+    const harness = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    const attachment = harness.registry.lookup('stable-app-session')?.attachment
+    await harness.refreshNotebookConnection({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          name: 'open-science-notebook',
+          command: '/node',
+          args: [],
+          env: [{ name: 'TOKEN', value: 'fresh' }]
+        }
+      ],
+      assertCurrent: () => undefined
+    })
+    expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume
+    ])
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+  })
   it.each([undefined, 'native-missing'])(
     'adopts Pi history after missing native session (persisted id: %s)',
     async (providerSessionId) => {

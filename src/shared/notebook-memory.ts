@@ -1,0 +1,36 @@
+// Live policy/notification data only. These values never belong to run.json or portable packages.
+export type NotebookMemoryPolicyState = Readonly<{
+  status: 'healthy' | 'pressured' | 'unavailable'
+  reason: string
+  detail?: string
+  source: string
+  executionScope: string
+  checkedAt: number
+  sampleAgeMs?: number
+  retryAfterMs?: number
+  recoveryRemainingMs?: number
+  pressureLevel?: 'normal' | 'warning' | 'critical'
+  availableBytes?: number
+  totalBytes?: number
+  committedBytes?: number
+  commitLimitBytes?: number
+}>
+
+export type NotebookMemoryRejectedEvent = Readonly<{
+  projectId: string
+  sessionId: string
+  workspaceCwd?: string
+  source?: string
+  inputKind?: string
+  refusalId?: string
+  messageBranchId?: string
+  terminalTarget?: string
+  memory: NotebookMemoryPolicyState
+}>
+
+export type NotebookMemoryPolicyChangedEvent = Readonly<{
+  hasLiveResources: boolean
+  memory: NotebookMemoryPolicyState
+}>
+
+export type NotebookMemoryPolicyStateRequest = Readonly<{ executionScope?: string }>

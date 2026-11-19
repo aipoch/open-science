@@ -1184,34 +1184,18 @@ it('freezes the initial camera and existing coordinates while paging, then fits 
   expect(screen.getByRole('button', { name: 'Select Layout 1' }).getAttribute('aria-pressed')).toBe(
     'true'
   )
-  expect(
-    screen.getByText(
-      'New papers are outside the current view. Fit the graph to see all loaded papers.'
-    )
-  ).toBeTruthy()
+  expect(screen.getByText('New papers off-screen. Fit graph.')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Fit graph' }))
   expect(svg.getAttribute('viewBox')).not.toBe(originalCamera)
-  expect(
-    screen.queryByText(
-      'New papers are outside the current view. Fit the graph to see all loaded papers.'
-    )
-  ).toBeNull()
+  expect(screen.queryByText('New papers off-screen. Fit graph.')).toBeNull()
   const canvas = svg.closest<HTMLElement>('[data-citation-canvas]')!
   attachCapture(canvas)
   dispatchPointer(canvas, 'pointerdown')
   dispatchPointer(canvas, 'pointermove', { clientX: 10000 })
   dispatchPointer(canvas, 'pointerup')
-  expect(
-    screen.queryByText(
-      'New papers are outside the current view. Fit the graph to see all loaded papers.'
-    )
-  ).toBeNull()
+  expect(screen.queryByText('New papers off-screen. Fit graph.')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Fit graph' }))
-  expect(
-    screen.queryByText(
-      'New papers are outside the current view. Fit the graph to see all loaded papers.'
-    )
-  ).toBeNull()
+  expect(screen.queryByText('New papers off-screen. Fit graph.')).toBeNull()
   expect(screen.getByRole('button', { name: 'Select Layout 1' }).getAttribute('aria-pressed')).toBe(
     'true'
   )

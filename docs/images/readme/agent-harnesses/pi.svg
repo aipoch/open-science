@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="34" viewBox="0 0 144 34">
+  <title>Pi</title>
+  <rect x="0.5" y="0.5" width="143" height="33" rx="6" fill="#f7faf9" stroke="#cbd8d3"/>
+  <image x="8" y="6" width="22" height="22" xlink:href="data:image/svg+xml;base64,PHN2ZyBmaWxsPSJjdXJyZW50Q29sb3IiIGZpbGwtcnVsZT0iZXZlbm9kZCIgaGVpZ2h0PSIxZW0iIHN0eWxlPSJmbGV4Om5vbmU7bGluZS1oZWlnaHQ6MSIgdmlld0JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMWVtIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjx0aXRsZT5QaTwvdGl0bGU+PHBhdGggY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMSAxaDE2LjV2MTFIMTJ2NS41SDYuNVYyM0gxVjF6bTUuNSA1LjVWMTJIMTJWNi41SDYuNXoiPjwvcGF0aD48cGF0aCBkPSJNMTcuNSAxMkgyM3YxMWgtNS41VjEyeiI+PC9wYXRoPjwvc3ZnPg=="/>
+  <text x="37" y="21.5" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#203c33">Pi</text>
+</svg>

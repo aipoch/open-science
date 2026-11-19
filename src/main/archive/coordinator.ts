@@ -361,6 +361,26 @@ class ArchiveCoordinator {
     })
   }
 
+  async isSessionResourceReadable(projectId: string, sessionId: string): Promise<boolean> {
+    try {
+      const ownerProjectId =
+        (await this.sessions.sessionProjectId(sessionId)) ??
+        this.runtime.liveSessionProjectId(sessionId)
+      if (ownerProjectId !== projectId) return false
+      await this.activeProject(projectId)
+      await this.sessions.assertSessionAvailable(projectId, sessionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  assertSessionResourceReleaseAvailable(projectId: string, sessionId: string): void {
+    this.assertProjectDeletionAvailable(projectId)
+    this.assertProjectExportAvailable(projectId)
+    this.assertExportAvailable(sessionId)
+  }
+
   assertSessionAvailableById(sessionId: string): Promise<void> {
     return this.resolveSessionProjectId(sessionId).then((projectId) => {
       if (!projectId) {

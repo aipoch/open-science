@@ -7,6 +7,11 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import { createSpecialistService } from '../specialist/service'
 import {
+  NotebookExecutionIntent,
+  notebookExecutionIntent,
+  withNotebookExecutionIntent
+} from '../notebook/execution-intent'
+import {
   createDeterministicDelegateExecution,
   type ExecutionControl
 } from './deterministic-execution'
@@ -52,6 +57,34 @@ const specialist = (overrides: Partial<SpecialistFixture> = {}): SpecialistFixtu
 })
 
 describe('durable delegated work', () => {
+  it('inherits the originating execution authority into Subagent dispatch and rechecks queued admission', async () => {
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records })
+    const intent = new NotebookExecutionIntent(caller.session)
+    const parent = withNotebookExecutionIntent(caller, intent)
+    const outcome = await work.delegate(
+      parent,
+      { task: 'Read current outputs', name: 'Inspect' },
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    expect(notebookExecutionIntent(execution.controls()[0].input)).toBe(intent)
+    intent.block('memory-pressure')
+    await expect(
+      work.delegate(
+        withNotebookExecutionIntent({ ...caller, toolInvocationId: 'changed-tool' }, intent),
+        { task: 'Same work through another child', name: 'Retry' },
+        { wait: false }
+      )
+    ).rejects.toThrow('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+    expect(outcome.kind).toBe('receipts')
+    await work.stopSession(caller.session)
+  })
   it.each([false, true])(
     'durably queues delegated user questions and resumes only after atomic confirmation (multiSelect: %s)',
     async (multiSelect) => {

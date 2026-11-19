@@ -204,6 +204,31 @@ export const sessionsDeleteSessionContracts = {
     'sessions:catalog-changed',
     EVENT
   ]),
+  'sessions.orgCasesList': callable<
+    (
+      query?: import('../org-cases').ListOrgCasesQuery
+    ) => Promise<import('../org-cases').ListOrgCasesResult>
+  >()('sessions', ['sessions:org-cases-list', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.orgCaseDetail': callable<
+    (caseId: string) => Promise<import('../org-cases').GetOrgCaseDetailResult>
+  >()('sessions', ['sessions:org-case-detail', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.orgCaseImport': callable<
+    (caseId: string) => Promise<import('../org-cases').ImportOrgCaseResult>
+  >()('sessions', ['sessions:org-case-import', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.orgCaseCancelImport': callable<
+    (caseId?: string) => Promise<import('../org-cases').CancelOrgCaseImportResult>
+  >()('sessions', [
+    'sessions:org-case-cancel-import',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.onOrgCaseDownload': callable<
+    (
+      listener: (snapshot: import('../org-cases').OrgCaseDownloadSnapshot | null) => void
+    ) => RemoveListener
+  >()('sessions', ['sessions:org-case-download-changed', EVENT]),
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),

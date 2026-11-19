@@ -3,13 +3,15 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectorService } from '../connectors/service'
 import { ParserEngine } from '@aipoch/connector-core'
 import { renderSkillDoc } from '../connectors/skill-doc'
+import { listenForLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import type { NotebookExecutionResult } from './runtime-service'
+import { createWindowsStandardProcessSandbox } from './fixtures/windows-standard-process-sandbox'
 
 // host.mcp now lives ONLY in the control-plane repl kernel (a Node process). Node is always available
 // under vitest, so the sole gate is RUN_KERNEL — no provisioned python/r env is needed.
@@ -20,11 +22,30 @@ const gate = process.env.RUN_KERNEL ? describe : describe.skip
 // spawns it under process.execPath with ELECTRON_RUN_AS_NODE=1 exactly as production does.
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
-const makeExecutor = (): NotebookKernelExecutor =>
-  new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
+const resetOwnership = configureTestRuntimeMetadata()
+let windowsSandbox: Awaited<ReturnType<typeof createWindowsStandardProcessSandbox>> | undefined
+const windowsExecutors: NotebookKernelExecutor[] = []
+const makeExecutor = (): NotebookKernelExecutor => {
+  const executor = new NotebookKernelExecutor({
+    replLoopPath: REPL_LOOP,
+    processSandbox: windowsSandbox?.port
+  })
+  if (process.platform === 'win32') windowsExecutors.push(executor)
+  return executor
+}
 
 const notebookRoots: string[] = []
-afterEach(() => {
+beforeEach(async () => {
+  if (process.platform !== 'win32') return
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', makeNotebookRoots().runtimeRoot)
+  windowsSandbox = await createWindowsStandardProcessSandbox()
+})
+afterEach(async () => {
+  for (const executor of windowsExecutors.splice(0)) await executor.shutdown()
+  await windowsSandbox?.dispose()
+  windowsSandbox = undefined
+  await resetOwnership()
+  vi.unstubAllEnvs()
   vi.restoreAllMocks()
   for (const root of notebookRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
@@ -75,6 +96,9 @@ const baseRequest = (
   code: '',
   kind: 'repl',
   ...makeNotebookRoots(),
+  ...(process.platform === 'win32'
+    ? { sessionId: 'source-session', projectId: 'source-project' }
+    : {}),
   ...overrides
 })
 
@@ -974,19 +998,19 @@ gate('repl kernel host.mcp', () => {
           .end(JSON.stringify({ result: { ok: true } }))
       )
     })
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-    const addr = server.address() as { port: number }
+    const connection = await listenForLocalRpc(server, { name: 'host-mcp-integration-test' })
     const exec = makeExecutor()
     const result = await exec.execute(
       baseRequest({
         code: "const r = await host.mcp('chemistry','pubchem_get_properties',{ cids: [1] }); console.log(r.ok)",
-        mcpRpcEndpoint: `http://127.0.0.1:${addr.port}`,
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
         mcpRpcToken: 'tok'
       })
     )
     await exec.shutdown()
     server.close()
-    expect(result.status).toBe('completed')
+    expect(result.status, result.traceback).toBe('completed')
     expect(result.stdout).toContain('true')
   })
 
@@ -1006,13 +1030,13 @@ gate('repl kernel host.mcp', () => {
           .end(JSON.stringify({ result: { echoedArgs: received.params?.args } }))
       })
     })
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-    const addr = server.address() as { port: number }
+    const connection = await listenForLocalRpc(server, { name: 'host-mcp-integration-test' })
     const exec = makeExecutor()
     const result = await exec.execute(
       baseRequest({
         code: "const r = await host.mcp('chemistry','pubchem_get_properties',{ cids: [1, 2] }); console.log(JSON.stringify(r.echoedArgs.cids))",
-        mcpRpcEndpoint: `http://127.0.0.1:${addr.port}`,
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-42',
         projectId: 'project-1'
@@ -1020,7 +1044,7 @@ gate('repl kernel host.mcp', () => {
     )
     await exec.shutdown()
     server.close()
-    expect(result.status).toBe('completed')
+    expect(result.status, result.traceback).toBe('completed')
     expect(result.stdout).toContain('[1,2]')
     expect(received.params?.args).toEqual({ cids: [1, 2] })
     expect(received.params).toMatchObject({ sessionId: 'session-42', projectId: 'project-1' })
@@ -1120,5 +1144,3 @@ gate('repl kernel host.mcp', () => {
     }
   })
 })
-
-configureTestRuntimeMetadata()

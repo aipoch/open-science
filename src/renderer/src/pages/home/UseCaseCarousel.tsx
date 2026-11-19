@@ -10,10 +10,24 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { importSessionPackage } from '@/lib/session-package-import'
-import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
+import {
+  labSettingsAvailable,
+  orgCaseSharingAvailable,
+  sessionPackageImportAvailable
+} from '@/lib/session-package-capabilities'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { UseCaseIntroductionLoader } from './use-case-introduction-loader'
 import { UseCaseCover } from './UseCaseCover'
+import { useSettingsStore } from '@/stores/settings-store'
+import { OrgCaseDetailsDialog } from './OrgCaseDetailsDialog'
+import { UseCaseSourceToggle } from './OrgCaseCard'
+import { OrgCaseSectionContent } from './OrgCaseSectionContent'
+import {
+  useOrgCaseLabSync,
+  useOrgCaseStore,
+  type UseCaseSourceKind
+} from '@/stores/org-cases-store'
+import { OrgCaseDetailsPage } from '../marketplace/OrgCaseDetailsPage'
 import { UseCaseDetailsDialog } from './UseCaseDetailsDialog'
 import { UseCaseGalleryList } from '../marketplace/UseCaseGalleryList'
 import { UseCaseDetailsPage } from '../marketplace/UseCaseDetailsPage'
@@ -24,14 +38,28 @@ import type { UseCase } from '../../../../shared/use-cases'
 export const UseCaseCarousel = ({
   sectionRef,
   variant = 'home',
-  compact = false
+  compact = false,
+  active = true
 }: {
   sectionRef?: (element: HTMLElement | null) => void
   variant?: 'home' | 'marketplace'
   compact?: boolean
+  active?: boolean
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const headingId = useId()
+  const labAuthenticated = useSettingsStore((state) => state.lab?.state === 'authenticated')
+  const orgCasesEnabled = labAuthenticated && orgCaseSharingAvailable()
+  const canOpenLabSettings = labSettingsAvailable()
+  const rawSource = useOrgCaseStore((state) => state.source)
+  const source = orgCasesEnabled ? rawSource : 'official'
+  const orgCaseEpoch = useOrgCaseStore((state) => state.epoch)
+  const [selectedOrgCase, setSelectedOrgCase] = useState<{
+    id: string
+    epoch: number
+  } | null>(null)
+  const selectedOrgCaseId =
+    source === 'organization' && selectedOrgCase?.epoch === orgCaseEpoch ? selectedOrgCase.id : null
   const projectId = useNavigationStore((state) => state.activeProjectId)
   const initialListState = useNavigationStore((state) =>
     state.marketplaceListContext?.projectId === state.activeProjectId
@@ -49,6 +77,7 @@ export const UseCaseCarousel = ({
   useEffect(() => () => introductions.cancelPrefetch(), [introductions])
   const openMarketplace = (): void => {
     setBrowser(null)
+    setSelectedOrgCase(null)
     useNavigationStore.getState().openMarketplace('user')
   }
   const [browser, setBrowser] = useState<{ slug: string; opener: HTMLElement } | null>(null)
@@ -173,8 +202,16 @@ export const UseCaseCarousel = ({
   // first startup layout can report a short card, so correct the visible error until it settles.
   useLayoutEffect(() => {
     if (variant !== 'home') return
-    const grid = homeGridRef.current
     const section = homeSectionRef.current
+    if (source !== 'official') {
+      homeGalleryOffsetRef.current = 0
+      if (section) section.style.paddingTop = ''
+      const resetFrame = requestAnimationFrame(() => {
+        setHomeGalleryOffset((previousOffset) => (previousOffset === 0 ? previousOffset : 0))
+      })
+      return () => cancelAnimationFrame(resetFrame)
+    }
+    const grid = homeGridRef.current
     const scroll = section?.closest('[data-home-scroll]') as HTMLElement | null
     if (!grid || !section) return
     const applyOffset = (offset: number): void => {
@@ -243,7 +280,7 @@ export const UseCaseCarousel = ({
       if (scroll) scroll.removeEventListener('scroll', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
-  }, [variant, visibleKey])
+  }, [source, variant, visibleKey])
 
   // Observe the shared homepage viewport so reaching the list end appends one batch. The first
   // batch is already rendered behind the one-row viewport, so this only fetches later batches.
@@ -485,9 +522,102 @@ export const UseCaseCarousel = ({
       )
     })
 
+  const setSource = useOrgCaseStore((state) => state.setSource)
+  const orgItems = useOrgCaseStore((state) => state.items)
+  const orgDetailById = useOrgCaseStore((state) => state.detailById)
+  const orgDetailLoadingId = useOrgCaseStore((state) => state.detailLoadingId)
+  const orgDetailError = useOrgCaseStore((state) => state.detailError)
+  const orgDownload = useOrgCaseStore((state) => state.download)
+  const orgDownloadError = useOrgCaseStore((state) => state.downloadError)
+  const loadOrgCaseDetail = useOrgCaseStore((state) => state.loadCaseDetail)
+  const importOrgCase = useOrgCaseStore((state) => state.importCase)
+  const cancelOrgCaseImport = useOrgCaseStore((state) => state.cancelImport)
+  const dismissOrgDownloadError = useOrgCaseStore((state) => state.dismissDownloadError)
+  const orgOpenerRef = useRef<HTMLElement | null>(null)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
+  useOrgCaseLabSync(active && orgCasesEnabled)
+
+  const importDisabled = !sessionPackageImportAvailable()
+  const displayedHomeGalleryOffset = source === 'official' ? homeGalleryOffset : 0
   const selected = items?.find((item) => item.slug === browser?.slug)
+  const selectedOrgCaseDetail = selectedOrgCaseId
+    ? (orgDetailById[selectedOrgCaseId] ?? null)
+    : null
+  const selectedOrgCaseItem = selectedOrgCaseId
+    ? (orgItems.find((item) => item.id === selectedOrgCaseId) ?? selectedOrgCaseDetail ?? null)
+    : null
   const inlineDetails = variant === 'marketplace' && compact
-  if (!items?.length && variant === 'home') return null
+  const showOfficialDetailsPage =
+    inlineDetails && source === 'official' && Boolean(browser && selected)
+  const showOrgDetailsPage =
+    orgCasesEnabled && inlineDetails && source === 'organization' && Boolean(selectedOrgCaseId)
+  const handleLoadOrgCaseDetail = useCallback(
+    (caseId: string) => {
+      void loadOrgCaseDetail(caseId)
+    },
+    [loadOrgCaseDetail]
+  )
+  const restoreOrgOpenerFocus = useCallback((): void => {
+    const opener = orgOpenerRef.current
+    orgOpenerRef.current = null
+    if (opener?.isConnected) opener.focus({ preventScroll: true })
+  }, [])
+  const handleChangeSource = (next: UseCaseSourceKind): void => {
+    setSource(next)
+    if (next === 'official') setSelectedOrgCase(null)
+  }
+  const handleOpenOrgDetails = useCallback(
+    (caseId: string, opener?: HTMLElement | null): void => {
+      orgOpenerRef.current =
+        opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      setSelectedOrgCase({
+        id: caseId,
+        epoch: useOrgCaseStore.getState().epoch
+      })
+      void loadOrgCaseDetail(caseId)
+    },
+    [loadOrgCaseDetail, setSelectedOrgCase]
+  )
+  const handleImportOrgCase = useCallback(
+    (caseId: string): void => {
+      void importOrgCase(caseId)
+    },
+    [importOrgCase]
+  )
+  const handleCancelOrgCaseImport = useCallback(
+    (caseId: string): void => {
+      void cancelOrgCaseImport(caseId)
+    },
+    [cancelOrgCaseImport]
+  )
+  const handleBackFromOrgDetails = useCallback((): void => {
+    setSelectedOrgCase(null)
+    requestAnimationFrame(() => {
+      restoreOrgOpenerFocus()
+    })
+  }, [restoreOrgOpenerFocus, setSelectedOrgCase])
+  const handleCloseOrgDialog = useCallback((): void => {
+    setSelectedOrgCase(null)
+    requestAnimationFrame(() => {
+      if (!usePackageOperationStore.getState().open) {
+        restoreOrgOpenerFocus()
+      } else {
+        orgOpenerRef.current = null
+      }
+    })
+  }, [restoreOrgOpenerFocus, setSelectedOrgCase])
+  const handleOpenDialogLabSettings = useCallback((): void => {
+    orgOpenerRef.current = null
+    setSelectedOrgCase(null)
+    openSettingsToPanel('lab')
+  }, [openSettingsToPanel, setSelectedOrgCase])
+  const handleOpenInlineLabSettings = useCallback((): void => {
+    openSettingsToPanel('lab')
+  }, [openSettingsToPanel])
+
+  if (!orgCasesEnabled && !items?.length && variant === 'home') {
+    return null
+  }
 
   return (
     <>
@@ -495,7 +625,9 @@ export const UseCaseCarousel = ({
         <div className="flex min-h-0 flex-1 flex-col">
           <div
             className={
-              inlineDetails && browser && selected ? 'hidden' : 'flex min-h-0 flex-1 flex-col'
+              showOfficialDetailsPage || showOrgDetailsPage
+                ? 'hidden'
+                : 'flex min-h-0 flex-1 flex-col'
             }
           >
             <UseCaseGalleryList
@@ -506,16 +638,22 @@ export const UseCaseCarousel = ({
               refreshCompletion={refreshCompletion}
               onResetRefreshCompletion={() => setRefreshCompletion(null)}
               onRefresh={() => void refreshCatalog()}
+              source={source}
+              onChangeSource={orgCasesEnabled ? handleChangeSource : undefined}
+              onOpenOrgCase={handleOpenOrgDetails}
               initialState={initialListState}
               onFiltersChange={updateListFilters}
               onOpenMarketplace={
                 compact
-                  ? (snapshot) => useNavigationStore.getState().openMarketplace('user', snapshot)
+                  ? (snapshot) => {
+                      setSelectedOrgCase(null)
+                      useNavigationStore.getState().openMarketplace('user', snapshot)
+                    }
                   : undefined
               }
             />
           </div>
-          {inlineDetails && browser && selected && (
+          {showOfficialDetailsPage && browser && selected && (
             <UseCaseDetailsPage
               item={selected}
               introductions={introductions}
@@ -530,18 +668,45 @@ export const UseCaseCarousel = ({
               renderDownloadStatus={(item) => renderDownloadStatus(item, true)}
             />
           )}
+          {showOrgDetailsPage && selectedOrgCaseId && (
+            <OrgCaseDetailsPage
+              caseId={selectedOrgCaseId}
+              item={selectedOrgCaseItem}
+              detail={selectedOrgCaseDetail}
+              detailLoading={orgDetailLoadingId === selectedOrgCaseId}
+              detailError={
+                orgDetailError?.caseId === selectedOrgCaseId ? orgDetailError.errorCode : null
+              }
+              download={orgDownload}
+              downloadError={
+                orgDownloadError?.caseId === selectedOrgCaseId ? orgDownloadError.errorCode : null
+              }
+              importBusy={Boolean(orgDownload && orgDownload.caseId !== selectedOrgCaseId)}
+              importDisabled={importDisabled}
+              onBack={handleBackFromOrgDetails}
+              onLoadDetail={handleLoadOrgCaseDetail}
+              onImport={handleImportOrgCase}
+              onCancelImport={handleCancelOrgCaseImport}
+              onDismissDownloadError={dismissOrgDownloadError}
+              onOpenLabSettings={canOpenLabSettings ? handleOpenInlineLabSettings : undefined}
+            />
+          )}
         </div>
       ) : (
         <section
           ref={setHomeSectionRef}
           aria-labelledby={headingId}
           data-home-gallery-has-more={
-            homeHasMore || slugs.length < (items?.length ?? 0) ? 'true' : 'false'
+            source === 'official' && (homeHasMore || slugs.length < (items?.length ?? 0))
+              ? 'true'
+              : 'false'
           }
           // The heading background sits immediately under the project card when the page is full.
           // This gap keeps that card's 1px ring visible; a positive pin replaces it inline.
           className="mt-auto -mx-3 overflow-visible px-3 pt-2 [&_button:enabled]:cursor-pointer"
-          style={homeGalleryOffset ? { paddingTop: homeGalleryOffset } : undefined}
+          style={
+            displayedHomeGalleryOffset ? { paddingTop: displayedHomeGalleryOffset } : undefined
+          }
         >
           <div className="sticky top-0 z-20 -mx-3 mb-3 flex items-center justify-between gap-4 bg-bg-10 px-3 py-2">
             <h2 id={headingId} className="text-base font-medium text-text-000">
@@ -554,28 +719,43 @@ export const UseCaseCarousel = ({
                 {t('Use Cases')}
               </button>
             </h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={t('Browse all examples')}
-              title={t('Browse all examples')}
-              onClick={openMarketplace}
-            >
-              <ArrowUpRight className="size-4" aria-hidden="true" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {orgCasesEnabled ? (
+                <UseCaseSourceToggle compact source={source} onChange={handleChangeSource} />
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t('Browse all examples')}
+                title={t('Browse all examples')}
+                onClick={openMarketplace}
+              >
+                <ArrowUpRight className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
-          <div
-            ref={homeGridRef}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
-          >
-            {renderCards(homeVisible)}
-          </div>
-          {homeHasMore || slugs.length < (items?.length ?? 0) ? (
-            <div ref={sentinelRef} className="h-px" aria-hidden="true" />
-          ) : null}
+          {source === 'organization' ? (
+            <OrgCaseSectionContent
+              variant="home"
+              importDisabled={importDisabled}
+              onOpenDetails={handleOpenOrgDetails}
+            />
+          ) : (
+            <>
+              <div
+                ref={homeGridRef}
+                className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
+              >
+                {renderCards(homeVisible)}
+              </div>
+              {homeHasMore || slugs.length < (items?.length ?? 0) ? (
+                <div ref={sentinelRef} className="h-px" aria-hidden="true" />
+              ) : null}
+            </>
+          )}
         </section>
       )}
-      {!inlineDetails && browser && selected && (
+      {!inlineDetails && source === 'official' && browser && selected && (
         <UseCaseDetailsDialog
           item={selected}
           introductions={introductions}
@@ -586,6 +766,48 @@ export const UseCaseCarousel = ({
           renderDownloadStatus={(item) => renderDownloadStatus(item, true)}
         />
       )}
+      {orgCasesEnabled &&
+        !inlineDetails &&
+        source === 'organization' &&
+        selectedOrgCaseId &&
+        (selectedOrgCaseItem ||
+          orgDetailLoadingId === selectedOrgCaseId ||
+          orgDetailError?.caseId === selectedOrgCaseId) && (
+          <OrgCaseDetailsDialog
+            open
+            onOpenChange={(open) => {
+              if (!open) handleCloseOrgDialog()
+            }}
+            caseId={selectedOrgCaseId}
+            item={selectedOrgCaseItem}
+            detail={selectedOrgCaseDetail}
+            detailLoading={orgDetailLoadingId === selectedOrgCaseId}
+            detailError={
+              orgDetailError?.caseId === selectedOrgCaseId ? orgDetailError.errorCode : null
+            }
+            download={orgDownload}
+            downloadError={
+              orgDownloadError?.caseId === selectedOrgCaseId ? orgDownloadError.errorCode : null
+            }
+            importBusy={Boolean(orgDownload && orgDownload.caseId !== selectedOrgCaseId)}
+            importDisabled={importDisabled}
+            onRestoreFocus={restoreOrgOpenerFocus}
+            onRetryDetail={() => {
+              void loadOrgCaseDetail(selectedOrgCaseId)
+            }}
+            onImport={(id) => {
+              void importOrgCase(id, () => {
+                orgOpenerRef.current = null
+                setSelectedOrgCase(null)
+              })
+            }}
+            onCancelImport={(id) => {
+              void cancelOrgCaseImport(id)
+            }}
+            onDismissDownloadError={dismissOrgDownloadError}
+            onOpenLabSettings={canOpenLabSettings ? handleOpenDialogLabSettings : undefined}
+          />
+        )}
     </>
   )
 }

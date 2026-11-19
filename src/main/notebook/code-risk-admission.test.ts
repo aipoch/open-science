@@ -13,6 +13,7 @@ import type { NotebookRunSummary, ShellRuntimeBinding } from '../../shared/noteb
 import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import { NotebookKernelExecutor } from './kernel-executor'
 import * as powerShellParser from './powershell-search-parser'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
 import * as windowsRuntime from './windows-notebook-runtime'
 
@@ -169,6 +170,7 @@ async function harness(
     })
   )
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     notebookRuntimeSettings: {
       getSnapshot: async (language) => ({
         language,

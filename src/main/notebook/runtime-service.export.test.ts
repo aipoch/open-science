@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunDocument } from '../../shared/notebook'
 import type { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
 
 const document: NotebookRunDocument = {
@@ -56,6 +57,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
       .fn()
       .mockResolvedValue({ saved: true, filePath: '/downloads/export.ipynb' })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: '/config',
       dataRoot: '/storage',
       projectId: 'default-project',
@@ -109,6 +111,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
       .fn()
       .mockResolvedValue({ saved: true, filePath: '/downloads/session-12345678-python.ipynb' })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: '/config',
       dataRoot: '/storage',
       projectId: 'default-project',
@@ -147,6 +150,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     } as unknown as NotebookRunRepository
     const saveIpynb = vi.fn()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: '/config',
       dataRoot: '/storage',
       projectId: 'default-project',
@@ -169,6 +173,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     } as unknown as NotebookRunRepository
     const saveIpynb = vi.fn()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: '/config',
       dataRoot: '/storage',
       projectId: 'default-project',
@@ -203,6 +208,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     } as unknown as NotebookRunRepository
     const saveIpynbAll = vi.fn().mockResolvedValue({ saved: true, filePaths: [] })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: '/config',
       dataRoot: '/storage',
       projectId: 'default-project',

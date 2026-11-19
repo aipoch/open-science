@@ -40,6 +40,7 @@ on:
       - 'src/main/notebook/shell-process.ts'
       - 'resources/notebook/kernel_process_host.js'
       - 'src/main/desktop-runtime-launcher.ts'
+      - 'packages/open-science/launch-log.mjs'
       - 'src/main/desktop-runtime-client.ts'
       - 'src/main/desktop-runtime-recovery.ts'
       - 'src/main/desktop-runtime-transport.ts'
@@ -80,7 +81,7 @@ on:
         description: Focused no-publish dry-run (core includes detector negative controls)
         type: choice
         default: core
-        options: [core, detector]
+        options: [core, detector, update-occupancy]
       platform:
         description: Native runner selection
         type: choice
@@ -91,11 +92,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: process-lifecycle-${{ github.event_name }}-${{ github.ref }}-${{ inputs.platform || 'all' }}
+  group: process-lifecycle-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.mode || 'core' }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
 jobs:
   lifecycle:
+    if: inputs.mode != 'update-occupancy'
     name: Lifecycle (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -140,7 +142,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Prepare independent OS observer
-        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        if: inputs.mode != 'update-occupancy' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform)
         run: |
           ${{ matrix.python }} -m venv .scratch/lifecycle-python
           ${{ matrix.python_path }} -m pip install psutil==7.1.0
@@ -148,20 +150,26 @@ jobs:
         if: (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform) && inputs.mode != 'detector'
         run: node scripts/ci/npm-ci.mjs
       - name: Run lifecycle checks
-        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        if: inputs.mode != 'update-occupancy' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform)
         run: node scripts/ci/process-lifecycle/run.mjs ${{ env.LIFECYCLE_MODE }}
       - name: Upload process evidence
         if: always() && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: process-lifecycle-${{ matrix.platform }}-${{ github.run_attempt }}
+          name: process-lifecycle-${{ inputs.mode || 'core' }}-${{ matrix.platform }}-${{ github.run_attempt }}
           path: test-results/process-lifecycle/**/*.json
           retention-days: 14
           if-no-files-found: error
 
+  update_occupancy:
+    if: github.event_name != 'pull_request' && inputs.mode != 'detector'
+    uses: ./.github/workflows/update-occupancy.yml
+    with:
+      platform: ${{ inputs.platform || 'all' }}
+
   report:
     name: Report scheduled outcome
-    needs: lifecycle
+    needs: [lifecycle, update_occupancy]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -178,7 +186,7 @@ jobs:
       - name: Open, refresh, or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          CONCLUSION: ${{ needs.lifecycle.result == 'success' && 'success' || 'failure' }}
+          CONCLUSION: ${{ needs.lifecycle.result == 'success' && needs.update_occupancy.result == 'success' && 'success' || 'failure' }}
         with:
           script: |
             const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)

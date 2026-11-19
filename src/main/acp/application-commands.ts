@@ -5,6 +5,7 @@ import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpContinueInterruptedTurnRequest,
+  AcpContinueNotebookExecutionRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
   ElicitationResponse,
@@ -31,6 +32,7 @@ import {
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
+import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { z } from 'zod'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import {
@@ -198,6 +200,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpPromptRequest],
     AcpStateCommandResponse
   >('acp:send-prompt'),
+  continueNotebookExecution: defineApplicationCommand<
+    'acp:continue-notebook-execution',
+    readonly [request: AcpContinueNotebookExecutionRequest],
+    AcpStateCommandResponse
+  >('acp:continue-notebook-execution'),
   steerFollowUp: defineApplicationCommand<
     'acp:steer-follow-up',
     readonly [request: AcpSteerFollowUpRequest],
@@ -265,6 +272,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
+  acpCommands.continueNotebookExecution,
   acpCommands.steerFollowUp,
   acpCommands.saveAsSkill,
   acpCommands.cancel,
@@ -381,14 +389,56 @@ const registerAcpCommands = (
             : dependencies.runtime.compactSession(invocation.args[0])
         ),
       'acp:send-prompt': (invocation) => {
+        const request: AcpPromptRequest = {
+          ...invocation.args[0],
+          turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
+          permissionPrompts: undefined,
+          continuation: undefined,
+          suppressUserMessage: undefined
+        }
         return stateCommand(
-          dependencies.workflows.sendPrompt({
-            ...invocation.args[0],
-            turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
-            permissionPrompts: undefined,
-            continuation: undefined,
-            suppressUserMessage: undefined
-          })
+          dependencies.workflows.sendPrompt(
+            canSatisfyHumanApproval(invocation.callerContext)
+              ? withNotebookUserOperation(request, {
+                  assertCurrent: () => {
+                    if (
+                      !canSatisfyHumanApproval(invocation.callerContext) ||
+                      invocation.callerLease.signal.aborted ||
+                      !invocation.callerLease.isCurrent()
+                    )
+                      throw new Error('Notebook user operation expired.')
+                  }
+                })
+              : request
+          )
+        )
+      },
+      'acp:continue-notebook-execution': (invocation) => {
+        const assertCurrent = (): void => {
+          if (
+            !canSatisfyHumanApproval(invocation.callerContext) ||
+            invocation.callerLease.signal.aborted ||
+            !invocation.callerLease.isCurrent()
+          )
+            throw new Error('Only a current human caller can continue Notebook execution.')
+        }
+        assertCurrent()
+        const { projectId, refusalId, ...request } = invocation.args[0]
+        if (!projectId?.trim() || !refusalId?.trim() || !request.text?.trim())
+          throw new Error('Notebook continuation requires a current refusal and a new user prompt.')
+        return stateCommand(
+          dependencies.workflows.sendPrompt(
+            withNotebookUserOperation(
+              {
+                ...request,
+                turnIntent: undefined,
+                permissionPrompts: undefined,
+                continuation: undefined,
+                suppressUserMessage: undefined
+              },
+              { projectId, refusalId, assertCurrent }
+            )
+          )
         )
       },
       'acp:steer-follow-up': (invocation) =>

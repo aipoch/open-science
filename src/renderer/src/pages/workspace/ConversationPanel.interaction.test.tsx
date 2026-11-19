@@ -1,3 +1,4 @@
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitationFailures
@@ -724,6 +725,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    runtimeInteractionInFlight: false,
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {
@@ -737,7 +739,8 @@ const createPanelDefaults = (): PanelProps => ({
     actions: {
       submit: {
         draft: vi.fn(),
-        restoredPlan: vi.fn().mockResolvedValue(undefined)
+        restoredPlan: vi.fn().mockResolvedValue(undefined),
+        notebookContinuation: vi.fn()
       },
       revise: vi.fn(),
       branch: vi.fn(),
@@ -981,6 +984,37 @@ const dispatchDrag = (
     target.dispatchEvent(event)
   })
 }
+
+describe('ConversationPanel Web tool cancellation', () => {
+  const activeSession: ChatSession = {
+    id: 'web-session',
+    projectId: 'web-project',
+    title: 'Read web page',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'web-session',
+      messages: [],
+      frameworkId: 'open-science-agent',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  }
+  it('retains Stop after remount when the runtime still owns the turn', async () => {
+    const cancel = vi.fn(async () => undefined)
+    renderPanel({
+      view: { activeSession },
+      conversation: { runtimeInteractionInFlight: true, actions: { cancel } }
+    })
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!
+    expect(stop).not.toBeNull()
+    await act(async () => stop.click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+})
 
 describe('ConversationPanel header spacing', () => {
   it('opens Model settings for an unavailable Subagent configuration', () => {
@@ -9908,6 +9942,46 @@ describe('ConversationPanel unified failure notices', () => {
     act(() => action(button)?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith(panel)
     expect(action('report')).toBeNull()
+  })
+
+  it('routes a Lab model configuration failure to the Lab settings panel', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({
+      openSettingsToPanel,
+      providers: [
+        {
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          models: ['lab:research-default'],
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false,
+          lastValidatedAt: 10
+        }
+      ]
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          failure: {
+            category: 'configuration',
+            reason: 'configuration/model-unavailable',
+            diagnostics: {}
+          }
+        }
+      },
+      agentControls: {
+        modelConfiguration: {
+          providerId: 'builtin-lab',
+          model: 'lab:research-default',
+          reasoningEffort: 'default'
+        }
+      }
+    })
+    act(() => action('open-provider-settings')?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('lab')
   })
 
   it('retries a service failure through the existing revision command and preserves the current draft', async () => {

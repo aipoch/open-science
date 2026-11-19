@@ -23,6 +23,7 @@ import type {
 } from '../../shared/notebook-env'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { shellRuntimeBindingSchema } from './shell-runtime'
+import type { NotebookExecutionIntent, NotebookExecutionIntentScope } from './execution-intent'
 
 const provenanceContextSchema = z
   .object({
@@ -226,6 +227,19 @@ type NotebookRuntimeBindingRequest = NotebookSessionRequest & {
 }
 
 type NotebookLocalRpcCapability = {
+  createExecutionIntent?(scope: NotebookExecutionIntentScope): NotebookExecutionIntent
+  currentExecutionIntent?(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined
+  bindExecutionIntent?(scope: NotebookExecutionIntentScope, intent: NotebookExecutionIntent): void
+  adoptExecutionIntentScope?(scope: NotebookExecutionIntentScope, sessionId: string): void
+  rememberExecutionIntent?(
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ): void
+  resolveExecutionIntent?(
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ): NotebookExecutionIntent | undefined
   manualKernelTerminations?: (
     projectId: string,
     sessionId: string

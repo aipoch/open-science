@@ -25,6 +25,7 @@ import type { SpecialistView } from '../../shared/specialist'
 import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import {
   NotebookControlCompletionCapturedError,
   NotebookRuntimeService,
@@ -270,6 +271,7 @@ describe('OpenCode immediate handoff production path', () => {
     })
     const loops = resolveLoopScriptPaths()
     const notebookService = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'default-project',

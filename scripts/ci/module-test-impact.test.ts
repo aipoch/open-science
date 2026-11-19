@@ -1260,6 +1260,7 @@ it.each([
   }
   // Test process routing separately while retaining the production full-validation guard above.
   delete manifest.modules.main_delegation.fullTestReason
+  delete manifest.modules.host_process_runtime.fullTestReason
   const plan = createAffectedTestPlan(changes, graph, manifest)
 
   expect(plan.mode).toBe('selective')

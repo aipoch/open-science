@@ -1,5 +1,5 @@
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { CirclePlus, Sparkles } from 'lucide-react'
+import { CirclePlus, FlaskConical, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
@@ -127,6 +127,15 @@ export const ProviderKindIcon = ({
       <AnthropicMono
         size={20}
         className={cn('size-5 shrink-0 text-foreground', className)}
+        aria-hidden="true"
+      />
+    )
+  }
+
+  if (kindKey === 'lab') {
+    return (
+      <FlaskConical
+        className={cn('size-5 shrink-0 text-muted-foreground', className)}
         aria-hidden="true"
       />
     )

@@ -126,7 +126,8 @@
     "build:ocr": "node scripts/ocr/build.mjs",
     "check:agent-harness-package": "node scripts/check-agent-harness-package.mjs",
     "harness:smoke": "npm run build:packages && node scripts/agent-harness-smoke.mjs",
-    "check:agent-harness-standalone": "node scripts/agent-harness-acceptance.mjs"
+    "check:agent-harness-standalone": "node scripts/agent-harness-acceptance.mjs",
+    "test:e2e:web-tools": "playwright test e2e/builtin-web-fetch.spec.ts e2e/builtin-web-evidence-lifecycle.spec.ts e2e/builtin-web-package.spec.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

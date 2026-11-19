@@ -23,6 +23,11 @@ import { createInitialSettingsState, useSettingsStore } from '../../stores/setti
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { NotebookPreview, type NotebookPreviewItem } from './NotebookPreview'
+import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
+import {
+  presentNotebookMemoryRejection,
+  useNotebookMemoryNoticeStore
+} from '@/stores/notebook-memory-notice-store'
 import { deriveProvisionUi } from './provisioning-view'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -51,6 +56,7 @@ let root: Root
 beforeEach(() => {
   useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   notebookCodeBlockSpy.mockClear()
+  useNotebookMemoryNoticeStore.setState({ rejection: undefined, terminal: undefined })
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
   useSettingsStore.setState(createInitialSettingsState())
   useSessionStore.setState({
@@ -543,7 +549,12 @@ describe('NotebookPreview per-kernel tabs', () => {
       settings: { getNotebookNetworkStatus: vi.fn(async () => ({ kind: 'ready', warnings: [] })) }
     })
     await act(async () => {
-      root.render(<NotebookPreview item={previewItem} />)
+      root.render(
+        <>
+          <NotebookPreview item={previewItem} />
+          <NotebookMemoryNoticeBridge projectId="proj" />
+        </>
+      )
     })
     // Flush the mount-deferred setTimeout(0) that kicks off loadNotebookState(), plus its state()
     // promise resolution and the resulting re-render — React's passive effects also queue via a
@@ -803,6 +814,126 @@ describe('NotebookPreview per-kernel tabs', () => {
       ).toContain('R kernel')
     }
   )
+
+  it.each(['thrown', 'resolved'] as const)(
+    'keeps a %s rejected terminal draft and retries the current edited contents only on a new click',
+    async (resultKind) => {
+      await mountWithRuns([makeRun({ runId: 'root', kernelKind: 'python' })])
+      const execute = vi.mocked(window.api.notebook.execute)
+      execute.mockImplementationOnce(async () => {
+        presentNotebookMemoryRejection({
+          projectId: 'proj',
+          sessionId: 'session-1',
+          source: 'user',
+          inputKind: 'terminal',
+          memory: {
+            status: 'pressured',
+            reason: 'linux-available-low',
+            source: 'linux-procfs',
+            executionScope: 'linux:host',
+            checkedAt: 1
+          }
+        })
+        if (resultKind === 'thrown') throw new Error('Execution was not started.')
+        return {
+          status: 'failed',
+          kernelDispatched: false,
+          executionStarted: false,
+          recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+        } as never
+      })
+      const input = container.querySelector<HTMLTextAreaElement>(
+        '[data-testid="kernel-terminal-input"]'
+      )!
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'print("blocked")' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+      })
+      expect(input.value).toBe('print("blocked")')
+      expect(screen.getByRole('dialog', { name: 'System memory is under pressure' })).toBeTruthy()
+      expect(execute).toHaveBeenCalledTimes(1)
+      await act(async () => fireEvent.change(input, { target: { value: 'print("edited")' } }))
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Recheck and retry' }))
+      )
+      expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ code: 'print("edited")' }))
+    }
+  )
+
+  it('does not bind a late rejection from another kernel to the currently selected terminal', async () => {
+    await mountWithRuns([makeRun({ runId: 'root', kernelKind: 'python' })])
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="kernel-terminal-input"]'
+    )!
+    await act(async () => fireEvent.change(input, { target: { value: 'print("current")' } }))
+    await act(async () =>
+      presentNotebookMemoryRejection({
+        projectId: 'proj',
+        sessionId: 'session-1',
+        source: 'user',
+        inputKind: 'terminal',
+        terminalTarget: 'r:default-r',
+        memory: {
+          status: 'pressured',
+          reason: 'low',
+          source: 'linux-proc',
+          executionScope: 'linux:host',
+          checkedAt: 1
+        }
+      })
+    )
+    const retry = screen.getByRole('button', { name: 'Recheck and retry' }) as HTMLButtonElement
+    expect(retry.disabled).toBe(true)
+    await act(async () => fireEvent.click(retry))
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+  })
+
+  it('retires memory retry when the original terminal namespace is lost', async () => {
+    await mountWithRuns([makeRun({ runId: 'root', kernelKind: 'python' })])
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="kernel-terminal-input"]'
+    )!
+    await act(async () => fireEvent.change(input, { target: { value: 'print("draft")' } }))
+    await act(async () =>
+      presentNotebookMemoryRejection({
+        projectId: 'proj',
+        sessionId: 'session-1',
+        source: 'user',
+        inputKind: 'terminal',
+        memory: {
+          status: 'pressured',
+          reason: 'low',
+          source: 'linux-proc',
+          executionScope: 'linux:host',
+          checkedAt: 1
+        }
+      })
+    )
+    const state = vi.mocked(window.api.notebook.state)
+    const previous = await state.mock.results[0].value
+    state.mockResolvedValue({
+      ...previous,
+      kernelStatus: 'terminated',
+      environments: [
+        {
+          processKey: 'python:default-python',
+          kind: 'python',
+          environment: 'default-python',
+          status: 'terminated'
+        }
+      ]
+    })
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls[0][0](item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-read-only-status"]')).toBeTruthy()
+    const retry = screen.getByRole('button', { name: 'Recheck and retry' }) as HTMLButtonElement
+    expect(retry.disabled).toBe(true)
+    await act(async () => fireEvent.click(retry))
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+  })
 
   const seedPendingCode = (overrides: Partial<ToolActivity> = {}): void => {
     const messages = [

@@ -35,6 +35,8 @@ export type ResolvedProvider = {
   vendorId?: OfficialVendorId
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
+  // Exact Lab deployment address; host-owned credential resolution must match this address.
+  labServerUrl?: string
   // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
   // when the chosen endpoint is chat-completions; falls back to baseUrl when absent.
   chatCompletionsBaseUrl?: string
@@ -42,6 +44,9 @@ export type ResolvedProvider = {
   // when the chosen endpoint is responses; falls back to chatCompletionsBaseUrl and then baseUrl.
   responsesBaseUrl?: string
   model?: string
+  // False only when the selected Lab model explicitly does not support streaming. Absent means the
+  // provider's model is assumed streaming-capable.
+  streaming?: boolean
   // Model token limits. Context is the shared request/response budget; input/output are independent
   // provider-reported caps and remain absent when unknown.
   contextWindow?: number

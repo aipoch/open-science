@@ -18,7 +18,14 @@ it('recovers fixed versions and completed rows without automatically resuming in
       createdAt: new Date().toISOString(),
       targets: [
         { artifactId: 'a', versionId: 'v', name: 'x.csv', status: 'matched' },
-        { artifactId: 'b', versionId: 'v2', name: 'y.csv', status: 'running' }
+        { artifactId: 'b', versionId: 'v2', name: 'y.csv', status: 'running' },
+        {
+          artifactId: 'c',
+          versionId: 'v3',
+          name: 'z.csv',
+          status: 'failed',
+          failedStep: { stepId: 'step:c', runIndex: 0, execution: 'not-started' }
+        }
       ]
     }
     await store.save(batch)
@@ -37,14 +44,17 @@ it('recovers fixed versions and completed rows without automatically resuming in
       status: 'cancelled',
       targets: [
         { versionId: 'v', status: 'matched' },
-        { versionId: 'v2', status: 'cancelled' }
+        { versionId: 'v2', status: 'cancelled' },
+        { versionId: 'v3', status: 'failed' }
       ]
     })
+    expect(restored?.targets[2]).not.toHaveProperty('failedStep')
     await expect(
       batches.command({ action: 'start', projectId: 'p', appSessionId: 's', batchId: 'batch' }, 99)
     ).rejects.toThrow('Prepare')
     const file = join(root, 'artifacts/p/s/.reproducibility/latest.json')
-    await writeFile(file, JSON.stringify({ schemaVersion: 1, state: batch, checksum: 'corrupt' }))
+    const saved = await store.load(batch)
+    await writeFile(file, JSON.stringify({ schemaVersion: 1, state: saved, checksum: 'corrupt' }))
     await expect(store.load(batch)).rejects.toThrow()
     await expect(store.load({ projectId: '../escape', appSessionId: 's' })).rejects.toThrow()
     await rm(file)

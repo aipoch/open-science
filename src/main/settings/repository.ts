@@ -243,13 +243,24 @@ class SettingsRepository {
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
       >
-    }
+    },
+    guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        source?.labCatalogToken !== guard.expectedLabCatalogToken
+      ) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       if (
         configEdit?.expectedConfigRevision !== undefined &&
         (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
@@ -293,8 +304,8 @@ class SettingsRepository {
           ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
           : sameCatalogTarget(existing, provider) &&
             (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
-        // CodeBuddy sign-in and sign-out own that subscription’s model list.
-        if (provider.type !== 'codebuddy-subscription' && keepCatalog) {
+        // The Lab and CodeBuddy account owners supply their current model lists.
+        if (provider.type !== 'codebuddy-subscription' && provider.type !== 'lab' && keepCatalog) {
           provider = reconcileCatalogHealth(provider, { ...provider, ...catalog })
           // A concurrent refresh can move the model while its old route is being tested.
           if (configEdit?.validationMatches && !configEdit.validationMatches(provider)) {
@@ -665,10 +676,26 @@ class SettingsRepository {
   // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(
     id: string,
-    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve'
+    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve',
+    guard?: {
+      expectedLabCatalogToken?: string
+      isCurrent?: () => boolean
+      // Restore the active pointer atomically only when this mutation is the one that removed the
+      // still-selected provider. A user selection written before/after this transaction wins.
+      restoreActive?: { providerId: string; model?: string }
+    }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) return settings
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        settings.providers.find((provider) => provider.id === id)?.labCatalogToken !==
+          guard.expectedLabCatalogToken
+      ) {
+        return settings
+      }
       const removedIds = new Set(
         deletingClaudeSubscription ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID] : [id]
       )
@@ -684,6 +711,11 @@ class SettingsRepository {
         activeProviderId,
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
+      }
+
+      if (clearedActive && guard?.restoreActive) {
+        next.activeProviderId = guard.restoreActive.providerId
+        next.activeModel = guard.restoreActive.model
       }
 
       delete next.imageServices

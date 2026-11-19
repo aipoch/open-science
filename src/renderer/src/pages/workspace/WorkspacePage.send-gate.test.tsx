@@ -1439,6 +1439,45 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
+  it('ends the active turn when Lab sign-in expires', async () => {
+    runtime.promptInFlightSessionIds = ['sess-a']
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          agentConfiguration: {
+            providerId: 'builtin-lab',
+            model: 'lab:research-default',
+            reasoningEffort: 'default'
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    useSettingsStore.setState({
+      activeProviderId: 'builtin-lab',
+      activeModel: 'lab:research-default',
+      providers: [
+        {
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          models: ['lab:research-default'],
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false
+        }
+      ],
+      lab: {
+        state: 'expired',
+        serverUrl: 'https://lab.example.com',
+        error: { code: 'expired' }
+      }
+    })
+    await renderPage()
+
+    expect(runtime.cancelRun).toHaveBeenCalledWith('sess-a')
+  })
+
   it('locks draft submission and message editing while a send prepares runtime adoption', async () => {
     await renderPage()
 

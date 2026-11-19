@@ -1,4 +1,6 @@
 import { compilePowerShellCommand } from './powershell-native-capture'
+import { releaseNotebookResources, type NotebookOwnedResource } from './owned-resources'
+import { NotebookExecutionAdmissionError } from './execution-admission'
 import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -6,6 +8,7 @@ import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
+import { createWslExecutionMemoryPolicy } from './memory-policy-wsl'
 import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
@@ -72,6 +75,10 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
+  memoryPolicy?(
+    executionScope: string
+  ): import('./execution-admission').NotebookMemoryPolicyPort | undefined
+  resources?: () => NotebookOwnedResource[]
   monitoredProcesses?: () => import('./process-monitor').MonitoredInterpreter[]
   idleProcesses?: () => Array<IdleInterpreter & { laneKey?: string }>
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
@@ -614,6 +621,7 @@ const runShellCommand = (
     previewAvailable?: () => boolean
     onProcess?: (child: ChildProcessWithoutNullStreams) => void
     onCleanupRetry?: (retry: () => Promise<boolean>) => void
+    configRoot?: string
   }
 ): Promise<NotebookShellResult> => {
   const run = async (): Promise<NotebookShellResult> => {
@@ -630,10 +638,24 @@ const runShellCommand = (
     const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(options.platform)
     const runtimePlatform = shellRuntimePlatform(runtimeBinding, options.platform)
     const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
+    const oneShotWsl =
+      runtimeBinding.kind === 'wsl2-bash' && !options.preparedLaunch?.deferExecution
     const prepared =
       options.preparedLaunch ??
-      (await prepareShellLaunch(options, options.platform, options.processSandbox))
-    const { platform, invocation, baseEnv, sandboxed, endSandboxExecution } = prepared
+      (await prepareShellLaunch(
+        oneShotWsl
+          ? {
+              ...options,
+              launchCommand:
+                'printf \'\\000open-science-wsl-ready\\000\'; IFS= read -r __os_once; eval "$__os_once"',
+              deferExecution: true
+            }
+          : options,
+        options.platform,
+        options.processSandbox
+      ))
+    const { platform, invocation, baseEnv, sandboxed } = prepared
+    let endSandboxExecution = prepared.endSandboxExecution
     const cleanupCompleted = (result: NotebookSandboxCleanupResult): boolean =>
       result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
     let sandboxCleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
@@ -702,7 +724,8 @@ const runShellCommand = (
         : withIncompleteCleanup(cancelled, 'not-started')
     }
 
-    const spawnAdmission = sandboxed?.beginSpawn?.()
+    let spawnAdmission:
+      ReturnType<NonNullable<NonNullable<typeof sandboxed>['beginSpawn']>> | undefined
     let processTreeOwnership: ReturnType<typeof createPosixProcessTreeOwnership>
     const launchOwnership = options.prepareProcessOwnership?.({
       hosted: platform === 'win32' && Boolean(sandboxed?.confirmProcessTreeTermination)
@@ -713,6 +736,10 @@ const runShellCommand = (
     const gateLaunch = platform === 'darwin' && process.platform === 'darwin'
     let child: ChildProcessWithoutNullStreams
     try {
+      await options.executionAdmission?.prepare('create')
+      options.signal?.throwIfAborted()
+      options.executionAdmission?.assertCurrent('create')
+      spawnAdmission = sandboxed?.beginSpawn?.()
       processTreeOwnership = createPosixProcessTreeOwnership(sandboxed?.env ?? baseEnv, platform)
       const executable = ownershipHost
         ? process.execPath
@@ -770,7 +797,11 @@ const runShellCommand = (
       const result: NotebookShellResult = {
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error),
-        exitCode: null
+        exitCode: error instanceof NotebookExecutionAdmissionError ? 1 : null,
+        ...(options.signal?.aborted ? { cancelled: true } : {}),
+        ...(error instanceof NotebookExecutionAdmissionError
+          ? { kernelDispatched: false, executionStarted: false, recovery: error.recovery }
+          : {})
       }
       return complete ? result : withIncompleteCleanup(result, 'not-started')
     }
@@ -779,6 +810,7 @@ const runShellCommand = (
       trackOwnedPosixProcessTree(child, processTreeOwnership.token)
 
     return new Promise((resolve) => {
+      let guestPolicy: import('./execution-admission').NotebookMemoryPolicyPort | undefined
       let releaseProcessOwnership: (() => void) | undefined
       try {
         if (gateLaunch && child.pid !== undefined && !capturePosixProcessTreeIdentity(child)) {
@@ -849,6 +881,10 @@ const runShellCommand = (
           return
         }
       }
+      const rawReady = Promise.withResolvers<void>()
+      let rawReadyBuffer = ''
+      let rawReadyPending = oneShotWsl
+      let rawWaitingForNetwork = false
       let stdout = ''
       let stderr = ''
       let stdoutBytes = 0
@@ -868,6 +904,7 @@ const runShellCommand = (
       ): Promise<void> => {
         if (settled) return
         settled = true
+        guestPolicy?.dispose?.()
         unsubscribeNetworkWait?.()
         timeoutTimer.cancel()
         options.signal?.removeEventListener('abort', abort)
@@ -1046,6 +1083,19 @@ const runShellCommand = (
         return current + limited.text
       }
       child.stdout!.on('data', (chunk: string) => {
+        if (rawReadyPending) {
+          rawReadyBuffer += chunk
+          const marker = '\0open-science-wsl-ready\0'
+          const index = rawReadyBuffer.indexOf(marker)
+          if (index < 0) {
+            if (rawReadyBuffer.length > 4096) abort()
+            return
+          }
+          chunk = rawReadyBuffer.slice(index + marker.length)
+          rawReadyBuffer = ''
+          rawReadyPending = false
+          rawReady.resolve()
+        }
         if (options.onProcess) return
         stdout = appendOutput(
           stdout,
@@ -1097,6 +1147,7 @@ const runShellCommand = (
       child.once('exit', (code) => {
         if (timedOut || cancelled || exited || failed) return
         exited = true
+        if (rawReadyPending && rawReadyBuffer) stdout += rawReadyBuffer
         timeoutTimer.cancel()
         if (sandboxed?.confirmProcessTreeTermination) {
           // The helper has already stopped its Job Object. Its proof, not an absent/reused PID or
@@ -1125,6 +1176,69 @@ const runShellCommand = (
           )
         })
       })
+      if (oneShotWsl) {
+        void (async () => {
+          const readyTimer = setTimeout(() => {
+            abort()
+            rawReady.resolve()
+          }, 5_000)
+          try {
+            await rawReady.promise
+          } finally {
+            clearTimeout(readyTimer)
+          }
+          if (settled || exited || failed || cancelled) return
+          const probe = sandboxed?.memoryProbe
+          if (!probe || !options.executionAdmission?.withExecutionDomain)
+            throw new NotebookExecutionAdmissionError(
+              'NOTEBOOK_MEMORY_UNAVAILABLE',
+              'The original WSL execution has no trusted memory admission.'
+            )
+          guestPolicy = await createWslExecutionMemoryPolicy(probe, options.configRoot)
+          const admission = options.executionAdmission.withExecutionDomain(
+            guestPolicy,
+            probe.executionScope
+          )
+          await admission.prepare('dispatch')
+          options.signal?.throwIfAborted()
+          admission.assertCurrent('dispatch')
+          const encoded = Buffer.from(options.command, 'utf8').toString('base64')
+          endSandboxExecution = sandboxed?.beginExecution?.({
+            commandText: options.command,
+            executionReference: options.executionReference,
+            signal: options.signal,
+            onNetworkWaitChange: (waiting) => {
+              rawWaitingForNetwork = waiting
+              timeoutTimer.setPaused(waiting)
+            }
+          })
+          admission.assertCurrent('dispatch')
+          child.stdin.end(`eval "$(printf %s '${encoded}' | base64 -d)"\n`)
+          timeoutTimer.setPaused(rawWaitingForNetwork)
+        })().catch((error: unknown) => {
+          if (settled || exited || failed) return
+          failed = true
+          void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) =>
+            finish(
+              {
+                stdout,
+                stderr: error instanceof Error ? error.message : String(error),
+                exitCode: 1,
+                kernelDispatched: false,
+                executionStarted: false,
+                ...(error instanceof NotebookExecutionAdmissionError
+                  ? { recovery: error.recovery }
+                  : {})
+              },
+              'cancel',
+              withNotebookSandboxProcessState(
+                { processesTerminated: reaped },
+                reaped ? 'started-and-reaped' : 'termination-unknown'
+              )
+            )
+          )
+        })
+      }
       if (gateLaunch && !cancelled) {
         if (launchGate && 'end' in launchGate) launchGate.end('start\n')
         else processError(new Error('Shell launch ownership pipe is unavailable.'))
@@ -1150,6 +1264,37 @@ const runShellCommand = (
 // Each lane owns a live interpreter; runShellCommand remains the one-shot spawn/cleanup owner.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
   private readonly sessions = new Map<string, ShellCellSession>()
+  memoryPolicy(
+    executionScope: string
+  ): import('./execution-admission').NotebookMemoryPolicyPort | undefined {
+    for (const session of this.sessions.values()) {
+      const policy = session.executionMemoryPolicy(executionScope)
+      if (policy) return policy
+    }
+    return undefined
+  }
+  resources(): NotebookOwnedResource[] {
+    return Array.from(this.sessions, ([key, session]) => ({
+      identity: session,
+      group: 'shell',
+      kind: session.identity.runtimeBinding?.kind,
+      phase: session.resourcePhase,
+      startedAt: session.startedAt,
+      projectId: session.identity.projectId,
+      sessionId: session.identity.sessionId,
+      laneKey: session.identity.laneKey,
+      sampleMemory: session.sampleMemory,
+      ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
+        ? {}
+        : { executionDomain: 'host' as const }),
+      release: async () => {
+        const result = await session.shutdown()
+        if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
+        return result
+      }
+    }))
+  }
+
   monitoredProcesses(): import('./process-monitor').MonitoredInterpreter[] {
     return [...this.sessions].flatMap(([key, session]) => {
       const observed = session.monitoredProcess
@@ -1187,6 +1332,9 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
         sessionId: session.identity.sessionId,
         laneKey: session.identity.laneKey,
         group: 'shell',
+        ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
+          ? {}
+          : { executionDomain: 'host' as const }),
         lastUsedAt: session.lastUsedAt,
         release: async (stillIdle) => {
           if (!stillIdle() || this.sessions.get(key) !== session) return false
@@ -1217,7 +1365,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
         platform?: NodeJS.Platform
         hosted?: boolean
       }): ShellProcessLaunchOwnership
-    }
+    },
+    private readonly configRoot?: string
   ) {}
 
   async prepareEnvironment(
@@ -1305,11 +1454,13 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           }
           let retryCleanup: (() => Promise<boolean>) | undefined
           return {
+            memoryProbe: preparedLaunch.sandboxed?.memoryProbe,
             completion: runShellCommand({
               ...cell,
               signal,
               platform: this.platform,
               preparedLaunch,
+              configRoot: this.configRoot,
               onProcess,
               onCleanupRetry: (retry) => {
                 retryCleanup = retry
@@ -1344,7 +1495,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           })
           if (mutation) throw new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${mutation.message}`)
         },
-        Boolean(this.processSandbox)
+        Boolean(this.processSandbox),
+        this.configRoot
       )
       this.sessions.set(key, session)
     }
@@ -1354,20 +1506,14 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
   async shutdown(
     scope: { projectId?: string; sessionId?: string; laneKey?: string } = {}
   ): Promise<{ reaped: boolean }> {
-    const selected = [...this.sessions].filter(
-      ([, session]) =>
-        (scope.projectId === undefined || session.identity.projectId === scope.projectId) &&
-        (scope.sessionId === undefined || session.identity.sessionId === scope.sessionId) &&
-        (scope.laneKey === undefined || session.identity.laneKey === scope.laneKey)
+    const selected = this.resources().filter(
+      (resource) =>
+        (scope.projectId === undefined || resource.projectId === scope.projectId) &&
+        (scope.sessionId === undefined || resource.sessionId === scope.sessionId) &&
+        (scope.laneKey === undefined || resource.laneKey === scope.laneKey)
     )
-    const results = await Promise.all(
-      selected.map(async ([key, session]) => {
-        const result = await session.shutdown()
-        if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
-        return result
-      })
-    )
-    return { reaped: results.every((result) => result.reaped) }
+    const results = await releaseNotebookResources(selected)
+    return { reaped: results.every(({ result }) => result.reaped) }
   }
 
   private ownershipClaim(request: NotebookShellProcessRequest): {

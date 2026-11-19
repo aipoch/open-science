@@ -10,7 +10,9 @@ import {
   type OfficialVendorId,
   isVendorModelMultimodal
 } from '@aipoch/providers'
+import { isModelStreamingCompatible } from './agent-framework-id'
 import { isModelBridgeSupported } from './provider-bridge-policy'
+import { labModelLabel, readLabModelCapabilities } from './lab'
 
 import {
   isClaudeSubscriptionProvider,
@@ -40,7 +42,10 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   metadata?: CatalogModel
   selectable: boolean
   supportsImageInput: boolean
-  unavailableReason?: 'framework-incompatible' | 'model-bridge-unsupported'
+  // Only an explicit false rules out streaming.
+  streaming?: boolean
+  unavailableReason?:
+    'framework-incompatible' | 'model-bridge-unsupported' | 'streaming-unsupported'
 }>
 
 export type ConfiguredModelInventoryEntry = Readonly<
@@ -66,10 +71,11 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'apiEndpoints'>,
-  metadata: CatalogModel | undefined
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints' | 'modelProtocols'>,
+  metadata: CatalogModel | undefined,
+  model?: string
 ): readonly ModelProtocol[] =>
-  metadata ? catalogModelApiEndpoints(metadata) : providerEndpoints(provider)
+  metadata ? catalogModelApiEndpoints(metadata) : providerEndpoints(provider, model)
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -94,6 +100,13 @@ export const buildConfiguredModelInventory = (
       return true
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
+    if (provider.type === 'lab') {
+      return (
+        readLabModelCapabilities(provider.modelCapabilities?.[model])?.inputModalities.includes(
+          'image'
+        ) ?? false
+      )
+    }
     if (provider.type === 'custom') return provider.supportsImageInput === true
     return metadata?.supportsImageInput === true
   }
@@ -116,9 +129,10 @@ export const buildConfiguredModelInventory = (
           providerType: provider.type,
           ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
           model,
-          label: model || provider.name,
+          label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
           metadata,
-          supportsImageInput: supportsImageInput(provider, model, metadata)
+          supportsImageInput: supportsImageInput(provider, model, metadata),
+          ...(provider.modelStreaming?.[model] === false ? { streaming: false } : {})
         })
 
       if (provider.type === 'official' && provider.vendorId) {
@@ -126,7 +140,11 @@ export const buildConfiguredModelInventory = (
           .filter(isCatalogModelAvailable)
           .map((metadata) => entry(metadata.id, metadata))
       }
-      const models = provider.models.length > 0 ? provider.models : [provider.model ?? '']
+      // An empty Lab catalog means the organization has no available models.
+      const models =
+        provider.type === 'lab' || provider.models.length > 0
+          ? provider.models
+          : [provider.model ?? '']
       return models.map((model) => entry(model))
     })
 }
@@ -144,7 +162,7 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).flatMap((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
-    const apiEndpoints = configuredModelApiEndpoints(provider, entry.metadata)
+    const apiEndpoints = configuredModelApiEndpoints(provider, entry.metadata, model)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(
       { apiEndpoints },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
@@ -173,15 +191,18 @@ export const buildConfiguredModelCatalog = (
     )
       return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
+    const streamingSupported = isModelStreamingCompatible(input.frameworkId, entry.streaming)
     return [
       Object.freeze({
         ...entry,
-        selectable: frameworkCompatible && bridgeSupported,
+        selectable: frameworkCompatible && bridgeSupported && streamingSupported,
         ...(!frameworkCompatible
           ? { unavailableReason: 'framework-incompatible' as const }
           : !bridgeSupported
             ? { unavailableReason: 'model-bridge-unsupported' as const }
-            : {})
+            : !streamingSupported
+              ? { unavailableReason: 'streaming-unsupported' as const }
+              : {})
       })
     ]
   })

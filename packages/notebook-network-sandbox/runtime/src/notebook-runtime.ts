@@ -306,6 +306,7 @@ const wrap = async (
   requestProcessTreeTermination?: () => Promise<boolean>
   confirmProcessState?: () => Promise<SandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
+  memoryProbe?: import('./platform/wsl2-isolation.js').Wsl2Launch['memoryProbe']
 }> => {
   if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
@@ -363,7 +364,12 @@ const wrap = async (
         executionActive: false,
         epoch: 0
       })
-      return { argv: launch.argv, env: launch.env, beginSpawn: launch.beginSpawn }
+      return {
+        argv: launch.argv,
+        env: launch.env,
+        beginSpawn: launch.beginSpawn,
+        memoryProbe: launch.memoryProbe
+      }
     } catch (error) {
       if (commandContexts.has(request.commandId)) {
         const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {

@@ -32,10 +32,99 @@ import { SessionPackageOperation } from './operation'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { assertPackageCapacity, PackageCapacityError } from './capacity'
 import { withPackageTransfer } from './transfer'
+import type { OrgCaseDetail, OrgCaseErrorCode, OrgCaseUploadMetadata } from '../../shared/org-cases'
+import type { UploadOrgCaseInput } from '../settings/lab-api'
+import { OrgCaseFailure } from './org-cases'
 import type {
   PackageOperationSnapshot,
   PackageOperationRequest
 } from '../../shared/session-package'
+
+type OrgCaseUploader = (input: UploadOrgCaseInput, signal: AbortSignal) => Promise<OrgCaseDetail>
+
+const formatExportArchiveFilename = (title: string): string => {
+  const today = new Date()
+  const date = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-')
+  return `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`
+}
+
+const translateOrgCaseUploadError = (
+  errorCode: OrgCaseErrorCode,
+  translate: NativeTranslator
+): string => {
+  switch (errorCode) {
+    case 'unconfigured':
+    case 'signed-out':
+      return translate('Sign in to Lab in Settings before uploading organization cases.')
+    case 'expired':
+      return translate('Your Lab session expired. Sign in again in Lab Settings and try again.')
+    case 'storage-not-configured':
+      return translate(
+        'Object storage for organization case sharing is not configured on this Lab server.'
+      )
+    case 'storage-unavailable':
+      return translate(
+        'The organization case storage service could not be reached. Try again shortly.'
+      )
+    case 'license-inactive':
+      return translate('Your Lab organization does not have an active license for uploading cases.')
+    case 'seat-required':
+      return translate('An assigned Lab seat is required before you can upload organization cases.')
+    case 'org-inactive':
+      return translate(
+        'Your Lab organization is currently inactive. Contact your administrator before uploading.'
+      )
+    case 'account-disabled':
+      return translate(
+        'Your Lab account is disabled. Contact your Lab administrator before uploading.'
+      )
+    case 'no-organization':
+      return translate('Join an organization in Lab before uploading shared cases.')
+    case 'forbidden':
+      return translate('Your Lab role does not have permission to upload organization cases.')
+    case 'rate-limited':
+      return translate('The Lab upload queue is busy. Wait a moment and try again.')
+    case 'upload-in-progress':
+      return translate(
+        'This upload is still being processed by Lab. Wait a moment and check the organization case list before retrying.'
+      )
+    case 'package-too-large':
+      return translate(
+        'The Session package exceeds the maximum upload size allowed by your Lab server.'
+      )
+    case 'unsupported-package':
+      return translate(
+        'This Lab server rejected the package format as unsupported. Update your Lab server or check the package contents.'
+      )
+    case 'package-invalid':
+      return translate(
+        'Lab rejected the package or case details. Check the case name and package contents, then try again.'
+      )
+    case 'upload-timeout':
+    case 'timeout':
+      return translate(
+        'Uploading the Session package to Lab timed out. Check your connection and try again.'
+      )
+    case 'network':
+      return translate(
+        'Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.'
+      )
+    case 'invalid-response':
+      return translate('Lab returned an unexpected response while uploading the organization case.')
+    case 'cancelled':
+      return translate(
+        'The upload was cancelled because your Lab session changed. Sign in and try again.'
+      )
+    default:
+      return translate(
+        'Could not upload the Session package to Lab. Check your connection and try again.'
+      )
+  }
+}
 
 type NativeImportFile = {
   id: string
@@ -64,9 +153,12 @@ export class SessionPackageDesktop {
   private activeFile?: NativeImportFile
   private lastExport?: {
     operationId: string
-    filePath: string
+    filePath?: string
+    orgCase?: OrgCaseUploadMetadata
+    sessionTitle?: string
     selection?: PackageFileSelection
   }
+  private orgCaseUploader?: OrgCaseUploader
   // The sensitive-content retry in respond() never passes export options, so it inherits this
   // remembered policy instead of falling back into the native save-dialog branch.
   private stageDownloadForRetries = false
@@ -103,6 +195,7 @@ export class SessionPackageDesktop {
       ) => void
       cancelBrowserTransfer?: (id: string) => Promise<void>
       assertCanStart?: () => void
+      uploadOrgCase?: OrgCaseUploader
     }
   ) {
     this.operations = new SessionPackageOperation((snapshot) => {
@@ -118,6 +211,17 @@ export class SessionPackageDesktop {
       // Defer until run() has completed ownership release and any active file has settled.
       if (!this.operations.active) queueMicrotask(() => this.pumpOpenFiles())
     })
+  }
+
+  registerOrgCaseUploader(uploader: OrgCaseUploader): () => void {
+    this.orgCaseUploader = uploader
+    return () => {
+      if (this.orgCaseUploader === uploader) this.orgCaseUploader = undefined
+    }
+  }
+
+  private resolveOrgCaseUploader(): OrgCaseUploader | undefined {
+    return this.orgCaseUploader ?? this.options.uploadOrgCase
   }
 
   reportOpenOverflow(): void {
@@ -279,7 +383,10 @@ export class SessionPackageDesktop {
         undefined,
         true,
         previous?.filePath,
-        previous?.selection
+        previous?.selection,
+        undefined,
+        previous?.orgCase,
+        previous?.sessionTitle
       ).then(() => this.operations.snapshot)
     }
     if (
@@ -660,6 +767,9 @@ export class SessionPackageDesktop {
         { cause: error }
       )
     }
+    if (error instanceof OrgCaseFailure) {
+      throw new Error(translateOrgCaseUploadError(error.errorCode, translate), { cause: error })
+    }
     if (detail.includes('Sensitive content detected'))
       throw new Error(
         translate('Sensitive content detected. Remove it before exporting the Session package.'),
@@ -787,50 +897,98 @@ export class SessionPackageDesktop {
     allowSensitiveContent = false,
     destinationPath?: string,
     selection?: PackageFileSelection,
-    stageDownload?: boolean
+    stageDownload?: boolean,
+    uploadOrgCase?: OrgCaseUploadMetadata,
+    initialTitle?: string
   ): Promise<SessionPackageExportResult> {
     const stage = stageDownload ?? this.stageDownloadForRetries
     let operationSignal: AbortSignal | undefined
     return this.operations
-      .run('export', request, async (signal) => {
-        operationSignal = signal
-        this.stageDownloadForRetries = stage
-        this.options.assertCanStart?.()
-        if (destinationPath)
-          this.lastExport = {
-            operationId: this.operations.snapshot!.id,
-            filePath: destinationPath,
-            selection
-          }
-        this.operations.setCleanupPending(this.pendingCleanup.size > 0)
-        const release = await this.options.reserveExport?.(request, signal)
-        try {
-          return await this.staged(async (directory) => {
-            const archive = join(directory, 'session.science')
-            let filePath: string | undefined = destinationPath
-            await this.options.withDataRootWrite(() =>
-              this.acceptCleanup(() =>
-                this.options.service.exportTo(request, archive, {
-                  ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
-                  signal,
-                  onProgress: this.operations.report,
-                  // Reuse acknowledged choices; headless callers without a selection include all files.
-                  ...(selection
-                    ? { selectFiles: async () => selection }
-                    : destinationPath
-                      ? {}
-                      : {
-                          selectFiles: async (files, budgetSignal, summary, title) => {
-                            const excluded = await this.operations.selectFiles(
-                              files,
-                              budgetSignal,
-                              summary
-                            )
-                            if (stage) {
-                              // Local Web callers download the staged archive from the renderer;
-                              // a headless host has no native dialog to ask for a destination.
+      .run(
+        'export',
+        request,
+        async (signal) => {
+          operationSignal = signal
+          this.stageDownloadForRetries = stage
+          this.options.assertCanStart?.()
+          if (destinationPath || uploadOrgCase)
+            this.lastExport = {
+              operationId: this.operations.snapshot!.id,
+              ...(destinationPath ? { filePath: destinationPath } : {}),
+              ...(uploadOrgCase ? { orgCase: uploadOrgCase } : {}),
+              ...(initialTitle !== undefined ? { sessionTitle: initialTitle } : {}),
+              selection
+            }
+          this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+          const release = await this.options.reserveExport?.(request, signal)
+          try {
+            return await this.staged(async (directory) => {
+              const archive = join(directory, 'session.science')
+              let filePath: string | undefined = destinationPath
+              let orgCaseTarget: OrgCaseUploadMetadata | undefined = uploadOrgCase
+              let sessionTitle: string | undefined = initialTitle
+              const { webOmissions } = await this.options.withDataRootWrite(() =>
+                this.acceptCleanup(() =>
+                  this.options.service.exportTo(request, archive, {
+                    ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
+                    signal,
+                    onProgress: this.operations.report,
+                    // Reuse acknowledged choices; headless callers without a selection include all files.
+                    ...(selection
+                      ? { selectFiles: async () => selection }
+                      : destinationPath || uploadOrgCase
+                        ? {}
+                        : {
+                            selectFiles: async (files, budgetSignal, summary, title) => {
+                              const excluded = await this.operations.selectFiles(
+                                files,
+                                budgetSignal,
+                                summary,
+                                title
+                              )
+                              const selectedUpload = this.operations.uploadTarget
+                              if (selectedUpload) {
+                                signal.throwIfAborted()
+                                orgCaseTarget = selectedUpload
+                                sessionTitle = title
+                                this.lastExport = {
+                                  operationId: this.operations.snapshot!.id,
+                                  orgCase: selectedUpload,
+                                  sessionTitle: title,
+                                  selection: excluded
+                                }
+                                this.operations.report({ phase: 'preparing' })
+                                return excluded
+                              }
+                              if (stage) {
+                                // Local Web callers download the staged archive from the renderer;
+                                // a headless host has no native dialog to ask for a destination.
+                                signal.throwIfAborted()
+                                filePath = await this.stageDownloadPath(title)
+                                this.lastExport = {
+                                  operationId: this.operations.snapshot!.id,
+                                  filePath: filePath!,
+                                  selection: excluded
+                                }
+                                this.operations.report({ phase: 'preparing' })
+                                return excluded
+                              }
+                              this.operations.report({ phase: 'choosing-location' })
                               signal.throwIfAborted()
-                              filePath = await this.stageDownloadPath(title)
+                              const options = {
+                                title: this.options.translate('Export Session package'),
+                                defaultPath: formatExportArchiveFilename(title),
+                                filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                              }
+                              const selected = await this.nativeDialog(
+                                desktopFileInteraction().chooseSavePath(options, callerId),
+                                AbortSignal.any([signal, budgetSignal])
+                              )
+                              if (selected.canceled || !selected.filePath) {
+                                this.operations.cancel()
+                                signal.throwIfAborted()
+                              }
+                              filePath = selected.filePath
                               this.lastExport = {
                                 operationId: this.operations.snapshot!.id,
                                 filePath: filePath!,
@@ -839,57 +997,66 @@ export class SessionPackageDesktop {
                               this.operations.report({ phase: 'preparing' })
                               return excluded
                             }
-                            this.operations.report({ phase: 'choosing-location' })
-                            signal.throwIfAborted()
-                            const today = new Date()
-                            const date = [
-                              today.getFullYear(),
-                              String(today.getMonth() + 1).padStart(2, '0'),
-                              String(today.getDate()).padStart(2, '0')
-                            ].join('-')
-                            const options = {
-                              title: this.options.translate('Export Session package'),
-                              defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
-                              filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-                            }
-                            const selected = await this.nativeDialog(
-                              desktopFileInteraction().chooseSavePath(options, callerId),
-                              AbortSignal.any([signal, budgetSignal])
-                            )
-                            if (selected.canceled || !selected.filePath) {
-                              this.operations.cancel()
-                              signal.throwIfAborted()
-                            }
-                            filePath = selected.filePath
-                            this.lastExport = {
-                              operationId: this.operations.snapshot!.id,
-                              filePath: filePath!,
-                              selection: excluded
-                            }
-                            this.operations.report({ phase: 'preparing' })
-                            return excluded
-                          }
-                        })
-                })
+                          })
+                  })
+                )
               )
-            )
-            signal.throwIfAborted()
-            if (!filePath) throw new Error('No export destination was selected.')
-            this.operations.report({ phase: 'saving' })
-            await publishUserFile(
-              filePath,
-              (temporary) => this.copyArchive(archive, temporary, 'saving', signal),
-              {
-                validateDestination: async () => signal.throwIfAborted()
+              signal.throwIfAborted()
+              const omissionResult = webOmissions?.length ? { webOmissions } : {}
+              if (orgCaseTarget) {
+                const uploader = this.resolveOrgCaseUploader()
+                if (!uploader) throw new OrgCaseFailure('unconfigured')
+                const archiveStats = await stat(archive)
+                signal.throwIfAborted()
+                const filename = formatExportArchiveFilename(
+                  orgCaseTarget.name || sessionTitle || 'Session'
+                )
+                this.operations.report({
+                  phase: 'uploading',
+                  completedBytes: 0,
+                  totalBytes: archiveStats.size
+                })
+                const uploadSignal = AbortSignal.any([signal, this.shutdown.signal])
+                const uploaded = await uploader(
+                  {
+                    archivePath: archive,
+                    filename,
+                    name: orgCaseTarget.name,
+                    description: orgCaseTarget.description,
+                    clientUploadId: `upload-${this.operations.snapshot!.id}`,
+                    onProgress: (completedBytes, totalBytes) => {
+                      if (!uploadSignal.aborted)
+                        this.operations.report({ phase: 'uploading', completedBytes, totalBytes })
+                    }
+                  },
+                  uploadSignal
+                )
+                signal.throwIfAborted()
+                const uploadedCase = { id: uploaded.id, name: uploaded.name, code: uploaded.code }
+                this.operations.completeResult({ uploadedCase, ...omissionResult })
+                return { saved: true, uploadedCase }
               }
-            )
-            this.operations.completeResult({ filePath })
-            return { saved: true, filePath }
-          }, request)
-        } finally {
-          release?.()
-        }
-      })
+              if (!filePath) throw new Error('No export destination was selected.')
+              this.operations.report({ phase: 'saving' })
+              await publishUserFile(
+                filePath,
+                (temporary) => this.copyArchive(archive, temporary, 'saving', signal),
+                {
+                  validateDestination: async () => signal.throwIfAborted()
+                }
+              )
+              this.operations.completeResult({ filePath, ...omissionResult })
+              return { saved: true, filePath }
+            }, request)
+          } finally {
+            release?.()
+          }
+        },
+        undefined,
+        undefined,
+        undefined,
+        uploadOrgCase ? 'org-case' : destinationPath ? 'local' : undefined
+      )
       .catch((error) => {
         if (operationSignal?.aborted && !this.shutdown.signal.aborted) return { saved: false }
         throw error

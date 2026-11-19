@@ -1291,6 +1291,10 @@ class AcpRuntimeCoordinator {
     return this.sendObservedPrompt(request)
   }
 
+  captureNotebookTaskIntent(request: AcpPromptRequest): AcpPromptRequest {
+    return this.runtimeForSession(request.sessionId).captureNotebookTaskIntent(request)
+  }
+
   // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
   // streamed through runtime state/events. Settle when the application runtime publishes the exact
   // matching prompt start after its durable Session turn is admitted. Provider output and later
