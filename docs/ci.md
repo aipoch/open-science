@@ -117,7 +117,9 @@ update admission API: those candidates instead verify the actual packaged reader
 held SQLite lease and native occupancy, distinguish an unregistered foreign Node, and repeat after
 restart. Reports identify this narrower coverage explicitly; a stable macOS candidate selecting the
 manual fallback fails. Signed stable macOS packages must pass the real updater path. IPC and OS
-occupancy are not mocked. Missing packaged identity or prerequisites fail
+occupancy are not mocked. Positive readiness checks wait at most 60 seconds for real admission
+(e.g. a hosted Windows provisioning agent releasing a freshly installed executable); they never
+exempt that agent, and the controlled foreign Node must still block by exact PID. Missing packaged identity or prerequisites fail
 the job. Nightly and Release already require Package Smoke before publication, so this is a blocking
 pre-publication check. The existing post-release Windows Upgrade Smoke still covers actual binary
 replacement from older versions; its failure is advisory and cannot retroactively stop a release.

@@ -97,14 +97,32 @@ test('certifies real packaged update occupancy and recovery', async ({ app }, te
     return { occupants, registered: registrations.map(({ identity }) => identity.pid) }
   }
   const recheck = async (): Promise<void> => {
-    if (manualNightly) {
-      await inspectNightlyReaders()
-      return
-    }
-    const status = await app.page.evaluate(() => window.api.update.recheck())
-    expect(status.reason, JSON.stringify(status)).toBeUndefined()
-    expect(status.error, JSON.stringify(status)).toBeUndefined()
-    expect(status.recovery?.canRetryInstall).toBe(true)
+    const blocked: string[] = []
+    // Hosted Windows provisioning can briefly hold freshly installed executables. Wait for
+    // actual admission, never exempt the provisioning process or retry a failed test case.
+    await expect(async () => {
+      if (manualNightly) {
+        await inspectNightlyReaders()
+        return
+      }
+      const status = await app.page.evaluate(() => window.api.update.recheck())
+      const evidence = JSON.stringify({
+        state: status.state,
+        current: status.current,
+        reason: status.reason,
+        error: status.error,
+        recovery: status.recovery
+      })
+      if (status.reason || status.error || !status.recovery?.canRetryInstall) blocked.push(evidence)
+      expect(status.reason, evidence).toBeUndefined()
+      expect(status.error, evidence).toBeUndefined()
+      expect(status.recovery?.canRetryInstall, evidence).toBe(true)
+    }).toPass({ timeout: 60_000, intervals: [250, 1000, 2000] })
+    if (blocked.length)
+      await testInfo.attach('transient-update-blockers', {
+        body: JSON.stringify(blocked.map((status) => JSON.parse(status))),
+        contentType: 'application/json'
+      })
   }
   // No IPC overrides. Manual Mac nightlies validate the real reader lease/native occupancy;
   // in-place candidates also exercise the candidate's complete update admission path.
