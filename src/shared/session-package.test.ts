@@ -193,3 +193,68 @@ it('allows every supported package feature in one manifest', () => {
   const features = sessionPackageManifestSchema.shape.requiredFeatures.unwrap()
   expect(features.parse(features.element.options)).toEqual(features.element.options)
 })
+
+it('validates org-case upload metadata and result snapshots on package export contracts', () => {
+  expect(
+    packageOperationRequestSchema.parse({
+      action: 'select',
+      operationId: 'op-1',
+      excludedStorageKeys: [],
+      destination: 'org-case',
+      orgCase: { name: '  Trimmed Case  ', description: '  Details  ' }
+    })
+  ).toMatchObject({
+    destination: 'org-case',
+    orgCase: { name: 'Trimmed Case', description: 'Details' }
+  })
+
+  for (const bad of [
+    { action: 'select', operationId: 'op-1', excludedStorageKeys: [], destination: 'org-case' },
+    {
+      action: 'select',
+      operationId: 'op-1',
+      excludedStorageKeys: [],
+      orgCase: { name: 'Valid' }
+    },
+    {
+      action: 'select',
+      operationId: 'op-1',
+      excludedStorageKeys: [],
+      destination: 'org-case',
+      orgCase: { name: '   ' }
+    },
+    {
+      action: 'select',
+      operationId: 'op-1',
+      excludedStorageKeys: [],
+      destination: 'org-case',
+      orgCase: { name: 'x'.repeat(201) }
+    }
+  ]) {
+    expect(packageOperationRequestSchema.safeParse(bad).success).toBe(false)
+  }
+
+  const uploadedSnapshot = {
+    id: 'op-upload',
+    kind: 'export',
+    exportDestination: 'org-case',
+    state: 'succeeded',
+    progress: { phase: 'uploading', completedBytes: 50, totalBytes: 50 },
+    result: {
+      uploadedCase: { id: 'case_1', name: 'Trimmed Case', code: '7Q2M9X4B' },
+      webOmissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
+  }
+  expect(sessionPackageCommandContracts.operation.result.parse(uploadedSnapshot)).toEqual(
+    uploadedSnapshot
+  )
+  expect(
+    sessionPackageCommandContracts.export.result.parse({
+      saved: true,
+      uploadedCase: { id: 'case_1', name: 'Trimmed Case', code: '7Q2M9X4B' }
+    })
+  ).toEqual({
+    saved: true,
+    uploadedCase: { id: 'case_1', name: 'Trimmed Case', code: '7Q2M9X4B' }
+  })
+})

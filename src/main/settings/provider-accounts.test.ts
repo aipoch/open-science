@@ -2,7 +2,11 @@ import type { CatalogSnapshot } from '@aipoch/providers'
 import * as codeBuddyAuth from './codebuddy-auth'
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
-import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
+import {
+  LAB_PROVIDER_ID,
+  providerValidationRoute,
+  providerValidationSucceeded
+} from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,6 +23,7 @@ import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import { buildLabProviderRecord } from './lab-provider'
 
 vi.mock('electron', () => ({
   net: {
@@ -1332,6 +1337,62 @@ describe('ProviderAccountsModule', () => {
       vi.unstubAllGlobals()
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('protects the managed Lab record from generic saves and draft validation', async () => {
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [{ id: 'research', protocol: 'openai' }]
+    })
+    await repository.upsertProvider(lab)
+    const before = await repository.getSettings()
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+
+    const custom = {
+      id: LAB_PROVIDER_ID,
+      type: 'custom' as const,
+      baseUrl: 'https://api.example.com/v1',
+      model: 'replacement'
+    }
+    const managed = 'The Lab provider is managed in Settings → Lab.'
+    await expect(module.upsertProvider({ type: 'lab' })).rejects.toThrow(managed)
+    await expect(module.upsertProvider(custom)).rejects.toThrow(managed)
+    await expect(module.saveValidatedProvider(custom)).rejects.toThrow(managed)
+    await expect(module.validateProvider({ edit: custom })).rejects.toThrow(managed)
+    await expect(module.validateProvider({ draft: { type: 'lab' } })).rejects.toThrow(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('redirects generic validation of saved or signed-out Lab to the Lab settings', async () => {
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+    const managed = {
+      ok: false,
+      category: 'unknown',
+      message: 'The Lab provider is managed in Settings → Lab.',
+      applied: false
+    }
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
+
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [{ id: 'lab:research', protocol: 'openai' }],
+      default_model_id: 'lab:research'
+    })
+    await repository.upsertProvider(lab)
+    await repository.upsertProvider({ ...lab, id: 'legacy-lab' })
+    const before = await repository.getSettings()
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
+    await expect(
+      module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'lab:lab:research' })
+    ).resolves.toEqual(managed)
+    await expect(module.validateProvider({ providerId: 'legacy-lab' })).resolves.toEqual(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {

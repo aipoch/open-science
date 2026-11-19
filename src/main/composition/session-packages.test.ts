@@ -467,3 +467,30 @@ it('routes receipt progress and targeted cancellation through the existing packa
     await lifecycle.close()
   }
 })
+
+it('includes registered external transfers in both quit and update guards', () => {
+  const lifecycle = { isActive: () => false, close: async () => {} }
+  const surfaces = composeSessionPackageSurfaces({
+    declareElectronAdapter: (name, install) => {
+      if (name === 'session-package-quit-guard') install()
+    },
+    sessionPackageDesktopLifecycle: lifecycle,
+    packageHandoffHeld: { current: false },
+    translate: englishNativeTranslator
+  } as Parameters<typeof composeSessionPackageSurfaces>[0])
+  const canBlockQuit = native.installQuitGuard.mock.calls[0][0] as () => boolean
+
+  let active = true
+  const unregister = surfaces.registerExternalTransferCheck(() => active)
+  expect(lifecycle.isActive()).toBe(true)
+  expect(canBlockQuit()).toBe(true)
+
+  active = false
+  expect(lifecycle.isActive()).toBe(false)
+  expect(canBlockQuit()).toBe(false)
+
+  active = true
+  unregister()
+  expect(lifecycle.isActive()).toBe(false)
+  expect(canBlockQuit()).toBe(false)
+})
