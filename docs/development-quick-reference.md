@@ -151,10 +151,18 @@ uses a headers file only if its path is also set in that environment.
 
 Send a turn with the Open-Science Agent and look for a `harness.turn` span with a
 `harness.model` child under the `open-science-agent` service in the collector. A turn that
-executes an MCP tool also emits a `harness.tool` span. Spans carry operational metadata such as
-the Agent session and model request IDs, timing, outcomes, and reported model token usage.
-The payload excludes prompts, generated text, tool arguments and results, credentials, and error
-details. Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
+executes an MCP tool also emits a `harness.tool` span. Langfuse groups spans by Agent session.
+The observation previews show model and protocol, stop reason, request and tool counts, and
+reported token usage. The default previews contain operational metadata only.
+
+To evaluate prompts against model replies, add `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=1` to
+`.env` and restart the backend. New traces include bounded excerpts of the current prompt's
+plain text and completed visible replies. Each excerpt is limited to 4,096 UTF-16 code units and
+marked when truncated. Prompt attachments and links, stored history, system instructions, reasoning
+events, compaction text, tool arguments and results, and provider credentials stay outside the
+capture. Enable this setting for conversations whose text you intend to send to your collector.
+
+Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
 Failed uploads are dropped without retries. Keep the Agent process open until the collector
 receives the spans, since closing the helper cancels pending uploads.
 

@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
 import {
+  HARNESS_OTLP_CAPTURE_CONTENT,
   HARNESS_OTLP_DIAGNOSTICS,
   HARNESS_OTLP_TRACES_API_KEY,
   HARNESS_OTLP_TRACES_ENDPOINT,
@@ -12,17 +13,25 @@ import {
 } from './config'
 
 const MAX_QUEUED_SPANS = 256
+const MAX_EXPORT_BATCH_SPANS = 32
 const EXPORT_TIMEOUT_MS = 2_000
 const MAX_HEADERS_FILE_BYTES = 8_192
 const MAX_ENV_FILE_BYTES = 65_536
+const MAX_PREVIEW_TEXT = 4_096
 const SERVICE_NAME = 'open-science-agent'
 const LANGFUSE_TRACE_PATH = '/api/public/otel/v1/traces'
 const timeOriginNanos = BigInt(Math.round(performance.timeOrigin * 1_000)) * 1_000n
 const unixNanos = (): string =>
   (timeOriginNanos + BigInt(Math.round(performance.now() * 1_000_000))).toString()
 
+const observationTypes = {
+  'harness.turn': 'agent',
+  'harness.model': 'generation',
+  'harness.tool': 'tool'
+} as const
+
 type StartedSpan = {
-  name: string
+  name: keyof typeof observationTypes
   traceId: string
   spanId: string
   parentSpanId?: string
@@ -38,7 +47,7 @@ type FinishedSpan = StartedSpan & {
 }
 
 function startSpan(
-  name: string,
+  name: StartedSpan['name'],
   kind: StartedSpan['kind'],
   parent?: StartedSpan
 ): StartedSpan | undefined {
@@ -69,39 +78,102 @@ function encodeAttributes(attributes: Attributes): FinishedSpan['attributes'] {
   return encoded
 }
 
-type SpanRecorder = (span: StartedSpan | undefined, outcome: string, attributes: Attributes) => void
+type Preview = { input: object; output: object }
+type TextBlock = { type: string; text?: string }
+type TextPreview = { text: string; truncated?: true }
+
+function previewText(blocks: readonly TextBlock[]): TextPreview | undefined {
+  let text = ''
+  for (const block of blocks) {
+    if (block.type !== 'text' || !block.text) continue
+    if (text) text += '\n'
+    const remaining = MAX_PREVIEW_TEXT - text.length
+    if (block.text.length > remaining) {
+      // Keep the prefix valid Unicode when it ends inside a surrogate pair.
+      const prefix = (text + block.text.slice(0, Math.max(0, remaining))).slice(0, MAX_PREVIEW_TEXT)
+      return { text: prefix.replace(/[\uD800-\uDBFF]$/, ''), truncated: true }
+    }
+    text += block.text
+  }
+  return text ? { text } : undefined
+}
+
+type SpanRecorder = (
+  span: StartedSpan | undefined,
+  outcome: string,
+  attributes: Attributes,
+  preview: Preview
+) => void
 
 export type HarnessSessionTracing = {
-  startTurn(): ((outcome: string, requestCount?: number) => void) | undefined
+  startTurn(
+    prompt?: readonly TextBlock[]
+  ): ((outcome: string, requestCount?: number) => void) | undefined
   markCompaction(requestId: string): void
   wrapModel(model: AgentModel): AgentModel
   wrapTool(tool: AgentTool): AgentTool
 }
 
-type Turn = { span: StartedSpan; compactionRequestId?: string }
+type Turn = {
+  span: StartedSpan
+  prompt?: TextPreview
+  response?: TextPreview
+  modelRequests: number
+  compactionRequests: number
+  toolExecutions: number
+  compactionRequestId?: string
+}
 
 function traceSession(
   record: SpanRecorder,
   sessionId: string,
   modelName: string,
   protocol: string,
-  enabled: () => boolean
+  enabled: () => boolean,
+  captureContent: () => boolean
 ): HarnessSessionTracing {
   let active: Turn | undefined
+  const sessionAttributes = { 'langfuse.session.id': sessionId }
   return {
-    startTurn() {
+    startTurn(prompt = []) {
       if (!enabled()) return undefined
       const span = startSpan('harness.turn', 1)
       if (!span) return undefined
-      active = { span }
+      const turn: Turn = {
+        span,
+        prompt: captureContent() ? previewText(prompt) : undefined,
+        modelRequests: 0,
+        compactionRequests: 0,
+        toolExecutions: 0
+      }
+      active = turn
       return (outcome, requestCount) => {
         active = undefined
-        record(span, outcome, {
-          'harness.session.id': sessionId,
-          'harness.model.protocol': protocol,
-          'harness.request.count': requestCount,
-          'gen_ai.request.model': modelName
-        })
+        record(
+          span,
+          outcome,
+          {
+            ...sessionAttributes,
+            'harness.session.id': sessionId,
+            'harness.model.protocol': protocol,
+            'harness.request.count': requestCount
+          },
+          {
+            input: {
+              model: modelName.slice(0, 256),
+              protocol,
+              promptBlocks: prompt.length,
+              prompt: turn.prompt
+            },
+            output: {
+              stopReason: outcome,
+              modelRequests: requestCount ?? turn.modelRequests,
+              compactionRequests: turn.compactionRequests,
+              toolExecutions: turn.toolExecutions,
+              response: turn.response
+            }
+          }
+        )
       }
     },
     markCompaction(requestId) {
@@ -115,8 +187,14 @@ function traceSession(
           if (!turn) return model.stream(request, signal)
           const stream = async function* (): AsyncGenerator<ModelEvent> {
             const span = startSpan('harness.model', 3, turn.span)
+            const compaction = turn.compactionRequestId === request.requestId
+            const purpose = compaction ? 'compaction' : 'turn'
+            turn.modelRequests++
+            if (compaction) turn.compactionRequests++
             let reason: string | undefined
             let usage: ModelUsage | undefined
+            let response: TextPreview | undefined
+            let toolCalls: number | undefined
             let completed = false
             try {
               for await (const event of model.stream(request, signal)) {
@@ -124,20 +202,51 @@ function traceSession(
                 if (event.type === 'finish') {
                   reason = event.reason
                   usage = event.usage
+                  toolCalls = event.calls?.length ?? 0
+                  if (!compaction && captureContent()) response = previewText(event.content)
                 }
               }
               completed = true
             } finally {
-              record(span, signal.aborted ? 'cancelled' : (completed && reason) || 'error', {
-                'harness.request.id': request.requestId,
-                'harness.request.purpose':
-                  turn.compactionRequestId === request.requestId ? 'compaction' : 'turn',
-                'gen_ai.request.model': modelName,
-                'gen_ai.usage.input_tokens': usage?.inputTokens,
-                'gen_ai.usage.output_tokens': usage?.outputTokens,
-                'gen_ai.usage.cache_read.input_tokens': usage?.cacheReadTokens,
-                'gen_ai.usage.cache_creation.input_tokens': usage?.cacheWriteTokens
-              })
+              const outcome = signal.aborted ? 'cancelled' : (completed && reason) || 'error'
+              if (!compaction && (outcome === 'complete' || outcome === 'length'))
+                turn.response = response
+              record(
+                span,
+                outcome,
+                {
+                  ...sessionAttributes,
+                  'harness.request.id': request.requestId,
+                  'harness.request.purpose': purpose,
+                  'gen_ai.request.model': modelName,
+                  'gen_ai.usage.input_tokens': usage?.inputTokens,
+                  'gen_ai.usage.output_tokens': usage?.outputTokens,
+                  'gen_ai.usage.cache_read.input_tokens': usage?.cacheReadTokens,
+                  'gen_ai.usage.cache_creation.input_tokens': usage?.cacheWriteTokens
+                },
+                {
+                  input: {
+                    purpose,
+                    messages: request.messages.length,
+                    availableTools: request.tools.length,
+                    maxOutputTokens: request.useProviderOutputDefault
+                      ? undefined
+                      : request.maxOutputTokens,
+                    turnPrompt: compaction ? undefined : turn.prompt
+                  },
+                  output: {
+                    outcome,
+                    toolCalls,
+                    usage: usage && {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      cacheReadTokens: usage.cacheReadTokens,
+                      cacheWriteTokens: usage.cacheWriteTokens
+                    },
+                    response
+                  }
+                }
+              )
             }
           }
           return stream()
@@ -151,6 +260,7 @@ function traceSession(
           const turn = active
           if (!turn) return tool.execute(args, context)
           const span = startSpan('harness.tool', 1, turn.span)
+          turn.toolExecutions++
           let result: Awaited<ReturnType<AgentTool['execute']>> | undefined
           try {
             result = await tool.execute(args, context)
@@ -162,7 +272,13 @@ function traceSession(
               if ('waiting' in result) outcome = 'waiting'
               else if (!result.isError) outcome = 'complete'
             }
-            record(span, outcome, { 'gen_ai.tool.name': tool.name })
+            const toolName = tool.name.slice(0, 256)
+            record(
+              span,
+              outcome,
+              { ...sessionAttributes, 'gen_ai.tool.name': toolName },
+              { input: { tool: toolName }, output: { outcome } }
+            )
           }
         }
       }
@@ -273,6 +389,7 @@ export function createHarnessTracing(
   let exporting = false
   let scheduled: NodeJS.Immediate | undefined
   let disabled = false
+  let captureContent = false
   const destination = (async () => {
     // Explicit launch settings are one destination. File credentials stay with the file URL.
     const env =
@@ -281,6 +398,7 @@ export function createHarnessTracing(
         : {}
     const statusFile =
       envFile && env[HARNESS_OTLP_DIAGNOSTICS] === '1' ? `${envFile}.otel-status.json` : undefined
+    captureContent = env[HARNESS_OTLP_CAPTURE_CONTENT] === '1'
     const config = await loadExportConfig(endpoint, headersFile, env).catch(() => undefined)
     if (!config) {
       if (statusFile && !lifetime.signal.aborted)
@@ -307,8 +425,7 @@ export function createHarnessTracing(
   }
 
   async function send(): Promise<void> {
-    const spans = queued
-    queued = []
+    const spans = queued.splice(0, MAX_EXPORT_BATCH_SPANS)
     exporting = true
     let statusFile: string | undefined
     let timeout: AbortSignal | undefined
@@ -350,7 +467,7 @@ export function createHarnessTracing(
     }
   }
 
-  const record: SpanRecorder = (span, outcome, attributes) => {
+  const record: SpanRecorder = (span, outcome, attributes, preview) => {
     if (!span || disabled || lifetime.signal.aborted || queued.length >= MAX_QUEUED_SPANS) return
     try {
       queued.push({
@@ -358,7 +475,21 @@ export function createHarnessTracing(
         flags: 1,
         endTimeUnixNano: unixNanos(),
         ...(outcome === 'error' ? { status: { code: 2 } } : {}),
-        attributes: encodeAttributes({ ...attributes, 'harness.outcome': outcome })
+        attributes: [
+          ...encodeAttributes({
+            ...attributes,
+            'harness.outcome': outcome,
+            'langfuse.observation.type': observationTypes[span.name]
+          }),
+          {
+            key: 'langfuse.observation.input',
+            value: { stringValue: JSON.stringify(preview.input) }
+          },
+          {
+            key: 'langfuse.observation.output',
+            value: { stringValue: JSON.stringify(preview.output) }
+          }
+        ]
       })
       scheduleExport()
     } catch {
@@ -367,7 +498,15 @@ export function createHarnessTracing(
   }
 
   return {
-    session: (id, model, protocol) => traceSession(record, id, model, protocol, () => !disabled),
+    session: (id, model, protocol) =>
+      traceSession(
+        record,
+        id,
+        model,
+        protocol,
+        () => !disabled,
+        () => captureContent
+      ),
     dispose() {
       lifetime.abort()
       queued = []

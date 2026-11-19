@@ -533,11 +533,27 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
   expect(attributes(turn.attributes)).toMatchObject({
     'harness.session.id': sessionId,
     'harness.outcome': 'end_turn',
-    'harness.request.count': '2'
+    'harness.request.count': '2',
+    'langfuse.session.id': sessionId,
+    'langfuse.observation.type': 'agent'
+  })
+  const preview = (span: Span, field: 'input' | 'output'): unknown =>
+    JSON.parse(attributes(span.attributes)[`langfuse.observation.${field}`]!)
+  expect(preview(turn, 'input')).toEqual({
+    model: 'test',
+    protocol: 'chat-completions',
+    promptBlocks: 1
+  })
+  expect(preview(turn, 'output')).toEqual({
+    stopReason: 'end_turn',
+    modelRequests: 2,
+    compactionRequests: 0,
+    toolExecutions: 1
   })
   for (const span of spans) {
     expect(span.traceId).toMatch(/^[0-9a-f]{32}$/)
     expect(span.traceId).toBe(turn.traceId)
+    expect(attributes(span.attributes)['langfuse.session.id']).toBe(sessionId)
     expect(span.spanId).toMatch(/^[0-9a-f]{16}$/)
     expect(span.startTimeUnixNano).toMatch(/^\d{19}$/)
     expect(span.endTimeUnixNano).toMatch(/^\d{19}$/)
@@ -551,6 +567,7 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
       (span) => attributes(span.attributes)['harness.request.id'] === receipt.id
     )!
     expect(attributes(modelSpan.attributes)).toMatchObject({
+      'langfuse.observation.type': 'generation',
       'harness.outcome': index === 0 ? 'tools' : 'complete',
       'harness.request.purpose': 'turn',
       'gen_ai.request.model': 'test',
@@ -558,12 +575,25 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
       'gen_ai.usage.output_tokens': '10',
       'gen_ai.usage.cache_read.input_tokens': '40'
     })
+    expect(preview(modelSpan, 'input')).toMatchObject({
+      purpose: 'turn',
+      messages: expect.any(Number),
+      availableTools: expect.any(Number)
+    })
+    expect(preview(modelSpan, 'output')).toMatchObject({
+      outcome: index === 0 ? 'tools' : 'complete',
+      toolCalls: index === 0 ? 1 : 0,
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 40 }
+    })
   }
   const tool = spans.find((span) => span.name === 'harness.tool')!
   expect(attributes(tool.attributes)).toMatchObject({
     'gen_ai.tool.name': modelToolName,
-    'harness.outcome': 'complete'
+    'harness.outcome': 'complete',
+    'langfuse.observation.type': 'tool'
   })
+  expect(preview(tool, 'input')).toEqual({ tool: modelToolName })
+  expect(preview(tool, 'output')).toEqual({ outcome: 'complete' })
 
   collectorStatus = 503
   const followUp = prompt(f.connection, sessionId, 'private-follow-up')
@@ -592,11 +622,15 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
   }
 })
 
-it('uses a raw API key as a Bearer token for an OTLP collector', async () => {
-  let authorization: string | undefined
-  const collector = createServer((request, response) => {
-    authorization = request.headers.authorization
-    request.resume()
+it('exports bounded prompt and reply previews when opted in', async () => {
+  const batches: { body: string; authorization?: string }[] = []
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    batches.push({
+      body: Buffer.concat(chunks).toString('utf8'),
+      authorization: request.headers.authorization
+    })
     response.end('{}')
   })
   collector.listen(0, '127.0.0.1')
@@ -613,13 +647,60 @@ it('uses a raw API key as a Bearer token for an OTLP collector', async () => {
   const endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`
   await writeFile(
     envFile,
-    `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}\nOPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY=collector-test-key\n`,
+    [
+      `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
+      'OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY=collector-test-key',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=1',
+      ''
+    ].join('\n'),
     { mode: 0o600 }
   )
   const tracing = createHarnessTracing(undefined, undefined, envFile)!
   cleanup.push(async () => tracing.dispose())
-  tracing.session('test-session', 'test-model', 'responses').startTurn()?.('end_turn', 0)
-  await vi.waitFor(() => expect(authorization).toBe('Bearer collector-test-key'))
+  const reply = 'agent-reply'
+  const model = await modelServer((_body, response) => finish(response, reply))
+  const f = await fixture(model.endpoint, directory, true, 32768, undefined, undefined, tracing)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'private-system-prompt' }
+  })
+  const promptPrefix = 'a'.repeat(4095)
+  const result = await f.connection.agent.request(acp.methods.agent.session.prompt, {
+    sessionId,
+    prompt: [
+      { type: 'text', text: `${promptPrefix}🧪private-prompt-tail` },
+      { type: 'resource_link', name: 'private-file', uri: 'file:///private-file' }
+    ]
+  })
+  expect(result.stopReason).toBe('end_turn')
+  const readSpans = (): {
+    name: string
+    attributes: { key: string; value: { stringValue?: string } }[]
+  }[] =>
+    batches.flatMap(({ body }) =>
+      JSON.parse(body).resourceSpans.flatMap((resource: { scopeSpans: { spans: unknown[] }[] }) =>
+        resource.scopeSpans.flatMap(({ spans }) => spans)
+      )
+    )
+  await vi.waitFor(() => expect(readSpans()).toHaveLength(2))
+  const [turn, generation] = ['harness.turn', 'harness.model'].map((name) =>
+    readSpans().find((span) => span.name === name)!
+  )
+  const preview = (span: typeof turn, field: 'input' | 'output'): unknown =>
+    JSON.parse(
+      span.attributes.find(({ key }) => key === `langfuse.observation.${field}`)!.value.stringValue!
+    )
+  expect(preview(turn, 'input')).toMatchObject({ prompt: { text: promptPrefix, truncated: true } })
+  expect(preview(turn, 'output')).toMatchObject({ response: { text: reply } })
+  expect(preview(generation, 'input')).toMatchObject({
+    turnPrompt: { text: promptPrefix, truncated: true }
+  })
+  expect(preview(generation, 'output')).toMatchObject({ response: { text: reply } })
+  for (const { authorization, body } of batches) {
+    expect(authorization).toBe('Bearer collector-test-key')
+    expect(body).not.toMatch(/private-|collector-test-key/)
+  }
 })
 
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {
