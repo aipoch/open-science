@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import {
   parseResearchVideoScreenplay,
@@ -23,6 +23,7 @@ import {
 } from './script-review.js'
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
+  ResearchFilmDraftError,
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint,
   type ResearchFilmCorrection as Correction
@@ -203,10 +204,9 @@ export async function authorResearchFilmSource(options: {
       )
   )
   const layoutIssues = options.visualIssues?.filter((issue) => !issue.script)
-  let previous = layoutIssues?.length ? await options.checkpoint?.read('screenplay') : undefined
-  // Layout repairs preserve approved narration. Later script repairs preserve the
-  // latest visual fields and change only narration and its existing timing cues.
-  const mergeRepair = (output: string, narration: boolean): string => {
+  const previous = layoutIssues?.length ? await options.checkpoint?.read('screenplay') : undefined
+  // Layout repairs preserve narration outside the reported lines.
+  const mergeRepair = (output: string): string => {
     if (!previous || !layoutIssues?.length) return output
     const parse = (
       raw: string
@@ -222,42 +222,11 @@ export async function authorResearchFilmSource(options: {
     const original = parse(previous)
     const revised = parse(output)
     for (const [i, scene] of original.scenes.entries()) {
-      if (
-        !narration &&
-        !layoutIssues.some((issue) => issue.scene === (scene.id ?? `scene-${i + 1}`))
-      )
-        continue
+      if (!layoutIssues.some((issue) => issue.scene === (scene.id ?? `scene-${i + 1}`))) continue
       const replacement = scene.id
         ? revised.scenes.find((item) => item.id === scene.id)
         : revised.scenes[i]
       if (!replacement) throw new Error('Return the affected scene with its original id.')
-      if (narration) {
-        scene.lines = replacement.lines
-        const cueError = 'Keep the existing panels and items when rewriting narration and cues.'
-        if (scene.panels.length !== replacement.panels.length) throw new Error(cueError)
-        for (const [index, panel] of scene.panels.entries()) {
-          const revisedPanel = replacement.panels[index]
-          if (panel.type !== revisedPanel.type) throw new Error(cueError)
-          panel.at = revisedPanel.at
-          panel.until = revisedPanel.until
-          for (const field of ['note_at', 'badge_at', 'total_at', 'foot_at'])
-            panel[field] = revisedPanel[field]
-          for (const field of ['items', 'rows', 'marks', 'elements'] as const) {
-            const items = panel[field]
-            if (!items) continue
-            const revisedItems = revisedPanel[field]
-            if (items.length !== revisedItems?.length) throw new Error(cueError)
-            for (const [itemIndex, item] of items.entries()) item.at = revisedItems[itemIndex].at
-          }
-          for (const field of ['left', 'right', 'band'] as const) {
-            const item = panel[field]
-            if (!item) continue
-            if (!revisedPanel[field]) throw new Error(cueError)
-            item.at = revisedPanel[field].at
-          }
-        }
-        continue
-      }
       scene.panels = replacement.panels
       for (const field of ['layout', 'highlight'] as const) scene[field] = replacement[field]
       for (const issue of layoutIssues)
@@ -266,17 +235,11 @@ export async function authorResearchFilmSource(options: {
     }
     return JSON.stringify(original)
   }
-  const writeSpec = async (
-    feedback?: string,
-    narration = false
-  ): Promise<ResearchVideoScreenplay> => {
-    const result = await writeWithResearchFilmCorrection(
+  const writeSpec = async (feedback?: string): Promise<ResearchVideoScreenplay> => {
+    return writeWithResearchFilmCorrection(
       (correction) => author.writeScreenplay(source, signal, correction),
       (output) => {
-        const parsed = parseResearchVideoScreenplay(
-          mergeRepair(output, narration),
-          source.messages.length
-        )
+        const parsed = parseResearchVideoScreenplay(mergeRepair(output), source.messages.length)
         const lastScene = parsed.scenes.at(-1)!
         // Older illustration screenplays have no scene roles. Supply the fixed
         // user-profile sign-off when resuming one through the generation path.
@@ -340,48 +303,33 @@ export async function authorResearchFilmSource(options: {
       previous && options.checkpoint
         ? {
             read: options.checkpoint.read,
-            save: (key, value) => options.checkpoint!.save(key, mergeRepair(value, narration))
+            save: (key, value) => options.checkpoint!.save(key, mergeRepair(value))
           }
         : options.checkpoint,
       'screenplay',
       feedback
     )
-    if (previous) previous = JSON.stringify(result)
-    return result
   }
   const layoutFeedback = layoutIssues
     ?.map((issue) => `Scene ${issue.scene}: ${issue.message}`)
     .join('\n')
-  let spec = await writeSpec(
+  const spec = await writeSpec(
     layoutFeedback ||
       (options.drawSessionApp === 'switch'
         ? 'The session app could not run. Omit libs and use a self-contained drawing of the subject. Keep the source facts and approved narration.'
         : undefined)
   )
-  let scriptScore: number | undefined
-  if (author.reviewScript) {
-    for (let pass = 0; ; pass++) {
-      const review = await scoreFilmScript(
-        spec,
-        (lines, warnings, correction) =>
-          author.reviewScript!(source, lines, warnings, signal, correction),
-        signal,
-        options.checkpoint
-      )
-      if (!review.findings.length) {
-        scriptScore = review.score
-        break
-      }
-      const feedback = `Narration review (${review.score}/9). Rewrite the failing lines and adjust their cues.\n${review.findings.join('\n')}`
-      if (pass >= 3) throw new Error(feedback)
-      spec = await writeSpec(
-        previous
-          ? `${feedback}\nKeep the existing scenes, panels, and visual layout. Change only narration and timing cues.`
-          : feedback,
-        true
-      )
-    }
-  }
+  const review = author.reviewScript
+  const scriptScore = review
+    ? (
+        await scoreFilmScript(
+          spec,
+          (lines, warnings) => review(source, lines, warnings, signal),
+          signal,
+          options.checkpoint
+        )
+      )?.score
+    : undefined
   await writeResearchVideoAnimations(
     spec,
     directory,
@@ -398,6 +346,16 @@ export async function authorResearchFilmSource(options: {
   const specPath = join(directory, 'video.json')
   await writeFile(specPath, JSON.stringify(spec), { flag: 'wx', mode: 0o600, signal })
   return { specPath, title: spec.title, spec, scriptScore }
+}
+
+// The loose screenplay and animations must travel with the standalone player and source bundle.
+const draftFiles = ['output', 'video.json', 'anims'] as const
+async function moveFilmDraft(from: string, to: string): Promise<void> {
+  const entries = await readdir(from)
+  for (const name of draftFiles) {
+    if (name === 'anims' && !entries.includes(name)) continue
+    await rename(join(from, name), join(to, name))
+  }
 }
 
 /** Complete source-to-player pipeline. Storage publication and model leases remain host-owned. */
@@ -437,74 +395,133 @@ export async function generateResearchFilm(
   let visualIssues: FilmVisualIssue[] = []
   let drawSessionApp = false
   const reviewedScripts = new Map<string, string>()
-  for (let pass = 0; ; pass++) {
-    const { specPath, title, spec, scriptScore } = await authorResearchFilmSource({
-      ...options,
-      checkpoint,
-      visualIssues,
-      reviewedScripts,
-      drawSessionApp: drawSessionApp ? (pass === 0 ? 'switch' : 'continue') : undefined,
-      onAnimations: pass ? undefined : options.onAnimations
-    })
-    options.signal.throwIfAborted()
-    if (pass === 0) options.onProgress?.({ phase: 'loading' })
-    const result = await options.generate(
-      {
-        specPath,
-        mode: options.source.provenance.mode,
-        retainNarration: Boolean(options.checkpoint),
-        modelDirectory: options.modelDirectory,
-        engineDirectory: options.engineDirectory,
-        outputDirectory: join(options.directory, 'output'),
-        provenance: {
-          ...options.source.provenance,
-          kind: 'session-source-snapshot',
-          ...(scriptScore !== undefined && { scriptScore }),
-          ...(options.drawnSessionApp && { sessionAppMode: 'drawn' }),
-          modelRevision: options.modelRevision
-        }
-      },
-      options.signal,
-      pass === 0 ? options.onProgress : undefined
-    )
-    const usedSessionApp = Boolean(
-      spec && 'libs' in spec && Array.isArray(spec.libs) && spec.libs.includes('libs/app.js')
-    )
-    if (!review || !spec) return { ...result, title, scriptScore, usedSessionApp }
-    options.onProgress?.({ phase: 'verifying' })
-    visualIssues = await review(options.source, result.playerPath, spec, options.signal)
-    options.signal.throwIfAborted()
-    if (!visualIssues.length) return { ...result, title, scriptScore, usedSessionApp }
-    const useDrawing = usedSessionApp && (visualIssues.some((i) => i.app) || pass >= 3)
-    if (pass >= 3 && !useDrawing)
-      throw new Error(
-        'The HTML film still needs visual repairs. ' +
-          visualIssues
-            .slice(0, 6)
-            .map((issue) => `${issue.scene}: ${issue.message}`)
-            .join(' ')
-      )
-    options.onProgress?.({ phase: 'repairing' })
-    const { shared, scripts } = researchVideoAnimationPlan(spec)
-    reviewedScripts.clear()
-    if (useDrawing) {
-      drawSessionApp = true
-      visualIssues = []
-      pass = -1
-    } else
-      for (const name of [...shared, ...scripts])
-        reviewedScripts.set(
-          name,
-          await readFile(join(options.directory, name), {
-            encoding: 'utf8',
-            signal: options.signal
-          })
-        )
-
-    // These are private staging files. Narration and authoring checkpoints survive rebuilding.
-    for (const name of ['output', 'video.json', 'anims']) {
-      options.signal.throwIfAborted()
+  const bestDirectory = join(options.directory, 'best-layout')
+  let best:
+    | {
+        renderFailures: number
+        textDefects: number
+        result: Awaited<ReturnType<typeof generateResearchFilm>>
+      }
+    | undefined
+  let ownsBestDirectory = false
+  const restoreBest = async (
+    result: Awaited<ReturnType<typeof generateResearchFilm>>
+  ): Promise<typeof result> => {
+    for (const name of draftFiles)
       await rm(join(options.directory, name), { recursive: true, force: true })
+    await moveFilmDraft(bestDirectory, options.directory)
+    options.signal.throwIfAborted()
+    return result
+  }
+  let visualRepairs = 0
+  try {
+    for (let pass = 0; ; pass++) {
+      const { specPath, title, spec, scriptScore } = await authorResearchFilmSource({
+        ...options,
+        checkpoint,
+        visualIssues,
+        reviewedScripts,
+        drawSessionApp: drawSessionApp ? (pass === 0 ? 'switch' : 'continue') : undefined,
+        onAnimations: pass ? undefined : options.onAnimations
+      })
+      options.signal.throwIfAborted()
+      if (pass === 0) options.onProgress?.({ phase: 'loading' })
+      const result = await options.generate(
+        {
+          specPath,
+          mode: options.source.provenance.mode,
+          retainNarration: Boolean(options.checkpoint),
+          modelDirectory: options.modelDirectory,
+          engineDirectory: options.engineDirectory,
+          outputDirectory: join(options.directory, 'output'),
+          provenance: {
+            ...options.source.provenance,
+            kind: 'session-source-snapshot',
+            ...(scriptScore !== undefined && { scriptScore }),
+            ...(options.drawnSessionApp && { sessionAppMode: 'drawn' }),
+            modelRevision: options.modelRevision
+          }
+        },
+        options.signal,
+        pass === 0 ? options.onProgress : undefined
+      )
+      const usedSessionApp = Boolean(
+        spec && 'libs' in spec && Array.isArray(spec.libs) && spec.libs.includes('libs/app.js')
+      )
+      const candidate = { ...result, title, scriptScore, usedSessionApp }
+      if (!review || !spec) return candidate
+      options.onProgress?.({ phase: 'verifying' })
+      const observations = await review(options.source, result.playerPath, spec, options.signal)
+      // Unclassified findings from custom reviewers retain their existing repair behavior.
+      visualIssues = observations.filter(
+        (issue) => issue.app || issue.renderFailure || issue.textLayout !== false
+      )
+      options.signal.throwIfAborted()
+      if (!visualIssues.length) return candidate
+      const ranked = visualIssues.every(
+        (issue) => !issue.app && (issue.renderFailure || issue.textLayout)
+      )
+      const renderFailures = visualIssues.filter((issue) => issue.renderFailure).length
+      const textDefects = visualIssues.filter((issue) => issue.textLayout).length
+      const better =
+        ranked &&
+        (!best ||
+          renderFailures < best.renderFailures ||
+          (renderFailures === best.renderFailures && textDefects < best.textDefects))
+      if (ranked && visualRepairs >= 3) {
+        if (better || !best) return candidate
+        return await restoreBest(best.result)
+      }
+      if (ranked) visualRepairs++
+      const useDrawing =
+        usedSessionApp && (visualIssues.some((i) => i.app) || (!ranked && pass >= 3))
+      if (pass >= 3 && !ranked && !useDrawing)
+        throw new Error(
+          'The HTML film still needs visual repairs. ' +
+            visualIssues
+              .slice(0, 6)
+              .map((issue) => `${issue.scene}: ${issue.message}`)
+              .join(' ')
+        )
+      options.onProgress?.({ phase: 'repairing' })
+      const { shared, scripts } = researchVideoAnimationPlan(spec)
+      reviewedScripts.clear()
+      if (useDrawing) {
+        drawSessionApp = true
+        visualIssues = []
+        pass = -1
+      } else
+        for (const name of [...shared, ...scripts])
+          reviewedScripts.set(
+            name,
+            await readFile(join(options.directory, name), {
+              encoding: 'utf8',
+              signal: options.signal
+            })
+          )
+
+      // These are private staging files. Narration and authoring checkpoints survive rebuilding.
+      if (better) {
+        if (!ownsBestDirectory) {
+          await mkdir(bestDirectory)
+          ownsBestDirectory = true
+        } else {
+          for (const name of draftFiles)
+            await rm(join(bestDirectory, name), { recursive: true, force: true })
+        }
+        await moveFilmDraft(options.directory, bestDirectory)
+        best = { renderFailures, textDefects, result: candidate }
+        continue
+      }
+      for (const name of draftFiles) {
+        options.signal.throwIfAborted()
+        await rm(join(options.directory, name), { recursive: true, force: true })
+      }
     }
+  } catch (error) {
+    if (!best || !(error instanceof ResearchFilmDraftError) || options.signal.aborted) throw error
+    return await restoreBest(best.result)
+  } finally {
+    if (ownsBestDirectory) await rm(bestDirectory, { recursive: true, force: true })
   }
 }

@@ -77,7 +77,7 @@ export async function filmOutputFingerprint(
     const stat = await lstat(path)
     files.push(await digestFileWithinBudget(path, stat.size, signal))
   }
-  return digestFilmInput(JSON.stringify(['film-output-review-v1', ...files]))
+  return digestFilmInput(JSON.stringify(['film-output-review-v3', ...files]))
 }
 
 export const filmConversationDigest = (source: ResearchVideoSessionSource): string =>

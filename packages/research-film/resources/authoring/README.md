@@ -6,9 +6,9 @@ These resources describe the `video.json` and `anims/*.js` format used by the Re
 
 1. The user selects **Research film** from a session action, or the research-film action in an imported session.
 2. The host freezes the selected branch and supported images. If a branch-visible managed ZIP contains an offline ES-module app, the user can choose to feature that app or use a drawn illustration.
-3. The configured main model writes the screenplay, then scores its narration against the nine criteria in [SCRIPT.md](SCRIPT.md). The host checks the closing line and its cue, sends failed criteria back for revision, and requests animation scripts once the narration passes.
+3. The configured model writes the screenplay and scores its narration against the nine criteria in [SCRIPT.md](SCRIPT.md). The screenplay format requires the closing line and its end-card cue. The preview shows the available score from 0 to 9. Any score can proceed to animation, and an unscorable response leaves the score empty.
 4. Owned workers generate English narration, align captions, assemble the timeline, and build a standalone HTML player and source archive.
-5. The host reviews the built HTML and repairs failed frames before showing the film and its narration score. The saved HTML can then be played or regenerated from the session.
+5. The host opens the built HTML in the desktop renderer. An unavailable embedded session app falls back to a drawn illustration.
 6. The preview offers **Render video (MP4)** and **Save shareable HTML**. Saving HTML copies the self-contained player with its narration and visual assets. Rendering a video is a separate desktop action. The host captures the stage through Electron and encodes it with FFmpeg. The current export is 1280 × 720, 16:9.
 
 The player renders frames dynamically from its timeline. It contains its own audio, fonts, scripts, styles and referenced images, so the finished HTML can play outside the application without a local server.
@@ -46,6 +46,6 @@ An approved session app uses `libs: ["libs/app.js"]`. Its local modules are bund
 
 Runtime checks cover the supported screenplay shape and size limits, source message references, cues, required files, safe paths, speech output and JavaScript syntax. Required inputs fail generation rather than producing a placeholder result.
 
-Before showing a new research explanation, the desktop app seeks through the 16:9 HTML player. It measures every timed caption phrase, including word highlighting, and checks readout-card labels, panel bounds, drawing errors, blank animations and the fully revealed end card. An image-capable selected model also reviews a live HTML screenshot per scene. The app rebuilds and rechecks repairs, up to three rounds. If a defect persists, the user sees the affected scene and can continue generation.
+The desktop renderer seeks through the standalone player to check playback. It records the count of visual observations, including caption overflow, panel overlap and drawing issues. A model call has up to ten minutes. A local narration request has six minutes, and the build worker has eight minutes between progress events. Drawing errors, blank animations, text overlap and clipping share a budget of three targeted repairs. A readable caption that wraps or sits near the margin is only a diagnostic observation. The player is checked in both aspect ratios after each build. If these checks find no repairable issues the film is ready. At the limit the desktop publishes the playable version with the fewest rendering failures across both sizes, then the fewest text defects, keeping the earliest on a tie. An embedded session app that fails to run triggers the drawing fallback.
 
 Results are saved separately from source conversation history. The source archive retains the frozen inputs and generated materials for reproducibility; it is not an executable CLI distribution.

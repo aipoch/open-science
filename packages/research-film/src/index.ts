@@ -11,6 +11,7 @@ export {
 } from './animation-authoring.js'
 export * from './authoring.js'
 export {
+  ResearchFilmDraftError,
   ResearchFilmOutputLimitError,
   ResearchFilmIncompleteError,
   writeWithResearchFilmCorrection,

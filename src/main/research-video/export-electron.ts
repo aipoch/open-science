@@ -269,7 +269,8 @@ export async function checkResearchVideoHtml(
     )
   }
   const portrait = await check('9x16')
-  return portrait.issues.length ? portrait : check('16x9')
+  const landscape = await check('16x9')
+  return { issues: [...portrait.issues, ...landscape.issues], frames: landscape.frames }
 }
 
 export async function renderResearchVideoMp4(
