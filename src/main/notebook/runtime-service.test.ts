@@ -53,6 +53,7 @@ import {
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
   type NotebookEnvironmentStatus,
+  type NotebookKernelMetadata,
   type NotebookLanguage,
   type NotebookRunInputFile,
   type NotebookRunProvenanceContext
@@ -10174,43 +10175,58 @@ describe('notebook runtime service', () => {
     expect(afterRespawn.kernelStatus).toBe('idle')
   })
 
-  it('keeps a recovered execution successful when clearing durable termination fails', async () => {
-    const root = await createStorageRoot()
-    const repository = new NotebookRunRepository(root)
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
-    const { service, lifecycles } = lifecycleCallbackHarness(root, { repository, logger })
+  it.each(['python', 'repl'] as const)(
+    'keeps the recovered %s epoch while retrying durable termination clearance',
+    async (kind) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      const { service, lifecycles } = lifecycleCallbackHarness(root, { repository, logger })
+      const scope = { sessionId: 'session-1', workspaceCwd: root }
+      const environment = kind === 'python' ? DEFAULT_PY_ENV : undefined
+      const identity = kind === 'python' ? { kind, environment } : { kind }
+      const readKernel = async (): Promise<NotebookKernelMetadata | undefined> =>
+        (await repository.findExisting('default-project', scope.sessionId))?.kernel
+      const run = async (code: string): Promise<string | undefined> => {
+        const request = { ...scope, code }
+        const result = await (kind === 'python'
+          ? service.execute(request)
+          : service.executeControl(request))
+        expect(result.status).toBe('completed')
+        return (await service.state(scope)).runs.at(-1)?.kernelEpochId
+      }
 
-    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
-    await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
-    const persistenceError = new Error('could not clear durable termination')
-    vi.spyOn(repository, 'clearKernelTermination').mockRejectedValueOnce(persistenceError)
+      const first = await run('1')
+      await lifecycles[0].onIdleShutdown(kind, environment, first)
+      const persistenceError = new Error('could not clear durable termination')
+      vi.spyOn(repository, 'clearKernelTermination').mockRejectedValueOnce(persistenceError)
 
-    const recovered = await service.execute({
-      sessionId: 'session-1',
-      workspaceCwd: root,
-      code: '2'
-    })
-
-    expect(recovered.status).toBe('completed')
-    expect((await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus).toBe(
-      'idle'
-    )
-    expect(
-      (await new NotebookRunRepository(root).findExisting('default-project', 'session-1'))?.kernel
-    ).toMatchObject({
-      lastKnownStatus: 'terminated',
-      terminatedKernelInstances: [{ kind: 'python', environment: DEFAULT_PY_ENV }]
-    })
-    expect(logger.error).toHaveBeenCalledWith(
-      'notebook kernel lifecycle persistence failed',
-      expect.objectContaining({
-        error: persistenceError.message,
-        operation: 'recovered-idle',
-        kind: 'python',
-        environment: DEFAULT_PY_ENV
+      const recovered = await run('2')
+      expect(recovered).toEqual(expect.any(String))
+      expect(recovered).not.toBe(first)
+      expect((await service.state(scope)).environments).toContainEqual(
+        expect.objectContaining({ ...identity, status: 'idle' })
+      )
+      expect(await readKernel()).toMatchObject({
+        lastKnownStatus: 'terminated',
+        terminatedKernelInstances: [identity]
       })
-    )
-  })
+      expect(logger.error).toHaveBeenCalledWith(
+        'notebook kernel lifecycle persistence failed',
+        expect.objectContaining({
+          error: persistenceError.message,
+          operation: 'recovered-idle',
+          kind,
+          environment
+        })
+      )
+
+      expect(await run('3')).toBe(recovered)
+      expect(await readKernel()).toMatchObject({ lastKnownStatus: 'idle' })
+      await lifecycles[0].onTerminated(kind, environment, undefined, recovered)
+      expect(await readKernel()).toMatchObject({ terminatedKernelInstances: [identity] })
+    }
+  )
 
   it('persists idle after recovering a terminated kernel in a recreated runtime service', async () => {
     const root = await createStorageRoot()

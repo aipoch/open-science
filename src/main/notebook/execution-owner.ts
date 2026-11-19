@@ -745,11 +745,8 @@ class NotebookExecutionOwner {
     )
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
-    const kernelStatusBefore = session.kernelStatus(processKey)
     const kernelWasTerminatedAtAdmission =
-      session.isKernelTerminated(processKey) ||
-      kernelStatusBefore === 'terminated' ||
-      session.hasDurableKernelTermination(processKey)
+      session.isKernelTerminated(processKey) || session.kernelStatus(processKey) === 'terminated'
     const kernelEpoch = session.kernelEpoch(
       processKey,
       kernelWasTerminatedAtAdmission,
@@ -842,9 +839,9 @@ class NotebookExecutionOwner {
           const cwdBefore = session.cwd
           const kernelStatusBefore = session.kernelStatus(processKey)
           const kernelWasTerminated =
-            session.isKernelTerminated(processKey) ||
-            session.kernelStatus(processKey) === 'terminated' ||
-            session.hasDurableKernelTermination(processKey)
+            session.isKernelTerminated(processKey) || kernelStatusBefore === 'terminated'
+          // A failed idle write leaves durable termination behind even if this epoch is live.
+          const durableTerminationPending = session.hasDurableKernelTermination(processKey)
           const kernelEpoch = session.kernelEpoch(
             processKey,
             kernelWasTerminated,
@@ -1053,7 +1050,11 @@ class NotebookExecutionOwner {
                 !session.isKernelTerminated(processKey) &&
                 (executedOnLiveKernel || !reachedExecutor)
               ) {
-                if (!reachedExecutor && kernelWasTerminated) {
+                if (
+                  !reachedExecutor &&
+                  (kernelWasTerminated ||
+                    (kernelStatusBefore === undefined && durableTerminationPending))
+                ) {
                   session.markKernelTerminated(processKey)
                   session.setKernelStatus(processKey, 'terminated')
                 } else if (!reachedExecutor && kernelStatusBefore === 'error') {
@@ -1066,7 +1067,9 @@ class NotebookExecutionOwner {
           })
           const run = terminalized.run
           if (
-            kernelWasTerminated &&
+            reachedExecutor &&
+            terminalized.result?.kernelDispatched !== false &&
+            (kernelWasTerminated || durableTerminationPending) &&
             session.currentKernelEpochId(processKey) === kernelEpochId &&
             session.kernelStatus(processKey) === 'idle' &&
             !session.isKernelTerminated(processKey)
@@ -1369,7 +1372,8 @@ class NotebookExecutionOwner {
     await session.drainExecutorLifecycle()
     const replStatusBefore = session.kernelStatus('repl')
     const replWasTerminated =
-      replStatusBefore === 'terminated' || session.hasDurableKernelTermination('repl')
+      session.isKernelTerminated('repl') || replStatusBefore === 'terminated'
+    const durableTerminationPending = session.hasDurableKernelTermination('repl')
     const epoch = session.kernelEpoch('repl', replWasTerminated)
     // The queued record describes admission. Persist the actual dispatch epoch in the existing
     // queued -> running transition, before any process receives this invocation.
@@ -1513,7 +1517,10 @@ class NotebookExecutionOwner {
           session.kernelStatus('repl') === 'running' &&
           !session.isKernelTerminated('repl')
         ) {
-          if (!reachedExecutor && replWasTerminated) {
+          if (
+            !reachedExecutor &&
+            (replWasTerminated || (replStatusBefore === undefined && durableTerminationPending))
+          ) {
             session.markKernelTerminated('repl')
             session.setKernelStatus('repl', 'terminated')
           } else if (!reachedExecutor && replStatusBefore === 'error') {
@@ -1528,7 +1535,9 @@ class NotebookExecutionOwner {
     // Clear durable termination only after the recovered Run commits; ordinary activity is volatile.
     if (
       terminalized.dispatched &&
-      replWasTerminated &&
+      reachedExecutor &&
+      terminalized.result?.kernelDispatched !== false &&
+      (replWasTerminated || durableTerminationPending) &&
       session.currentKernelEpochId('repl') === replEpochId &&
       session.kernelStatus('repl') === 'idle' &&
       !session.isKernelTerminated('repl')
