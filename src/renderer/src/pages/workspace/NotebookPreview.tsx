@@ -108,6 +108,7 @@ export type NotebookPreviewItem = PreviewToolItem & {
 
 type NotebookPreviewProps = {
   item: NotebookPreviewItem
+  isActive?: boolean
 }
 
 type NotebookNamespaceViewStatus =
@@ -517,7 +518,7 @@ const TerminalInput = ({
 }
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
-const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React.JSX.Element => {
   const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
   const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
   const { t } = useTranslation()
@@ -611,6 +612,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Reads the latest notebook state from main, including its bounded recent run window.
   const loadNotebookState = useCallback(async (): Promise<boolean> => {
+    if (!isActive) return false
     if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
       return false
     if (stateLoadInFlight.current) {
@@ -659,18 +661,19 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         stateLoadInFlight.current = undefined
       }
     }
-  }, [applyNotebookState])
+  }, [applyNotebookState, isActive])
 
   useEffect(
     () =>
       registerDesktopRecoveryReader(async () => {
+        if (!isActive) return
         if (!(await loadNotebookState())) {
           // Content-local failures must not invalidate a healthy replacement attachment.
           latestNotebookState.current = undefined
           setNotebookState(undefined)
         }
       }),
-    [loadNotebookState]
+    [isActive, loadNotebookState]
   )
 
   // Defer the initial state load until after the component has mounted.
@@ -694,11 +697,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   }, [item.notebook.sessionId, loadNotebookState])
 
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
-  const frameRuns = session ? normalizeNotebookRootFrameRuns(runs, session) : runs
+  const notebookSession = session ?? { id: item.notebook.sessionId }
+  const frameRuns = normalizeNotebookRootFrameRuns(runs, notebookSession)
   const pendingCode = pendingNotebookCode(session, frameRuns)
   const frameOptions = createNotebookFrameFilterOptions(
     frameRuns,
-    session ? notebookFrameLabels(session, t) : {},
+    notebookFrameLabels(notebookSession, t, frameRuns),
     undefined,
     false,
     pendingCode[0]?.frameId

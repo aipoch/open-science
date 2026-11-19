@@ -58,16 +58,30 @@ const projectNotebookRunsForFrame = (
 const notebookFrameFilterForExport = (filter: NotebookFrameFilterValue): string =>
   filter.slice('frame:'.length)
 
+// Notebook reads already carry root provenance. Display-only conversation pages deliberately omit
+// the graph, so reopening a Notebook must not require hydrating the transcript first.
+const notebookRootFrameId = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  runs: readonly NotebookRunRecord[]
+): string => {
+  const canonicalRootFrameId = `root-frame-${session.id}`
+  return (
+    session.conversationGraph?.rootFrameId ??
+    runs.find((run) => run.rootFrameId && run.rootFrameId !== canonicalRootFrameId)?.rootFrameId ??
+    canonicalRootFrameId
+  )
+}
+
 // Pending Sessions keep their provisional Conversation Graph IDs when the provider later binds the
 // final Session ID. Renderer-originated terminal runs use the final Session's canonical root ID, so
 // fold that alias back into the graph root before building or applying the Agent filter.
 const normalizeNotebookRootFrameRuns = (
   runs: readonly NotebookRunRecord[],
-  session: ChatSession
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>
 ): NotebookRunRecord[] => {
-  const rootFrameId = session.conversationGraph?.rootFrameId
+  const rootFrameId = notebookRootFrameId(session, runs)
   const canonicalRootFrameId = `root-frame-${session.id}`
-  if (!rootFrameId || rootFrameId === canonicalRootFrameId) return [...runs]
+  if (rootFrameId === canonicalRootFrameId) return [...runs]
 
   return runs.map((run) =>
     run.agentFrameId === canonicalRootFrameId ? { ...run, agentFrameId: rootFrameId } : run
@@ -76,9 +90,13 @@ const normalizeNotebookRootFrameRuns = (
 
 // Takes `t` because the root frame's label is catalog copy while every delegate label is the user's
 // own name for its Subagent, which interpolates unchanged.
-const notebookFrameLabels = (session: ChatSession, t: TFunction): Record<string, string> => {
+const notebookFrameLabels = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  t: TFunction,
+  runs: readonly NotebookRunRecord[] = []
+): Record<string, string> => {
   const graph = session.conversationGraph
-  if (!graph) return {}
+  if (!graph) return { [notebookRootFrameId(session, runs)]: t('Main Agent') }
   return Object.fromEntries(
     graph.frames.flatMap((frame) => {
       if (frame.id === graph.rootFrameId) return [[frame.id, t('Main Agent')]]

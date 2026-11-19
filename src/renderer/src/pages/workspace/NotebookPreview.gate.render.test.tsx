@@ -437,7 +437,8 @@ describe('NotebookPreview per-kernel tabs', () => {
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
     stateOverrides: Partial<NotebookSessionState> = {},
     previewItem: NotebookPreviewItem = item,
-    deferredState?: Promise<NotebookSessionState>
+    deferredState?: Promise<NotebookSessionState>,
+    isActive = true
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -543,7 +544,7 @@ describe('NotebookPreview per-kernel tabs', () => {
       settings: { getNotebookNetworkStatus: vi.fn(async () => ({ kind: 'ready', warnings: [] })) }
     })
     await act(async () => {
-      root.render(<NotebookPreview item={previewItem} />)
+      root.render(<NotebookPreview item={previewItem} isActive={isActive} />)
     })
     // Flush the mount-deferred setTimeout(0) that kicks off loadNotebookState(), plus its state()
     // promise resolution and the resulting re-render — React's passive effects also queue via a
@@ -563,6 +564,58 @@ describe('NotebookPreview per-kernel tabs', () => {
       fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }))
     })
   }
+
+  it.each(['root-frame-session-1', 'root-frame-pending-session-1', undefined])(
+    'shows paged-session history without loading the transcript (root %s)',
+    async (rootFrameId) => {
+      useSessionStore.setState({
+        sessions: [{ id: 'session-1', projectId: 'proj', contentLoaded: false }]
+      } as never)
+
+      await mountWithRuns([
+        makeRun({ runId: 'manual', script: 'print("manual-history")' }),
+        makeRun({
+          rootFrameId,
+          agentFrameId: rootFrameId ?? 'root-frame-session-1',
+          script: 'print("persisted-history")'
+        })
+      ])
+
+      expect(container.textContent).toContain('persisted-history')
+      expect(container.textContent).toContain('manual-history')
+      expect(container.textContent).not.toContain('No code has run in this view yet.')
+      expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(false)
+      expect(window.api.notebook.state).toHaveBeenCalledWith({
+        projectId: 'proj',
+        sessionId: 'session-1',
+        workspaceCwd: '/tmp/proj'
+      })
+    }
+  )
+
+  it('reads history only when the retained Notebook panel is opened', async () => {
+    await mountWithRuns([makeRun()], [], {}, 'idle', {}, item, undefined, false)
+    expect(window.api.notebook.state).not.toHaveBeenCalled()
+    await act(async () => refreshDesktopRecoveryReaders())
+    expect(window.api.notebook.state).not.toHaveBeenCalled()
+
+    await act(async () => root.render(<NotebookPreview item={item} isActive />))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('print(1)')
+
+    await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls.at(-1)![0](item.notebook)
+      await refreshDesktopRecoveryReaders()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
+
+    await act(async () => root.render(<NotebookPreview item={item} isActive />))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(2)
+  })
 
   it.each([
     {

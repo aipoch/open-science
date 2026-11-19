@@ -257,6 +257,20 @@ describe('Session Notebook producer projection', () => {
     })
   })
 
+  it('renders Main Agent history from Notebook provenance without a conversation graph', () => {
+    const runs = [
+      makeRun({
+        rootFrameId: 'root-frame-pending-s1',
+        agentFrameId: 'root-frame-pending-s1',
+        script: 'print("persisted-history")'
+      })
+    ]
+    const frameLabels = notebookFrameLabels({ id: 's1' }, i18next.getFixedT('en'), runs)
+    const html = renderContent({ sessionId: 's1', runs, frameLabels, status: 'ready' })
+    expect(html).toContain('persisted-history')
+    expect(frameLabels).toEqual({ 'root-frame-pending-s1': 'Main Agent' })
+  })
+
   it('derives named Main Agent and Subagent producers without All or Unattributed', () => {
     expect(
       createNotebookFrameFilterOptions(attributedRuns, {
