@@ -182,7 +182,7 @@ class SettingsRepository {
     return this.store.read()
   }
 
-  /** 记录首次桌面启动。旧配置仅补齐供应商，主模型仍由用户选择。 */
+  /** Record desktop initialization and add Kilo to existing profiles while preserving their model selection. */
   async initializeDesktopKiloDefaults(upgrading: boolean): Promise<void> {
     const current = await this.getSettings()
     if (current.kiloDefaultInitialized) return
@@ -210,7 +210,7 @@ class SettingsRepository {
     )
   }
 
-  /** 跳过引导时只补齐 Kilo 供应商，由用户之后选择模型。 */
+  /** Add Kilo when users skip onboarding and leave the model choice to them. */
   async addOnboardingKiloProvider(): Promise<void> {
     await this.mutate((settings) => {
       if (settings.onboardingCompletedAt !== undefined || settings.providers.some(isKiloProvider))

@@ -2053,7 +2053,8 @@ const definitions: readonly OfficialVendor[] = [
     },
     supportsAnonymousAccess: true,
     reasoningEffort: { supported: false },
-    // 默认走免费路由。内置目录来自 2026-11-18 的 /models，可在设置中刷新。
+    // List the free route first. The built-in catalog comes from the 2026-11-18 /models
+    // response and can be refreshed in Settings.
     models: [
       { id: 'kilo-auto/free', contextWindow: 256_000, maxOutputTokens: 32_768 },
       {

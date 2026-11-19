@@ -114,7 +114,7 @@ export type OfficialVendor = {
   readonly chatCompletionsBaseUrl?: string
   readonly responsesBaseUrl?: string
   readonly regions?: readonly VendorRegion[]
-  // 免费模型允许省略认证头。其他供应商仍要求密钥。
+  // Free model requests may omit the authentication header when this is enabled.
   readonly supportsAnonymousAccess?: boolean
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
   readonly apiKeyUrl?: string

@@ -14,7 +14,7 @@ import {
 export const customProviderRequiresKey = (baseUrl: string | undefined): boolean =>
   !isLoopbackProviderBaseUrl((baseUrl ?? '').trim())
 
-/** 判断已保存的供应商或运行时连接能否匿名调用。 */
+/** Determine whether a saved provider or runtime connection allows anonymous requests. */
 export function providerAllowsAnonymousAccess(provider: {
   type: ProviderType
   vendorId?: OfficialVendorId
@@ -22,7 +22,8 @@ export function providerAllowsAnonymousAccess(provider: {
 }): boolean {
   if (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl)) return true
   const vendor = provider.vendorId && getOfficialVendor(provider.vendorId)
-  // 主进程会把内置供应商投影为 custom，运行时仍须匹配其注册的地址。
+  // The main process can represent a built-in provider as custom. Its runtime URL
+  // still has to match the registered URL.
   return (
     vendor?.supportsAnonymousAccess === true &&
     (provider.type === 'official' ||

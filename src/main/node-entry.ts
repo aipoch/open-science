@@ -543,7 +543,8 @@ async function main(): Promise<void> {
     let desktopKiloDefaults: Promise<void> | undefined
     const initializeDesktopKiloDefaults = (): Promise<void> =>
       (desktopKiloDefaults ??= (async () => {
-        // 桌面端可能接入已经运行的 CLI 服务，也要识别该服务随后保存的用户配置。
+        // A desktop client can attach to a running CLI service. Check for settings saved
+        // since that service started.
         const current =
           !existingSettings && !launchingDesktop ? await repository.getSettings() : undefined
         const upgrading =

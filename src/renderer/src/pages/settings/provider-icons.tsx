@@ -25,7 +25,7 @@ import minimaxLogo from '@/assets/provider-icons/minimax.svg'
 import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
 import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
-// Kilo 的官方标识来自 https://kilo.ai/favicon/favicon.svg。
+// Official Kilo icon from https://kilo.ai/favicon/favicon.svg
 import kiloLogo from '@/assets/provider-icons/kilo.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'

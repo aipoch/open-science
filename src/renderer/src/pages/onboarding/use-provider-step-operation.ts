@@ -6,7 +6,7 @@ export type ProviderStepOperation = {
   finish(): void
 }
 
-/** 由引导页持有操作状态，返回后仍需等待上一轮验证结束。 */
+/** Keep operations scoped to the wizard so returning still waits for pending validation. */
 export function useProviderStepOperation(): ProviderStepOperation {
   const [pending, setPending] = useState(false)
   const inFlight = useRef(false)
