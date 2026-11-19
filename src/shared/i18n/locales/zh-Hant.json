@@ -8670,6 +8670,14 @@
     "Uploading package…": "正在上傳套件…",
     "Session package uploaded": "工作階段套件已上傳",
     "Organization case": "機構案例",
-    "Share code": "分享碼"
+    "Share code": "分享碼",
+    "Search query": "搜尋內容",
+    "Result limit": "結果上限",
+    "Past 24 hours": "過去 24 小時",
+    "Past week": "過去一週",
+    "Past month": "過去一個月",
+    "Past year": "過去一年",
+    "Limit to these sites": "僅限這些網站",
+    "Up to {{count}} results_other": "最多 {{count}} 筆結果"
   }
 }

@@ -9024,6 +9024,16 @@
     "Uploading package…": "Téléversement du paquet…",
     "Session package uploaded": "Paquet de session téléversé",
     "Organization case": "Cas de l'organisation",
-    "Share code": "Code de partage"
+    "Share code": "Code de partage",
+    "Search query": "Requête de recherche",
+    "Result limit": "Limite de résultats",
+    "Past 24 hours": "Dernières 24 heures",
+    "Past week": "Dernière semaine",
+    "Past month": "Dernier mois",
+    "Past year": "Dernière année",
+    "Limit to these sites": "Limiter à ces sites",
+    "Up to {{count}} results_one": "Jusqu’à {{count}} résultat",
+    "Up to {{count}} results_many": "Jusqu’à {{count}} résultats",
+    "Up to {{count}} results_other": "Jusqu’à {{count}} résultats"
   }
 }

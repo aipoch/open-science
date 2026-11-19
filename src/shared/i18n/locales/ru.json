@@ -9178,6 +9178,17 @@
     "Uploading package…": "Загрузка пакета…",
     "Session package uploaded": "Пакет сеанса загружен",
     "Organization case": "Кейс организации",
-    "Share code": "Код доступа"
+    "Share code": "Код доступа",
+    "Search query": "Поисковый запрос",
+    "Result limit": "Ограничение результатов",
+    "Past 24 hours": "За последние 24 часа",
+    "Past week": "За последнюю неделю",
+    "Past month": "За последний месяц",
+    "Past year": "За последний год",
+    "Limit to these sites": "Только эти сайты",
+    "Up to {{count}} results_one": "Не более {{count}} результата",
+    "Up to {{count}} results_few": "Не более {{count}} результатов",
+    "Up to {{count}} results_many": "Не более {{count}} результатов",
+    "Up to {{count}} results_other": "Не более {{count}} результата"
   }
 }

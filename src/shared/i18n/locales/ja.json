@@ -8670,6 +8670,14 @@
     "Uploading package…": "パッケージをアップロード中…",
     "Session package uploaded": "セッションパッケージをアップロードしました",
     "Organization case": "組織ケース",
-    "Share code": "共有コード"
+    "Share code": "共有コード",
+    "Search query": "検索内容",
+    "Result limit": "検索結果の上限",
+    "Past 24 hours": "過去24時間",
+    "Past week": "過去1週間",
+    "Past month": "過去1か月",
+    "Past year": "過去1年",
+    "Limit to these sites": "対象サイト",
+    "Up to {{count}} results_other": "最大{{count}}件の結果"
   }
 }

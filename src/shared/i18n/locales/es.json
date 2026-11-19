@@ -9024,6 +9024,16 @@
     "Uploading package…": "Subiendo paquete…",
     "Session package uploaded": "Paquete de sesión subido",
     "Organization case": "Caso de la organización",
-    "Share code": "Código para compartir"
+    "Share code": "Código para compartir",
+    "Search query": "Consulta de búsqueda",
+    "Result limit": "Límite de resultados",
+    "Past 24 hours": "Últimas 24 horas",
+    "Past week": "Última semana",
+    "Past month": "Último mes",
+    "Past year": "Último año",
+    "Limit to these sites": "Limitar a estos sitios",
+    "Up to {{count}} results_one": "Hasta {{count}} resultado",
+    "Up to {{count}} results_many": "Hasta {{count}} resultados",
+    "Up to {{count}} results_other": "Hasta {{count}} resultados"
   }
 }
