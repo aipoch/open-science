@@ -10,6 +10,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -1022,6 +1023,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       return { state, started: false }
     }
   }
+  options.signal?.throwIfAborted()
   if (options.appPath)
     throw new CliUsageError(
       '--app-path is no longer used for Node startup. Install the standalone backend package.'
@@ -1066,6 +1068,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       entryPath: backend.entry,
       packaged: !backend.development
     })
+    options.signal?.throwIfAborted()
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
       stdio: ['ignore', capture.input, capture.input, 'ignore', capture.control],
@@ -2502,11 +2505,20 @@ export const runCli = async (argv = process.argv.slice(2)) => {
     const { version } = await readCliMetadata()
     await runResearchMcpServer({
       version,
-      startService: async () => {
+      startService: async (signal) => {
         // stdout belongs to the MCP transport. The persistent service has its own startup log.
         const { state } = await startCommand(
-          { configRoot: options.configRoot, open: false },
-          { ...DEFAULT_DEPS, log: () => {} }
+          { configRoot: options.configRoot, open: false, signal },
+          {
+            ...DEFAULT_DEPS,
+            log: () => {},
+            sleep: (ms) => delay(ms, undefined, { signal }),
+            fetch: (url, init) =>
+              fetch(url, {
+                ...init,
+                signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
+              })
+          }
         )
         return state.configRoot
       }

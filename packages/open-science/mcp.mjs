@@ -434,8 +434,9 @@ export const createResearchMcpServer = ({
 
 export const runResearchMcpServer = async ({ version, startService }) => {
   // The handshake and tool catalog stay responsive while the standalone backend starts.
+  const lifetime = new AbortController()
   let startup
-  const serviceRoot = () => (startup ??= startService())
+  const serviceRoot = () => (startup ??= startService(lifetime.signal))
   const server = createResearchMcpServer({
     version,
     connect: async ({ signal }) => {
@@ -459,6 +460,7 @@ export const runResearchMcpServer = async ({ version, startService }) => {
   const transport = new StdioServerTransport()
   let closing
   const close = () => {
+    lifetime.abort()
     closing ??= server.close().finally(() => {
       process.stdin.off('end', close)
       process.off('SIGINT', close)

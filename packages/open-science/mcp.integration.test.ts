@@ -108,9 +108,32 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
 it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
   'terminates on %s without writing non-protocol stdout',
   async (event) => {
-    const child = spawn(process.execPath, [resolve('packages/open-science/cli.mjs'), 'mcp'], {
-      stdio: 'pipe'
+    const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-exit-'))
+    cleanup.push(() => rm(profile, { recursive: true, force: true }))
+    const probing = Promise.withResolvers<void>()
+    const owner = createServer(() => probing.resolve()) // Hold the owner probe open until disconnect.
+    owner.listen(0, '127.0.0.1')
+    await once(owner, 'listening')
+    cleanup.push(async () => {
+      owner.closeAllConnections()
+      await new Promise<void>((done) => owner.close(() => done()))
     })
+    await writeFile(join(profile, 'web-token'), 'test')
+    await writeFile(
+      join(profile, 'runtime-owner.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: process.pid,
+        port: (owner.address() as { port: number }).port,
+        host: 'node',
+        generation: 'mcp-exit'
+      })
+    )
+    const child = spawn(
+      process.execPath,
+      [resolve('packages/open-science/cli.mjs'), 'mcp', '--profile', profile],
+      { stdio: 'pipe' }
+    )
     cleanup.push(async () => {
       if (child.exitCode === null) child.kill()
     })
@@ -118,7 +141,6 @@ it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
     child.stdout.on('data', (data) => {
       output += data.toString()
     })
-    const exited = once(child, 'exit')
     child.stdin.write(
       JSON.stringify({
         jsonrpc: '2.0',
@@ -133,6 +155,10 @@ it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
     )
     await once(child.stdout, 'data')
     expect(JSON.parse(output).result.serverInfo.name).toBe('open-science')
+    child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+    await probing.promise
+    // The owner probe normally waits five seconds. Closing the adapter must interrupt it.
+    const exited = once(child, 'exit', { signal: AbortSignal.timeout(3000) })
     if (event === 'EOF') child.stdin.end()
     else child.kill(event)
     const [code, signal] = await exited
