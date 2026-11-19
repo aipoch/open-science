@@ -416,6 +416,7 @@ describe('preload bridge — public surface inventory', () => {
       'lifecycle.getClientId',
       'literature.addPdf',
       'literature.cancelPdfImport',
+      'literature.cancelRelated',
       'literature.citationStyles',
       'literature.collect',
       'literature.completeMetadata',
