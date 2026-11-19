@@ -455,6 +455,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/brand-storage.spec.ts",
+        "e2e/onboarding-silk.spec.ts",
         "e2e/electron-foundation.spec.ts",
         "e2e/settings-persistence.spec.ts",
         "e2e/windows-window-system.spec.ts",

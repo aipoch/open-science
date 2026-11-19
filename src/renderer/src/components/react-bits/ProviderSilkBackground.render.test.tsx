@@ -2,36 +2,21 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-const silk = vi.hoisted(() => vi.fn(() => <canvas data-testid="silk-canvas" />))
-vi.mock('./Silk', () => ({ default: silk }))
+vi.mock('./Silk', () => ({
+  default: ({ paused }: { paused: boolean }) => <canvas data-paused={paused} />
+}))
 
 import { ProviderSilkBackground } from './ProviderSilkBackground'
 
 describe('ProviderSilkBackground', () => {
-  it('keeps idle cards static and mounts silk only while hovered', () => {
+  it('pauses and resumes the same Silk canvas', () => {
     const view = render(<ProviderSilkBackground color="#123456" active={false} />)
-
-    expect(silk).not.toHaveBeenCalled()
-
+    const canvas = view.container.querySelector('canvas')!
+    expect(canvas.dataset.paused).toBe('true')
     view.rerender(<ProviderSilkBackground color="#123456" active />)
-    expect(silk).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        color: '#123456',
-        paused: false,
-        rotation: 0,
-        speed: 0.35,
-        noiseIntensity: 1.6,
-        mouseInteraction: false,
-        clickRipple: false,
-        intro: false,
-        wave: 0.45,
-        dpr: 1.25,
-        glow: 0
-      }),
-      undefined
-    )
-
+    expect(canvas.dataset.paused).toBe('false')
     view.rerender(<ProviderSilkBackground color="#123456" active={false} />)
-    expect(silk).toHaveBeenCalledTimes(1)
+    expect(canvas.dataset.paused).toBe('true')
+    expect(view.container.querySelector('canvas')).toBe(canvas)
   })
 })
