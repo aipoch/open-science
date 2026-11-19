@@ -667,27 +667,6 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   font-size: 0.7rem;
   line-height: 1.3;
 }
-.onboarding-cancel-sign-in {
-  --cancel-ink: var(--color-status-warning-foreground);
-  --cancel-surface: var(--color-status-warning-surface);
-  color: var(--cancel-ink);
-  background: var(--cancel-surface);
-  border-color: color-mix(in oklab, var(--cancel-ink) 45%, var(--cancel-surface));
-}
-.dark .onboarding-cancel-sign-in {
-  --cancel-ink: var(--color-status-warning-dark-foreground);
-  --cancel-surface: var(--color-status-warning-dark-surface);
-}
-.onboarding-cancel-sign-in:hover,
-.onboarding-cancel-sign-in:active {
-  color: var(--cancel-ink);
-  background: color-mix(in oklab, var(--cancel-surface) 90%, var(--cancel-ink));
-  border-color: var(--cancel-ink);
-}
-.onboarding-cancel-sign-in:focus-visible {
-  outline: 2px solid var(--cancel-ink);
-  outline-offset: 2px;
-}
 .onboarding-install-progress {
   margin-bottom: 0.7rem;
   padding: 0.5rem 0.65rem;
