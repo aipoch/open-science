@@ -249,33 +249,35 @@ function NetworkLogContent(): React.JSX.Element {
               </div>
             </div>
           ) : null}
-          {/* Keep search and advanced controls connected as one full-width action row. */}
-          <SplitButton
-            kind="popover"
-            open={advanced}
-            onOpenChange={(next) => {
-              if (!next && form.current && !form.current.reportValidity()) return
-              setAdvanced(next)
-            }}
-            busy={busy}
-          >
-            <SplitButtonGroup className="w-full">
-              <SplitButtonPrimary type="submit" size="sm" className="h-8 min-w-0 flex-1">
-                {busy ? t('Loading…') : t('Search')}
-              </SplitButtonPrimary>
-              <SplitButtonTrigger
-                size="icon-sm"
-                variant={advanced ? 'secondary' : 'ghost'}
-                className="h-8 w-9"
-                aria-label={t('Advanced options')}
-                aria-controls="network-log-advanced"
-                aria-pressed={advanced}
-                title={t('Advanced options')}
-              >
-                <SlidersHorizontal aria-hidden="true" />
-              </SplitButtonTrigger>
-            </SplitButtonGroup>
-          </SplitButton>
+          {/* Keep search and advanced controls connected on one right-aligned action row. */}
+          <div className="flex justify-end">
+            <SplitButton
+              kind="popover"
+              open={advanced}
+              onOpenChange={(next) => {
+                if (!next && form.current && !form.current.reportValidity()) return
+                setAdvanced(next)
+              }}
+              busy={busy}
+            >
+              <SplitButtonGroup>
+                <SplitButtonPrimary type="submit" size="sm" className="h-8 w-24">
+                  {busy ? t('Loading…') : t('Search')}
+                </SplitButtonPrimary>
+                <SplitButtonTrigger
+                  size="icon-sm"
+                  variant="default"
+                  className={advanced ? 'h-8 w-9 bg-primary/80 hover:bg-primary/70' : 'h-8 w-9'}
+                  aria-label={t('Advanced options')}
+                  aria-controls="network-log-advanced"
+                  aria-pressed={advanced}
+                  title={t('Advanced options')}
+                >
+                  <SlidersHorizontal aria-hidden="true" />
+                </SplitButtonTrigger>
+              </SplitButtonGroup>
+            </SplitButton>
+          </div>
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
         {page?.warnings.length ? (
