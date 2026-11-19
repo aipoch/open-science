@@ -53,18 +53,18 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.3.0 — Novedades
+### 💡 AIPOCH Open-Science v1.3.1 — Novedades
 
-_18 de noviembre de 2026_
+_19 de noviembre de 2026_
 
-- **Tareas de investigación programadas**: Configura programaciones recurrentes o puntuales que lanzan sesiones y tareas de Notebook por sí solas; cada ejecución se abre en el espacio de trabajo con su propio registro.
-- **Generación y edición de imágenes**: Genera imágenes con tu proveedor configurado e itera con ediciones posteriores; cada variante es una nueva versión que puedes comparar, revisitar y reutilizar.
-- **Presentaciones editables**: Los archivos PowerPoint se abren para editar texto en el lugar — fuentes, tamaños, colores y alineación — conservando la estructura de diapositivas.
-- **Películas rehechas**: Repite las operaciones de una película en nuevas ramas con resultados independientes, abre las películas directamente desde el menú de sesión y consulta el uso de tokens antes de generar.
-- **Preguntas del agente más inteligentes**: Cuando el agente pide tu entrada, las opciones ahora muestran sus compromisos para decidir conociendo las consecuencias.
-- **Fiabilidad y velocidad**: Los historiales largos de sesión persisten de forma incremental, las películas y transferencias de paquetes detenidas se recuperan solas, las instalaciones y actualizaciones de Windows son más ligeras y la aplicación llega a tu proyecto antes al iniciar.
+- **Búsqueda web y lectura de páginas**: El agente integrado puede buscar en la web y leer páginas públicas; las aprobaciones de búsqueda muestran la consulta en una tarjeta legible y las fuentes citadas permanecen con la conversación.
+- **Grafo de citas**: Explora las referencias de un artículo y los artículos que lo citan como un grafo interactivo; vuelve a centrarlo en cualquier artículo relacionado y filtra por dirección.
+- **MCP sin abrir la aplicación**: Al conectar un agente externo a través de MCP, el servicio de Open-Science se inicia por ti, con opciones de configuración para más de 30 agentes y clientes.
+- **Modelos de Lab y casos de la organización**: Inicia sesión con una cuenta de Lab para usar los modelos de tu organización y buscar, importar o compartir casos de investigación con tu equipo.
+- **Listas de modelos actualizadas y errores más claros**: Actualiza la lista de modelos de un proveedor desde Ajustes y consulta la causa y el siguiente paso cuando falla una solicitud al proveedor.
+- **Actualizar desde 1.3.0**: Si el actualizador de 1.3.0 indica que otro proceso está usando la instalación, cierra por completo Open-Science e instala manualmente el paquete descargado.
 
-[Notas completas v1.3.0](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[Notas completas v1.3.1](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
 
 <a id="share-your-research"></a>
 
