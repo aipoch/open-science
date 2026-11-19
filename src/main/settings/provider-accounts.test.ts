@@ -1366,38 +1366,33 @@ describe('ProviderAccountsModule', () => {
     expect(await repository.getSettings()).toEqual(before)
   })
 
-  it('validates explicit and saved Lab model selections without stripping the public ID', async () => {
+  it('redirects generic validation of saved or signed-out Lab to the Lab settings', async () => {
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+    const managed = {
+      ok: false,
+      category: 'unknown',
+      message: 'The Lab provider is managed in Settings → Lab.',
+      applied: false
+    }
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
+
     const lab = buildLabProviderRecord('https://lab.example.com', {
       user: { id: 'user' },
       device: { id: 'device' },
-      models: [
-        { id: 'research', protocol: 'openai' },
-        { id: 'lab:research', protocol: 'openai' }
-      ],
+      models: [{ id: 'lab:research', protocol: 'openai' }],
       default_model_id: 'lab:research'
     })
     await repository.upsertProvider(lab)
-    await repository.setAgentFramework('open-science-agent')
-    const modelIds: string[] = []
-    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
-      modelIds.push(JSON.parse(String(init.body)).model)
-      return Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
-    })
-
-    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toMatchObject({
-      ok: true
-    })
+    await repository.upsertProvider({ ...lab, id: 'legacy-lab' })
+    const before = await repository.getSettings()
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
     await expect(
       module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'lab:lab:research' })
-    ).resolves.toMatchObject({ ok: true })
-    await repository.setActiveProvider(LAB_PROVIDER_ID, 'lab:research')
-    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toMatchObject({
-      ok: true
-    })
-    await expect(
-      module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'research' })
-    ).resolves.toMatchObject({ ok: false, category: 'model-not-found', applied: false })
-    expect(modelIds).toEqual(['lab:research', 'lab:research', 'research'])
+    ).resolves.toEqual(managed)
+    await expect(module.validateProvider({ providerId: 'legacy-lab' })).resolves.toEqual(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {

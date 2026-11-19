@@ -133,12 +133,6 @@ type PreparedProvider = {
   catalogBaseline?: ProviderCatalogState
 }
 
-type ResolvedProviderValidationTarget = {
-  provider: ResolvedProvider
-  storedId?: string
-  labModelId?: string
-}
-
 const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
 
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
@@ -885,12 +879,30 @@ class ProviderAccountsModule {
     }
     assertProviderModelLimit(request.model)
     const settings = await this.repository.getSettings()
-    const resolved = this.resolveValidationTarget(request, settings)
-    if (!resolved) {
-      return { ok: false, category: 'unknown', message: 'No provider to validate.' }
+    const stored = settings.providers.find((provider) => provider.id === request.providerId)
+    if (request.providerId === LAB_PROVIDER_ID || (stored && isLabProvider(stored.type))) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: LAB_PROVIDER_MANAGED_MESSAGE,
+        applied: false
+      }
     }
-
-    return this.validateResolvedProvider(request, settings, resolved)
+    if (stored) {
+      const model =
+        request.model ??
+        (settings.activeProviderId === stored.id ? settings.activeModel : undefined)
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveProvider(stored, model),
+        storedId: stored.id
+      })
+    }
+    if (request.draft) {
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveDraft(request.draft)
+      })
+    }
+    return { ok: false, category: 'unknown', message: 'No provider to validate.' }
   }
 
   private async validateProviderEdit(
@@ -943,24 +955,12 @@ class ProviderAccountsModule {
   private async validateResolvedProvider(
     request: ValidateProviderRequest,
     settings: StoredSettings,
-    resolved: ResolvedProviderValidationTarget,
+    resolved: { provider: ResolvedProvider; storedId?: string },
     healthPolicy: 'all' | 'definitive-failures' = 'all'
   ): Promise<ValidateProviderResult> {
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
       : undefined
-    if (
-      resolved.labModelId &&
-      storedValidationTarget?.fetchedModels !== undefined &&
-      !storedValidationTarget.fetchedModels.includes(resolved.labModelId)
-    ) {
-      return {
-        ok: false,
-        category: 'model-not-found',
-        message: `The Lab model "${resolved.labModelId}" is no longer available from this organization. Pick another model in Settings → Model.`,
-        applied: false
-      }
-    }
     const validationGeneration = resolved.storedId
       ? this.advanceProviderValidationGeneration(resolved.storedId)
       : undefined
@@ -1267,27 +1267,6 @@ class ProviderAccountsModule {
       .join(' or ')}, but this provider speaks ${providerEndpoints(provider)
       .map((endpoint) => ENDPOINT_PATHS[endpoint])
       .join(' or ')}. Change the API format or switch the agent framework.`
-  }
-
-  private resolveValidationTarget(
-    request: ValidateProviderRequest,
-    settings: StoredSettings
-  ): ResolvedProviderValidationTarget | undefined {
-    if (request.providerId) {
-      const stored = settings.providers.find((provider) => provider.id === request.providerId)
-      if (!stored) return undefined
-      const model =
-        request.model ??
-        (settings.activeProviderId === stored.id ? settings.activeModel : undefined) ??
-        (stored.type === 'lab' ? (stored.model ?? stored.fetchedModels?.[0]) : undefined)
-      return {
-        provider: this.resolveProvider(stored, model),
-        storedId: stored.id,
-        ...(stored.type === 'lab' ? { labModelId: model } : {})
-      }
-    }
-    if (request.draft) return { provider: this.resolveDraft(request.draft) }
-    return undefined
   }
 
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {

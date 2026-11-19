@@ -983,7 +983,7 @@ describe('Lab account owner', () => {
     expect(reachable.state).toBe('signedOut')
   })
 
-  it('refreshes the Lab default and catalog while keeping the selected model', async () => {
+  it('refreshes Lab and clears old validation failures while keeping the selected model', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
     const api = createApi()
@@ -992,6 +992,16 @@ describe('Lab account owner', () => {
     await seedSession(credentials)
     await owner.check()
     await repository.setActiveProvider(LAB_PROVIDER_ID, 'lab:research-default')
+    await repository.updateProviderValidationIfTargetMatches(
+      LAB_PROVIDER_ID,
+      () => true,
+      { ok: false, category: 'auth', status: 401 },
+      undefined
+    )
+    expect(
+      (await repository.getSettings()).providers.find(({ id }) => id === LAB_PROVIDER_ID)
+        ?.lastValidationFailure
+    ).toMatchObject({ category: 'auth', status: 401 })
     api.bootstrap.mockResolvedValue({
       ...BOOTSTRAP,
       default_model_id: 'research-fast',
@@ -1009,6 +1019,7 @@ describe('Lab account owner', () => {
     expect(record?.model).toBe('lab:research-fast')
     expect(record?.fetchedModels).toEqual(['lab:research-default', 'lab:research-fast'])
     expect(record?.lastValidatedAt).toBeGreaterThan(0)
+    expect(record?.lastValidationFailure).toBeUndefined()
     const view = new ProviderRuntimeProjectionOwner().toProviderView(record!)
     expect(
       buildConfiguredModelCatalog({
