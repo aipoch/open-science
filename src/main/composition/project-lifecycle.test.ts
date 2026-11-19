@@ -1,6 +1,11 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialRequestBroker } from '../connectors/credential-request-broker'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { SessionDeletionHandlers } from '../session-persistence/coordinator'
 
 const mocks = vi.hoisted(() => ({
@@ -57,7 +62,7 @@ vi.mock('../desktop-surface-declarations', () => ({}))
 
 import { composeProjectLifecycle } from './project-lifecycle'
 
-const fixture = (() => {
+const fixture = ((notebookRuntime?: NotebookRuntimeService) => {
   let handlers: SessionDeletionHandlers | undefined
   const runtime = {
     getSnapshot: vi.fn(() => ({ promptInFlightSessionIds: [] as string[] })),
@@ -71,6 +76,7 @@ const fixture = (() => {
     beginProjectDeletion: vi.fn(),
     deleteProjectFileEvidence: vi.fn(),
     deleteProjectInputs: vi.fn(),
+    forgetDeletedExecutionIntents: vi.fn(),
     releaseProjectDeletion: vi.fn()
   }
   const broker = new CredentialRequestBroker({
@@ -148,7 +154,7 @@ const fixture = (() => {
       }
     },
     clearSessionCredentials: (sessionId: string) => broker.clearSession(sessionId),
-    getNotebookService: () => notebook
+    getNotebookService: () => notebookRuntime ?? notebook
   }
   const result = composeProjectLifecycle(
     dependencies as unknown as Parameters<typeof composeProjectLifecycle>[0]
@@ -171,6 +177,52 @@ beforeEach(() => {
 })
 
 describe('Project lifecycle composition', () => {
+  it('forgets Notebook intents after permanent deletion and preserves surviving refusals', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-intent-deletion-'))
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-1',
+      memoryPolicy: healthyNotebookMemoryPolicy()
+    })
+    const session = { projectId: 'project-1', sessionId: 'session-1' }
+    const provisional = { projectId: 'project-1', sessionId: 'provisional-session' }
+    const survivor = { projectId: 'project-2', sessionId: 'session-2' }
+    try {
+      const { handlers } = fixture(notebook)
+      const hooks = mocks.deletion.mock.calls[0][5]
+      const [archivedIntent, provisionalIntent, survivingIntent] = [
+        session,
+        provisional,
+        survivor
+      ].map((scope) => {
+        const intent = notebook.createExecutionIntent(scope)
+        notebook.rememberExecutionIntent(scope, 'prompt', intent)
+        intent.block('manual-release')
+        return intent
+      })
+
+      await handlers.reconcile([session.sessionId, survivor.sessionId], [session.sessionId])
+      expect(notebook.currentExecutionIntent(session)).toBe(archivedIntent)
+      await hooks.abortProjectDeletion(session.projectId)
+      expect(notebook.currentExecutionIntent(provisional)).toBe(provisionalIntent)
+
+      await handlers.commit([session.sessionId])
+      expect(notebook.currentExecutionIntent(session)).toBeUndefined()
+      expect(notebook.resolveExecutionIntent(session, 'prompt')).toBeUndefined()
+      expect(notebook.currentExecutionIntent(provisional)).toBe(provisionalIntent)
+
+      hooks.completeProjectDeletion(session.projectId)
+      expect(notebook.currentExecutionIntent(provisional)).toBeUndefined()
+      expect(notebook.resolveExecutionIntent(provisional, 'prompt')).toBeUndefined()
+      expect(notebook.currentExecutionIntent(survivor)).toBe(survivingIntent)
+      expect(notebook.resolveExecutionIntent(survivor, 'prompt')).toBe(survivingIntent)
+    } finally {
+      await notebook.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('clears credential state on the shared durable commit even if another projection fails', async () => {
     const { dependencies, broker, handlers, result } = fixture()
     const info = {

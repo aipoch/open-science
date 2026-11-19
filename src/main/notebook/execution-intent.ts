@@ -11,6 +11,8 @@ export type NotebookExecutionIntentScope = Readonly<{
 }>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
   Readonly<{ refusalId: string }>
+export type NotebookExecutionIntentDeletion =
+  { projectId: string } | { sessionIds: readonly string[] }
 
 // Main owns this transient authority. A prompt id, tool argument or document cannot create it.
 // Concrete transports and derived Attempts retain the same immutable reference.
@@ -211,6 +213,24 @@ export class NotebookExecutionIntentOwner {
     if (previous && !this.currentIntents.has(canonicalKey))
       this.currentIntents.set(canonicalKey, previous)
     this.currentIntents.delete(previousKey)
+  }
+
+  forgetDeleted(deletion: NotebookExecutionIntentDeletion): void {
+    const sessionIds = new Set('sessionIds' in deletion ? deletion.sessionIds : [])
+    const matches = (key: string): boolean => {
+      const [projectId, sessionId] = JSON.parse(key) as [string, string]
+      return 'projectId' in deletion ? projectId === deletion.projectId : sessionIds.has(sessionId)
+    }
+    for (const key of this.scopes.keys()) {
+      if (!matches(key)) continue
+      this.scopes.delete(key)
+      this.currentIntents.delete(key)
+    }
+    for (const [key, ref] of this.origins) {
+      if (!matches(key)) continue
+      this.collectedOrigins.unregister(ref)
+      this.origins.delete(key)
+    }
   }
 
   current(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined {

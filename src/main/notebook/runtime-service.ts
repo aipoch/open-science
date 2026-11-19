@@ -29,6 +29,7 @@ import {
   notebookExecutionIntent,
   notebookUserOperation,
   type NotebookExecutionIntent,
+  type NotebookExecutionIntentDeletion,
   type NotebookExecutionIntentScope,
   type NotebookExecutionContinuation
 } from './execution-intent'
@@ -537,6 +538,10 @@ class NotebookRuntimeService {
 
   adoptExecutionIntentScope(scope: NotebookExecutionIntentScope, sessionId: string): void {
     this.executionIntents.adopt(scope, sessionId)
+  }
+
+  forgetDeletedExecutionIntents(deletion: NotebookExecutionIntentDeletion): void {
+    this.executionIntents.forgetDeleted(deletion)
   }
 
   rememberExecutionIntent(
