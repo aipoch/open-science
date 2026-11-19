@@ -8,6 +8,7 @@ import {
   type CitationMetadata
 } from './citation-graph'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { parseApplicationCommandError } from '../../../../../shared/application-command-contract'
 import { ErrorNotice } from '@/components/error-notice'
 import { lookupCachedLiteratureMetadata } from '../literature-metadata-lookup'
 import {
@@ -33,7 +34,7 @@ export function CitationPaperDetails({
   const base = record.item
   const reference = conflicting ? undefined : citationMetadataReference(base)
   const [attempt, setAttempt] = useState(0)
-  const [settled, setSettled] = useState<string>()
+  const [settled, setSettled] = useState<{ reference: string; retryable: boolean }>()
   useEffect(() => {
     if (!reference) return
     const reader = new AbortController()
@@ -42,10 +43,16 @@ export function CitationPaperDetails({
         if (reader.signal.aborted) return
         if (verifiedCitationMetadata(base, candidate, reference))
           paperMetadata.set(reference, candidate)
-        setSettled(reference)
+        setSettled({ reference, retryable: false })
       },
-      () => {
-        if (!reader.signal.aborted) setSettled(reference)
+      (error) => {
+        if (!reader.signal.aborted)
+          setSettled({
+            reference,
+            retryable:
+              parseApplicationCommandError(error)?.code ===
+              'literature-metadata-temporarily-unavailable'
+          })
       }
     )
     return () => reader.abort()
@@ -53,7 +60,7 @@ export function CitationPaperDetails({
 
   const supplement = supplementedCitation(base, conflicting ? undefined : paperMetadata)
   const { item } = supplement
-  const pending = Boolean(reference && settled !== reference && !supplement.reference)
+  const pending = Boolean(reference && settled?.reference !== reference && !supplement.reference)
   const authors = fullCreatorLabel(item)
   const publication = publicationCitation(item)
   const { identifiers, abstract } = item
@@ -106,30 +113,27 @@ export function CitationPaperDetails({
               <div key={index} className={`h-2.5 rounded bg-muted ${width}`} />
             ))}
           </div>
+        ) : settled?.reference === reference && settled?.retryable ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            description={t('The provider is temporarily unavailable. Please try again later.')}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () => {
+                setSettled(undefined)
+                setAttempt((n) => n + 1)
+              }
+            }}
+          />
         ) : (
-          (!reference || supplement.reference) && (
-            <p className="mt-2 text-xs text-muted-foreground">{t('No abstract available.')}</p>
-          )
+          <p className="mt-2 text-xs text-muted-foreground">{t('No abstract available.')}</p>
         )}
       </section>
       {pending && (
         <p role="status" className="sr-only">
           {t('Loading…')}
         </p>
-      )}
-      {reference && settled === reference && !supplement.reference && (
-        <ErrorNotice
-          inline
-          role="alert"
-          description={t('Lookup failed')}
-          primaryButton={{
-            label: t('Retry'),
-            onClick: () => {
-              setSettled(undefined)
-              setAttempt((n) => n + 1)
-            }
-          }}
-        />
       )}
     </div>
   )

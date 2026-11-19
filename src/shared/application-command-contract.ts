@@ -14,6 +14,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'schedule-request-conflict',
   'desktop-runtime-disconnected',
   'desktop-runtime-not-submitted',
+  'literature-metadata-temporarily-unavailable',
   'settings-storage-unavailable',
   'settings-invalid',
   'settings-credential-unavailable',

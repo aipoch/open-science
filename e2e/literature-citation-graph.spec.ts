@@ -96,6 +96,20 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   graphApp
 }, info) => {
   await openCitationGraph(page, url)
+  const switcher = page.getByRole('group', { name: 'Citation discovery view' })
+  const listView = switcher.getByRole('button', { name: 'List', exact: true })
+  const graphView = switcher.getByRole('button', { name: 'Citation graph', exact: true })
+  await expect(listView.locator('.lucide-list')).toBeVisible()
+  await expect(graphView.locator('svg')).toBeVisible()
+  await expect(graphView).toHaveAttribute('aria-pressed', 'true')
+  await listView.click()
+  await expect(listView).toHaveAttribute('data-variant', 'default')
+  await expect(graphView).toHaveAttribute('aria-pressed', 'false')
+  await page.screenshot({ path: info.outputPath('citation-list-view.png') })
+  await graphView.focus()
+  await page.keyboard.press('Enter')
+  await expect(graphView).toHaveAttribute('data-variant', 'default')
+  await expect(listView).toHaveAttribute('aria-pressed', 'false')
   await captureGraph(graphApp, info, 'electron-graph-desktop-initial')
   await verifyCitationDesktopLayout(page, async () => {
     const frame = page.locator('[data-current-frame="true"]')

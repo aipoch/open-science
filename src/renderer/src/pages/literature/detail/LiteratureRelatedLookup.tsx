@@ -15,7 +15,7 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, LibraryBig } from 'lucide-react'
+import { BookOpen, LibraryBig, List, Quote, Share2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -95,16 +95,16 @@ function LiteratureRelatedSession(
     { value: 'opencitations-index', label: t('OpenCitations · Index v2') }
   ]
   const toolbar = (
-    <div
-      className="flex min-w-0 flex-wrap items-center gap-1"
-      role="group"
-      aria-label={t('Citation discovery view')}
-    >
-      <div className="inline-flex shrink-0 rounded-lg border border-border-300 bg-muted/50 p-0.5">
+    <div className="flex min-w-0 flex-wrap items-center gap-1">
+      <div
+        role="group"
+        aria-label={t('Citation discovery view')}
+        className="inline-flex shrink-0 rounded-lg border border-border-300 bg-muted/50 p-0.5"
+      >
         <Button
           size="sm"
           className="px-2"
-          variant={view === 'list' ? 'secondary' : 'ghost'}
+          variant={view === 'list' ? 'default' : 'ghost'}
           aria-pressed={view === 'list'}
           disabled={saving}
           onClick={() => {
@@ -112,12 +112,13 @@ function LiteratureRelatedSession(
             setView('list')
           }}
         >
+          <List data-icon="inline-start" aria-hidden="true" />
           {t('List')}
         </Button>
         <Button
           size="sm"
           className="px-2"
-          variant={view === 'graph' ? 'secondary' : 'ghost'}
+          variant={view === 'graph' ? 'default' : 'ghost'}
           aria-pressed={view === 'graph'}
           disabled={saving}
           onClick={() => {
@@ -125,6 +126,7 @@ function LiteratureRelatedSession(
             setView('graph')
           }}
         >
+          <Share2 data-icon="inline-start" aria-hidden="true" />
           {t('Citation graph')}
         </Button>
       </div>

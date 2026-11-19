@@ -2335,18 +2335,45 @@ it('resolves visible details once and ignores a previous paper returning late', 
   expect(transact).not.toHaveBeenCalled()
 })
 
-it('keeps the citation when metadata belongs to another paper and retries on request', async () => {
+const temporaryMetadataError = {
+  code: 'literature-metadata-temporarily-unavailable',
+  message: 'The metadata provider is temporarily unavailable.'
+}
+
+it.each([
+  ['mismatched metadata', '', false],
+  ['existing abstract', 'Abstract from the citation', true]
+] as const)('keeps %s out of the retry flow', async (_, abstract, unavailable) => {
+  const ref = record('b')
+  ref.item.identifiers = [{ scheme: 'pmid', value: '100', isPrimary: true }]
+  ref.item.abstract = abstract
+  related.mockImplementation(async (request) => result(request, { records: [ref] }))
+  const lookup = vi.fn()
+  if (unavailable) lookup.mockRejectedValue(temporaryMetadataError)
+  else lookup.mockResolvedValue({ ...ref.item, identifiers: [], abstract: 'Unrelated abstract' })
+  Object.assign(window.api.literature, { lookupMetadata: lookup })
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Select Paper b' }))
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce())
+  await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull())
+  expect(screen.getByText(abstract || 'No abstract available.')).toBeTruthy()
+  expect(screen.queryByText('Unrelated abstract')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+})
+
+it('retries a missing abstract after a temporary provider failure', async () => {
   const ref = record('b')
   ref.item.identifiers = [{ scheme: 'pmid', value: '100', isPrimary: true }]
   related.mockImplementation(async (request) => result(request, { records: [ref] }))
   const lookup = vi
     .fn()
-    .mockResolvedValueOnce({ ...ref.item, identifiers: [], abstract: 'Unrelated abstract' })
+    .mockRejectedValueOnce(temporaryMetadataError)
     .mockResolvedValueOnce({ ...ref.item, abstract: 'Correct abstract' })
   Object.assign(window.api.literature, { lookupMetadata: lookup })
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Select Paper b' }))
-  await screen.findByText('Lookup failed')
+  await screen.findByText('The provider is temporarily unavailable. Please try again later.')
   expect(screen.queryByText('Unrelated abstract')).toBeNull()
   expect(screen.getByRole('heading', { name: 'Paper b' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))

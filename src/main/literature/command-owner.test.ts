@@ -1,4 +1,4 @@
-import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
+import { LiteratureProviderError, LiteratureReferenceResolver } from '@aipoch/literature-discovery'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
 import { runInNewContext } from 'node:vm'
@@ -499,6 +499,22 @@ it.each([
   expect(lookup).toHaveBeenCalledWith(reference, undefined)
   expect(broadcastToRenderers).not.toHaveBeenCalled()
 })
+
+it.each([404, 429, 503])(
+  'reports transient metadata errors separately from HTTP %i',
+  async (status) => {
+    const error = new LiteratureProviderError(status)
+    const owner = createLiteratureCommandOwner({
+      literatureReferenceResolver: { lookup: vi.fn().mockRejectedValue(error) }
+    } as unknown as Services)
+    const result = owner.lookupMetadata('pmid:35022204')
+    if (status === 404) await expect(result).rejects.toBe(error)
+    else
+      await expect(result).rejects.toMatchObject({
+        code: 'literature-metadata-temporarily-unavailable'
+      })
+  }
+)
 
 it('accepts exactly one bounded import source at the transport boundary', () => {
   const items = [literatureItemInputSchema.parse({ itemType: 'review', title: 'Native record' })]

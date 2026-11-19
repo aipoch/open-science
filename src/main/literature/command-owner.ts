@@ -1,3 +1,4 @@
+import { literatureFailure } from '@aipoch/literature-discovery'
 import type { LiteratureOverviewBatch } from './overview-batch'
 import type { LiteratureOverviewService } from './overview'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
@@ -141,8 +142,18 @@ export const createLiteratureCommandOwner = ({
       : input.startsWith('10.')
         ? `doi:${input}`
         : input
-    const resolved = await literatureReferenceResolver.lookup(reference, signal)
-    return resolved.item
+    try {
+      return (await literatureReferenceResolver.lookup(reference, signal)).item
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (['network', 'timeout', 'rate-limit'].includes(literatureFailure(error, 'search').code)) {
+        throw new ApplicationCommandError(
+          'literature-metadata-temporarily-unavailable',
+          'The metadata provider is temporarily unavailable.'
+        )
+      }
+      throw error
+    }
   },
   completeMetadata: (request) => literatureMetadataEnricher.complete(request),
   supplementAttachmentProgress: (request) => literatureSupplementAttachments.progress(request),
