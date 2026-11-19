@@ -463,9 +463,7 @@ class ProviderAccountsModule {
       ) {
         Object.assign(provider, providerCatalogState(existing))
       }
-      if (!carryKey() && !providerAllowsAnonymousAccess(provider)) {
-        throw new Error('API key is required for an official provider.')
-      }
+      carryKey()
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
@@ -514,6 +512,12 @@ class ProviderAccountsModule {
       provider,
       existing
     )
+    if (
+      provider.type === 'official' &&
+      !provider.keyRef &&
+      !providerAllowsAnonymousAccess({ ...provider, model: request.model ?? provider.model })
+    )
+      throw new Error('API key is required for an official provider.')
     return {
       provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
       settings,

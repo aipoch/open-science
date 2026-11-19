@@ -1141,6 +1141,7 @@ const ProviderForm = ({
               vendorId: value.vendorId,
               region: value.region,
               modelCatalog,
+              hasKey: Boolean(value.key.trim() || (catalogHasStoredKey && !needsKey)),
               fetchedModels: supportedModels
             }).filter(isCatalogModelAvailable)
             const catalogAuth = catalog?.options.auth

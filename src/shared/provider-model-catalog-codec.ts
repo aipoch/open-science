@@ -27,6 +27,7 @@ const model = z.object({
   supportsImageInput: z.boolean().optional(),
   supportsTools: z.boolean().optional(),
   supportsReasoning: z.boolean().optional(),
+  supportsAnonymousAccess: z.boolean().optional(),
   lifecycle: text.optional(),
   source: z.string().max(2048).optional(),
   routes: z

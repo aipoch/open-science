@@ -1,4 +1,9 @@
-import { getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
+import {
+  getOfficialVendor,
+  type CatalogModel,
+  type CatalogSnapshot,
+  type OfficialVendorId
+} from '@aipoch/providers'
 import { isSensitiveUrlQueryKey } from '@aipoch/diagnostics'
 import {
   PROVIDER_TRANSPORT_ERROR,
@@ -13,20 +18,38 @@ import {
 export const customProviderRequiresKey = (baseUrl: string | undefined): boolean =>
   !isLoopbackProviderBaseUrl((baseUrl ?? '').trim())
 
+// Older snapshots lack eligibility metadata, so only the bundled free models are known there.
+export const kiloModelSupportsAnonymousAccess = (
+  model: Pick<CatalogModel, 'id' | 'supportsAnonymousAccess'>
+): boolean =>
+  model.supportsAnonymousAccess ??
+  getOfficialVendor('kilo')?.models.some(({ id }) => id === model.id) === true
+
 /** Determine whether a saved provider or runtime connection allows anonymous requests. */
 export function providerAllowsAnonymousAccess(provider: {
   type: string
   vendorId?: OfficialVendorId
   baseUrl?: string
+  model?: string
+  modelCatalog?: CatalogSnapshot
+  modelAllowsAnonymousAccess?: boolean
 }): boolean {
   if (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl)) return true
   const vendor = provider.vendorId && getOfficialVendor(provider.vendorId)
   // The main process can represent a built-in provider as custom. Its runtime URL
   // still has to match the registered URL.
-  return (
-    vendor?.supportsAnonymousAccess === true &&
-    (provider.type === 'official' ||
-      (provider.type === 'custom' && provider.baseUrl === vendor.baseUrl))
+  if (
+    vendor?.supportsAnonymousAccess !== true ||
+    (provider.type !== 'official' &&
+      !(provider.type === 'custom' && provider.baseUrl === vendor.baseUrl))
+  )
+    return false
+  if (vendor.id !== 'kilo') return true
+  if (provider.modelAllowsAnonymousAccess !== undefined) return provider.modelAllowsAnonymousAccess
+  const selected = provider.model?.trim()
+  const models = provider.modelCatalog?.models ?? vendor.models
+  return models.some(
+    (model) => (!selected || model.id === selected) && kiloModelSupportsAnonymousAccess(model)
   )
 }
 

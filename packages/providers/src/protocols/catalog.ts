@@ -10,6 +10,7 @@ export type CatalogModel = {
   supportsImageInput?: boolean
   supportsTools?: boolean
   supportsReasoning?: boolean
+  supportsAnonymousAccess?: boolean
   reasoningEffort?: ReasoningCapability
   lifecycle?: string
   routes?: Partial<Record<ModelProtocol, string>>

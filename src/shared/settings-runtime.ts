@@ -185,6 +185,8 @@ export const canUseClaudeProviderTransport = (provider: {
   key?: string
   baseUrl?: string
   vendorId?: OfficialVendorId
+  model?: string
+  modelAllowsAnonymousAccess?: boolean
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('messages') &&

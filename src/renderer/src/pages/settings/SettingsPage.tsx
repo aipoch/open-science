@@ -1101,7 +1101,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     !formValue.key && parameters === catalogParameterKey(regionalCredential?.catalogParameters)
       ? regionalCredential
       : undefined
-  const formErrors = getProviderFormErrors(formValue, { hasStoredKey: credentialSource?.hasKey })
   const providerConflict =
     editingProvider &&
     providerBase &&
@@ -1112,7 +1111,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     !isRefreshingModels &&
     !providerEditTargetMissing &&
     !providerConflict
-  const canSave = canRunProviderOperation && !hasProviderFormErrors(formErrors)
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
@@ -1130,6 +1128,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   ])
   const visibleCatalogPreview =
     catalogPreview?.signature === catalogSignature ? catalogPreview.result : undefined
+  const formErrors = getProviderFormErrors(formValue, {
+    hasStoredKey: credentialSource?.hasKey,
+    modelCatalog: visibleCatalogPreview?.catalog ?? catalogSource?.modelCatalog
+  })
+  const canSave = canRunProviderOperation && !hasProviderFormErrors(formErrors)
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)

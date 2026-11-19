@@ -5,6 +5,7 @@ import {
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
+  type CatalogSnapshot,
   type ModelProtocol,
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -257,7 +258,7 @@ const positiveWholeNumberError = (value: string): boolean => {
 // requirement, so the user can leave the key blank to keep it.
 export const getProviderFormErrors = (
   value: ProviderFormValue,
-  options: { hasStoredKey?: boolean } = {}
+  options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
 
@@ -282,7 +283,7 @@ export const getProviderFormErrors = (
     (value.type === 'custom' || value.type === 'official') &&
     !value.key.trim() &&
     !options.hasStoredKey &&
-    !providerAllowsAnonymousAccess(value)
+    !providerAllowsAnonymousAccess({ ...value, modelCatalog: options.modelCatalog })
   ) {
     errors.key = 'API key is required.'
   }

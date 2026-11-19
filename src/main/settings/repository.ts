@@ -238,7 +238,7 @@ class SettingsRepository {
         return settings
       const provider = existing ?? createDefaultKiloProvider(settings)
       if (
-        !resolveOfficialModelCatalog(provider).some(
+        !resolveOfficialModelCatalog({ ...provider, hasKey: false }).some(
           (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
         )
       )
@@ -1512,55 +1512,53 @@ class SettingsRepository {
   ): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
     let previousImageConfiguration: unknown
-    return this.store
-      .mutate(
-        (settings) => {
-          previous = structuredClone(settings.providers)
-          previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
-          return update(settings)
-        },
-        undefined,
-        preserveDocumentExcept
-      )
-      .then((settings) => {
-        if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
-          for (const listener of this.imageModelListeners) {
-            try {
-              listener()
-            } catch {
-              createLogger('settings:repository').error('Image model change listener failed')
-            }
+    const capture = (settings: StoredSettings): StoredSettings => {
+      previous = structuredClone(settings.providers)
+      previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
+      return update(settings)
+    }
+    const committed = preserveDocumentExcept
+      ? this.store.mutate(capture, undefined, preserveDocumentExcept)
+      : this.store.mutate(capture)
+    return committed.then((settings) => {
+      if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
+        for (const listener of this.imageModelListeners) {
+          try {
+            listener()
+          } catch {
+            createLogger('settings:repository').error('Image model change listener failed')
           }
         }
-        const before = new Map(previous.map((provider) => [provider.id, provider]))
-        const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
-        const changes = [...new Set([...before.keys(), ...after.keys()])]
-          .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
-          .map((id) => ({ id, current: after.get(id) }))
-        for (const { id, current } of changes) {
-          const prior = before.get(id)
-          if (!current) this.providerValidationHistory.delete(id)
-          // A display edit keeps existing official connections and their recovery watermarks valid.
-          else if (
-            prior?.type === 'official' &&
-            current.configRevision !== prior.configRevision &&
-            sameCatalogTarget(prior, current)
-          ) {
-            this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+      }
+      const before = new Map(previous.map((provider) => [provider.id, provider]))
+      const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
+      const changes = [...new Set([...before.keys(), ...after.keys()])]
+        .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
+        .map((id) => ({ id, current: after.get(id) }))
+      for (const { id, current } of changes) {
+        const prior = before.get(id)
+        if (!current) this.providerValidationHistory.delete(id)
+        // A display edit keeps existing official connections and their recovery watermarks valid.
+        else if (
+          prior?.type === 'official' &&
+          current.configRevision !== prior.configRevision &&
+          sameCatalogTarget(prior, current)
+        ) {
+          this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+        }
+      }
+      if (changes.length) {
+        for (const listener of this.providerListeners) {
+          try {
+            listener(structuredClone(changes))
+          } catch {
+            // The write has committed; observer failure cannot turn it into a failed save.
+            createLogger('settings:repository').error('Provider change listener failed')
           }
         }
-        if (changes.length) {
-          for (const listener of this.providerListeners) {
-            try {
-              listener(structuredClone(changes))
-            } catch {
-              // The write has committed; observer failure cannot turn it into a failed save.
-              createLogger('settings:repository').error('Provider change listener failed')
-            }
-          }
-        }
-        return settings
-      })
+      }
+      return settings
+    })
   }
 }
 
