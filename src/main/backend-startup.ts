@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialDiagnosticSchema } from './credential-identity/diagnostic'
+import { DataDirectoryUnavailableError } from './storage/data-directory-availability'
 
 // Only fixed diagnostic codes cross this private pipe. Never send messages, paths, keys or stacks.
 const credentialReasonSchema = z.enum([
@@ -34,7 +35,9 @@ export const backendStartupStatusSchema = z
     attemptId: z.string().uuid(),
     stage: z.enum(['bootstrap', 'credentials', 'storage', 'database', 'runtime', 'endpoint']),
     kind: z.enum(['progress', 'failed', 'ready']),
-    code: z.enum(['credential-unavailable', 'startup-failed']).optional(),
+    code: z
+      .enum(['credential-unavailable', 'data-directory-unavailable', 'startup-failed'])
+      .optional(),
     reason: credentialReasonSchema.optional(),
     diagnostic: credentialDiagnosticSchema.optional()
   })
@@ -42,6 +45,7 @@ export const backendStartupStatusSchema = z
   .superRefine((status, context) => {
     if (
       (status.kind === 'failed') !== (status.code !== undefined) ||
+      (status.code === 'data-directory-unavailable' && status.stage !== 'storage') ||
       (status.reason !== undefined && status.code !== 'credential-unavailable') ||
       (status.diagnostic !== undefined && status.code !== 'credential-unavailable')
     )
@@ -51,6 +55,7 @@ export type BackendStartupStatus = z.infer<typeof backendStartupStatusSchema>
 
 export class DesktopBackendStartupError extends Error {
   readonly credentialFailure?: CredentialIdentityError
+  readonly dataDirectoryUnavailable: boolean
   constructor(
     message: string,
     readonly stage: BackendStartupStatus['stage'],
@@ -60,6 +65,7 @@ export class DesktopBackendStartupError extends Error {
   ) {
     super(message)
     this.name = 'DesktopBackendStartupError'
+    this.dataDirectoryUnavailable = status?.code === 'data-directory-unavailable'
     if (status?.code === 'credential-unavailable')
       this.credentialFailure = new CredentialIdentityError(
         status.reason ?? 'credential-unavailable',
@@ -109,6 +115,10 @@ export function createBackendStartupReporter(): {
       send({})
     },
     failed(error) {
+      if (stage === 'storage' && error instanceof DataDirectoryUnavailableError) {
+        send({ kind: 'failed', code: 'data-directory-unavailable' })
+        return
+      }
       const diagnostic = credentialDiagnosticSchema.safeParse(
         error instanceof CredentialIdentityError ? error.diagnostic : undefined
       )
