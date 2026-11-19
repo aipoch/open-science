@@ -229,6 +229,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   font-size: 0.9375rem;
   line-height: 1.4;
 }
+.onboarding-advanced .onboarding-advanced-content :is(h2, h3) {
+  font-size: 1.0625rem;
+  line-height: 1.5rem;
+  font-weight: 500;
+}
 .onboarding-agent-panel > [data-slot='settings-section'] > :last-child {
   margin-top: 1rem;
 }
@@ -635,8 +640,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   line-height: 1.65;
 }
 .onboarding-provider-card-actions {
-  min-height: 7.35rem;
-  padding: 1rem 1.35rem 1.25rem;
+  min-height: 8.35rem;
+  padding: 2rem 1.35rem 1.25rem;
   border-top: 0;
   background: color-mix(in oklab, var(--bg-000) 32%, transparent);
   backdrop-filter: blur(12px) saturate(1.05);
