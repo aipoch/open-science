@@ -80,9 +80,12 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
         if (cancelled) return
         const animationData = structuredClone(welcomeAnimation)
         animationData.assets = animationData.assets.map((asset) =>
-          asset.id === 'center' ? { ...asset, p: logoUrl, u: '', e: 0 } : asset
+          asset.id === 'center' || asset.id === 'agents-5'
+            ? { ...asset, p: logoUrl, u: '', e: 0 }
+            : asset
         )
         animationData.layers = animationData.layers.map((layer) => {
+          if (layer.refId === 'agents-5') return { ...layer, cl: 'onboarding-lottie-logo' }
           if (layer.refId !== 'center') return layer
           // Enlarge the symbol throughout convergence, so completion never swaps its size.
           for (const frame of layer.ks.s.k) {

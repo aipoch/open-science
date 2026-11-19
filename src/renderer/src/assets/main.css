@@ -167,11 +167,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     max-height 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.onboarding-entry-shell.is-wide {
-  width: min(1040px, calc(100vw - 2rem));
+.onboarding-entry-shell.is-connect {
+  width: min(1200px, calc(100vw - 1.5rem));
 }
 
 .onboarding-entry-shell.is-advanced {
+  width: min(1040px, calc(100vw - 2rem));
   height: min(760px, calc(100svh - 2rem));
 }
 .onboarding-advanced {
@@ -1033,7 +1034,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 
 @media (max-width: 680px) {
   .onboarding-entry-shell,
-  .onboarding-entry-shell.is-wide,
+  .onboarding-entry-shell.is-connect,
+  .onboarding-entry-shell.is-advanced,
   .onboarding-entry-shell.is-ready {
     width: calc(100vw - 1rem);
     max-height: calc(100svh - 1rem);
