@@ -9,13 +9,19 @@ import type {
   NotebookKernelInstanceIdentity,
   NotebookRunDocument,
   NotebookRunHistorySummary,
+  NotebookAgentSummary,
   NotebookRunCursor,
   NotebookRunRecord,
   NotebookRunStatus,
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
+import {
+  createNotebookFrameRunFilter,
+  summarizeNotebookHistory,
+  NOTEBOOK_RUN_FILE,
+  NOTEBOOKS_DIR
+} from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
@@ -1424,10 +1430,33 @@ class NotebookRunRepository {
     return documents
   }
 
+  // History views may infer a missing root identity from the physical root document. Its path
+  // is normalized from the requested lane, not trusted from disk. Leave raw provenance readers,
+  // explicit identities and child documents unchanged, and never mutate cached records.
+  private historyRuns(
+    document: NotebookRunDocument,
+    projectId: string,
+    sessionId: string
+  ): NotebookRunRecord[] {
+    if (
+      document.notebookSessionRoot !==
+      getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
+    ) {
+      return document.runs
+    }
+    return document.runs.map((run) =>
+      run.agentFrameId &&
+      run.agentFrameId !== `root-frame-${sessionId}` &&
+      run.rootFrameId === undefined
+        ? { ...run, rootFrameId: run.agentFrameId }
+        : run
+    )
+  }
+
   async readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]> {
     const documents = await this.readSessionDocuments(projectId, sessionId)
     return documents
-      .flatMap((document) => document.runs)
+      .flatMap((document) => this.historyRuns(document, projectId, sessionId))
       .sort(
         (left, right) => left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
       )
@@ -1445,9 +1474,13 @@ class NotebookRunRepository {
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
     historySummary?: NotebookRunHistorySummary
+    agentSummaries: NotebookAgentSummary[]
     historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
   }> {
-    const documents = await this.readSessionDocuments(projectId, sessionId)
+    const documents = (await this.readSessionDocuments(projectId, sessionId)).map((document) => ({
+      ...document,
+      runs: this.historyRuns(document, projectId, sessionId)
+    }))
     const runs: NotebookRunRecord[] = []
     const requestedRunIds = new Set(includeRunIds)
     const requestedRuns = new Map<string, NotebookRunRecord>()
@@ -1459,6 +1492,13 @@ class NotebookRunRepository {
           kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
         }
       : undefined
+    const matchesSummaryFrame = historySummary
+      ? createNotebookFrameRunFilter(
+          sessionId,
+          historySummary.agentFrameId,
+          documents.flatMap((document) => document.runs)
+        )
+      : undefined
     let latestSummaryDataRun: NotebookRunRecord | undefined
     let total = 0
     let eligibleTotal = 0
@@ -1469,7 +1509,7 @@ class NotebookRunRepository {
       for (const run of document.runs) {
         total += 1
         if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
-        if (historySummary && run.agentFrameId === historySummary.agentFrameId) {
+        if (historySummary && matchesSummaryFrame?.(run)) {
           historySummary.runCount += 1
           historySummary.kernelCounts[run.kernelKind] += 1
           if (
@@ -1516,6 +1556,10 @@ class NotebookRunRepository {
     return {
       runs: [...mergedRuns.values()].sort(compareRuns),
       total,
+      agentSummaries: summarizeNotebookHistory(
+        sessionId,
+        documents.flatMap((document) => document.runs)
+      ),
       latestRunEnvironments: Object.fromEntries(
         [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
       ),
