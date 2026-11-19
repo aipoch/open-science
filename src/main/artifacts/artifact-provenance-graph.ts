@@ -881,7 +881,7 @@ const sealArtifactProvenanceGraph = (
   }
   const priorOutputByPath = new Map<
     string,
-    { generation: FileGeneration; writerAttributionComplete: boolean }
+    { generation: FileGeneration; activityId: string; writerAttributionComplete: boolean }
   >()
   const candidateOutputGroups: ArtifactProvenanceGraphOutputGroup[] = []
 
@@ -932,19 +932,34 @@ const sealArtifactProvenanceGraph = (
       return priorGeneration ?? generation
     }
 
+    // For partial reads, a file present at start is only a candidate input if
+    // analysis also names the specific preceding producer and frozen generation.
+    const projectedReads = new Map(
+      (input.notebookDependencies?.fileDependenciesByRunId?.[candidate.activity.activityId] ?? [])
+        .filter((dependency) => dependency.generationId && dependency.checksum)
+        .map((dependency) => [dependency.generationId, dependency])
+    )
     const produced: FileGeneration[] = []
     for (const relation of candidate.decodedEvidence.relations) {
+      const key = pathKey(relation.relativePath)
+      const prior = priorOutputByPath.get(key)
+      const projected = prior && projectedReads.get(prior.generation.generationId)
+      const corroboratedRead =
+        candidate.decodedEvidence.fileReads === 'partial' &&
+        projected &&
+        projected.producerRunId === prior.activityId &&
+        projected.checksum === relation.generation?.checksum &&
+        prior.generation.checksum === projected.checksum &&
+        prior.generation.sizeBytes === relation.generation?.sizeBytes
       const usedGeneration =
         relation.relation === 'staged-input' ||
         (relation.relation === 'present-before' &&
-          candidate.decodedEvidence.fileReads === 'complete')
+          (candidate.decodedEvidence.fileReads === 'complete' || corroboratedRead))
           ? relation.generation
           : relation.relation === 'modified' || relation.relation === 'deleted'
             ? generations.get(relation.previousGenerationId ?? '')
             : undefined
       if (usedGeneration) {
-        const key = pathKey(relation.relativePath)
-        const prior = priorOutputByPath.get(key)
         const correlatedPrior =
           prior?.generation.checksum === usedGeneration.checksum &&
           prior.generation.sizeBytes === usedGeneration.sizeBytes
@@ -1028,6 +1043,7 @@ const sealArtifactProvenanceGraph = (
     for (const generation of produced) {
       priorOutputByPath.set(pathKey(generation.relativePath), {
         generation,
+        activityId: candidate.activity.activityId,
         writerAttributionComplete: candidate.decodedEvidence.writerAttribution === 'complete'
       })
     }

@@ -6,6 +6,8 @@ export type NotebookAnalysisRun = {
   kernelKind: 'python' | 'r' | 'repl' | 'bash'
   script: string
   status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
+  startedAt?: number
+  endedAt?: number
   kernelEpochId?: string
   kernelDispatched?: boolean
   replPersistentBindings?: true
