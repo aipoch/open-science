@@ -19,7 +19,7 @@ import { processBirthIdentity } from './process-birth-identity'
 import {
   inspectInstallationAvailability,
   captureInstallationHelperExit,
-  beginInstallationUpdate,
+  beginInstallationUpdateAsync,
   advanceInstallationUpdate,
   advanceInstallationUpdateAsync
 } from './update/installation-protection'
@@ -127,7 +127,8 @@ ${fixtureSource
   )
   .replace(
     'server.listen(',
-    `registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
+    `const installationLease=registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
+process.once('exit',()=>installationLease.release());
 const launchLogControl=await log.bindLaunchLogReader();
 server.listen(`
   )}
@@ -274,7 +275,7 @@ server.listen(`
         expect(await inspectInstallationProcessesAsync(installationRoot)).toEqual(
           expect.arrayContaining([replacement.pid, reader!.pid])
         )
-        const record = beginInstallationUpdate({
+        const record = await beginInstallationUpdateAsync({
           ...location,
           runtime: { pid: replacement.pid, generation: replacement.generation, configRoot },
           currentVersion: '1',

@@ -1,5 +1,4 @@
-import { processBirthIdentity } from '../process-birth-identity'
-import { isRuntimeProcessAlive } from '../runtime-stop-confirmation'
+import { processBirthIdentity } from './windows-update-handoff'
 import { setTimeout as delay } from 'node:timers/promises'
 import { systemBootIdentity } from '../system-boot-identity'
 import { windowsProcessIsAlive } from '../windows-process-query'
@@ -382,7 +381,12 @@ export function captureInstallationHelperExit(
     try {
       while (
         helpers.some(({ pid, birth }) => {
-          if (!isRuntimeProcessAlive(pid)) return false
+          // Keep this OS observation below desktop composition; no service-stop dependency.
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+          }
           const current = processBirthIdentity(pid)
           // Unreadable identity is not proof of exit. A reused PID is not our old helper.
           return !birth || !current || current === birth
