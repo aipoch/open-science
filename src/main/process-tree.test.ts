@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Hoisted spawn double: process-tree spawns `taskkill` (win32) or `ps` (posix); each test wires the
 // return value to a controllable EventEmitter so it can drive exit/close/error and ps output.
@@ -238,6 +238,13 @@ describe('terminateProcessTree (win32)', () => {
 })
 
 describe('terminateProcessTree (posix)', () => {
+  beforeEach(() => {
+    // Fake PIDs and process groups are absent unless the test models a live one.
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw esrch()
+    })
+  })
+
   it.each(['linux', 'darwin'] as const)(
     'preserves inherited environment when marking %s process ownership',
     (platform) => {
@@ -427,7 +434,7 @@ describe('terminateProcessTree (posix)', () => {
       .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
       .mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
       .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
-    const killSpy = vi.spyOn(process, 'kill')
+    const killSpy = vi.mocked(process.kill)
     const child = new FakeChild(1000)
     trackLinux(child, 100)
     await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
@@ -471,7 +478,7 @@ describe('terminateProcessTree (posix)', () => {
     readFileMock
       .mockResolvedValueOnce(linuxStat(1001, 1, 1001, 1001, 101))
       .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 200))
-    const killSpy = vi.spyOn(process, 'kill')
+    const killSpy = vi.mocked(process.kill)
     const child = new FakeChild(1000)
 
     readFileSyncMock.mockImplementationOnce(() => {
@@ -552,7 +559,7 @@ describe('terminateProcessTree (posix)', () => {
       .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
       .mockResolvedValueOnce(linuxStat(1001, 1000, 1001, 1001, 101))
       .mockResolvedValueOnce(linuxStat(1001, 1, 1001, 1001, 102))
-    const killSpy = vi.spyOn(process, 'kill')
+    const killSpy = vi.mocked(process.kill)
     const child = new FakeChild(1000)
 
     trackLinux(child, 100)

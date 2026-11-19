@@ -954,7 +954,7 @@ class AcpRuntimeCoordinator {
       const retrySkills =
         remainingSkillReloads > 0 &&
         !pinnedRuntime &&
-        !admissionCurrent &&
+        (!admissionCurrent || admissionCurrent()) &&
         resumeGeneration === this.initializationGeneration &&
         configurationGeneration === this.configurationGeneration &&
         skillsGeneration !== this.skillsReloadGeneration &&
@@ -983,7 +983,12 @@ class AcpRuntimeCoordinator {
             this.sessionResumeOperations.get(request.sessionId)?.invalidated
           )
             throw new Error('ACP session resume was superseded.')
-          return this.performSessionResume(request, undefined, undefined, remainingSkillReloads - 1)
+          return this.performSessionResume(
+            request,
+            undefined,
+            admissionCurrent,
+            remainingSkillReloads - 1
+          )
         }
       } else if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)

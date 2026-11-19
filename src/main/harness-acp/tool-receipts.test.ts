@@ -55,3 +55,18 @@ it('rejects unclaimed or mismatched completion and invalid metadata', async () =
   ).rejects.toThrow('identity mismatch')
   await expect(receipts.begin('session', { ...query, invocationId: '' })).rejects.toThrow()
 })
+
+it('keeps the first durable completion immutable across concurrent host instances', async () => {
+  const { root, receipts } = await fixture()
+  const other = new HarnessToolReceipts(root)
+  await receipts.begin('session', query)
+  const replacement = { content: [{ type: 'text' as const, text: 'cancelled' }] }
+  const outcomes = await Promise.allSettled([
+    receipts.complete('session', query, result),
+    other.complete('session', query, replacement)
+  ])
+  expect(outcomes[0].status).toBe('fulfilled')
+  expect(outcomes[1]).toMatchObject({ status: 'rejected', reason: expect.any(Error) })
+  await expect(other.complete('session', query, result)).resolves.toBeUndefined()
+  expect(await other.read('session', query)).toEqual({ status: 'completed', result })
+})

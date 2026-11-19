@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { LoadAllSessionsResult, PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  LoadAllSessionsResult,
+  PersistedChatSession,
+  SessionSummary
+} from '../../shared/session-persistence'
+import { broadcastToRenderers } from '../renderer-broadcast'
 import { composeSessionProjection } from './session-projection'
 
 vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers: vi.fn() }))
@@ -9,7 +14,8 @@ vi.mock('../compute/session-catalog-hydration', () => ({
   }: {
     sessionLoader: { loadAll(): Promise<LoadAllSessionsResult> }
   }) => ({
-    loadAll: () => sessionLoader.loadAll()
+    loadAll: () => sessionLoader.loadAll(),
+    recoverProjectDeletions: async () => ({ isComplete: true })
   })
 }))
 const recovery = vi.hoisted(() => ({ complete: true }))
@@ -25,6 +31,7 @@ vi.mock('../session-persistence/ipc', async (importOriginal) => ({
 }))
 afterEach(() => {
   recovery.complete = true
+  vi.clearAllMocks()
   vi.restoreAllMocks()
 })
 
@@ -160,5 +167,83 @@ describe('host network approval recovery', () => {
     const recovered = await f.loadAllSessions()
     expect(recovered.diagnostics?.isComplete).toBe(true)
     expect(recovered.sessions[0].runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('serves projection summaries while startup hydration is pending', async () => {
+    const summary = {
+      id: 'summary-session',
+      projectId: 'summary-project',
+      number: 1,
+      title: 'Summary session',
+      status: 'idle',
+      presentedStatus: 'idle',
+      pinned: false,
+      revision: 1,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      needsStartupRecovery: false
+    } satisfies SessionSummary
+    let resolveProjection!: (value: { sessions: SessionSummary[] }) => void
+    const projection = new Promise<{ sessions: SessionSummary[] }>((resolve) => {
+      resolveProjection = resolve
+    })
+    const newerSummary = { ...summary, title: 'New summary session', revision: 2 }
+    const replaceSessionMetadata = vi.fn()
+    const sessionRepository = {
+      ensureSessionProjection: vi
+        .fn()
+        .mockImplementationOnce(() => projection)
+        .mockImplementationOnce(async () => ({ sessions: [newerSummary] })),
+      listProjectionSummaries: vi.fn(async () => [summary]),
+      reconcilePendingSessionProjection: vi.fn(async () => undefined),
+      loadManifest: vi.fn(async () => ({ version: 1 })),
+      loadSession: vi.fn(async () => undefined)
+    }
+    const composed = composeSessionProjection({
+      settingsService: {
+        allowNotebookNetworkDomain: vi.fn(),
+        allowNotebookNetworkDestination: vi.fn()
+      },
+      sessionPersistenceCoordinator: {
+        recoveryCatalogGeneration: () => 7,
+        replaceSessionMetadata,
+        projectRuntimeSessionSummaries: async (sessions: SessionSummary[]) => sessions,
+        loadAll: vi.fn()
+      },
+      sessionRepository,
+      sessionEnabledComputeHostsOwnerRef: {},
+      projectDeletionCoordinator: {},
+      permissionGrantRegistry: {},
+      wslSetupSessions: {
+        reconcileBoundSessions: vi.fn(async () => undefined),
+        projectSessionSummaries: async (sessions: SessionSummary[]) => sessions
+      },
+      auxiliaryUsageRecorder: {},
+      archiveCoordinator: {}
+    } as unknown as Parameters<typeof composeSessionProjection>[0])
+
+    const pendingList = composed.sessionPersistenceBackend.list!()
+    await vi.waitFor(() => expect(sessionRepository.ensureSessionProjection).toHaveBeenCalledOnce())
+    await expect(pendingList).resolves.toMatchObject({
+      sessions: [summary],
+      diagnostics: { catalogHydrationPending: true }
+    })
+    expect(sessionRepository.listProjectionSummaries).toHaveBeenCalledOnce()
+    expect(replaceSessionMetadata).toHaveBeenCalledWith([summary], false, 7)
+
+    resolveProjection({ sessions: [summary] })
+    await vi.waitFor(() => {
+      expect(replaceSessionMetadata).toHaveBeenLastCalledWith([summary], true, 7)
+      expect(broadcastToRenderers).toHaveBeenCalledWith('sessions:catalog-changed', undefined)
+    })
+
+    await expect(composed.sessionPersistenceBackend.list!()).resolves.toMatchObject({
+      sessions: [newerSummary]
+    })
+    expect(sessionRepository.ensureSessionProjection).toHaveBeenCalledTimes(2)
+    expect(broadcastToRenderers).toHaveBeenCalledTimes(1)
   })
 })

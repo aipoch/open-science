@@ -1778,6 +1778,21 @@ it.each(['none', 'dialog', 'export'] as const)(
       status: 'idle',
       createdAt: 1,
       updatedAt: 2,
+      activities: [
+        {
+          id: 'incomplete-web',
+          kind: 'tool',
+          title: 'Web Fetch',
+          providerToolName: 'mcp__open_science_web__web_fetch',
+          appOwned: true,
+          rawInput: { url: 'https://example.org/' },
+          status: 'failed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
       messages: []
     })
     const remove = fsPromises.rm
@@ -1820,6 +1835,12 @@ it.each(['none', 'dialog', 'export'] as const)(
       desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
     ).resolves.toEqual({ saved: true, filePath })
     const snapshot = desktop.operations.snapshot!
+    expect(snapshot.result?.webOmissions).toContainEqual({
+      component: 'fetch_body',
+      reason: 'invalid',
+      count: 1
+    })
+    expect(snapshot.summary).toBeUndefined()
     expect(() => sessionPackageCommandContracts.operation.result.parse(snapshot)).not.toThrow()
     expect(() =>
       sessionPackageCommandContracts.operation.args.parse([

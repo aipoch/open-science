@@ -259,6 +259,55 @@ describe('SettingsWorkflows runtime effects', () => {
     expect(calls).toEqual(['read', 'upsert', 'reconnect', 'select', 'read', 'delete', 'reconnect'])
   })
 
+  it.each(['upsertProvider', 'saveValidatedProvider'] as const)(
+    '%s keeps the ACP connection on a catalog and name edit but reconnects after a credential or region change',
+    async (method) => {
+      const { store, capability } = fakeStore()
+      const provider = {
+        id: 'p',
+        type: 'official' as const,
+        vendorId: 'deepseek' as const,
+        name: 'DeepSeek',
+        models: ['old'],
+        supportsImageInput: false,
+        hasKey: true,
+        needsKey: false
+      }
+      const before = snapshot({ providers: [provider] })
+      store.getSettingsView.mockResolvedValue(before)
+      const reconnect = vi.fn()
+      const workflows = createSettingsWorkflows(
+        capability,
+        testEffects({ requestProviderReconnect: reconnect })
+      ).runtime
+      const save = async (region?: string, key?: string): Promise<void> => {
+        const after = snapshot({
+          providers: [{ ...provider, name: 'Renamed', region, models: ['new'] }]
+        })
+        store.upsertProvider.mockResolvedValue(after)
+        store.saveValidatedProvider.mockResolvedValue({
+          providerId: provider.id,
+          snapshot: after,
+          validation: { ok: true, category: 'ok' }
+        })
+        await workflows[method]({
+          id: provider.id,
+          type: 'official',
+          vendorId: provider.vendorId,
+          name: 'Renamed',
+          catalogDraftToken: 'preview',
+          region,
+          key
+        })
+      }
+      await save()
+      expect(reconnect).not.toHaveBeenCalled()
+      await save(undefined, 'new-key')
+      expect(reconnect).toHaveBeenCalledTimes(1)
+      await save('global')
+      expect(reconnect).toHaveBeenCalledTimes(2)
+    }
+  )
   it('preserves the committed validated save when requesting runtime reconnect fails', async () => {
     const { store, capability } = fakeStore()
     const committed = {

@@ -6,6 +6,7 @@ import {
   resolvePreparationNoticeBaseline
 } from '../../../../shared/session-persistence'
 import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
+import type { ClassifiedFailure } from '../../../../shared/failure/contract'
 
 // Match ACP authentication failures, including the application's session-resume wrapper.
 export const isAgentAuthenticationRequired = (message: string | null | undefined): boolean =>
@@ -13,30 +14,43 @@ export const isAgentAuthenticationRequired = (message: string | null | undefined
     message?.trim() ?? ''
   )
 
+// Reuse authentication recovery so providers needing no Agent login still expose credential failures.
+const authenticationFailure = (
+  message: string | null | undefined,
+  failure?: ClassifiedFailure
+): boolean =>
+  failure?.reason === 'configuration/auth-failed' || isAgentAuthenticationRequired(message)
+
 export const sessionAuthenticationFailure = (
   session: ChatSession | undefined
 ): { message: string; at: number; providerId?: string } | undefined => {
   if (!session || session.packageOrigin) return undefined
   const candidates = session.conversationGraph?.messages ?? session.messages
   if (
-    !isAgentAuthenticationRequired(session.error) &&
-    !isAgentAuthenticationRequired(session.promptPreparation?.previousState.error) &&
+    !authenticationFailure(session.error, session.failure) &&
+    !authenticationFailure(
+      session.promptPreparation?.previousState.error,
+      session.promptPreparation?.previousState.failure
+    ) &&
     !candidates.some(
       (message) =>
         message.turnOutcome?.kind === 'failed' &&
-        isAgentAuthenticationRequired(message.turnOutcome.error)
+        authenticationFailure(message.turnOutcome.error, message.turnOutcome.failure)
     )
   )
     return undefined
   const outcome = resolveCurrentTurnOutcomeItem(session)
   if (outcome) {
-    if (outcome.outcome.kind !== 'failed' || !isAgentAuthenticationRequired(outcome.outcome.error))
+    if (
+      outcome.outcome.kind !== 'failed' ||
+      !authenticationFailure(outcome.outcome.error, outcome.outcome.failure)
+    )
       return undefined
     const graph = session.conversationGraph
     const message = graph?.messages.find(({ id }) => id === outcome.promptMessageId)
     const segment = graph?.runtimeSegments.find(({ id }) => id === message?.runtimeSegmentId)
     return {
-      message: outcome.outcome.error!,
+      message: outcome.outcome.error ?? 'Authentication required',
       at: outcome.outcome.settledAt,
       providerId: segment?.providerId
     }
@@ -50,8 +64,11 @@ export const sessionAuthenticationFailure = (
     return undefined
   const baseline = preparing ? resolvePreparationNoticeBaseline(session) : undefined
   const legacy = baseline && !baseline.promptMessageId ? baseline.state : session
-  return legacy.status === 'error' && isAgentAuthenticationRequired(legacy.error)
-    ? { message: legacy.error!, at: session.updatedAt }
+  return legacy.status === 'error' && authenticationFailure(legacy.error, legacy.failure)
+    ? {
+        message: legacy.error ?? 'Authentication required',
+        at: session.updatedAt
+      }
     : undefined
 }
 

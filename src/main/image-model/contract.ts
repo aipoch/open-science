@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { ImageAdapterKind, ImageServiceModel } from '../../shared/image-model-settings'
 import { extname } from 'node:path'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import type { ImageErrorDetail, ImageModelErrorCode } from '../../shared/image-model-error'
@@ -6,6 +7,17 @@ import type { ImageTaskExecutionModel } from '../../shared/image-task'
 import type { ImageEditSnapshot } from '../../shared/image-edit-contract'
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { ImageOperation, ImageOptionValue } from '../../shared/image-model-presets'
+
+// Host-only execution snapshot; never include this in a renderer settings response.
+export type ResolvedImageModel = {
+  serviceId: string
+  serviceName?: string
+  providerId?: string
+  adapter: ImageAdapterKind
+  baseUrl: string
+  apiKey?: string
+  model: ImageServiceModel
+}
 
 export const MAX_IMAGE_BYTES = 64 * 1024 * 1024
 export const MAX_IMAGE_PIXELS = 20_000_000

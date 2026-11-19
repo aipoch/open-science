@@ -63,7 +63,7 @@ import type {
   ResolvedAgentBackend
 } from '../agent-framework/types'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
-import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-server'
+import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-contract'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -1247,6 +1247,9 @@ class AcpRuntime {
       this.connection === connection &&
       this.activeSessionFor(request.sessionId) === session
 
+    if (request.profile === 'ask') {
+      this.options.web?.cancelSession?.(request.sessionId)
+    }
     // Make the requested posture authoritative before the provider mode request can yield. A
     // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
     this.permissionContext.beginPermissionProfileTransition(
@@ -1305,6 +1308,12 @@ class AcpRuntime {
 
   // Revokes an app-owned session grant so the next matching tool call prompts again.
   async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot> {
+    if (
+      request.categoryKey === 'builtin:web_search' ||
+      request.categoryKey === 'builtin:web_fetch'
+    ) {
+      this.options.web?.cancelSession?.(request.sessionId)
+    }
     await this.permissionContext.revokeGrant(request.sessionId, request.categoryKey)
     this.emitState()
 
@@ -1313,6 +1322,7 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    for (const sessionId of this.activeSessionIds()) this.options.web?.cancelSession?.(sessionId)
     const epoch = this.connectionResources.epoch
     recordResourceSnapshot(this.resourceRuntimeId, this, 'teardown-started')
     this.planContinuations.clearRetries()
@@ -1809,6 +1819,7 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    this.options.web?.cancelSession?.(request.sessionId)
     // A timed-out cancellation may already be closing the shared connection. Wait before taking
     // any early permission/continuation path so every caller observes the same teardown boundary.
     const pendingCancellationTeardown = this.cancellationTeardown

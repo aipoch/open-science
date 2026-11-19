@@ -95,3 +95,20 @@ export const CollapsibleAuthors = ({ text }: { text: string }): React.JSX.Elemen
     collapsedClassName="line-clamp-5"
   />
 )
+
+export function CitationAbstract({
+  text,
+  className
+}: {
+  text: string | undefined
+  className: string
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  if (!text) return null
+  return (
+    <details className={cn('text-sm', className)}>
+      <summary className="cursor-pointer">{t('Abstract')}</summary>
+      <p className="mt-2 whitespace-pre-wrap">{text}</p>
+    </details>
+  )
+}

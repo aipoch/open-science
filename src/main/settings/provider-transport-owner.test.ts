@@ -1402,13 +1402,21 @@ describe('ProviderTransportOwner generations', () => {
 
   it('owns the native Codex provider projection, retargeting, and release', async () => {
     const bridge = makeOpenAiBridge(0)
+    const upstreamBase = 'https://api.openai.com/v1'
     const owner = new ProviderTransportOwner({
-      createProtocolForwardingBridge: () => bridge
+      createProtocolForwardingBridge: (targets) => {
+        expect(targets[0].endpoint).toBe(`${upstreamBase}/responses`)
+        return bridge
+      }
     })
     const activeTarget: ProviderRuntimeTarget = {
       ...makeTarget(),
       apiEndpoints: ['responses'],
-      provider: { ...makeTarget().provider, apiEndpoints: ['responses'] },
+      provider: {
+        ...makeTarget().provider,
+        apiEndpoints: ['responses'],
+        responsesBaseUrl: upstreamBase
+      },
       needsChatResponsesToChatCompletionsBridge: false
     }
     const initialTargetId = 'codex/provider-a/model-a'
@@ -1429,6 +1437,7 @@ describe('ProviderTransportOwner generations', () => {
     expect(generation.provider).toMatchObject({
       baseUrl: 'http://127.0.0.1:44000',
       chatCompletionsBaseUrl: 'http://127.0.0.1:44000/v1',
+      responsesBaseUrl: 'http://127.0.0.1:44000/v1',
       key: 'openai-token-0',
       model: 'model-a',
       apiEndpoints: ['responses']

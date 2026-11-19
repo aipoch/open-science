@@ -16,7 +16,7 @@ import {
   customProviderRequiresKey,
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
-import type { ResolvedImageModel } from '../settings/image-model-owner'
+import type { ResolvedImageModel } from './contract'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { encodeImageRequest, readImageResult, readImageUsage } from './adapter'
 import {

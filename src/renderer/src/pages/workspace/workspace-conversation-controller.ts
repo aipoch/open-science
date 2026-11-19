@@ -140,6 +140,7 @@ type WorkspaceConversationControllerOptions = {
 }
 
 type WorkspaceConversationController = {
+  runtimeInteractionInFlight: boolean
   optimisticMessage: ChatMessage | undefined
   planProjectionRecoveryError: boolean
   availability: {
@@ -890,6 +891,9 @@ const useWorkspaceConversationController = (
   const queueDraft = canQueueDraft(options)
 
   return {
+    runtimeInteractionInFlight: Boolean(
+      options.activeSession && options.promptInFlightSessionIds.includes(options.activeSession.id)
+    ),
     admitApplicationMessage: messageQueue.lifecycle.enqueueApplication,
     optimisticMessage: options.activeSession
       ? optimisticMessages[options.activeSession.id]

@@ -9,8 +9,7 @@ import {
   type PdfTextResult,
   type TargetedPdfTextResult
 } from './attachment-media'
-import { readPdfPageText } from './pdf-reading-order'
-import { createPdfOcrSession } from './pdf-ocr'
+import type { createPdfOcrSession } from './pdf-ocr'
 
 let activePdfTextExtractions = 0
 const pendingPdfTextExtractions: Array<() => void> = []
@@ -48,6 +47,7 @@ export const extractPdfText = async (
     throw new Error(`PDF source is ${size} bytes, exceeding the automatic extraction limit.`)
   }
   return withPdfTextExtractionSlot(async () => {
+    const { readPdfPageText } = await import('./pdf-reading-order')
     const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
     const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
     const fileData = source ? Buffer.from(await source.readBytes()) : await readFile(filePath)
@@ -64,7 +64,12 @@ export const extractPdfText = async (
     })
     const document = await loadingTask.promise
 
-    const ocr = options.ocr ? (options.createOcrSession ?? createPdfOcrSession)() : undefined
+    const createOcrSession = options.createOcrSession
+      ? options.createOcrSession
+      : options.ocr
+        ? (await import('./pdf-ocr')).createPdfOcrSession
+        : undefined
+    const ocr = options.ocr ? createOcrSession!() : undefined
     const coverage = {
       textPages: [] as number[],
       ocrPages: [] as number[],
@@ -222,6 +227,7 @@ export const extractPdfTextPages = async (
   }
   return withPdfTextExtractionSlot(async () => {
     signal?.throwIfAborted()
+    const { readPdfPageText } = await import('./pdf-reading-order')
     const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
     const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
     const fileData = await readFile(filePath, { signal })

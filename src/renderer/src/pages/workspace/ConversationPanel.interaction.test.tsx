@@ -1,3 +1,4 @@
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitationFailures
@@ -724,6 +725,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    runtimeInteractionInFlight: false,
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {
@@ -982,6 +984,37 @@ const dispatchDrag = (
     target.dispatchEvent(event)
   })
 }
+
+describe('ConversationPanel Web tool cancellation', () => {
+  const activeSession: ChatSession = {
+    id: 'web-session',
+    projectId: 'web-project',
+    title: 'Read web page',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'web-session',
+      messages: [],
+      frameworkId: 'open-science-agent',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  }
+  it('retains Stop after remount when the runtime still owns the turn', async () => {
+    const cancel = vi.fn(async () => undefined)
+    renderPanel({
+      view: { activeSession },
+      conversation: { runtimeInteractionInFlight: true, actions: { cancel } }
+    })
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!
+    expect(stop).not.toBeNull()
+    await act(async () => stop.click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+})
 
 describe('ConversationPanel header spacing', () => {
   it('opens Model settings for an unavailable Subagent configuration', () => {
@@ -4097,7 +4130,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model provider credentials need attention' : failure
       )
       renderPanel({
         view: {
@@ -4117,7 +4150,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model provider credentials need attention')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -9976,6 +10009,51 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.textContent).toContain('Resume preparation could not be saved.')
     dismiss()
     expect(slot()?.dataset.noticeCategory).toBe('session')
+  })
+
+  it('preserves provider interruption details while resuming the existing session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    const revise = vi.fn()
+    const failure = {
+      category: 'service' as const,
+      reason: 'service/response-interrupted' as const,
+      diagnostics: {
+        protocol: 'chat-completions' as const,
+        phase: 'stream',
+        requestId: 'cut-stream'
+      }
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle',
+          failure,
+          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume',
+                failure
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { resume, revise } }
+    })
+    expect(slot()?.textContent).toContain('The model response was interrupted')
+    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(action('retry')).toBeNull()
+    await act(async () => action('resume')?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it.each([false, true])(

@@ -14,8 +14,8 @@ const routeList = (endpoints: readonly ModelProtocol[], t: TFunction): string =>
   endpoints.map((endpoint) => ENDPOINT_PATHS[endpoint]).join(t(' or '))
 
 export const modelUnavailableReason = (
-  option: Pick<ConfiguredModelCatalogEntry, 'label' | 'model' | 'unavailableReason'>,
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
+  option: Pick<ConfiguredModelCatalogEntry, 'label' | 'metadata' | 'unavailableReason'>,
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints'>,
   frameworkName: string,
   frameworkEndpoints: readonly ModelProtocol[],
   t: TFunction
@@ -29,7 +29,7 @@ export const modelUnavailableReason = (
 
   return t('{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.', {
     model: option.label,
-    modelRoutes: routeList(configuredModelApiEndpoints(provider, option.model), t),
+    modelRoutes: routeList(configuredModelApiEndpoints(provider, option.metadata), t),
     framework: frameworkName,
     frameworkRoutes: routeList(frameworkEndpoints, t)
   })

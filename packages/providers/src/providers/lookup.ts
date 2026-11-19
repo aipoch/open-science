@@ -2,6 +2,7 @@ import { OFFICIAL_VENDORS } from './data'
 import type { OfficialVendorId, OfficialVendor } from './types'
 import type { ModelProtocol } from '../protocols/types'
 import type { ReasoningCapability } from '../protocols/types'
+import type { CatalogRequestOptions } from '../protocols/catalog'
 
 const VENDORS_BY_ID = new Map<OfficialVendorId, OfficialVendor>(
   OFFICIAL_VENDORS.map((vendor) => [vendor.id, vendor])
@@ -207,3 +208,20 @@ export const getVendorModelContextWindow = (
   modelId: string | undefined
 ): number | undefined =>
   VENDORS_BY_ID.get(id)?.models.find((model) => model.id === modelId)?.contextWindow
+
+/** Resolve the selected region explicitly; unsupported regions must not borrow another endpoint. */
+export const resolveVendorModelCatalog = (
+  id: OfficialVendorId,
+  regionId?: string
+): { url: string; options: CatalogRequestOptions } | undefined => {
+  const vendor = getOfficialVendor(id)
+  if (!vendor) return undefined
+  const region = regionId
+    ? vendor.regions?.find((entry) => entry.id === regionId)
+    : vendor.regions?.[0]
+  if (regionId && vendor.regions && !region) return undefined
+  if (region?.modelsList === false) return undefined
+  const options = region?.modelsList ?? vendor.modelsList
+  const url = region?.modelsListUrl ?? vendor.modelsListUrl
+  return options && url ? { url, options } : undefined
+}

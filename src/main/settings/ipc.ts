@@ -1,6 +1,5 @@
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -568,6 +567,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle('settings:test-image-model', (_event, request) => service.imageModels.test(request))
   ipcMainHandle('settings:get-image-models', () => service.imageModels.snapshot())
   ipcMainHandle('settings:update-image-models', (_event, request) =>
     service.imageModels.mutate(request)
@@ -611,11 +611,6 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
-  )
-  ipcMainHandle(
-    'settings:set-semantic-scholar-credential',
-    (_event, request: SetSemanticScholarCredentialRequest) =>
-      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

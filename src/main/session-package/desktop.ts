@@ -808,7 +808,7 @@ export class SessionPackageDesktop {
           return await this.staged(async (directory) => {
             const archive = join(directory, 'session.science')
             let filePath: string | undefined = destinationPath
-            await this.options.withDataRootWrite(() =>
+            const exported = await this.options.withDataRootWrite(() =>
               this.acceptCleanup(() =>
                 this.options.service.exportTo(request, archive, {
                   ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
@@ -883,7 +883,10 @@ export class SessionPackageDesktop {
                 validateDestination: async () => signal.throwIfAborted()
               }
             )
-            this.operations.completeResult({ filePath })
+            this.operations.completeResult({
+              filePath,
+              ...(exported.webOmissions?.length ? { webOmissions: exported.webOmissions } : {})
+            })
             return { saved: true, filePath }
           }, request)
         } finally {

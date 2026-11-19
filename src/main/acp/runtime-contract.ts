@@ -36,7 +36,7 @@ import type {
   LiteratureLibraryScope,
   LiteratureLibrarySearchResult
 } from '../literature/library-mcp-server'
-import type { LiteratureReadDocumentRequest } from '../literature/mcp-server'
+import type { LiteratureReadDocumentRequest } from '../literature/mcp-contract'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type {
   NotebookExecutionIntent,
@@ -169,6 +169,10 @@ export type AcpRuntimeOptions = {
       routingId: string,
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
+  }>
+  web?: Readonly<{
+    handlerFor: (sessionId: string, projectId: string) => import('../web/mcp-server').WebMcpHandler
+    cancelSession?: (sessionId: string) => void
   }>
   literature?: Readonly<{
     annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools

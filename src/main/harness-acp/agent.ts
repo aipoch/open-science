@@ -15,9 +15,12 @@ import {
   type ModelUsage,
   type Json
 } from '@aipoch/agent-harness'
-import { createChatCompletionsModel } from '@aipoch/agent-harness/chat-completions'
+import {
+  createChatCompletionsModel,
+  ChatCompletionsError
+} from '@aipoch/agent-harness/chat-completions'
 import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/responses'
-import { createMessagesModel } from '@aipoch/agent-harness/messages'
+import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
@@ -224,6 +227,8 @@ export function createToolResultClearing(
 }
 
 type Entry = {
+  model: string
+  cancelWebTools(): void
   setScheduleTurn(ref: string | undefined): void
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
@@ -361,7 +366,19 @@ export function createHarnessAcpAgent(directory: string): {
         ...(owner ? { owner: { ...owner, sessionId: owner.sessionId ?? id } } : {})
       }
       if (resume) {
-        const previous = JSON.parse(await readFile(bindingFile, 'utf8'))
+        let bindingText: string
+        try {
+          bindingText = await readFile(bindingFile, 'utf8')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          // A local Fork has durable host history but deliberately no provider checkpoint.
+          // Only a wholly absent native Session permits host adoption and history replay;
+          // a partial/corrupt checkpoint remains authoritative evidence requiring recovery.
+          if (await store.load(id))
+            throw new Error('Session binding is missing for an existing checkpoint')
+          throw acp.RequestError.resourceNotFound()
+        }
+        const previous = JSON.parse(bindingText)
         if (previous.cwd !== binding.cwd || !(await store.load(id)))
           throw new Error('Session resume identity mismatch')
         if (previous.owner && JSON.stringify(previous.owner) !== JSON.stringify(binding.owner))
@@ -392,6 +409,7 @@ export function createHarnessAcpAgent(directory: string): {
             controller.abort()
           })
       }
+      const pendingWebTools = new Map<string, string>()
       const announced = new Set<string>(),
         completed = new Set<string>()
       const meter = createContextMeter()
@@ -447,6 +465,9 @@ export function createHarnessAcpAgent(directory: string): {
           notify({
             sessionUpdate: 'tool_call_update',
             toolCallId: event.invocationId,
+            ...(pendingWebTools.has(event.invocationId)
+              ? { _meta: { toolName: pendingWebTools.get(event.invocationId) } }
+              : {}),
             status: 'in_progress',
             content: event.content
               .filter((block) => block.type === 'text')
@@ -457,12 +478,19 @@ export function createHarnessAcpAgent(directory: string): {
             if (!announced.has(tool.invocationId)) {
               announced.add(tool.invocationId)
               const toolName = mcp!.toolNames.get(tool.call.name) ?? tool.call.name
+              if (/^mcp__open_science_web__web_(fetch|search)$/.test(toolName))
+                pendingWebTools.set(tool.invocationId, toolName)
               notify({
                 sessionUpdate: 'tool_call',
                 toolCallId: tool.invocationId,
                 title: toolName,
                 _meta: { toolName },
-                kind: 'other',
+                kind:
+                  toolName === 'mcp__open_science_web__web_fetch'
+                    ? 'fetch'
+                    : toolName === 'mcp__open_science_web__web_search'
+                      ? 'search'
+                      : 'other',
                 status: 'pending',
                 rawInput: tool.call.arguments
               })
@@ -471,7 +499,10 @@ export function createHarnessAcpAgent(directory: string): {
               notify({
                 sessionUpdate: 'tool_call_update',
                 toolCallId: tool.invocationId,
-                status: 'in_progress'
+                status: 'in_progress',
+                ...(pendingWebTools.has(tool.invocationId)
+                  ? { _meta: { toolName: pendingWebTools.get(tool.invocationId) } }
+                  : {})
               })
           }
           for (const message of event.checkpoint.messages) {
@@ -483,9 +514,12 @@ export function createHarnessAcpAgent(directory: string): {
             )
               continue
             completed.add(message.invocationId)
+            const webToolName = pendingWebTools.get(message.invocationId)
+            pendingWebTools.delete(message.invocationId)
             notify({
               sessionUpdate: 'tool_call_update',
               toolCallId: message.invocationId,
+              ...(webToolName ? { _meta: { toolName: webToolName } } : {}),
               status: message.isError ? 'failed' : 'completed',
               content: message.content
                 .filter((block) => block.type === 'text')
@@ -514,7 +548,26 @@ export function createHarnessAcpAgent(directory: string): {
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
-          const response = await fetch(url, { ...init, headers })
+          let response = await fetch(url, { ...init, headers })
+          if (
+            !response.ok &&
+            response.headers.get('x-open-science-provider-failure') === 'connection'
+          ) {
+            void response.body?.cancel().catch(() => undefined)
+            throw new Error('Model provider connection failed')
+          }
+          // The endpoint is restricted to host loopback; only here trust the bridge's original status.
+          const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
+          if (
+            !response.ok &&
+            Number.isInteger(upstreamStatus) &&
+            upstreamStatus >= 400 &&
+            upstreamStatus <= 599
+          )
+            response = new Response(response.body, {
+              status: upstreamStatus,
+              headers: response.headers
+            })
           if (!response.ok && (await isContextOverflowResponse(response, init?.signal))) {
             overflow = true
             meter.overflowed(target.contextWindow)
@@ -583,6 +636,7 @@ export function createHarnessAcpAgent(directory: string): {
       }
       signal.throwIfAborted()
       entries.set(id, {
+        model: target.model,
         session,
         setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
@@ -597,6 +651,18 @@ export function createHarnessAcpAgent(directory: string): {
         },
         close,
         reconcile: () => mcp!.reconcile(session!),
+        cancelWebTools: () => {
+          for (const [invocationId, toolName] of pendingWebTools) {
+            completed.add(invocationId)
+            notify({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: invocationId,
+              status: 'failed',
+              _meta: { toolName, 'open-science/web-cancelled': true }
+            })
+          }
+          pendingWebTools.clear()
+        },
         active: false,
         cancelled: false,
         flush
@@ -736,19 +802,35 @@ export function createHarnessAcpAgent(directory: string): {
                 await entry.flush()
                 if (!entry.cancelled) assertKnown(await entry.session.inspect())
                 if (
-                  error instanceof ResponsesError &&
-                  [
-                    'insufficient_quota',
-                    'rate_limit_exceeded',
-                    'model_not_found',
-                    'authentication_error'
-                  ].includes(error.code)
-                )
+                  error instanceof ChatCompletionsError ||
+                  error instanceof ResponsesError ||
+                  error instanceof MessagesError
+                ) {
+                  const protocol =
+                    error instanceof ChatCompletionsError
+                      ? 'chat-completions'
+                      : error instanceof ResponsesError
+                        ? 'responses'
+                        : 'messages'
+                  const diagnostics = error.diagnostics ?? {}
+                  const phase =
+                    'phase' in diagnostics && typeof diagnostics.phase === 'string'
+                      ? diagnostics.phase
+                      : error.code === 'http' || error.code === 'network'
+                        ? 'response'
+                        : 'provider'
                   throw new acp.RequestError(-32603, error.message, {
                     errorName: 'APIError',
-                    errorKind: error.code,
-                    ...(error.status === undefined ? {} : { status: error.status })
+                    errorKind: 'provider-error',
+                    model: entry.model,
+                    protocol,
+                    adapterCode: error.code,
+                    ...(error.status === undefined ? {} : { status: error.status }),
+                    ...(diagnostics.reason ? { code: diagnostics.reason } : {}),
+                    ...(diagnostics.requestId ? { requestId: diagnostics.requestId } : {}),
+                    phase
                   })
+                }
                 throw error
               })
             await entry.flush()
@@ -789,6 +871,7 @@ export function createHarnessAcpAgent(directory: string): {
       if (!entry?.active) return
       // ACP cancellation acknowledges prompt release; uncertain effects stay blocked in the journal.
       entry.cancelled = true
+      entry.cancelWebTools()
       entry.session.cancel()
     })
     .onRequest(acp.methods.agent.session.close, (context) =>

@@ -2,7 +2,8 @@ export function installationRootForEntry(entryPath: string): string
 export function protectInstallationStartup(
   entryPath: string,
   configRoot: string,
-  stateRoot?: string
+  stateRoot?: string,
+  helperOwner?: { pid: number; generation: string; configRoot: string; token: string }
 ): {
   readonly identity: Readonly<{
     pid: number

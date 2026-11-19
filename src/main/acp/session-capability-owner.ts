@@ -1,3 +1,4 @@
+import { WEB_MCP_SERVER_NAME, type WebMcpHandler } from '../web/mcp-server'
 import type { McpServer } from '@agentclientprotocol/sdk'
 
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
@@ -17,11 +18,9 @@ import {
 import { IMAGE_MCP_SERVER_NAME, createImageMcpServerConfig } from '../image-model/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
-import {
-  LITERATURE_LIBRARY_MCP_SERVER_NAME,
-  type LiteratureLibraryMcpHandler
-} from '../literature/library-mcp-server'
-import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-server'
+import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
+import { LITERATURE_LIBRARY_MCP_SERVER_NAME } from '../literature/library-mcp-contract'
+import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-contract'
 import {
   NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_RPC_TOOLS,
@@ -64,6 +63,7 @@ import { notebookExecutionIntent, type NotebookExecutionIntent } from '../notebo
 const log = createLogger('acp')
 
 const CURRENT_PRIMARY_CAPABILITIES = [
+  'web',
   'artifacts',
   'images',
   'notebook',
@@ -203,6 +203,7 @@ type BuildSessionCapabilitiesRequest = {
   nativeMcpEnabled: boolean
   bridgeMcpAliasesEnabled: boolean
   policy: SessionCapabilityPolicy
+  stableAppSessionId?: string
   routingIds: SessionCapabilityRoutingIds
   routingOwner: object
   provisionGeneration: number
@@ -308,6 +309,10 @@ type SessionCapabilityOwnerOptions = {
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
   }>
+  web?: Readonly<{
+    handlerFor: (sessionId: string, projectId: string) => WebMcpHandler
+    cancelSession?: (sessionId: string) => void
+  }>
   literature?: Readonly<{
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     handlerFor: (appSessionId: string, projectId: string) => LiteratureMcpHandler
@@ -377,8 +382,13 @@ export class AcpSessionCapabilityOwner {
   private readonly sideChatRoutingIds = new Map<string, string>()
   private readonly mcpServers = new Map<
     string,
-    { servers: readonly McpServer[]; restoreScheduleRoute?: () => void }
+    {
+      servers: readonly McpServer[]
+      restoreScheduleRoute?: () => void
+      restoreWebRoute?: () => void
+    }
   >()
+  private readonly webRouteRevisions = new Map<string, string>()
   private readonly literatureRoutingIds = new Map<string, string>()
   private readonly literatureEnabledSessionIds = new Set<string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
@@ -432,6 +442,7 @@ export class AcpSessionCapabilityOwner {
         nativeMcpEnabled: request.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: request.bridgeMcpAliasesEnabled,
         policy: request.policy,
+        stableAppSessionId: request.stableAppSessionId,
         routingIds,
         routingOwner,
         provisionGeneration,
@@ -471,14 +482,7 @@ export class AcpSessionCapabilityOwner {
           routingIds.sideChat,
           routingIds.literature
         ],
-        usedHttpTransport:
-          ownsStableIdentity &&
-          (request.policy.role === 'side-chat' ||
-            !request.framework.acceptsStdioMcp ||
-            Boolean(
-              (this.options.literature || this.options.library || this.options.schedules) &&
-              this.options.mcpHttpHost
-            )),
+        usedHttpTransport: ownsStableIdentity && this.usesHttpTransport(request),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
@@ -632,14 +636,7 @@ export class AcpSessionCapabilityOwner {
               routingIds.sideChat,
               routingIds.literature
             ],
-            usedHttpTransport:
-              ownsRoutingIds &&
-              (request.policy.role === 'side-chat' ||
-                !request.framework.acceptsStdioMcp ||
-                Boolean(
-                  (this.options.literature || this.options.library || this.options.schedules) &&
-                  this.options.mcpHttpHost
-                )),
+            usedHttpTransport: ownsRoutingIds && this.usesHttpTransport(request),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
@@ -674,6 +671,16 @@ export class AcpSessionCapabilityOwner {
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
           provisionalCleanupComplete = true
           throw new Error('ACP session capability provision was superseded.')
+        }
+        if (
+          built.descriptor.capabilities.includes('web') &&
+          this.options.web &&
+          this.options.mcpHttpHost
+        ) {
+          this.options.mcpHttpHost.rebindWeb(
+            routingIds.literature,
+            this.options.web.handlerFor(appSessionId, request.projectId)
+          )
         }
         if (
           built.descriptor.capabilities.includes('literature') &&
@@ -734,6 +741,7 @@ export class AcpSessionCapabilityOwner {
             'skill-import': routingIds.skillImport,
             plan: routingIds.plan,
             'host-message': routingIds.sideChat,
+            web: routingIds.literature,
             literature: routingIds.literature,
             library: routingIds.literature,
             schedule: routingIds.literature,
@@ -752,6 +760,9 @@ export class AcpSessionCapabilityOwner {
         }
         this.mcpServers.set(appSessionId, {
           servers: Object.freeze([...built.mcpServers]),
+          restoreWebRoute: built.descriptor.capabilities.includes('web')
+            ? this.options.mcpHttpHost?.captureWebRoute(routingIds.literature)
+            : undefined,
           restoreScheduleRoute: built.descriptor.capabilities.includes('schedule')
             ? this.options.mcpHttpHost?.captureScheduleRoute(routingIds.literature)
             : undefined
@@ -798,14 +809,7 @@ export class AcpSessionCapabilityOwner {
             routingIds.sideChat,
             routingIds.literature
           ],
-          usedHttpTransport:
-            ownsStableIdentity &&
-            (request.policy.role === 'side-chat' ||
-              !request.framework.acceptsStdioMcp ||
-              Boolean(
-                (this.options.literature || this.options.library || this.options.schedules) &&
-                this.options.mcpHttpHost
-              )),
+          usedHttpTransport: ownsStableIdentity && this.usesHttpTransport(request),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
@@ -826,7 +830,21 @@ export class AcpSessionCapabilityOwner {
     })
   }
 
+  private hasSharedHttpCapabilities(): boolean {
+    const { literature, library, schedules, web } = this.options
+    return Boolean(literature || library || schedules || web)
+  }
+
+  private usesHttpTransport(request: ProvisionSessionCapabilitiesRequest): boolean {
+    return (
+      request.policy.role === 'side-chat' ||
+      !request.framework.acceptsStdioMcp ||
+      (this.hasSharedHttpCapabilities() && Boolean(this.options.mcpHttpHost))
+    )
+  }
+
   private createRoutingIds(stableAppSessionId?: string): SessionCapabilityRoutingIds {
+    const usesSharedRoute = this.hasSharedHttpCapabilities()
     if (stableAppSessionId) {
       return Object.freeze({
         artifact: this.options.artifacts ? stableAppSessionId : '',
@@ -834,10 +852,7 @@ export class AcpSessionCapabilityOwner {
         skillImport: this.options.skillImport ? stableAppSessionId : '',
         plan: this.options.plan ? stableAppSessionId : '',
         sideChat: this.options.sideChat ? stableAppSessionId : '',
-        literature:
-          this.options.literature || this.options.library || this.options.schedules
-            ? stableAppSessionId
-            : ''
+        literature: usesSharedRoute ? stableAppSessionId : ''
       })
     }
 
@@ -847,8 +862,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
     if (this.options.sideChat) this.sideChatSessionSequence += 1
-    if (this.options.literature || this.options.library || this.options.schedules)
-      this.literatureSessionSequence += 1
+    if (usesSharedRoute) this.literatureSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -864,10 +878,9 @@ export class AcpSessionCapabilityOwner {
       sideChat: this.options.sideChat
         ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
         : '',
-      literature:
-        this.options.literature || this.options.library || this.options.schedules
-          ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
-          : ''
+      literature: usesSharedRoute
+        ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
+        : ''
     })
   }
 
@@ -904,16 +917,33 @@ export class AcpSessionCapabilityOwner {
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
     const hostMessageAllowed = policyAllowsSessionCapability(request.policy, 'host-message')
     const memoryToolsEnabled = this.options.notebook?.memoryTools ?? true
-    const literatureAllowed =
-      policyAllowsSessionCapability(request.policy, 'literature') &&
-      Boolean(this.options.literature) &&
+    const webAllowed =
+      request.framework.id === 'open-science-agent' &&
+      policyAllowsSessionCapability(request.policy, 'web') &&
+      Boolean(this.options.web) &&
+      Boolean(this.options.mcpHttpHost)
+    const literaturePolicyAllows = policyAllowsSessionCapability(request.policy, 'literature')
+    const literature = this.options.literature
+    const literatureEnabledBySession = this.literatureEnabledSessionIds.has(
+      request.routingIds.literature
+    )
+    const stableAppSessionId = request.stableAppSessionId
+    const canReadPersistedLiterature =
+      !request.literatureEnabled &&
+      !literatureEnabledBySession &&
+      literaturePolicyAllows &&
       Boolean(this.options.mcpHttpHost) &&
-      (request.literatureEnabled ||
-        this.literatureEnabledSessionIds.has(request.routingIds.literature) ||
-        (await this.options.literature?.isEnabled(
-          request.routingIds.literature,
-          request.projectId
-        )))
+      Boolean(literature) &&
+      Boolean(stableAppSessionId)
+    const persistedLiteratureEnabled =
+      canReadPersistedLiterature && stableAppSessionId && literature
+        ? await literature.isEnabled(stableAppSessionId, request.projectId)
+        : false
+    const literatureAllowed =
+      literaturePolicyAllows &&
+      Boolean(literature) &&
+      Boolean(this.options.mcpHttpHost) &&
+      (request.literatureEnabled || literatureEnabledBySession || persistedLiteratureEnabled)
     const libraryAllowed =
       policyAllowsSessionCapability(request.policy, 'literature-library') &&
       Boolean(this.options.library) &&
@@ -961,6 +991,23 @@ export class AcpSessionCapabilityOwner {
               shellRuntime
             })
           : []
+    if (
+      webAllowed &&
+      this.options.web &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const route = request.routingIds.literature
+      host.registerWeb(route, this.options.web.handlerFor(route, request.projectId))
+      servers.push({
+        type: 'http',
+        name: WEB_MCP_SERVER_NAME,
+        url: host.urlFor('web', route),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      })
+    }
     if (
       literatureAllowed &&
       this.options.literature &&
@@ -1054,6 +1101,7 @@ export class AcpSessionCapabilityOwner {
       .filter((name): name is string => typeof name === 'string')
     const canonicalMcpServerNames = modelFacingMcpServerNames.map(canonicalAppMcpServerName)
     const capabilities: SessionCapabilityName[] = []
+    if (canonicalMcpServerNames.includes(WEB_MCP_SERVER_NAME)) capabilities.push('web')
     if (canonicalMcpServerNames.includes('open-science-schedule')) capabilities.push('schedule')
     if (canonicalMcpServerNames.includes(ARTIFACT_MCP_SERVER_NAME)) capabilities.push('artifacts')
     if (canonicalMcpServerNames.includes(IMAGE_MCP_SERVER_NAME)) capabilities.push('images')
@@ -1226,6 +1274,12 @@ export class AcpSessionCapabilityOwner {
     if (routingIds.literature) {
       this.literatureRoutingIds.set(appSessionId, routingIds.literature)
     }
+    const webRevision = descriptor.capabilities.includes('web')
+      ? this.options.mcpHttpHost?.webRouteRevision(routingIds.literature)
+      : undefined
+    if (descriptor.capabilities.includes('web') && webRevision)
+      this.webRouteRevisions.set(appSessionId, webRevision)
+    else this.webRouteRevisions.delete(appSessionId)
     this.descriptors.set(appSessionId, descriptor)
     if (request.shellRuntime) this.shellRuntimeBindings.set(appSessionId, request.shellRuntime)
     this.committedSessionIds.add(appSessionId)
@@ -1244,6 +1298,11 @@ export class AcpSessionCapabilityOwner {
     if (!routingId || !descriptor || !this.options.mcpHttpHost) return
     try {
       this.mcpServers.get(appSessionId)?.restoreScheduleRoute?.()
+      this.mcpServers.get(appSessionId)?.restoreWebRoute?.()
+      if (descriptor.capabilities.includes('web')) {
+        const revision = this.options.mcpHttpHost.webRouteRevision(routingId)
+        if (revision) this.webRouteRevisions.set(appSessionId, revision)
+      }
       if (descriptor.capabilities.includes('literature') && this.options.literature) {
         this.options.mcpHttpHost.registerLiterature(
           routingId,
@@ -1323,6 +1382,7 @@ export class AcpSessionCapabilityOwner {
   }
 
   revokeSession(appSessionId: string): void {
+    this.options.web?.cancelSession?.(appSessionId)
     if (!this.committedSessionIds.has(appSessionId)) return
 
     this.options.unregisterBridgeMcpSession?.(appSessionId)
@@ -1365,6 +1425,7 @@ export class AcpSessionCapabilityOwner {
     this.mcpServers.delete(appSessionId)
     this.literatureRoutingIds.delete(appSessionId)
     this.literatureEnabledSessionIds.delete(appSessionId)
+    this.webRouteRevisions.delete(appSessionId)
     this.descriptors.delete(appSessionId)
     this.shellRuntimeBindings.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
@@ -1424,6 +1485,7 @@ export class AcpSessionCapabilityOwner {
     this.skillImportRoutingIds.clear()
     this.planRoutingIds.clear()
     this.sideChatRoutingIds.clear()
+    this.webRouteRevisions.clear()
     this.literatureRoutingIds.clear()
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
@@ -1504,6 +1566,21 @@ export class AcpSessionCapabilityOwner {
       mcpServerNames: descriptor.canonicalMcpServerNames,
       allowedToolIdentities: allowed
     }
+  }
+
+  webToolOperationFor(appSessionId: string, identity: string): 'search' | 'fetch' | undefined {
+    const descriptor = this.descriptors.get(appSessionId)
+    const route = this.literatureRoutingIds.get(appSessionId)
+    if (
+      !descriptor?.capabilities.includes('web') ||
+      !route ||
+      !this.webRouteRevisions.has(appSessionId) ||
+      this.webRouteRevisions.get(appSessionId) !== this.options.mcpHttpHost?.webRouteRevision(route)
+    )
+      return undefined
+    if (identity === `${WEB_MCP_SERVER_NAME}/web_fetch`) return 'fetch'
+    if (identity === `${WEB_MCP_SERVER_NAME}/web_search`) return 'search'
+    return undefined
   }
 
   shellRuntimeBindingFor(appSessionId: string): ShellRuntimeBinding | undefined {

@@ -586,7 +586,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: undefined,
-      failure: { category: 'service' }
+      failure: { category: 'configuration' }
     },
     {
       name: 'Claude Code API connection refused with an unknown error kind',

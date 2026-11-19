@@ -6,7 +6,6 @@ import type {
   AddSkillSourceRequest,
   RemoveSkillSourceRequest
 } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import { SkillReleaseInstallConflict as MarketplaceInstallConflict } from '@aipoch/skills'
 import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -660,6 +659,7 @@ class SettingsService {
     })
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
+      this.providers,
       options.onProviderHealthChanged
     )
     this.harnessSessions = new HarnessSessionOwner(
@@ -1121,7 +1121,7 @@ class SettingsService {
     return this.scenarioModels.vision.admit()
   }
 
-  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve'> {
+  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve' | 'test'> {
     return this.scenarioModels.image
   }
 
@@ -1984,12 +1984,6 @@ class SettingsService {
   // Sets or clears the shared contact email and NCBI API key (encrypted at rest), returning state.
   async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
     return this.connectors.setNcbiCredentials(request)
-  }
-
-  async setSemanticScholarCredential(
-    request: SetSemanticScholarCredentialRequest
-  ): Promise<ConnectorsSnapshot> {
-    return this.connectors.setSemanticScholarCredential(request)
   }
 
   async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {

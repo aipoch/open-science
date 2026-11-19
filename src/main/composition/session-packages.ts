@@ -1,4 +1,5 @@
 import type { ImageTask, ImageTaskScope } from '../../shared/image-task'
+import { resolveReviewedWebPolicy } from '../session-package/web-evidence'
 import { createLiteraturePackageSource } from '../literature/package-source'
 import { desktopInteraction } from '../desktop-interaction'
 import { join } from 'node:path'
@@ -36,6 +37,9 @@ import { runDataRootStartupRecovery } from '../storage/migration-state'
 import { normalizeLegacyDataPaths } from '../storage/normalize-legacy-paths'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import { getWebSnapshotStore } from '../web/snapshot-store'
+import { WebEvidenceLifecycle, webEvidenceScope } from '../web/evidence-lifecycle'
+import { getWebInvocationStore } from '../web/invocation-store'
 
 type SessionExportReservation = (
   request: SessionPackageRequest,
@@ -78,7 +82,24 @@ export async function composeSessionPackages({
   sessionPackageService: import('../session-package/service').SessionPackageService
   reserveSessionExport: SessionExportReservation
   previewStateRepository: ReturnType<typeof createDefaultPreviewStateRepository>
+  webEvidenceLifecycle: WebEvidenceLifecycle
 }> {
+  const webSnapshotStore = getWebSnapshotStore(join(resolveDataRoot(), 'web-evidence'))
+  const webEvidenceLifecycle = new WebEvidenceLifecycle(
+    webSnapshotStore,
+    async (projectId, sessionId) => {
+      const loaded = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only',
+        preserveRuntimeState: true
+      })
+      if (loaded.status === 'found') return loaded.session
+      if (loaded.status === 'missing') return undefined
+      throw new Error('Web evidence Session authority is unreadable.')
+    },
+    (binding) =>
+      getWebInvocationStore(join(resolveDataRoot(), 'web-invocations')).deleteSession(binding),
+    () => getWebInvocationStore(join(resolveDataRoot(), 'web-invocations')).ownedSessions()
+  )
   const projectRepository = createDefaultProjectRepository()
   const sessionPackageDesktopLifecycle = {
     close: async (): Promise<void> => undefined,
@@ -155,6 +176,18 @@ export async function composeSessionPackages({
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
       readImageTasks,
+      webEvidence: {
+        resolvePolicy: resolveReviewedWebPolicy,
+        loadSnapshot: async (session, snapshotId, activity) => {
+          const branchId = activity.messageBranchId
+          if (session.conversationGraph && !branchId) return undefined
+          if (branchId) await webEvidenceLifecycle.ensureBranchOwnership(session, branchId)
+          return webSnapshotStore.readCommitted(
+            webEvidenceScope(session.projectId, session.id, branchId),
+            snapshotId
+          )
+        }
+      },
       literatureSource: createLiteraturePackageSource(() =>
         getProjectDbClient(resolveConfigRoot())
       ),
@@ -165,8 +198,11 @@ export async function composeSessionPackages({
         return owner ? owner.runSessionMutation(projectId, sessionId, work) : work()
       },
       onSessionPublished: async (publication) => {
+        await webEvidenceLifecycle.confirmPublication(publication.session)
         await packagePublicationOwner.current?.adoptPublishedSession(publication)
       },
+      onForkPrepared: (source, child) => webEvidenceLifecycle.prepareFork(source, child),
+      onForkAborted: (child) => webEvidenceLifecycle.abortFork(child),
       inspectPackage: createPackageInspector(createInspectionWorker),
       configRoot: resolveConfigRoot(),
       storageRoot: resolveDataRoot(),
@@ -191,6 +227,13 @@ export async function composeSessionPackages({
   await runDataRootStartupRecovery(() =>
     sessionPackageService.recover({ collectDeletedPackages: beforePackageHydration })
   )
+  await runDataRootStartupRecovery(() => webEvidenceLifecycle.recover(), {
+    reportFailure: () =>
+      storageLog.warn('Web evidence startup recovery remains incomplete', {
+        operation: 'web-evidence-recovery',
+        outcome: 'retained'
+      })
+  })
   // Reconnecting a missing data root can replay this callback after runtimes exist. Import
   // recovery still runs behind its write gate, but package collection waits for the next launch.
   beforePackageHydration = false
@@ -232,7 +275,8 @@ export async function composeSessionPackages({
     packagePublicationOwner,
     sessionPackageService,
     reserveSessionExport,
-    previewStateRepository
+    previewStateRepository,
+    webEvidenceLifecycle
   }
 }
 

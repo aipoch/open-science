@@ -61,7 +61,8 @@
     "src/shared/use-cases.ts",
     "src/shared/use-cases.test.ts",
     "src/shared/session-history.ts",
-    "src/shared/session-persistence/metadata-commands.test.ts"
+    "src/shared/session-persistence/metadata-commands.test.ts",
+    "src/shared/session-package-web.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -187,7 +188,8 @@
     "src/shared/history-preamble.ts",
     "src/shared/sandbox-network-approval.ts",
     "src/shared/use-cases.ts",
-    "src/shared/session-history.ts"
+    "src/shared/session-history.ts",
+    "src/shared/session-package-web.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {

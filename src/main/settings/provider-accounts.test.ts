@@ -1,3 +1,4 @@
+import type { CatalogSnapshot } from '@aipoch/providers'
 import * as codeBuddyAuth from './codebuddy-auth'
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
@@ -786,6 +787,24 @@ describe('ProviderAccountsModule', () => {
     expect(result.message).not.toContain('synthetic-private')
     expect(result.message).toContain('[redacted]')
     expect(result.message!.length).toBeLessThanOrEqual(301)
+  })
+
+  it('requires a new key when an edit targets another official vendor', async () => {
+    await module.upsertProvider({
+      id: 'account',
+      type: 'official',
+      vendorId: 'sensenova',
+      region: 'global',
+      key: 'stored-secret'
+    })
+    const before = await repository.getSettings()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      module.validateProvider({ edit: { id: 'account', type: 'official', vendorId: 'deepseek' } })
+    ).rejects.toThrow('API key is required')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('preserves the active official model selection and saved key during a validated edit', async () => {
@@ -2204,11 +2223,32 @@ describe('ProviderAccountsModule', () => {
     expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    { key: 'é'.repeat(8193) },
+    { name: 'n'.repeat(129) },
+    { catalogDraftToken: 't'.repeat(37) },
+    { region: 'r'.repeat(129) }
+  ])('rejects oversized refresh inputs before discovery', async (input) => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    try {
+      expect(
+        await module.refreshProviderModels({
+          draft: { type: 'official', vendorId: 'opencode', ...input }
+        })
+      ).toEqual({ ok: false, category: 'unknown', code: 'resource-limit' })
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns bounded failures for missing model catalogs', async () => {
     await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
       {
         ok: false,
         category: 'unknown',
+        code: 'stale',
         message: 'Provider not found.'
       }
     )
@@ -2225,7 +2265,7 @@ describe('ProviderAccountsModule', () => {
     await expect(module.refreshProviderModels({ providerId })).resolves.toEqual({
       ok: false,
       category: 'unknown',
-      message: 'This provider has no model-list endpoint.'
+      code: 'unsupported'
     })
   })
 
@@ -2441,6 +2481,222 @@ describe('ProviderAccountsModule', () => {
     ).toBe('https://token.sensenova.ai/v1')
   })
 
+  it.each(['account', 'editor'] as const)(
+    'discards a pending %s probe when only the Responses URL changes',
+    async (source) => {
+      await repository.setAgentFramework('open-science-agent')
+      const catalog = (path: string): CatalogSnapshot => ({
+        fetchedAt: 1,
+        models: [{ id: 'model-a', routes: { responses: 'https://opencode.ai/' + path } }]
+      })
+      const account = {
+        id: 'zen',
+        type: 'official' as const,
+        name: 'Zen',
+        vendorId: 'opencode' as const,
+        keyRef: 'plain:' + Buffer.from('fixture').toString('base64'),
+        modelCatalog: catalog('first')
+      }
+      await repository.upsertProvider(account)
+      const started = deferred<void>()
+      const response = deferred<Response>()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => {
+          started.resolve()
+          return response.promise
+        })
+      )
+      const probe = module.validateProvider(
+        source === 'account'
+          ? { providerId: account.id, model: 'model-a' }
+          : {
+              edit: {
+                id: account.id,
+                type: account.type,
+                vendorId: account.vendorId,
+                name: 'Edited'
+              }
+            }
+      )
+      await started.promise
+      await repository.updateProviderModelCatalogIfTargetMatches(account, ['model-a'], {
+        modelCatalog: catalog('second')
+      })
+      response.resolve(
+        source === 'account'
+          ? new Response(null, { status: 401 })
+          : Response.json({
+              object: 'response',
+              id: 'test',
+              status: 'completed',
+              output: [
+                {
+                  type: 'message',
+                  role: 'assistant',
+                  content: [{ type: 'output_text', text: 'OK' }]
+                }
+              ]
+            })
+      )
+      expect(await probe).toMatchObject({ ok: source === 'editor', applied: false })
+      expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+    }
+  )
+
+  it('keeps the complete saved catalog when a cursor page lacks its end marker', async () => {
+    await module.upsertProvider({
+      id: 'anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      key: 'fixture'
+    })
+    const request = { providerId: 'anthropic' }
+    const http = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'previous' }], has_more: false }))
+      .mockResolvedValueOnce(
+        Response.json({ data: [{ id: 'first' }], has_more: true, last_id: 'first' })
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'second' }] }))
+    vi.stubGlobal('fetch', http)
+    expect((await module.refreshProviderModels(request)).ok).toBe(true)
+    const before = (await repository.getSettings()).providers[0]
+    expect(await module.refreshProviderModels(request)).toMatchObject({
+      ok: false,
+      code: 'invalid-response'
+    })
+    expect(http.mock.calls[2][0]).toContain('after_id=first')
+    const saved = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(saved.modelCatalog).toEqual(before.modelCatalog)
+    expect(saved.fetchedModels).toEqual(['previous'])
+    expect(saved.modelCatalogStatus?.code).toBe('invalid-response')
+  })
+
+  it.each(['save', 'validated save'] as const)(
+    'keeps the completed refresh when an older preview reaches %s',
+    async (operation) => {
+      const account = {
+        id: 'p',
+        type: 'official' as const,
+        vendorId: 'deepseek' as const,
+        name: 'DeepSeek'
+      }
+      // Re-entering the same legacy credential produces a new encrypted reference for the same target.
+      await repository.upsertProvider({
+        ...account,
+        keyRef: 'plain:' + Buffer.from('fixture').toString('base64')
+      })
+      const edit = {
+        ...account,
+        name: 'Renamed',
+        key: operation === 'save' ? 'fixture' : undefined,
+        expectedConfigRevision: 0,
+        requireExisting: true
+      }
+      const previewModels = Response.json({ data: [{ id: 'deepseek-v4-pro' }] })
+      const savedModels = Response.json({ data: [{ id: 'deepseek-flash' }] })
+      const validating = deferred<void>()
+      const validated = deferred<Response>()
+      const http = vi
+        .fn(async (url: string) => {
+          if (url.endsWith('/models')) return savedModels
+          validating.resolve()
+          return validated.promise
+        })
+        .mockResolvedValueOnce(previewModels)
+      vi.stubGlobal('fetch', http)
+      const preview = await module.refreshProviderModels({ providerId: account.id, draft: edit })
+      expect(preview.draftToken).toBeTruthy()
+      const request = { ...edit, catalogDraftToken: preview.draftToken }
+      const saving =
+        operation === 'validated save' ? module.saveValidatedProvider(request) : undefined
+      if (saving) await validating.promise
+      const latest = await module.refreshProviderModels({ providerId: account.id })
+      expect(latest.models).toEqual(['deepseek-flash'])
+      const refreshed = (await repository.getSettings()).providers[0]
+      if (saving) {
+        validated.resolve(
+          Response.json({
+            id: 'ok',
+            choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+            content: [{ type: 'text', text: 'OK' }],
+            role: 'assistant',
+            type: 'message',
+            usage: { input_tokens: 1, output_tokens: 1 }
+          })
+        )
+        expect(await saving).toMatchObject({
+          providerId: account.id,
+          validation: { ok: true, applied: false }
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(
+          refreshed.lastValidatedAt
+        )
+      } else {
+        await module.upsertProvider(request)
+      }
+      expect((await new SettingsRepository(dir).getSettings()).providers[0]).toMatchObject({
+        name: edit.name,
+        fetchedModels: latest.models,
+        modelCatalog: refreshed.modelCatalog,
+        modelCatalogStatus: refreshed.modelCatalogStatus
+      })
+    }
+  )
+
+  it('persists an ongoing refresh even when a concurrent draft preview is abandoned', async () => {
+    const account = { id: 'p', type: 'official' as const, vendorId: 'deepseek' as const }
+    await module.upsertProvider({ ...account, key: 'fixture' })
+    const started = deferred<void>(),
+      response = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementationOnce(() => {
+          started.resolve()
+          return response.promise
+        })
+        .mockResolvedValueOnce(Response.json({ data: [{ id: 'preview' }] }))
+    )
+    const saving = module.refreshProviderModels({ providerId: account.id })
+    await started.promise
+    const preview = await module.refreshProviderModels({
+      providerId: account.id,
+      draft: { ...account, name: 'Renamed' }
+    })
+    expect(preview.draftToken).toBeTruthy()
+    response.resolve(Response.json({ data: [{ id: 'saved' }] }))
+    await expect(saving).resolves.toMatchObject({ ok: true, models: ['saved'] })
+    expect((await new SettingsRepository(dir).getSettings()).providers[0].fetchedModels).toEqual([
+      'saved'
+    ])
+  })
+
+  it.each([
+    [401, 'authentication'],
+    [429, 'rate-limit'],
+    [200, 'invalid-response']
+  ] as const)(
+    'retains the saved xAI catalog and records %s discovery failures',
+    async (status, code) => {
+      await module.upsertProvider({ type: 'xai-subscription' })
+      const account = (await repository.getSettings()).providers[0]
+      await repository.updateProviderModelCatalogIfTargetMatches(account, ['grok-saved'])
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json({ data: [{ id: 'image-model' }] }, { status }))
+      )
+      const result = await module.refreshProviderModels({ providerId: account.id })
+      expect(result).toMatchObject({ ok: false, code, catalogStatus: { ok: false, code, status } })
+      expect((await new SettingsRepository(dir).getSettings()).providers[0]).toMatchObject({
+        fetchedModels: ['grok-saved'],
+        modelCatalogStatus: { ok: false, code, status }
+      })
+    }
+  )
+
   it('discards a model catalog fetched for a provider target changed during refresh', async () => {
     await module.upsertProvider({
       type: 'official',
@@ -2487,7 +2743,7 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers[0].fetchedModels).toBeUndefined()
   })
 
-  it('preserves unrelated provider edits while applying a pending model catalog refresh', async () => {
+  it('preserves provider edits and rejects a refresh started before the saved revision changed', async () => {
     await module.upsertProvider({
       type: 'official',
       name: 'DeepSeek',
@@ -2516,21 +2772,23 @@ describe('ProviderAccountsModule', () => {
     })
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
-    await expect(repository.getSettings()).resolves.toMatchObject({
+    await expect(refresh).resolves.toMatchObject({ ok: false, code: 'stale' })
+    const saved = await repository.getSettings()
+    expect(saved).toMatchObject({
       providers: [
         expect.objectContaining({
           id: original.id,
           name: 'Renamed DeepSeek',
-          keyRef: original.keyRef,
-          fetchedModels: ['deepseek-v5']
+          keyRef: original.keyRef
         })
       ]
     })
+    expect(saved.providers[0].fetchedModels).toEqual(original.fetchedModels)
+    expect(saved.providers[0].modelCatalog).toEqual(original.modelCatalog)
   })
 
   it.each([
-    { vendorId: 'deepseek', model: 'deepseek-v4-pro', preserved: true },
+    { vendorId: 'deepseek', model: 'deepseek-v4-pro', preserved: false },
     { vendorId: 'anthropic', model: 'claude-opus-5', preserved: false }
   ] as const)(
     'resolves configured models after catalog refresh for $vendorId',
@@ -2545,7 +2803,11 @@ describe('ProviderAccountsModule', () => {
       await module.setActiveProvider(providerId, model)
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
+        vi
+          .fn()
+          .mockResolvedValue(
+            Response.json({ data: [{ id: 'replacement-model' }], has_more: false })
+          )
       )
 
       await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({

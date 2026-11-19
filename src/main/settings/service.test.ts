@@ -4491,7 +4491,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
+  it('stores the returned DeepSeek IDs and exposes its two compatible aliases in the picker', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4522,7 +4522,7 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    // The saved snapshot records the vendor response. The picker also resolves the legacy aliases.
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
@@ -4531,13 +4531,12 @@ describe('SettingsService: official vendors', () => {
     expect(view.models).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro',
-      'deepseek-flash',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ])
   })
 
-  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+  it('preserves a captured removed model id and requires reselection when it is used', async () => {
     await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4549,14 +4548,14 @@ describe('SettingsService: official vendors', () => {
         key: 'k'
       })
     ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
     const selection = await service.captureActiveAgentBackendSelection()
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+            data: [{ id: 'deepseek-flash' }]
           })
         )
       )
@@ -4564,18 +4563,15 @@ describe('SettingsService: official vendors', () => {
     expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
       ok: true
     })
-    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
-    const backend = await service.resolveAgentBackend(selection)
-    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
-    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-pro')
+    await expect(service.resolveAgentBackend(selection)).rejects.toThrow(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
+    )
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
     const service = createService()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
 
     const created = (
       await service.upsertProvider({
@@ -4601,7 +4597,7 @@ describe('SettingsService: official vendors', () => {
 
     const result = await service.refreshProviderModels({ providerId: created.id })
     expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/no model-list endpoint/i)
+    expect(result.code).toBe('unsupported')
   })
 
   it.each(['opencode', 'claude-code'] as const)(
@@ -4862,7 +4858,7 @@ describe('SettingsService: image-input capability', () => {
       vi
         .fn()
         .mockResolvedValue(
-          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+          Response.json({ data: [{ id: 'claude-opus-5-unreleased' }], has_more: false })
         )
     )
 
@@ -4875,7 +4871,7 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    await service.refreshProviderModels({ providerId: created.id })
+    expect((await service.refreshProviderModels({ providerId: created.id })).ok).toBe(true)
     // Activate the fetched model, then read the active provider's view.
     const view = (
       await service.setActiveProvider(created.id, 'claude-opus-5-unreleased')
@@ -4885,9 +4881,9 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.supportsImageInput).toBe(true)
   })
 
-  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+  it('projects the capability of the refreshed default model when no model is selected', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
+    // With no explicit selection, capabilities follow the refreshed default, which is text-only here.
     vi.stubGlobal(
       'fetch',
       vi
@@ -4901,12 +4897,9 @@ describe('SettingsService: image-input capability', () => {
     ).providers[0]
     await service.refreshProviderModels({ providerId: created.id })
 
-    // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
-    // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')
-    expect(view?.supportsImageInput).toBe(true)
+    expect(view?.supportsImageInput).toBe(false)
   })
 })
 

@@ -56,6 +56,7 @@ const log = createLogger('application-events')
 export type ApplicationEventMap = {
   'resource-recording:changed': import('../shared/resource-recording').ResourceRecordingState
   'sessions:package-operation-changed': PackageOperationSnapshot
+  'sessions:catalog-changed': undefined
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
