@@ -48,11 +48,18 @@
     "packages/literature-discovery/src/publication-check-contracts.ts",
     "packages/literature-discovery/src/publication-check.ts",
     "packages/literature-discovery/test/publication-check.test.ts",
-    "packages/literature-discovery/src/arxiv.ts"
+    "packages/literature-discovery/src/arxiv.ts",
+    "packages/literature-discovery/src/related-europe-pmc.ts",
+    "packages/literature-discovery/test/related-europe-pmc.test.ts",
+    "packages/literature-discovery/src/related-opencitations.ts",
+    "packages/literature-discovery/src/related-opencitations-index.ts",
+    "packages/literature-discovery/src/related-source-error.ts",
+    "packages/literature-discovery/test/related-opencitations.test.ts"
   ],
   "interfacePaths": [
     "packages/literature-discovery/src/index.ts",
     "packages/literature-discovery/src/contracts.ts",
+    "packages/literature-discovery/src/related-contracts.ts",
     "packages/literature-discovery/src/jobs.ts",
     "packages/literature-discovery/src/download.ts",
     "packages/literature-discovery/src/checkpoints.ts",
@@ -76,7 +83,9 @@
       "packages/literature-discovery/test/scale.test.ts",
       "packages/literature-discovery/test/supplements.test.ts",
       "packages/literature-discovery/test/related.test.ts",
-      "packages/literature-discovery/test/publication-check.test.ts"
+      "packages/literature-discovery/test/publication-check.test.ts",
+      "packages/literature-discovery/test/related-europe-pmc.test.ts",
+      "packages/literature-discovery/test/related-opencitations.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

@@ -143,6 +143,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literaturePublicationCheckRequestSchema])),
     validationCodec(literaturePublicationCheckResultSchema)
   ),
+  cancelRelated: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ requestId: z.string().uuid() }).strict()])),
+    validationCodec(z.void())
+  ),
   related: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureRelatedRequestSchema])),
     validationCodec(literatureRelatedResultSchema)
@@ -189,7 +193,8 @@ const literatureApplicationCommandContracts = Object.freeze({
           .max(2048)
           .regex(
             /^(?:10\.\d{4,9}\/\S+|pmid:\d+|pmcid:PMC[1-9]\d{0,8}|arxiv:(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7}))$/u
-          )
+          ),
+        z.string().uuid().optional()
       ])
     ),
     validationCodec(literatureItemInputSchema)

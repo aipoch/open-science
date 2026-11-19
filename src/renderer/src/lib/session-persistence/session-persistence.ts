@@ -779,10 +779,21 @@ const sessionWriteBaseRevision = (intent: SessionWriteIntent): number =>
 
 const isSessionWriteSatisfied = (
   intent: SessionWriteIntent,
-  authority: PersistedChatSession
+  authority: PersistedChatSession | SessionMetadataReceipt
 ): boolean => {
   if (authority.id !== intent.session.id || authority.projectId !== intent.session.projectId)
     return false
+  if (!('messages' in authority)) {
+    return (
+      intent.kind === 'fields' &&
+      !intent.options?.conversationCommands?.length &&
+      Object.entries(intent.changes).every(
+        ([field, change]) =>
+          (field === 'title' || field === 'pinned') &&
+          sessionPreferenceValuesEqual(field, change.after, authority[field])
+      )
+    )
+  }
   const acknowledged = new Set(authority.runtimeConversationCommandIds ?? [])
   const commands = retainActivePreparationCommands(intent.options?.conversationCommands ?? [])
   if (commands.some(({ id }) => !acknowledged.has(id))) return false
@@ -2269,7 +2280,8 @@ const loadPersistedSessions = async (
   preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection),
   preserveLocalDrafts = false,
   retainedNewSessionIds: ReadonlySet<string> = new Set(),
-  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void
+  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void,
+  reconnecting = false
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
   const previousSessions = preserveLocalDrafts ? useSessionStore.getState().sessions : []
   const restoreLocalDrafts = (): void => {
@@ -2302,9 +2314,18 @@ const loadPersistedSessions = async (
     const result = await api.list()
     if (!shouldHydrate()) return undefined
     const retrySessionId = currentSelection()?.sessionId
+    const previousSelection = reconnecting
+      ? previousSessions.find((session) => session.id === retrySessionId)
+      : undefined
+    const restoreRuntimeState =
+      previousSelection &&
+      (previousSelection.activeRun ||
+        previousSelection.status === 'running' ||
+        previousSelection.status.startsWith('waiting-'))
     const summariesToHydrate = result.sessions.filter(
       (session) =>
-        session.needsStartupRecovery || (!api.loadHistoryPage && session.id === retrySessionId)
+        session.needsStartupRecovery ||
+        (session.id === retrySessionId && (restoreRuntimeState || !api.loadHistoryPage))
     )
     const hydratedSessions = new Map(
       await Promise.all(
@@ -2542,16 +2563,36 @@ const createStoreSaver = (
           api.setPinned &&
           pendingSessionConversationCommands(session.id).length === 0
         ) {
+          const initialMetadata = (): { title: string; pinned: boolean } =>
+            acknowledgedMetadata.get(session.id) ?? {
+              title: previousSession?.title ?? session.title,
+              pinned: previousSession?.pinned === true
+            }
+          const intent = (): SessionFieldWriteIntent => {
+            const baseline = initialMetadata()
+            return {
+              kind: 'fields',
+              session: { id: session.id, projectId: session.projectId!, title: session.title },
+              baseRevision: sessionRevision(session),
+              changes: Object.fromEntries(
+                conflictRebaseFields.map((field) => [
+                  field,
+                  {
+                    before: baseline[field],
+                    after: session[field]
+                  }
+                ])
+              )
+            }
+          }
           tasks.push({
+            intent,
             target,
             failureContext: { conflictRebaseFields },
             run: () =>
               persistence.saveMetadata(target, async () => {
                 let receipt: SessionMetadataReceipt | undefined
-                let baseline = acknowledgedMetadata.get(session.id) ?? {
-                  title: previousSession?.title ?? session.title,
-                  pinned: previousSession?.pinned === true
-                }
+                let baseline = initialMetadata()
                 if (conflictRebaseFields.includes('title')) {
                   receipt = await api.rename!({
                     projectId: session.projectId,
@@ -3066,7 +3107,7 @@ const createStoreSaver = (
         ? persistence.recovery.trackSession(
             target,
             intent,
-            run as () => Promise<PersistedChatSession>
+            run as () => Promise<PersistedChatSession | SessionMetadataReceipt>
           )
         : run()
       return scheduled.then(
@@ -3681,7 +3722,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
             }
             let candidate: PersistedChatSession | undefined
             if (intent.kind === 'fields') {
-              if (authority?.runtimeTranscriptOwner === 'main') {
+              if (
+                authority &&
+                (authority.runtimeTranscriptOwner === 'main' ||
+                  Object.keys(intent.changes).every(
+                    (field) => field === 'title' || field === 'pinned'
+                  ))
+              ) {
                 candidate = structuredClone(authority)
                 for (const [field, change] of Object.entries(intent.changes)) {
                   const key = field as SessionConflictRebaseField
@@ -3934,7 +3981,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
               sessionLoadErrorsBySessionRef.current = next
               setSessionLoadErrorsBySession(next)
             }
-          }
+          },
+          recovering
         )
         if (!result || !isMounted) return
         if (recovering || liveSessionPersistence.recovery.getSnapshot().length > 0) {

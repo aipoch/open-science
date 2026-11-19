@@ -393,7 +393,6 @@ describe('Settings backend ownership architecture', () => {
       'setReasoningEffort',
       'setReviewerModel',
       'setRuntimeEnablement',
-      'setSemanticScholarCredential',
       'setSessionDetailsModel',
       'setShowNotificationContent',
       'setSkillEnabled',
@@ -524,7 +523,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setLabServer setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill uploadLabCase upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitLabLogin waitXaiOAuthLogin withHostSkillRead
       `

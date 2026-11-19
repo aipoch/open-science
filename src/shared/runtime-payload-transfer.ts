@@ -10,15 +10,17 @@ export const RUNTIME_PAYLOAD_UPLOAD_CHANNELS = new Set([
   'sessions:save-session',
   'sessions:update-configuration'
 ])
-export const RUNTIME_PAYLOAD_CHANNELS = new Set([
-  'pdf-translation:generate-pdf',
+export const RUNTIME_PAYLOAD_READ_CHANNELS = new Set([
   'sessions:load-one',
-  'sessions:save-session',
-  'sessions:update-configuration',
+  'sessions:load-history-page',
+  'notebook:state'
+])
+export const RUNTIME_PAYLOAD_CHANNELS = new Set([
+  ...RUNTIME_PAYLOAD_READ_CHANNELS,
+  ...RUNTIME_PAYLOAD_UPLOAD_CHANNELS,
   'sessions:edit-details',
   'sessions:set-delegation-policy',
-  'sessions:update-archive',
-  'notebook:state'
+  'sessions:update-archive'
 ])
 
 const snapshotId = z.string().uuid()

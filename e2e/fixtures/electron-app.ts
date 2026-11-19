@@ -57,6 +57,7 @@ import type { UpdateStatus } from '../../src/shared/update'
 import { prepareBrandStorageFixture } from './brand-storage-data'
 import { captureNativeQuitDialog } from './native-quit-dialog'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+import { sessionJournalPath } from '../../src/main/session-persistence/journal'
 import { createSessionFile, type PersistedChatSession } from '../../src/shared/session-persistence'
 
 const APP_ROOT = resolve(process.cwd())
@@ -1959,8 +1960,12 @@ class ElectronAppHarness implements ElectronApp {
       const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
       await mkdir(directory, { recursive: true })
       await writeFile(
-        join(directory, `${fixture.id}.json`),
-        JSON.stringify(createSessionFile(fixture))
+        join(directory, `${fixture.id}.jsonl`),
+        JSON.stringify({
+          type: 'session_snapshot',
+          journalVersion: 1,
+          document: createSessionFile(fixture)
+        }) + '\n'
       )
     }
     if (dataRoot && notebookRuns.length) {
@@ -2009,7 +2014,10 @@ class ElectronAppHarness implements ElectronApp {
     await mkdir(directory, { recursive: true })
     // Preserve the released fixture byte-for-byte instead of re-encoding it through the current
     // createSessionFile projection.
-    await writeFile(join(directory, `${fixture.sessionId}.json`), fixture.contents, 'utf8')
+    const path = join(directory, `${fixture.sessionId}.json`)
+    await writeFile(path, fixture.contents, 'utf8')
+    // A current journal takes precedence over the explicitly requested legacy fixture.
+    await rm(sessionJournalPath(path), { force: true })
     const client = createProjectDbClient(this.roots.storageRoot)
     try {
       await client.sessionProjectionState.deleteMany()

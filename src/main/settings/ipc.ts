@@ -1,6 +1,5 @@
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { LabCheckRequest, SetLabServerRequest } from '../../shared/lab'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
@@ -630,11 +629,6 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
-  )
-  ipcMainHandle(
-    'settings:set-semantic-scholar-credential',
-    (_event, request: SetSemanticScholarCredentialRequest) =>
-      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

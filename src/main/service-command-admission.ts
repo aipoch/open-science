@@ -41,6 +41,7 @@ const shutdownCommands = new Set([
   'uploads:abort-transfer',
   'uploads:transfer-status',
   'literature:cancel-pdf-import',
+  'literature:cancel-related',
   'pdf-annotations:cancel-import',
   'pdf-structure:cancel',
   'local-models:cancel',

@@ -31,6 +31,7 @@ const validatedChannels = [
   'lifecycle:claim-runtime-writer',
   'literature:add-pdf',
   'literature:cancel-pdf-import',
+  'literature:cancel-related',
   'literature:citation-styles',
   'literature:collect',
   'literature:complete-metadata',
