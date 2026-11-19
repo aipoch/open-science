@@ -2,6 +2,7 @@ import { CirclePlus, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
+  AnthropicMono,
   ClaudeColor,
   CodexMono,
   NvidiaColor,
@@ -11,7 +12,6 @@ import {
 } from './provider-brand-icons'
 
 import { cn } from '@/lib/utils'
-import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
@@ -67,7 +67,6 @@ export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.E
 // Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
-  anthropic: anthropicLogo,
   xai: grokLogo,
   apodex: apodexLogo,
   deepseek: deepseekLogo,
@@ -114,6 +113,16 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'xai-subscription') {
     return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
+  if (kindKey === 'official:anthropic') {
+    return (
+      <AnthropicMono
+        size={20}
+        className={cn('size-5 shrink-0 text-foreground', className)}
+        aria-hidden="true"
+      />
+    )
   }
 
   if (
