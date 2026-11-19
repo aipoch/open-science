@@ -557,7 +557,8 @@ async function main(): Promise<void> {
           existingSettings !== undefined ||
           current?.onboardingCompletedAt !== undefined ||
           Boolean(current?.providers.length)
-        await repository.initializeDesktopKiloDefaults(upgrading)
+        if (runtime) await runtime.initializeDesktopKiloDefaults(upgrading)
+        else await repository.initializeDesktopKiloDefaults(upgrading)
       })().catch((error) => {
         desktopKiloDefaults = undefined
         createLogger('settings').warn(

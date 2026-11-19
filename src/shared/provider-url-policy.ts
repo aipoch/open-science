@@ -1,5 +1,4 @@
 import { getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
-import type { ProviderType } from './settings-types'
 import { isSensitiveUrlQueryKey } from '@aipoch/diagnostics'
 import {
   PROVIDER_TRANSPORT_ERROR,
@@ -16,7 +15,7 @@ export const customProviderRequiresKey = (baseUrl: string | undefined): boolean 
 
 /** Determine whether a saved provider or runtime connection allows anonymous requests. */
 export function providerAllowsAnonymousAccess(provider: {
-  type: ProviderType
+  type: string
   vendorId?: OfficialVendorId
   baseUrl?: string
 }): boolean {

@@ -188,9 +188,9 @@ class SettingsRepository {
   }
 
   /** Record desktop initialization and add Kilo to existing profiles while preserving their model selection. */
-  async initializeDesktopKiloDefaults(upgrading: boolean): Promise<void> {
+  async initializeDesktopKiloDefaults(upgrading: boolean): Promise<boolean> {
     const current = await this.getSettings()
-    if (current.kiloDefaultInitialized) return
+    if (current.kiloDefaultInitialized) return false
     const logCapacitySkip = (providerCount: number): void => {
       createLogger('settings:repository').warn(
         'Skipped adding Kilo Gateway on desktop upgrade because the provider limit was reached.',
@@ -203,9 +203,10 @@ class SettingsRepository {
       !current.providers.some(isKiloProvider)
     ) {
       logCapacitySkip(current.providers.length)
-      return
+      return false
     }
-    await this.store.mutate(
+    let added = false
+    await this.mutate(
       (settings) => {
         if (settings.kiloDefaultInitialized) return settings
         if (!upgrading || settings.providers.some(isKiloProvider)) {
@@ -215,15 +216,17 @@ class SettingsRepository {
           logCapacitySkip(settings.providers.length)
           return settings
         }
+        const provider = createDefaultKiloProvider(settings)
+        added = true
         return {
           ...settings,
           kiloDefaultInitialized: true,
-          providers: [...settings.providers, createDefaultKiloProvider(settings)]
+          providers: [...settings.providers, provider]
         }
       },
-      undefined,
       upgrading ? ['providers', 'kiloDefaultInitialized'] : undefined
     )
+    return added
   }
 
   /** Provision Kilo and select its free route when users skip onboarding. */
@@ -231,6 +234,8 @@ class SettingsRepository {
     await this.mutate((settings) => {
       if (settings.onboardingCompletedAt !== undefined) return settings
       const existing = settings.providers.find(isKiloProvider)
+      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers)
+        return settings
       const provider = existing ?? createDefaultKiloProvider(settings)
       if (
         !resolveOfficialModelCatalog(provider).some(
@@ -1501,15 +1506,22 @@ class SettingsRepository {
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
-  private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
+  private mutate(
+    update: (settings: StoredSettings) => StoredSettings,
+    preserveDocumentExcept?: readonly (keyof StoredSettings)[]
+  ): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
     let previousImageConfiguration: unknown
     return this.store
-      .mutate((settings) => {
-        previous = structuredClone(settings.providers)
-        previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
-        return update(settings)
-      })
+      .mutate(
+        (settings) => {
+          previous = structuredClone(settings.providers)
+          previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
+          return update(settings)
+        },
+        undefined,
+        preserveDocumentExcept
+      )
       .then((settings) => {
         if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
           for (const listener of this.imageModelListeners) {
