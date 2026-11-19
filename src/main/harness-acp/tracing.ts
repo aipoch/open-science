@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
 import {
+  HARNESS_OTLP_CAPTURE_API_REQUEST,
   HARNESS_OTLP_CAPTURE_CONTENT,
   HARNESS_OTLP_DIAGNOSTICS,
   HARNESS_OTLP_TRACES_API_KEY,
@@ -14,6 +15,9 @@ import {
 
 const MAX_QUEUED_SPANS = 256
 const MAX_EXPORT_BATCH_SPANS = 32
+const MAX_API_REQUEST_BYTES = 1_048_576
+const MAX_QUEUED_API_REQUEST_BYTES = 4 * MAX_API_REQUEST_BYTES
+const MAX_TOOL_NAMES = 64
 const EXPORT_TIMEOUT_MS = 2_000
 const MAX_HEADERS_FILE_BYTES = 8_192
 const MAX_ENV_FILE_BYTES = 65_536
@@ -45,6 +49,7 @@ type FinishedSpan = StartedSpan & {
   status?: { code: 2 } // ERROR
   attributes: { key: string; value: AttributeValue }[]
 }
+type QueuedSpan = { span: FinishedSpan; apiRequestBytes: number }
 
 function startSpan(
   name: StartedSpan['name'],
@@ -78,7 +83,12 @@ function encodeAttributes(attributes: Attributes): FinishedSpan['attributes'] {
   return encoded
 }
 
-type Preview = { input: object; output: object }
+type ApiRequestCapture =
+  | { status: 'captured'; body: string; bytes: number }
+  | { status: 'size_limit' | 'queue_limit'; bytes: number }
+  | { status: 'not_sent' | 'unsupported_body'; bytes?: undefined }
+
+type Preview = { input: object; output: object; apiRequest?: ApiRequestCapture }
 type TextBlock = { type: string; text?: string }
 type TextPreview = { text: string; truncated?: true }
 
@@ -110,6 +120,7 @@ export type HarnessSessionTracing = {
     prompt?: readonly TextBlock[]
   ): ((outcome: string, requestCount?: number) => void) | undefined
   markCompaction(requestId: string): void
+  captureModelRequest(body: RequestInit['body']): void
   wrapModel(model: AgentModel): AgentModel
   wrapTool(tool: AgentTool): AgentTool
 }
@@ -130,9 +141,13 @@ function traceSession(
   modelName: string,
   protocol: string,
   enabled: () => boolean,
-  captureContent: () => boolean
+  captureContent: () => boolean,
+  captureApiRequest: () => boolean
 ): HarnessSessionTracing {
   let active: Turn | undefined
+  // The harness serializes requests within each session, including compaction. Different
+  // sessions own different wrappers and transports.
+  let modelRequest: { capture: ApiRequestCapture } | undefined
   const sessionAttributes = { 'langfuse.session.id': sessionId }
   return {
     startTurn(prompt = []) {
@@ -179,6 +194,18 @@ function traceSession(
     markCompaction(requestId) {
       if (active) active.compactionRequestId = requestId
     },
+    captureModelRequest(body) {
+      if (!modelRequest) return
+      if (typeof body !== 'string') {
+        modelRequest.capture = { status: 'unsupported_body' }
+        return
+      }
+      const bytes = Buffer.byteLength(body)
+      modelRequest.capture =
+        bytes <= MAX_API_REQUEST_BYTES
+          ? { status: 'captured', body, bytes }
+          : { status: 'size_limit', bytes }
+    },
     wrapModel(model) {
       return {
         ...model,
@@ -189,25 +216,34 @@ function traceSession(
             const span = startSpan('harness.model', 3, turn.span)
             const compaction = turn.compactionRequestId === request.requestId
             const purpose = compaction ? 'compaction' : 'turn'
+            const apiRequest: { capture: ApiRequestCapture } | undefined = captureApiRequest()
+              ? { capture: { status: 'not_sent' } }
+              : undefined
+            modelRequest = apiRequest
             turn.modelRequests++
             if (compaction) turn.compactionRequests++
             let reason: string | undefined
             let usage: ModelUsage | undefined
             let response: TextPreview | undefined
             let toolCalls: number | undefined
+            let requestedTools: string[] | undefined
             let completed = false
             try {
               for await (const event of model.stream(request, signal)) {
-                yield event
                 if (event.type === 'finish') {
                   reason = event.reason
                   usage = event.usage
                   toolCalls = event.calls?.length ?? 0
+                  requestedTools = event.calls
+                    ?.slice(0, MAX_TOOL_NAMES)
+                    .map((call) => call.name.slice(0, 64))
                   if (!compaction && captureContent()) response = previewText(event.content)
                 }
+                yield event
               }
               completed = true
             } finally {
+              modelRequest = undefined
               const outcome = signal.aborted ? 'cancelled' : (completed && reason) || 'error'
               if (!compaction && (outcome === 'complete' || outcome === 'length'))
                 turn.response = response
@@ -225,10 +261,14 @@ function traceSession(
                   'gen_ai.usage.cache_creation.input_tokens': usage?.cacheWriteTokens
                 },
                 {
+                  apiRequest: apiRequest?.capture,
                   input: {
                     purpose,
                     messages: request.messages.length,
                     availableTools: request.tools.length,
+                    offeredTools: request.tools
+                      .slice(0, MAX_TOOL_NAMES)
+                      .map((tool) => tool.name.slice(0, 64)),
                     maxOutputTokens: request.useProviderOutputDefault
                       ? undefined
                       : request.maxOutputTokens,
@@ -237,6 +277,7 @@ function traceSession(
                   output: {
                     outcome,
                     toolCalls,
+                    requestedTools,
                     usage: usage && {
                       inputTokens: usage.inputTokens,
                       outputTokens: usage.outputTokens,
@@ -385,11 +426,13 @@ export function createHarnessTracing(
 ): HarnessTracing | undefined {
   if (endpoint === undefined && !envFile) return undefined
   const lifetime = new AbortController()
-  let queued: FinishedSpan[] = []
+  let queued: QueuedSpan[] = []
+  let queuedApiRequestBytes = 0
   let exporting = false
   let scheduled: NodeJS.Immediate | undefined
   let disabled = false
   let captureContent = false
+  let captureApiRequest = false
   const destination = (async () => {
     // Explicit launch settings are one destination. File credentials stay with the file URL.
     const env =
@@ -399,6 +442,7 @@ export function createHarnessTracing(
     const statusFile =
       envFile && env[HARNESS_OTLP_DIAGNOSTICS] === '1' ? `${envFile}.otel-status.json` : undefined
     captureContent = env[HARNESS_OTLP_CAPTURE_CONTENT] === '1'
+    captureApiRequest = env[HARNESS_OTLP_CAPTURE_API_REQUEST] === '1'
     const config = await loadExportConfig(endpoint, headersFile, env).catch(() => undefined)
     if (!config) {
       if (statusFile && !lifetime.signal.aborted)
@@ -412,6 +456,7 @@ export function createHarnessTracing(
       if (!config) {
         disabled = true
         queued = []
+        queuedApiRequestBytes = 0
       }
       return config
     })
@@ -425,7 +470,19 @@ export function createHarnessTracing(
   }
 
   async function send(): Promise<void> {
-    const spans = queued.splice(0, MAX_EXPORT_BATCH_SPANS)
+    let count = 0
+    let batchApiRequestBytes = 0
+    for (const item of queued) {
+      if (
+        count === MAX_EXPORT_BATCH_SPANS ||
+        batchApiRequestBytes + item.apiRequestBytes > MAX_API_REQUEST_BYTES
+      )
+        break
+      count++
+      batchApiRequestBytes += item.apiRequestBytes
+    }
+    const spans = queued.splice(0, count).map((item) => item.span)
+    queuedApiRequestBytes -= batchApiRequestBytes
     exporting = true
     let statusFile: string | undefined
     let timeout: AbortSignal | undefined
@@ -470,27 +527,57 @@ export function createHarnessTracing(
   const record: SpanRecorder = (span, outcome, attributes, preview) => {
     if (!span || disabled || lifetime.signal.aborted || queued.length >= MAX_QUEUED_SPANS) return
     try {
+      let apiRequest = preview.apiRequest
+      if (
+        apiRequest?.status === 'captured' &&
+        queuedApiRequestBytes + apiRequest.bytes > MAX_QUEUED_API_REQUEST_BYTES
+      )
+        apiRequest = { status: 'queue_limit', bytes: apiRequest.bytes }
+      const apiRequestBytes = apiRequest?.status === 'captured' ? apiRequest.bytes : 0
+      const input =
+        apiRequest?.status === 'captured'
+          ? apiRequest.body
+          : JSON.stringify({
+              ...preview.input,
+              ...(apiRequest
+                ? {
+                    apiRequest: {
+                      status: apiRequest.status,
+                      bytes: apiRequest.bytes,
+                      limitBytes:
+                        apiRequest.status === 'size_limit'
+                          ? MAX_API_REQUEST_BYTES
+                          : apiRequest.status === 'queue_limit'
+                            ? MAX_QUEUED_API_REQUEST_BYTES
+                            : undefined
+                    }
+                  }
+                : {})
+            })
       queued.push({
-        ...span,
-        flags: 1,
-        endTimeUnixNano: unixNanos(),
-        ...(outcome === 'error' ? { status: { code: 2 } } : {}),
-        attributes: [
-          ...encodeAttributes({
-            ...attributes,
-            'harness.outcome': outcome,
-            'langfuse.observation.type': observationTypes[span.name]
-          }),
-          {
-            key: 'langfuse.observation.input',
-            value: { stringValue: JSON.stringify(preview.input) }
-          },
-          {
-            key: 'langfuse.observation.output',
-            value: { stringValue: JSON.stringify(preview.output) }
-          }
-        ]
+        apiRequestBytes,
+        span: {
+          ...span,
+          flags: 1,
+          endTimeUnixNano: unixNanos(),
+          ...(outcome === 'error' ? { status: { code: 2 } } : {}),
+          attributes: [
+            ...encodeAttributes({
+              ...attributes,
+              'harness.outcome': outcome,
+              'harness.request.body_capture': apiRequest?.status,
+              'harness.request.body_bytes': apiRequest?.bytes,
+              'langfuse.observation.type': observationTypes[span.name]
+            }),
+            { key: 'langfuse.observation.input', value: { stringValue: input } },
+            {
+              key: 'langfuse.observation.output',
+              value: { stringValue: JSON.stringify(preview.output) }
+            }
+          ]
+        }
       })
+      queuedApiRequestBytes += apiRequestBytes
       scheduleExport()
     } catch {
       // Recording spans must not change Agent behavior.
@@ -505,11 +592,13 @@ export function createHarnessTracing(
         model,
         protocol,
         () => !disabled,
-        () => captureContent
+        () => captureContent,
+        () => captureApiRequest
       ),
     dispose() {
       lifetime.abort()
       queued = []
+      queuedApiRequestBytes = 0
       if (scheduled) clearImmediate(scheduled)
     }
   }

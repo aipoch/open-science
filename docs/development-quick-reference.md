@@ -162,6 +162,20 @@ marked when truncated. Prompt attachments and links, stored history, system inst
 events, compaction text, tool arguments and results, and provider credentials stay outside the
 capture. Enable this setting for conversations whose text you intend to send to your collector.
 
+To inspect the model API parameters, set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=1` in
+`.env` and restart the backend. In a new trace, select a `harness.model` child and open its Input.
+It shows the complete JSON request the Agent's Chat Completions, Responses, or Messages adapter
+sent to the local provider bridge. This is the request before any bridge-side rewrites. It includes
+the model, instructions and conversation context, tool schemas, and the parameters that the
+adapter actually sent. HTTP headers and authentication are outside the capture. The request body
+can contain sensitive conversation and tool data, including attachments.
+
+In the default preview, `offeredTools` lists the first 64 tool names from the model's catalog and
+`requestedTools` lists names returned by the model. A `harness.tool` child records the outcome of an
+executed MCP tool. Full model bodies use a 1 MiB per-request limit and a bounded queue. If omitted,
+the model span retains its summary and shows the omission reason instead of a truncated JSON body.
+[Harness tracing research](agent-harness-tracing-research.md)
+
 Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
 Failed uploads are dropped without retries. Keep the Agent process open until the collector
 receives the spans, since closing the helper cancels pending uploads.
