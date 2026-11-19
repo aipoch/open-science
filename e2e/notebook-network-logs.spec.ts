@@ -74,11 +74,11 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toBeVisible()
   const advanced = settings.getByRole('button', { name: 'Advanced options' })
   const olderCell = settings.getByRole('cell', { name: 'run-older', exact: true })
-  const advancedLabels = ['Address', 'Project ID', 'Notebook run ID', 'From', 'To']
+  const advancedLabels = ['Address', 'Project ID', 'Session ID', 'Notebook run ID', 'From', 'To']
   await expect(advanced).toHaveAttribute('aria-expanded', 'false')
   const sessionFilter = settings.getByRole('textbox', { name: 'Session ID', exact: true })
   const resultFilter = settings.getByRole('combobox', { name: 'Result', exact: true })
-  await expect(sessionFilter).toBeVisible()
+  await expect(sessionFilter).toBeHidden()
   await expect(resultFilter).toBeVisible()
   for (const label of advancedLabels)
     await expect(settings.getByLabel(label, { exact: true })).toBeHidden()
@@ -122,9 +122,8 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   const collapse = await expectStackedActions()
   expect(collapse.x).toBeGreaterThanOrEqual(end!.x + end!.width)
   expect(collapse.y).toBeLessThan(end!.y + end!.height)
-  for (const label of ['Network mode', 'Decision', 'Result', 'Session ID', ...advancedLabels]) {
+  for (const label of ['Network mode', 'Decision', 'Result', ...advancedLabels]) {
     const box = await settings.getByLabel(label, { exact: true }).boundingBox()
-    expect(box!.width).toBeCloseTo(footerBox!.width, 0)
     expect(box!.height).toBeCloseTo(collapse.height, 0)
   }
   expect((await submit.boundingBox())!.height).toBeCloseTo(collapse.height, 0)
@@ -132,6 +131,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await settings
     .getByLabel('From', { exact: true })
     .fill(new Date(Date.parse(older) - 86_400_000).toISOString().slice(0, 10) + 'T00:00')
+  await sessionFilter.fill('audit-session')
   await advanced.click()
   await submit.click()
   await expect(olderCell).toBeVisible()
@@ -141,12 +141,16 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toHaveCount(0)
   await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
   const empty = settings.getByText('No matching network records.', { exact: true })
+  await advanced.click()
   await sessionFilter.fill('other-session')
+  await advanced.click()
   await resultFilter.click()
   await page.getByRole('option', { name: 'Completed', exact: true }).click()
   await submit.click()
   await expect(empty).toBeVisible()
+  await advanced.click()
   await sessionFilter.fill('audit-session')
+  await advanced.click()
   await submit.click()
   await expect(olderCell).toBeVisible()
   await resultFilter.click()
@@ -158,7 +162,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
     (await settings.getByRole('button', { name: 'Save', exact: true }).boundingBox())!.height
   ).toBe(footerBox!.height)
   await retentionFilter.click()
-  await expect(page.getByRole('option')).toHaveText(['30', '90', '180', '365'])
+  await expect(page.getByRole('option')).toHaveText(['7', '15', '30', '90', '180', '365'])
   await settings.screenshot({ path: testInfo.outputPath('retention-options.png') })
   await page.getByRole('option', { name: '30', exact: true }).click()
   await settings.getByRole('button', { name: 'Save', exact: true }).click()

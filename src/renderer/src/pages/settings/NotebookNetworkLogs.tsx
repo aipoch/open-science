@@ -20,7 +20,7 @@ import type {
 } from '../../../../shared/notebook-network-audit'
 
 const fieldClass = 'w-44 max-w-full'
-const retentionPresets = [30, 90, 180, 365]
+const retentionPresets = [7, 15, 30, 90, 180, 365]
 
 function localMinute(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
@@ -135,15 +135,13 @@ function NetworkLogContent(): React.JSX.Element {
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <form
-          className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+          className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
             void load({ ...filters, ...queryRange(range) })
           }}
         >
-          <div
-            className={`flex flex-wrap items-center gap-2 ${advanced ? 'col-span-full' : 'sm:col-span-2'}`}
-          >
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             <Select
               value={filters.mode ?? 'all'}
               onValueChange={(value) =>
@@ -153,7 +151,7 @@ function NetworkLogContent(): React.JSX.Element {
                 })
               }
             >
-              <SelectTrigger className={fieldClass} aria-label={t('Network mode')}>
+              <SelectTrigger className="h-8 w-full" aria-label={t('Network mode')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -172,7 +170,7 @@ function NetworkLogContent(): React.JSX.Element {
                 })
               }
             >
-              <SelectTrigger className={fieldClass} aria-label={t('Decision')}>
+              <SelectTrigger className="h-8 w-full" aria-label={t('Decision')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -191,7 +189,7 @@ function NetworkLogContent(): React.JSX.Element {
                 })
               }
             >
-              <SelectTrigger className={fieldClass} aria-label={t('Result')}>
+              <SelectTrigger className="h-8 w-full" aria-label={t('Result')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -205,62 +203,82 @@ function NetworkLogContent(): React.JSX.Element {
                   ))}
               </SelectContent>
             </Select>
-            {field('sessionId', t('Session ID'))}
+            {!advanced ? (
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 w-full"
+                  aria-expanded={advanced}
+                  aria-controls="network-log-advanced"
+                  onClick={() => setAdvanced(true)}
+                >
+                  {t('Advanced options')}
+                  <ChevronDown aria-hidden="true" className="size-4" />
+                </Button>
+                <Button type="submit" size="sm" disabled={busy} className="h-8 w-full">
+                  {busy ? t('Loading…') : t('Search')}
+                </Button>
+              </div>
+            ) : null}
           </div>
-          <div id="network-log-advanced" className={advanced ? 'contents' : 'hidden'}>
-            <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {field('address', t('Address'))}
-              {field('projectId', t('Project ID'))}
-              {field('notebookRunId', t('Notebook run ID'))}
+          {advanced ? (
+            <div id="network-log-advanced" className="space-y-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {field('address', t('Address'))}
+                {field('sessionId', t('Session ID'))}
+                {field('projectId', t('Project ID'))}
+                {field('notebookRunId', t('Notebook run ID'))}
+              </div>
+              <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-3">
+                <div className="min-w-0 space-y-1">
+                  <label htmlFor="network-log-from" className="text-xs">
+                    {t('From')}
+                  </label>
+                  <Input
+                    id="network-log-from"
+                    className="h-8 w-full"
+                    type="datetime-local"
+                    value={range.from}
+                    onChange={(e) => setRange({ ...range, from: e.target.value })}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <label htmlFor="network-log-to" className="text-xs">
+                    {t('To')}
+                  </label>
+                  <Input
+                    id="network-log-to"
+                    className="h-8 w-full"
+                    type="datetime-local"
+                    min={range.from || undefined}
+                    value={range.to}
+                    onChange={(e) => setRange({ ...range, to: e.target.value })}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-full"
+                    aria-expanded={advanced}
+                    aria-controls="network-log-advanced"
+                    onClick={(event) => {
+                      if (event.currentTarget.form?.reportValidity()) setAdvanced(false)
+                    }}
+                  >
+                    {t('Advanced options')}
+                    <ChevronDown aria-hidden="true" className="size-4 rotate-180" />
+                  </Button>
+                  <Button type="submit" size="sm" disabled={busy} className="h-8 w-full">
+                    {busy ? t('Loading…') : t('Search')}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div className="col-span-full min-w-0 space-y-1 sm:col-span-1">
-              <label htmlFor="network-log-from" className="text-xs">
-                {t('From')}
-              </label>
-              <Input
-                id="network-log-from"
-                className={fieldClass}
-                type="datetime-local"
-                value={range.from}
-                onChange={(e) => setRange({ ...range, from: e.target.value })}
-              />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <label htmlFor="network-log-to" className="text-xs">
-                {t('To')}
-              </label>
-              <Input
-                id="network-log-to"
-                className={fieldClass}
-                type="datetime-local"
-                min={range.from || undefined}
-                value={range.to}
-                onChange={(e) => setRange({ ...range, to: e.target.value })}
-              />
-            </div>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-8 w-full"
-            aria-expanded={advanced}
-            aria-controls="network-log-advanced"
-            onClick={(event) => {
-              if (!advanced || event.currentTarget.form?.reportValidity()) setAdvanced(!advanced)
-            }}
-          >
-            {t('Advanced options')}
-            <ChevronDown aria-hidden="true" className={advanced ? 'size-4 rotate-180' : 'size-4'} />
-          </Button>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={busy}
-            className="col-start-2 h-8 w-full sm:col-start-3"
-          >
-            {busy ? t('Loading…') : t('Search')}
-          </Button>
+          ) : null}
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
         {page?.warnings.length ? (
@@ -358,7 +376,7 @@ function NetworkLogContent(): React.JSX.Element {
             <p className="p-4 text-sm text-muted-foreground">{t('No matching network records.')}</p>
           ) : null}
         </div>
-        <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-end gap-3 bg-background">
+        <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-end gap-3">
           {page?.cursor ? (
             <Button
               variant="outline"

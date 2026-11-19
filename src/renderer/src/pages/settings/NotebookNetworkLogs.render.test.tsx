@@ -76,17 +76,14 @@ it('keeps the last successful query when a new filter fails before loading more'
     warnings: []
   }
   let calls = 0
-  query.mockImplementation(async (request: { sessionId?: string }) => {
+  query.mockImplementation(async () => {
     calls++
     if (calls === 1) return firstPage
-    if (request.sessionId === 'other') throw new Error('temporary read failure')
+    if (calls === 2) throw new Error('temporary read failure')
     return { ...firstPage, records: [] }
   })
   await act(async () => root.render(<NotebookNetworkLogs />))
   await act(async () => {
-    fireEvent.change(document.querySelector('[aria-label="Session ID"]')!, {
-      target: { value: 'other' }
-    })
     fireEvent.submit(document.querySelector('form')!)
   })
   expect(document.body.textContent).toContain('Could not load network logs.')
