@@ -14,6 +14,7 @@ type NotebookNetworkProtectionBannerPreviewState =
 
 type NotebookNetworkProtectionBannerProps = {
   onOpen: () => void
+  actionLabel?: string
   previewState?: NotebookNetworkProtectionBannerPreviewState
   status?: NotebookNetworkStatus
 }
@@ -41,6 +42,7 @@ const previewStatus = (
 
 const NotebookNetworkProtectionBanner = ({
   onOpen,
+  actionLabel,
   previewState,
   status: suppliedStatus
 }: NotebookNetworkProtectionBannerProps): React.JSX.Element => {
@@ -51,8 +53,15 @@ const NotebookNetworkProtectionBanner = ({
   const presentation: BannerPresentation | null = (() => {
     switch (status.kind) {
       case 'ready':
-      case 'standard':
         return null
+      case 'standard':
+        return {
+          title: t('Standard mode'),
+          description: t(
+            'Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.'
+          ),
+          level: 'info'
+        }
       case 'setupRequired':
         return {
           title:
@@ -109,6 +118,7 @@ const NotebookNetworkProtectionBanner = ({
     <SettingsSection
       title={t('Notebook network protection')}
       aria-label={t('Notebook network protection')}
+      data-settings-anchor="network.domains"
       data-testid="notebook-network-protection-banner"
       className={cn(previewState === 'disabled' && 'opacity-50')}
     >
@@ -134,7 +144,7 @@ const NotebookNetworkProtectionBanner = ({
           disabled={previewState === 'disabled'}
           className={cn('ml-auto min-h-11 shrink-0 sm:min-h-8', previewButtonClassName)}
         >
-          {t('Network settings')}
+          {actionLabel ?? t('Network settings')}
         </Button>
       </div>
     </SettingsSection>

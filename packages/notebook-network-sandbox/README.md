@@ -241,15 +241,15 @@ together; only a verified ACL baseline can authorize a later manual repair.
 
 `status()` never elevates privileges or changes durable setup resources. When a receipt appears
 active, it launches short-lived positive and negative connection probes before reporting protected
-mode. Missing Windows setup leaves the runtime in standard mode; first Notebook use never prompts.
+mode. A fresh installation starts in standard mode. Selecting protected mode requires a ready installation before native execution.
 
 `isWindowsProtectionConfigured()` reads validated ownership records independently of initialization
 and ACL propagation. It does not verify runtime readiness. Unconfirmed absence during a concurrent
 setup/removal, invalid records, and a configuration helper that exceeds its five-second limit are
 errors, never permission to run unprotected. Actual execution retains the full readiness checks.
-Explicit setup, removal, and protected R authorization can display a UAC prompt. A cancelled or failed setup
-leaves standard mode available. Successful setup affects new Notebook and package-manager processes;
-already-running sessions retain their original mode. `removeWindows()` uses the same explicit
+Explicit setup, removal, and protected R authorization can display a UAC prompt. Users can select
+standard mode after a cancelled or failed setup. Switching execution modes stops running Notebook
+processes before committing the preference. `removeWindows()` uses the same explicit
 elevation behavior, stops protected AppContainer processes, removes only ownership-proven resources,
 and returns future launches to standard mode.
 
@@ -264,8 +264,8 @@ decision is checked again before launch; a protected R request never falls back 
 Settings mutations in the same owner process invalidate prepared R launches until the executor
 synchronously starts the owned process tree. Already-started trees retain their selected mode;
 this check does not coordinate mutations from other processes.
-Protected mode retains its separate R runtime-access authorization. This decision is transient and
-does not add a setting or change the ownership receipt format.
+Protected mode retains its separate R runtime-access authorization. The execution preference
+is stored in Notebook network settings. The native ownership receipt keeps its existing format.
 
 Packaged callers pass `join(process.resourcesPath, 'notebook-network-sandbox')` as `resources.root`.
 Development callers point it at this package's `vendor` directory.

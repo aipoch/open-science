@@ -315,9 +315,7 @@ const NotebookNetworkDomainsForm = ({
               ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {window.api.platform === 'win32' &&
-              !isInstalling &&
-              status.kind !== 'setupRequired' ? (
+              {window.api.platform === 'win32' && !isInstalling ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -409,7 +407,13 @@ const NotebookNetworkDomainsForm = ({
         </div>
       </section>
 
-      {status.kind !== 'checking' && status.kind !== 'ready' && status.kind !== 'standard' ? (
+      {status.kind === 'standard' ? (
+        <InlineNotice level="info">
+          {t(
+            'Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.'
+          )}
+        </InlineNotice>
+      ) : status.kind !== 'checking' && status.kind !== 'ready' ? (
         <InlineNotice level="warning">
           {t('Protection is not active. These rules apply only to protected execution.')}
         </InlineNotice>

@@ -6505,6 +6505,7 @@
     "Loading session information…": "Загрузка информации о сеансе…",
     "Notebook execution was blocked": "Выполнение Notebook заблокировано",
     "Standard mode": "Стандартный режим",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "Правила сети действуют для программ, использующих прокси Notebook. Другие программы могут подключаться напрямую.",
     "Use standard mode": "Использовать стандартный режим",
     "Use protected mode": "Использовать защищённый режим",
     "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку.",

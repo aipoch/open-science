@@ -74,8 +74,12 @@ Native Notebook, Shell, and package installation remain available without
 protected-mode setup. Windows Network settings can select standard execution while keeping
 installed protection components. Managed and user-selected Python and R interpreters use the
 chosen mode. Switching stops running Notebook processes. Existing installations keep their
-receipt-derived selection until a mode is explicitly chosen. Selected protection is checked before execution and never silently falls
-back to standard mode when protection fails. A bypass of an enforced boundary is in scope under the
+receipt-derived selection until a mode is explicitly chosen. Selecting standard mode retains
+existing R grants. Runtimes settings can revoke each interpreter's grant individually.
+Operations that unregister or replace an interpreter check for grants before removing its path.
+If an old ownership record is unreadable, repair that record to complete permission cleanup.
+Selected protection is checked before execution and never silently falls back to standard mode
+when protection fails. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
 
 Agent-native file tools such as Read/Write/Edit run in their selected Agent process, outside

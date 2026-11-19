@@ -6051,6 +6051,7 @@
     "Loading session information…": "正在載入對話資訊…",
     "Notebook execution was blocked": "Notebook 執行已遭封鎖",
     "Standard mode": "標準模式",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "網路規則適用於使用 Notebook 代理的程式。其他程式可以直接連線。",
     "Use standard mode": "使用標準模式",
     "Use protected mode": "使用保護模式",
     "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。",

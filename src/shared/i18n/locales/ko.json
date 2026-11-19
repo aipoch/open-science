@@ -6049,6 +6049,7 @@
     "Loading session information…": "세션 정보 불러오는 중…",
     "Notebook execution was blocked": "Notebook 실행이 차단되었습니다",
     "Standard mode": "표준 모드",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "네트워크 규칙은 Notebook 프록시를 사용하는 프로그램에 적용됩니다. 다른 프로그램은 직접 연결할 수 있습니다.",
     "Use standard mode": "표준 모드 사용",
     "Use protected mode": "보호 모드 사용",
     "Could not switch execution mode. Try again.": "실행 모드를 전환하지 못했습니다. 다시 시도하세요.",

@@ -6369,6 +6369,7 @@
     "Loading session information…": "Cargando información de la sesión…",
     "Notebook execution was blocked": "La ejecución del Notebook se bloqueó",
     "Standard mode": "Modo estándar",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "Las reglas de red se aplican a los programas que usan el proxy de Notebook. Los demás programas pueden conectarse directamente.",
     "Use standard mode": "Usar el modo estándar",
     "Use protected mode": "Usar el modo protegido",
     "Could not switch execution mode. Try again.": "No se pudo cambiar el modo de ejecución. Inténtelo de nuevo.",

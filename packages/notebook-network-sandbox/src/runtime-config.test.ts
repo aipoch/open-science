@@ -832,6 +832,15 @@ describe('R admission launch protection', () => {
     expect(() => wrapped.beginSpawn?.()).toThrow('R cancelled')
   })
 
+  it('invalidates a standard launch even when the user switches back before spawn', async () => {
+    const standard = { ...config(['example.com']), windowsProtectionEnabled: false }
+    NotebookNetworkRuntime.updateConfig(standard)
+    const wrapped = await NotebookNetworkRuntime.wrap(request(false))
+    NotebookNetworkRuntime.updateConfig({ ...standard, windowsProtectionEnabled: true })
+    NotebookNetworkRuntime.updateConfig(standard)
+    expect(() => wrapped.beginSpawn?.()).toThrow('protection changed')
+  })
+
   it('rejects pending ownership operations before a standard R launch', async () => {
     vi.mocked(isWindowsProtectionConfigured).mockRejectedValueOnce(
       new Error('pending protected-mode operation')

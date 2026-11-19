@@ -24,6 +24,7 @@ import {
 } from './NotebookNetworkDomainsForm'
 import { SettingsSection } from './SettingsLayout'
 import { NotebookNetworkAccessSummary } from './NotebookNetworkAccessSummary'
+import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
@@ -301,7 +302,14 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
+        window.api?.platform === 'win32' ? (
+          <NotebookNetworkProtectionBanner
+            actionLabel={t('Manage access')}
+            onOpen={() => onNavigate({ kind: 'domains' })}
+          />
+        ) : (
+          <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
+        )
       ) : null}
 
       {!isConfiguring ? (

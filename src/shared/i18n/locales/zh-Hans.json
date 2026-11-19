@@ -6051,6 +6051,7 @@
     "Loading session information…": "正在加载会话信息…",
     "Notebook execution was blocked": "Notebook 执行被阻止",
     "Standard mode": "标准模式",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "网络规则适用于使用 Notebook 代理的程序。其他程序可以直接连接网络。",
     "Use standard mode": "使用标准模式",
     "Use protected mode": "使用保护模式",
     "Could not switch execution mode. Try again.": "无法切换执行模式。请重试。",

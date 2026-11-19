@@ -6051,6 +6051,7 @@
     "Loading session information…": "セッション情報を読み込み中…",
     "Notebook execution was blocked": "Notebook の実行がブロックされました",
     "Standard mode": "標準モード",
+    "Network rules apply to programs that use the Notebook proxy. Other programs can connect directly.": "ネットワークルールは Notebook のプロキシを使用するプログラムに適用されます。その他のプログラムは直接接続できます。",
     "Use standard mode": "標準モードを使用",
     "Use protected mode": "保護モードを使用",
     "Could not switch execution mode. Try again.": "実行モードを切り替えられませんでした。もう一度お試しください。",

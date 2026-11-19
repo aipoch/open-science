@@ -311,6 +311,13 @@ describe('RuntimesPanel', () => {
     expect(authorize).not.toHaveBeenCalled()
     if (status.kind === 'standard' || status.kind === 'setupRequired') {
       expect(button).toBeUndefined()
+      if (status.kind === 'standard') {
+        expect(
+          Array.from(container.querySelectorAll('details button')).some(
+            (button) => button.textContent === 'Remove R access'
+          )
+        ).toBe(true)
+      }
       expect(container.textContent).not.toContain(
         'R access verification requires network protection'
       )
