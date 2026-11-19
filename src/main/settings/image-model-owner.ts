@@ -106,7 +106,7 @@ const savedImageCredential = (
   current: StoredSettings
 ): StoredImageService | undefined => {
   const previous = current.imageServices?.find((service) => service.id === update.id)
-  // 地址或协议改变后，旧凭据只留在原连接中。
+  // Reuse saved credentials only when the endpoint and adapter still match.
   return !update.providerId &&
     !previous?.providerId &&
     previous?.adapter === update.adapter &&
@@ -150,7 +150,7 @@ export class ImageModelOwner {
     private readonly testGeneration: typeof testImageModel = testImageModel
   ) {}
 
-  /** 使用当前连接预览官方生图目录，保存仍走生图服务设置。 */
+  /** Previews an official image catalog without changing the saved service configuration. */
   async refreshCatalog(request: ImageModelCatalogRequest): Promise<ImageModelCatalogResult> {
     const parsed = imageModelCatalogRequestSchema.safeParse(request)
     if (!parsed.success) return { ok: false, code: 'unsupported' }
@@ -180,7 +180,7 @@ export class ImageModelOwner {
       if (!workspace || !isQwenWorkspaceBaseUrl(workspace))
         return { ok: false, code: 'missing-parameter' }
       const catalogUrl = new URL('/api/v1/models', workspace)
-      // 生图只关联百炼中国站账户，其他地区的目录需要独立密钥。
+      // Linked Bailian image accounts are scoped to China. Other regions require a separate key.
       if (provider && !catalogUrl.hostname.endsWith('.cn-beijing.maas.aliyuncs.com'))
         return { ok: false, code: 'missing-key' }
       if (catalogUrl.hostname.endsWith('.us-east-1.maas.aliyuncs.com'))
@@ -246,7 +246,7 @@ export class ImageModelOwner {
         const previous = services.find((service) => service.id === update.id)
         if (!previous && services.length >= 16) throw new Error('Too many image services.')
         const service = prepareService(update, current)
-        // 保存刷新结果时也保留其他窗口刚绑定到同一官方连接的型号。
+        // Preserve a model recently selected in another window for the same official connection.
         if (
           (service.vendorId || service.providerId) &&
           previous &&
