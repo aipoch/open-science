@@ -113,6 +113,24 @@ export const capturePosixProcessTreeIdentity = (
 ): PosixProcessIdentity | undefined =>
   trackedPosixProcessTrees.get(child)?.leaderIdentity ?? undefined
 
+// Read only the original tracker's proven members. This never performs a fresh process census or
+// adopts a numeric pid supplied by a renderer, and is not a capability to signal those processes.
+export const ownedPosixProcessIdentities = (
+  child: ChildProcess
+): {
+  identities: ReadonlyArray<{ pid: number; birthToken: string }>
+  complete: boolean
+} => {
+  const tracker = trackedPosixProcessTrees.get(child)
+  if (!tracker?.leaderIdentity) return { identities: [], complete: false }
+  return {
+    identities: [...tracker.identities.values()].flatMap((identity) =>
+      identity.birthToken ? [{ pid: identity.pid, birthToken: identity.birthToken }] : []
+    ),
+    complete: tracker.complete && tracker.ambiguousIdentities.size === 0
+  }
+}
+
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
 // the whole shutdown, this is a second, tighter guard scoped to a single tree.

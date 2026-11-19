@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { AcpPromptRequest, AgentTurnProvenanceContext } from '../../shared/acp'
 import type { TaskAgentPort } from '../tasks/task-runner'
+import { NotebookExecutionIntent, withNotebookExecutionIntent } from '../notebook/execution-intent'
 import {
   materializeSessionAgentConfiguration,
   toAcpSessionAgentTarget,
@@ -284,6 +285,54 @@ describe('ACP Task Agent port', () => {
     await expect(port.prompt(prompt)).rejects.toBe(failure)
     expect(untrackPrompt).toHaveBeenCalledWith('session-1', trackedPrompt)
   })
+
+  it.each([
+    ['tracking', true],
+    ['dispatch', true],
+    ['tracking', false],
+    ['dispatch', false]
+  ] as const)(
+    'abandons only fresh Task authority after %s failure (fresh: %s)',
+    async (failurePoint, fresh) => {
+      const intent = new NotebookExecutionIntent({ projectId: 'project', sessionId: 'session' })
+      if (fresh) intent.prepareUserExecution()
+      const failure = new Error(`Task ${failurePoint} failed`)
+      const sendPrompt = vi.fn(async () => {
+        throw failure
+      })
+      const port = createAcpTaskAgentPort(
+        {
+          captureNotebookTaskIntent: (request) => withNotebookExecutionIntent(request, intent),
+          getSnapshot: () => ({ sessionIds: ['session'] }),
+          resumeSession: vi.fn(),
+          setPermissionProfile: vi.fn(),
+          setMemoryEnabled: vi.fn(),
+          sendPrompt,
+          sendPromptObserved: sendPrompt,
+          cancelPrompt: vi.fn()
+        },
+        { create: vi.fn() },
+        {
+          trackPrompt: () => {
+            if (failurePoint === 'tracking') throw failure
+            return { token: 1 }
+          },
+          untrackPrompt: vi.fn()
+        }
+      )
+      await expect(
+        port.prompt({
+          sessionId: 'session',
+          promptMessageId: 'accepted-root',
+          provenanceContext: taskProvenanceContext('accepted-root'),
+          text: 'Execute the accepted Task.'
+        })
+      ).rejects.toBe(failure)
+      expect(sendPrompt).toHaveBeenCalledTimes(failurePoint === 'dispatch' ? 1 : 0)
+      if (fresh) expect(() => intent.assertExecutable()).toThrow('Execution was not started')
+      else expect(() => intent.assertExecutable()).not.toThrow()
+    }
+  )
 
   it('forwards provider acceptance through the provider-neutral Task prompt observer', async () => {
     const onProviderPromptAccepted = vi.fn()

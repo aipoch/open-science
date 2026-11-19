@@ -20,6 +20,7 @@ import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows
 import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 import type { NotebookProcessSandbox, NotebookSandboxProcessState } from './process-sandbox'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
@@ -630,6 +631,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       requestDecision: async () => 'deny'
     })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'native-repl',
@@ -714,6 +716,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       const registry = new ShellProcessOwnershipRegistry(root)
       const adapter = new NotebookShellProcessAdapter('win32', owner, registry)
       const service = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'native-admission',
@@ -893,7 +896,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     }
   )
 
-  it('allows updating after the application exits during shell identity capture', async () => {
+  it('allows updating after the application exits during hosted shell launch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-interrupted-owner-'))
     const controller = join(
       process.cwd(),
@@ -908,6 +911,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         platform: 'node',
         format: 'cjs',
         packages: 'external',
+        define: { 'import.meta.url': '__filename' },
         logLevel: 'silent'
       })
       await promisify(execFile)(
@@ -933,10 +937,23 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           timeout: 20_000
         }
       ).catch((error) => {
-        if (error.killed || error.code === 'ENOENT') throw error
+        if (
+          error.killed ||
+          error.code !== 1 ||
+          error.signal !== null ||
+          error.stdout !== '' ||
+          error.stderr !== ''
+        )
+          throw error
       })
-      expect(await readFile(join(root, 'workload-started'), 'utf8')).toBe('started')
+      await vi.waitFor(
+        async () => {
+          await expect(readFile(join(root, 'workload-started'), 'utf8')).resolves.toBe('started')
+        },
+        { timeout: 10_000, interval: 50 }
+      )
       const restarted = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'project'
@@ -980,6 +997,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         expect(result.stderr).toContain('interpreter state was reset')
         expect(registry.hasReceipts()).toBe(false)
         const service = new NotebookRuntimeService({
+          memoryPolicy: healthyNotebookMemoryPolicy(),
           configRoot: root,
           dataRoot: root,
           projectId: 'project',
@@ -1009,6 +1027,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     )
     const info = vi.fn()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'project',

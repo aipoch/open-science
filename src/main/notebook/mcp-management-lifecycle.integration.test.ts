@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { createNotebookMcpServer } from './mcp-server'
+import { NotebookExecutionIntent } from './execution-intent'
 
 const deferred = <Value = void>(): {
   promise: Promise<Value>
@@ -47,7 +48,13 @@ describe('Notebook MCP management lifecycle', () => {
       const rpcServer = new NotebookLocalRpcServer({ [method]: operation } as never, {
         transport: 'tcp'
       })
-      const connection = await rpcServer.ensureStarted()
+      const connection = await rpcServer.issueSessionConnection(
+        'session-1',
+        'default-project',
+        'root-frame-session-1',
+        true,
+        new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+      )
       const mcpServer = createNotebookMcpServer({
         ...connection,
         projectId: 'default-project',

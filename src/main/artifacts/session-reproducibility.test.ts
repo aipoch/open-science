@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SessionReproducibilityBatches } from './session-reproducibility'
+import { NotebookExecutionAdmissionError } from '../notebook/execution-admission'
 import type {
   ArtifactReproducibilityCheckRequest,
   ArtifactReproducibilityCheckState
@@ -39,6 +40,102 @@ const state = (
   comparisons: []
 })
 describe('Session reproducibility batches', () => {
+  it('exposes ready batches and stops their original unstarted targets without stopping a successor', async () => {
+    const run = vi.fn(async (request: ArtifactReproducibilityCheckRequest) =>
+      state(request, 'matched')
+    )
+    const batches = new SessionReproducibilityBatches({ preflight, run, cancel: vi.fn() })
+    const ready = (await batches.command({ ...scope, action: 'prepare', targets }, 1))!
+    const [original] = batches.resources({ projectId: 'p', sessionId: 's' })
+    expect(original).toMatchObject({
+      group: 'batch',
+      phase: 'ready',
+      projectId: 'p',
+      sessionId: 's',
+      startedAt: expect.any(Number)
+    })
+    expect(batches.activeSessions()).toEqual([{ projectId: 'p', sessionId: 's' }])
+    await expect(original.release()).resolves.toMatchObject({ reaped: true })
+    await expect(
+      batches.command({ ...scope, action: 'start', batchId: ready.batchId }, 1)
+    ).rejects.toThrow('no longer current')
+    expect(run).not.toHaveBeenCalled()
+    const successor = (await batches.command({ ...scope, action: 'prepare', targets }, 1))!
+    await expect(original.release()).resolves.toMatchObject({ reaped: true })
+    expect((await batches.command({ ...scope, action: 'get' }, 1))?.batchId).toBe(successor.batchId)
+    expect((await batches.command({ ...scope, action: 'get' }, 1))?.status).toBe('ready')
+    await batches.stopWhere(() => true)
+  })
+
+  it('retains a failed original batch projection for retry and does not evict its cleanup fence', async () => {
+    let failProjection = false
+    const save = vi.fn(async (batch) => {
+      if (failProjection && batch.appSessionId === 's') throw new Error('checkpoint unavailable')
+    })
+    const batches = new SessionReproducibilityBatches({
+      preflight,
+      run: vi.fn(),
+      cancel: vi.fn(),
+      store: { load: async () => undefined, save }
+    })
+    const ready = (await batches.command({ ...scope, action: 'prepare', targets }, 1))!
+    const [original] = batches.resources()
+    failProjection = true
+    await expect(original.release()).resolves.toMatchObject({ reaped: true, projection: 'failed' })
+    await expect(
+      batches.command({ ...scope, action: 'start', batchId: ready.batchId }, 1)
+    ).rejects.toThrow('cleanup is incomplete')
+    for (let index = 0; index < 64; index++) {
+      await batches.command(
+        { ...scope, appSessionId: `other-${index}`, action: 'prepare', targets: [targets[0]] },
+        1
+      )
+    }
+    expect(batches.resources({ sessionId: 's' })[0]?.identity).toBe(original.identity)
+    failProjection = false
+    await expect(original.release()).resolves.toMatchObject({
+      reaped: true,
+      projection: 'complete'
+    })
+    expect(batches.resources({ sessionId: 's' })).toEqual([])
+    await batches.stopWhere(() => true)
+  })
+
+  it('stops pending targets after a memory refusal and preserves completed targets', async () => {
+    const run = vi.fn(
+      async (
+        request: ArtifactReproducibilityCheckRequest,
+        publish: (state: ArtifactReproducibilityCheckState) => void
+      ) => {
+        if (request.artifactId === 'two') {
+          publish({
+            ...state(request, 'failed'),
+            failedStep: { stepId: 'step:two', runIndex: 1, execution: 'not-started' }
+          })
+          throw new NotebookExecutionAdmissionError(
+            'NOTEBOOK_MEMORY_PRESSURE',
+            'Execution was not started.'
+          )
+        }
+        return state(request, 'matched')
+      }
+    )
+    const batches = new SessionReproducibilityBatches({ preflight, run, cancel: vi.fn() })
+    const ready = (await batches.command({ ...scope, action: 'prepare', targets }, 1))!
+    await batches.command({ ...scope, action: 'start', batchId: ready.batchId }, 1)
+    await vi.waitFor(async () =>
+      expect((await batches.command({ ...scope, action: 'get' }, 1))?.status).toBe('cancelled')
+    )
+    expect((await batches.command({ ...scope, action: 'get' }, 1))?.targets).toMatchObject([
+      { status: 'matched' },
+      {
+        status: 'failed',
+        failedStep: { stepId: 'step:two', runIndex: 1, execution: 'not-started' }
+      },
+      { status: 'cancelled' }
+    ])
+    expect(run.mock.calls.map(([request]) => request.artifactId)).toEqual(['one', 'two'])
+  })
   it('fixes versions at preflight, skips blocked targets and continues after failure', async () => {
     const run = vi.fn(async (request: ArtifactReproducibilityCheckRequest) => {
       if (request.artifactId === 'two') throw new Error('execution failed')

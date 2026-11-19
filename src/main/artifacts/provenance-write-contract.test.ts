@@ -13,6 +13,7 @@ import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService, type NotebookExecutionResult } from '../notebook/runtime-service'
 import { buildAgentResultContinuationPrompt } from '../background-result-delivery/continuation'
 import {
@@ -604,6 +605,7 @@ describe('artifact provenance producer and source validation', () => {
     const value = await fixture()
     const rootFrameId = 'root-frame-pending-session-1'
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: value.storageRoot,
       dataRoot: value.storageRoot,
       projectId: 'project-1',

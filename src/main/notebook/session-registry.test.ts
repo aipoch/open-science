@@ -281,7 +281,7 @@ describe('NotebookSessionRegistry', () => {
     expect(registry.get(lane('session-3'))).toBeUndefined()
   })
 
-  it('returns reaped false after releasing sessions, then reopens admission', async () => {
+  it('retains the unreaped owner for retry while reopening admission for other sessions', async () => {
     const registry = new NotebookSessionRegistry<TestSession>()
     const unreaped = testSession('session-1')
     vi.mocked(unreaped.shutdownExecutor).mockResolvedValueOnce({ reaped: false })
@@ -291,9 +291,28 @@ describe('NotebookSessionRegistry', () => {
 
     const replacement = testSession('session-1')
     await expect(registry.getOrCreate(lane('session-1'), async () => replacement)).resolves.toBe(
-      replacement
+      unreaped
     )
+    expect(unreaped.releaseMcpRpcConnection).not.toHaveBeenCalled()
+    const other = testSession('session-2')
+    await expect(registry.getOrCreate(lane('session-2'), async () => other)).resolves.toBe(other)
+    await expect(registry.remove(lane('session-1'))).resolves.toEqual({ reaped: true })
     expect(unreaped.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get(lane('session-1'))).toBeUndefined()
+    expect(registry.get(lane('session-2'))).toBe(other)
+  })
+
+  it('retains an original per-lane owner when removal cannot verify cleanup', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const original = testSession('session-1')
+    vi.mocked(original.shutdownExecutor).mockResolvedValueOnce({ reaped: false })
+    await registry.getOrCreate(lane('session-1'), async () => original)
+    await expect(registry.remove(lane('session-1'))).resolves.toEqual({ reaped: false })
+    expect(registry.get(lane('session-1'))).toBe(original)
+    expect(original.releaseMcpRpcConnection).not.toHaveBeenCalled()
+    await expect(registry.remove(lane('session-1'))).resolves.toEqual({ reaped: true })
+    expect(original.shutdownExecutor).toHaveBeenCalledTimes(2)
+    expect(registry.get(lane('session-1'))).toBeUndefined()
   })
 
   it('includes an earlier per-session removal without tearing down its aggregate twice', async () => {

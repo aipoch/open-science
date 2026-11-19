@@ -1203,6 +1203,8 @@ jobs:
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
         continue-on-error: true
+        env:
+          RUN_KERNEL: '1'
         run: >-
           npx vitest run
           scripts/windows-dev-notebook-host.integration.test.ts
@@ -1234,6 +1236,12 @@ jobs:
           src/main/managed-preview-ipc.test.ts
           src/main/managed-preview-protocol.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/notebook/resource-release.windows.integration.test.ts
+          src/main/notebook/memory-admission.windows.integration.test.ts
+          src/main/notebook/python-lifecycle.windows.integration.test.ts
+          src/main/composition/session-package-lifecycle.integration.test.ts
+          src/main/notebook/host-mcp.integration.test.ts
+          src/main/notebook/host-compute.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts

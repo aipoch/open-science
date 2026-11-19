@@ -843,6 +843,8 @@ export const prepareNativeImport = async (
       document.workspaceCwd = `$DATA/${rootKey}`
       document.dataRoot = `$DATA/${rootKey}/data`
       document.kernel = { runtimeRoot: '$DATA/runtime' }
+      // Explicit interpreter selections belong to the source installation, not portable history.
+      delete document.runtimeBindings
       if (!Array.isArray(document.runs)) throw new Error('Invalid Notebook run history.')
       for (const run of document.runs) {
         if (run.status === 'running' || run.status === 'queued')
