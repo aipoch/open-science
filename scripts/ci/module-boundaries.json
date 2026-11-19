@@ -2173,6 +2173,7 @@
         "src/main/session-package/literature-reader.ts",
         "src/main/session-package/literature.ts",
         "src/main/session-package/native-snapshot.ts",
+        "src/main/session-package/opening-guide.ts",
         "src/main/session-package/operation.ts",
         "src/main/session-package/quit-guard.ts",
         "src/main/session-package/reproducibility.ts",
