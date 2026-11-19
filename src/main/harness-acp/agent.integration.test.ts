@@ -486,11 +486,13 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
       `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
       'LANGFUSE_PUBLIC_KEY=pk-lf-test',
       'LANGFUSE_SECRET_KEY=sk-lf-test',
+      'OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1',
       ''
     ].join('\n'),
     { mode: 0o600 }
   )
   const tracing = createHarnessTracing(undefined, undefined, envFile)!
+  const statusFile = `${envFile}.otel-status.json`
   cleanup.push(async () => tracing.dispose())
   const managed = await mcpServer(false, undefined, false, 'private-tool-result', true)
   let step = 0
@@ -520,6 +522,10 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
   const exportedSpans = (status: number): Span[] =>
     exportedResources(status).flatMap(({ scopeSpans }) => scopeSpans.flatMap(({ spans }) => spans))
   await vi.waitFor(() => expect(exportedSpans(200)).toHaveLength(4), { timeout: 3000 })
+  await vi.waitFor(async () => {
+    const status = await readFile(statusFile, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ outcome: 'http_accepted', httpStatus: 200 })
+  })
   for (const { resource } of exportedResources(200))
     expect(attributes(resource.attributes)['service.name']).toBe('open-science-agent')
   const spans = exportedSpans(200)
@@ -571,6 +577,12 @@ it('uses raw Langfuse keys for correlated OTLP spans and completes turns when th
       ),
     { timeout: 3000 }
   )
+  await vi.waitFor(async () => {
+    const status = await readFile(statusFile, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ outcome: 'http_rejected', httpStatus: 503 })
+    expect(status).not.toContain(credentials)
+    expect(status).not.toContain(endpoint)
+  })
   for (const request of requests) {
     expect(request.url).toBe(tracePath)
     expect(request.authorization).toBe(`Basic ${credentials}`)

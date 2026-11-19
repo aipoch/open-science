@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
 import {
+  HARNESS_OTLP_DIAGNOSTICS,
   HARNESS_OTLP_TRACES_API_KEY,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS,
@@ -194,14 +195,8 @@ async function readTraceFile(path: string, maxBytes: number): Promise<string> {
 async function loadExportConfig(
   endpoint: string | undefined,
   headersFile: string | undefined,
-  envFile: string | undefined
+  env: NodeJS.Dict<string>
 ): Promise<{ url: URL; headers: Headers } | undefined> {
-  // Explicit launch settings are one export destination. Do not attach file credentials to
-  // a URL supplied by an environment override.
-  const env =
-    endpoint === undefined && envFile
-      ? parseEnv(await readTraceFile(envFile, MAX_ENV_FILE_BYTES))
-      : {}
   const target = endpoint ?? env[HARNESS_OTLP_TRACES_ENDPOINT]
   const path = headersFile ?? env[HARNESS_OTLP_TRACES_HEADERS_FILE]
   if (!target?.trim() || (path && !isAbsolute(path))) return undefined
@@ -237,7 +232,36 @@ async function loadExportConfig(
   return { url, headers }
 }
 
-/** Best-effort OTLP/HTTP JSON, owned by the ACP helper. No global SDK, logging or disk queue. */
+type UploadStatus =
+  | { outcome: 'http_accepted' | 'http_rejected'; httpStatus: number }
+  | { outcome: 'invalid_configuration' | 'timeout' | 'transport_error' }
+
+async function writeUploadStatus(path: string, status: UploadStatus): Promise<void> {
+  try {
+    const file = await open(
+      path,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+      0o600
+    )
+    try {
+      if (!(await file.stat()).isFile()) return
+      // A fixed-width record keeps concurrent helpers from truncating each other's status.
+      const contents =
+        JSON.stringify({ at: new Date().toISOString(), ...status }).padEnd(127) + '\n'
+      await file.writeFile(contents)
+      await file.truncate(Buffer.byteLength(contents))
+    } finally {
+      await file.close()
+    }
+  } catch {
+    // The status file is best effort and never participates in the Agent protocol.
+  }
+}
+
+/** Best-effort OTLP/HTTP JSON, owned by the ACP helper. */
 export function createHarnessTracing(
   endpoint: string | undefined,
   headersFile?: string,
@@ -249,7 +273,22 @@ export function createHarnessTracing(
   let exporting = false
   let scheduled: NodeJS.Immediate | undefined
   let disabled = false
-  const destination = loadExportConfig(endpoint, headersFile, envFile)
+  const destination = (async () => {
+    // Explicit launch settings are one destination. File credentials stay with the file URL.
+    const env =
+      endpoint === undefined && envFile
+        ? parseEnv(await readTraceFile(envFile, MAX_ENV_FILE_BYTES))
+        : {}
+    const statusFile =
+      envFile && env[HARNESS_OTLP_DIAGNOSTICS] === '1' ? `${envFile}.otel-status.json` : undefined
+    const config = await loadExportConfig(endpoint, headersFile, env).catch(() => undefined)
+    if (!config) {
+      if (statusFile && !lifetime.signal.aborted)
+        await writeUploadStatus(statusFile, { outcome: 'invalid_configuration' })
+      return undefined
+    }
+    return { ...config, statusFile }
+  })()
     .catch(() => undefined)
     .then((config) => {
       if (!config) {
@@ -271,10 +310,14 @@ export function createHarnessTracing(
     const spans = queued
     queued = []
     exporting = true
+    let statusFile: string | undefined
+    let timeout: AbortSignal | undefined
     try {
       const config = await destination
       if (!config || lifetime.signal.aborted) return
       const { url, headers } = config
+      statusFile = config.statusFile
+      timeout = AbortSignal.timeout(EXPORT_TIMEOUT_MS)
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -287,11 +330,20 @@ export function createHarnessTracing(
           ]
         }),
         redirect: 'error',
-        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(EXPORT_TIMEOUT_MS)])
+        signal: AbortSignal.any([lifetime.signal, timeout])
       })
-      await response.body?.cancel()
+      await response.body?.cancel().catch(() => undefined)
+      if (statusFile && !lifetime.signal.aborted)
+        await writeUploadStatus(statusFile, {
+          outcome: response.ok ? 'http_accepted' : 'http_rejected',
+          httpStatus: response.status
+        })
     } catch {
-      // A failed batch is dropped. Never retry, log or propagate telemetry errors.
+      if (statusFile && !lifetime.signal.aborted)
+        await writeUploadStatus(statusFile, {
+          outcome: timeout?.aborted ? 'timeout' : 'transport_error'
+        })
+      // A failed batch is dropped without retrying or propagating telemetry errors.
     } finally {
       exporting = false
       scheduleExport()
