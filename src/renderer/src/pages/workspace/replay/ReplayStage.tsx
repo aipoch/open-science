@@ -1,6 +1,6 @@
 import { NotebookTextOutput } from '../NotebookRunOutputs'
 import { GeneratedFileCard, artifactGalleryClassName } from '../GeneratedFileCard'
-import { formatByteSize } from '@/lib/utils'
+import { cn, formatByteSize } from '@/lib/utils'
 import { isReviewerCorrectionAttribution } from '../../../../../shared/session-persistence'
 import { ReplayReviewRecord } from './ReplayReviewRecord'
 import {
@@ -26,7 +26,15 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import type { NotebookRunRecord } from '../../../../../shared/notebook'
-import { ArrowLeft, ChevronUp, ChevronDown, X, BookOpen, Files as FilesIcon } from 'lucide-react'
+import {
+  ArrowLeft,
+  ChevronUp,
+  ChevronDown,
+  X,
+  BookOpen,
+  Files as FilesIcon,
+  MessageSquare
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { getPreviewFormatForFile } from '../preview-support'
@@ -342,6 +350,27 @@ export const ResourceTable = ({
   )
 }
 
+const HistoricalAskButton = ({ onClick }: { onClick: () => void }): React.JSX.Element => {
+  const { t } = useReplayTranslation()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={t('Ask')}
+          className="pointer-events-none absolute top-2 right-0 text-text-300 opacity-0 transition-opacity group-hover/replay-record:pointer-events-auto group-hover/replay-record:opacity-100 group-focus-within/replay-record:pointer-events-auto group-focus-within/replay-record:opacity-100 [@media(hover:none),(any-pointer:coarse)]:pointer-events-auto [@media(hover:none),(any-pointer:coarse)]:size-11 [@media(hover:none),(any-pointer:coarse)]:opacity-100"
+          onClick={onClick}
+        >
+          <MessageSquare size={16} aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{t('Ask about this step')}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 const StepConversation = memo(function StepConversation({
   step,
   active,
@@ -392,7 +421,11 @@ const StepConversation = memo(function StepConversation({
       tabIndex={interactive ? -1 : undefined}
       className={
         interactive
-          ? 'min-w-0 py-2'
+          ? cn(
+              'min-w-0 py-2',
+              onAskHistorical &&
+                'group/replay-record relative pr-12 [@media(hover:none),(any-pointer:coarse)]:min-h-13'
+            )
           : `rounded-xl border p-4 ${active ? 'border-border-100 bg-bg-000' : 'border-border-200 bg-bg-10'}`
       }
     >
@@ -533,10 +566,8 @@ const StepConversation = memo(function StepConversation({
             (step.runs.length ? t('Saved Notebook execution') : t('Recorded file version'))}
         </p>
       ) : null}
-      {!active && onAskHistorical && (
-        <Button size="sm" variant="ghost" onClick={() => onAskHistorical(step)}>
-          {t('Ask')}
-        </Button>
+      {interactive && !active && onAskHistorical && (
+        <HistoricalAskButton onClick={() => onAskHistorical(step)} />
       )}
     </article>
   )
@@ -1255,12 +1286,18 @@ const ReplayStageContent = ({
                     </p>
                   )
                 return fitContainer ? (
-                  <div key={index.runId} data-replay-run-item={index.runId} tabIndex={-1}>
+                  <div
+                    key={index.runId}
+                    data-replay-run-item={index.runId}
+                    tabIndex={-1}
+                    className={cn(
+                      'min-w-0',
+                      onAskHistorical && 'group/replay-record relative pr-12'
+                    )}
+                  >
                     {content}
                     {onAskHistorical && detail?.status === 'ready' && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
+                      <HistoricalAskButton
                         onClick={() => {
                           const step = scene.visibleSteps.find((item) =>
                             item.runs.some((run) => run.runId === index.runId)
@@ -1273,9 +1310,7 @@ const ReplayStageContent = ({
                               })
                             })
                         }}
-                      >
-                        {t('Ask')}
-                      </Button>
+                      />
                     )}
                   </div>
                 ) : (
