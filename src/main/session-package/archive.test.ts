@@ -1,5 +1,6 @@
 import {
   readPackageArchive,
+  packageEntry,
   validatePackageDirectory,
   writePackageArchive,
   PACKAGE_REQUIRES_UPDATE
@@ -7,12 +8,19 @@ import {
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Header, Pax, c } from 'tar'
+import { Header, Pax, c, t } from 'tar'
+import { gunzipSync } from 'node:zlib'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionPackageService } from './service'
 import { withPackageTransfer } from './transfer'
 import { withFileIoPacing } from '../file-io-pacing'
-import { packageInventoryEntrySchema } from '../../shared/session-package'
+import {
+  PACKAGE_INSTRUCTION_PATH,
+  PACKAGE_MAX_INSTRUCTION_BYTES,
+  packageInventoryEntrySchema,
+  type SessionPackageManifest
+} from '../../shared/session-package'
+import { PACKAGE_INSTRUCTION } from './opening-guide'
 import {
   compactLaneViews,
   indexPortableEvidence,
@@ -27,6 +35,99 @@ import * as storageUsage from '../storage/usage'
 import { sha256 } from '../artifacts/provenance-canonical'
 
 const directories: string[] = []
+
+const openingGuideFixture = async (): Promise<{
+  root: string
+  source: string
+  manifest: SessionPackageManifest
+  guide: string
+}> => {
+  const root = await mkdtemp(join(tmpdir(), 'science-package-opening-guide-'))
+  directories.push(root)
+  const source = join(root, 'source')
+  const manifest = await readPackageArchive(
+    join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'),
+    source
+  )
+  const guide = join(source, PACKAGE_INSTRUCTION_PATH)
+  await writeFile(guide, PACKAGE_INSTRUCTION)
+  manifest.inventory.push(await packageEntry(source, PACKAGE_INSTRUCTION_PATH, 'readme'))
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest))
+  return { root, source, manifest, guide }
+}
+
+it('writes an early opening guide in a standard gzip member that also works without its comment', async () => {
+  const { root, source, manifest } = await openingGuideFixture()
+  const archive = join(root, 'sample.science')
+  await writePackageArchive(source, archive)
+  const paths: string[] = []
+  await t({ file: archive, onReadEntry: (entry) => void paths.push(entry.path) })
+  expect(paths.slice(0, 2)).toEqual(['manifest.json', PACKAGE_INSTRUCTION_PATH])
+  expect(paths).toContain('README.md')
+  const bytes = await readFile(archive)
+  expect([...bytes.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0x10])
+  const commentEnd = bytes.indexOf(0, 10)
+  expect(bytes.toString('ascii', 10, commentEnd)).toBe(
+    'Open-Science session package (tar archive). See instruction-for-agent.md for opening guidance.'
+  )
+  const control = Buffer.concat([bytes.subarray(0, 10), bytes.subarray(commentEnd + 1)])
+  control[3] &= ~0x10
+  expect(gunzipSync(control)).toEqual(gunzipSync(bytes))
+  const controlArchive = join(root, 'control.science')
+  await writeFile(controlArchive, control)
+  for (const path of [archive, controlArchive]) {
+    const output = await mkdtemp(join(root, 'read-'))
+    await expect(readPackageArchive(path, output)).resolves.toEqual(manifest)
+    const exportedGuide = await readFile(join(output, PACKAGE_INSTRUCTION_PATH), 'utf8')
+    expect(exportedGuide).toBe(PACKAGE_INSTRUCTION)
+    expect(exportedGuide).toContain('# Open this Open-Science session package')
+    expect(exportedGuide).not.toMatch(/\bOpen ?Science\b/)
+  }
+})
+
+it.each(['tampered', 'missing', 'undeclared', 'duplicate', 'oversized'] as const)(
+  'rejects a %s opening guide before import',
+  async (fault) => {
+    const { root, source, manifest, guide } = await openingGuideFixture()
+    const paths = ['manifest.json', ...manifest.inventory.map((entry) => entry.path)]
+    if (fault === 'missing') paths.pop()
+    if (fault === 'undeclared') {
+      manifest.inventory.pop()
+      await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest))
+    }
+    if (fault === 'duplicate') paths.push(PACKAGE_INSTRUCTION_PATH)
+    if (fault === 'oversized')
+      await writeFile(guide, Buffer.alloc(PACKAGE_MAX_INSTRUCTION_BYTES + 1))
+    if (fault === 'tampered')
+      await writeFile(guide, 'x'.repeat(Buffer.byteLength(PACKAGE_INSTRUCTION)))
+    const archive = join(root, 'invalid.science')
+    await c({ cwd: source, file: archive, gzip: true }, paths)
+    const expected = {
+      tampered: /checksum|integrity/i,
+      missing: /ENOENT|incomplete/i,
+      undeclared: /incomplete/i,
+      duplicate: /duplicate/i,
+      oversized: /oversized/i
+    }
+    await expect(readPackageArchive(archive, join(root, 'read'))).rejects.toThrow(expected[fault])
+  }
+)
+
+it('never accepts an opening guide as stored Session content', async () => {
+  const { manifest } = await openingGuideFixture()
+  const entry = manifest.inventory.find((item) => item.path === PACKAGE_INSTRUCTION_PATH)
+  expect(packageInventoryEntrySchema.safeParse(entry).success).toBe(true)
+  expect(packageInventoryEntrySchema.safeParse({ ...entry, kind: 'file' }).success).toBe(false)
+  expect(
+    packageInventoryEntrySchema.safeParse({
+      ...entry,
+      storageKey: 'artifacts/project/session/file'
+    }).success
+  ).toBe(false)
+  expect(packageInventoryEntrySchema.safeParse({ ...entry, path: 'instruction.md' }).success).toBe(
+    false
+  )
+})
 
 it('bounds selected log records, their views and expanded generations when reading one activity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'evidence-budget-'))

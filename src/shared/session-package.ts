@@ -26,6 +26,8 @@ export type SensitiveContentEvidence = {
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
+export const PACKAGE_INSTRUCTION_PATH = 'instruction-for-agent.md'
+export const PACKAGE_MAX_INSTRUCTION_BYTES = 16 * 1024
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
 export const PACKAGE_MIN_IO_BYTES_PER_SECOND = 1024 ** 2
@@ -285,7 +287,7 @@ export const packageInventoryEntrySchema = z
     path: z
       .string()
       .regex(
-        /^(session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
+        /^(session\.json|records\.json|ro-crate-metadata\.json|README\.md|instruction-for-agent\.md|objects\/[a-f0-9]{64})$/
       ),
     sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_FILE_BYTES),
     checksum,
@@ -293,6 +295,14 @@ export const packageInventoryEntrySchema = z
     kind: z.enum(['session', 'records', 'file', 'notebook', 'readme', 'metadata'])
   })
   .strict()
+  .refine(
+    (entry) =>
+      entry.path !== PACKAGE_INSTRUCTION_PATH ||
+      (entry.kind === 'readme' &&
+        entry.storageKey === undefined &&
+        entry.sizeBytes <= PACKAGE_MAX_INSTRUCTION_BYTES),
+    'Invalid session package opening guide inventory entry.'
+  )
 
 const packageFeatureSchema = z.enum([
   'literature',
