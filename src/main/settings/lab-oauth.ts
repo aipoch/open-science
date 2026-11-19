@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import type { LabSignInChallenge } from '../../shared/lab'
 import { LAB_CALLBACK_PATH } from '../../shared/lab'
 import { desktopShellInteraction } from '../desktop-interaction'
+import openScienceLogoSvg from '../remote-access/open-science-logo.svg?raw'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { LabApi, LabApiError, type LabTokenResponse } from './lab-api'
 import { collectLabDeviceInfo } from './lab-device-info'
@@ -15,28 +16,50 @@ import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 // stored entirely in main; the renderer only sees the authorization URL and the resulting status.
 
 const callbackPage = (accepted: boolean): string => {
-  const title = accepted ? 'Authorization received' : 'Sign-in failed'
+  const title = accepted ? 'Return to Open-Science' : 'Sign-in failed'
   const message = accepted
-    ? 'You can close this tab and return to Open-Science.'
+    ? 'Authorization received. You can close this tab.'
     : 'Return to Lab settings in Open-Science and try signing in again.'
   return `<!doctype html>
 <html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>${title} · Open-Science</title>
-<style>
-  * { box-sizing: border-box }
-  body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px;
-    font: 1rem/1.5 system-ui, sans-serif; background: light-dark(#f7f9f8, #171a19); color: light-dark(#202522, #edf2ef) }
-  main { width: min(100%, 27rem); padding: clamp(24px, 6vw, 40px); border: 1px solid light-dark(#d9dfdc, #39423d);
-    border-radius: 16px; background: light-dark(white, #212623) }
-  header { font-weight: 600; font-size: .875rem; color: light-dark(#08685a, #8edacb) }
-  h1 { margin: 20px 0 8px; font-size: 1.625rem; line-height: 1.2 }
-  p { margin: 0; color: light-dark(#505b55, #b9c5bd) }
-</style>
-<main><header>Open-Science</header><h1>${title}</h1><p>${message}</p></main>
-${accepted ? '<script>window.close()</script>' : ''}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>${title}</title>
+  <style>
+    :root { color-scheme: light dark }
+    * { box-sizing: border-box }
+    body {
+      margin: 0;
+      min-block-size: 100vh;
+      min-block-size: 100svh;
+      display: grid;
+      place-items: center;
+      padding: 32px 24px;
+      font: 15px/1.6 system-ui, sans-serif;
+      background: #f7f8fa;
+      color: #20242d;
+    }
+    main { width: min(100%, 440px); text-align: center; margin-block-end: 6vh }
+    .logo { display: grid; place-items: center; width: 72px; height: 72px; margin: 0 auto 20px }
+    .logo svg { display: block; width: 100%; height: auto }
+    h1 { margin: 0 0 10px; font-size: clamp(24px, 5vw, 30px); font-weight: 650; line-height: 1.2; letter-spacing: -.035em }
+    p { margin: 0; color: #555e6d }
+    @media (prefers-color-scheme: dark) {
+      body { background: #17191d; color: #f1f3f6 }
+      p { color: #b5bdca }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo" aria-hidden="true">${openScienceLogoSvg}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </main>
+  ${accepted ? '<script>window.close()</script>' : ''}
+</body>
 </html>`
 }
 

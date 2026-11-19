@@ -89,7 +89,7 @@ describe('Lab settings panel', () => {
     await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
 
     expect(container.textContent).toContain('Not signed in')
-    await click('Sign in')
+    await click('Sign in with browser')
 
     expect(settingsApi.labBeginLogin).toHaveBeenCalledTimes(1)
     expect(settingsApi.labWaitLogin).toHaveBeenCalledTimes(1)
@@ -103,7 +103,7 @@ describe('Lab settings panel', () => {
     await act(async () => resolveWait?.({ state: 'authenticated' }))
   })
 
-  it('shows the signed-in account, device, and model count', async () => {
+  it('shows the signed-in account, device, and models', async () => {
     await renderPanel({
       state: 'authenticated',
       accountName: 'Ada Lovelace',
@@ -122,7 +122,6 @@ describe('Lab settings panel', () => {
 
     expect(container.textContent).toContain('Signed in as Ada Lovelace')
     expect(container.textContent).toContain('Device: MacBook Pro')
-    expect(container.textContent).toContain('2 models available')
     expect(container.textContent).toContain('Model A')
     expect(container.textContent).toContain('Chat Completions')
     expect(container.textContent).toContain('Model B')
@@ -268,8 +267,14 @@ describe('Lab settings panel', () => {
     await renderPanel({ state: 'signingIn', serverUrl: 'https://lab.example.com' })
 
     expect(container.textContent).toContain('Waiting for browser confirmation…')
+    settingsApi.labCancelLogin.mockImplementationOnce(async () => {
+      const view = { state: 'signedOut', serverUrl: 'https://lab.example.com' } satisfies LabView
+      useSettingsStore.setState({ lab: view })
+      return view
+    })
     await click('Cancel sign-in')
     expect(settingsApi.labCancelLogin).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(buttonWithText('Sign in with browser'))
   })
 
   it('never opens a blocking alert or dialog', async () => {
@@ -277,7 +282,7 @@ describe('Lab settings panel', () => {
     vi.stubGlobal('alert', alert)
     await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
 
-    await click('Sign in')
+    await click('Sign in with browser')
 
     expect(alert).not.toHaveBeenCalled()
     expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
