@@ -13,6 +13,7 @@ import {
 } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 import { getNotebookInputRoot } from './input-staging'
+import { NotebookExportReader } from './export-reader'
 import { digestNotebookHelperSource } from './helper-evidence'
 
 let storageRoot: string | undefined
@@ -280,6 +281,66 @@ describe('notebook run repository', () => {
     await expect(
       repository.findOwnedRun(projectId, sessionId, 'child-frame', { runId: 'run-root' })
     ).resolves.toBeUndefined()
+  })
+
+  it('counts and exports both root aliases without including a child or rewriting provenance', async () => {
+    const repository = new NotebookRunRepository(await createStorageRoot())
+    const projectId = 'default-project'
+    const sessionId = 'canonical-session'
+    const provisionalRoot = 'root-frame-pending-session'
+    const canonicalRoot = `root-frame-${sessionId}`
+    const records = [
+      { id: 'manual', frame: canonicalRoot, root: canonicalRoot },
+      { id: 'agent', frame: provisionalRoot, root: provisionalRoot },
+      { id: 'child', frame: 'child-frame', root: provisionalRoot }
+    ]
+    for (const [index, record] of records.entries()) {
+      const lane =
+        record.id === 'child'
+          ? createFrameNotebookLane(projectId, sessionId, record.frame)
+          : createRootNotebookLane(projectId, sessionId, record.frame)
+      await repository.loadOrCreate({ projectId, sessionId, workspaceCwd: '/workspace', lane })
+      await repository.appendRun({
+        projectId,
+        sessionId,
+        lane,
+        run: admittedRun({
+          runId: record.id,
+          cellId: record.id,
+          submissionIdentity: undefined,
+          submissionFingerprint: undefined,
+          startedAt: index,
+          status: 'completed',
+          script: `print("${record.id}")`,
+          rootFrameId: record.root,
+          agentFrameId: record.frame
+        })
+      })
+    }
+    const exporter = new NotebookExportReader({ repository, defaultProjectId: projectId })
+    for (const frameId of [provisionalRoot, canonicalRoot, 'child-frame']) {
+      const expectedIds = frameId === 'child-frame' ? ['child'] : ['manual', 'agent']
+      const window = await repository.readSessionRunWindow(projectId, sessionId, 1, [], frameId)
+      expect(window.historySummary).toMatchObject({
+        agentFrameId: frameId,
+        runCount: expectedIds.length,
+        kernelCounts: { python: expectedIds.length }
+      })
+      const exported = await exporter.readKernel({
+        projectId,
+        sessionId,
+        workspaceCwd: '/workspace',
+        kernel: 'python',
+        agentFrameFilter: frameId
+      })
+      const notebook = JSON.parse(exported.data) as { cells: { source: string[] }[] }
+      expect(notebook.cells.map((cell) => cell.source.join(''))).toEqual(
+        expectedIds.map((id) => `print("${id}")`)
+      )
+    }
+    expect(
+      (await repository.readSessionRuns(projectId, sessionId)).map((run) => run.agentFrameId)
+    ).toEqual(records.map((record) => record.frame))
   })
 
   it('atomically returns the canonical Run for a repeated submission', async () => {

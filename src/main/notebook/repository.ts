@@ -15,7 +15,11 @@ import type {
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
+import {
+  createNotebookFrameRunFilter,
+  NOTEBOOK_RUN_FILE,
+  NOTEBOOKS_DIR
+} from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
@@ -1459,6 +1463,13 @@ class NotebookRunRepository {
           kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
         }
       : undefined
+    const matchesSummaryFrame = historySummary
+      ? createNotebookFrameRunFilter(
+          sessionId,
+          historySummary.agentFrameId,
+          documents.flatMap((document) => document.runs)
+        )
+      : undefined
     let latestSummaryDataRun: NotebookRunRecord | undefined
     let total = 0
     let eligibleTotal = 0
@@ -1469,7 +1480,7 @@ class NotebookRunRepository {
       for (const run of document.runs) {
         total += 1
         if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
-        if (historySummary && run.agentFrameId === historySummary.agentFrameId) {
+        if (historySummary && matchesSummaryFrame?.(run)) {
           historySummary.runCount += 1
           historySummary.kernelCounts[run.kernelKind] += 1
           if (

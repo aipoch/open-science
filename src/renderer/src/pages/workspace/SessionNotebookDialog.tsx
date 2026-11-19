@@ -31,6 +31,7 @@ import {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
+  normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
@@ -598,6 +599,7 @@ const SessionNotebookDialog = ({
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
   const dialogSession = useRetainedDialogValue(session)
+  const frameRuns = dialogSession ? normalizeNotebookRootFrameRuns(runs, dialogSession) : runs
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const topSentinelRef = useRef<HTMLDivElement | null>(null)
   const initialBottomPending = useRef(true)
@@ -765,7 +767,7 @@ const SessionNotebookDialog = ({
               key={dialogSession.id}
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
-              runs={runs}
+              runs={frameRuns}
               runCount={runCount}
               loadedRunCount={runs.length}
               historyPage={historyPage}
@@ -773,7 +775,7 @@ const SessionNotebookDialog = ({
               earlierError={earlierError}
               viewportRef={viewportRef}
               topSentinelRef={topSentinelRef}
-              frameLabels={notebookFrameLabels(dialogSession, t, runs)}
+              frameLabels={notebookFrameLabels(dialogSession, t, frameRuns)}
               onLoadHistorySummary={loadHistorySummary}
               onLoadEarlier={loadEarlier}
               status={status}

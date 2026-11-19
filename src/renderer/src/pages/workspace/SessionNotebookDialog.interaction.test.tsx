@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import { SessionNotebookContent, SessionNotebookDialog } from './SessionNotebookDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 if (!Element.prototype.scrollIntoView) {
@@ -49,6 +49,45 @@ afterEach(() => {
   container.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+it('opens paged-session history with both provisional and canonical root runs', async () => {
+  const sessionId = 'paged-dialog-session'
+  const runs = [
+    {
+      ...run,
+      runId: 'manual',
+      agentFrameId: `root-frame-${sessionId}`,
+      rootFrameId: `root-frame-${sessionId}`,
+      script: 'print("manual-history")'
+    },
+    {
+      ...run,
+      runId: 'agent',
+      agentFrameId: 'root-frame-pending-dialog',
+      rootFrameId: 'root-frame-pending-dialog',
+      script: 'print("agent-history")'
+    }
+  ]
+  vi.stubGlobal('api', {
+    notebook: {
+      getReference: vi.fn().mockResolvedValue({ sessionId }),
+      state: vi.fn().mockResolvedValue({ runs, runCount: 2 }),
+      exportIpynb: vi.fn()
+    }
+  })
+  await act(async () => {
+    root.render(
+      <SessionNotebookDialog
+        session={{ id: sessionId, projectId: 'project-1', contentLoaded: false } as never}
+        onClose={vi.fn()}
+      />
+    )
+  })
+  await waitFor(() => {
+    expect(document.body.textContent).toContain('manual-history')
+    expect(document.body.textContent).toContain('agent-history')
+  })
 })
 
 describe('SessionNotebookContent export', () => {

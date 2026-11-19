@@ -502,6 +502,23 @@ export type NotebookRunRecord = {
   interruptionReason?: 'app-terminated' | 'execution-error'
 }
 
+// Main Agent history can contain both provisional and canonical root IDs. Resolve membership
+// from existing provenance without rewriting the records; Subagents remain exact Frame matches.
+export const createNotebookFrameRunFilter = (
+  sessionId: string,
+  agentFrameId: string,
+  runs: readonly NotebookRunRecord[]
+): ((run: NotebookRunRecord) => boolean) => {
+  const canonicalRootFrameId = `root-frame-${sessionId}`
+  const isRoot =
+    agentFrameId === canonicalRootFrameId || runs.some((run) => run.rootFrameId === agentFrameId)
+  return (run) =>
+    run.agentFrameId === agentFrameId ||
+    (isRoot &&
+      run.agentFrameId !== undefined &&
+      (run.agentFrameId === canonicalRootFrameId || run.agentFrameId === run.rootFrameId))
+}
+
 // Orthogonal to NotebookRunStatus: a completed run may later become stale when a name it depended
 // on is redefined in the same persistent-kernel generation.
 export type NotebookRunStaleness =
