@@ -60,6 +60,7 @@ type NetworkRuntimeConfig = Readonly<{
   installationId: string
   windowsHostPath: string
   windowsOwnershipRoot: string
+  windowsProtectionEnabled?: boolean
 }>
 
 type NetworkAskCallback = (request: {
@@ -153,6 +154,7 @@ const violations = new ViolationLog()
 // Settings mutations and the final spawn check run in this owner process. A revision change
 // invalidates prepared R launches, including a cancelled/failed mutation (the state may have changed).
 let windowsProtectionRevision = 0
+let windowsModeRevision = 0
 let windowsProtectionMutations = 0
 const mutateWindowsProtection = async <T>(operation: () => Promise<T>): Promise<T> => {
   windowsProtectionRevision += 1
@@ -261,7 +263,7 @@ const decide = async (
 
 const refreshWindowsProtection = async (): Promise<SandboxDependencyCheck> => {
   const config = runtimeConfig
-  if (!config || process.platform !== 'win32') {
+  if (!config || process.platform !== 'win32' || config.windowsProtectionEnabled === false) {
     windowsProtectedGatewayPort = undefined
     return { warnings: [], errors: [] }
   }
@@ -312,6 +314,8 @@ const wrap = async (
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
   const target = request.target ?? { kind: 'native' }
+  const protectionRevisionAtAdmission = windowsProtectionRevision
+  const modeRevisionAtAdmission = windowsModeRevision
   const filesystem = normalizeFilesystemLayout({
     ...request.filesystem,
     ...((process.platform === 'darwin' || process.platform === 'linux') &&
@@ -436,41 +440,49 @@ const wrap = async (
     }
     let assertWindowsSpawnAdmission: (() => void) | undefined
     let windowsGatewayPort = windowsProtectedGatewayPort
-    if (process.platform === 'win32' && request.windowsProtectionRequired !== undefined) {
-      if (!request.executable) throw new Error('R admission requires an exact executable.')
-      const revision = windowsProtectionRevision
+    const required = request.windowsProtectionRequired ?? config.windowsProtectionEnabled
+    if (process.platform === 'win32' && required !== undefined) {
       assertWindowsSpawnAdmission = () => {
         request.signal?.throwIfAborted()
         if (commandContexts.get(request.commandId) !== context) {
-          throw new Error('R startup preparation was released before process creation.')
+          throw new Error('Notebook startup preparation was released before process creation.')
         }
-        if (windowsProtectionMutations > 0 || windowsProtectionRevision !== revision) {
-          throw new Error('Windows protection changed before R startup. Retry the Notebook cell.')
+        if (
+          modeRevisionAtAdmission !== windowsModeRevision ||
+          (config.windowsProtectionEnabled !== false &&
+            (windowsProtectionMutations > 0 ||
+              windowsProtectionRevision !== protectionRevisionAtAdmission))
+        ) {
+          throw new Error('Windows protection changed before startup. Retry the Notebook cell.')
         }
       }
       assertWindowsSpawnAdmission()
       // Recheck journals/receipts and the admitted mode before selecting a launcher. Never turn
       // a protected R admission into an uncontained process when setup changes or breaks.
-      const access = await getWindowsRuntimeAccessImpl(
-        config.windowsHostPath,
-        config.installationId,
-        config.windowsOwnershipRoot,
-        request.executable
-      )
-      if (request.windowsRuntimeAccessRequired && !access.authorized) {
-        throw new Error(
-          'R runtime access changed before startup. Authorize and verify R access again.'
+      const configured =
+        config.windowsProtectionEnabled ?? (await isWindowsProtectionConfigured(config))
+      if (configured !== required) {
+        throw new Error('Windows protection changed before startup. Retry the Notebook cell.')
+      }
+      if (request.windowsRuntimeAccessRequired) {
+        if (!required || !request.executable)
+          throw new Error('Protected R requires an exact executable.')
+        const access = await getWindowsRuntimeAccessImpl(
+          config.windowsHostPath,
+          config.installationId,
+          config.windowsOwnershipRoot,
+          request.executable
         )
+        if (!access.authorized)
+          throw new Error(
+            'R runtime access changed before startup. Authorize and verify R access again.'
+          )
       }
-      const configured = await isWindowsProtectionConfigured(config)
-      if (configured !== request.windowsProtectionRequired) {
-        throw new Error('Windows protection changed before R startup. Retry the Notebook cell.')
-      }
-      if (request.windowsProtectionRequired) {
+      if (required) {
         const check = await refreshWindowsProtection()
         windowsGatewayPort = windowsProtectedGatewayPort
         if (check.errors.length > 0 || !windowsGatewayPort) {
-          throw new Error('Windows protected mode is not ready for R: ' + check.errors.join('; '))
+          throw new Error('Windows protected mode is not ready: ' + check.errors.join('; '))
         }
       } else {
         windowsGatewayPort = undefined
@@ -697,6 +709,10 @@ const resetCommandConnections = (commandId: string): void => {
 
 const updateConfig = (config: NetworkRuntimeConfig): void => {
   if (!runtimeConfig) throw new Error('Notebook process runtime is not initialized.')
+  if (runtimeConfig.windowsProtectionEnabled !== config.windowsProtectionEnabled) {
+    windowsModeRevision += 1
+    windowsProtectedGatewayPort = undefined
+  }
   runtimeConfig = config
   destinationPolicy = buildPolicy(config)
   const nextParent = parentSettings(config)
@@ -746,6 +762,8 @@ const statusForPlatform = async (
     }
   }
   if (platform === 'linux') return checkLinuxTools()
+  if (platform === 'win32' && config.windowsProtectionEnabled === false)
+    return { warnings: [], errors: [] }
   if (platform === 'win32')
     return checkWindowsAppContainer(
       config.windowsHostPath,

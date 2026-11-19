@@ -60,6 +60,7 @@ export type NotebookNetworkStatus = Readonly<{
         }>
       }>
     | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
+    | Readonly<{ kind: 'standard' }>
     | Readonly<{
         kind: 'setupRequired'
         platform: 'linux' | 'win32'
@@ -240,6 +241,9 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
 
   return {
     mode: record.mode === 'strict' ? 'strict' : 'relaxed',
+    ...(typeof record.windowsProtectionEnabled === 'boolean'
+      ? { windowsProtectionEnabled: record.windowsProtectionEnabled }
+      : {}),
     ...(record.strictWhitelistVersion === 1 ? { strictWhitelistVersion: 1 as const } : {}),
     ...(Array.isArray(record.strictWhitelist)
       ? { strictWhitelist: normalizeStrictWhitelist(record.strictWhitelist) }

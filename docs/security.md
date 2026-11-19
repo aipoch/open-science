@@ -71,7 +71,10 @@ network enforcement. It does not OS-enforce declared read-only or denied filesys
 including application configuration, input, helper, and managed-runtime directories. Source-risk
 and language-level guards are defense in depth, not isolation of arbitrary native child processes.
 Native Notebook, Shell, and package installation remain available without
-protected-mode setup. Configured protection is checked before execution and never silently falls
+protected-mode setup. Windows Network settings can select standard execution while keeping
+installed protection components. Managed and user-selected Python and R interpreters use the
+chosen mode. Switching stops running Notebook processes. Existing installations keep their
+receipt-derived selection until a mode is explicitly chosen. Selected protection is checked before execution and never silently falls
 back to standard mode when protection fails. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
 

@@ -16,7 +16,7 @@ import {
   normalizeNotebookNetworkSettings,
   normalizeTrustedPrivateDestinations
 } from '../../shared/notebook-network'
-import type { SetNotebookNetworkRequest } from '../../shared/settings'
+import type { NotebookNetworkRulesRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
 
 const mergeById = <T extends { id: string }>(
@@ -116,8 +116,19 @@ class NotebookNetworkSettingsOwner {
     return reviewPrivateDestination(request)
   }
 
-  set(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
+  set(request: NotebookNetworkRulesRequest): Promise<NotebookNetworkSettings> {
     return this.enqueue((current) => this.mergeRequest(current, request))
+  }
+
+  selectWindowsProtection(
+    enabled: boolean,
+    refresh: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    return this.enqueue(
+      (current) => ({ ...current, windowsProtectionEnabled: enabled }),
+      undefined,
+      refresh
+    )
   }
 
   allowDomain(
@@ -181,9 +192,14 @@ class NotebookNetworkSettingsOwner {
 
   private async mergeRequest(
     current: NotebookNetworkSettings,
-    request: SetNotebookNetworkRequest
+    request: NotebookNetworkRulesRequest
   ): Promise<NotebookNetworkSettings> {
-    let requested = normalizeNotebookNetworkSettings(request)
+    // A network editor may have opened before a mode switch. Only the execution mode
+    // command changes this preference.
+    let requested = normalizeNotebookNetworkSettings({
+      ...request,
+      windowsProtectionEnabled: current.windowsProtectionEnabled
+    })
     if (request.mode !== undefined && request.mode !== 'strict' && request.mode !== 'relaxed')
       throw new Error('Invalid network mode.')
     const currentMode = current.mode ?? 'relaxed'

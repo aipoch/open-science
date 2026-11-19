@@ -255,7 +255,10 @@ and returns future launches to standard mode.
 
 Managed and external R kernels can start in Windows standard mode without administrator setup.
 Their authenticated gateway remains active, but software that ignores proxy settings is not isolated.
-R admission checks the native ownership receipt and pending operations: an absent setup permits
+An explicit Windows standard-mode preference also permits native Notebook, Shell, and package
+execution while protection components are installed or require repair. With no saved preference,
+the existing ownership receipt determines the mode.
+Receipt-derived R admission checks the native ownership receipt and pending operations: an absent setup permits
 standard execution, while incomplete, damaged, or unreadable protection does not. The admission
 decision is checked again before launch; a protected R request never falls back to standard mode.
 Settings mutations in the same owner process invalidate prepared R launches until the executor

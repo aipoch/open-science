@@ -833,8 +833,7 @@ describe('R admission launch protection', () => {
   })
 
   it('rejects pending ownership operations before a standard R launch', async () => {
-    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
-    vi.mocked(getWindowsRuntimeAccess).mockRejectedValueOnce(
+    vi.mocked(isWindowsProtectionConfigured).mockRejectedValueOnce(
       new Error('pending protected-mode operation')
     )
     await expect(NotebookNetworkRuntime.wrap(request(false))).rejects.toThrow(

@@ -3516,6 +3516,7 @@ it.each(['managed', 'external'] as const)(
           superviseProcessTree: true
         })
       )
+      expect(backend.getWindowsRuntimeAccess).not.toHaveBeenCalled()
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()
@@ -4389,6 +4390,16 @@ describe('R startup authorization admission', () => {
       revocation = owner.setWindowsRuntimeAccess(request.executable, false)
       expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledTimes(1)
       expect(() => prepared.beginSpawn?.()).toThrow('R runtime access changed before startup')
+      const python = await owner.wrap({
+        ...invocation,
+        runtime: 'python',
+        windowsRuntimeAccessRequired: false
+      })
+      try {
+        expect(() => python.beginSpawn?.()).not.toThrow()
+      } finally {
+        await python.cleanup('spawn-failed', { processesTerminated: true })
+      }
       const pending = await owner.wrap(invocation)
       try {
         expect(() => pending.beginSpawn?.()).toThrow('R runtime access changed before startup')

@@ -51,6 +51,7 @@ const NotebookNetworkProtectionBanner = ({
   const presentation: BannerPresentation | null = (() => {
     switch (status.kind) {
       case 'ready':
+      case 'standard':
         return null
       case 'setupRequired':
         return {

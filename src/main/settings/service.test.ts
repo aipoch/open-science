@@ -9254,6 +9254,28 @@ describe('SettingsService: claude-shared login orchestration', () => {
 })
 
 describe('Notebook protection Shell capability switch', () => {
+  it.runIf(process.platform === 'win32')(
+    'persists a mode switch after stopping notebooks and refreshes Shell without setup',
+    async () => {
+      const calls: string[] = []
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        withNotebookFolderPolicyChange: async (commit) => {
+          calls.push('stop')
+          await commit()
+        },
+        refreshNotebookShellCapabilities: async () => {
+          calls.push('refresh')
+        }
+      })
+      await service.setNotebookNetwork({ selectWindowsProtection: false })
+      expect(calls).toEqual(['stop', 'refresh'])
+      expect(
+        await new SettingsService({ configRoot: storageRoot, repository }).getNotebookNetwork()
+      ).toMatchObject({ windowsProtectionEnabled: false })
+    }
+  )
   it('refreshes existing conversations after setup and removal before returning status', async () => {
     const calls: string[] = []
     let protectedMode = false

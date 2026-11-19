@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import * as sandboxConfig from '../../../packages/notebook-network-sandbox/src/config'
 
@@ -85,58 +85,79 @@ it.skipIf(process.platform !== 'win32' || !runtimeRoot)(
 // A fresh test-owned receipt directory exercises real standard-mode admission without installing,
 // removing, or modifying the desktop user's protected-mode resources or runtime ACLs.
 const standardRuntimeRoot = process.env.OPEN_SCIENCE_TEST_STANDARD_R_RUNTIME_ROOT
-it
-  .skipIf(process.platform !== 'win32' || !standardRuntimeRoot)
-  .each(['managed', 'external'] as const)(
-  'executes real %s R through the standard-mode gateway without administrator setup',
-  async (selection) => {
+const externalPython = process.env.OPEN_SCIENCE_TEST_STANDARD_PYTHON
+const externalR = standardRuntimeRoot && join(standardRuntimeRoot, 'envs/.r/Lib/R/bin/Rscript.exe')
+it.skipIf(process.platform !== 'win32').for([
+  { name: 'managed R', language: 'r', available: standardRuntimeRoot, command: undefined },
+  { name: 'external R', language: 'r', available: externalR, command: externalR },
+  {
+    name: 'external Python',
+    language: 'python',
+    available: externalPython,
+    command: externalPython
+  }
+] as const)(
+  'executes real $name through the standard-mode gateway without administrator setup',
+  { timeout: 45_000 },
+  async ({ language, available, command }, { skip }) => {
+    skip(!available)
     const root = await mkdtemp(join(tmpdir(), 'standard-r-access-'))
-    const originalConfig = sandboxConfig.createRuntimeConfig
-    const configSpy = vi
-      .spyOn(sandboxConfig, 'createRuntimeConfig')
-      .mockImplementation((options) => ({
-        ...originalConfig(options),
-        windowsOwnershipRoot: join(root, originalConfig(options).installationId)
-      }))
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+    const settings = command
+      ? { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, windowsProtectionEnabled: false }
+      : DEFAULT_NOTEBOOK_NETWORK_SETTINGS
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: resolve('packages/notebook-network-sandbox/vendor'),
       temporaryRoot: join(root, 'notebook-command-temp'),
       allowRuntimeAccessPrompt: false,
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getSettings: async () => settings,
       persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       requestDecision: async () => 'deny'
     })
     const executor = new NotebookKernelExecutor({ processSandbox: owner })
     try {
-      expect(await owner.status()).toMatchObject({ kind: 'setupRequired' })
+      if (command) {
+        const { windowsOwnershipRoot } = sandboxConfig.createRuntimeConfig({
+          resources: { root },
+          policy: { allowedDomains: [], deniedDomains: [] }
+        })
+        await mkdir(dirname(windowsOwnershipRoot), { recursive: true })
+        await writeFile(windowsOwnershipRoot, 'unusable protection directory')
+      }
+      const expectedStatus = command ? 'standard' : 'setupRequired'
+      expect(await owner.status()).toMatchObject({ kind: expectedStatus })
       const result = await executor.execute({
-        language: 'r',
-        code: 'stopifnot(sum(1:5) == 15); stopifnot(nzchar(Sys.getenv("HTTPS_PROXY"))); cat("STANDARD_R_OK: 15; proxy configured")',
+        language,
+        code:
+          language === 'python'
+            ? 'import os, sys; assert os.environ["HTTPS_PROXY"]; print(sys.executable); print(sum(range(1, 6)))'
+            : 'stopifnot(nzchar(Sys.getenv("HTTPS_PROXY"))); cat(sum(1:5))',
         cwd: root,
         notebookSessionRoot: root,
         dataRoot: root,
-        runtimeRoot: standardRuntimeRoot!,
+        runtimeRoot: command ? join(root, 'managed-runtime') : standardRuntimeRoot!,
         sessionId: 'standard-r-access',
         projectId: 'standard-r-access',
         timeoutMs: 15000,
-        ...(selection === 'external'
+        ...(command
           ? {
               resolvedInterpreter: {
-                command: join(standardRuntimeRoot!, 'envs/.r/Lib/R/bin/Rscript.exe'),
-                condaPrefix: join(standardRuntimeRoot!, 'envs/.r')
+                command,
+                ...(language === 'r' ? { condaPrefix: join(standardRuntimeRoot!, 'envs/.r') } : {})
               }
             }
           : {})
       })
       expect(result.status, result.stderr).toBe('completed')
-      expect(result.stdout).toContain('STANDARD_R_OK: 15; proxy configured')
-      expect(await owner.status()).toMatchObject({ kind: 'setupRequired' })
+      expect(result.stdout.trim()).toMatch(/15$/)
+      if (language === 'python')
+        expect(result.stdout.toLowerCase()).toContain(command!.toLowerCase())
+      expect(await owner.status()).toMatchObject({ kind: expectedStatus })
     } finally {
       await executor.shutdown()
       await owner.dispose()
-      configSpy.mockRestore()
+      vi.unstubAllEnvs()
       await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
-  },
-  45000
+  }
 )

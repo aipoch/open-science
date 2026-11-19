@@ -504,6 +504,7 @@ class SettingsService {
   private readonly onNotebookNetworkDomainAllowed?: () => Promise<void>
   private readonly withNotebookFolderPolicyChange: (commit: () => Promise<void>) => Promise<void>
   private notebookFolderPolicyWrite: Promise<unknown> = Promise.resolve()
+  private windowsProtectionWrite: Promise<unknown> = Promise.resolve()
   private readonly packageMirror: PackageMirrorSettingsOwner
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
@@ -863,7 +864,30 @@ class SettingsService {
   }
 
   async setNotebookNetwork(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
+    if ('selectWindowsProtection' in request) {
+      if (process.platform !== 'win32' || typeof request.selectWindowsProtection !== 'boolean')
+        throw new Error('Invalid Windows Notebook execution mode.')
+      return this.serializeWindowsProtection(() =>
+        this.switchWindowsProtection(request.selectWindowsProtection)
+      )
+    }
     return this.notebookNetwork.set(request)
+  }
+
+  private async switchWindowsProtection(enabled: boolean): Promise<NotebookNetworkSettings> {
+    await this.withNotebookFolderPolicyChange(async () => {
+      await this.notebookNetwork.selectWindowsProtection(
+        enabled,
+        this.refreshNotebookShellCapabilities
+      )
+    })
+    return this.notebookNetwork.get()
+  }
+
+  private serializeWindowsProtection<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.windowsProtectionWrite.then(operation)
+    this.windowsProtectionWrite = result.catch(() => undefined)
+    return result
   }
 
   reviewNotebookPrivateDestination(
@@ -913,9 +937,21 @@ class SettingsService {
   }
 
   async installNotebookNetwork(): Promise<NotebookNetworkStatus> {
-    const result = await this.installNotebookNetworkImpl()
-    if (!result.cancelled) await this.refreshNotebookShellCapabilities()
-    return this.getNotebookNetworkStatusImpl()
+    return this.serializeWindowsProtection(async () => {
+      const previous = await this.notebookNetwork.get()
+      const switching = previous.windowsProtectionEnabled === false
+      if (switching) await this.switchWindowsProtection(true)
+      let result: { cancelled: boolean }
+      try {
+        result = await this.installNotebookNetworkImpl()
+      } catch (error) {
+        if (switching) await this.switchWindowsProtection(false)
+        throw error
+      }
+      if (result.cancelled && switching) await this.switchWindowsProtection(false)
+      if (!result.cancelled) await this.refreshNotebookShellCapabilities()
+      return this.getNotebookNetworkStatusImpl()
+    })
   }
 
   cancelNotebookNetworkSetup(): boolean {
@@ -923,9 +959,15 @@ class SettingsService {
   }
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
-    const result = await this.removeNotebookNetworkImpl()
-    if (!result.cancelled) await this.refreshNotebookShellCapabilities()
-    return this.getNotebookNetworkStatusImpl()
+    return this.serializeWindowsProtection(async () => {
+      const result = await this.removeNotebookNetworkImpl()
+      if (!result.cancelled) {
+        const settings = await this.notebookNetwork.get()
+        if (settings.windowsProtectionEnabled === true) await this.switchWindowsProtection(false)
+        else await this.refreshNotebookShellCapabilities()
+      }
+      return this.getNotebookNetworkStatusImpl()
+    })
   }
 
   probeWslSetup(): Promise<WslSetupSnapshot> {

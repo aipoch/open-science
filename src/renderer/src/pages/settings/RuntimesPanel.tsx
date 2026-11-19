@@ -777,7 +777,11 @@ const RuntimesPanel = ({
           </div>
         ) : null}
 
-        {(external || defaultManaged) && language === 'r' && window.api.platform === 'win32' ? (
+        {(external || defaultManaged) &&
+        language === 'r' &&
+        window.api.platform === 'win32' &&
+        networkStatus.kind !== 'standard' &&
+        !(networkStatus.kind === 'setupRequired' && networkStatus.platform === 'win32') ? (
           <div className="mt-3 border-t border-border pt-3">
             <p className="text-xs text-muted-foreground">
               {t(

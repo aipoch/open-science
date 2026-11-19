@@ -5,7 +5,7 @@ import {
 export type { NetworkEditorLeaveState } from './NotebookNetworkAccessEditor'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { LoaderCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -57,8 +57,11 @@ const NotebookNetworkDomainsForm = ({
   const [isRemoving, setIsRemoving] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [cancelError, setCancelError] = useState(false)
+  const [switchingMode, setSwitchingMode] = useState(false)
+  const [switchError, setSwitchError] = useState(false)
+  const statusRevision = useRef(0)
   const preparing = isInstalling || status.kind === 'checking'
-  const busy = preparing || isRemoving
+  const busy = preparing || isRemoving || switchingMode
   const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
   const failure = status.windowsRuntimeSetup?.failure
   const failureDescription = status.windowsRuntimeSetup?.cancelled
@@ -76,12 +79,18 @@ const NotebookNetworkDomainsForm = ({
         : ''
 
   useEffect(() => {
-    if (!preparing) return
+    if (!preparing || switchingMode) return
     let active = true
     const timer = setInterval(() => {
+      const revision = statusRevision.current
       void window.api.settings.getNotebookNetworkStatus().then(
         (next) => {
-          if (active && (!isInstalling || next.kind === 'checking')) setStatus(next)
+          if (
+            active &&
+            revision === statusRevision.current &&
+            (!isInstalling || next.kind === 'checking')
+          )
+            setStatus(next)
         },
         () => undefined
       )
@@ -90,20 +99,30 @@ const NotebookNetworkDomainsForm = ({
       active = false
       clearInterval(timer)
     }
-  }, [preparing, isInstalling])
+  }, [preparing, isInstalling, switchingMode])
 
   useEffect(() => {
-    void window.api.settings
-      .getNotebookNetworkStatus()
-      .then(setStatus, () => setStatus({ kind: 'error', reason: 'runtimeFailure' }))
+    const revision = statusRevision.current
+    void window.api.settings.getNotebookNetworkStatus().then(
+      (next) => {
+        if (revision === statusRevision.current) setStatus(next)
+      },
+      () => {
+        if (revision === statusRevision.current)
+          setStatus({ kind: 'error', reason: 'runtimeFailure' })
+      }
+    )
   }, [])
 
   const refreshStatus = async (): Promise<void> => {
+    const revision = ++statusRevision.current
     setStatus({ kind: 'checking' })
     try {
-      setStatus(await window.api.settings.getNotebookNetworkStatus())
+      const next = await window.api.settings.getNotebookNetworkStatus()
+      if (revision === statusRevision.current) setStatus(next)
     } catch {
-      setStatus({ kind: 'error', reason: 'runtimeFailure' })
+      if (revision === statusRevision.current)
+        setStatus({ kind: 'error', reason: 'runtimeFailure' })
     }
   }
 
@@ -148,6 +167,22 @@ const NotebookNetworkDomainsForm = ({
     } catch {
       setIsCancelling(false)
       setCancelError(true)
+    }
+  }
+
+  const selectProtection = async (enabled: boolean): Promise<void> => {
+    if (switchingMode || isInstalling || isRemoving) return
+    statusRevision.current += 1
+    setSwitchingMode(true)
+    setSwitchError(false)
+    try {
+      await window.api.settings.setNotebookNetwork({ selectWindowsProtection: enabled })
+      statusRevision.current += 1
+      setStatus(await window.api.settings.getNotebookNetworkStatus())
+    } catch {
+      setSwitchError(true)
+    } finally {
+      setSwitchingMode(false)
     }
   }
 
@@ -203,15 +238,17 @@ const NotebookNetworkDomainsForm = ({
                     ? window.api.platform === 'win32'
                       ? t('Status: On')
                       : t('Notebook network protection is active.')
-                    : status.kind === 'setupRequired'
-                      ? status.platform === 'win32'
-                        ? t('Status: Off')
-                        : t('Notebook network protection needs setup before notebooks can run.')
-                      : status.kind === 'unsupported'
-                        ? t('Notebook network protection is not supported on this platform.')
-                        : window.api.platform === 'win32'
-                          ? t('Network protection error')
-                          : statusReasonLabel(status.reason, t)}
+                    : status.kind === 'standard'
+                      ? t('Standard mode')
+                      : status.kind === 'setupRequired'
+                        ? status.platform === 'win32'
+                          ? t('Status: Off')
+                          : t('Notebook network protection needs setup before notebooks can run.')
+                        : status.kind === 'unsupported'
+                          ? t('Notebook network protection is not supported on this platform.')
+                          : window.api.platform === 'win32'
+                            ? t('Network protection error')
+                            : statusReasonLabel(status.reason, t)}
               </p>
               {window.api.platform === 'win32' && status.kind === 'ready' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -251,9 +288,17 @@ const NotebookNetworkDomainsForm = ({
                   description={t('Could not cancel. Try again.')}
                 />
               ) : null}
+              {switchError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  description={t('Could not switch execution mode. Try again.')}
+                />
+              ) : null}
               {window.api.platform === 'win32' &&
               !preparing &&
               status.kind !== 'ready' &&
+              status.kind !== 'standard' &&
               Boolean(status.windowsRuntimeSetup?.downloadBytes) ? (
                 <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                   {t('Downloads up to {{size}}. Downloaded components are reused.', {
@@ -270,6 +315,18 @@ const NotebookNetworkDomainsForm = ({
               ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {window.api.platform === 'win32' &&
+              !isInstalling &&
+              status.kind !== 'setupRequired' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isRemoving || switchingMode}
+                  onClick={() => void selectProtection(status.kind === 'standard')}
+                >
+                  {status.kind === 'standard' ? t('Use protected mode') : t('Use standard mode')}
+                </Button>
+              ) : null}
               {preparing && window.api.platform === 'win32' ? (
                 <Button
                   type="button"
@@ -306,7 +363,7 @@ const NotebookNetworkDomainsForm = ({
                     disabled={busy}
                     onClick={() => void removeWindowsSandbox()}
                   >
-                    {isRemoving ? t('Turning off…') : t('Turn off')}
+                    {isRemoving ? t('Turning off…') : t('Uninstall')}
                   </Button>
                 </>
               ) : null}
@@ -328,29 +385,31 @@ const NotebookNetworkDomainsForm = ({
                       : t('Try again')}
                 </Button>
               ) : null}
-              {!preparing && window.api.platform === 'win32' && status.kind === 'error' ? (
+              {!preparing &&
+              window.api.platform === 'win32' &&
+              (status.kind === 'error' || status.kind === 'standard') ? (
                 <Button
                   type="button"
                   variant="ghost"
                   disabled={busy}
                   onClick={() => void removeWindowsSandbox()}
                 >
-                  {isRemoving ? t('Turning off…') : t('Turn off')}
+                  {isRemoving ? t('Turning off…') : t('Uninstall')}
                 </Button>
               ) : null}
             </div>
           </div>
-          {window.api.platform === 'win32' &&
-          (status.kind === 'ready' ||
-            (status.kind === 'setupRequired' && status.platform === 'win32')) ? (
+          {window.api.platform === 'win32' && !preparing ? (
             <p className="mt-2 text-xs text-muted-foreground">
-              {t('Turning protection on or off requires administrator permission.')}
+              {t(
+                'Switching modes stops running Notebook processes. Installed protection components are kept.'
+              )}
             </p>
           ) : null}
         </div>
       </section>
 
-      {status.kind !== 'checking' && status.kind !== 'ready' ? (
+      {status.kind !== 'checking' && status.kind !== 'ready' && status.kind !== 'standard' ? (
         <InlineNotice level="warning">
           {t('Protection is not active. These rules apply only to protected execution.')}
         </InlineNotice>
