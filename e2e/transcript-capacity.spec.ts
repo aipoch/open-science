@@ -54,6 +54,12 @@ test('bounds history scrolling and preserves native find across the transcript',
   const rows = viewport.locator('[data-message-id^="capacity-"]')
   await expect(rows).toHaveCount(80)
   const openMs = performance.now() - openedAt
+  await page.getByRole('button', { name: 'Load full conversation', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Load full conversation', exact: true })
+  ).toHaveCount(0)
+  await rows.last().scrollIntoViewIfNeeded()
+  await expect(rows.last()).toBeInViewport()
   const scrollMs: number[] = []
   const counts: number[] = [80]
   await viewport.hover()
@@ -150,7 +156,11 @@ test('does not force unannotated transcript geometry during native layout change
   page = await app.restart()
   await openProjectSession(page, 'Layout history', 'Layout history')
   await expect(page.locator('[data-message-id="layout-399"]')).toBeVisible()
-  await expect(page.locator('[data-slot="message-scroller-item"]')).toHaveCount(80)
+  await page.getByRole('button', { name: 'Load full conversation', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Load full conversation', exact: true })
+  ).toHaveCount(0)
+  await expect(page.locator('[data-message-id]')).toHaveCount(80)
   await expect(page.locator('[data-annotation-surface]').first()).toBeAttached()
 
   // Count the synchronous geometry reads identified by the issue's CPU reproduction.
