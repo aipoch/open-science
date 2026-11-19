@@ -423,7 +423,7 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
 })
 
-it('exports correlated OTLP spans for a tool turn and completes a turn when the collector fails', async () => {
+it('exports correlated OTLP spans with Basic Auth and completes a turn when the collector fails', async () => {
   type Attribute = { key: string; value: { stringValue?: string; intValue?: string } }
   type Span = {
     name: string
@@ -442,7 +442,13 @@ it('exports correlated OTLP spans for a tool turn and completes a turn when the 
   }
   const attributes = (entries: Attribute[]): Record<string, string | undefined> =>
     Object.fromEntries(entries.map(({ key, value }) => [key, value.stringValue ?? value.intValue]))
-  const requests: { body: string; url?: string; authorization?: string; status: number }[] = []
+  const requests: {
+    body: string
+    url?: string
+    authorization?: string
+    ingestionVersion?: string | string[]
+    status: number
+  }[] = []
   let collectorStatus = 200
   const rejection = Promise.withResolvers<void>()
   const collector = createServer(async (request, response) => {
@@ -453,6 +459,7 @@ it('exports correlated OTLP spans for a tool turn and completes a turn when the 
       body: Buffer.concat(chunks).toString(),
       url: request.url,
       authorization: request.headers.authorization,
+      ingestionVersion: request.headers['x-langfuse-ingestion-version'],
       status
     })
     if (status === 503) await rejection.promise
@@ -467,8 +474,22 @@ it('exports correlated OTLP spans for a tool turn and completes a turn when the 
       collector.close((error) => (error ? reject(error) : resolve()))
     )
   })
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const credentials = Buffer.from('pk-lf-test:sk-lf-test').toString('base64')
+  const headersFile = join(directory, 'otel-headers.json')
+  await writeFile(
+    headersFile,
+    JSON.stringify({
+      Authorization: `Basic ${credentials}`,
+      'x-langfuse-ingestion-version': '4'
+    }),
+    { mode: 0o600 }
+  )
+  const tracePath = '/api/public/otel/v1/traces'
   const tracing = createHarnessTracing(
-    `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`
+    `http://127.0.0.1:${(collector.address() as AddressInfo).port}${tracePath}`,
+    headersFile
   )!
   cleanup.push(async () => tracing.dispose())
   const managed = await mcpServer(false, undefined, false, 'private-tool-result', true)
@@ -480,7 +501,7 @@ it('exports correlated OTLP spans for a tool turn and completes a turn when the 
       finish(response, '', modelToolName, { value: { name: 'private-tool-input' } })
     } else finish(response, 'private-model-output')
   })
-  const f = await fixture(model.endpoint, undefined, true, 32768, undefined, undefined, tracing)
+  const f = await fixture(model.endpoint, directory, true, 32768, undefined, undefined, tracing)
   const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
     cwd: f.directory,
     mcpServers: [managed.config],
@@ -551,9 +572,11 @@ it('exports correlated OTLP spans for a tool turn and completes a turn when the 
     { timeout: 3000 }
   )
   for (const request of requests) {
-    expect(request.url).toBe('/v1/traces')
-    expect(request.authorization).toBeUndefined()
-    expect(request.body).not.toMatch(/private-|local-test-token/)
+    expect(request.url).toBe(tracePath)
+    expect(request.authorization).toBe(`Basic ${credentials}`)
+    expect(request.ingestionVersion).toBe('4')
+    expect(request.body).not.toContain(credentials)
+    expect(request.body).not.toMatch(/private-|local-test-token|sk-lf-test/)
   }
 })
 

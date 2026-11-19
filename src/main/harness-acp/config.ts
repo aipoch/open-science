@@ -7,6 +7,7 @@ export const HARNESS_TOOL_LESS = 'open-science-agent/tool-less'
 export const HARNESS_OWNER = 'open-science-agent/owner'
 export const HARNESS_EPHEMERAL_SESSION = 'open-science-agent/ephemeral-session'
 export const HARNESS_OTLP_TRACES_ENDPOINT = 'OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT'
+export const HARNESS_OTLP_TRACES_HEADERS_FILE = 'OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE'
 export const harnessOwnerSchema = z
   .object({
     projectId: z.string().min(1).max(512),
