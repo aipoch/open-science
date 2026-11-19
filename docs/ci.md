@@ -52,8 +52,10 @@ in the independent Windows E2E Regression workflow.
 PR Gate selects a short native update-occupancy check on macOS, Linux and Windows for runtime/CLI
 lanes and full fallback plans. It reuses the read-only Update Occupancy workflow and rejects a
 selected job that fails, is cancelled, or is skipped. The desktop/CLI fixture also checks that a
-backend self-restart transfers the same reader to the new runtime generation and that final shutdown
-releases the installation. Positive checks allow up to 60 seconds for transient external holders,
+backend self-restart uses the production restart path to transfer the same reader to the new runtime
+generation. A controlled delayed EOF verifies that handoff joins reader exit after stopping the
+backend; the production wait is bounded to five seconds and retains the final occupancy check with
+its independent platform budget. Preparing checks allow up to 60 seconds for transient external holders,
 while pinning the backend and reader birth identities so their exit cannot produce a false pass.
 Other Mac validation runs in merge queue.
 The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.

@@ -675,7 +675,11 @@ export async function startOrAttachDesktopBackend(options: {
     options.signal?.throwIfAborted()
     await options.beforeLaunch?.()
     options.signal?.throwIfAborted()
-    capture = await startLaunchLogReader(options.command, file.fd, options.serviceLauncher)
+    capture = await startLaunchLogReader(options.command, file.fd, {
+      entryPath: options.entry,
+      packaged: options.packaged,
+      serviceLauncher: options.serviceLauncher
+    })
     options.signal?.throwIfAborted()
     child = spawn(
       options.serviceLauncher ?? options.command,

@@ -3,14 +3,14 @@ import type { Socket } from 'node:net'
 export function startLaunchLogReader(
   node: string,
   fileDescriptor: number,
-  serviceLauncher?: string
+  options: { entryPath: string; packaged: boolean; serviceLauncher?: string }
 ): Promise<{
   input: Writable
   control: Duplex
   closed: Promise<number | null>
 }>
 
-export function bindLaunchLogReader(options: {
-  entryPath: string
-  bootstrapPath: string
-}): Promise<Socket | undefined>
+export function bindLaunchLogReader(): Promise<Socket | undefined>
+export function restartWithLaunchLogReader(
+  control?: Socket
+): import('node:child_process').ChildProcess

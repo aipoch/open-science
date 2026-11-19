@@ -178,7 +178,8 @@ vi.mock('./storage/config-root', () => ({
 vi.mock('./storage/electron-profile', () => ({
   resolveElectronProfile: () => '/isolated-fixture/profile'
 }))
-vi.mock('../../packages/open-science/launch-log.mjs', () => ({
+vi.mock('../../packages/open-science/launch-log.mjs', async (original) => ({
+  ...(await original<typeof import('../../packages/open-science/launch-log.mjs')>()),
   bindLaunchLogReader: f.bindLaunchLogReader
 }))
 vi.mock('./update/installation-protection', () => ({
@@ -320,6 +321,7 @@ beforeEach(async () => {
   // Keep thrown errors and the reporter on the same module instance after each entry reload.
   f.credentialAccess = (await import('./credential-identity/access')).createCredentialAccess
   vi.clearAllMocks()
+  f.bindLaunchLogReader.mockReset().mockResolvedValue(undefined)
   f.captureUpdateProcesses.mockReturnValue(f.reapUpdateProcesses)
   f.healthyCredentials = false
   f.inventoryFailure = undefined
@@ -840,6 +842,27 @@ it('keeps startup commands bounded until database verification and hands off to 
   expect(transport.isStopping!()).toBe(true)
   expect(isStopping()).toBe(true)
   callers.dispose()
+})
+
+it('keeps startup and self-restart available when log ownership fails', async () => {
+  f.bindLaunchLogReader.mockRejectedValueOnce(new Error('ownership rejected'))
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  expect(f.log.warn).toHaveBeenCalledWith(
+    'Launch log ownership unavailable; update admission remains protected',
+    expect.any(Object)
+  )
+  f.desktop.requestNative.mockResolvedValueOnce(false)
+  const lifecycle = f.lifecycle.mock.calls[0][0]
+  lifecycle.relaunch()
+  lifecycle.quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+  await vi.dynamicImportSettled()
+  expect(f.spawn).toHaveBeenCalledWith(process.execPath, process.argv.slice(1), {
+    detached: true,
+    stdio: 'inherit',
+    env: process.env
+  })
 })
 
 it.each([true, false])(

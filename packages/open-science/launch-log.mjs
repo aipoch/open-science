@@ -2,11 +2,13 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { Socket } from 'node:net'
+import { dirname, join, resolve } from 'node:path'
 
 // Ship the same dependency-free reader with npm and inside Electron's ASAR. Ordinary Node
 // can run this source even when it cannot open the launching application's ASAR paths.
 const readerSource = `
   const { writeSync } = require('node:fs')
+  const [entryPath, bootstrapPath] = process.argv.slice(1)
   const control = new (require('node:net').Socket)({fd: 3})
   let request = '', lease
   control.setEncoding('utf8')
@@ -16,7 +18,7 @@ const readerSource = `
     if (request.length > 16384) { control.destroy(); return }
     if (!request.includes('\\n')) return
     try {
-      const {entryPath, bootstrapPath, owner, stateRoot, appImage, appDir} = JSON.parse(request)
+      const {owner, stateRoot, appImage, appDir} = JSON.parse(request)
       if (appImage && appDir) { process.env.APPIMAGE = appImage; process.env.APPDIR = appDir }
       const next = require(bootstrapPath).protectInstallationStartup(entryPath, owner.configRoot, stateRoot, owner)
       lease?.release()
@@ -45,8 +47,17 @@ const readerSource = `
 `
 
 /** Pass input/control to the backend, then destroy both launcher copies after spawn. */
-export async function startLaunchLogReader(node, fileDescriptor, serviceLauncher) {
-  const args = ['--input-type=commonjs', '-e', readerSource]
+export async function startLaunchLogReader(
+  node,
+  fileDescriptor,
+  { entryPath, packaged, serviceLauncher }
+) {
+  const applicationPath = resolve(dirname(entryPath), '../..')
+  const bootstrapPath = join(
+    applicationPath,
+    packaged ? 'installation-startup.cjs' : 'packages/open-science/installation-startup.cjs'
+  )
+  const args = ['--input-type=commonjs', '-e', readerSource, resolve(entryPath), bootstrapPath]
   const reader = spawn(serviceLauncher ?? node, serviceLauncher ? [node, ...args] : args, {
     detached: true,
     windowsHide: true,
@@ -61,22 +72,20 @@ export async function startLaunchLogReader(node, fileDescriptor, serviceLauncher
 }
 
 /** Called after registration, before readiness. Only the inherited private pipe conveys authority. */
-export async function bindLaunchLogReader({ entryPath, bootstrapPath }) {
+export async function bindLaunchLogReader() {
   const fd = process.env.OPEN_SCIENCE_LAUNCH_LOG_PIPE
   delete process.env.OPEN_SCIENCE_LAUNCH_LOG_PIPE
   if (fd === undefined) return
   if (fd !== '4') throw new Error('Invalid launch-log control descriptor.')
-  const request =
-    JSON.stringify({
-      entryPath,
-      bootstrapPath,
-      owner: JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER),
-      stateRoot: process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT,
-      appImage: process.env.APPIMAGE,
-      appDir: process.env.APPDIR
-    }) + '\n'
   const control = new Socket({ fd: 4 })
   try {
+    const request =
+      JSON.stringify({
+        owner: JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER),
+        stateRoot: process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT,
+        appImage: process.env.APPIMAGE,
+        appDir: process.env.APPDIR
+      }) + '\n'
     const registered = new Promise((resolve, reject) => {
       let reply = ''
       control.setEncoding('utf8')
@@ -107,4 +116,13 @@ export async function bindLaunchLogReader({ entryPath, bootstrapPath }) {
     control.destroy()
     throw error
   }
+}
+
+/** Preserve the reader only across the backend's explicit self-restart. */
+export function restartWithLaunchLogReader(control) {
+  return spawn(process.execPath, process.argv.slice(1), {
+    detached: true,
+    stdio: control ? ['inherit', 'inherit', 'inherit', 'ignore', control] : 'inherit',
+    env: control ? { ...process.env, OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4' } : process.env
+  })
 }

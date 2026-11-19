@@ -16,7 +16,13 @@ import { pathToFileURL } from 'node:url'
 import { once } from 'node:events'
 import { inspectInstallationProcessesAsync } from './update/installation-occupancy'
 import { processBirthIdentity } from './process-birth-identity'
-import { inspectInstallationAvailability } from './update/installation-protection'
+import {
+  inspectInstallationAvailability,
+  captureInstallationHelperExit,
+  beginInstallationUpdate,
+  advanceInstallationUpdate,
+  advanceInstallationUpdateAsync
+} from './update/installation-protection'
 import * as childProcess from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
@@ -99,13 +105,15 @@ ${fixtureSource
     ` if(req.url==='/restart') {
       res.end('restarting');
       setImmediate(()=>{
-        const child=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{
-          detached:true,
-          stdio:launchLogControl?['inherit','inherit','inherit','ignore',launchLogControl]:'inherit',
-          env:launchLogControl?{...process.env,OPEN_SCIENCE_LAUNCH_LOG_PIPE:'4'}:process.env
-        });
+        const child=log.restartWithLaunchLogReader(launchLogControl);
         child.unref();process.exit(0);
       });return;
+    }
+    if(req.url==='/stop') {
+      const writer=require('node:child_process').spawn(${JSON.stringify(process.execPath)}, ['-e',
+        "const fs=require('node:fs');const timer=setInterval(()=>{if(fs.existsSync(process.argv[1])||!fs.existsSync(require('node:path').dirname(process.argv[1])))clearInterval(timer)},20);setTimeout(()=>process.exit(0),120000).unref()",
+        ${JSON.stringify(join(root, 'release-reader'))}], {stdio:['ignore','inherit','inherit']});
+      writer.once('spawn',()=>{ writer.unref();res.end('stopping');server.close(); });return;
     }
     res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration`
   )
@@ -120,7 +128,7 @@ ${fixtureSource
   .replace(
     'server.listen(',
     `registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
-const launchLogControl=await log.bindLaunchLogReader({entryPath:__filename, bootstrapPath:${JSON.stringify(bootstrap)}});
+const launchLogControl=await log.bindLaunchLogReader();
 server.listen(`
   )}
 } main().catch(error => {console.error(error);process.exit(1)});`,
@@ -266,12 +274,44 @@ server.listen(`
         expect(await inspectInstallationProcessesAsync(installationRoot)).toEqual(
           expect.arrayContaining([replacement.pid, reader!.pid])
         )
-        process.kill(replacement.pid, 'SIGTERM')
-        await vi.waitFor(
-          async () => expect(await inspectInstallationAvailability(location)).toBeUndefined(),
-          { timeout: 60000, interval: 250 }
-        )
+        const record = beginInstallationUpdate({
+          ...location,
+          runtime: { pid: replacement.pid, generation: replacement.generation, configRoot },
+          currentVersion: '1',
+          targetVersion: '2',
+          targetManifest: { version: '2', files: {} },
+          startupOptions: {
+            configRoot,
+            dataRoot: configRoot,
+            profilePath: configRoot,
+            port: 44100,
+            host: '127.0.0.1',
+            credentialStore: 'file'
+          }
+        })
+        const waitForHelpers = captureInstallationHelperExit(location, record.runtime)
+        advanceInstallationUpdate(location, record.operationId, 'stopping')
+        await fetch(`http://127.0.0.1:${replacement.port}/stop`, {
+          headers: {
+            authorization: 'Bearer ' + 'x'.repeat(43),
+            'x-open-science-runtime-generation': replacement.generation
+          }
+        })
+        await vi.waitFor(() => expect(processBirthIdentity(replacement.pid)).toBeUndefined())
+        advanceInstallationUpdate(location, record.operationId, 'stopped', true, true)
+        try {
+          await expect(
+            advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
+          ).rejects.toMatchObject({ reason: 'installation-busy' })
+        } finally {
+          await writeFile(join(root, 'release-reader'), '')
+          await waitForHelpers()
+        }
+        await expect(
+          advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
+        ).resolves.toMatchObject({ phase: 'handoff' })
       } finally {
+        await writeFile(join(root, 'release-reader'), '')
         if (previousStateRoot === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
         else process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = previousStateRoot
       }
@@ -621,7 +661,12 @@ ${fixtureSource}`
       }
     })
     expect(launched.startedProcess?.pid).toBeGreaterThan(0)
-    expect(children.filter((child) => child.spawnargs.includes(entry))).toHaveLength(2)
+    expect(
+      children.filter(
+        (child) =>
+          child.spawnargs.includes(entry) && !child.spawnargs.includes('--input-type=commonjs')
+      )
+    ).toHaveLength(2)
   })
   it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
@@ -652,7 +697,9 @@ ${fixtureSource}`
     const spy = vi
       .spyOn(childProcess, 'spawn')
       .mockImplementation((...args) =>
-        Array.isArray(args[1]) && args[1].includes(entry)
+        Array.isArray(args[1]) &&
+        args[1].includes(entry) &&
+        !args[1].includes('--input-type=commonjs')
           ? real.spawn(join(root, 'missing-executable'), [], { stdio: 'ignore' })
           : spawn(...args)
       )

@@ -1062,7 +1062,10 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const startupTimeoutMs = options.timeoutMs ?? START_TIMEOUT_MS
   try {
     installationLease = protectInstallationStartup(backend.entry, configRoot)
-    capture = await startLaunchLogReader(backend.command, logFd)
+    capture = await startLaunchLogReader(backend.command, logFd, {
+      entryPath: backend.entry,
+      packaged: !backend.development
+    })
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
       stdio: ['ignore', capture.input, capture.input, 'ignore', capture.control],
