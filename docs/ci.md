@@ -6,6 +6,65 @@ meet the [PR requirements](../CONTRIBUTING.md#pull-requests) and follow the
 
 ## PR, merge queue and scheduled coverage
 
+### PR automation events
+
+`PR Automation Signal` runs a permissionless, checkout-free `pull_request` job.
+Default-branch `workflow_run` listeners resolve its run through the GitHub API,
+validate the workflow path, attempt, repository and current PR head, and then run
+CI Integrity, PR labeling and AI review independently. Fork runs without an attached
+PR are matched by source repository ID, branch and head SHA; ambiguous matches are
+ignored. Signal titles are routing hints, never authorization. No signal artifacts,
+caches or contributor scripts are consumed by privileged listeners.
+
+| Activity                             | Behavior                                                                                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Open, reopen or push commits         | Integrity, classification/stale-label cleanup and eligible AI review                                                                |
+| Edit PR metadata                     | Integrity and classification; no AI review or review-outcome reset                                                                  |
+| Mark ready                           | Integrity and eligible AI review                                                                                                    |
+| Convert to draft                     | Integrity runs; AI workflow cancels its previous automatic run for the same head and skips review; publication rechecks draft state |
+| Submit approval or changes requested | Separate PR Review Signal and trusted PR Review Status listener refresh handoff labels                                              |
+| Enter merge queue                    | Existing `merge_group: checks_requested` validation remains independent of the PR signal                                            |
+
+The listeners start after the lightweight signal completes, without waiting for PR
+Gate's tests. This adds a workflow scheduling hop. Unlike `pull_request_target`,
+`pull_request` does not run while a PR has merge conflicts, and fork runs may wait
+for maintainer approval. Labels and automatic AI review can therefore be delayed.
+Resolving a conflict and pushing starts a fresh signal. Skipped, failed or stale
+signals do not publish a successful required check. The existing PR Gate test
+selection, platform coverage and merge-queue policy are unchanged.
+
+`workflow_run` job checks belong to the default branch. The integrity listener
+therefore creates an in-progress **CI Integrity** check on the resolved PR head
+and completes it only after trusted validation. Failed validation or a changed
+head/title cannot publish success. A runner failure can leave this check pending;
+rerun the signal to retry. Both required check names and their GitHub Actions
+integration remain unchanged. Editing these workflows in a PR does not activate
+their automatic listeners; they must first land on the default branch.
+
+Manual previews reuse the production paths without writes:
+
+- **PR automation preview** accepts a successful PR Automation Signal run ID and
+  calls the real CI Integrity workflow without creating or completing a required
+  check. Its native jobs carry the `Preview /` prefix, so a preview cannot satisfy
+  the dispatch revision's required `CI Integrity` check.
+- **PR Labels** accepts the same run ID and logs proposed classification changes
+  without resetting, creating, adding or removing labels.
+- **AI PR Review (Single)** accepts a PR number and `dry_run: true` to resolve
+  metadata and review policy without invoking the model or publishing feedback.
+
+For the staged migration, land the trigger-policy transition and signal/resolver
+first, then the consumer migration. Keep the old trigger until its trusted-base
+replacement policy is on main. Rerun a successful signal for open PRs after rollout
+when current-head automation needs refreshing; there is no bulk history replay.
+No application data migration or new application states are involved. GitHub check
+runs and labels retain their existing roles, and no Actions event allowance is
+needed once all target triggers have been removed.
+
+See GitHub's [event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+and [pull request security guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+Changing the trigger does not make execution of untrusted PR code with secrets safe;
+the AI review sandbox and credential isolation remain required.
+
 ### Pull requests
 
 The independent **Impact registration** job runs a

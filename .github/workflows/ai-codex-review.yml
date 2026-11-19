@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ format('codex-review-{0}', inputs.pull_request_number) }}
+      group: ${{ format('codex-review-{0}-{1}', inputs.pull_request_number, inputs.head_sha) }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -314,10 +314,9 @@ jobs:
       - name: Checkout pull request review commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.review_event == 'pull_request_target' && format('refs/pull/{0}/merge', inputs.pull_request_number) || inputs.review_sha }}
+          ref: ${{ inputs.review_sha }}
           # The caller gates fork reviews with FORK_REVIEW_MODE. This job performs static review
           # with a read-only token, isolated model credentials, and untrusted project config.
-          allow-unsafe-pr-checkout: ${{ inputs.is_fork && inputs.review_event == 'pull_request_target' }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -332,8 +331,6 @@ jobs:
           set -euo pipefail
           if [[ "$PR_STATE" == "MERGED" ]]; then
             base_sha="$(git rev-parse HEAD^)"
-          elif [[ "$REVIEW_EVENT" == "pull_request_target" ]]; then
-            base_sha="$(git rev-parse HEAD^1)"
           else
             base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
           fi

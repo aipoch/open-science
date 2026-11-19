@@ -3,10 +3,21 @@
 # AI review authentication
 
 Reviews run for ready PRs targeting main on opened, synchronize, reopened, and
-ready_for_review events. Draft PRs are skipped, including manual dispatches.
-Converting a PR back to draft cancels an in-progress run through PR concurrency;
+ready_for_review events, after the permissionless PR Automation Signal completes.
+The trusted default-branch listener resolves the current PR head before calling the
+review workflow; stale signals cannot select a different revision for review.
+The reviewer checks out that immutable head SHA and compares it with its merge base.
+Draft PRs are skipped, including manual dispatches.
+Converting a PR back to draft cancels its automatic run for the same head through concurrency;
 the publisher also checks the current draft status before posting feedback.
 Existing enablement, fork policy, and review-round limits still apply.
+
+Fork signals may require workflow approval; PRs with merge conflicts do not produce
+automatic pull_request signals. The workflow scheduling hop also delays cancellation
+after conversion to draft. Publishing always rechecks the current draft and head.
+Manual dispatch remains available. Select `dry_run` to inspect target/policy resolution
+without a model request, review comment or label change. Title/body edits do not
+automatically start another AI review.
 
 The `AI PR Review (Single)` workflow supports API-key and Codex subscription authentication.
 Subscription auth is the default for every allowed automatic or manually dispatched pull request
@@ -134,9 +145,9 @@ GitHub-hosted runners are ephemeral. Codex may refresh `auth.json` during a job,
 is discarded with that runner and is not written back to the GitHub secret. If authentication starts
 returning `401` or can no longer refresh, the preflight selects API-key auth for that run. Run
 `codex login` again on the trusted machine and repeat the `gh secret set CODEX_AUTH_JSON` command to
-restore subscription usage. The reviewer gets one temporary credential copy per run. Newer runs
-cancel an older run for the same pull request to avoid duplicate feedback and review-round
-consumption.
+restore subscription usage. The reviewer gets one temporary credential copy per run. Runs for the same PR head cancel duplicate reviewers. Different heads do not cancel each other,
+so delayed old signals cannot cancel current reviews. Older model requests may finish, but the
+publisher rejects their stale heads before posting feedback or consuming a review round.
 
 Each workflow run starts at most one Codex review job. There is no repository-wide concurrency lock;
 different pull requests can still be reviewed concurrently. Account or organization runner limits
