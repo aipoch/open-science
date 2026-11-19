@@ -82,9 +82,23 @@ describe('NotebookStep', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('reuses the complete Settings runtimes panel with Python and R logos', async () => {
+  it('shows Python and R without checking optional WSL setup on Windows', async () => {
+    window.api.platform = 'win32'
+    const getWsl2BashPreviewStatus = vi
+      .fn()
+      .mockResolvedValue({ available: true, reason: 'available' })
+    Object.assign(window.api, {
+      settings: {
+        getWsl2BashPreviewStatus,
+        getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined),
+        getWslSetupStatus: vi.fn().mockResolvedValue({ revision: 0, operation: { state: 'idle' } }),
+        probeWslSetup: vi.fn().mockResolvedValue({ state: 'failed', distros: [] })
+      }
+    })
     await renderStep()
 
+    expect(container.textContent).not.toContain('Local Shell: WSL2 Bash Preview')
+    expect(getWsl2BashPreviewStatus).not.toHaveBeenCalled()
     const panel = container.querySelector('section[aria-label="Notebook runtime (optional)"]')
     expect(panel?.querySelector('h2')?.textContent).toBe('Notebook runtime (optional)')
     expect(panel?.textContent).toContain(
