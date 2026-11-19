@@ -102,25 +102,38 @@ describe('Session reproducibility batches', () => {
   })
 
   it('stops pending targets after a memory refusal and preserves completed targets', async () => {
-    const run = vi.fn(async (request: ArtifactReproducibilityCheckRequest) => {
-      if (request.artifactId === 'two')
-        throw new NotebookExecutionAdmissionError(
-          'NOTEBOOK_MEMORY_PRESSURE',
-          'Execution was not started.'
-        )
-      return state(request, 'matched')
-    })
+    const run = vi.fn(
+      async (
+        request: ArtifactReproducibilityCheckRequest,
+        publish: (state: ArtifactReproducibilityCheckState) => void
+      ) => {
+        if (request.artifactId === 'two') {
+          publish({
+            ...state(request, 'failed'),
+            failedStep: { stepId: 'step:two', runIndex: 1, execution: 'not-started' }
+          })
+          throw new NotebookExecutionAdmissionError(
+            'NOTEBOOK_MEMORY_PRESSURE',
+            'Execution was not started.'
+          )
+        }
+        return state(request, 'matched')
+      }
+    )
     const batches = new SessionReproducibilityBatches({ preflight, run, cancel: vi.fn() })
     const ready = (await batches.command({ ...scope, action: 'prepare', targets }, 1))!
     await batches.command({ ...scope, action: 'start', batchId: ready.batchId }, 1)
     await vi.waitFor(async () =>
       expect((await batches.command({ ...scope, action: 'get' }, 1))?.status).toBe('cancelled')
     )
-    expect(
-      (await batches.command({ ...scope, action: 'get' }, 1))?.targets.map(
-        (target) => target.status
-      )
-    ).toEqual(['matched', 'failed', 'cancelled'])
+    expect((await batches.command({ ...scope, action: 'get' }, 1))?.targets).toMatchObject([
+      { status: 'matched' },
+      {
+        status: 'failed',
+        failedStep: { stepId: 'step:two', runIndex: 1, execution: 'not-started' }
+      },
+      { status: 'cancelled' }
+    ])
     expect(run.mock.calls.map(([request]) => request.artifactId)).toEqual(['one', 'two'])
   })
   it('fixes versions at preflight, skips blocked targets and continues after failure', async () => {

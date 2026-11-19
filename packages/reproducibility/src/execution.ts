@@ -9,6 +9,7 @@ import { stripVTControlCharacters } from 'node:util'
 
 import type {
   ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityFailedStep,
   ArtifactReproducibilityReceiptComparison
 } from './evidence'
 import type {
@@ -79,7 +80,11 @@ type ArtifactReproducibilityExecutionEvent =
   | { type: 'environment-output'; entry: ArtifactReproducibilityCheckLog }
   | { type: 'environments-restored'; count: number }
   | { type: 'step-started'; stepId: string; index: number; total: number }
-  | { type: 'step-output'; entries: ArtifactReproducibilityCheckLog[] }
+  | {
+      type: 'step-output'
+      entries: ArtifactReproducibilityCheckLog[]
+      failedStep?: ArtifactReproducibilityFailedStep
+    }
   | { type: 'step-completed'; stepId: string; index: number; total: number }
   | { type: 'output-compared'; comparison: ArtifactReproducibilityOutputComparison }
   | { type: 'attempt-completed'; matched: boolean }
@@ -126,7 +131,8 @@ export const createReproductionExecutor = (options: {
 
   const reproductionLogs = (
     step: NotebookReproductionStep,
-    result: Awaited<ReturnType<NotebookReproductionRuntime['execute']>>
+    result: Awaited<ReturnType<NotebookReproductionRuntime['execute']>>,
+    failedStep?: ArtifactReproducibilityFailedStep
   ): ArtifactReproducibilityCheckLog[] => {
     const stderr =
       result.traceback && !result.stderr.includes(result.traceback)
@@ -135,7 +141,7 @@ export const createReproductionExecutor = (options: {
     return (
       [
         ['stdout', result.stdout],
-        ['stderr', stderr]
+        ['stderr', failedStep ? [failedStep.execution, stderr].filter(Boolean).join(': ') : stderr]
       ] as const
     ).flatMap(([stream, text]) => {
       if (!text) return []
@@ -474,8 +480,17 @@ export const createReproductionExecutor = (options: {
           helperModules: helpersForRun(run, input.execution.helperModules),
           signal: input.signal
         })
-        const logEntries = reproductionLogs(step, result)
-        if (logEntries.length > 0) input.onEvent?.({ type: 'step-output', entries: logEntries })
+        const failedStep =
+          result.status !== 'completed' && result.recovery
+            ? { stepId: step.stepId, runIndex: step.runIndex, execution: result.recovery.execution }
+            : undefined
+        const logEntries = reproductionLogs(step, result, failedStep)
+        if (logEntries.length > 0)
+          input.onEvent?.({
+            type: 'step-output',
+            entries: logEntries,
+            ...(failedStep ? { failedStep } : {})
+          })
         if (result.status !== 'completed') {
           const diagnostic = result.stderr || result.traceback
           throw new Error(

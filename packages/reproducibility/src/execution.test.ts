@@ -212,6 +212,48 @@ const fixture = async (
 }
 
 describe('Artifact reproducibility execution', () => {
+  it.each(['not-started', 'may-have-run'] as const)(
+    'reports a failed step as %s in the result event and existing log',
+    async (disposition) => {
+      const root = await mkdtemp(join(tmpdir(), 'reproduction-step-failure-'))
+      try {
+        const { execution } = await fixture(root)
+        const events: ArtifactReproducibilityExecutionEvent[] = []
+        await expect(
+          executeArtifactReproducibility(
+            {
+              execution,
+              frontierId: 'original-inputs',
+              evidence: reproductionEvidence(root),
+              onEvent: (event) => events.push(event)
+            },
+            {
+              createRuntime: async () => ({
+                execute: async () => ({
+                  status: 'failed',
+                  recovery: { execution: disposition },
+                  stdout: '',
+                  stderr: 'Memory check refused execution.',
+                  traceback: ''
+                }),
+                shutdown: async () => ({ reaped: true })
+              })
+            }
+          )
+        ).rejects.toThrow('Reproducibility step step:run-1 failed')
+        expect(events.find(({ type }) => type === 'step-output')).toMatchObject({
+          failedStep: { stepId: 'step:run-1', runIndex: 0, execution: disposition },
+          entries: [
+            { stepId: 'step:run-1', text: `${disposition}: Memory check refused execution.` }
+          ]
+        })
+        expect(events.some(({ type }) => type === 'step-completed')).toBe(false)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each([
     ['result.rds', 'unsupported-format'],
     ['result.h5ad', 'unsupported-format'],

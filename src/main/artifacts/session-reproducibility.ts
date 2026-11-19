@@ -243,6 +243,7 @@ export class SessionReproducibilityBatches {
           (state) => {
             target.attemptId = state.attemptId
             target.status = state.status
+            if (state.failedStep) target.failedStep = state.failedStep
             if (state.receipt) target.receiptChecksum = state.receipt.receiptChecksum
           },
           entry.ownerId

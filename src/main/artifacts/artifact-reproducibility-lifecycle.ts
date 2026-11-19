@@ -123,6 +123,7 @@ const snapshot = (state: ArtifactReproducibilityCheckState): ArtifactReproducibi
   request: structuredClone(state.request),
   comparisons: structuredClone(state.comparisons),
   ...(state.logs ? { logs: state.logs.map((entry) => ({ ...entry })) } : {}),
+  ...(state.failedStep ? { failedStep: { ...state.failedStep } } : {}),
   ...(state.receipt
     ? {
         receipt: {
@@ -690,7 +691,8 @@ class ArtifactReproducibilityAttemptOwner {
         )
         this.update(attempt, {
           logs: appended.logs,
-          logsTruncated: attempt.state.logsTruncated || appended.truncated
+          logsTruncated: attempt.state.logsTruncated || appended.truncated,
+          ...(event.failedStep ? { failedStep: event.failedStep } : {})
         })
         return
       }
