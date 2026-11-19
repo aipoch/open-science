@@ -1556,3 +1556,34 @@ it.each(
     await composition.dispose()
   }
 })
+
+it('shares citation lookup capacity with callers that omit the request ID', async () => {
+  const release = Promise.withResolvers<void>()
+  const lookupMetadata = vi.fn(async () => {
+    await release.promise
+    throw new Error('Provider unavailable')
+  })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { lookupMetadata } as never
+  })
+  const invoke = (requestId?: string): Promise<unknown> =>
+    composition.localWeb.invoke('literature:lookup-metadata', {
+      ...invocation(),
+      args: requestId ? ['pmid:123', requestId] : ['pmid:123']
+    })
+  const active = Promise.allSettled(Array.from({ length: 200 }, () => invoke()))
+  try {
+    await vi.waitFor(() => expect(lookupMetadata).toHaveBeenCalledTimes(200))
+    await expect(invoke(crypto.randomUUID())).rejects.toThrow('Too many active citation requests.')
+    await expect(invoke()).rejects.toThrow('Too many active citation requests.')
+    release.resolve()
+    await active
+    await expect(invoke()).rejects.toThrow('Provider unavailable')
+    expect(lookupMetadata).toHaveBeenCalledTimes(201)
+  } finally {
+    release.resolve()
+    await active
+    await composition.dispose()
+  }
+})

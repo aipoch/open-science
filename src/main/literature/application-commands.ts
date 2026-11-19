@@ -336,19 +336,19 @@ const registerLiteratureApplicationCommands = (
     requestId: string | undefined,
     operation: (signal: AbortSignal) => Promise<T>
   ): Promise<T> => {
-    const key = requestId ? requestKey(callerLease, requestId) : undefined
+    const key = requestId ? requestKey(callerLease, requestId) : crypto.randomUUID()
     pruneCancelled()
-    if (key && lookups.has(key)) throw new Error('Citation request is already active.')
+    if (lookups.has(key)) throw new Error('Citation request is already active.')
     if (lookups.size >= 200) throw new Error('Too many active citation requests.')
     const cancellation = new AbortController()
-    if (key && cancelled.has(key)) cancellation.abort()
-    if (key) lookups.set(key, cancellation)
+    if (cancelled.has(key)) cancellation.abort()
+    lookups.set(key, cancellation)
     const signal = AbortSignal.any([callerLease.signal, lifetime.signal, cancellation.signal])
     return run(() => {
       signal.throwIfAborted()
       return operation(signal)
     }, false).finally(() => {
-      if (key) lookups.delete(key)
+      lookups.delete(key)
     })
   }
   try {
