@@ -53,6 +53,15 @@ describe('ProviderKindIcon', () => {
     expect(html).toContain('%231677FF')
     expect(html).not.toContain('text-muted-foreground')
   })
+
+  it('renders Anthropic inline so the onboarding card does not depend on an image request', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:anthropic" />)
+
+    expect(html).toContain('<svg')
+    expect(html).toContain('<title>Anthropic</title>')
+    expect(html).toContain('currentColor')
+    expect(html).not.toContain('<img')
+  })
 })
 
 describe('AgentFrameworkIcon', () => {

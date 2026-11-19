@@ -497,6 +497,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 .onboarding-provider-card {
   position: relative;
+  isolation: isolate;
   display: flex;
   min-height: 26rem;
   flex: 0 0 17.5rem;
@@ -556,7 +557,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: color-mix(in oklab, var(--bg-000) 58%, transparent);
+  background: color-mix(in oklab, var(--bg-10) 64%, transparent);
   opacity: 0.92;
   backdrop-filter: blur(7px) saturate(0.76);
   content: '';
@@ -571,9 +572,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   filter: blur(0.45px) saturate(0.96) contrast(0.96);
 }
 .onboarding-provider-silk.is-active::after {
-  background: transparent;
-  opacity: 0;
-  backdrop-filter: blur(0) saturate(1);
+  /* Keep a light tint even when the hover mask clears. This protects dark cards from a
+     white WebGL fallback surface while preserving the silk movement and readable content. */
+  background: color-mix(in oklab, var(--bg-10) 34%, transparent);
+  opacity: 0.48;
+  backdrop-filter: blur(1.5px) saturate(0.9);
 }
 .onboarding-provider-card::after {
   position: absolute;
