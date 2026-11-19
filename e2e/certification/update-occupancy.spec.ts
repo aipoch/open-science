@@ -102,8 +102,8 @@ test('certifies real packaged update occupancy and recovery', async ({ app }, te
       return
     }
     const status = await app.page.evaluate(() => window.api.update.recheck())
-    expect(status.reason).toBeUndefined()
-    expect(status.error).toBeUndefined()
+    expect(status.reason, JSON.stringify(status)).toBeUndefined()
+    expect(status.error, JSON.stringify(status)).toBeUndefined()
     expect(status.recovery?.canRetryInstall).toBe(true)
   }
   // No IPC overrides. Manual Mac nightlies validate the real reader lease/native occupancy;
