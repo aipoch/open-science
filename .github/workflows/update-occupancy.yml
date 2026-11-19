@@ -1,0 +1,55 @@
+name: Update Occupancy
+
+# Shared read-only gate. The daily wrapper owns issue reporting; PR callers need no write token.
+on:
+  workflow_call:
+    inputs:
+      platform:
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  occupancy:
+    name: Update occupancy (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos, os: macos-latest }
+          - { platform: linux, os: ubuntu-latest }
+          - { platform: windows, os: windows-latest }
+    steps:
+      - name: Checkout
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: node scripts/ci/npm-ci.mjs
+      - name: Verify update occupancy through both real launchers
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: npm test -- src/main/desktop-runtime-launcher.integration.test.ts -t "admits launch-log readers" --reporter=default --reporter=json --outputFile=test-results/update-occupancy.json
+      - name: Require executed desktop and CLI evidence
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: node scripts/ci/verify-update-occupancy.mjs source test-results/update-occupancy.json
+      - name: Upload update occupancy evidence
+        if: always() && (inputs.platform == 'all' || inputs.platform == matrix.platform)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: update-occupancy-source-${{ matrix.platform }}
+          path: test-results/update-occupancy.json
+          retention-days: 14
+          if-no-files-found: error

@@ -67,14 +67,29 @@ const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
-  evidence: { packaged: boolean; appPath: string; executable: string; version: string },
+  evidence: {
+    packaged: boolean
+    appPath: string
+    executable: string
+    version: string
+    appImage?: string
+    appDir?: string
+  },
   environment: NodeJS.ProcessEnv = process.env
 ): void => {
   const revision = environment.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+  const expected = environment.OPEN_SCIENCE_E2E_EXECUTABLE
+  const mounted =
+    process.platform === 'linux' &&
+    expected?.endsWith('.AppImage') &&
+    evidence.appImage === expected &&
+    evidence.appDir &&
+    evidence.executable === join(evidence.appDir, 'open-science') &&
+    evidence.appPath === join(evidence.appDir, 'resources/app.asar')
   if (
     !evidence.packaged ||
     !evidence.appPath.endsWith('app.asar') ||
-    evidence.executable !== environment.OPEN_SCIENCE_E2E_EXECUTABLE ||
+    (!mounted && evidence.executable !== expected) ||
     (revision && !evidence.version.endsWith(`-nightly.g${revision.slice(0, 7)}`))
   ) {
     throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
@@ -336,6 +351,7 @@ const closeElectronApplicationForCleanup = async (
 }
 
 type BrandState = {
+  resources: string
   name: string
   packaged: boolean
   profile: string
@@ -364,6 +380,11 @@ type ElectronApp = {
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
+  captureWebNetworkState: () => Promise<{
+    platform: string
+    versions: Record<string, string | undefined>
+    proxyDirectives: Record<string, string[]>
+  }>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
@@ -474,6 +495,12 @@ const launchEnvironment = (
       'number_of_processors',
       'processor_architecture',
       'systemdrive',
+      // Keep the operator's transport policy while isolating provider credentials. Network
+      // acceptance must not silently become a direct connection when HOME is isolated.
+      'http_proxy',
+      'https_proxy',
+      'all_proxy',
+      'no_proxy',
       // Keep the test display and Secret Service session when isolating Linux HOME.
       'display',
       'xauthority',
@@ -1866,6 +1893,7 @@ class ElectronAppHarness implements ElectronApp {
     return this.runningApplication.evaluate(({ app, BrowserWindow, Menu }) => ({
       name: app.getName(),
       packaged: app.isPackaged,
+      resources: process.resourcesPath,
       profile: app.getPath('userData'),
       logs: app.getPath('logs'),
       title: BrowserWindow.getAllWindows()[0]?.getTitle() ?? '',
@@ -2116,6 +2144,8 @@ class ElectronAppHarness implements ElectronApp {
           packaged: app.isPackaged,
           appPath: app.getAppPath(),
           executable: process.execPath,
+          appImage: process.env.APPIMAGE,
+          appDir: process.env.APPDIR,
           version: app.getVersion()
         }))
         assertPackagedElectronIdentity(evidence)
@@ -2162,6 +2192,32 @@ class ElectronAppHarness implements ElectronApp {
   private get runningApplication(): ElectronApplication {
     if (!this.application) throw new Error('Electron application is not running.')
     return this.application
+  }
+
+  async captureWebNetworkState(): Promise<{
+    platform: string
+    versions: Record<string, string | undefined>
+    proxyDirectives: Record<string, string[]>
+  }> {
+    return this.runningApplication.evaluate(async ({ session }) => {
+      const endpoints = ['https://mcp.exa.ai/mcp', 'https://example.org/']
+      const proxyDirectives: Record<string, string[]> = {}
+      for (const endpoint of endpoints) {
+        proxyDirectives[endpoint] = (await session.defaultSession.resolveProxy(endpoint))
+          .split(';')
+          .map((directive) => directive.trim().split(/\s+/)[0])
+      }
+      // Never return proxy addresses, authentication, the environment or application settings.
+      return {
+        platform: process.platform,
+        versions: {
+          electron: process.versions.electron,
+          chromium: process.versions.chrome,
+          node: process.versions.node
+        },
+        proxyDirectives
+      }
+    })
   }
 
   private async findDelegatedHandoff(

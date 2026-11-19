@@ -47,4 +47,5 @@ export type PackageRecords = {
   literature?: PackageLiterature
   history?: PackageHistory
   reproducibility?: PackageReproducibility
+  webEvidence?: import('../../shared/session-package-web').PackageWebEvidence
 }

@@ -992,28 +992,47 @@ lack the endpoints return an endpoint error; the CLI never falls back to editing
 
 ## External agents through MCP
 
-Start the selected profile normally, then let an MCP client launch the stdio adapter:
+For npm setup, use the [external agent quick start](https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp).
+The client launches one stdio adapter per connection. Open-Science owns the backend and research
+runs, so disconnecting the client leaves the service running.
 
-```bash
-open-science start --no-open --config-root /absolute/path/to/profile
-open-science mcp --config-root /absolute/path/to/profile
-```
+### Choose your agent
 
-Example client configuration (replace paths with your installation and profile paths):
+With the service running, register the local stdio adapter using your client's configuration format.
+On macOS and Linux the npm launch command is `npx --yes @aipoch/open-science@latest mcp`.
+On Windows, use `cmd.exe` as the executable and
+`["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]` as its arguments.
+In the Codex and Claude registration commands below, use
+`-- cmd.exe /d /c npx --yes @aipoch/open-science@latest mcp` after the server name on Windows.
 
-```json
-{
-  "mcpServers": {
-    "open-science": {
-      "command": "/absolute/path/to/open-science",
-      "args": ["mcp", "--config-root", "/absolute/path/to/profile"]
-    }
-  }
-}
-```
+| Agent                    | Where to configure it                                                                                                                                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WorkBuddy                | Add a custom local MCP server using the [README configuration](https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp).                                                                                                         |
+| Codex CLI                | Run `codex mcp add open-science -- npx --yes @aipoch/open-science@latest mcp`.                                                                                                                                                                     |
+| Claude Code              | Run `claude mcp add --transport stdio open-science -- npx --yes @aipoch/open-science@latest mcp`.                                                                                                                                                  |
+| DeepSeek TUI / Harness   | Add a [DSH MCP client entry](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp/mcp-client) with `serverName: open-science`, `transport: stdio`, `command: npx` and `args: ['--yes', '@aipoch/open-science@latest', 'mcp']`. |
+| GitHub Copilot (VS Code) | In [VS Code's MCP configuration](https://code.visualstudio.com/docs/copilot/customization/mcp-servers), put the README's `open-science` entry under `servers` and set `type` to `stdio`.                                                           |
 
-`--profile` is an alias for `--config-root`; existing environment overrides and discovery order
-apply. For a source checkout, use `node` as the command and put the absolute path to
+#### Other local clients
+
+Other local clients include Aider, Amp, Antigravity, AtomCode, Claude Desktop, Cline, CodeBuddy, Cursor Agent, Devin, Gemini CLI, Grok Build, Hermes, Kilo, Kimi CLI, Kiro CLI, MiMo, Mistral Vibe, OpenClaw, OpenCode, Pi, Qoder CLI, Qwen Code, Raven, Reasonix, Trae CLI, and Vela.
+For these clients, check whether your installed edition can launch a local stdio MCP server.
+If it can, use the npm command above and ask the agent to list your Open-Science projects.
+Clients with local shell access can also use the [Open-Science CLI](#first-run-setup-codex).
+The directory identifies setup options; individual host sessions still need end-to-end verification.
+
+### Profiles and installed launchers
+
+If the CLI is already installed and available on the client's PATH, use `open-science` as the
+command and `["mcp"]` as its arguments. To target a custom profile, start the service with
+`open-science start --no-open --config-root /absolute/path/to/profile` and add
+`"--config-root", "/absolute/path/to/profile"` after `"mcp"` in the client's argument list.
+Use the absolute CLI path if the client cannot find the installed command.
+
+`--profile` is an alias for `--config-root`. Without an explicit path, discovery honors
+`OPEN_SCIENCE_CONFIG_ROOT`, then `OPEN_SCIENCE_STORAGE_ROOT`. With neither set, it checks
+`~/.open-science-project` (development) before `~/.open-science` (production).
+For a source checkout, use `node` as the command and put the absolute path to
 `packages/open-science/cli.mjs` before `mcp` in `args`. The adapter connects to an already
 running authenticated local service; it does not start it, install anything or open a browser.
 `open-science mcp --help` works without a running service.

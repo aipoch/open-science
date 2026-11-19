@@ -1315,6 +1315,7 @@ const ConversationPanel = ({
     }
   }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
+    conversation.runtimeInteractionInFlight ||
     blockingInteraction ||
     actionability?.activity === 'running' ||
     activeSession?.compacting ||
