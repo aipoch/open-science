@@ -49,16 +49,17 @@ function* exportRows(table: ComparisonTable, kind: ExportKind): Generator<unknow
         'manualSourceKey',
         'confirmedCurrent'
       ]
-  if (kind === 'matrix')
+  if (kind === 'matrix') {
+    const rows = Map.groupBy(table.cells, (cell) => cell.itemId)
     for (const member of table.members)
       yield [
         member.itemId,
         member.title,
         ...table.fields.flatMap((f) => {
-          const c = table.cells.find((c) => c.itemId === member.itemId && c.fieldId === f.id)!
-          const latest = c.history
-            .filter((h) => h.fieldVersion === f.version && h.sourceKey === member.sourceKey)
-            .at(-1)
+          const c = rows.get(member.itemId)!.find((c) => c.fieldId === f.id)!
+          const latest = c.history.findLast(
+            (h) => h.fieldVersion === f.version && h.sourceKey === member.sourceKey
+          )
           const machine = c.history.at(-1)
           const view = comparisonCellView(c, f, member.sourceKey)
           return [
@@ -73,7 +74,7 @@ function* exportRows(table: ComparisonTable, kind: ExportKind): Generator<unknow
           ]
         })
       ]
-  else
+  } else
     for (const cell of table.cells) {
       const field = table.fields.find((f) => f.id === cell.fieldId)
       const confirmed = current(cell)

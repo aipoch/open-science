@@ -1,8 +1,8 @@
 import { memo, useCallback, type RefObject } from 'react'
-import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { CircleAlert, CircleCheck, CircleDashed, Clock, Pencil } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
+import type { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import type { ComparisonCell, ComparisonField } from '../../../../../shared/literature-comparison'
 import { comparisonCellView } from './comparison-display'
 
@@ -13,6 +13,8 @@ export const ComparisonMatrixValue = memo(function ComparisonMatrixValue({
   selected,
   expanded,
   cellTriggers,
+  t,
+  formatDateTime,
   onTooltipEscape
 }: {
   cell: ComparisonCell
@@ -21,10 +23,10 @@ export const ComparisonMatrixValue = memo(function ComparisonMatrixValue({
   selected: boolean
   expanded: boolean
   cellTriggers: RefObject<Map<string, HTMLButtonElement>>
+  t: TFunction
+  formatDateTime: ReturnType<typeof useDateTimeFormat>
   onTooltipEscape?: () => void
 }): React.JSX.Element {
-  const { t } = useTranslation()
-  const formatDateTime = useDateTimeFormat()
   const setTrigger = useCallback(
     (node: HTMLButtonElement | null) => {
       if (node) cellTriggers.current.set(cell.id, node)
@@ -34,13 +36,17 @@ export const ComparisonMatrixValue = memo(function ComparisonMatrixValue({
   )
   const view = comparisonCellView(cell, field, sourceKey)
   const needsReview = view.needsReview || view.stale
-  const statusLabel = needsReview
-    ? t('Needs review')
-    : view.confirmed
-      ? t('Confirmed')
-      : cell.manual
-        ? t('Manual draft')
-        : t('Machine result')
+  const machineResult = cell.status === 'succeeded' && view.attempt?.status === 'succeeded'
+  const showStatus = needsReview || Boolean(cell.manual) || machineResult
+  const statusLabel = !showStatus
+    ? undefined
+    : needsReview
+      ? t('Needs review')
+      : view.confirmed
+        ? t('Confirmed')
+        : cell.manual
+          ? t('Manual draft')
+          : t('Machine result')
   const outdatedRule =
     view.attempt && view.attempt.fieldVersion !== field.version
       ? t('Outdated rule v{{previous}} (current: v{{current}})', {
@@ -48,8 +54,6 @@ export const ComparisonMatrixValue = memo(function ComparisonMatrixValue({
           current: field.version
         })
       : undefined
-  const machineResult = cell.status === 'succeeded' && view.attempt?.status === 'succeeded'
-  const showStatus = needsReview || Boolean(cell.manual) || machineResult
   const detail =
     outdatedRule ??
     (cell.manual && cell.manual.fieldVersion !== field.version

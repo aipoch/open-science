@@ -1,3 +1,4 @@
+import { formatBytes } from '../../../../../shared/update'
 import {
   useCallback,
   useEffect,
@@ -8,6 +9,7 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ComparisonMatrixValue } from './ComparisonMatrixValue'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useTranslation } from 'react-i18next'
@@ -190,6 +192,8 @@ export function LiteratureComparisonPage({
   loadCellHistory,
   loadError,
   onRetryLoad,
+  onRestoreBackup,
+  storage,
   onOpenSettings,
   loadIssue,
   command,
@@ -208,6 +212,8 @@ export function LiteratureComparisonPage({
   loadIssue?: string
   onOpenSettings?: (panel: 'model' | 'storage') => void
   loadError?: boolean
+  storage?: ComparisonResult['storage']
+  onRestoreBackup?: () => void
   onRetryLoad?: () => void
   command: (request: ComparisonRequest) => Promise<ComparisonResult>
   onChooseReferences: () => void
@@ -218,6 +224,7 @@ export function LiteratureComparisonPage({
   reviewRef?: React.Ref<HTMLDivElement>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const formatDateTime = useDateTimeFormat()
   const [name, setName] = useState(table?.name ?? '')
   const [fields, setFields] = useState(
     table?.fields.map(({ id, name, rule }) => ({ id, name, rule })) ?? []
@@ -325,6 +332,7 @@ export function LiteratureComparisonPage({
     draftStatus.current.field = { pending: fieldPending, failed: fieldFailed }
     reportDraftStatus()
   }, [fieldPending, fieldFailed, reportDraftStatus])
+  const [backupSaved, setBackupSaved] = useState(false)
   const [error, setError] = useState<string>()
   const [confirmation, setConfirmation] = useState<{
     request?: ComparisonLaunchRequest
@@ -468,14 +476,16 @@ export function LiteratureComparisonPage({
           : undefined
       }
       primaryButton={
-        settingsPanel && onOpenSettings
-          ? {
-              label: settingsPanel === 'model' ? t('Model settings') : t('Open Settings'),
-              onClick: () => onOpenSettings(settingsPanel)
-            }
-          : loadError
-            ? { label: t('Retry'), onClick: () => onRetryLoad?.() }
-            : undefined
+        onRestoreBackup
+          ? { label: t('Restore comparison backup'), onClick: onRestoreBackup }
+          : settingsPanel && onOpenSettings
+            ? {
+                label: settingsPanel === 'model' ? t('Model settings') : t('Open Settings'),
+                onClick: () => onOpenSettings(settingsPanel)
+              }
+            : loadError
+              ? { label: t('Retry'), onClick: () => onRetryLoad?.() }
+              : undefined
       }
     />
   )
@@ -1135,7 +1145,13 @@ export function LiteratureComparisonPage({
             </h1>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
               <span className="hidden @min-[45rem]/matrix:inline">{t('Comparison tables')}</span>
-              <Popover open={totalsOpen} onOpenChange={setTotalsOpen}>
+              <Popover
+                open={totalsOpen}
+                onOpenChange={(open) => {
+                  setTotalsOpen(open)
+                  setBackupSaved(false)
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     size="sm"
@@ -1184,6 +1200,30 @@ export function LiteratureComparisonPage({
                       <span>{failedCount}</span>
                     </li>
                   </ul>
+                  {storage && (
+                    <div className="mt-3 flex items-center justify-between gap-2 border-t pt-2 text-xs">
+                      <span className="tabular-nums">
+                        {t('Comparison storage')} · {formatBytes(storage.bytes)} /{' '}
+                        {formatBytes(storage.limit)}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBackupSaved(false)
+                          setBackupSaved(await run({ action: 'backup' }))
+                        }}
+                      >
+                        {t('Back up comparison tables')}
+                      </Button>
+                    </div>
+                  )}
+                  {backupSaved && (
+                    <p role="status" className="mt-1 text-xs">
+                      {t('Backup saved to literature/comparisons-v1.json.bak.')}
+                    </p>
+                  )}
                   {!sampleStep && sampleControls}
                 </PopoverContent>
               </Popover>
@@ -2231,6 +2271,8 @@ export function LiteratureComparisonPage({
                           }}
                         >
                           <ComparisonMatrixValue
+                            t={t}
+                            formatDateTime={formatDateTime}
                             cell={cell}
                             field={field}
                             sourceKey={member.sourceKey}

@@ -47,6 +47,27 @@ describe('comparison subscriptions', () => {
       { action: 'list' }
     ])
   })
+  it('retains a failed restore notice across polling and clears it on successful recovery', async () => {
+    let restored = false
+    let attempts = 0
+    comparisons.mockImplementation(async (request) => {
+      if (request.action === 'restore-backup') {
+        if (++attempts === 1) throw new Error('write failed')
+        restored = true
+        return { tables: [] }
+      }
+      if (!restored) throw new Error('comparison-storage-unavailable-backup-ready')
+      return { tables: [], summaries: [], storage: { bytes: 24, limit: 24000000 } }
+    })
+    const { result } = renderHook(() => useComparisonTables())
+    await waitFor(() => expect(result.current.loadIssue).toContain('backup-ready'))
+    await act(() => result.current.restoreBackup())
+    await act(() => result.current.refresh())
+    expect(result.current.loadIssue).toContain('restore-failed')
+    await act(() => result.current.restoreBackup())
+    expect(result.current.loadIssue).toBeUndefined()
+    expect(result.current.storage?.bytes).toBe(24)
+  })
   it('uses the same pending scope for summaries from older hosts', async () => {
     const cells = [
       { id: 'revised', itemId: 'revised', status: 'pending', history: [{ id: 'old' }] },

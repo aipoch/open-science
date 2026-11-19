@@ -1,6 +1,6 @@
 import Papa from 'papaparse'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
@@ -1305,6 +1305,45 @@ it('does not let an old task completion consume the same cell in a newly admitte
   await f.owner.dispose()
 })
 
+it.each(['missing', 'damaged', 'newer', 'repaired'] as const)(
+  'recovers only a replaceable primary from an explicit backup (%s)',
+  async (kind) => {
+    const f = await fixture()
+    const saved = await readFile(f.path, 'utf8')
+    expect((await f.owner.run({ action: 'list' })).storage?.bytes).toBe(Buffer.byteLength(saved))
+    await f.owner.run({ action: 'backup' })
+    expect(await readFile(f.path + '.bak', 'utf8')).toBe(saved)
+    await f.owner.dispose()
+    const future = JSON.stringify({ version: 2, tables: [] })
+    if (kind === 'missing') await rm(f.path)
+    else await writeFile(f.path, kind === 'newer' ? future : 'broken')
+    const reopened = new LiteratureComparisons(f.options)
+    try {
+      await reopened.start()
+      if (kind === 'newer') {
+        await expect(reopened.run({ action: 'list' })).rejects.toMatchObject({
+          message: 'comparison-storage-unavailable'
+        })
+        await expect(reopened.run({ action: 'restore-backup' })).rejects.toThrow()
+        expect(await readFile(f.path, 'utf8')).toBe(future)
+        return
+      }
+      await expect(reopened.run({ action: 'list' })).rejects.toThrow('backup-ready')
+      if (kind === 'repaired') await writeFile(f.path, JSON.stringify({ version: 1, tables: [] }))
+      await reopened.run({ action: 'restore-backup' })
+      const list = await reopened.run({ action: 'list' })
+      expect(list.summaries?.map((t) => t.name)).toEqual(kind === 'repaired' ? [] : ['Comparison'])
+      if (kind === 'damaged') {
+        const damaged = (await readdir(join(f.path, '..'))).find((name) =>
+          name.startsWith('tables.json.damaged-')
+        )
+        expect(await readFile(join(f.path, '..', damaged!), 'utf8')).toBe('broken')
+      }
+    } finally {
+      await reopened.dispose()
+    }
+  }
+)
 it.each(['{broken JSON', JSON.stringify({ version: 999, tables: [] })])(
   'isolates an unreadable comparison envelope without replacing it',
   async (content) => {

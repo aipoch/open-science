@@ -119,6 +119,8 @@ const launchChecks = {
 }
 
 export const comparisonRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('backup') }).strict(),
+  z.object({ action: z.literal('restore-backup') }).strict(),
   z.object({ action: z.literal('list'), retryStorage: z.literal(true).optional() }).strict(),
   z
     .object({
@@ -255,6 +257,26 @@ export const comparisonTableSummarySchema = comparisonTableSchema
   .strict()
 export type ComparisonTableSummary = z.infer<typeof comparisonTableSummarySchema>
 
+export function summarizeComparisonTable(table: ComparisonTable): ComparisonTableSummary {
+  const counts = { pending: 0, running: 0, succeeded: 0, failed: 0, unavailable: 0 }
+  const pendingItems = new Set<string>()
+  for (const cell of table.cells) {
+    counts[cell.status]++
+    if (isPendingComparisonCell(cell)) pendingItems.add(cell.itemId)
+  }
+  return {
+    id: table.id,
+    name: table.name,
+    state: table.state,
+    issue: table.issue,
+    memberCount: table.members.length,
+    total: table.cells.length,
+    ...counts,
+    pendingItemIds: [...pendingItems],
+    reference: comparisonTaskReference(table)
+  }
+}
+
 /** A task link names one exact reference, preferring the in-flight cell over queued work. */
 export function comparisonTaskReference(
   table: Pick<ComparisonTable, 'cells' | 'members' | 'taskSources' | 'remainingCellIds'>
@@ -271,6 +293,9 @@ export function comparisonTaskReference(
 export const comparisonResultSchema = z
   .object({
     tables: z.array(comparisonTableSchema).max(30),
+    storage: z
+      .object({ bytes: z.number().int().nonnegative(), limit: z.number().int().positive() })
+      .optional(),
     summaries: z.array(comparisonTableSummarySchema).max(30).optional(),
     cell: comparisonCellSchema.optional(),
     nextOffset: csvOffset,

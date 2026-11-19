@@ -8,6 +8,8 @@ export function comparisonStorageMessage(
   issue: string | undefined,
   t: (key: string) => string
 ): string | undefined {
+  if (issue?.includes('restore-failed'))
+    return t('Could not restore the comparison backup. Check the storage location and retry.')
   if (issue?.includes('comparison-storage-limit') || issue?.includes('comparison-table-limit'))
     return t(
       'Comparison storage is full. Back up literature/comparisons-v1.json from your data folder before deleting a table.'

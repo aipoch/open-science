@@ -1760,6 +1760,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         <LiteratureLibrarySidebar
           comparisons={{
             tables: comparisons.tables,
+            storageIssue: comparisons.loadIssue,
+            storageRestore: comparisons.loadIssue?.includes('backup-ready')
+              ? comparisons.restoreBackup
+              : undefined,
             storageRetry: comparisons.loadIssue?.includes('comparison-storage-unavailable')
               ? () => void comparisons.retryLoad()
               : undefined,
@@ -1836,6 +1840,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               loadIssue={comparisons.loadIssue}
               onOpenSettings={(panel) => useSettingsStore.getState().openSettingsToPanel(panel)}
               onRetryLoad={() => void comparisons.retryLoad()}
+              storage={comparisons.storage}
+              onRestoreBackup={
+                comparisons.loadIssue?.includes('backup-ready')
+                  ? comparisons.restoreBackup
+                  : undefined
+              }
               command={comparisons.command}
               onDraftStatusChange={reportComparisonDraftStatus}
               reviewRef={comparisonReviewRef}

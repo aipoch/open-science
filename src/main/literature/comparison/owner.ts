@@ -1,12 +1,18 @@
 import { ComparisonCsvReader } from './export'
+import { copyFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
+import {
+  DurableJsonRecoveryBarrierError,
+  readDurableJsonFile,
+  writeDurableJsonFile
+} from '@aipoch/durable-files'
 import { z } from 'zod'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import {
   COMPARISON_HISTORY_LIMIT,
   comparisonCellSchema,
-  comparisonTaskReference,
+  summarizeComparisonTable,
   isUnattemptedComparisonCell,
   isPendingComparisonCell,
   comparisonRequestSchema,
@@ -44,6 +50,35 @@ const matrixCell = (cell: ComparisonCell): ComparisonCell => ({
   ...(cell.history.length >= COMPARISON_HISTORY_LIMIT && { historyLimitReached: true }),
   history: cell.history.slice(-1).map((attempt) => ({ ...attempt, evidence: [] }))
 })
+function readStore(
+  path: string
+): ReturnType<typeof readDurableJsonFile<{ raw: string; data: z.infer<typeof envelope> }>> {
+  return readDurableJsonFile(
+    path,
+    (raw) => {
+      const data = JSON.parse(raw)
+      if (typeof data?.version === 'number' && data.version > 1)
+        throw new DurableJsonRecoveryBarrierError('comparison-newer-storage-version')
+      return { raw, data: envelope.parse(data) }
+    },
+    {},
+    { maxBytes: MAX_BYTES }
+  )
+}
+const malformedStore = (error: unknown): boolean =>
+  error instanceof SyntaxError || error instanceof z.ZodError
+// Attempts and their source evidence are immutable after publication. Copy the mutable
+// table, field and manual-review state while retaining append-only history snapshots.
+function snapshotTable(table: ComparisonTable): ComparisonTable {
+  const snapshot: ComparisonTable = structuredClone({
+    ...table,
+    cells: table.cells.map((cell) => ({ ...cell, history: [] }))
+  })
+  snapshot.cells.forEach((cell, index) => {
+    cell.history = table.cells[index].history
+  })
+  return snapshot
+}
 type Options = {
   sourceRevision?: () => number
   path: () => string
@@ -117,6 +152,8 @@ export class LiteratureComparisons {
     ComparisonTable,
     { revision: number; json: string }
   >()
+  private storageBytes = 0
+  private recoverable = false
   private loadError = false
   private started = false
   private closed = false
@@ -134,16 +171,20 @@ export class LiteratureComparisons {
   }
   private async load(): Promise<void> {
     if (this.closed) return
+    this.recoverable = false
     try {
-      const saved = await readDurableJsonFile(
-        this.options.path(),
-        (text) => envelope.parse(JSON.parse(text)),
-        {},
-        { maxBytes: MAX_BYTES }
-      )
-      if (this.loadError && saved.status !== 'found') throw new Error('comparison-backup-missing')
+      const path = this.options.path()
+      const saved = await readStore(path)
+      if (saved.status === 'missing') {
+        // A missing primary with a backup requires explicit restoration before accepting writes.
+        const backup = await readStore(path + '.bak')
+        this.recoverable = backup.status === 'found'
+        if (this.loadError || this.recoverable) throw new Error('comparison-primary-missing')
+      }
       this.loadError = false
-      if (saved.status === 'found') this.tables = saved.value.tables
+      this.recoverable = false
+      this.storageBytes = saved.status === 'found' ? Buffer.byteLength(saved.value.raw) : 0
+      if (saved.status === 'found') this.tables = saved.value.data.tables
       let changed = false
       for (const table of this.tables)
         if (
@@ -164,6 +205,9 @@ export class LiteratureComparisons {
       if (changed) await this.save()
     } catch (error) {
       // A damaged optional feature must not stop application startup or replace its bytes.
+      if (malformedStore(error))
+        this.recoverable =
+          (await readStore(this.options.path() + '.bak').catch(() => undefined))?.status === 'found'
       this.loadError = true
       this.tables = []
       this.options.onError?.(error)
@@ -203,15 +247,17 @@ export class LiteratureComparisons {
       return json
     })
     const content = '{"version":1,"tables":[' + parts.join(',') + ']}'
-    if (Buffer.byteLength(content) > MAX_BYTES)
+    const bytes = Buffer.byteLength(content)
+    if (bytes > MAX_BYTES)
       throw new ApplicationCommandError('comparison-storage-limit', 'comparison-storage-limit')
     await withDataRootWrite(() => writeDurableJsonFile(this.options.path(), content), signal)
+    this.storageBytes = bytes
   }
   private async mutate<T>(
     changed: ComparisonTable | undefined,
     operation: () => Promise<T>
   ): Promise<T> {
-    const before = this.tables.map((table) => (table === changed ? structuredClone(table) : table))
+    const before = this.tables.map((table) => (table === changed ? snapshotTable(table) : table))
     try {
       const result = await operation()
       await this.save()
@@ -262,6 +308,38 @@ export class LiteratureComparisons {
   async run(input: ComparisonRequest): Promise<ComparisonResult> {
     const request = comparisonRequestSchema.parse(input)
     if (this.closed || !this.started) throw new Error('comparison-owner-unavailable')
+    if (request.action === 'restore-backup' || request.action === 'backup') {
+      return this.queue(() =>
+        withDataRootWrite(async () => {
+          if (this.closed) throw new Error('comparison-owner-unavailable')
+          const path = this.options.path()
+          if (request.action === 'backup') {
+            if (this.loadError) throw new Error('comparison-storage-unavailable')
+            const current = await readStore(path)
+            if (current.status !== 'found') throw new Error('comparison-storage-unavailable')
+            await writeDurableJsonFile(path + '.bak', current.value.raw)
+          } else {
+            if (!this.loadError || !this.recoverable)
+              throw new Error('comparison-restore-unavailable')
+            // Prefer a primary that has already been repaired. Only replace a missing or malformed archive.
+            const current = await readStore(path).catch((error) => {
+              if (malformedStore(error)) return undefined
+              throw error
+            })
+            if (current?.status !== 'found') {
+              const backup = await readStore(path + '.bak')
+              if (backup.status !== 'found') throw new Error('comparison-restore-unavailable')
+              if (!current)
+                await copyFile(path, path + '.damaged-' + randomUUID(), constants.COPYFILE_EXCL)
+              await writeDurableJsonFile(path, backup.value.raw)
+            }
+            await this.load()
+            if (this.loadError) throw new Error('comparison-storage-unavailable')
+          }
+          return { tables: [] }
+        })
+      )
+    }
     if (this.loadError && request.action === 'list' && request.retryStorage) {
       await this.queue(async () => {
         if (this.loadError) await withDataRootWrite(() => this.load())
@@ -270,7 +348,9 @@ export class LiteratureComparisons {
     if (this.loadError)
       throw new ApplicationCommandError(
         'comparison-storage-unavailable',
-        'comparison-storage-unavailable'
+        this.recoverable
+          ? 'comparison-storage-unavailable-backup-ready'
+          : 'comparison-storage-unavailable'
       )
     if (
       request.action === 'run' ||
@@ -326,24 +406,11 @@ export class LiteratureComparisons {
         }
         return this.bounded({
           tables: [],
+          storage: { bytes: this.storageBytes, limit: MAX_BYTES },
           summaries: this.tables.map((table) => ({
-            id: table.id,
-            name: table.name,
-            state: table.state,
-            issue: table.issue,
+            ...summarizeComparisonTable(table),
             revision: table.revision,
-            inFlight: this.inFlightAdmissions.has(table.id),
-            memberCount: table.members.length,
-            total: table.cells.length,
-            pending: table.cells.filter((cell) => cell.status === 'pending').length,
-            running: table.cells.filter((cell) => cell.status === 'running').length,
-            succeeded: table.cells.filter((cell) => cell.status === 'succeeded').length,
-            failed: table.cells.filter((cell) => cell.status === 'failed').length,
-            unavailable: table.cells.filter((cell) => cell.status === 'unavailable').length,
-            reference: comparisonTaskReference(table),
-            pendingItemIds: [
-              ...new Set(table.cells.filter(isPendingComparisonCell).map((cell) => cell.itemId))
-            ]
+            inFlight: this.inFlightAdmissions.has(table.id)
           }))
         })
       }
@@ -441,7 +508,7 @@ export class LiteratureComparisons {
           if (this.exportSnapshots.size >= MAX_EXPORT_SNAPSHOTS)
             throw new Error('comparison-export-limit')
           await this.refreshSources(table.id)
-          const captured = structuredClone(this.tables.find((current) => current.id === table.id)!)
+          const captured = snapshotTable(this.tables.find((current) => current.id === table.id)!)
           token = randomUUID()
           const snapshotToken = token
           const expiry = setTimeout(() => this.releaseExportSnapshot(snapshotToken), 300_000)
@@ -531,16 +598,20 @@ export class LiteratureComparisons {
           // Preserve only definitions we actually know before replacing the current fields.
           for (const cell of table.cells) {
             const field = previous.find((f) => f.id === cell.fieldId)
-            for (const attempt of cell.history)
-              if (
-                field &&
-                attempt.fieldVersion === field.version &&
-                (!attempt.fieldSnapshot || !attempt.sourcePolicy)
-              ) {
-                this.serializedHistories.delete(cell.history)
-                attempt.fieldSnapshot ??= { ...field }
-                attempt.sourcePolicy ??= table.sourcePolicy
-              }
+            if (!field) continue
+            const needsSnapshot = (attempt: ComparisonCell['history'][number]): boolean =>
+              attempt.fieldVersion === field.version &&
+              (!attempt.fieldSnapshot || !attempt.sourcePolicy)
+            if (cell.history.some(needsSnapshot))
+              cell.history = cell.history.map((attempt) =>
+                needsSnapshot(attempt)
+                  ? {
+                      ...attempt,
+                      fieldSnapshot: attempt.fieldSnapshot ?? { ...field },
+                      sourcePolicy: attempt.sourcePolicy ?? table.sourcePolicy
+                    }
+                  : attempt
+              )
           }
           table.fields = request.fields.map((f) => {
             const old = previous.find((p) => p.id === f.id)
@@ -600,7 +671,7 @@ export class LiteratureComparisons {
     const table = await this.queue(async () => {
       const current = this.tables.find((entry) => entry.id === request.tableId)
       if (!current || this.closed) throw new Error('comparison-owner-unavailable')
-      return structuredClone(current)
+      return snapshotTable(current)
     })
     const revision = table.revision
     if (request.action === 'resume') {
@@ -835,7 +906,7 @@ export class LiteratureComparisons {
       for (const table of this.tables) {
         if (!tableId || table.id === tableId) {
           await this.refreshTable(table, undefined, () =>
-            previous.set(table.id, structuredClone(table))
+            previous.set(table.id, snapshotTable(table))
           )
         }
       }

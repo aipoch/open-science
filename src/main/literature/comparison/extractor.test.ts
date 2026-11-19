@@ -174,6 +174,15 @@ it.each(['P0', 'P2', 'p1', ' P1', ' ', 'P1\n'])('rejects unknown evidence ID %j'
     f.extractor.extract(f.table, field, 'paper', new AbortController().signal)
   ).rejects.toThrow('invalid-evidence')
 })
+it.each([
+  { value: null, issue: 'invalid-evidence' },
+  { value: '  ', issue: 'unsupported-value' }
+])('rejects ambiguous model output with value $value', async ({ value, issue }) => {
+  const f = fixture(JSON.stringify({ value, evidenceIds: ['P1'] }))
+  await expect(
+    f.extractor.extract(f.table, field, 'paper', new AbortController().signal)
+  ).rejects.toThrow(issue)
+})
 it('rejects a value without selected evidence', async () => {
   const f = fixture(JSON.stringify({ value: '20 patients', evidenceIds: [] }))
   await expect(

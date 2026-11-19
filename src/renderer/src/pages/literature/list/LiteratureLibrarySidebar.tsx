@@ -76,6 +76,8 @@ export function LiteratureLibrarySidebar({
   comparisons?: {
     tables: ComparisonTableSummary[]
     selectedId?: string
+    storageIssue?: string
+    storageRestore?: () => void
     storageRetry?: () => void
     onCreate: () => void
     onOpen: (id: string, action?: 'configure' | 'export') => void
@@ -473,7 +475,16 @@ export function LiteratureLibrarySidebar({
                 {comparisons?.storageRetry && !comparisons.selectedId && (
                   <ErrorNotice
                     inline
-                    title={comparisonStorageMessage('comparison-storage-unavailable', t)}
+                    title={comparisonStorageMessage(
+                      comparisons.storageIssue ?? 'comparison-storage-unavailable',
+                      t
+                    )}
+                    secondaryButton={
+                      comparisons.storageRestore && {
+                        label: t('Restore comparison backup'),
+                        onClick: comparisons.storageRestore
+                      }
+                    }
                     primaryButton={{ label: t('Retry'), onClick: comparisons.storageRetry }}
                   />
                 )}

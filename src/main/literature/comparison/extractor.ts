@@ -169,7 +169,9 @@ export class ComparisonExtractor {
     const parsed = outputSchema.parse(
       JSON.parse(response.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/u, '$1'))
     )
-    if (parsed.value !== null && !parsed.evidenceIds.length) throw new Error('unsupported-value')
+    if (parsed.value === null && parsed.evidenceIds.length) throw new Error('invalid-evidence')
+    if (parsed.value !== null && (!parsed.value.trim() || !parsed.evidenceIds.length))
+      throw new Error('unsupported-value')
     const evidence = [...new Set(parsed.evidenceIds)].map((id) => {
       const passage = evidenceById.get(id)
       if (!passage) throw new Error('invalid-evidence')

@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLiteratureHost } from '../renderer-host'
-import {
-  comparisonTaskReference,
-  isPendingComparisonCell
-} from '../../../../../shared/literature-comparison'
+import { summarizeComparisonTable } from '../../../../../shared/literature-comparison'
 import type {
   ComparisonCell,
   ComparisonRequest,
@@ -34,6 +31,8 @@ export function useComparisonTables(activeTableId?: string): {
   error: boolean
   loadIssue?: string
   refresh: () => Promise<void>
+  storage?: ComparisonResult['storage']
+  restoreBackup: () => Promise<void>
   retryLoad: () => Promise<void>
   command: (request: ComparisonRequest) => Promise<ComparisonResult>
   loadCellHistory: (tableId: string, cellId: string) => Promise<ComparisonCell>
@@ -56,6 +55,8 @@ export function useComparisonTables(activeTableId?: string): {
     },
     [publish]
   )
+  const [storage, setStorage] = useState<ComparisonResult['storage']>()
+  const [restoreFailed, setRestoreFailed] = useState(false)
   const [failure, setFailure] = useState<{ tableId?: string; issue?: string }>()
   const sequence = useRef(0)
   const inFlight = useRef<{ sequence: number; promise: Promise<void> } | undefined>(undefined)
@@ -72,27 +73,14 @@ export function useComparisonTables(activeTableId?: string): {
           ...(retry && { retryStorage: true })
         })
         if (generation !== sequence.current) return
+        setStorage((previous) =>
+          previous?.bytes === result.storage?.bytes && previous?.limit === result.storage?.limit
+            ? previous
+            : result.storage
+        )
+        setRestoreFailed(false)
         // Compatibility with older hosts; only summaries enter list consumers.
-        const summaries =
-          result.summaries ??
-          (result.tables.map((table) => ({
-            id: table.id,
-            name: table.name,
-            state: table.state,
-            issue: table.issue,
-            memberCount: table.itemIds?.length ?? 0,
-            total: table.cells.length,
-            reference: comparisonTaskReference(table),
-            pendingItemIds: [
-              ...new Set(table.cells.filter(isPendingComparisonCell).map((cell) => cell.itemId))
-            ],
-            ...Object.fromEntries(
-              ['pending', 'running', 'succeeded', 'failed', 'unavailable'].map((status) => [
-                status,
-                table.cells.filter((cell) => cell.status === status).length
-              ])
-            )
-          })) as ComparisonTableSummary[])
+        const summaries = result.summaries ?? result.tables.map(summarizeComparisonTable)
         setTables((current) =>
           JSON.stringify(current) === JSON.stringify(summaries) ? current : summaries
         )
@@ -228,7 +216,9 @@ export function useComparisonTables(activeTableId?: string): {
         }
         throw error
       }
-      if (!['list', 'read', 'read-cell', 'check-sources', 'export'].includes(request.action)) {
+      if (
+        !['list', 'read', 'read-cell', 'check-sources', 'export', 'backup'].includes(request.action)
+      ) {
         // A mutation supersedes any partially assembled projection.
         sequence.current += 1
         if (request.action === 'edit-cell') {
@@ -288,8 +278,21 @@ export function useComparisonTables(activeTableId?: string): {
     tables,
     selectedTable: activeTableId ? snapshots.get(activeTableId)?.table : undefined,
     error: Boolean(failure && failure.tableId === activeTableId),
-    loadIssue: failure?.tableId === activeTableId ? failure?.issue : undefined,
+    loadIssue:
+      failure?.tableId === activeTableId && failure?.issue
+        ? restoreFailed && failure.issue.includes('comparison-storage-unavailable')
+          ? failure.issue + '-restore-failed'
+          : failure.issue
+        : undefined,
     refresh,
+    storage,
+    restoreBackup: async () => {
+      try {
+        await command({ action: 'restore-backup' })
+      } catch {
+        setRestoreFailed(true)
+      }
+    },
     retryLoad: () => {
       retryStorage.current = true
       sequence.current++
