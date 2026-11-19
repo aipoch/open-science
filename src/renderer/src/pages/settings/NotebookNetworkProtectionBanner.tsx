@@ -118,7 +118,6 @@ const NotebookNetworkProtectionBanner = ({
     <SettingsSection
       title={t('Notebook network protection')}
       aria-label={t('Notebook network protection')}
-      data-settings-anchor="network.domains"
       data-testid="notebook-network-protection-banner"
       className={cn(previewState === 'disabled' && 'opacity-50')}
     >

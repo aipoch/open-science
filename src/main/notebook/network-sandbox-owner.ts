@@ -436,6 +436,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async windowsProtectionConfigured(): Promise<boolean> {
     if (this.platform !== 'win32') return false
+    // This selects the Shell contract. Readiness is reported by status() and checked at launch.
     const settings = await this.readWindowsSettings()
     return (
       settings.windowsProtectionEnabled ?? this.getOrCreateSandbox().isWindowsProtectionConfigured()
@@ -511,6 +512,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         runtimePreparation: this.windowsRuntime?.progress
       })
     if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
+    // Both launchers consume the configured CA bundle, including explicit standard mode.
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
     } catch (error) {

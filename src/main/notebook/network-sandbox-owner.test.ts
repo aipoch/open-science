@@ -285,6 +285,24 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it('reports an invalid CA before reporting explicit Windows standard mode', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-standard-ca-'))
+    fixtureDirectories.push(root)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      platform: 'win32',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      getCaBundlePath: async () => join(root, 'missing.pem'),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    expect(await owner.status()).toMatchObject({ kind: 'error', reason: 'trustBundleInvalid' })
+    await owner.dispose()
+  })
+
   it('does not ACL-preflight granted roots outside Windows', async () => {
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',

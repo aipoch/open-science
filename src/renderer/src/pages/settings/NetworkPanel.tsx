@@ -302,14 +302,16 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        window.api?.platform === 'win32' ? (
-          <NotebookNetworkProtectionBanner
-            actionLabel={t('Manage access')}
-            onOpen={() => onNavigate({ kind: 'domains' })}
-          />
-        ) : (
-          <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
-        )
+        <div data-settings-anchor="network.domains">
+          {window.api?.platform === 'win32' ? (
+            <NotebookNetworkProtectionBanner
+              actionLabel={t('Manage access')}
+              onOpen={() => onNavigate({ kind: 'domains' })}
+            />
+          ) : (
+            <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
+          )}
+        </div>
       ) : null}
 
       {!isConfiguring ? (
