@@ -19,10 +19,12 @@ $compare = if ($LastSuccess) { $LastSuccess } else { $base }
 # Compare the full untested interval. A failed scheduled run must not advance this boundary.
 $paths = @('src/main/update/', ':(glob)src/main/**/*update*', ':(glob)src/shared/**/*update*',
   'src/main/desktop-runtime-launcher.ts', 'src/main/node-entry.ts', 'src/main/desktop-entry.ts',
+  'packages/open-science/cli.mjs', 'packages/open-science/installation-startup.cjs',
+  'packages/open-science/launch-log.mjs', 'packages/process-tree-native/',
   ':(glob)src/main/**/*occupancy*', ':(glob)packages/**/*handoff*', ':(glob)packages/**/*occupancy*',
   'build/', 'electron-builder.yml', 'patches/', 'package.json', 'package-lock.json',
   'scripts/windows-updater-certification.mjs', 'scripts/ci/build-upgrade-fixture.ps1',
-  '.github/workflows/daily-windows-upgrade.yml')
+  'scripts/ci/plan-windows-upgrade.ps1', '.github/workflows/daily-windows-upgrade.yml')
 $changed = @(git diff --name-only $compare HEAD -- @paths)
 "baseline=$tag" >> $env:GITHUB_OUTPUT
 "baseline_sha=$base" >> $env:GITHUB_OUTPUT

@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Published stable tag to validate
+        description: Published stable tag for the post-release drill
         type: string
-        required: true
+        default: ''
 
       dry_run:
         description: Test baseline selection and the installer observer without downloading or installing releases
@@ -285,6 +285,8 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           CONCLUSION: ${{ needs.candidate-upgrade.result }}
+          BASELINE: ${{ needs.candidate-upgrade.outputs.baseline }}
+          FAILED_STAGE: ${{ needs.candidate-upgrade.outputs.failed_stage }}
         with:
           script: |
             const {reportScheduledOutcome} = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
@@ -293,5 +295,6 @@ jobs:
               workflowName: 'Daily Windows Upgrade', runId: context.runId,
               runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), headSha: context.sha,
+              failureDetails: `Baseline: ${process.env.BASELINE || 'unresolved'}. Failed stage: ${process.env.FAILED_STAGE || 'see job log'}.`,
               conclusion: process.env.CONCLUSION, log: core.info
             })

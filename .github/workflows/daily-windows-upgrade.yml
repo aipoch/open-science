@@ -2,6 +2,11 @@ name: Daily Windows Upgrade
 
 on:
   workflow_call:
+    outputs:
+      baseline:
+        value: ${{ jobs.certify.outputs.baseline }}
+      failed_stage:
+        value: ${{ jobs.certify.outputs.failed_stage }}
     inputs:
       signed_run_id:
         description: Reuse the Windows artifact from this Release run
@@ -16,6 +21,9 @@ jobs:
   certify:
     runs-on: windows-latest
     timeout-minutes: 150
+    outputs:
+      baseline: ${{ steps.plan.outputs.baseline }}
+      failed_stage: ${{ steps.fixtures.outcome == 'failure' && 'Build test packages' || steps.aba.outcome == 'failure' && 'A to B and rollback' || steps.forward.outcome == 'failure' && 'B to C' || 'Runner preparation or cleanup' }}
     env:
       ARTIFACT_RUN: ${{ inputs.signed_run_id }}
     steps:
@@ -96,10 +104,12 @@ jobs:
           npx --no-install prisma generate
 
       - name: Upgrade A to B and roll back the same profile to A
+        id: aba
         shell: pwsh
         run: node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-a" --current-dir "$env:RUNNER_TEMP/upgrade-b" --rollback --output aba.json
 
       - name: Exercise the candidate updater from B to C
+        id: forward
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.plan.outputs.forward == 'true' }}
         shell: pwsh
         run: node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --output forward.json

@@ -47,7 +47,10 @@ function fixture({
 describe('scheduled failure tracking issues', () => {
   it('opens a labelled tracking issue on the first failure', async () => {
     const f = fixture()
-    expect(await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure' })).toEqual({
+    const failureDetails = 'Baseline: v1.3.0. Failed stage: A to B and rollback.'
+    expect(
+      await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure', failureDetails })
+    ).toEqual({
       action: 'created',
       issueNumber: 42
     })
@@ -67,6 +70,7 @@ describe('scheduled failure tracking issues', () => {
     for (const fragment of [
       trackingMarker('nightly.yml'),
       run.runUrl,
+      failureDetails,
       sha,
       'attempt 1',
       'To investigate'
