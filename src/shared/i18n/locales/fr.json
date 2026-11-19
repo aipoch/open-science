@@ -8407,7 +8407,6 @@
     "No matching network records.": "Aucun enregistrement réseau correspondant.",
     "Shorten network log retention?": "Réduire la durée de conservation des journaux réseau ?",
     "Allowed and blocked Notebook connections, grouped by their original network mode.": "Connexions Notebook autorisées et bloquées, regroupées selon leur mode réseau d’origine.",
-    "Advanced search": "Recherche avancée",
     "Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.": "Les anciens enregistrements pourront être supprimés lors du prochain nettoyage. Les enregistrements supprimés ne peuvent pas être récupérés.",
     "Some records could not be written or read, or expired files could not be cleaned up.": "Certains enregistrements n’ont pas pu être écrits ou lus, ou des fichiers expirés n’ont pas pu être nettoyés.",
     "Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.": "Inclut les adresses de destination et les identifiants d’exécution. Seuls les enregistrements du périmètre de ce diagnostic sont inclus.",

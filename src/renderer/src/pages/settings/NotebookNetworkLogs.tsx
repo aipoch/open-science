@@ -123,17 +123,32 @@ function NetworkLogContent(): React.JSX.Element {
       onChange={(e) => setFilters({ ...filters, [key]: e.target.value })}
     />
   )
+  const searchButton = (
+    <Button
+      type="submit"
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      className={advanced ? 'col-start-1 justify-self-end sm:col-span-2' : undefined}
+    >
+      {busy ? t('Loading…') : t('Search')}
+    </Button>
+  )
   return (
     <>
       <div className="space-y-4">
         <form
-          className="space-y-3"
+          className={
+            advanced
+              ? 'grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'
+              : 'flex flex-wrap items-center gap-2'
+          }
           onSubmit={(e) => {
             e.preventDefault()
             void load({ ...filters, ...queryRange(range) })
           }}
         >
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="col-span-full flex flex-wrap items-center gap-2">
             <select
               className={selectClass}
               aria-label={t('Network mode')}
@@ -164,28 +179,10 @@ function NetworkLogContent(): React.JSX.Element {
               <option value="allowed">{t('Allowed')}</option>
               <option value="blocked">{t('Blocked')}</option>
             </select>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              aria-expanded={advanced}
-              aria-controls="network-log-advanced"
-              onClick={(event) => {
-                if (!advanced || event.currentTarget.form?.reportValidity()) setAdvanced(!advanced)
-              }}
-            >
-              {t('Advanced search')}
-              <ChevronDown
-                aria-hidden="true"
-                className={advanced ? 'size-4 rotate-180' : 'size-4'}
-              />
-            </Button>
-            <Button type="submit" size="sm" variant="outline" disabled={busy}>
-              {busy ? t('Loading…') : t('Search')}
-            </Button>
           </div>
-          <div id="network-log-advanced" hidden={!advanced}>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {!advanced && searchButton}
+          <div id="network-log-advanced" className={advanced ? 'contents' : 'hidden'}>
+            <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-2">
               {field('address', t('Address'))}
               {field('projectId', t('Project ID'))}
               {field('sessionId', t('Session ID'))}
@@ -210,33 +207,46 @@ function NetworkLogContent(): React.JSX.Element {
                     </option>
                   ))}
               </select>
-              <div className="col-span-full grid grid-cols-1 items-end gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <label htmlFor="network-log-from" className="text-xs">
-                    {t('From')}
-                  </label>
-                  <Input
-                    id="network-log-from"
-                    type="datetime-local"
-                    value={range.from}
-                    onChange={(e) => setRange({ ...range, from: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label htmlFor="network-log-to" className="text-xs">
-                    {t('To')}
-                  </label>
-                  <Input
-                    id="network-log-to"
-                    type="datetime-local"
-                    min={range.from || undefined}
-                    value={range.to}
-                    onChange={(e) => setRange({ ...range, to: e.target.value })}
-                  />
-                </div>
-              </div>
+            </div>
+            <div className="col-span-full min-w-0 space-y-1 sm:col-span-1">
+              <label htmlFor="network-log-from" className="text-xs">
+                {t('From')}
+              </label>
+              <Input
+                id="network-log-from"
+                type="datetime-local"
+                value={range.from}
+                onChange={(e) => setRange({ ...range, from: e.target.value })}
+              />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <label htmlFor="network-log-to" className="text-xs">
+                {t('To')}
+              </label>
+              <Input
+                id="network-log-to"
+                type="datetime-local"
+                min={range.from || undefined}
+                value={range.to}
+                onChange={(e) => setRange({ ...range, to: e.target.value })}
+              />
             </div>
           </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="ms-auto"
+            aria-expanded={advanced}
+            aria-controls="network-log-advanced"
+            onClick={(event) => {
+              if (!advanced || event.currentTarget.form?.reportValidity()) setAdvanced(!advanced)
+            }}
+          >
+            {t('Advanced options')}
+            <ChevronDown aria-hidden="true" className={advanced ? 'size-4 rotate-180' : 'size-4'} />
+          </Button>
+          {advanced && searchButton}
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
         {page?.warnings.length ? (
@@ -248,8 +258,8 @@ function NetworkLogContent(): React.JSX.Element {
             )}
           />
         ) : null}
-        <div aria-busy={busy} className="overflow-x-auto">
-          <table className="w-full border-separate border-spacing-x-0 border-spacing-y-1 text-left text-xs [&_tr>:first-child]:rounded-l-md [&_tr>:last-child]:rounded-r-md">
+        <div aria-busy={busy} className="overflow-x-auto rounded-lg">
+          <table className="w-full border-collapse text-left text-xs">
             <thead className="bg-muted">
               <tr>
                 {[

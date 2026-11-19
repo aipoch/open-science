@@ -23,7 +23,7 @@ afterEach(() => {
   container.remove()
   delete (window as unknown as { api?: unknown }).api
 })
-it('loads on entry as a secondary page with the last seven local dates and advanced search collapsed', async () => {
+it('loads on entry as a secondary page with the last seven local dates and advanced options collapsed', async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(2026, 0, 3, 17))
   await act(async () => root.render(<NotebookNetworkLogs />))
@@ -32,7 +32,7 @@ it('loads on entry as a secondary page with the last seven local dates and advan
     to: new Date(2026, 0, 3, 23, 59, 59, 999).getTime()
   })
   expect(container.querySelector('[aria-expanded="false"][aria-controls]')?.textContent).toContain(
-    'Advanced search'
+    'Advanced options'
   )
   expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('No matching network records.')

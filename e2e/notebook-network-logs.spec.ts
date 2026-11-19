@@ -69,7 +69,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   ).toHaveCount(0)
   await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toBeVisible()
-  const advanced = settings.getByRole('button', { name: 'Advanced search' })
+  const advanced = settings.getByRole('button', { name: 'Advanced options' })
   const olderCell = settings.getByRole('cell', { name: 'run-older', exact: true })
   const advancedLabels = [
     'Address',
@@ -88,7 +88,16 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await advanced.click()
   for (const label of advancedLabels)
     await expect(settings.getByLabel(label, { exact: true })).toBeVisible()
-  await settings.screenshot({ path: testInfo.outputPath('advanced-search.png') })
+  const [end, collapse, search] = await Promise.all([
+    settings.getByLabel('To', { exact: true }).boundingBox(),
+    advanced.boundingBox(),
+    settings.getByRole('button', { name: 'Search', exact: true }).boundingBox()
+  ])
+  expect(collapse!.x).toBeGreaterThanOrEqual(end!.x + end!.width)
+  expect(collapse!.y).toBeLessThan(end!.y + end!.height)
+  expect(search!.y).toBeGreaterThanOrEqual(end!.y + end!.height)
+  expect(search!.x + search!.width).toBeCloseTo(end!.x + end!.width, 0)
+  await settings.screenshot({ path: testInfo.outputPath('advanced-options.png') })
   await settings
     .getByLabel('From', { exact: true })
     .fill(new Date(Date.parse(older) - 86_400_000).toISOString().slice(0, 10) + 'T00:00')
