@@ -1705,6 +1705,11 @@ it('resolves overlapping hit rectangles to the true nearest mark and focuses tha
   const covered = svg.querySelector(`[data-node-hit="${paperId('c')}"]`)!
   const expected = screen.getByRole('button', { name: 'Select Paper b' })
   const expectedMark = expected.querySelector('[data-node-mark]')!
+  fireEvent.mouseMove(covered, {
+    clientX: Number(expectedMark.getAttribute('data-x')) * 0.1,
+    clientY: Number(expectedMark.getAttribute('data-y')) * 0.1
+  })
+  expect(screen.getByRole('tooltip').textContent).toBe('Paper b')
   fireEvent.click(covered, {
     clientX: Number(expectedMark.getAttribute('data-x')) * 0.1,
     clientY: Number(expectedMark.getAttribute('data-y')) * 0.1
@@ -2361,4 +2366,42 @@ it('stages the selected row and recenters directly from its actions', async () =
   fireEvent.click(list.getByRole('button', { name: 'Set as center' }))
   await screen.findByText('Temporary center')
   expect(related.mock.calls.some(([request]) => request.seedPaperId === paperId('b'))).toBe(true)
+})
+
+it('stages a cross-tab selection once per paper and retries only failed papers', async () => {
+  related.mockImplementation(async (request) =>
+    result(request, {
+      records: request.direction === 'references' ? [record('b')] : [record('b'), record('c')]
+    })
+  )
+  transact
+    .mockResolvedValueOnce({ kind: 'candidate', id: 'b', state: 'pending' })
+    .mockRejectedValueOnce(new Error('transient'))
+  const onSaved = vi.fn()
+  render(<LiteratureCitationGraph item={item} onSaved={onSaved} />)
+  await screen.findByRole('button', { name: 'Select Paper c' })
+  fireEvent.click(screen.getByRole('button', { name: 'Select multiple' }))
+  const check = (letter: string): HTMLElement =>
+    screen.getByRole('checkbox', { name: 'Select Paper ' + letter })
+  fireEvent.click(check('b'))
+  showCategory('citations')
+  expect(check('b')).toHaveProperty('checked', true)
+  fireEvent.click(check('c'))
+  expect(screen.getByText('Selected: 2')).toBeTruthy()
+  const add = screen.getByRole('button', { name: 'Add to Inbox' })
+  fireEvent.click(add)
+  await screen.findByText('Could not add this reference. Try again.')
+  expect(check('b')).toHaveProperty('disabled', true)
+  expect(check('b')).toHaveProperty('checked', false)
+  expect(check('c')).toHaveProperty('checked', true)
+  fireEvent.click(add)
+  await screen.findByText('Selected: 0')
+  expect(transact.mock.calls.map(([request]) => request.candidate.source.externalId)).toEqual([
+    paperId('b'),
+    paperId('c'),
+    paperId('c')
+  ])
+  expect(onSaved).toHaveBeenCalledTimes(2)
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+  expect(screen.queryByRole('checkbox')).toBeNull()
 })

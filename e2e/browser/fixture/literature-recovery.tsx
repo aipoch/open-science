@@ -150,7 +150,7 @@ window.api = {
     overviewBatch: async () => null,
     lookupMetadata: async (reference: string) => {
       linkReferences.push(reference)
-      if (!params.has('citation-graph'))
+      if (!params.has('citation-graph') || params.has('hold-paper-details'))
         await new Promise<void>((resolve) => pendingLinkLookups.push(resolve))
       const arxiv = reference.startsWith('arxiv:')
       const scheme = arxiv

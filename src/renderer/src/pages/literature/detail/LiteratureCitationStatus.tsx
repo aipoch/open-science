@@ -20,12 +20,14 @@ export function LiteratureCitationStatus({
   model,
   direction,
   sourceName,
+  selecting = false,
   renderRecords,
   onRestart
 }: {
   model: CitationStatusModel
   direction: 'references' | 'citations'
   sourceName: string
+  selecting?: boolean
   renderRecords(direction: 'references' | 'citations'): React.ReactNode
   onRestart(): void
 }): React.JSX.Element | null {
@@ -117,7 +119,7 @@ export function LiteratureCitationStatus({
             result.issue === 'expired' ? onRestart() : void load(direction, state.nextOffset)
           }
           renderRetry={
-            state.pages
+            state.pages && !selecting
               ? (button) => (
                   <div className={footerClass}>
                     <span className="tabular-nums">{loadedLabel}</span>
@@ -138,7 +140,7 @@ export function LiteratureCitationStatus({
               : undefined
           }
         />
-      ) : result?.state === 'ready' && !pageLimitReached ? (
+      ) : result?.state === 'ready' && !pageLimitReached && !selecting ? (
         <div className={footerClass}>
           <span className="tabular-nums">{loadedLabel}</span>
           {canPage ? (

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle } from 'lucide-react'
 import type { LiteratureRelatedRecord } from '@aipoch/literature-discovery/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import {
@@ -86,11 +85,24 @@ export function CitationPaperDetails({
       (entry) => !item.identifiers.some((local) => identity(local) === identity(entry))
     )
   ]
+  const pending = Boolean(reference && !current)
   const abstract = item.abstract || metadata?.abstract
   const href = getExternalLiteratureUrl(item.url)?.href
   return (
     <div className="space-y-4 text-sm">
       <div className="space-y-1.5">
+        {pending && !authors && (
+          <div
+            aria-hidden="true"
+            className="h-3 w-2/3 rounded bg-muted motion-safe:animate-pulse"
+          />
+        )}
+        {pending && !publication && (
+          <div
+            aria-hidden="true"
+            className="h-3 w-1/2 rounded bg-muted motion-safe:animate-pulse"
+          />
+        )}
         {authors && <p className="break-words leading-snug">{authors}</p>}
         {publication && (
           <p className="break-words text-xs leading-relaxed text-muted-foreground">{publication}</p>
@@ -113,15 +125,24 @@ export function CitationPaperDetails({
         <h4 className="font-medium">{t('Abstract')}</h4>
         {abstract ? (
           <CollapsibleAbstract text={abstract} />
+        ) : pending ? (
+          <div
+            data-slot="abstract-skeleton"
+            aria-hidden="true"
+            className="mt-3 space-y-2.5 motion-safe:animate-pulse"
+          >
+            {['w-full', 'w-11/12', 'w-full', 'w-3/5'].map((width, index) => (
+              <div key={index} className={`h-2.5 rounded bg-muted ${width}`} />
+            ))}
+          </div>
         ) : (
           (!reference || metadata) && (
             <p className="mt-2 text-xs text-muted-foreground">{t('No abstract available.')}</p>
           )
         )}
       </section>
-      {reference && !current && (
-        <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />
+      {pending && (
+        <p role="status" className="sr-only">
           {t('Loading…')}
         </p>
       )}

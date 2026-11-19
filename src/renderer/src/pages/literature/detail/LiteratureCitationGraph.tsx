@@ -406,6 +406,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
             save: controller.save,
             setSelected: controller.setSelected,
             exploreSelected: controller.exploreSelected,
+            receiptFor: controller.receiptFor,
             receipt: controller.selectedReceipt,
             temporaryCenter: Boolean(props.center),
             canExplore: Boolean(controller.resolutionToken)

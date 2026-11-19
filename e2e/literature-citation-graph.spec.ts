@@ -114,6 +114,46 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   await captureGraph(graphApp, info, 'electron-graph-desktop-selected')
 })
 
+test('Electron groups graph guidance, loads missing paper details and stages selections across tabs', async ({
+  page
+}, info) => {
+  await openCitationGraph(page, url + '&hold-paper-details', undefined, 'all')
+  const frame = page.locator('[data-current-frame="true"]')
+  const source = page.getByRole('combobox', { name: 'Citation source' })
+  await source.click()
+  for (const option of await page.getByRole('option').all()) {
+    await expect(option.locator('svg').first()).toBeVisible()
+  }
+  await page.screenshot({ path: info.outputPath('citation-sources.png') })
+  await page.keyboard.press('Escape')
+  const key = frame.locator('[data-citation-legend]')
+  await expect(key.getByText('Scroll to zoom. Drag to pan.')).toBeVisible()
+  await frame.locator('[data-paper-id="europe-pmc:MED:1101"] [data-node-mark]').click()
+  await expect(frame.locator('[data-slot="abstract-skeleton"]')).toBeVisible()
+  await expect(frame.getByRole('heading', { name: /Graph paper 1101/ })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('citation-details-loading.png') })
+  await page.evaluate(() =>
+    (
+      window as unknown as { literatureLink: { completeLookup(index: number): void } }
+    ).literatureLink.completeLookup(0)
+  )
+  await expect(frame.locator('[data-slot="abstract-skeleton"]')).toHaveCount(0)
+  await expect(frame.getByText(/Metadata supplied by the browser fixture/)).toBeVisible()
+  await frame.getByRole('button', { name: 'Back to list' }).click()
+  await frame.getByRole('button', { name: 'Select multiple' }).click()
+  await frame.getByRole('checkbox', { name: /Select Graph paper 1101:/ }).check()
+  await frame
+    .getByRole('tablist', { name: 'Paper list' })
+    .getByRole('tab', { name: /Cited by/ })
+    .click()
+  await frame.getByRole('checkbox', { name: /Select Graph paper 1200:/ }).check()
+  await expect(frame.getByText('Selected: 2')).toBeVisible()
+  await page.screenshot({ path: info.outputPath('citation-batch-selection.png') })
+  await frame.getByRole('button', { name: 'Add to Inbox' }).click()
+  await expect(frame.getByText('Selected: 0')).toBeVisible()
+  await expect(frame.getByRole('checkbox', { name: /Select Graph paper 1200:/ })).toBeDisabled()
+})
+
 test('Electron shows initial, queued and partial citation results', async ({ page }, info) => {
   await page.goto(url + '&citation-loading')
   await page.getByRole('button', { name: 'All references', exact: true }).click()

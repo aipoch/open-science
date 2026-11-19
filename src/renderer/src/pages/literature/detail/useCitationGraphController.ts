@@ -111,10 +111,14 @@ export function useCitationGraphController({
     graph?.nodes.find((node) => node.id === selected || node.paperIds.includes(selected ?? '')) ??
     graph?.nodes[0]
   // Pagination can merge saved nodes under another canonical id; receipts follow native aliases.
-  const selectedReceipts = selectedNode?.paperIds.map((id) => receipts[id])
-  const selectedReceipt =
-    selectedReceipts?.find((receipt) => receipt && receipt !== 'failed') ??
-    selectedReceipts?.find((receipt) => receipt === 'failed')
+  const receiptFor = (node: CitationGraphNode): LiteratureCatalogReceipt | 'failed' | undefined => {
+    const matches = node.paperIds.map((id) => receipts[id])
+    return (
+      matches.find((receipt) => receipt && receipt !== 'failed') ??
+      matches.find((receipt) => receipt === 'failed')
+    )
+  }
+  const selectedReceipt = selectedNode && receiptFor(selectedNode)
   const invalidated =
     directionMode === 'single'
       ? ['expired', 'reference-changed'].includes(states[activeDirection].result?.issue ?? '')
@@ -294,59 +298,66 @@ export function useCitationGraphController({
     }
   }, [load, parentToken, center, onSavingChange])
 
-  async function save(): Promise<void> {
+  async function save(
+    nodes: CitationGraphNode[] = selectedNode ? [selectedNode] : []
+  ): Promise<void> {
     if (
-      !selectedNode ||
-      (selectedNode.center && !center) ||
-      (selectedReceipt !== undefined && selectedReceipt !== 'failed') ||
+      !nodes.length ||
       blocked ||
       savingRef.current ||
       invalidatedSession.current ||
       isReferenceInvalidated?.()
     )
       return
-    const node = selectedNode
     const current = generation.current
+    const isCurrent = (): boolean => current === generation.current && active.current
     savingRef.current = true
     setSaving(true)
     onSavingChange?.(true)
-    let receipt: LiteratureCatalogReceipt | 'failed'
-    try {
-      receipt = await api.literature.transact({
-        kind: 'stage-candidate',
-        candidate: {
-          item: node.record.item,
-          source: {
-            provider: citationRecordProvider(node.record.paperId),
-            externalId: node.record.paperId,
-            sourceUrl: node.record.item.url,
-            rawMetadata: {
-              ...(node.record.retrievedAt !== undefined
-                ? { retrievedAt: node.record.retrievedAt }
-                : {}),
-              rootItemId: item.id,
-              rootMetadataRevision: item.metadataRevision,
-              ...(citationRecordProvider(node.record.paperId) === 'opencitations'
-                ? { lookupMode: opencitationsMode ?? 'skg-if' }
-                : {}),
-              ...(node.center
-                ? {
-                    exploredPaperId: node.record.paperId,
-                    origin: 'exploration-center'
-                  }
-                : {
-                    seedPaperId: seed?.paperId,
-                    directions: unfilteredGraph?.edges
-                      .filter((edge) => edge.source === node.id || edge.target === node.id)
-                      .map((edge) => (edge.source === node.id ? 'citations' : 'references'))
-                  })
-            }
-          },
-          origin: { kind: 'manual-discovery' }
-        }
-      })
-    } catch {
-      receipt = 'failed'
+    const results: typeof receipts = {}
+    for (const node of nodes) {
+      if (!isCurrent() || invalidatedSession.current || isReferenceInvalidated?.()) break
+      const previous = receiptFor(node)
+      if ((node.center && !center) || (previous && previous !== 'failed')) continue
+      let receipt: LiteratureCatalogReceipt | 'failed'
+      try {
+        receipt = await api.literature.transact({
+          kind: 'stage-candidate',
+          candidate: {
+            item: node.record.item,
+            source: {
+              provider: citationRecordProvider(node.record.paperId),
+              externalId: node.record.paperId,
+              sourceUrl: node.record.item.url,
+              rawMetadata: {
+                ...(node.record.retrievedAt !== undefined
+                  ? { retrievedAt: node.record.retrievedAt }
+                  : {}),
+                rootItemId: item.id,
+                rootMetadataRevision: item.metadataRevision,
+                ...(citationRecordProvider(node.record.paperId) === 'opencitations'
+                  ? { lookupMode: opencitationsMode ?? 'skg-if' }
+                  : {}),
+                ...(node.center
+                  ? {
+                      exploredPaperId: node.record.paperId,
+                      origin: 'exploration-center'
+                    }
+                  : {
+                      seedPaperId: seed?.paperId,
+                      directions: unfilteredGraph?.edges
+                        .filter((edge) => edge.source === node.id || edge.target === node.id)
+                        .map((edge) => (edge.source === node.id ? 'citations' : 'references'))
+                    })
+              }
+            },
+            origin: { kind: 'manual-discovery' }
+          }
+        })
+      } catch {
+        receipt = 'failed'
+      }
+      results[normalizeCitationPaperId(node.id)] = receipt
     }
     // A retired lifetime cannot release the current owner's save lock.
     if (current !== generation.current || !active.current) return
@@ -355,8 +366,8 @@ export function useCitationGraphController({
     onSavingChange?.(false)
     // Recheck after the owner callback, which can synchronously leave this lifetime.
     if (current !== generation.current || !active.current) return
-    setReceipts((previous) => ({ ...previous, [normalizeCitationPaperId(node.id)]: receipt }))
-    if (receipt !== 'failed') onSaved()
+    setReceipts((previous) => ({ ...previous, ...results }))
+    if (Object.values(results).some((receipt) => receipt !== 'failed')) onSaved()
   }
 
   const exploreSelected = (): void => {
@@ -376,6 +387,7 @@ export function useCitationGraphController({
     saving,
     receipts,
     selectedReceipt,
+    receiptFor,
     resolutionToken,
     invalidated,
     interactionBusy,
@@ -414,7 +426,8 @@ export type CitationGraphController = {
     resolutionToken?: string,
     current?: number
   ): Promise<LiteratureRelatedResult | undefined>
-  save(): Promise<void>
+  receiptFor(node: CitationGraphNode): LiteratureCatalogReceipt | 'failed' | undefined
+  save(nodes?: CitationGraphNode[]): Promise<void>
   exploreSelected(): void
   center: LiteratureRelatedRecord | undefined
   item: LiteratureItemView

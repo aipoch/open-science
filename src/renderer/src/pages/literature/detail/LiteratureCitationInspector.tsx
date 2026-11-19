@@ -2,6 +2,7 @@ import { CitationPaperDetails } from './CitationPaperDetails'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ListChecks,
   ArrowLeft,
   ChevronRight,
   Inbox,
@@ -22,6 +23,7 @@ export type CitationInspectorModel = Pick<
   CitationGraphController,
   | 'selected'
   | 'selectedNode'
+  | 'receiptFor'
   | 'graph'
   | 'blocked'
   | 'saving'
@@ -109,6 +111,18 @@ export function LiteratureCitationInspector({
     setSelected,
     exploreSelected
   } = model
+  const [checked, setChecked] = useState<Set<string>>()
+  const selecting = checked !== undefined
+  const selectedPapers = selecting
+    ? (statusModel.unfilteredGraph?.nodes.filter((node) => {
+        const receipt = model.receiptFor(node)
+        return (
+          !node.center &&
+          (!receipt || receipt === 'failed') &&
+          node.paperIds.some((id) => checked.has(id))
+        )
+      }) ?? [])
+    : []
   const [listOpen, setListOpen] = useState(true)
   const [listDirection, setListDirection] = useState<'references' | 'citations'>('references')
   const direction = model.filter === 'all' ? listDirection : model.filter
@@ -142,10 +156,11 @@ export function LiteratureCitationInspector({
     if (!listOpen) resetScroll()
   }, [selected, listOpen, resetScroll])
   const showDetails = useCallback(() => {
+    if (selecting) return
     if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
     setListOpen(false)
     resetScroll()
-  }, [direction, listOpen, resetScroll])
+  }, [direction, listOpen, resetScroll, selecting])
   const focusDetails = useCallback(() => {
     showDetails()
     pendingFocus.current = !expanded
@@ -165,95 +180,130 @@ export function LiteratureCitationInspector({
         ?.focus({ preventScroll: true })
     }
   }, [listOpen, direction, expanded])
-  const receiptText = !receipt
-    ? undefined
-    : receipt === 'failed'
-      ? t('Could not add this reference. Try again.')
-      : receipt.kind === 'item' || receipt.state === 'accepted'
-        ? t('Already in Library')
-        : receipt.state === 'dismissed'
-          ? t('Previously dismissed; review it in Inbox.')
-          : t('In Inbox')
+  const receiptLabel = (receipt: CitationInspectorModel['receipt']): string | undefined =>
+    !receipt
+      ? undefined
+      : receipt === 'failed'
+        ? t('Could not add this reference. Try again.')
+        : receipt.kind === 'item' || receipt.state === 'accepted'
+          ? t('Already in Library')
+          : receipt.state === 'dismissed'
+            ? t('Previously dismissed; review it in Inbox.')
+            : t('In Inbox')
+  const receiptText = receiptLabel(receipt)
   const saveDisabled = blocked || (receipt !== undefined && receipt !== 'failed')
   const centerDisabled = blocked || !canExplore
   const saveLabel = saving ? t('Saving…') : t('Add to Inbox')
-  const paperRow = (node: CitationGraphNode): React.JSX.Element => (
-    <li
-      key={node.id}
-      className={selectedNode?.id === node.id ? 'rounded-md bg-primary/10' : undefined}
-    >
-      <button
-        type="button"
-        data-citation-paper-id={node.id}
-        aria-pressed={selectedNode?.id === node.id}
-        className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-ring"
-        onClick={() => setSelected(node.id)}
-      >
-        <span
-          aria-hidden="true"
-          className={`mt-1.5 size-2 shrink-0 rounded-full ${node.relation === 'references' ? 'bg-chart-1' : node.relation === 'citations' ? 'bg-chart-3' : node.relation === 'both' ? 'bg-chart-1 ring-2 ring-chart-3' : 'bg-primary'}`}
-        />
-        <span className="min-w-0 space-y-1">
-          <span className="block line-clamp-3 text-sm leading-snug">{node.record.item.title}</span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {[
-              node.record.item.issuedYear,
-              node.record.item.containerTitle,
-              creatorLabel(node.record.item)
-            ]
-              .filter(Boolean)
-              .join(' · ')}
+  const paperRow = (node: CitationGraphNode): React.JSX.Element => {
+    const Row = selecting ? 'label' : 'button'
+    const rowReceipt = selecting ? model.receiptFor(node) : undefined
+    const alreadySaved = Boolean(rowReceipt && rowReceipt !== 'failed')
+    const included = !alreadySaved && node.paperIds.some((id) => checked?.has(id))
+    const highlighted = selecting ? included : selectedNode?.id === node.id
+    return (
+      <li key={node.id} className={highlighted ? 'rounded-md bg-primary/10' : undefined}>
+        <Row
+          {...(selecting
+            ? {}
+            : {
+                type: 'button' as const,
+                'aria-pressed': highlighted,
+                onClick: () => setSelected(node.id)
+              })}
+          data-citation-paper-id={node.id}
+          className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          {selecting ? (
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+              aria-label={t('Select {{title}}', { title: node.record.item.title })}
+              disabled={saving || statusModel.invalidated || alreadySaved}
+              checked={included}
+              onChange={() =>
+                setChecked((previous) => {
+                  const next = new Set(previous)
+                  if (included) node.paperIds.forEach((id) => next.delete(id))
+                  else next.add(node.id)
+                  return next
+                })
+              }
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              className={`mt-1.5 size-2 shrink-0 rounded-full ${node.relation === 'references' ? 'bg-chart-1' : node.relation === 'citations' ? 'bg-chart-3' : node.relation === 'both' ? 'bg-chart-1 ring-2 ring-chart-3' : 'bg-primary'}`}
+            />
+          )}
+          <span className="min-w-0 space-y-1">
+            <span className="block line-clamp-3 text-sm leading-snug">
+              {node.record.item.title}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {[
+                node.record.item.issuedYear,
+                node.record.item.containerTitle,
+                creatorLabel(node.record.item)
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+            {selecting && rowReceipt && (
+              <span role="status" className="block text-xs text-muted-foreground">
+                {receiptLabel(rowReceipt)}
+              </span>
+            )}
+            {node.center ? (
+              <span className="block text-xs text-muted-foreground">{t('Current center')}</span>
+            ) : null}
           </span>
-          {node.center ? (
-            <span className="block text-xs text-muted-foreground">{t('Current center')}</span>
-          ) : null}
-        </span>
-      </button>
-      {selectedNode?.id === node.id ? (
-        <div className="px-2 pb-1.5 pl-5">
-          <div className="flex items-center gap-1">
-            <TooltipProvider disableHoverableContent>
-              <PaperAction
-                label={saveLabel}
-                hint={receiptText ?? saveLabel}
-                disabled={saveDisabled}
-                onClick={() => void save()}
+        </Row>
+        {!selecting && selectedNode?.id === node.id ? (
+          <div className="px-2 pb-1.5 pl-5">
+            <div className="flex items-center gap-1">
+              <TooltipProvider disableHoverableContent>
+                <PaperAction
+                  label={saveLabel}
+                  hint={receiptText ?? saveLabel}
+                  disabled={saveDisabled}
+                  onClick={() => void save()}
+                >
+                  {saving ? (
+                    <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" />
+                  ) : receipt && receipt !== 'failed' ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    <Inbox aria-hidden="true" />
+                  )}
+                </PaperAction>
+                <PaperAction
+                  label={t('Set as center')}
+                  disabled={centerDisabled}
+                  onClick={exploreSelected}
+                >
+                  <Crosshair aria-hidden="true" />
+                </PaperAction>
+              </TooltipProvider>
+              <Button
+                size="sm"
+                variant="link"
+                className="ml-auto focus-visible:underline"
+                onClick={focusDetails}
               >
-                {saving ? (
-                  <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" />
-                ) : receipt && receipt !== 'failed' ? (
-                  <Check aria-hidden="true" />
-                ) : (
-                  <Inbox aria-hidden="true" />
-                )}
-              </PaperAction>
-              <PaperAction
-                label={t('Set as center')}
-                disabled={centerDisabled}
-                onClick={exploreSelected}
-              >
-                <Crosshair aria-hidden="true" />
-              </PaperAction>
-            </TooltipProvider>
-            <Button
-              size="sm"
-              variant="link"
-              className="ml-auto focus-visible:underline"
-              onClick={focusDetails}
-            >
-              {t('View details')}
-              <ChevronRight aria-hidden="true" />
-            </Button>
+                {t('View details')}
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </div>
+            {receiptText ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {receiptText}
+              </p>
+            ) : null}
           </div>
-          {receiptText ? (
-            <p role="status" className="text-xs text-muted-foreground">
-              {receiptText}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </li>
-  )
+        ) : null}
+      </li>
+    )
+  }
   const collapse = (): void => {
     resetScroll()
     if (pane.current?.contains(document.activeElement))
@@ -272,6 +322,10 @@ export function LiteratureCitationInspector({
         // Leave modal dismissal to a subsequent Escape after closing this local disclosure.
         event.preventDefault()
         event.stopPropagation()
+        if (selecting) {
+          if (!saving) setChecked(undefined)
+          return
+        }
         if (listOpen) {
           setListOpen(false)
           resetScroll()
@@ -290,7 +344,19 @@ export function LiteratureCitationInspector({
         {listOpen ? (
           <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{t('Paper list')}</h3>
         ) : null}
-        {expanded && graph ? (
+        {listOpen && (selecting || graph?.nodes.some((node) => !node.center)) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            aria-pressed={selecting}
+            onClick={() => setChecked(selecting ? undefined : new Set())}
+          >
+            <ListChecks aria-hidden="true" />
+            {selecting ? t('Done') : t('Select multiple')}
+          </Button>
+        )}
+        {expanded && graph && !selecting ? (
           <Button
             size={listOpen ? 'icon-sm' : 'sm'}
             className={listOpen ? undefined : 'mr-auto min-w-0'}
@@ -424,6 +490,7 @@ export function LiteratureCitationInspector({
               <LiteratureCitationStatus
                 model={statusModel}
                 direction={direction}
+                selecting={selecting}
                 sourceName={sourceName}
                 onRestart={onRestart}
                 renderRecords={(direction) => (
@@ -440,6 +507,21 @@ export function LiteratureCitationInspector({
             </section>
           ) : null}
         </Tabs.Content>
+        {listOpen && selecting && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border-300 bg-card px-3 py-2">
+            <span role="status" className="text-xs tabular-nums text-muted-foreground">
+              {t('Selected: {{selected}}', { selected: selectedPapers.length })}
+            </span>
+            <Button
+              size="sm"
+              disabled={blocked || !selectedPapers.length}
+              onClick={() => void save(selectedPapers)}
+            >
+              <Inbox aria-hidden="true" />
+              {saveLabel}
+            </Button>
+          </div>
+        )}
         {!listOpen && selectedNode && (!selectedNode.center || temporaryCenter || receipt) ? (
           <div
             data-citation-inspector-actions

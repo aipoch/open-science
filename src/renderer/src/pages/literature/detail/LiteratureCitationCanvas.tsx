@@ -138,12 +138,44 @@ export function LiteratureCitationCanvas({
     x: (viewportSize.width - view.width * scale) / 2,
     y: (viewportSize.height - view.height * scale) / 2
   }
-  const labels = new Map(
-    (graph?.nodes ?? []).map((node) => [
-      node.id,
-      citationGraphCompactLabel(node.record.item, narrow ? 80 : 135)
-    ])
+  const labels = useMemo(
+    () =>
+      new Map(
+        (graph?.nodes ?? []).map((node) => [
+          node.id,
+          citationGraphCompactLabel(node.record.item, narrow ? 80 : 135)
+        ])
+      ),
+    [graph, narrow]
   )
+  const edges = useMemo(() => {
+    if (!graph) return []
+    const center = graph.nodes.find((node) => node.center)?.id
+    const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
+    return graph.edges.map((edge) => {
+      const outgoing = edge.source === center
+      const direction = outgoing ? ('references' as const) : ('citations' as const)
+      const neighbor = nodes.get(outgoing ? edge.target : edge.source)!
+      const bend = citationGraphEdgeBend(direction, neighbor.relation)
+      const radius =
+        citationGraphNodeRadius(false) * (neighbor.relation === 'citations' ? 1.2 : 1.1)
+      const { start, control, end } = citationGraphEdgeGeometry(
+        positions.get(edge.source)!,
+        positions.get(edge.target)!,
+        outgoing ? citationGraphNodeRadius(true) : radius,
+        outgoing ? radius : citationGraphNodeRadius(true),
+        scale,
+        bend
+      )
+      return {
+        ...edge,
+        direction,
+        neighbor,
+        bend,
+        path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`
+      }
+    })
+  }, [graph, positions, scale])
   const labelPositions = placeCitationGraphLabels(
     (graph?.nodes ?? []).map((node) => {
       const point = positions.get(node.id)!
@@ -245,29 +277,23 @@ export function LiteratureCitationCanvas({
       element.removeEventListener('wheel', wheel)
     }
   }, [visible, zoom, pan])
-  const selectFromHit = useCallback(
-    (event: React.MouseEvent<SVGRectElement>, fallback: string): void => {
-      if (Date.now() < ignoreClickUntil.current) return
-      const scene = viewport.current?.querySelector<SVGGElement>('[data-citation-scene]')
-      const matrix = scene?.getScreenCTM?.()
-      const id = matrix
-        ? (nearestCitationGraphNode(
-            [...positions].map(([id, point]) => ({
-              id,
-              x: matrix.a * point.x + matrix.c * point.y + matrix.e,
-              y: matrix.b * point.x + matrix.d * point.y + matrix.f
-            })),
-            event.clientX,
-            event.clientY
-          ) ?? fallback)
-        : fallback
-      setSelected(id)
-      viewport.current
-        ?.querySelector<SVGGElement>(`[data-paper-id="${id}"]`)
-        ?.focus({ preventScroll: true })
-    },
-    [positions, setSelected]
+  const hitPoints = useMemo(
+    () => [...positions].map(([id, point]) => ({ id, ...point })),
+    [positions]
   )
+  const paperAtPointer = (event: React.MouseEvent<SVGRectElement>, fallback: string): string => {
+    const scene = event.currentTarget.parentElement?.closest<SVGGElement>('[data-citation-scene]')
+    const matrix = scene?.getScreenCTM?.()
+    // The scene only translates and scales uniformly, so nearest distances are preserved.
+    if (!matrix?.a || !matrix.d) return fallback
+    return (
+      nearestCitationGraphNode(
+        hitPoints,
+        (event.clientX - matrix.e) / matrix.a,
+        (event.clientY - matrix.f) / matrix.d
+      ) ?? fallback
+    )
+  }
   const inspectedNode = graph?.nodes.find((node) => node.id === inspected)
   useLayoutEffect(() => {
     const canvas = viewport.current
@@ -381,7 +407,7 @@ export function LiteratureCitationCanvas({
         <div
           data-citation-toolbar
           data-no-pan
-          className="absolute bottom-6 right-2 z-20 flex items-center gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur sm:top-3 sm:right-3 sm:bottom-auto"
+          className="absolute bottom-1 right-2 z-20 flex items-center gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur sm:top-3 sm:right-3 sm:bottom-auto"
         >
           <ZoomControls
             onZoomIn={() => setZoom((value) => Math.min(3, value + 0.2))}
@@ -441,13 +467,6 @@ export function LiteratureCitationCanvas({
           </div>
         ) : null}
 
-        <p
-          id={`${marker}-arrow-meaning`}
-          className="pointer-events-none absolute inset-x-3 bottom-2 z-10 text-center text-[10px] font-medium text-muted-foreground/80"
-        >
-          {t('A → B means A cites B.')}{' '}
-          <span className="hidden xl:inline">{t('Scroll to zoom. Drag to pan.')}</span>
-        </p>
         {visible && hintGraph && hintGraph === graph ? (
           <p
             role="status"
@@ -456,31 +475,10 @@ export function LiteratureCitationCanvas({
             {t('New papers are outside the current view. Fit the graph to see all loaded papers.')}
           </p>
         ) : null}
-        {graph ? (
-          <div
-            data-citation-legend
-            className="pointer-events-none absolute bottom-2 left-3 z-10 hidden items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-[10px] sm:flex"
-            aria-label={t('Citation graph')}
-          >
-            <span className="inline-flex items-center gap-1 text-foreground">
-              <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-              {t('Current center')}
-            </span>
-            <span className="h-3 w-px bg-border-300" aria-hidden="true" />
-            <span className="inline-flex items-center gap-1 text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-chart-1" aria-hidden="true" />
-              {t('References')}
-            </span>
-            <span className="inline-flex items-center gap-1 text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-chart-3" aria-hidden="true" />
-              {t('Cited by')}
-            </span>
-          </div>
-        ) : null}
         <div
           ref={plot}
           data-citation-plot
-          className="absolute inset-x-0 top-12 bottom-16 overflow-hidden sm:top-14 sm:bottom-7"
+          className="absolute inset-x-0 top-12 bottom-12 overflow-hidden sm:top-14 sm:bottom-1"
         >
           {graph ? (
             <svg
@@ -558,36 +556,18 @@ export function LiteratureCitationCanvas({
                   strokeDasharray={`${5 / scale} ${7 / scale}`}
                   pointerEvents="none"
                 />
-                {graph.edges.map((edge) => {
-                  const from = positions.get(edge.source)!
-                  const to = positions.get(edge.target)!
-                  const centerId = graph.nodes.find((node) => node.center)?.id
-                  const direction = edge.source === centerId ? 'references' : 'citations'
-                  const neighbor = graph.nodes.find(
-                    (node) => !node.center && (node.id === edge.source || node.id === edge.target)
-                  )!
-                  const bend = citationGraphEdgeBend(direction, neighbor.relation)
+                {edges.map(({ source, target, direction, neighbor, bend, path }) => {
                   const related = selectedNode?.id === neighbor.id || inspected === neighbor.id
                   const emphasis = related ? 'related' : selectedNode?.center ? 'center' : 'ambient'
-                  const neighborRadius =
-                    citationGraphNodeRadius(false) * (neighbor.relation === 'citations' ? 1.2 : 1.1)
-                  const { start, control, end } = citationGraphEdgeGeometry(
-                    from,
-                    to,
-                    edge.source === centerId ? citationGraphNodeRadius(true) : neighborRadius,
-                    edge.target === centerId ? citationGraphNodeRadius(true) : neighborRadius,
-                    scale,
-                    bend
-                  )
                   return (
                     <path
-                      key={`${edge.source}:${edge.target}`}
-                      data-source={edge.source}
-                      data-target={edge.target}
+                      key={`${source}:${target}`}
+                      data-source={source}
+                      data-target={target}
                       data-direction={direction}
                       data-edge-emphasis={emphasis}
                       data-edge-bend={bend}
-                      d={`M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`}
+                      d={path}
                       fill="none"
                       style={{
                         stroke: direction === 'references' ? 'var(--chart-1)' : 'var(--chart-3)'
@@ -610,9 +590,17 @@ export function LiteratureCitationCanvas({
                         width={Math.max(112, 24 / scale)}
                         height={Math.max(66, 24 / scale)}
                         fill="transparent"
-                        onMouseEnter={() => inspectTitle(node.id)}
+                        onMouseEnter={(event) => inspectTitle(paperAtPointer(event, node.id))}
+                        onMouseMove={(event) => inspectTitle(paperAtPointer(event, node.id))}
                         onMouseLeave={leaveTitle}
-                        onClick={(event) => selectFromHit(event, node.id)}
+                        onClick={(event) => {
+                          if (Date.now() < ignoreClickUntil.current) return
+                          const id = paperAtPointer(event, node.id)
+                          setSelected(id)
+                          viewport.current
+                            ?.querySelector<SVGGElement>(`[data-paper-id="${id}"]`)
+                            ?.focus({ preventScroll: true })
+                        }}
                       />
                     )
                   })}
@@ -853,6 +841,32 @@ export function LiteratureCitationCanvas({
           {t('View selected paper')}
         </Button>
       </div>
+      {graph ? (
+        <div
+          data-citation-legend
+          className="mx-2 mb-2 max-w-full self-end rounded-md border border-border-300 bg-card px-2.5 py-1.5 text-xs text-muted-foreground sm:mx-3"
+          aria-label={t('Citation graph')}
+        >
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="inline-flex items-center gap-1 text-foreground">
+              <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+              {t('Current center')}
+            </span>
+            <span className="h-3 w-px bg-border-300" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-chart-1" aria-hidden="true" />
+              {t('References')}
+            </span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <span className="size-1.5 rotate-45 bg-chart-3" aria-hidden="true" />
+              {t('Cited by')}
+            </span>
+          </div>
+          <p id={`${marker}-arrow-meaning`} className="mt-1 text-[11px]">
+            {t('A → B means A cites B.')} <span>{t('Scroll to zoom. Drag to pan.')}</span>
+          </p>
+        </div>
+      ) : null}
     </div>
   )
 }

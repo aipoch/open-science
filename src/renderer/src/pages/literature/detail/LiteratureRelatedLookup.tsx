@@ -15,7 +15,7 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote } from 'lucide-react'
+import { BookOpen, Quote, LibraryBig, Network, ListTree } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -83,6 +83,12 @@ function LiteratureRelatedSession(
     },
     [onSavingChange]
   )
+  const sources = [
+    { value: 'europe-pmc', label: t('Europe PMC'), Icon: LibraryBig },
+    { value: 'opencitations', label: t('OpenCitations · SKG-IF'), Icon: Network },
+    { value: 'opencitations-index', label: t('OpenCitations · Index v2'), Icon: ListTree }
+  ]
+  const SourceIcon = (sources.find(({ value }) => value === props.provider) ?? sources[0]).Icon
   const toolbar = (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1"
@@ -126,12 +132,19 @@ function LiteratureRelatedSession(
         }}
       >
         <SelectTrigger aria-label={t('Citation source')} className="w-auto max-w-full px-2">
+          <SourceIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
-          <SelectItem value="opencitations">{t('OpenCitations · SKG-IF')}</SelectItem>
-          <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
+          {sources.map(({ value, label, Icon }) => (
+            <SelectItem
+              key={value}
+              value={value}
+              icon={<Icon className="size-4 text-muted-foreground" aria-hidden="true" />}
+            >
+              {label}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
     </div>
