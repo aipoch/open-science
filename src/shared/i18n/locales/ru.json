@@ -9009,6 +9009,15 @@
     "{{component}}: {{total}} · {{reason}}": "{{component}}: {{total}} · {{reason}}",
     "Required Web execution evidence cannot be shared under the current data policy.": "Текущая политика данных не разрешает распространение обязательных свидетельств веб-выполнения.",
     "Content unavailable": "Содержимое недоступно",
-    "Model-generated response": "Ответ, сгенерированный моделью"
+    "Model-generated response": "Ответ, сгенерированный моделью",
+    "Past 24 hours": "За последние 24 часа",
+    "Past week": "За последнюю неделю",
+    "Past month": "За последний месяц",
+    "Past year": "За последний год",
+    "Limit to these sites": "Только эти сайты",
+    "Up to {{count}} results_one": "Не более {{count}} результата",
+    "Up to {{count}} results_few": "Не более {{count}} результатов",
+    "Up to {{count}} results_many": "Не более {{count}} результатов",
+    "Up to {{count}} results_other": "Не более {{count}} результата"
   }
 }

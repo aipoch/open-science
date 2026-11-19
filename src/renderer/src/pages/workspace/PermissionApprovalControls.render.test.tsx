@@ -16,6 +16,69 @@ import { PermissionApprovalControls } from './PermissionApprovalControls'
 const longRequestTitle =
   'Bash pwd echo whoami echo list home directory with enough extra words to clip'
 
+const builtInSearchRequest: AcpPermissionRequest = {
+  requestId: 'search',
+  sessionId: 'session',
+  toolCallId: 'search-tool',
+  title: 'mcp__open_science_web__web_search',
+  providerToolName: 'mcp__open_science_web__web_search',
+  isMcp: true,
+  mcpIdentity: 'open-science-web/web_search',
+  rawInput: {
+    query: 'new foundation model release 2026',
+    freshness: 'month',
+    max_results: 10,
+    allowed_domains: ['example.org']
+  },
+  options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }]
+}
+
+it.each([false, true])('presents built-in search parameters as a card (wrapped: %s)', (wrapped) => {
+  const html = renderToStaticMarkup(
+    <PermissionApprovalControls
+      requests={[
+        {
+          ...builtInSearchRequest,
+          rawInput: wrapped
+            ? { arguments: builtInSearchRequest.rawInput, requestTag: 'keep-visible-in-input' }
+            : builtInSearchRequest.rawInput
+        }
+      ]}
+      onRespond={() => undefined}
+    />
+  )
+  expect(html).toContain('data-testid="web-search-permission-card"')
+  expect(html).toContain('Allow web search?')
+  expect(html).toContain('new foundation model release 2026')
+  expect(html).toContain('Past month')
+  expect(html).toContain('Up to 10 results')
+  expect(html).toContain('Limit to these sites')
+  expect(html).toContain('example.org')
+  expect(html).toContain('data-language="json"')
+  if (wrapped) expect(html).toContain('keep-visible-in-input')
+  expect(html).not.toContain('External service input')
+})
+
+it.each([
+  { isMcp: false },
+  { mcpIdentity: undefined },
+  { mcpIdentity: 'third-party/web_search' },
+  { mcpIdentity: 'open-science-web/web_fetch' },
+  { rawInput: { query: 'search', freshness: 'unknown' } },
+  { rawInput: { query: 'search', max_results: 0 } },
+  { rawInput: { query: 'search', extra: 'must remain visible' } },
+  { rawInput: { query: '' } }
+])('keeps the generic preview for unsupported search requests: %j', (override) => {
+  const html = renderToStaticMarkup(
+    <PermissionApprovalControls
+      requests={[{ ...builtInSearchRequest, ...override }]}
+      onRespond={() => undefined}
+    />
+  )
+  expect(html).not.toContain('data-testid="web-search-permission-card"')
+  expect(html).toContain('data-language="json"')
+})
+
 it.each(['WebFetch', 'WebSearch'] as const)(
   'explains conversation-wide %s including delegated children before approval',
   (tool) => {

@@ -68,6 +68,8 @@ import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
+import { searchInputSchema } from '../../../../shared/web-tools'
+import { WebSearchPermissionCard } from './WebSearchPermissionCard'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -846,6 +848,14 @@ const PermissionApprovalCard = ({
     sourceLookupKey
   ])
   const permCode = codeReview || selectedLabel ? undefined : extractPermissionCode(request)
+  // Only the broker-resolved built-in identity gets this presentation. Unknown or invalid
+  // arguments keep the complete generic preview instead of silently losing approval context.
+  const webSearch =
+    isMcpPermissionRequest(request) &&
+    /^open[-_]science[-_]web\/web_search$/.test(request.mcpIdentity ?? '')
+      ? searchInputSchema.safeParse(notebookInput(request.rawInput))
+      : undefined
+  const webSearchInput = webSearch?.success ? webSearch.data : undefined
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -901,9 +911,11 @@ const PermissionApprovalCard = ({
     ...sourcePresentation,
     actionTitle:
       schedule?.summary.title ??
-      t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
-        ...sourcePresentation.actionTitleValues
-      }),
+      (webSearchInput
+        ? t('Allow web search?')
+        : t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
+            ...sourcePresentation.actionTitleValues
+          })),
     categoryLabel: schedule ? t('Schedule') : t(sourcePresentation.categoryLabel),
     description: t(sourcePresentation.description)
   }
@@ -1182,6 +1194,8 @@ const PermissionApprovalCard = ({
             </details>
           )}
         </div>
+      ) : webSearchInput && permCode ? (
+        <WebSearchPermissionCard key={requestId} input={webSearchInput} code={permCode.code} />
       ) : imageOperation ? (
         <WorkspaceImageToolCard
           key={requestId}

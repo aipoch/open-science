@@ -8857,6 +8857,14 @@
     "{{component}}: {{total}} · {{reason}}": "{{component}} : {{total}} · {{reason}}",
     "Required Web execution evidence cannot be shared under the current data policy.": "La politique de données actuelle interdit le partage des preuves d’exécution web requises.",
     "Content unavailable": "Contenu indisponible",
-    "Model-generated response": "Réponse générée par le modèle"
+    "Model-generated response": "Réponse générée par le modèle",
+    "Past 24 hours": "Dernières 24 heures",
+    "Past week": "Dernière semaine",
+    "Past month": "Dernier mois",
+    "Past year": "Dernière année",
+    "Limit to these sites": "Limiter à ces sites",
+    "Up to {{count}} results_one": "Jusqu’à {{count}} résultat",
+    "Up to {{count}} results_many": "Jusqu’à {{count}} résultats",
+    "Up to {{count}} results_other": "Jusqu’à {{count}} résultats"
   }
 }

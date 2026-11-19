@@ -8507,6 +8507,12 @@
     "{{component}}: {{total}} · {{reason}}": "{{component}}：{{total}} · {{reason}}",
     "Required Web execution evidence cannot be shared under the current data policy.": "目前的資料政策不允許分享必要的網頁執行證據。",
     "Content unavailable": "內容無法使用",
-    "Model-generated response": "模型產生的內容"
+    "Model-generated response": "模型產生的內容",
+    "Past 24 hours": "過去 24 小時",
+    "Past week": "過去一週",
+    "Past month": "過去一個月",
+    "Past year": "過去一年",
+    "Limit to these sites": "僅限這些網站",
+    "Up to {{count}} results_other": "最多 {{count}} 筆結果"
   }
 }

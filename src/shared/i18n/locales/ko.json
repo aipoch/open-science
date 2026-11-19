@@ -8505,6 +8505,12 @@
     "{{component}}: {{total}} · {{reason}}": "{{component}}: {{total}} · {{reason}}",
     "Required Web execution evidence cannot be shared under the current data policy.": "현재 데이터 정책에서는 필수 웹 실행 증거를 공유할 수 없습니다.",
     "Content unavailable": "콘텐츠 사용 불가",
-    "Model-generated response": "모델이 생성한 응답"
+    "Model-generated response": "모델이 생성한 응답",
+    "Past 24 hours": "지난 24시간",
+    "Past week": "지난 1주",
+    "Past month": "지난 1개월",
+    "Past year": "지난 1년",
+    "Limit to these sites": "다음 사이트로 제한",
+    "Up to {{count}} results_other": "최대 {{count}}개 결과"
   }
 }

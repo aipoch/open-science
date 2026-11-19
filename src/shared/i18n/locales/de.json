@@ -8678,6 +8678,13 @@
     "{{component}}: {{total}} · {{reason}}": "{{component}}: {{total}} · {{reason}}",
     "Required Web execution evidence cannot be shared under the current data policy.": "Erforderliche Web-Ausführungsnachweise dürfen gemäß der aktuellen Datenrichtlinie nicht weitergegeben werden.",
     "Content unavailable": "Inhalt nicht verfügbar",
-    "Model-generated response": "Vom Modell erzeugte Antwort"
+    "Model-generated response": "Vom Modell erzeugte Antwort",
+    "Past 24 hours": "Letzte 24 Stunden",
+    "Past week": "Letzte Woche",
+    "Past month": "Letzter Monat",
+    "Past year": "Letztes Jahr",
+    "Limit to these sites": "Auf diese Websites beschränken",
+    "Up to {{count}} results_one": "Bis zu {{count}} Ergebnis",
+    "Up to {{count}} results_other": "Bis zu {{count}} Ergebnisse"
   }
 }

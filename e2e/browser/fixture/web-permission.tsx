@@ -51,6 +51,25 @@ const request: AcpPermissionRequest = {
   ]
 }
 const powershell = new URLSearchParams(location.search).has('powershell')
+const builtInSearch = new URLSearchParams(location.search).has('built-in-search')
+const builtInSearchRequest: AcpPermissionRequest = {
+  ...request,
+  requestId: 'built-in-search',
+  title: 'mcp__open_science_web__web_search',
+  providerToolName: 'mcp__open_science_web__web_search',
+  toolKind: 'search',
+  isMcp: true,
+  mcpIdentity: 'open-science-web/web_search',
+  delegated: undefined,
+  rawInput: {
+    query: 'new foundation model release 2026',
+    freshness: 'month',
+    max_results: 10,
+    ...(new URLSearchParams(location.search).has('sites')
+      ? { allowed_domains: ['nature.com', 'science.org'] }
+      : {})
+  }
+}
 const risk = new URLSearchParams(location.search).has('risk')
 const large = new URLSearchParams(location.search).has('large')
 const riskPrefix = large
@@ -341,7 +360,15 @@ void Promise.resolve(prepareI18nLocale(language)).then(() => {
           <NetworkApproval />
         ) : (
           <PermissionApprovalControls
-            requests={[runtimeSelection ? runtimeRequest : risk ? riskRequest : request]}
+            requests={[
+              runtimeSelection
+                ? runtimeRequest
+                : risk
+                  ? riskRequest
+                  : builtInSearch
+                    ? builtInSearchRequest
+                    : request
+            ]}
             onRespond={(requestId, optionId) => {
               responses.push({ requestId, optionId })
             }}

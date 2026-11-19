@@ -1,5 +1,59 @@
 import { expect, test } from '@playwright/test'
 
+test('reviews built-in search parameters and preserves allow and deny responses', async ({
+  page
+}) => {
+  await page.goto('/web-permission.html?built-in-search=1&light=1&sites=1')
+  const card = page.getByTestId('web-search-permission-card')
+  await expect(card).toContainText('new foundation model release 2026')
+  await expect(card).toContainText('Past month')
+  await expect(card).toContainText('Up to 10 results')
+  await expect(card).toContainText('nature.com')
+  await expect(card).toContainText('science.org')
+  await expect(card.getByTestId('tool-code-block')).not.toBeVisible()
+  await card.locator('summary').click()
+  await expect(card.getByTestId('tool-code-block')).toBeVisible()
+  await expect(card.getByTestId('tool-code-block')).toContainText('allowed_domains')
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (value: string) => Object.assign(window, { copiedInput: value }) }
+    })
+  )
+  await card.getByRole('button', { name: 'Copy code', exact: true }).click()
+  expect(
+    await page.evaluate(() =>
+      JSON.parse((window as unknown as { copiedInput: string }).copiedInput)
+    )
+  ).toEqual({
+    query: 'new foundation model release 2026',
+    freshness: 'month',
+    max_results: 10,
+    allowed_domains: ['nature.com', 'science.org']
+  })
+  await page.getByRole('button', { name: 'Choose authorization scope' }).click()
+  await expect(page.getByRole('menuitemradio')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Allow for this conversation', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'built-in-search', optionId: 'session' }])
+
+  await page.setViewportSize({ width: 375, height: 700 })
+  await page.goto('/web-permission.html?built-in-search=1&lang=zh-Hans&sites=1')
+  await expect(card).toContainText('过去一个月')
+  await expect(card).toContainText('最多 10 条结果')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375)
+  await page.getByRole('button', { name: '拒绝', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'built-in-search', optionId: 'deny' }])
+})
+
 test('withdraws a cancelled network approval on an incremental state update', async ({
   page
 }, testInfo) => {
