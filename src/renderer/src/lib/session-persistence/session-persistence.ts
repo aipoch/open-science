@@ -779,10 +779,21 @@ const sessionWriteBaseRevision = (intent: SessionWriteIntent): number =>
 
 const isSessionWriteSatisfied = (
   intent: SessionWriteIntent,
-  authority: PersistedChatSession
+  authority: PersistedChatSession | SessionMetadataReceipt
 ): boolean => {
   if (authority.id !== intent.session.id || authority.projectId !== intent.session.projectId)
     return false
+  if (!('messages' in authority)) {
+    return (
+      intent.kind === 'fields' &&
+      !intent.options?.conversationCommands?.length &&
+      Object.entries(intent.changes).every(
+        ([field, change]) =>
+          (field === 'title' || field === 'pinned') &&
+          sessionPreferenceValuesEqual(field, change.after, authority[field])
+      )
+    )
+  }
   const acknowledged = new Set(authority.runtimeConversationCommandIds ?? [])
   const commands = retainActivePreparationCommands(intent.options?.conversationCommands ?? [])
   if (commands.some(({ id }) => !acknowledged.has(id))) return false
@@ -2543,16 +2554,36 @@ const createStoreSaver = (
           api.setPinned &&
           pendingSessionConversationCommands(session.id).length === 0
         ) {
+          const initialMetadata = () =>
+            acknowledgedMetadata.get(session.id) ?? {
+              title: previousSession?.title ?? session.title,
+              pinned: previousSession?.pinned === true
+            }
+          const intent = (): SessionFieldWriteIntent => {
+            const baseline = initialMetadata()
+            return {
+              kind: 'fields',
+              session: { id: session.id, projectId: session.projectId!, title: session.title },
+              baseRevision: sessionRevision(session),
+              changes: Object.fromEntries(
+                conflictRebaseFields.map((field) => [
+                  field,
+                  {
+                    before: baseline[field],
+                    after: session[field]
+                  }
+                ])
+              )
+            }
+          }
           tasks.push({
+            intent,
             target,
             failureContext: { conflictRebaseFields },
             run: () =>
               persistence.saveMetadata(target, async () => {
                 let receipt: SessionMetadataReceipt | undefined
-                let baseline = acknowledgedMetadata.get(session.id) ?? {
-                  title: previousSession?.title ?? session.title,
-                  pinned: previousSession?.pinned === true
-                }
+                let baseline = initialMetadata()
                 if (conflictRebaseFields.includes('title')) {
                   receipt = await api.rename!({
                     projectId: session.projectId,
@@ -3067,7 +3098,7 @@ const createStoreSaver = (
         ? persistence.recovery.trackSession(
             target,
             intent,
-            run as () => Promise<PersistedChatSession>
+            run as () => Promise<PersistedChatSession | SessionMetadataReceipt>
           )
         : run()
       return scheduled.then(
@@ -3682,7 +3713,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
             }
             let candidate: PersistedChatSession | undefined
             if (intent.kind === 'fields') {
-              if (authority?.runtimeTranscriptOwner === 'main') {
+              if (
+                authority &&
+                (authority.runtimeTranscriptOwner === 'main' ||
+                  Object.keys(intent.changes).every(
+                    (field) => field === 'title' || field === 'pinned'
+                  ))
+              ) {
                 candidate = structuredClone(authority)
                 for (const [field, change] of Object.entries(intent.changes)) {
                   const key = field as SessionConflictRebaseField

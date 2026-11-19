@@ -43,7 +43,10 @@ const isPendingNotificationCommandUnavailable = (error: unknown): boolean =>
   (/(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
     error.message
   ) ||
-    error.message.endsWith('Desktop is recovering. This operation was not submitted.'))
+    error.message.endsWith('Desktop is recovering. This operation was not submitted.') ||
+    error.message.endsWith(
+      'DesktopRuntimeWriteNotSubmittedError: Desktop runtime is disconnected.'
+    ))
 
 type ApplicationEventBindingsInput = Readonly<{
   startupView: StartupView | undefined
