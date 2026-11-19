@@ -112,7 +112,15 @@ jobs:
         id: forward
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.plan.outputs.forward == 'true' }}
         shell: pwsh
-        run: node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --output forward.json
+        run: |
+          # Both drills share this disposable Windows account. electron-updater promotes the
+          # downloaded B blockmap even if apply is blocked. Start the independent B install with
+          # a cold blockmap cache so the fixture observes both versioned feed requests.
+          $map = Join-Path $env:LOCALAPPDATA 'open-science-updater/current.blockmap'
+          if (Test-Path -LiteralPath $map -PathType Leaf) {
+            Move-Item -LiteralPath $map -Destination "$env:RUNNER_TEMP/upgrade-b-prior.blockmap"
+          }
+          node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --output forward.json
 
       - name: Remove test signing identity
         if: always() && env.TEST_SIGNER != ''
