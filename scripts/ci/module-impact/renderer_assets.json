@@ -113,5 +113,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The bundled Kilo provider icon expands the reviewed renderer asset boundary. Retain full validation for asset resolution and packaging."
 }
