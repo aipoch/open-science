@@ -341,6 +341,9 @@ const Silk = ({
     })
     if (!container || !canvas || !gl) return undefined
 
+    gl.clearColor(0, 0, 0, 0)
+    gl.disable(gl.BLEND)
+
     const fieldProgram = link(gl, FIELD)
     const compositeProgram = link(gl, COMPOSITE)
     if (!fieldProgram || !compositeProgram) return undefined
@@ -455,6 +458,7 @@ const Silk = ({
         )
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
         gl.viewport(0, 0, target.width, target.height)
+        gl.clear(gl.COLOR_BUFFER_BIT)
         gl.useProgram(fieldProgram.program)
         setShared(fieldProgram.uniforms, target.width, target.height, s, unfold)
         gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -465,6 +469,7 @@ const Silk = ({
       const c = compositeProgram.uniforms
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.viewport(0, 0, canvas.width, canvas.height)
+      gl.clear(gl.COLOR_BUFFER_BIT)
       gl.useProgram(compositeProgram.program)
       setShared(c, canvas.width, canvas.height, s, unfold)
       gl.uniform3fv(c.uColor, toRgb(s.color))
