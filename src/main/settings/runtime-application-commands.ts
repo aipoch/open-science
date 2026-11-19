@@ -1,3 +1,9 @@
+import type {
+  LabCheckRequest,
+  LabSignInChallenge,
+  LabView,
+  SetLabServerRequest
+} from '../../shared/lab'
 import type { DeleteProviderRequest } from '../../shared/settings'
 import {
   defineApplicationCommand,
@@ -11,6 +17,7 @@ import {
   readIsolatedClaudeToken,
   readReasoningEffort
 } from './transport-validation'
+import type { SettingsService } from './service'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import type { RuntimeSettingsWorkflows } from './workflows/runtime'
 
@@ -46,6 +53,17 @@ type WorkflowResult<Method extends keyof RuntimeSettingsCommandWorkflows> =
   RuntimeSettingsCommandWorkflows[Method] extends (...args: never[]) => infer Result
     ? Awaited<Result>
     : never
+
+type RuntimeSettingsLabOwner = Pick<
+  SettingsService,
+  | 'setLabServer'
+  | 'checkLab'
+  | 'beginLabLogin'
+  | 'waitLabLogin'
+  | 'cancelLabLogin'
+  | 'refreshLab'
+  | 'logoutLab'
+>
 
 const settingsRuntimeApplicationCommands = Object.freeze({
   uninstallClaude: defineApplicationCommand<
@@ -162,7 +180,36 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     'settings:logout-xai-oauth',
     readonly [],
     WorkflowResult<'logoutXaiOAuth'>
-  >('settings:logout-xai-oauth')
+  >('settings:logout-xai-oauth'),
+  // The Lab panel reaches these through the runtime: credentials and tokens never cross into the
+  // renderer, and the browser build installs rejecting stubs for every one of them.
+  setLabServer: defineApplicationCommand<
+    'settings:lab-set-server',
+    readonly [request: SetLabServerRequest],
+    LabView
+  >('settings:lab-set-server'),
+  checkLab: defineApplicationCommand<
+    'settings:lab-check',
+    readonly [request?: LabCheckRequest],
+    LabView
+  >('settings:lab-check'),
+  beginLabLogin: defineApplicationCommand<
+    'settings:lab-begin-login',
+    readonly [],
+    LabSignInChallenge
+  >('settings:lab-begin-login'),
+  waitLabLogin: defineApplicationCommand<'settings:lab-wait-login', readonly [], LabView>(
+    'settings:lab-wait-login'
+  ),
+  cancelLabLogin: defineApplicationCommand<'settings:lab-cancel-login', readonly [], LabView>(
+    'settings:lab-cancel-login'
+  ),
+  refreshLab: defineApplicationCommand<'settings:lab-refresh', readonly [], LabView>(
+    'settings:lab-refresh'
+  ),
+  logoutLab: defineApplicationCommand<'settings:lab-logout', readonly [], LabView>(
+    'settings:lab-logout'
+  )
 })
 
 const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('settings-runtime', [
@@ -188,11 +235,19 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
   settingsRuntimeApplicationCommands.beginXaiOAuthLogin,
   settingsRuntimeApplicationCommands.waitXaiOAuthLogin,
   settingsRuntimeApplicationCommands.cancelXaiOAuthLogin,
-  settingsRuntimeApplicationCommands.logoutXaiOAuth
+  settingsRuntimeApplicationCommands.logoutXaiOAuth,
+  settingsRuntimeApplicationCommands.setLabServer,
+  settingsRuntimeApplicationCommands.checkLab,
+  settingsRuntimeApplicationCommands.beginLabLogin,
+  settingsRuntimeApplicationCommands.waitLabLogin,
+  settingsRuntimeApplicationCommands.cancelLabLogin,
+  settingsRuntimeApplicationCommands.refreshLab,
+  settingsRuntimeApplicationCommands.logoutLab
 ] as const)
 
 type RuntimeSettingsApplicationCommandDependencies = Readonly<{
   workflows: RuntimeSettingsCommandWorkflows
+  lab: RuntimeSettingsLabOwner
   snapshotCommits: SettingsSnapshotCommitOwner
 }>
 
@@ -332,6 +387,34 @@ const registerRuntimeSettingsApplicationCommands = (
         return dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.workflows.logoutXaiOAuth()
         )
+      },
+      'settings:lab-set-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-set-server')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.setLabServer(args[0]))
+      },
+      'settings:lab-check': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-check')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.checkLab(args[0]))
+      },
+      'settings:lab-begin-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-begin-login')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.beginLabLogin())
+      },
+      'settings:lab-wait-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-wait-login')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.waitLabLogin())
+      },
+      'settings:lab-cancel-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-cancel-login')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.cancelLabLogin())
+      },
+      'settings:lab-refresh': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-refresh')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.refreshLab())
+      },
+      'settings:lab-logout': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:lab-logout')
+        return dependencies.snapshotCommits.projectAfter(dependencies.lab.logoutLab())
       }
     })
     return scope.complete()

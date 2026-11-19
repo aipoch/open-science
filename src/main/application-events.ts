@@ -16,6 +16,7 @@ import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { MemoryChangedEvent } from '../shared/memory'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
 import type { NotificationInboxChanged } from '../shared/notifications'
+import type { OrgCaseDownloadSnapshot } from '../shared/org-cases'
 import type {
   PdfAnnotationsChangedEvent,
   PdfNativeAnnotationImportProgress
@@ -57,6 +58,7 @@ export type ApplicationEventMap = {
   'resource-recording:changed': import('../shared/resource-recording').ResourceRecordingState
   'sessions:package-operation-changed': PackageOperationSnapshot
   'sessions:catalog-changed': undefined
+  'sessions:org-case-download-changed': OrgCaseDownloadSnapshot | null
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate

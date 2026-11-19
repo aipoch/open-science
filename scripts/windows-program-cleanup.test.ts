@@ -1,9 +1,18 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { SETTINGS_RESOURCE_LIMITS } from '../src/main/settings/settings-resource-limits'
 
 const powershell = join(
   process.env.SystemRoot || 'C:\\Windows',
@@ -67,6 +76,40 @@ function compileInjectedHelper(fixture: string, source: string): string {
 }
 
 describe.skipIf(process.platform !== 'win32')('Windows program cleanup diagnostics', () => {
+  it('protects the configured data root in large settings and rejects oversized documents', () => {
+    const install = join(root, 'open-science')
+    const dataRoot = join(install, 'resources', 'research')
+    mkdirSync(dataRoot, { recursive: true })
+    const settings = join(root, 'settings.json')
+    const output = join(root, 'protected-paths.txt')
+    const resolvePaths = (): SpawnSyncReturns<string> =>
+      spawnSync(
+        helper,
+        [
+          'program-data-paths',
+          '--install-path',
+          install,
+          '--output',
+          output,
+          '--max-line-length',
+          '8192'
+        ],
+        { env: { ...process.env, OPEN_SCIENCE_E2E_STORAGE_ROOT: root }, encoding: 'utf8' }
+      )
+    writeFileSync(
+      settings,
+      JSON.stringify({ version: 2, providers: [], dataRoot }).padEnd(2 ** 21 + 1)
+    )
+    const resolved = resolvePaths()
+    expect(resolved.status, resolved.stderr).toBe(0)
+    expect(readFileSync(output, 'utf16le').split('\r\n')).toEqual(['', '', dataRoot, dataRoot, ''])
+
+    truncateSync(settings, SETTINGS_RESOURCE_LIMITS.documentBytes + 1)
+    const oversized = resolvePaths()
+    expect(oversized.status, oversized.stderr).toBe(2)
+    expect(oversized.stderr).toContain(String(SETTINGS_RESOURCE_LIMITS.documentBytes))
+  })
+
   it('continues an upgrade after a controlled lock is released during the first retry wait', () => {
     const stage = join(root, 'transient-stage')
     mkdirSync(stage)

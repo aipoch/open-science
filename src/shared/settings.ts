@@ -1,4 +1,5 @@
 export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
+export { LAB_PROVIDER_ID } from './lab'
 export * from './settings-types'
 export {
   SETTINGS_FILE_VERSION,
@@ -11,6 +12,8 @@ export {
   XAI_SUBSCRIPTION_PROVIDER_ID,
   xaiSubscriptionProviderIdentity,
   isXaiSubscriptionProvider,
+  labProviderIdentity,
+  isLabProvider,
   usesAppProviderTransport,
   isCodexSubscriptionProvider,
   codexSubscriptionProviderIdentity,

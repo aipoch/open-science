@@ -147,6 +147,10 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 ### Connect your own agent through MCP
 
+If your agent can configure local MCP servers, copy this prompt into its chat:
+
+> Follow https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp to connect this client to Open-Science and list my projects. Ask me to sign in only when an operation I request needs it.
+
 Choose your agent to see its setup options. For clients with local command access, the Open-Science CLI is also available.
 
 <p>
@@ -176,13 +180,9 @@ Choose your agent to see its setup options. For clients with local command acces
 
 Also listed in the [local client guide](packages/open-science/CLI.md#other-local-clients): Amp, AtomCode, Claude Desktop, Cline, CodeBuddy, MiMo, OpenClaw, Raven and Vela.
 
-After first-time setup,
-keep the Open-Science service running. If it is already running, go straight to the client
-configuration. To start it independently of the desktop app, run:
-
-```sh
-npx --yes @aipoch/open-science@latest start --no-open
-```
+Connecting starts the standalone Open-Science service or reuses the one already running for
+your profile. You can open the desktop app later. The published 1.3.0 CLI requires an existing
+service; with that version, open Open-Science or run `npx --yes @aipoch/open-science@1.3.0 start --no-open` first.
 
 In your agent client's custom MCP settings, add a local **stdio** server. For clients that
 accept `mcpServers` JSON, use the following macOS/Linux configuration with Node.js 22.13.0

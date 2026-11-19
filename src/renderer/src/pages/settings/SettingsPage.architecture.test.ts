@@ -25,7 +25,8 @@ describe('SettingsPage loading boundaries', () => {
       'ComputeHostDetail',
       'PermissionsPanel',
       'ArchivedPanel',
-      'TokenUsagePanel'
+      'TokenUsagePanel',
+      'LabPanel'
     ]) {
       expect(source).toContain(`const ${panel} = lazy(`)
       expect(source).not.toContain(`import { ${panel} } from`)

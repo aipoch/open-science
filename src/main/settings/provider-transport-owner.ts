@@ -1,13 +1,27 @@
 import { harnessFramework } from '../agent-framework/harness'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
-import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings-runtime'
+import {
+  isCodexSubscriptionProvider,
+  isLabProvider,
+  preferredEndpoint
+} from '../../shared/settings-runtime'
+import {
+  isLabDeploymentUrl,
+  LabApiError,
+  labModelWireId,
+  mapLabGatewayError
+} from '../../shared/lab'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import { usesVendorMessagesApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
+import {
+  usesVendorMessagesApiKeyHeader,
+  type ModelProtocol,
+  type ModelReasoningEffort
+} from '@aipoch/providers'
 import { resolveProviderOutputLimit } from './provider-env'
 
 import {
@@ -144,6 +158,7 @@ type ProviderTransportOwnerOptions = {
     failure: ProviderFailureObservation
   ) => Promise<void>
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+  getLabAccessToken?: (forceRefresh?: boolean, expectedServerUrl?: string) => Promise<string>
   bindCodexHarnessConnection?: BindCodexHarnessConnection
   createResponsesToChatCompletionsBridge?: (
     target: ResponsesToChatCompletionsBridgeTarget,
@@ -238,6 +253,10 @@ class ProviderTransportOwner {
   private readonly createXaiOAuthProviderBridge: CreateXaiOAuthProviderBridge
   private readonly nextGenerationId: () => string
   private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+  private readonly getLabAccessToken?: (
+    forceRefresh?: boolean,
+    expectedServerUrl?: string
+  ) => Promise<string>
   private readonly bindCodexHarnessConnection?: BindCodexHarnessConnection
   private readonly responsesToChatCompletionsBridges = new Map<
     string,
@@ -272,6 +291,7 @@ class ProviderTransportOwner {
       options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
+    this.getLabAccessToken = options.getLabAccessToken
     this.bindCodexHarnessConnection = options.bindCodexHarnessConnection
   }
 
@@ -323,16 +343,18 @@ class ProviderTransportOwner {
     const { provider, providerId, configRevision } = snapshot
     const model = snapshot.effectiveModel ?? provider.model
     const usesXaiOAuth = snapshot.providerType === 'xai-subscription'
+    const usesLab = isLabProvider(snapshot.providerType)
     const usesCodexOAuth = isCodexSubscriptionProvider(snapshot.providerType)
     const wire = preferredEndpoint(snapshot.apiEndpoints, harnessFramework.supportedApiTypes)
     if (
-      !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
+      !['custom', 'official', 'xai-subscription', 'lab', 'codex-isolated', 'codex-shared'].includes(
         snapshot.providerType
       ) ||
-      !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
+      !['custom', 'official', 'xai-subscription', 'lab', 'codex-isolated', 'codex-shared'].includes(
         provider.type
       ) ||
       usesXaiOAuth !== (provider.type === 'xai-subscription') ||
+      usesLab !== isLabProvider(provider.type) ||
       usesCodexOAuth !== isCodexSubscriptionProvider(provider.type) ||
       snapshot.disconnectedAt !== undefined ||
       !providerId.trim() ||
@@ -345,6 +367,8 @@ class ProviderTransportOwner {
     ) {
       throw new Error('Harness requires a connected, versioned provider target.')
     }
+    if (usesLab && wire === 'messages')
+      throw new Error('Lab models do not expose the Messages API.')
     const endpoint =
       usesXaiOAuth || usesCodexOAuth
         ? undefined
@@ -377,35 +401,40 @@ class ProviderTransportOwner {
             wire,
             this.getXaiOAuthAccessToken
           )
-        : wire === 'messages'
-          ? this.createMessagesBridge(
-              [
-                {
-                  ...this.healthObservation(snapshot),
-                  id: route.id,
-                  baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
-                  key: provider.key,
-                  model,
-                  useApiKeyHeader:
-                    provider.vendorId === 'anthropic' ||
-                    (!!provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId))
-                }
-              ],
+        : usesLab
+          ? this.createProtocolForwardingBridge(
+              [this.labForwardingTarget(route.id, wire, endpoint!, snapshot)],
               route.id
             )
-          : this.createProtocolForwardingBridge(
-              [
-                {
-                  ...this.healthObservation(snapshot),
-                  id: route.id,
-                  wire,
-                  endpoint: endpoint!,
-                  key: provider.key,
-                  model
-                }
-              ],
-              route.id
-            )
+          : wire === 'messages'
+            ? this.createMessagesBridge(
+                [
+                  {
+                    ...this.healthObservation(snapshot),
+                    id: route.id,
+                    baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
+                    key: provider.key,
+                    model,
+                    useApiKeyHeader:
+                      provider.vendorId === 'anthropic' ||
+                      (!!provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId))
+                  }
+                ],
+                route.id
+              )
+            : this.createProtocolForwardingBridge(
+                [
+                  {
+                    ...this.healthObservation(snapshot),
+                    id: route.id,
+                    wire,
+                    endpoint: endpoint!,
+                    key: provider.key,
+                    model
+                  }
+                ],
+                route.id
+              )
     let releasePromise: Promise<void> | undefined
     const release = (): Promise<void> =>
       (releasePromise ??= Promise.resolve().then(() => bridge.close()))
@@ -517,38 +546,46 @@ class ProviderTransportOwner {
                 this.getXaiOAuthAccessToken,
                 { token }
               )
-            : planned.wire === 'messages'
-              ? this.createMessagesBridge(
+            : planned.oauth === 'lab'
+              ? this.createProtocolForwardingBridge(
                   [
-                    {
-                      ...this.healthObservation(candidate),
-                      id: planned.id,
-                      baseUrl: planned.endpoint!,
-                      ...key,
-                      model,
-                      ...(candidate.provider.vendorId &&
-                      usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
-                        ? { useApiKeyHeader: true }
-                        : {})
-                    }
+                    this.labForwardingTarget(planned.id, planned.wire, planned.endpoint!, candidate)
                   ],
                   planned.id,
                   { token }
                 )
-              : this.createProtocolForwardingBridge(
-                  [
-                    {
-                      ...this.healthObservation(candidate),
-                      id: planned.id,
-                      wire: planned.wire,
-                      endpoint: planned.endpoint!,
-                      ...key,
-                      model
-                    }
-                  ],
-                  planned.id,
-                  { token }
-                )
+              : planned.wire === 'messages'
+                ? this.createMessagesBridge(
+                    [
+                      {
+                        ...this.healthObservation(candidate),
+                        id: planned.id,
+                        baseUrl: planned.endpoint!,
+                        ...key,
+                        model,
+                        ...(candidate.provider.vendorId &&
+                        usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
+                          ? { useApiKeyHeader: true }
+                          : {})
+                      }
+                    ],
+                    planned.id,
+                    { token }
+                  )
+                : this.createProtocolForwardingBridge(
+                    [
+                      {
+                        ...this.healthObservation(candidate),
+                        id: planned.id,
+                        wire: planned.wire,
+                        endpoint: planned.endpoint!,
+                        ...key,
+                        model
+                      }
+                    ],
+                    planned.id,
+                    { token }
+                  )
         bridges.push(bridge)
         const connection = await bridge.start()
         const localProvider = Object.freeze({
@@ -605,6 +642,7 @@ class ProviderTransportOwner {
     const targetId = JSON.stringify(['codebuddy', input.activeTarget.providerId, model])
     const transport = input.plan.transport
     const usesXaiOAuth = provider.type === 'xai-subscription'
+    const usesLab = isLabProvider(provider.type)
     const maxOutputTokens =
       transport.kind === 'codebuddy-provider-compatibility' && transport.wire === 'messages'
         ? resolveProviderOutputLimit({ ...provider, model })
@@ -630,26 +668,45 @@ class ProviderTransportOwner {
               this.getXaiOAuthAccessToken,
               { adaptChatCompletionsRequest: adaptCodeBuddyChatCompletionsRequest }
             )
-          : (() => {
-              const endpoint = resolveChatCompletionsUrl(provider)
-              if (!endpoint) throw new Error('The CodeBuddy provider target is incomplete.')
-              return this.createProtocolForwardingBridge(
-                [
-                  {
-                    ...this.healthObservation(input.activeTarget),
-                    id: targetId,
-                    wire: 'chat-completions',
-                    endpoint,
-                    ...(provider.key ? { key: provider.key } : {}),
-                    model,
-                    adaptRequest: adaptCodeBuddyChatCompletionsRequest
-                  }
-                ],
-                targetId
-              )
-            })()
+          : usesLab
+            ? (() => {
+                const endpoint = resolveChatCompletionsUrl(provider)
+                if (!endpoint) throw new Error('The CodeBuddy provider target is incomplete.')
+                return this.createProtocolForwardingBridge(
+                  [
+                    this.labForwardingTarget(
+                      targetId,
+                      'chat-completions',
+                      endpoint,
+                      input.activeTarget,
+                      {
+                        adaptRequest: adaptCodeBuddyChatCompletionsRequest
+                      }
+                    )
+                  ],
+                  targetId
+                )
+              })()
+            : (() => {
+                const endpoint = resolveChatCompletionsUrl(provider)
+                if (!endpoint) throw new Error('The CodeBuddy provider target is incomplete.')
+                return this.createProtocolForwardingBridge(
+                  [
+                    {
+                      ...this.healthObservation(input.activeTarget),
+                      id: targetId,
+                      wire: 'chat-completions',
+                      endpoint,
+                      ...(provider.key ? { key: provider.key } : {}),
+                      model,
+                      adaptRequest: adaptCodeBuddyChatCompletionsRequest
+                    }
+                  ],
+                  targetId
+                )
+              })()
     let selector: ReturnType<typeof createCodeBuddySkillSelectorTransport> | undefined =
-      transport.kind === 'codebuddy-provider-compatibility' || usesXaiOAuth
+      transport.kind === 'codebuddy-provider-compatibility' || usesXaiOAuth || usesLab
         ? undefined
         : createCodeBuddySkillSelectorTransport({
             activeTarget: input.activeTarget,
@@ -713,6 +770,11 @@ class ProviderTransportOwner {
       const model = candidate.effectiveModel ?? candidate.provider.model
       const baseUrl = resolveResponsesBaseUrl(candidate.provider)
       if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
+      if (isLabProvider(candidate.provider.type)) {
+        return Object.freeze(
+          this.labForwardingTarget(planned.id, 'responses', `${baseUrl}/responses`, candidate)
+        )
+      }
       return Object.freeze({
         ...this.healthObservation(candidate),
         id: planned.id,
@@ -784,37 +846,53 @@ class ProviderTransportOwner {
                 'chat-completions',
                 this.getXaiOAuthAccessToken
               )
-            : transport.kind === 'opencode-openai'
-              ? this.createProtocolForwardingBridge(
-                  [
-                    {
-                      ...this.healthObservation(candidate),
-                      id: targetId,
-                      wire: 'chat-completions',
-                      endpoint: resolveChatCompletionsUrl(candidate.provider)!,
-                      adaptStream: bufferChatCompletionsToolNames,
-                      ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                      model
-                    }
-                  ],
-                  targetId
-                )
-              : this.createMessagesBridge(
-                  [
-                    {
-                      ...this.healthObservation(candidate),
-                      id: targetId,
-                      baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
-                      ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                      model,
-                      ...(candidate.provider.vendorId &&
-                      usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
-                        ? { useApiKeyHeader: true }
-                        : {})
-                    }
-                  ],
-                  targetId
-                )
+            : isLabProvider(candidate.provider.type)
+              ? (() => {
+                  if (transport.kind !== 'opencode-openai')
+                    throw new Error('Lab models do not expose the Messages API.')
+                  const endpoint = resolveChatCompletionsUrl(candidate.provider)
+                  if (!endpoint) throw new Error('The OpenCode Lab target is incomplete.')
+                  return this.createProtocolForwardingBridge(
+                    [
+                      this.labForwardingTarget(targetId, 'chat-completions', endpoint, candidate, {
+                        ...(this.healthObservation(candidate) ?? {}),
+                        adaptStream: bufferChatCompletionsToolNames
+                      })
+                    ],
+                    targetId
+                  )
+                })()
+              : transport.kind === 'opencode-openai'
+                ? this.createProtocolForwardingBridge(
+                    [
+                      {
+                        ...this.healthObservation(candidate),
+                        id: targetId,
+                        wire: 'chat-completions',
+                        endpoint: resolveChatCompletionsUrl(candidate.provider)!,
+                        adaptStream: bufferChatCompletionsToolNames,
+                        ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        model
+                      }
+                    ],
+                    targetId
+                  )
+                : this.createMessagesBridge(
+                    [
+                      {
+                        ...this.healthObservation(candidate),
+                        id: targetId,
+                        baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
+                        ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        model,
+                        ...(candidate.provider.vendorId &&
+                        usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
+                          ? { useApiKeyHeader: true }
+                          : {})
+                      }
+                    ],
+                    targetId
+                  )
         bridges.push(bridge)
         const connection = await bridge.start()
         const apiEndpoints = [
@@ -878,6 +956,75 @@ class ProviderTransportOwner {
       await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
       throw error
     }
+  }
+
+  // The one place that binds a Lab request to its institution: validate the deployment boundary,
+  // translate the namespaced model id, and resolve a fresh host-owned credential per request.
+  private prepareLabRequest(
+    target: ProviderRuntimeTarget,
+    endpoint: string
+  ): Readonly<{
+    endpoint: string
+    model: string
+    resolveCredential: (forceRefresh?: boolean) => Promise<string>
+  }> {
+    const { effectiveModel, provider } = target
+    const { labServerUrl } = provider
+    if (labServerUrl && !isLabDeploymentUrl(labServerUrl, endpoint)) {
+      throw new Error('The Lab gateway endpoint left the configured deployment.')
+    }
+    // Projection has already decoded provider.model. Only effectiveModel is namespaced.
+    const model = effectiveModel === undefined ? provider.model : labModelWireId(effectiveModel)
+    if (!model) throw new Error('The Lab gateway model is missing.')
+    const expectedServerUrl = labServerUrl ?? new URL(endpoint).origin
+    return Object.freeze({
+      endpoint,
+      model,
+      resolveCredential: (forceRefresh?: boolean) =>
+        this.requireLabAccessToken(forceRefresh, expectedServerUrl)
+    })
+  }
+
+  private labForwardingTarget(
+    id: string,
+    wire: ModelProtocol,
+    endpoint: string,
+    target: ProviderRuntimeTarget,
+    extra: Partial<ProtocolForwardingBridgeTarget> = {}
+  ): ProtocolForwardingBridgeTarget {
+    if (wire === 'messages') throw new Error('Lab models do not expose the Messages API.')
+    const prepared = this.prepareLabRequest(target, endpoint)
+    return Object.freeze({
+      id,
+      wire,
+      endpoint: prepared.endpoint,
+      model: prepared.model,
+      resolveConnection: async (_signal, forceRefresh) => ({
+        endpoint: prepared.endpoint,
+        key: await prepared.resolveCredential(forceRefresh)
+      }),
+      refreshOnUnauthorized: true,
+      terminalUpstreamStatuses: [401, 502, 503],
+      mapConnectionError: (error) =>
+        error instanceof LabApiError && error.code === 'unauthorized'
+          ? {
+              status: 401,
+              code: 'unauthorized',
+              message: 'Your Lab sign-in expired. Sign in again.'
+            }
+          : undefined,
+      mapUpstreamError: mapLabGatewayError,
+      privateCredentialsErrorMessage: 'The Lab request failed.',
+      ...extra
+    })
+  }
+
+  private async requireLabAccessToken(
+    forceRefresh?: boolean,
+    expectedServerUrl?: string
+  ): Promise<string> {
+    if (!this.getLabAccessToken) throw new Error('Lab sign-in is unavailable.')
+    return this.getLabAccessToken(forceRefresh, expectedServerUrl)
   }
 
   private async startClaudeTransport(
@@ -946,9 +1093,14 @@ class ProviderTransportOwner {
     const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
       const targetBaseUrl = resolveResponsesBaseUrl(candidate.provider)
       if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
+      const targetModel = candidate.effectiveModel ?? candidate.provider.model
+      const lab =
+        isLabProvider(candidate.provider.type) && targetModel
+          ? this.prepareLabRequest(candidate, targetBaseUrl)
+          : undefined
       return {
         ...this.healthObservation(candidate),
-        baseUrl: targetBaseUrl,
+        baseUrl: lab?.endpoint ?? targetBaseUrl,
         vendorId: candidate.provider.vendorId,
         key: candidate.provider.key,
         ...(candidate.provider.type === 'xai-subscription'
@@ -957,7 +1109,7 @@ class ProviderTransportOwner {
               sanitizeRequest: sanitizeXaiResponsesRequest
             }
           : {}),
-        model: candidate.effectiveModel ?? candidate.provider.model,
+        ...(lab ? { resolveKey: lab.resolveCredential, model: lab.model } : { model: targetModel }),
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }
     }
