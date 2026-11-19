@@ -507,6 +507,10 @@
         "e2e/desktop-runtime-restart.spec.ts",
         "e2e/desktop-runtime-preview-recovery.spec.ts",
         "e2e/desktop-runtime-stop.spec.ts",
+        "e2e/literature-citation-graph-live.spec.ts",
+        "e2e/literature-citation-graph.spec.ts",
+        "e2e/fixtures/citation-graph-electron.mjs",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/pdf-annotations.spec.ts",
         "e2e/pdf-translation-pair.spec.ts",
         "e2e/pdf-translation-preparation.spec.ts",
@@ -646,6 +650,7 @@
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
         "e2e/fixtures/local-service-cleanup.ts",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/fake-opencode.mjs",
         "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
@@ -721,6 +726,7 @@
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
       "paths": [
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/localized-settings.ts",
         "e2e/fixtures/settings-preferences.ts",
         "e2e/fixtures/scroll-geometry.ts"

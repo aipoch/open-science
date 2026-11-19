@@ -114,6 +114,7 @@
     "src/renderer/src/pages/literature/imports/useLiteraturePdfStaging.tsx",
     "src/renderer/src/pages/literature/list/useLiteratureTable.ts",
     "src/renderer/src/pages/literature/detail/LiteratureBibliographicDetails.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureIdentifiers.tsx",
     "src/renderer/src/pages/literature/list/LiteratureCandidateDialog.tsx",
     "src/renderer/src/pages/literature/imports/useLiteratureImport.ts",
     "src/renderer/src/pages/literature/list/LiteratureSelection.tsx",
@@ -170,7 +171,20 @@
     "src/renderer/src/pages/literature/detail/LiteratureOverview.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.tsx",
-    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
+    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx",
+    "src/renderer/src/pages/literature/detail/citation-graph.ts",
+    "src/renderer/src/pages/literature/detail/citation-graph.test.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureCitationGraph.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureCitationGraph.render.test.tsx",
+    "src/renderer/src/pages/literature/detail/useCitationGraphController.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureCitationCanvas.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureCitationInspector.tsx",
+    "src/renderer/src/pages/literature/detail/CitationPaperDetails.tsx",
+    "src/renderer/src/pages/literature/literature-metadata-lookup.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureCitationStatus.tsx",
+    "src/renderer/src/pages/literature/detail/useCitationSource.ts",
+    "src/renderer/src/pages/literature/detail/CitationLookupError.tsx",
+    "src/renderer/src/pages/literature/detail/CitationLookupLoading.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -231,7 +245,9 @@
       "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
       "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
-      "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
+      "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx",
+      "src/renderer/src/pages/literature/detail/citation-graph.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureCitationGraph.render.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
