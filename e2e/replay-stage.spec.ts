@@ -11,8 +11,10 @@ import {
 import { createServer, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import type { ReplayEvidenceReference } from '../src/shared/replay'
 
 type ReplayFixtureWindow = Window & {
+  discussionCapture: { stepId: string; evidence: ReplayEvidenceReference[] }
   replayFixture: {
     seek: (time: number) => void
     prepare: (mode: string, timeout: number) => void
@@ -130,7 +132,9 @@ base(
     await ask.hover()
     await expect(page.getByRole('tooltip', { name: 'Ask about this step' })).toBeVisible()
     await ask.click()
-    expect(await page.evaluate(() => window['discussionCapture'].stepId)).toBe('question')
+    expect(
+      await page.evaluate(() => (window as unknown as ReplayFixtureWindow).discussionCapture.stepId)
+    ).toBe('question')
     await page.mouse.move(0, 0)
     await expect(ask).toHaveCSS('opacity', '0')
     await record.focus()
@@ -150,9 +154,11 @@ base(
     await notebook.hover()
     await expect(askRun).toHaveCSS('opacity', '1')
     await askRun.click()
-    expect(await page.evaluate(() => window['discussionCapture'].evidence)).toEqual([
-      expect.objectContaining({ kind: 'notebook-run', id: 'run-1' })
-    ])
+    expect(
+      await page.evaluate(
+        () => (window as unknown as ReplayFixtureWindow).discussionCapture.evidence
+      )
+    ).toEqual([expect.objectContaining({ kind: 'notebook-run', id: 'run-1' })])
 
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true })
