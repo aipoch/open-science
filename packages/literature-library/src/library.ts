@@ -111,11 +111,16 @@ export class LibraryTransaction extends LibraryImporter {
         candidate.origin.sessionId ?? null
       ])
     )
-    if (persisted.state === 'pending') {
-      if (pdf) await this.store.stagePdf(persisted.id, pdf, provenanceJson)
-      if (previous?.id !== persisted.id)
-        await this.store.attachSource({ source: candidate.source, candidateId: persisted.id })
-    }
+    if (persisted.state === 'pending' && pdf)
+      await this.store.stagePdf(persisted.id, pdf, provenanceJson)
+    const acceptedItemId =
+      persisted.state === 'accepted'
+        ? (await this.store.candidate(persisted.id))?.acceptedItemId
+        : undefined
+    await this.store.attachSource({
+      source: candidate.source,
+      ...(acceptedItemId ? { itemId: acceptedItemId } : { candidateId: persisted.id })
+    })
     return {
       kind: 'candidate',
       id: persisted.id,

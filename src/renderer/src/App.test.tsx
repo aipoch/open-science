@@ -2452,6 +2452,7 @@ describe('App startup routing', () => {
 
   const notificationUnavailableErrors = [
     "No handler registered for 'notifications:peek-pending-open-session'",
+    "Error invoking remote method 'notifications:peek-pending-open-session': DesktopRuntimeWriteNotSubmittedError: Desktop runtime is disconnected.",
     "Error invoking remote method 'notifications:peek-pending-open-session': Error: Desktop is recovering. This operation was not submitted."
   ]
 

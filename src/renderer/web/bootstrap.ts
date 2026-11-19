@@ -73,6 +73,7 @@ const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
+  'settings:test-image-model',
   'literature:overview-batch',
   'literature:collect',
   'storage:migrate',
@@ -661,7 +662,7 @@ const installWebApi = async (): Promise<EventCursor> => {
               break
           }
           const acquiredResource = (await invoke('preview-resources:acquire', [
-            previewRequest
+            { ...previewRequest, purpose: 'download' }
           ])) as { id: string; url: string; size: number }
           resource = acquiredResource
           if (!writable && acquiredResource.size > WEB_BLOB_DOWNLOAD_MAX_BYTES) {

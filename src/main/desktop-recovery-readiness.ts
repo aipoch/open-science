@@ -29,10 +29,15 @@ export async function verifyDesktopRecoveryReadiness(
     const storage = (await client.invokeHost('storage:get-status')) as StorageStatus
     if (storage.dataRoot !== config.dataRoot || storage.dataRootMissing)
       throw new Error('The original data folder is not readable after recovery.')
-    const [sessions] = (await Promise.all([
-      client.invokeHost('sessions:list'),
-      client.invokeHost('projects:list')
-    ])) as [ListSessionSummariesResult, unknown]
+    let sessions: ListSessionSummariesResult
+    while (true) {
+      sessions = (await client.invokeHost('sessions:list')) as ListSessionSummariesResult
+      if (sessions.diagnostics?.catalogHydrationPending !== true) break
+      if (Date.now() >= deadline)
+        throw new Error('The recovered service or original data readiness check timed out.')
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, deadline - Date.now())))
+    }
+    await client.invokeHost('projects:list')
     if (
       sessions.diagnostics?.isComplete !== true ||
       sessions.diagnostics?.isProjectDeletionRecoveryComplete !== true

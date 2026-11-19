@@ -7,6 +7,7 @@ export {
   resolveVendorResponsesBaseUrl,
   resolveVendorApiKeyUrl,
   resolveVendorModelsUrl,
+  resolveVendorApiEndpoints,
   usesVendorMessagesApiKeyHeader,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
@@ -15,7 +16,8 @@ export type {
   OfficialVendorId,
   VendorRegion,
   OfficialModel,
-  OfficialVendor
+  OfficialVendor,
+  ImageGenerationProviderDefinition
 } from './providers/types'
 export { getVendorModelReasoningCapability } from './providers/lookup'
 export type {
@@ -30,6 +32,19 @@ export type {
   ClassificationAdapter,
   ClassificationModelDefinition
 } from './providers/classification'
-export { getProviderDefinition, getProviderModels } from './providers/definitions'
+export {
+  getProviderDefinition,
+  getProviderModels,
+  resolveProviderImageBaseUrl
+} from './providers/definitions'
 export type { ProviderDefinition } from './providers/definitions'
 export type { ModelCapability, ModelIdentity, ModelDefinition } from './models/types'
+
+export { resolveVendorModelCatalog } from './providers/lookup'
+export type {
+  CatalogModel,
+  CatalogSnapshot,
+  CatalogStatus,
+  CatalogErrorCode,
+  CatalogRequestOptions
+} from './protocols/catalog'

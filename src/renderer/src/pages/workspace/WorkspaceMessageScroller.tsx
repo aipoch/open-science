@@ -1,4 +1,5 @@
 import { ScheduleMessageCards, SessionScheduleBanner } from './schedules/ScheduleMessageCard'
+import { ImageToolPreviewContext } from './image-tool-preview-context'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
@@ -683,6 +684,7 @@ const WorkspaceMessageScrollerImpl = ({
       ])
     : undefined
   const { artifactsForMessage } = useWorkspaceArtifactVisibility(activeSession)
+
   const [resolveFileReferences] = useState(createMessageFileReferenceResolver)
   const notebookRoot = notebookReference?.notebookSessionRoot
   const fileReferencesByMessage = useMemo(
@@ -2359,30 +2361,37 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 return (
-                  <WorkspaceActivityGroup
-                    allowFolderAccess={Boolean(
-                      activeSession &&
-                      activeSession.contentLoaded !== false &&
-                      !activeSession.packageOrigin
-                    )}
+                  <ImageToolPreviewContext.Provider
                     key={item.id}
-                    group={item}
-                    isExpanded={windowFindOpen || expandedActivityGroups.has(item.id)}
-                    onToggleGroup={toggleActivityGroup}
-                    expansionOverrides={activityExpansionOverrides}
-                    onToggleRow={toggleActivityRow}
-                    notebookRunsById={notebookRunsById}
-                    onNotebookRunNearViewport={handleNotebookRunNearViewport}
-                    permission={activeSession?.runtimeContext?.permission}
-                    jobsByActivityId={jobsByActivityId}
-                    onOpenJobDetail={handleOpenJobDetail}
-                    annotationPort={activityAnnotationPort}
-                    revealRequest={
-                      sessionItemRevealRequest?.itemType === 'tool-activity'
-                        ? sessionItemRevealRequest
-                        : undefined
-                    }
-                  />
+                    value={{
+                      projectId: activeSession?.projectId,
+                      sessionId: activeSession?.id
+                    }}
+                  >
+                    <WorkspaceActivityGroup
+                      allowFolderAccess={Boolean(
+                        activeSession &&
+                        activeSession.contentLoaded !== false &&
+                        !activeSession.packageOrigin
+                      )}
+                      group={item}
+                      isExpanded={windowFindOpen || expandedActivityGroups.has(item.id)}
+                      onToggleGroup={toggleActivityGroup}
+                      expansionOverrides={activityExpansionOverrides}
+                      onToggleRow={toggleActivityRow}
+                      notebookRunsById={notebookRunsById}
+                      onNotebookRunNearViewport={handleNotebookRunNearViewport}
+                      permission={activeSession?.runtimeContext?.permission}
+                      jobsByActivityId={jobsByActivityId}
+                      onOpenJobDetail={handleOpenJobDetail}
+                      annotationPort={activityAnnotationPort}
+                      revealRequest={
+                        sessionItemRevealRequest?.itemType === 'tool-activity'
+                          ? sessionItemRevealRequest
+                          : undefined
+                      }
+                    />
+                  </ImageToolPreviewContext.Provider>
                 )
               })}
 

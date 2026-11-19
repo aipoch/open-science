@@ -6,6 +6,7 @@ import type {
 
 export type NoticeActionId =
   | 'retry'
+  | 'refresh'
   | 'resume'
   | 'open-provider-settings'
   | 'open-agent-settings'
@@ -81,6 +82,88 @@ export const noticeCatalog = {
 
 // Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'configuration/model-unavailable': {
+    level: 'warning',
+    titleKey: 'Model configuration needs attention',
+    descriptionKey: 'The selected model is unavailable. Select another model in Settings.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry'],
+    feedback: 'link'
+  },
+  'service/unavailable': noticeCatalog.service,
+  'configuration/endpoint-invalid': {
+    ...noticeCatalog.configuration,
+    titleKey: 'The model service address is invalid',
+    descriptionKey: 'Check the model provider base URL and endpoint path, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/auth-failed': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Model provider credentials need attention',
+    descriptionKey: 'Check the model provider API key or credentials, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/billing': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Model provider quota needs attention',
+    descriptionKey: 'Check the model provider plan, quota or account balance, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/request-invalid': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Request parameters need attention',
+    descriptionKey:
+      'The model provider rejected this request. Check the model and provider settings.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'service/rate-limited': {
+    ...noticeCatalog.service,
+    titleKey: 'Request limited',
+    descriptionKey: 'The model provider is limiting requests. Wait a moment, then retry.',
+    primaryAction: 'retry',
+    secondaryActions: []
+  },
+  'service/connection-failed': {
+    ...noticeCatalog.service,
+    titleKey: 'Unable to connect to the model service',
+    descriptionKey: 'Check the network connection and model service address, then retry.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'service/response-interrupted': {
+    ...noticeCatalog.service,
+    titleKey: 'The model response was interrupted',
+    descriptionKey: 'The connection closed before the model finished replying. Retry the request.',
+    primaryAction: 'retry',
+    secondaryActions: []
+  },
+  'service/response-invalid': {
+    ...noticeCatalog.service,
+    titleKey: 'The model response could not be parsed',
+    descriptionKey:
+      'The model provider returned an invalid response. Check the protocol settings or retry.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'service/provider-error': {
+    ...noticeCatalog.service,
+    titleKey: 'Model request failed',
+    descriptionKey:
+      'The model provider could not complete the request. Retry or check the model provider settings.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'input/context-overflow': {
+    ...noticeCatalog.input,
+    titleKey: 'The input is too long',
+    descriptionKey: 'Shorten the conversation or remove some attachments, then retry.',
+    primaryAction: 'compact',
+    secondaryActions: ['remove-attachments']
+  },
   'configuration/vision-model': {
     level: 'warning',
     titleKey: 'Image support is not configured',
@@ -89,6 +172,10 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     primaryAction: 'open-provider-settings',
     secondaryActions: [],
     feedback: 'none'
+  },
+  'service/image-observation': {
+    ...noticeCatalog.service,
+    primaryAction: 'refresh'
   },
   'service/prompt-optimization': {
     level: 'warning',
@@ -153,6 +240,7 @@ export type ComposerNotice = Readonly<{
   recovery?: 'retry-artifact-publication'
   recoveryCause?: string
   operation?: string
+  summary?: { title: string; description?: string }
 }>
 export type NoticeActionHandler = Readonly<{
   run: (notice: ComposerNotice) => void | Promise<void>

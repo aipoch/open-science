@@ -21,13 +21,16 @@
     "src/renderer/src/stores/settings-store.ts",
     "src/renderer/src/stores/settings-write-coordinator.test.ts",
     "src/renderer/src/stores/settings-write-coordinator.ts",
-    "src/renderer/src/lib/read-with-deadline.ts"
+    "src/renderer/src/lib/read-with-deadline.ts",
+    "src/renderer/src/stores/image-model-settings-store.ts",
+    "src/renderer/src/stores/image-model-settings-store.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/runtime-settings-store.ts",
     "src/renderer/src/stores/settings-return-focus.ts",
     "src/renderer/src/stores/settings-store.ts",
-    "src/renderer/src/lib/read-with-deadline.ts"
+    "src/renderer/src/lib/read-with-deadline.ts",
+    "src/renderer/src/stores/image-model-settings-store.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -41,7 +44,8 @@
       "src/renderer/src/stores/settings-skills-slice.test.ts",
       "src/renderer/src/stores/settings-store.architecture.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
-      "src/renderer/src/stores/settings-write-coordinator.test.ts"
+      "src/renderer/src/stores/settings-write-coordinator.test.ts",
+      "src/renderer/src/stores/image-model-settings-store.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -268,5 +272,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Shared image settings add an independent snapshot owner consumed by Settings and image previews; retain full CI until the expanded state boundary and ordering contract are reviewed."
 }

@@ -202,6 +202,29 @@ it('uses the active branch and ignores an old login completion on a clean branch
   hook.providers([{ ...provider, lastValidatedAt: 30 }])
   expect(hook.result.required).toBe(false)
 })
+it('keeps structured provider authentication visible until matching credentials are validated', () => {
+  const hook = mount()
+  hook.error(null)
+  const failed = failedSession()
+  const failure = {
+    category: 'configuration' as const,
+    reason: 'configuration/auth-failed' as const,
+    diagnostics: {
+      protocol: 'chat-completions' as const,
+      status: 401,
+      code: 'authentication_error'
+    }
+  }
+  failed.error = 'Invalid API key'
+  failed.failure = failure
+  const outcome = { kind: 'failed' as const, settledAt: 20, error: 'Invalid API key', failure }
+  failed.messages[0].turnOutcome = outcome
+  failed.conversationGraph!.messages[0].turnOutcome = outcome
+  hook.session(failed)
+  expect(hook.result.required).toBe(true)
+  hook.providers([{ ...provider, lastValidatedAt: 30 }])
+  expect(hook.result.required).toBe(false)
+})
 it('does not apply an old runtime provider failure to the newly selected provider', () => {
   const hook = mount()
   hook.error(null)

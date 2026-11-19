@@ -36,7 +36,8 @@ import {
   sanitizeComputeGrant,
   sanitizeConnectors,
   sanitizePackageMirror,
-  sanitizeProvider
+  sanitizeProvider,
+  sanitizeImageSettings
 } from './record-codec'
 import {
   createEmptySettings,
@@ -263,6 +264,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     ...(modalRuntime.success ? { modalRuntime: modalRuntime.data } : {}),
     version: SETTINGS_FILE_VERSION,
     providers,
+    ...sanitizeImageSettings(value, providers),
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),

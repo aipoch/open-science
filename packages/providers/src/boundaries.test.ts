@@ -20,7 +20,7 @@ const allowed: Record<string, string[]> = {
   protocols: ['protocols'],
   transport: ['transport'],
   responses: ['responses', 'protocols', 'transport'],
-  discovery: ['discovery', 'transport.ts'],
+  discovery: ['discovery', 'protocols', 'transport.ts', 'errors.ts'],
   models: ['models', 'protocols', 'transport', 'errors.ts']
 }
 it('keeps internal responsibilities acyclic and independent of host source and facades', () => {

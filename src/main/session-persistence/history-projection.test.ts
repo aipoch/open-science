@@ -1,12 +1,14 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   activateConversationBranch,
   createLinearConversationGraph,
   forkEditedConversationMessage,
+  synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { createSessionFile, decodeSessionFile } from '../../shared/session-persistence'
@@ -170,20 +172,75 @@ const session = (tools = 100): PersistedChatSession => ({
     {
       id: 'artifact',
       kind: 'managed-file',
-      path: '/artifact/result.txt',
-      fileUrl: 'file:///artifact/result.txt'
+      path: join(tmpdir(), 'artifact', 'result.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'result.txt')).href
     },
     {
       id: 'unrelated',
       kind: 'managed-file',
-      path: '/artifact/old.txt',
-      fileUrl: 'file:///artifact/old.txt'
+      path: join(tmpdir(), 'artifact', 'old.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'old.txt')).href
     }
   ]
 })
 const request = { projectId: 'project-1', sessionId: 'session-1' }
 
 describe('SQLite Session display history', () => {
+  it('restores graph-owned tool prompts from existing indexes without rewriting stored payloads', async () => {
+    const index = await setup()
+    const full = session(1)
+    full.messages[0]!.turnOutcome = { kind: 'completed', settledAt: 200 }
+    full.messages.splice(1, 0, {
+      ...message('progress', 'agent', 2),
+      responseToMessageId: 'prompt'
+    })
+    for (const tool of full.activities!) delete tool.promptMessageId
+    full.conversationGraph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: full.id,
+        messages: full.messages,
+        createdAt: 1,
+        updatedAt: 200
+      }),
+      full.activities!,
+      full.activityGroups!
+    )
+    await index.sync(full, 'graph-source')
+    const stored = await client!.sessionHistoryItem.findUniqueOrThrow({
+      where: {
+        sessionId_kind_itemId: { sessionId: full.id, kind: 'activity', itemId: 'tool-0' }
+      }
+    })
+    expect(stored.promptMessageId).toBe('prompt')
+    expect(JSON.parse(stored.payloadJson)).not.toHaveProperty('promptMessageId')
+    const page = (await index.readPage(request, 'graph-source'))!
+    expect(page.session.conversationGraph).toBeUndefined()
+    expect(page.session.activities).toEqual([{ ...full.activities![0], promptMessageId: 'prompt' }])
+    expect(
+      await client!.sessionHistoryItem.findUniqueOrThrow({
+        where: {
+          sessionId_kind_itemId: { sessionId: full.id, kind: 'activity', itemId: 'tool-0' }
+        }
+      })
+    ).toEqual(stored)
+  })
+
+  it('does not turn inferred legacy index prompts into tool ownership', async () => {
+    const index = await setup()
+    const full = session(1)
+    delete full.activities![0]!.promptMessageId
+    await index.sync(full, 'legacy-source')
+    const stored = await client!.sessionHistoryItem.findUniqueOrThrow({
+      where: {
+        sessionId_kind_itemId: { sessionId: full.id, kind: 'activity', itemId: 'tool-0' }
+      }
+    })
+    expect(stored.promptMessageId).toBe('prompt')
+    expect((await index.readPage(request, 'legacy-source'))!.session.activities).toEqual(
+      full.activities
+    )
+  })
+
   it('reads 80 complete business items, their prompt and clipped group without a full transcript', async () => {
     const index = await setup()
     const full = session()
@@ -545,8 +602,8 @@ describe('SQLite Session display history', () => {
     const added = {
       id: 'late-artifact',
       kind: 'managed-file' as const,
-      path: '/artifact/late.txt',
-      fileUrl: 'file:///artifact/late.txt'
+      path: join(tmpdir(), 'artifact', 'late.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'late.txt')).href
     }
     const next = {
       ...full,

@@ -107,6 +107,8 @@ export type ChatSession = Omit<
   }
   // False for a catalog row or a display-only history page. Neither is a save authority.
   contentLoaded?: false
+  // Transient projection fact. Details recovery is requested only when the Session is opened.
+  needsStartupRecovery?: boolean
   historyPage?: {
     revision: number
     beforeCursor?: string

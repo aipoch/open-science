@@ -28,7 +28,12 @@
     "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
     "src/renderer/src/pages/settings/provider-key-security.ts",
     "src/renderer/src/pages/settings/ClassificationPanel.tsx",
-    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
+    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+    "src/renderer/src/pages/settings/CodeBuddySubscriptionRow.tsx",
+    "src/renderer/src/pages/settings/ImageModelSettings.render.test.tsx",
+    "src/renderer/src/pages/settings/ImageModelSettings.tsx",
+    "src/renderer/src/pages/settings/use-image-model-settings.ts",
+    "src/renderer/src/pages/settings/ImageServiceTest.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AgentHomeImportView.tsx",
@@ -40,7 +45,9 @@
     "src/renderer/src/pages/settings/SkillUsageAgents.tsx",
     "src/renderer/src/pages/settings/provider-form-value.ts",
     "src/renderer/src/pages/settings/provider-icons.tsx",
-    "src/renderer/src/pages/settings/skill-marketplace-model.ts"
+    "src/renderer/src/pages/settings/skill-marketplace-model.ts",
+    "src/renderer/src/pages/settings/ImageModelSettings.tsx",
+    "src/renderer/src/pages/settings/use-image-model-settings.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -59,7 +66,8 @@
       "src/renderer/src/pages/settings/agent-home-import-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/agent-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
-      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ImageModelSettings.render.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -155,5 +163,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Image service settings add renderer forms and a scenario selector beyond the reviewed source boundary; retain full CI until the expanded boundary is reviewed."
 }

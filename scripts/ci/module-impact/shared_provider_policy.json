@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/shared/provider-model-catalog.ts",
+    "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
     "src/shared/provider-reasoning-effort.ts",
     "src/shared/model-preference-contract.ts",
@@ -14,9 +16,15 @@
     "src/shared/provider-model-policy.test.ts",
     "src/shared/configured-model-catalog.test.ts",
     "src/shared/provider-presentation-policy.test.ts",
-    "src/shared/reasoning-effort-presets.test.ts"
+    "src/shared/reasoning-effort-presets.test.ts",
+    "src/shared/image-model-settings.ts",
+    "src/shared/image-model-service-policy.ts",
+    "src/shared/image-model-presets/index.ts",
+    "src/shared/image-model-presets/index.test.ts"
   ],
   "interfacePaths": [
+    "src/shared/provider-model-catalog.ts",
+    "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
     "src/shared/provider-reasoning-effort.ts",
     "src/shared/model-preference-contract.ts",
@@ -25,7 +33,10 @@
     "src/shared/provider-error.ts",
     "src/shared/configured-model-catalog.ts",
     "src/shared/local-models.ts",
-    "src/shared/classification.ts"
+    "src/shared/classification.ts",
+    "src/shared/image-model-settings.ts",
+    "src/shared/image-model-service-policy.ts",
+    "src/shared/image-model-presets/index.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -40,7 +51,8 @@
       "src/shared/provider-model-policy.test.ts",
       "src/shared/configured-model-catalog.test.ts",
       "src/shared/provider-presentation-policy.test.ts",
-      "src/shared/reasoning-effort-presets.test.ts"
+      "src/shared/reasoning-effort-presets.test.ts",
+      "src/shared/image-model-presets/index.test.ts"
     ],
     "contract": [],
     "consumer": [

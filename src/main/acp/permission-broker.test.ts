@@ -67,6 +67,33 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
   ]
 })
 
+it.each(['generate_image', 'edit_image'])('asks once per %s call in Ask mode', async (tool) => {
+  const emit = vi.fn()
+  const grants = new ConversationPermissionGrantStore()
+  const identity = `open-science-images/${tool}`
+  const request = withTrustedMcpToolIdentity(createPermissionRequest(), identity)
+  grants.remember(request.sessionId, `mcp:${identity}`)
+  const broker = new AcpPermissionBroker(emit, grants)
+  const context = { profile: 'ask' as const, mcpServerNames: ['open-science-images'] }
+
+  await expect(broker.requestPermission(request, { ...context, profile: 'auto' })).resolves.toEqual(
+    {
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    }
+  )
+  expect(emit).not.toHaveBeenCalled()
+
+  const waiting = broker.requestPermission(request, context)
+  const pending = broker.getPendingRequests()[0]
+  expect(emit).toHaveBeenCalledOnce()
+  expect(pending.mcpIdentity).toBe(identity)
+  expect(pending.options).toEqual([{ ...request.options[0], scope: 'once' }, request.options[1]])
+  await broker.respond({ requestId: pending.requestId, optionId: 'reject-once' })
+  await expect(waiting).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'reject-once' }
+  })
+})
+
 describe('issue #3284 shared permission boundary', () => {
   it('hands verified Notebook calls to the host without creating a reusable grant', async () => {
     const emit = vi.fn()

@@ -220,7 +220,10 @@ it('builds an offline seekable player with continuous speech, source identity an
   })
   try {
     await (preview.window as unknown as { __ready: Promise<unknown> }).__ready
-    expect(notifyParent).toHaveBeenCalledWith({ type: 'open-science-research-video-ready' }, '*')
+    expect(notifyParent).toHaveBeenCalledWith(
+      { type: 'open-science-research-video-ready', duration: result.duration },
+      '*'
+    )
   } finally {
     preview.window.close()
   }

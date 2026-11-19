@@ -18,22 +18,25 @@ export const typeFieldText = (item: LiteratureItemInput, field: string): string 
   return typeof value === 'string' ? value.trim() : ''
 }
 
-export const publicationSummary = (item: LiteratureItemInput): string => {
+export const publicationCitation = (item: LiteratureItemInput): string => {
   const publication = typeFieldText(item, 'journalAbbreviation') || item.containerTitle
   const date = item.issuedText || item.issuedYear?.toString() || ''
   const volume = typeFieldText(item, 'volume')
   const issue = typeFieldText(item, 'issue')
   const pages = typeFieldText(item, 'pages')
+  const volumeIssue = `${volume}${issue ? `(${issue})` : ''}`
+  const volumeIssuePages = volumeIssue && pages ? `${volumeIssue}:${pages}` : volumeIssue || pages
+  return `${[publication, date].filter(Boolean).join('. ')}${
+    volumeIssuePages ? `${publication || date ? ';' : ''}${volumeIssuePages}` : ''
+  }`
+}
+
+export const publicationSummary = (item: LiteratureItemInput): string => {
   const doiIdentifier = item.identifiers.find((identifier) => identifier.scheme === 'doi')
   const doi = doiIdentifier
     ? normalizeLiteratureIdentifierValue(doiIdentifier.scheme, doiIdentifier.value)
     : undefined
-  const volumeIssue = `${volume}${issue ? `(${issue})` : ''}`
-  const volumeIssuePages = volumeIssue && pages ? `${volumeIssue}:${pages}` : volumeIssue || pages
-  const citation = `${[publication, date].filter(Boolean).join('. ')}${
-    volumeIssuePages ? `${publication || date ? ';' : ''}${volumeIssuePages}` : ''
-  }`
-  return [citation, doi ? `doi: ${doi}` : ''].filter(Boolean).join('. ')
+  return [publicationCitation(item), doi ? `doi: ${doi}` : ''].filter(Boolean).join('. ')
 }
 
 export const getExternalLiteratureUrl = (value: string): URL | undefined => {

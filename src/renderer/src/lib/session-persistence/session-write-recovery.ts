@@ -7,6 +7,7 @@ import {
   type PersistedChatSession,
   type SaveSessionManifestRequest,
   type SaveSessionOptions,
+  type SessionMetadataReceipt,
   type SessionConflictRebaseField
 } from '../../../../shared/session-persistence'
 
@@ -31,6 +32,8 @@ export type SessionFieldWriteIntent = Readonly<{
 }>
 
 export type SessionWriteIntent = SessionSnapshotWriteIntent | SessionFieldWriteIntent
+
+type SessionWriteResult = PersistedChatSession | SessionMetadataReceipt
 
 type RetainedWrite = {
   target: string
@@ -76,7 +79,7 @@ export class SessionWriteRecovery {
 
   constructor(
     private readonly policy: {
-      satisfied: (intent: SessionWriteIntent, authority: PersistedChatSession) => boolean
+      satisfied: (intent: SessionWriteIntent, authority: SessionWriteResult) => boolean
       merge: (retained: SessionWriteIntent, next: SessionWriteIntent) => SessionWriteIntent
       ignoreError?: (error: unknown) => boolean
       report?: (
@@ -201,11 +204,11 @@ export class SessionWriteRecovery {
     return version
   }
 
-  trackSession(
+  trackSession<Result extends SessionWriteResult>(
     target: string,
     intent: () => SessionWriteIntent,
-    run: () => Promise<PersistedChatSession>
-  ): Promise<PersistedChatSession> {
+    run: () => Promise<Result>
+  ): Promise<Result> {
     // Reading identity does not serialize a growing transcript on every streaming tick.
     return this.observe(this.track(target, intent, undefined, run))
   }
@@ -229,12 +232,12 @@ export class SessionWriteRecovery {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending])
   }
 
-  private track(
+  private track<Result extends SessionWriteResult>(
     target: string,
     intent: () => SessionWriteIntent,
     manifest: undefined,
-    run: () => Promise<PersistedChatSession>
-  ): Promise<PersistedChatSession>
+    run: () => Promise<Result>
+  ): Promise<Result>
   private track(
     target: string,
     intent: undefined,
@@ -245,8 +248,8 @@ export class SessionWriteRecovery {
     target: string,
     intent: (() => SessionWriteIntent) | undefined,
     manifest: SaveSessionManifestRequest | undefined,
-    run: () => Promise<PersistedChatSession | void>
-  ): Promise<PersistedChatSession | void> {
+    run: () => Promise<SessionWriteResult | void>
+  ): Promise<SessionWriteResult | void> {
     const version = this.begin(target, intent, manifest)
     try {
       const result = await run()

@@ -36,7 +36,7 @@ import type {
   LiteratureLibraryScope,
   LiteratureLibrarySearchResult
 } from '../literature/library-mcp-server'
-import type { LiteratureReadDocumentRequest } from '../literature/mcp-server'
+import type { LiteratureReadDocumentRequest } from '../literature/mcp-contract'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -330,6 +330,10 @@ export type AcpRuntimeArtifactOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  enableImageGeneration?: boolean
+  imageMcp?: {
+    getPresetId: () => Promise<string | undefined>
+  }
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>

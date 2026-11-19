@@ -164,7 +164,15 @@ const readOpenFileChunks = async function* (
   }
 }
 
-const inlineChunks = function* (content: string, encoding: 'utf8' | 'base64'): Generator<Buffer> {
+const inlineChunks = function* (
+  content: string | Buffer,
+  encoding: 'utf8' | 'base64'
+): Generator<Buffer> {
+  if (typeof content !== 'string') {
+    for (let offset = 0; offset < content.length; offset += 64 * 1024)
+      yield content.subarray(offset, offset + 64 * 1024)
+    return
+  }
   if (encoding === 'utf8') {
     const chunkCharacters = 16 * 1024
     for (let offset = 0; offset < content.length;) {
@@ -190,7 +198,8 @@ const inlineChunks = function* (content: string, encoding: 'utf8' | 'base64'): G
   if (carry) yield Buffer.from(carry, 'base64')
 }
 
-const inlineDecodedSize = (content: string, encoding: 'utf8' | 'base64'): number => {
+const inlineDecodedSize = (content: string | Buffer, encoding: 'utf8' | 'base64'): number => {
+  if (typeof content !== 'string') return content.length
   let sizeBytes = 0
   for (const chunk of inlineChunks(content, encoding)) sizeBytes += chunk.byteLength
   return sizeBytes
@@ -198,7 +207,7 @@ const inlineDecodedSize = (content: string, encoding: 'utf8' | 'base64'): number
 
 const writeInlineWithinBudget = async (
   targetPath: string,
-  content: string,
+  content: string | Buffer,
   encoding: 'utf8' | 'base64',
   maxBytes: number,
   signal?: AbortSignal

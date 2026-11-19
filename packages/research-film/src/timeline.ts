@@ -43,6 +43,40 @@ export type ResolvedScene = Omit<VideoScene, 'lines' | 'panels'> & {
 export type VoiceTiming = { duration: number; words: Array<[number, number]> }
 const round = (n: number): number => Math.round(n * 1000) / 1000
 const punctuation = /[,.?!—:;]$/u
+// The stage uses 46 px captions in landscape and 64 px in portrait. Estimate letter
+// widths here, then the desktop review measures the actual font in the caption box.
+function captionPhrases(
+  words: WordTime[],
+  maxWords: number,
+  maxWidth: number,
+  stopAtPunctuation: boolean
+): WordTime[][] {
+  const phrases: WordTime[][] = []
+  let phrase: WordTime[] = []
+  let width = 0
+  for (const word of words) {
+    let wordWidth = 0
+    for (const ch of word[0]) {
+      if ('MWmw'.includes(ch)) wordWidth += 1.55
+      else if (/\p{Lu}/u.test(ch)) wordWidth += 1.3
+      else wordWidth += "iljtfrI.,:;'!|() ".includes(ch) ? 0.5 : 1
+    }
+    if (phrase.length && (phrase.length >= maxWords || width + 0.5 + wordWidth > maxWidth)) {
+      phrases.push(phrase)
+      phrase = []
+      width = 0
+    }
+    width += (phrase.length ? 0.5 : 0) + wordWidth
+    phrase.push(word)
+    if (stopAtPunctuation && phrase.length >= 2 && punctuation.test(word[0])) {
+      phrases.push(phrase)
+      phrase = []
+      width = 0
+    }
+  }
+  if (phrase.length) phrases.push(phrase)
+  return phrases
+}
 const itemKeys: Record<string, 'items' | 'rows' | 'marks'> = {
   stats: 'items',
   bars: 'items',
@@ -55,7 +89,9 @@ const itemKeys: Record<string, 'items' | 'rows' | 'marks'> = {
 const normal = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}_.%,]/gu, '')
 
 export function resolveVideoCue(cue: string, scene: Pick<ResolvedScene, 'dur' | 'lines'>): number {
-  const match = /^(end|\d+)(\.end|:([^\s+-]+))?([+-]\d+(?:\.\d+)?)?$/.exec(cue)
+  const match = /^(end|\d+)(\.end|:([^\s+-]+(?:-[^\s+\d-][^\s+-]*)*))?([+-]\d+(?:\.\d+)?)?$/.exec(
+    cue
+  )
   if (!match) throw new Error(`Invalid cue: ${cue}`)
   const [, base, tail, word, offset] = match
   const delta = Number(offset ?? 0)
@@ -302,6 +338,20 @@ export function buildVideoTimeline(
           .map((q) => q.t_out!)
       )
     scheduleVerdictReading(resolved)
+    const card = resolved.panels.at(-1)
+    if (scene.role === 'outro' && index === spec.scenes.length - 1 && card?.type === 'end_card') {
+      // The logo, tagline and byline reveal over 4.1 seconds. Reserve their own
+      // space and leave a settled frame before the final fade, even with short voice.
+      const content = resolved.panels.slice(0, -1)
+      if (content.length) {
+        const handoff = Math.max(card.t_in, ...content.map((panel) => panel.t_out ?? resolved.dur))
+        card.t_in = handoff
+        for (const panel of content) panel.t_out ??= handoff
+      }
+      card.occ_from = card.t_in
+      card.t_out = null
+      resolved.dur = round(Math.max(resolved.dur, card.t_in + 5))
+    }
     scenes.push(resolved)
     start += resolved.dur
   }
@@ -309,28 +359,21 @@ export function buildVideoTimeline(
   const chunks: Array<{ words: WordTime[]; end: number }> = []
   for (const scene of scenes)
     for (const line of scene.lines) {
-      let words: WordTime[] = []
-      for (const [i, [word, a, b]] of line.words.entries()) {
-        words.push([word, round(scene.start + a), round(scene.start + b)])
-        if (
-          words.length >= 7 ||
-          (punctuation.test(word) && words.length >= 2) ||
-          i === line.words.length - 1
-        ) {
-          chunks.push({ words, end: round(scene.start + b + 0.35) })
-          words = []
-        }
-      }
+      const timed = line.words.map<WordTime>(([word, a, b]) => [
+        word,
+        round(scene.start + a),
+        round(scene.start + b)
+      ])
+      for (const words of captionPhrases(timed, 7, 42, true))
+        chunks.push({ words, end: round(words.at(-1)![2] + 0.35) })
     }
   chunks.forEach((chunk, i) => {
     const next = chunks[i + 1]?.words[0][1]
     if (next !== undefined && next - chunk.words.at(-1)![2] < 0.6) chunk.end = next
   })
   const tall = chunks.flatMap((chunk) => {
-    const parts: typeof chunks = []
-    for (let i = 0; i < chunk.words.length; i += 4)
-      parts.push({ words: chunk.words.slice(i, i + 4), end: chunk.words[i + 4]?.[1] ?? chunk.end })
-    return parts
+    const parts = captionPhrases(chunk.words, 4, 22, false)
+    return parts.map((words, i) => ({ words, end: parts[i + 1]?.[0][1] ?? chunk.end }))
   })
   return {
     fps: 30,

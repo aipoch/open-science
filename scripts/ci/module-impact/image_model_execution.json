@@ -1,0 +1,51 @@
+{
+  "ownerPaths": [
+    "src/main/image-model/contract.ts",
+    "src/main/image-model/adapter.ts",
+    "src/main/image-model/download.ts",
+    "src/main/image-model/raster.ts",
+    "src/main/image-model/service.ts",
+    "src/main/image-model/service.test.ts",
+    "src/main/image-model/download.test.ts",
+    "src/main/image-model/spatial-input.ts",
+    "src/main/image-model/tasks.ts",
+    "src/main/image-model/stored-tasks.ts",
+    "src/main/image-model/tasks.test.ts",
+    "src/main/image-model/provider-error.ts",
+    "src/main/image-model/result-store.ts",
+    "src/main/image-model/result-store.test.ts",
+    "src/main/image-model/probe.ts",
+    "src/main/image-model/probe.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/image-model/service.ts",
+    "src/main/image-model/contract.ts",
+    "src/main/image-model/download.ts",
+    "src/main/image-model/tasks.ts",
+    "src/main/image-model/stored-tasks.ts",
+    "src/main/image-model/probe.ts"
+  ],
+  "consumerModules": [
+    "desktop_composition",
+    "settings_backend_resolution",
+    "notebook_application",
+    "settings_model_owners"
+  ],
+  "testFiles": {
+    "owner": [
+      "src/main/image-model/service.test.ts",
+      "src/main/image-model/download.test.ts",
+      "src/main/image-model/tasks.test.ts",
+      "src/main/image-model/result-store.test.ts",
+      "src/main/image-model/probe.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/main/notebook/local-rpc-server.image-generation.test.ts",
+      "src/main/image-model/mcp-server.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "New image execution and result-download workflow expands the runtime boundary; retain full CI validation until its network, native decoding and usage contracts are reviewed."
+}

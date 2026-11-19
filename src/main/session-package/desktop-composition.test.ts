@@ -48,6 +48,7 @@ const releaseImport = vi.fn((): void => {
   order.push('release:import')
 })
 const service = {
+  prepareExport: vi.fn<SessionPackageService['prepareExport']>(),
   assertExportIdle: vi.fn<SessionPackageService['assertExportIdle']>(),
   exportTo: vi.fn<SessionPackageService['exportTo']>(),
   importFrom: vi.fn<SessionPackageService['importFrom']>()
@@ -98,6 +99,9 @@ beforeEach(async (): Promise<void> => {
   persistence.reserveSessionExport.mockImplementation(async (): Promise<() => void> => {
     order.push('reserve:persistence')
     return releasePersistence
+  })
+  service.prepareExport.mockImplementation(async () => {
+    order.push('prepare:images')
   })
   service.assertExportIdle.mockImplementation(async (): Promise<void> => {
     order.push('assert:idle')
@@ -268,6 +272,7 @@ describe('Session package desktop composition baseline', () => {
     const operationId = await selection()
     expect(order).toEqual([
       'reserve:archive',
+      'prepare:images',
       'reserve:persistence',
       'assert:idle',
       'admitted:archive',

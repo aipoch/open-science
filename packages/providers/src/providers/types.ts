@@ -1,3 +1,4 @@
+import type { CatalogRequestOptions } from '../protocols/catalog'
 import type { ModelProtocol } from '../protocols/types'
 import type { ReasoningCapability } from '../protocols/types'
 
@@ -45,6 +46,7 @@ export type VendorRegion = {
   readonly apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
   readonly modelsListUrl?: string
+  readonly modelsList?: CatalogRequestOptions | false
   // An authoritative curated subset when this region serves fewer models than the vendor catalog.
   readonly modelIds?: readonly string[]
 }
@@ -61,7 +63,13 @@ export type OfficialModel = {
   readonly reasoningEffort?: ReasoningCapability
 }
 
+export type ImageGenerationProviderDefinition = Readonly<{
+  regions: readonly Readonly<{ id: string; baseUrl: string }>[]
+  models: readonly Readonly<{ id: string; label: string }>[]
+}>
+
 export type OfficialVendor = {
+  readonly imageGeneration?: ImageGenerationProviderDefinition
   readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
@@ -110,4 +118,5 @@ export type OfficialVendor = {
   // Full URL of a live model-list endpoint (OpenAI-style `{ data: [{ id }] }`). Set only for vendors
   // that actually expose one, so the "refresh from vendor" affordance is hidden for those that don't.
   readonly modelsListUrl?: string
+  readonly modelsList?: CatalogRequestOptions | false
 }

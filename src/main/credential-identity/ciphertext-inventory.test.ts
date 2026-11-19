@@ -99,17 +99,17 @@ describe('read-only ciphertext inventory', () => {
     }
   )
 
-  it('includes the Semantic Scholar credential in startup key validation', () => {
+  it('includes a retired literature credential in startup key validation', () => {
     const paths = fixture()
     writeFileSync(
       join(paths.configRoot, 'settings.json'),
       JSON.stringify({
         version: 1,
-        connectors: { semanticScholarApiKeyRef: ref('semantic-scholar-ciphertext') }
+        connectors: { semanticScholarApiKeyRef: ref('retired-semantic-scholar-ciphertext') }
       })
     )
     expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toContain(
-      'semantic-scholar-ciphertext'
+      'retired-semantic-scholar-ciphertext'
     )
   })
 
@@ -308,6 +308,7 @@ describe('read-only ciphertext inventory', () => {
       version: 2,
       providers: [{ keyRef: ref('old-provider') }],
       classification: { services: [{ keyRef: ref('classification-key') }] },
+      imageServices: [{ keyRef: ref('image-key') }],
       connectors: { customMcpServers: [{ envRefs: { TOKEN: ref('old-env') } }] }
     })
     const credentials = JSON.stringify({
@@ -331,6 +332,7 @@ describe('read-only ciphertext inventory', () => {
     expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
       'old-provider',
       'classification-key',
+      'image-key',
       'old-env',
       'old-oauth'
     ])

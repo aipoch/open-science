@@ -4096,7 +4096,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model provider credentials need attention' : failure
       )
       renderPanel({
         view: {
@@ -4116,7 +4116,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model provider credentials need attention')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -5671,6 +5671,41 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
+  it('keeps Side chat provider diagnostics in the notice above the composer', () => {
+    renderSidePanel({
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          entries: [],
+          draft: 'my follow-up',
+          running: false,
+          error: 'Invalid credentials',
+          errorDetails: {
+            message: 'Invalid credentials',
+            failure: {
+              category: 'configuration',
+              reason: 'configuration/auth-failed',
+              responseMessage: 'Invalid credentials',
+              diagnostics: { status: 401, provider: 'Test provider', model: 'test-model' }
+            }
+          }
+        }
+      }
+    })
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.textContent).toContain('Model provider error')
+    expect(notice?.textContent).toContain('status: 401')
+    expect(notice?.textContent).toContain('provider: Test provider')
+    expect(notice?.textContent).toContain('model: test-model')
+    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+      'side-chat-composer'
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+  })
+
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
@@ -5738,8 +5773,12 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.textContent).toContain('Historical answer')
     expect(container.textContent).not.toContain('Flow')
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not save Side chat: Disk full'
+    )
+    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+      'side-chat-composer'
     )
     expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
 
@@ -9938,6 +9977,51 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.dataset.noticeCategory).toBe('session')
   })
 
+  it('preserves provider interruption details while resuming the existing session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    const revise = vi.fn()
+    const failure = {
+      category: 'service' as const,
+      reason: 'service/response-interrupted' as const,
+      diagnostics: {
+        protocol: 'chat-completions' as const,
+        phase: 'stream',
+        requestId: 'cut-stream'
+      }
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle',
+          failure,
+          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume',
+                failure
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { resume, revise } }
+    })
+    expect(slot()?.textContent).toContain('The model response was interrupted')
+    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(action('retry')).toBeNull()
+    await act(async () => action('resume')?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'keeps full operation diagnostics, copy retry and optional export (%s)',
     async (canExport) => {
@@ -10552,7 +10636,9 @@ describe('prompt optimization admission', () => {
 })
 
 const selectAdditionalNotice = (index = 0): void => {
-  const slot = container.querySelector('[data-testid="composer-notice-slot"]')
-  act(() => slot?.querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click())
+  const slot = [...container.querySelectorAll('[data-testid="composer-notice-slot"]')].find(
+    (notice) => notice.querySelector('button[aria-expanded="false"]')
+  )
+  act(() => slot?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click())
   act(() => slot?.querySelectorAll<HTMLButtonElement>('[data-select-notice]')[index]?.click())
 }

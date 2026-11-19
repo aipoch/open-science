@@ -1,6 +1,5 @@
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -347,6 +346,14 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-isolated-claude', () =>
     snapshotCommits.projectAfter(workflows.runtime.logoutIsolatedClaude())
   )
+  ipcMainHandle('settings:codebuddy-account', (_event, request) => {
+    const result = workflows.runtime.codeBuddyAccount(request)
+    return request?.action === 'login' ||
+      request?.action === 'logout' ||
+      request?.action === 'refresh'
+      ? snapshotCommits.projectAfter(result)
+      : result
+  })
   ipcMainHandle('settings:login-isolated-codex', () =>
     snapshotCommits.projectAfter(workflows.runtime.loginIsolatedCodex())
   )
@@ -560,6 +567,11 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle('settings:test-image-model', (_event, request) => service.imageModels.test(request))
+  ipcMainHandle('settings:get-image-models', () => service.imageModels.snapshot())
+  ipcMainHandle('settings:update-image-models', (_event, request) =>
+    service.imageModels.mutate(request)
+  )
   ipcMainHandle('settings:get-classification', () => service.classification.snapshot())
   ipcMainHandle('settings:update-classification', (_event, request) =>
     service.classification.mutate(request)
@@ -599,11 +611,6 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
-  )
-  ipcMainHandle(
-    'settings:set-semantic-scholar-credential',
-    (_event, request: SetSemanticScholarCredentialRequest) =>
-      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',
