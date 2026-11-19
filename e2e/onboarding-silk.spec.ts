@@ -1,6 +1,8 @@
 import { OFFICIAL_VENDORS } from '@aipoch/providers'
 import { expect } from '@playwright/test'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { Locator } from 'playwright'
+import sharp from 'sharp'
 import { test } from './fixtures/electron-app'
 
 test.use({ windowMode: 'normal' })
@@ -37,24 +39,42 @@ test('shows Silk on every provider and advances only the hovered texture', async
   const card = page.locator('.onboarding-provider-card-anthropic')
   const canvas = card.locator('canvas')
   const index = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'anthropic')
+  const expectIdle = async (frames: string[]): Promise<void> => {
+    // Include the composited mask and controls; a frozen canvas alone can still look animated.
+    await page.locator('.onboarding-entry-shell').evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations({ subtree: true }).map((animation) => animation.finished)
+      )
+    })
+    const screenPixels = async (): Promise<Buffer> =>
+      sharp(await card.screenshot())
+        .removeAlpha()
+        .raw()
+        .toBuffer()
+    const settled = await screenPixels()
+    for (let i = 0; i < 4; i++) {
+      await delay(500)
+      expect(await allFrames()).toEqual(frames)
+      const sample = await screenPixels()
+      expect(sample.length).toBe(settled.length)
+      // Allow compositor rounding of up to two levels per color channel.
+      expect(sample.some((value, channel) => Math.abs(value - settled[channel]) > 2)).toBe(false)
+    }
+  }
   await card.screenshot({ path: info.outputPath('anthropic-idle.png') })
-  expect(await allFrames()).toEqual(idle)
+  await expectIdle(idle)
   await card.hover()
   await expect.poll(() => pixels(canvas)).not.toBe(idle[index])
   const moving = await pixels(canvas)
   await expect.poll(() => pixels(canvas)).not.toBe(moving)
   await card.screenshot({ path: info.outputPath('anthropic-hover.png') })
   await heading.hover()
+  const stopped = await allFrames()
+  expect(stopped.filter((_, i) => i !== index)).toEqual(idle.filter((_, i) => i !== index))
+  await expectIdle(stopped)
+  expect(stopped[index]).not.toBe(idle[index])
   // Keyboard focus exposes controls but must not restart the Silk after mouse leave.
   await card.getByRole('button').first().focus()
   await expect(card.getByRole('button').first()).toBeFocused()
-  const stopped = await allFrames()
-  expect(stopped.filter((_, i) => i !== index)).toEqual(idle.filter((_, i) => i !== index))
-  // Sample across multiple presented frames; leaving must freeze the last pose, not reset it.
-  await page.evaluate(
-    () =>
-      new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
-  )
-  expect(await allFrames()).toEqual(stopped)
-  expect(stopped[index]).not.toBe(idle[index])
+  await expectIdle(stopped)
 })
