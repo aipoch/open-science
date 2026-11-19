@@ -2280,7 +2280,8 @@ const loadPersistedSessions = async (
   preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection),
   preserveLocalDrafts = false,
   retainedNewSessionIds: ReadonlySet<string> = new Set(),
-  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void
+  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void,
+  reconnecting = false
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
   const previousSessions = preserveLocalDrafts ? useSessionStore.getState().sessions : []
   const restoreLocalDrafts = (): void => {
@@ -2313,10 +2314,18 @@ const loadPersistedSessions = async (
     const result = await api.list()
     if (!shouldHydrate()) return undefined
     const retrySessionId = currentSelection()?.sessionId
+    const previousSelection = reconnecting
+      ? previousSessions.find((session) => session.id === retrySessionId)
+      : undefined
+    const restoreRuntimeState =
+      previousSelection &&
+      (previousSelection.activeRun ||
+        previousSelection.status === 'running' ||
+        previousSelection.status.startsWith('waiting-'))
     const summariesToHydrate = result.sessions.filter(
       (session) =>
         session.needsStartupRecovery ||
-        (session.id === retrySessionId && (preserveLocalDrafts || !api.loadHistoryPage))
+        (session.id === retrySessionId && (restoreRuntimeState || !api.loadHistoryPage))
     )
     const hydratedSessions = new Map(
       await Promise.all(
@@ -2554,7 +2563,7 @@ const createStoreSaver = (
           api.setPinned &&
           pendingSessionConversationCommands(session.id).length === 0
         ) {
-          const initialMetadata = () =>
+          const initialMetadata = (): { title: string; pinned: boolean } =>
             acknowledgedMetadata.get(session.id) ?? {
               title: previousSession?.title ?? session.title,
               pinned: previousSession?.pinned === true
@@ -3972,7 +3981,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
               sessionLoadErrorsBySessionRef.current = next
               setSessionLoadErrorsBySession(next)
             }
-          }
+          },
+          recovering
         )
         if (!result || !isMounted) return
         if (recovering || liveSessionPersistence.recovery.getSnapshot().length > 0) {
