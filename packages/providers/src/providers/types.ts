@@ -66,6 +66,7 @@ export type OfficialModel = {
 export type ImageGenerationProviderDefinition = Readonly<{
   regions: readonly Readonly<{ id: string; baseUrl: string }>[]
   models: readonly Readonly<{ id: string; label: string }>[]
+  modelsList?: CatalogRequestOptions
 }>
 
 export type OfficialVendor = {

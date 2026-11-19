@@ -8346,6 +8346,7 @@
     "Edit image service": "画像サービスを編集",
     "Image generation": "画像生成",
     "Image generation model": "画像生成モデル",
+    "Choose a server model that supports image generation.": "画像生成に対応しているサーバーモデルを選択してください。",
     "Image services": "画像サービス",
     "Interface preset": "API プリセット",
     "Model ID": "モデル ID",

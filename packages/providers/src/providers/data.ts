@@ -19,6 +19,7 @@ const definitions: readonly OfficialVendor[] = [
     modelsList: { ...bearerCatalog, knownModelsOnly: true, fields: { lifecycle: 'shutdown_date' } },
     imageGeneration: {
       regions: [{ id: 'global', baseUrl: 'https://api.openai.com/v1' }],
+      modelsList: { ...bearerCatalog, fields: { lifecycle: 'shutdown_date' } },
       models: [
         { id: 'gpt-image-2.6-sunburst', label: 'GPT Image 2.6 Sunburst' },
         { id: 'gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare' }
@@ -242,6 +243,10 @@ const definitions: readonly OfficialVendor[] = [
     imageGeneration: {
       // The chat catalog's global region is US, not Singapore. Do not borrow its key.
       regions: [{ id: 'china', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }],
+      modelsList: {
+        ...bailianCatalog,
+        filter: { path: 'inference_metadata.response_modality', includes: 'Image' }
+      },
       models: [
         { id: 'qwen-image-3.0-pro', label: 'Qwen Image 3.0 Pro' },
         { id: 'qwen-image-3.0', label: 'Qwen Image 3.0' }
@@ -620,6 +625,7 @@ const definitions: readonly OfficialVendor[] = [
         { id: 'global', baseUrl: 'https://api.minimax.io/v1' },
         { id: 'china', baseUrl: 'https://api.minimax.cn/v1' }
       ],
+      modelsList: bearerCatalog,
       models: [{ id: 'MiniMax-H3-Image', label: 'MiniMax H3 Image' }]
     },
     reasoningEffort: { supported: false },
@@ -843,6 +849,10 @@ const definitions: readonly OfficialVendor[] = [
     id: 'volcengine',
     imageGeneration: {
       regions: [{ id: 'china', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' }],
+      modelsList: {
+        ...bearerCatalog,
+        filter: { path: 'domain', includes: 'ImageGeneration' }
+      },
       models: [{ id: 'doubao-seedream-5-5-261028', label: 'Seedream 5.5' }]
     },
     label: 'Volcengine Ark',

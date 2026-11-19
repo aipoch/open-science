@@ -52,6 +52,7 @@ const expectedChannels = [
   'settings:get-connector-detail',
   'settings:get-classification',
   'settings:test-image-model',
+  'settings:refresh-image-model-catalog',
   'settings:get-image-models',
   'settings:update-image-models',
   'settings:get-github-token-status',
@@ -585,6 +586,10 @@ describe('Settings core application commands', () => {
             models: []
           } satisfies import('../../shared/image-model-settings').ImageModelTestRequest
         ]
+      ],
+      [
+        settingsCoreApplicationCommands.refreshImageModelCatalog,
+        [{ id: '11111111-1111-4111-8111-111111111111', adapter: 'openai-images' }]
       ],
       [settingsCoreApplicationCommands.getImageModels, []],
       [settingsCoreApplicationCommands.updateImageModels, [{ kind: 'bind' }]],

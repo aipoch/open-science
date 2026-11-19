@@ -8696,6 +8696,7 @@
     "Edit image service": "Modifier le service d’images",
     "Image generation": "Génération d’images",
     "Image generation model": "Modèle de génération d’images",
+    "Choose a server model that supports image generation.": "Choisissez un modèle du serveur qui prend en charge la génération d’images.",
     "Image services": "Services d’images",
     "Interface preset": "Préréglage d’interface",
     "Model ID": "ID du modèle",

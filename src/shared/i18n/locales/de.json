@@ -8517,6 +8517,7 @@
     "Edit image service": "Bilddienst bearbeiten",
     "Image generation": "Bilderzeugung",
     "Image generation model": "Modell zur Bilderzeugung",
+    "Choose a server model that supports image generation.": "Wählen Sie ein Servermodell aus, das Bilder erzeugen kann.",
     "Image services": "Bilddienste",
     "Interface preset": "Schnittstellenvoreinstellung",
     "Model ID": "Modell-ID",

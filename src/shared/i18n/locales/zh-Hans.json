@@ -8346,6 +8346,7 @@
     "Edit image service": "编辑图片服务",
     "Image generation": "图像生成",
     "Image generation model": "生图模型",
+    "Choose a server model that supports image generation.": "选择支持生图的服务器模型。",
     "Image services": "图片服务",
     "Interface preset": "接口预设",
     "Model ID": "模型 ID",

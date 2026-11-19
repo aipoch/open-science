@@ -8848,6 +8848,7 @@
     "Edit image service": "Изменить сервис изображений",
     "Image generation": "Генерация изображений",
     "Image generation model": "Модель генерации изображений",
+    "Choose a server model that supports image generation.": "Выберите модель сервера с поддержкой генерации изображений.",
     "Image services": "Сервисы изображений",
     "Interface preset": "Предустановка интерфейса",
     "Model ID": "ID модели",

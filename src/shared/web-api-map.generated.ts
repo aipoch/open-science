@@ -384,6 +384,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.previewGitHubSkill': 'settings:preview-github-skill',
   'settings.previewSkillZip': 'settings:preview-skill-zip',
   'settings.probeWslSetup': 'settings:probe-wsl-setup',
+  'settings.refreshImageModelCatalog': 'settings:refresh-image-model-catalog',
   'settings.refreshProviderModels': 'settings:refresh-provider-models',
   'settings.removeCustomServer': 'settings:remove-custom-server',
   'settings.removeDeviceCredential': 'settings:remove-device-credential',

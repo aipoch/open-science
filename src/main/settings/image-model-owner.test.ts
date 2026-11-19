@@ -9,6 +9,7 @@ import {
 } from '../../shared/image-model-settings'
 import { ImageModelOwner } from './image-model-owner'
 import { SettingsRepository, sanitizeSettings } from './repository'
+import { netFetchWithManualRedirect } from '../network-fetch'
 
 vi.mock('./crypto', async (original) => ({
   ...(await original<typeof import('./crypto')>()),
@@ -16,6 +17,7 @@ vi.mock('./crypto', async (original) => ({
   tryDecryptKey: (ref?: string) =>
     ref?.startsWith('enc:') ? Buffer.from(ref.slice(4), 'base64').toString() : undefined
 }))
+vi.mock('../network-fetch', () => ({ netFetchWithManualRedirect: vi.fn() }))
 
 let directory: string
 let repository: SettingsRepository
@@ -128,6 +130,56 @@ it('stores encrypted custom credentials, masks snapshots, and requires a new key
   expect((await repository.getSettings()).imageServices?.[0].baseUrl).toBe(remote.baseUrl)
   await owner.mutate({ kind: 'save', ...service })
   expect((await repository.getSettings()).imageServices?.[0].keyRef).toBeUndefined()
+})
+
+it('refreshes the linked Bailian image catalog and preserves the active model on save', async () => {
+  const key = 'synthetic-bailian-key'
+  await repository.upsertProvider({
+    id: 'bailian-account',
+    type: 'official',
+    vendorId: 'bailian',
+    region: 'china',
+    name: 'Bailian',
+    keyRef: `enc:${Buffer.from(key).toString('base64')}`,
+    catalogParameters: { workspaceId: 'image-workspace' }
+  })
+  const [account] = (await owner.snapshot()).availableProviders
+  const target = { id: service.id, adapter: account.adapter, providerId: account.id }
+  const official = { kind: 'save' as const, ...target, name: 'Images', models: account.models }
+  const saved = await owner.mutate(official)
+  const [active, visible] = account.models
+  vi.mocked(netFetchWithManualRedirect)
+    .mockReset()
+    .mockResolvedValueOnce(
+      Response.json({
+        success: true,
+        output: {
+          total: 3,
+          models: [
+            { model: active.wireModelId, inference_metadata: { response_modality: ['Text'] } },
+            { model: visible.wireModelId, inference_metadata: { response_modality: ['Image'] } },
+            { model: 'unknown-image', inference_metadata: { response_modality: ['Image'] } }
+          ]
+        }
+      })
+    )
+  await expect(owner.refreshCatalog(target)).resolves.toEqual({
+    ok: true,
+    modelIds: [visible.wireModelId],
+    fetchedAt: expect.any(Number)
+  })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledExactlyOnceWith(
+    'https://image-workspace.cn-beijing.maas.aliyuncs.com/api/v1/models?page_size=20&page_no=1',
+    expect.objectContaining({
+      method: 'GET',
+      redirect: 'manual',
+      headers: expect.objectContaining({ authorization: `Bearer ${key}` })
+    })
+  )
+  expect(await owner.snapshot()).toEqual(saved)
+  const updated = await owner.mutate({ ...official, models: [visible] })
+  expect(updated.imageModel).toEqual(saved.imageModel)
+  expect(updated.services[0].models).toEqual([visible, active])
 })
 
 it('links official credentials without copying them and cascades account deletion even with preserve handling', async () => {

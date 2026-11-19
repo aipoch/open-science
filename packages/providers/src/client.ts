@@ -11,6 +11,7 @@ export type {
 } from './models/classification'
 export { ClassificationHttpError, ClassificationResponseError } from './models/classification'
 export { ProviderTextGenerationError } from './errors'
+export { listProviderModels } from './discovery/models'
 export type { ListModelsOptions, ListModelsResult } from './discovery/models'
 
 export type { ProviderTokenUsage } from './protocols/usage'
