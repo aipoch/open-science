@@ -14,10 +14,31 @@ import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 // 127.0.0.1 port, PKCE S256, state matching and a five-minute window. The tokens are exchanged and
 // stored entirely in main; the renderer only sees the authorization URL and the resulting status.
 
-const CALLBACK_OK_HTML =
-  '<!doctype html><meta charset="utf-8"><title>Lab sign-in complete</title><h1>Sign-in complete</h1><p>You can close this window and return to Open-Science.</p>'
-const CALLBACK_ERROR_HTML =
-  '<!doctype html><meta charset="utf-8"><title>Lab sign-in failed</title><h1>Sign-in failed</h1><p>You can close this window and try again from Open-Science.</p>'
+const callbackPage = (accepted: boolean): string => {
+  const title = accepted ? 'Authorization received' : 'Sign-in failed'
+  const message = accepted
+    ? 'You can close this tab and return to Open-Science.'
+    : 'Return to Lab settings in Open-Science and try signing in again.'
+  return `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>${title} · Open-Science</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px;
+    font: 1rem/1.5 system-ui, sans-serif; background: light-dark(#f7f9f8, #171a19); color: light-dark(#202522, #edf2ef) }
+  main { width: min(100%, 27rem); padding: clamp(24px, 6vw, 40px); border: 1px solid light-dark(#d9dfdc, #39423d);
+    border-radius: 16px; background: light-dark(white, #212623) }
+  header { font-weight: 600; font-size: .875rem; color: light-dark(#08685a, #8edacb) }
+  h1 { margin: 20px 0 8px; font-size: 1.625rem; line-height: 1.2 }
+  p { margin: 0; color: light-dark(#505b55, #b9c5bd) }
+</style>
+<main><header>Open-Science</header><h1>${title}</h1><p>${message}</p></main>
+${accepted ? '<script>window.close()</script>' : ''}
+</html>`
+}
 
 const base64Url = (bytes: number): string => randomBytes(bytes).toString('base64url')
 
@@ -58,15 +79,16 @@ class LabLoopbackCallbackHost {
       const pending = this.pending
       if (!pending || pending.state !== state) {
         response.writeHead(400, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(CALLBACK_ERROR_HTML)
+        response.end(callbackPage(false))
         return
       }
       this.pending = undefined
       if (pending.timer) clearTimeout(pending.timer)
       const error = url.searchParams.get('error') ?? undefined
-      const code = url.searchParams.get('code') ?? undefined
-      response.writeHead(error ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end(error ? CALLBACK_ERROR_HTML : CALLBACK_OK_HTML)
+      const code = url.searchParams.get('code')?.trim() || undefined
+      const accepted = Boolean(code && !error)
+      response.writeHead(accepted ? 200 : 400, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(callbackPage(accepted))
       pending.resolve({ ...(code ? { code } : {}), ...(error ? { error } : {}) })
     })
     this.server = server

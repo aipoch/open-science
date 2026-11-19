@@ -95,7 +95,6 @@ describe('Lab settings panel', () => {
     expect(settingsApi.labWaitLogin).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('Waiting for browser confirmation…')
     expect(container.textContent).toContain('Open the sign-in page again')
-    expect(container.textContent).toContain('If the browser did not open, use this link.')
     const link = container.querySelector('a')
     expect(link?.getAttribute('href')).toBe('https://lab.example.com/sign-in')
     expect(link?.getAttribute('target')).toBe('_blank')
@@ -173,7 +172,9 @@ describe('Lab settings panel', () => {
     expect(container.textContent).toContain('Access token quota')
     expect(container.textContent).toContain('¥4.88 / ¥7.30')
     expect(container.textContent).not.toContain('Organization wallet')
-    expect(container.textContent).toContain('Effective remaining: ¥4.88')
+    expect(container.querySelector('dl > :last-child dd')?.textContent).toBe('¥4.88')
+    await click('Refresh models')
+    expect(settingsApi.labRefresh).toHaveBeenCalledTimes(1)
   })
 
   it('shows the blocked reason and retries the connection check', async () => {

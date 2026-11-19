@@ -256,11 +256,7 @@ export function LabPanel(): React.JSX.Element {
 
   return (
     <div className="space-y-5 p-5">
-      <SettingsSection
-        data-settings-anchor="lab.connection"
-        title={t('Lab')}
-        description={t("Connect Open-Science to your organization's Lab gateway.")}
-      >
+      <SettingsSection data-settings-anchor="lab.connection" title={t('Lab server')}>
         {isWeb ? (
           <ErrorNotice
             inline
@@ -270,42 +266,53 @@ export function LabPanel(): React.JSX.Element {
           />
         ) : (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-foreground">{t('Lab server')}</h4>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <SettingsField label={t('Server address')} className="min-w-0 flex-1">
-                  <Input
-                    aria-label={t('Lab server address')}
-                    placeholder={t('https://lab.example.com')}
-                    value={serverUrl}
-                    disabled={busyAction === 'save'}
-                    onChange={(event) => {
-                      const next = event.target.value
-                      editedRef.current = true
-                      serverUrlRef.current = next
-                      setServerUrl(next)
-                      setActionErrorKey(undefined)
-                      setActionSuccessKey(undefined)
-                    }}
-                  />
-                </SettingsField>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button type="button" onClick={() => void save()} disabled={busy}>
-                    {t('Save')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void check()}
-                    disabled={busy}
-                  >
-                    {t('Test connection')}
-                  </Button>
-                </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <SettingsField label={t('Server address')} className="min-w-0 flex-1 basis-56">
+                <Input
+                  aria-label={t('Lab server address')}
+                  placeholder={t('https://lab.example.com')}
+                  value={serverUrl}
+                  disabled={busyAction === 'save'}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    editedRef.current = true
+                    serverUrlRef.current = next
+                    setServerUrl(next)
+                    setActionErrorKey(undefined)
+                    setActionSuccessKey(undefined)
+                  }}
+                />
+              </SettingsField>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" onClick={() => void save()} disabled={busy}>
+                  {t('Save')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void check()}
+                  disabled={busy}
+                >
+                  {t('Test connection')}
+                </Button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-4 py-3">
+              {state === 'authenticated' && (lab?.accountName || lab?.deviceName) ? (
+                <div className="min-w-0 flex-1 basis-40 break-words">
+                  {lab.accountName ? (
+                    <p className="text-sm font-medium">
+                      {t('Signed in as {{name}}', { name: lab.accountName })}
+                    </p>
+                  ) : null}
+                  {lab.deviceName ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t('Device: {{name}}', { name: lab.deviceName })}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <Badge
                 variant="outline"
                 className={STATUS_TONE_CLASS_NAMES[labStatusTone(state)]}
@@ -319,26 +326,15 @@ export function LabPanel(): React.JSX.Element {
                 </Button>
               ) : null}
               {state === 'authenticated' ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void refreshModels()}
-                    disabled={busy}
-                  >
-                    {t('Refresh models')}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void signOut()}
-                    disabled={busy}
-                  >
-                    {t('Sign out')}
-                  </Button>
-                </>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void signOut()}
+                  disabled={busy}
+                >
+                  {t('Sign out')}
+                </Button>
               ) : null}
               {state === 'blocked' || state === 'unreachable' ? (
                 <Button
@@ -376,7 +372,7 @@ export function LabPanel(): React.JSX.Element {
                   <span>{t('Waiting for browser confirmation…')}</span>
                 </div>
                 {authorizationUrl ? (
-                  <div className="space-y-1">
+                  <div>
                     <a
                       href={authorizationUrl}
                       target="_blank"
@@ -385,9 +381,6 @@ export function LabPanel(): React.JSX.Element {
                     >
                       {t('Open the sign-in page again')}
                     </a>
-                    <p className="text-xs text-muted-foreground">
-                      {t('If the browser did not open, use this link.')}
-                    </p>
                   </div>
                 ) : null}
                 <Button
@@ -403,24 +396,9 @@ export function LabPanel(): React.JSX.Element {
             ) : null}
 
             {state === 'authenticated' ? (
-              <div className="space-y-3">
-                <div className="space-y-1 text-sm">
-                  <p>{t('Signed in as {{name}}', { name: lab?.accountName ?? '' })}</p>
-                  <p className="text-muted-foreground">
-                    {t('Device: {{name}}', { name: lab?.deviceName ?? '' })}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {t('{{count}} models available', {
-                      count: modelCount,
-                      defaultValue_one: '{{count}} model available'
-                    })}
-                  </p>
-                </div>
+              <div className="space-y-5">
                 {lab?.usage ? (
-                  <div
-                    data-settings-anchor="lab.usage"
-                    className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"
-                  >
+                  <div data-settings-anchor="lab.usage" className="space-y-2 text-sm">
                     <div className="flex items-center justify-between gap-2">
                       <h4 className="font-medium text-foreground">{t('Usage')}</h4>
                       {lab.usage.stale || lab.usage.org.stale ? (
@@ -428,24 +406,27 @@ export function LabPanel(): React.JSX.Element {
                       ) : null}
                     </div>
                     {lab.usage.available ? (
-                      <div className="space-y-1 text-muted-foreground">
-                        <p>
-                          {t('Access token quota')}:{' '}
-                          {usageQuotaText(
-                            lab.usage,
-                            lab.usage.token.quota,
-                            usageAmountFor(lab.usage, 'token'),
-                            t
-                          )}
-                        </p>
-                        {effectiveUsageText(lab.usage) ? (
-                          <p>
-                            {t('Effective remaining: {{amount}}', {
-                              amount: effectiveUsageText(lab.usage)
-                            })}
-                          </p>
+                      <dl className="divide-y divide-border rounded-lg border border-border px-3">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-4 py-2">
+                          <dt className="text-muted-foreground">{t('Access token quota')}</dt>
+                          <dd className="tabular-nums">
+                            {usageQuotaText(
+                              lab.usage,
+                              lab.usage.token.quota,
+                              usageAmountFor(lab.usage, 'token'),
+                              t
+                            )}
+                          </dd>
+                        </div>
+                        {lab.usage.effective ? (
+                          <div className="flex flex-wrap items-baseline justify-between gap-x-4 py-2">
+                            <dt className="text-muted-foreground">{t('Effective remaining')}</dt>
+                            <dd className="font-medium tabular-nums">
+                              {effectiveUsageText(lab.usage)}
+                            </dd>
+                          </div>
                         ) : null}
-                      </div>
+                      </dl>
                     ) : (
                       <p className="text-muted-foreground">
                         {t('Usage information is unavailable.')}
@@ -454,7 +435,23 @@ export function LabPanel(): React.JSX.Element {
                   </div>
                 ) : null}
                 <div className="space-y-2">
-                  <h4 className="text-sm font-medium text-foreground">{t('Available models')}</h4>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t('{{count}} models available', {
+                        count: modelCount,
+                        defaultValue_one: '{{count}} model available'
+                      })}
+                    </h4>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void refreshModels()}
+                      disabled={busy}
+                    >
+                      {t('Refresh models')}
+                    </Button>
+                  </div>
                   {models.length > 0 ? (
                     <ul className="divide-y divide-border rounded-lg border border-border">
                       {models.map((model) => (
@@ -463,7 +460,7 @@ export function LabPanel(): React.JSX.Element {
                           className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
                         >
                           <span className="min-w-0 break-words">{model.name}</span>
-                          <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                          <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <span>{t(labModelProtocolLabel(model.protocols))}</span>
                             {!model.streaming ? (
                               <Badge variant="outline">{t('Non-streaming')}</Badge>
