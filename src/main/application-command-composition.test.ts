@@ -45,6 +45,7 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import { LocalFsService } from './local-fs/service'
+import { HeadlessTaskApi } from './web-service/task-api'
 import type { ManagedPreviewResource, ManagedPreviewRangeResult } from '../shared/preview-resources'
 
 const EMPTY_OWNER = Object.freeze({})
@@ -340,8 +341,10 @@ describe('application command composition', () => {
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:rename',
       'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
+      'sessions:set-pinned',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',
@@ -464,8 +467,86 @@ describe('application command composition', () => {
         args: [request]
       })
     ).rejects.toThrow('identity')
+    inspect.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'different-file',
+        sessionId: 'session-1'
+      }
+    })
+    await expect(
+      composition.remoteWeb.invoke('managed-file-versions:inspect', {
+        ...invocation('remote'),
+        args: [{ source: 'artifact', fileId: 'file-1' }]
+      })
+    ).rejects.toThrow('identity')
     await composition.dispose()
   })
+
+  it.each([{}, { versionNumber: 2 }])(
+    'acquires HTML with selection %j through the real Task command view',
+    async (selection) => {
+      const identity = { source: 'artifact', fileId: 'file-1', ...selection }
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          projectId: 'project-1',
+          fileId: identity.fileId,
+          headVersionId: 'version-2',
+          selectedVersion: {
+            id: 'version-2',
+            versionNumber: 2,
+            fileId: identity.fileId,
+            displayName: 'report.html',
+            contentType: 'text/html'
+          }
+        }
+      })
+      const acquire = vi.fn().mockResolvedValue({
+        id: 'resource-1',
+        url: 'managed-preview://resource-1',
+        mimeType: 'text/html',
+        size: 42
+      })
+      const release = vi.fn()
+      const composition = createApplicationCommandComposition({
+        ...dependencies(),
+        dataContent: {
+          managedFileVersions: { inspect },
+          managedPreview: { acquire, release }
+        } as never
+      })
+      // Keep the production Task allowlist and router between the API and its service owners.
+      const tasks = new HeadlessTaskApi({ commands: composition.task, agent: {} as never })
+      try {
+        const acquired = await tasks.acquireArtifact(identity.fileId, selection)
+        expect(acquired).toMatchObject({
+          resourceId: 'resource-1',
+          url: 'managed-preview://resource-1',
+          name: 'report.html',
+          mimeType: 'text/html',
+          size: 42
+        })
+        expect(inspect).toHaveBeenCalledExactlyOnceWith(identity)
+        expect(acquire).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: identity.fileId,
+          versionId: 'version-2',
+          mimeType: 'text/html'
+        })
+        await acquired.release()
+        expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0], {
+          resourceId: 'resource-1'
+        })
+      } finally {
+        await tasks.dispose()
+        await composition.dispose()
+      }
+    }
+  )
 
   it.each([
     ['localWeb', 'web', 'local'],
@@ -565,6 +646,7 @@ describe('application command composition', () => {
       'reviewer:run',
       'artifacts:finalize-run',
       'artifacts:resolve-version-descriptors',
+      'managed-file-versions:inspect',
       'preview-resources:acquire',
       'preview-resources:release'
     ])

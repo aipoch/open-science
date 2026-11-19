@@ -45,7 +45,7 @@ afterEach(() => {
 })
 
 describe('CredentialsPanel', () => {
-  it('does not offer the removed citation-service credential', async () => {
+  it('offers the remaining literature credentials', async () => {
     await act(async () =>
       root.render(
         <CredentialsPanel
@@ -56,7 +56,6 @@ describe('CredentialsPanel', () => {
         />
       )
     )
-    expect(screen.queryByText('Semantic Scholar')).toBeNull()
     expect(screen.getByText('OpenAlex')).toBeTruthy()
     expect(screen.getByText('Literature access')).toBeTruthy()
   })

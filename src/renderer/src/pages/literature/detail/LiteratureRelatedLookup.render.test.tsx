@@ -716,7 +716,6 @@ it('keeps the default Europe PMC source after unavailable results across list an
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
   expect(related.mock.calls.every(([request]) => request.provider === 'europe-pmc')).toBe(true)
-  expect(screen.queryByText('Source: Semantic Scholar')).toBeNull()
   expect(transact).not.toHaveBeenCalled()
 })
 

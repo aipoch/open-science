@@ -287,18 +287,16 @@ describe('citation discovery session safeguards', () => {
     })
   })
 
-  it('rejects removed Semantic Scholar graph inputs before any catalog or transport access', async () => {
+  it('rejects unknown graph inputs before any catalog or transport access', async () => {
     const { finder, catalog, fetcher } = fixture()
     expect(
-      literatureRelatedRequestSchema.safeParse({ ...request, provider: 'semantic-scholar' }).success
+      literatureRelatedRequestSchema.safeParse({ ...request, provider: 'unknown-source' }).success
     ).toBe(false)
     for (const seedPaperId of ['a'.repeat(40), 'A'.repeat(40)]) {
       expect(literatureRelatedPaperIdSchema.safeParse(seedPaperId).success).toBe(false)
       await expect(finder.run({ ...request, seedPaperId })).rejects.toThrow()
     }
-    await expect(
-      finder.run({ ...request, provider: 'semantic-scholar' } as never)
-    ).rejects.toThrow()
+    await expect(finder.run({ ...request, provider: 'unknown-source' } as never)).rejects.toThrow()
     expect(catalog.get).not.toHaveBeenCalled()
     expect(fetcher).not.toHaveBeenCalled()
     const result = { ...request, state: 'ready', records: [], metadataRevision: 1 }
@@ -306,7 +304,7 @@ describe('citation discovery session safeguards', () => {
     delete (result as { offset?: number }).offset
     expect(literatureRelatedResultSchema.safeParse(result).success).toBe(true)
     for (const obsolete of [
-      { provider: 'semantic-scholar' },
+      { provider: 'unknown-source' },
       { fallbackFrom: 'europe-pmc' },
       { issue: 'api-key-required' },
       { state: 'match-required' }

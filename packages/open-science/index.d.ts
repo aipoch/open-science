@@ -101,7 +101,6 @@ export type ConnectorsSnapshot = {
   openAlex?: OpenAlexCredentialView
   // Retained for clients compiled against older snapshots; the current main process no longer
   // projects or mutates this retired credential.
-  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'

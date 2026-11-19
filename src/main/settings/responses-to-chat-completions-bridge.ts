@@ -82,6 +82,7 @@ const REQUEST_LOCAL_PLAN_TOOL_NAMES = new Set(['generate_plan', 'update_step_sta
 const chatUrl = (value: string): string => appendChatCompletionsPath(value)
 
 export class ResponsesToChatCompletionsBridge {
+  private skillSelectionAbort = new AbortController()
   private readonly host: ProviderLoopbackHttpHost<ResponsesConnection>
   private target: ResponsesToChatCompletionsBridgeTarget
   private readonly adapter: ReturnType<typeof createResponsesAdapter>
@@ -160,7 +161,9 @@ export class ResponsesToChatCompletionsBridge {
         fetchImpl: this.fetchImpl,
         timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
         maxResponseBytes: this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-        ...(signal ? { signal } : {}),
+        signal: signal
+          ? AbortSignal.any([signal, this.skillSelectionAbort.signal])
+          : this.skillSelectionAbort.signal,
         ...(observeUsage ? { observeUsage } : {})
       })
     } catch (error) {
@@ -253,6 +256,9 @@ export class ResponsesToChatCompletionsBridge {
   }
 
   async close(): Promise<void> {
+    // Standalone Skill selection bypasses the loopback host's request ownership.
+    this.skillSelectionAbort.abort()
+    this.skillSelectionAbort = new AbortController()
     this.adapter.clear()
     this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()

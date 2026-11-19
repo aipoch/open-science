@@ -123,6 +123,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     listDrives: vi.fn(async () => []),
     listGrantedRoots: vi.fn(async () => []),
     openPath: vi.fn(async () => ''),
+    openInBrowser: vi.fn(async () => undefined),
     readPreview: vi.fn(async () => ({
       content: 'result',
       encoding: 'utf8' as const,
@@ -302,7 +303,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(87)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(88)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -318,7 +319,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(87)
+    expect(router.dispatcher.commandNames()).toHaveLength(88)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -358,6 +359,10 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(
       hostApplicationCommands.localFs.openPath,
       invocation(['/data/a'])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.localFs.openInBrowser,
+      invocation(['/data/report.html'])
     )
     await router.dispatcher.invoke(
       hostApplicationCommands.localFs.readPreview,
@@ -544,6 +549,7 @@ describe('Host application commands', () => {
     })
     expect(dependencies.localModels.setOcrLanguages).toHaveBeenCalledWith(['eng'])
     expect(dependencies.localFs.listDir).toHaveBeenCalledWith('/data')
+    expect(dependencies.localFs.openInBrowser).toHaveBeenCalledWith('/data/report.html')
     expect(dependencies.localFs.readPreview).toHaveBeenCalledWith(previewRequest)
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
     expect(dependencies.notifications.markAllRead).toHaveBeenCalledWith(markAllReadRequest)
@@ -713,7 +719,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(44)
+    expect(localOnlyChannels).toHaveLength(45)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

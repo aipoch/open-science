@@ -1806,7 +1806,8 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        {isNewConversation ? null : activeSession?.contentLoaded === false ? (
+        {isNewConversation ? null : activeSession?.contentLoaded === false &&
+          !activeSession.historyPage ? (
           sessionLoadError ? (
             <div className="flex min-h-0 flex-1 items-center justify-center p-6">
               <SessionPersistenceAlert
@@ -2321,6 +2322,7 @@ const ConversationPanel = ({
                               {t('View replay')}
                             </Button>
                             <ResearchVideoButton
+                              preferSavedFilm
                               key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
                               projectId={activeSession.projectId}
                               sessionId={activeSession.id}

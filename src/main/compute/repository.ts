@@ -1,5 +1,6 @@
 import {
   externalComputeMode,
+  type ExternalComputeMode,
   type KubernetesTarget,
   type HostedTarget,
   type RayTarget,
@@ -10,6 +11,7 @@ import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
 import { HostedTargetCatalog } from './hosted-target-catalog'
 import { RayTargetCatalog } from './ray-target-catalog'
 import { ModalTargetCatalog } from './modal-target-catalog'
+import { externalComputeProvider, externalComputeProviders } from './external-compute-provider'
 import type { PrismaClient, ComputeHost as PrismaComputeHost } from '@prisma/client'
 
 import type {
@@ -356,30 +358,28 @@ class ComputeHostRepository {
     )
   }
 
+  async listExternalTargets(mode: ExternalComputeMode): Promise<ExternalComputeTarget[]> {
+    return externalComputeProvider(mode).listTargets(this)
+  }
+
+  async getExternalTarget(
+    mode: ExternalComputeMode,
+    providerId: string
+  ): Promise<ExternalComputeTarget | null> {
+    return externalComputeProvider(mode).getTarget(this, providerId)
+  }
+
   async listComputeTargets(): Promise<(ExternalComputeTarget | ComputeHost)[]> {
     return (
       await Promise.all([
         this.list(),
-        this.listKubernetesTargets(),
-        this.listHostedTargets(),
-        this.listRayTargets(),
-        this.listModalTargets()
+        ...externalComputeProviders.map((provider) => provider.listTargets(this))
       ])
     ).flat()
   }
   async getComputeTarget(providerId: string): Promise<ExternalComputeTarget | ComputeHost | null> {
-    switch (externalComputeMode(providerId)) {
-      case 'kubernetes':
-        return this.getKubernetesTarget(providerId)
-      case 'hugging_face_jobs':
-        return this.getHostedTarget(providerId)
-      case 'ray_jobs':
-        return this.getRayTarget(providerId)
-      case 'modal_sandbox':
-        return this.getModalTarget(providerId)
-      default:
-        return this.get(providerId)
-    }
+    const mode = externalComputeMode(providerId)
+    return mode ? this.getExternalTarget(mode, providerId) : this.get(providerId)
   }
   get kubernetesTargets(): KubernetesTargetCatalog | undefined {
     return this.catalogs.kubernetesTargets

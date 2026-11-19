@@ -8,7 +8,11 @@ import type { ChatSession } from '@/stores/session-store'
 const mocks = vi.hoisted(() => ({
   providers: [] as ProviderView[],
   setAgentConfiguration: vi.fn(),
+  ensureContent: vi.fn(),
   endpoints: ['messages']
+}))
+vi.mock('@/lib/session-persistence/session-history', () => ({
+  ensureSessionContentLoaded: mocks.ensureContent
 }))
 vi.mock('@/stores/settings-store', () => ({
   selectFrameworkApiEndpoints: () => mocks.endpoints,
@@ -67,6 +71,7 @@ const mount = (
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount())
   mocks.setAgentConfiguration.mockReset()
+  mocks.ensureContent.mockReset()
 })
 describe('saved Session model availability', () => {
   it.each(['removed provider', 'targeted network failure'])(
@@ -104,6 +109,23 @@ describe('saved Session model availability', () => {
     mocks.providers = [provider('fallback')]
     mount(false)
     expect(mocks.setAgentConfiguration).not.toHaveBeenCalled()
+  })
+  it('loads complete history before changing a model on a displayed page', async () => {
+    mocks.providers = [provider('fallback')]
+    let resolve!: (session: ChatSession) => void
+    mocks.ensureContent.mockReturnValue(
+      new Promise<ChatSession>((done) => {
+        resolve = done
+      })
+    )
+    const hook = mount(false)
+    act(() => hook.result().changeAgentConfiguration(fallback))
+    expect(mocks.ensureContent).toHaveBeenCalledOnce()
+    expect(mocks.setAgentConfiguration).not.toHaveBeenCalled()
+    await act(async () => {
+      resolve({ id: 'session-1' } as ChatSession)
+    })
+    expect(mocks.setAgentConfiguration).toHaveBeenCalledWith('session-1', fallback)
   })
   it('recovers a missing provider only after the user explicitly selects a replacement', () => {
     mocks.providers = [provider('fallback')]

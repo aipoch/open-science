@@ -19,6 +19,11 @@ import {
 import { createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { ReviewRepository } from '../reviewer/repository'
 import { SessionRepository } from '../session-persistence/repository'
+import {
+  SessionJournalStore,
+  sessionJournalPath,
+  sessionLegacyBackupPath
+} from '../session-persistence/journal'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { ManagedFileIndexRepository } from '../project-files/repository'
@@ -255,8 +260,11 @@ it('repairs legacy children only when a package deletion journal and committed t
     )
   )
   await service.prepareSessionDeletion(parent)
-  // Simulate an old release that deleted only the parent, leaving its child JSON and index.
-  await rm(join(target.storageRoot, 'sessions', identity.projectId, parent.id + '.json'))
+  // Simulate an old release that deleted only the parent primary (JSON or JSONL, depending on the
+  // release), leaving its child record and index behind.
+  const parentDirectory = join(target.storageRoot, 'sessions', identity.projectId)
+  await rm(join(parentDirectory, parent.id + '.json'), { force: true })
+  await rm(join(parentDirectory, parent.id + '.jsonl'), { force: true })
   await service.recover({ collectDeletedPackages: true })
   expect((await sessions.loadSession(identity.projectId, child.id))?.parentSessionId).toBe(
     parent.id
@@ -363,6 +371,167 @@ it('removes native Version rows and retained upstream scopes as one import', asy
       )
     )
   ).rejects.toMatchObject({ code: 'ENOENT' })
+  await service.close()
+})
+
+const externalHistory = async (
+  root: string,
+  initialTitle: string,
+  id = 'other'
+): Promise<{
+  store: SessionJournalStore
+  path: string
+  update(title: string): Promise<void>
+  retainLegacyBackup(title: string): Promise<void>
+  sessions: SessionRepository
+}> => {
+  // No projection writer: reference retention in these tests must be proved by file history,
+  // rather than accidentally being caught by an old SQL summary.
+  const sessions = new SessionRepository(root)
+  await sessions.saveSession({
+    id,
+    projectId: 'target',
+    title: initialTitle,
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const store = new SessionJournalStore({ maxBytes: 1024 * 1024 })
+  const path = join(root, 'sessions', 'target', `${id}.json`)
+  expect((await store.read(path))?.format).toBe('journal')
+  const update = async (title: string): Promise<void> => {
+    const current = (await store.read(path))!
+    const document = JSON.parse(JSON.stringify(current.document))
+    document.session.title = title
+    document.session.revision = current.revision + 1
+    await store.write(path, {
+      document,
+      expectedRevision: current.revision
+    })
+  }
+  const retainLegacyBackup = async (title: string): Promise<void> => {
+    const document = JSON.parse(JSON.stringify((await store.read(path))!.document))
+    document.session.title = title
+    // Model already-retained history explicitly. Ordinary JSON saves now keep their format;
+    // they must not be used to manufacture a migration backup as part of this fixture.
+    await writeFile(sessionLegacyBackupPath(path), JSON.stringify(document))
+  }
+  return { store, path, update, retainLegacyBackup, sessions }
+}
+
+it('collects an unreferenced package beside valid current, appended and legacy backup history', async () => {
+  const { service, identity, coordinator, target, content } = await importedFixture(true)
+  const history = await externalHistory(target.storageRoot, 'Unrelated research')
+  await history.retainLegacyBackup('Unrelated legacy research')
+  await history.update('Unrelated appended research')
+  await history.update('Unrelated current research')
+  const paths = (await history.store.inspectStorage(history.path)).paths
+  expect(paths).toEqual([sessionJournalPath(history.path), sessionLegacyBackupPath(history.path)])
+  const before = await Promise.all(paths.map((path) => readFile(path, 'utf8')))
+  await coordinator.deleteSession(identity.projectId, identity.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  await expect(stat(content)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await target.client.uploadVersion.count()).toBe(0)
+  expect((await history.sessions.loadSession('target', 'other'))?.title).toBe(
+    'Unrelated current research'
+  )
+  expect(await Promise.all(paths.map((path) => readFile(path, 'utf8')))).toEqual(before)
+  await service.close()
+})
+
+it.each(['current', 'transient-log', 'stitched-log', 'initial-snapshot', 'legacy-backup'] as const)(
+  'retains the package when only external %s history references an imported version',
+  async (reference) => {
+    const { service, identity, coordinator, target, content } = await importedFixture(true)
+    const versionId = (await service.readOrigin(identity)).identities['version-1']
+    const history = await externalHistory(
+      target.storageRoot,
+      reference === 'current' || reference === 'initial-snapshot'
+        ? versionId
+        : reference === 'stitched-log'
+          ? versionId.slice(0, -1)
+          : 'Unrelated'
+    )
+    if (reference === 'transient-log' || reference === 'stitched-log') {
+      await history.update(versionId)
+      await history.update('Unrelated')
+    } else if (reference === 'initial-snapshot') {
+      await history.update('Unrelated')
+    } else if (reference === 'legacy-backup') {
+      await history.retainLegacyBackup(versionId)
+      await history.update('Unrelated')
+    }
+    if (reference !== 'current')
+      expect(JSON.stringify((await history.store.read(history.path))!.document)).not.toContain(
+        versionId
+      )
+    await coordinator.deleteSession(identity.projectId, identity.sessionId)
+    await service.recover({ collectDeletedPackages: true })
+    expect(await readFile(content, 'utf8')).toBe('Research result')
+    expect(await target.client.uploadVersion.count()).toBe(1)
+    expect((await service.readOrigin(identity)).sourceManifest.source.projectId).toBe('source')
+    await service.close()
+  }
+)
+
+it.each(['damaged-log', 'unknown-sidecar', 'missing-primary', 'over-budget'] as const)(
+  'retains the package when unrelated journal history has %s uncertainty',
+  async (fault) => {
+    const { service, identity, coordinator, target, content, sessions } =
+      await importedFixture(true)
+    // Deletion normally runs after startup projection hydration. Keep that realistic path so an
+    // unrelated unreadable Session cannot make the child-identity catalog incomplete.
+    await sessions.ensureSessionProjection(() => sessions.loadAll())
+    const history = await externalHistory(target.storageRoot, 'Unrelated')
+    await history.update('Still unrelated')
+    const previousLog = sessionJournalPath(history.path)
+    if (fault === 'damaged-log') await writeFile(previousLog, '{invalid complete record}\n')
+    else if (fault === 'unknown-sidecar')
+      await writeFile(`${history.path}.unrecognized-backup`, 'Unverifiable history')
+    else if (fault === 'missing-primary') {
+      await history.retainLegacyBackup('Unrelated legacy')
+      await history.update('Still unrelated')
+      await rm(previousLog)
+    } else await fs.truncate(previousLog, 64 * 1024 ** 2 + 1)
+    if (fault === 'unknown-sidecar')
+      expect((await history.sessions.loadSession('target', 'other'))?.title).toBe('Still unrelated')
+    await coordinator.deleteSession(identity.projectId, identity.sessionId)
+    await service.recover({ collectDeletedPackages: true })
+    expect(await readFile(content, 'utf8')).toBe('Research result')
+    expect(await target.client.uploadVersion.count()).toBe(1)
+    expect((await service.readOrigin(identity)).sourceManifest.source.projectId).toBe('source')
+    await service.close()
+  }
+)
+
+it('retains the package if an earlier Session gains transient historical references while a later Session is inspected', async () => {
+  const { service, identity, coordinator, target, content } = await importedFixture(true)
+  const versionId = (await service.readOrigin(identity)).identities['version-1']
+  const earlier = await externalHistory(target.storageRoot, 'Unrelated', 'a-earlier')
+  const later = await externalHistory(target.storageRoot, 'Unrelated', 'z-later')
+  const inspect = SessionJournalStore.prototype.visitRetainedHistory
+  let injected = false
+  vi.spyOn(SessionJournalStore.prototype, 'visitRetainedHistory').mockImplementation(
+    async function (this: SessionJournalStore, path, options) {
+      if (path === later.path && !injected) {
+        injected = true
+        await earlier.update(versionId)
+        await earlier.update('Unrelated')
+      }
+      return inspect.call(this, path, options)
+    }
+  )
+  await coordinator.deleteSession(identity.projectId, identity.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  expect(injected).toBe(true)
+  expect(JSON.stringify((await earlier.store.read(earlier.path))!.document)).not.toContain(
+    versionId
+  )
+  expect(await readFile(content, 'utf8')).toBe('Research result')
+  expect(await target.client.uploadVersion.count()).toBe(1)
+  expect((await service.readOrigin(identity)).sourceManifest.source.projectId).toBe('source')
   await service.close()
 })
 

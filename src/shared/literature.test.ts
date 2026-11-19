@@ -35,7 +35,7 @@ describe('Temporary citation exploration command contract', () => {
         offset: 20
       }
       expect(literatureApplicationCommandContracts.related.args.parse([request])).toEqual([request])
-      for (const provider of [undefined, 'auto', 'semantic-scholar', 'europe-pmc']) {
+      for (const provider of [undefined, 'auto', 'unknown-source', 'europe-pmc']) {
         expect(() =>
           literatureApplicationCommandContracts.related.args.parse([{ ...request, provider }])
         ).toThrow()
@@ -85,9 +85,9 @@ describe('Temporary citation exploration command contract', () => {
     }
   )
   it.each([
-    { provider: 'semantic-scholar' },
+    { provider: 'unknown-source' },
     { provider: 'europe-pmc', seedPaperId: 'b'.repeat(40) }
-  ])('rejects removed citation source identities: %j', (removed) => {
+  ])('rejects unsupported citation source identities: %j', (removed) => {
     expect(() =>
       literatureApplicationCommandContracts.related.args.parse([
         {

@@ -4,7 +4,14 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { computeProviderId, validateHostConnectionProfile } from '@aipoch/compute'
-import { createComputeExecution, classifyFiles, resolveSshTarget } from '@aipoch/compute/node'
+import {
+  createComputeExecution,
+  classifyFiles,
+  resolveSshTarget,
+  resolveRayJobsEndpoint as resolveLegacyRayJobsEndpoint
+} from '@aipoch/compute/node'
+import { isRayBearerEndpoint, resolveRayJobsEndpoint } from '@aipoch/compute/ray'
+import { normalizeRayDashboardEndpoint } from '@aipoch/compute/ray-endpoint'
 
 // Loading the compiled worker in the pruned tarball exercises the SDK and its Node dependencies.
 const archiveRoot = await mkdtemp(join(tmpdir(), 'hf-packed-'))
@@ -29,6 +36,21 @@ try {
 const require = createRequire(import.meta.url)
 assert.equal(require('@aipoch/compute').computeProviderId('cluster'), computeProviderId('cluster'))
 assert.equal(typeof require('@aipoch/compute/node').createComputeExecution, 'function')
+assert.equal(
+  Object.keys(require.cache).some((path) => path.includes('jszip')),
+  false
+)
+assert.equal(
+  resolveLegacyRayJobsEndpoint('https://lab.example/gateway/'),
+  'https://lab.example/gateway'
+)
+assert.equal(resolveRayJobsEndpoint('https://lab.example/gateway/'), 'https://lab.example/gateway')
+assert.equal(isRayBearerEndpoint('https://lab.example/gateway'), true)
+assert.equal(
+  normalizeRayDashboardEndpoint('https://lab.example/gateway/'),
+  'https://lab.example/gateway'
+)
+assert.equal(typeof require('@aipoch/compute/ray').submitRayJob, 'function')
 assert.deepEqual(validateHostConnectionProfile({ sshAlias: ' cluster ', port: '22' }), {
   sshAlias: 'cluster',
   displayName: 'cluster',

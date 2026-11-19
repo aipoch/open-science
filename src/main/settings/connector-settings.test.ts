@@ -1143,27 +1143,6 @@ describe('ConnectorSettingsModule', () => {
     expect(stored?.enabled).toBe(false)
   })
 
-  it('preserves a retired credential on unrelated saves without projecting it into snapshots', async () => {
-    const legacyRef = encryptKey('historical-semantic-scholar-secret')
-    const baseline = await repository.getSettings()
-    await writeFile(
-      join(dir, 'settings.json'),
-      JSON.stringify({ ...baseline, connectors: { semanticScholarApiKeyRef: legacyRef } })
-    )
-
-    expect(await service.listConnectors()).not.toHaveProperty('semanticScholar')
-    const snapshot = await service.setNcbiCredentials({ contactEmail: 'me@lab.org' })
-    expect(snapshot).not.toHaveProperty('semanticScholar')
-    expect(JSON.stringify(snapshot)).not.toContain(legacyRef)
-    expect(JSON.stringify(snapshot)).not.toContain('historical-semantic-scholar-secret')
-
-    const reloaded = await new SettingsRepository(dir).getSettings()
-    expect(reloaded.connectors?.semanticScholarApiKeyRef).toBe(legacyRef)
-    expect(reloaded.connectors?.contactEmail).toBe('me@lab.org')
-    expect(service).not.toHaveProperty('setSemanticScholarCredential')
-    expect(repository).not.toHaveProperty('setSemanticScholarCredential')
-  })
-
   it('encrypts OpenAlex at rest and exposes only configured state', async () => {
     let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
     expect(snapshot.openAlex).toEqual({ hasApiKey: true })

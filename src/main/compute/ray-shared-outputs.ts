@@ -3,7 +3,7 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, opendir, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
-export { inspectRayDashboard } from '@aipoch/compute/node'
+export { inspectRayDashboard } from '@aipoch/compute/ray'
 
 const marker = '.open-science-owner'
 const timeoutMarker = '.open-science-timeout'

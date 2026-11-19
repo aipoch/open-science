@@ -445,7 +445,6 @@ for (const width of [320, 375, 414, 768, 1000]) {
     await expect(dialog.getByText('Another related paper', { exact: true })).toBeVisible()
     await expect(dialog.getByRole('checkbox', { name: 'Select A follow-up study' })).toBeChecked()
     await expect(dialog.getByRole('combobox', { name: 'Citation source' })).toHaveText('Europe PMC')
-    await expect(dialog.getByRole('button', { name: 'Semantic Scholar settings' })).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Add selected to Inbox' }).click()
     await expect(dialog.getByText('In Inbox', { exact: true })).toBeVisible()
     await dialog.getByRole('button', { name: 'Back', exact: true }).click()

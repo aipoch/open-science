@@ -41,9 +41,11 @@ import { SessionProjectionRepository } from './projection'
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
 import { composeSessionProjection } from '../composition/session-projection'
 import {
+  createSessionFile,
   materializeSessionConversationGraph,
   type PersistedChatSession
 } from '../../shared/session-persistence'
+import { sessionJournalPath } from './journal'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ReviewRepository } from '../reviewer/repository'
@@ -137,6 +139,13 @@ async function createStartupHarness(
     status: 'running',
     activeRun: { promptMessageId: 'interrupted-message', startedAt: 1 }
   })
+  // These upstream startup tests exercise the released legacy JSON reader. Keep that format so
+  // their injected readSessionFile delays and temp/quarantine fixtures observe the intended path.
+  for (const saved of [historical, selected, interrupted]) {
+    const primary = join(root, 'sessions/project', `${saved.id}.json`)
+    await writeFile(primary, `${JSON.stringify(createSessionFile(saved), null, 2)}\n`)
+    await rm(sessionJournalPath(primary), { force: true })
+  }
   await projection.replaceAll([historical, interrupted, selected])
   const owners = new Set(['historical', 'interrupted'])
   const fileIndex: SessionFileIndex = {

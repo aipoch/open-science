@@ -59,6 +59,7 @@ type CapturedInvocation = {
 }
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'artifacts.openInBrowser',
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
