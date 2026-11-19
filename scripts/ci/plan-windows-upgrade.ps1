@@ -2,17 +2,25 @@ param([string]$ReleaseVersion, [string]$LastSuccess)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $releases = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
-$versions = foreach ($page in $releases) {
+$candidates = foreach ($page in $releases) {
   foreach ($release in $page) {
     if (!$release.draft -and !$release.prerelease -and $release.tag_name -cmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
-      [version]$release.tag_name.Substring(1)
+      if ($ReleaseVersion -and ([version]$release.tag_name.Substring(1) -ge [version]$ReleaseVersion -or
+          !(@($release.assets.name) -clike '*-win-x64-setup.exe'))) { continue }
+      $release
     }
   }
 }
-$stable = $versions | Where-Object { !$ReleaseVersion -or $_ -lt [version]$ReleaseVersion } |
-  Sort-Object -Descending | Select-Object -First 1
-if (!$stable) { throw "No published stable baseline for candidate $ReleaseVersion" }
-$tag = "v$stable"
+$baseline = $candidates | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+if (!$baseline) { throw "No published stable baseline for candidate $ReleaseVersion" }
+$tag = $baseline.tag_name
+$stable = [version]$tag.Substring(1)
+if ($ReleaseVersion) {
+  $installers = @($baseline.assets | Where-Object { $_.name -clike '*-win-x64-setup.exe' })
+  if ($installers.Count -ne 1) { throw "Expected one Windows x64 installer in $tag" }
+  $blockmap = "$($installers[0].name).blockmap"
+  if ($baseline.assets.name -cnotcontains $blockmap) { throw "Windows baseline $tag is missing $blockmap" }
+}
 $base = git rev-parse --verify "$tag^{commit}"
 git merge-base --is-ancestor $base HEAD
 $compare = if ($LastSuccess) { $LastSuccess } else { $base }

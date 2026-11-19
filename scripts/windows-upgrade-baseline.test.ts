@@ -1,7 +1,7 @@
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 
@@ -13,6 +13,54 @@ const release = (tag: string, blockmap = true, draft = false): object => ({
     name: `aipoch-open-science-${tag.slice(1)}-win-x64-setup${ext}`
   }))
 })
+
+it.skipIf(process.platform !== 'win32')(
+  'certifies the last published Windows installer and requires its own blockmap',
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'signed-upgrade-plan-'))
+    try {
+      const releases = join(dir, 'releases.json')
+      const output = join(dir, 'output.txt')
+      const plan = (): SpawnSyncReturns<string> =>
+        spawnSync(
+          'pwsh',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `
+        function gh { Get-Content -Raw $env:TEST_RELEASES }
+        function git { if ($args[0] -eq 'rev-parse') { 'baseline-sha' } }
+        & $env:TEST_PLANNER -ReleaseVersion '1.3.0'
+      `
+          ],
+          {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              TEST_RELEASES: releases,
+              TEST_PLANNER: resolve('scripts/ci/plan-windows-upgrade.ps1'),
+              GITHUB_OUTPUT: output,
+              GITHUB_STEP_SUMMARY: join(dir, 'summary.txt')
+            }
+          }
+        )
+      const newest = { ...release('v1.2.2'), assets: [] }
+      const older = release('v1.2.1')
+      writeFileSync(releases, JSON.stringify([[newest, older]]))
+      const success = plan()
+      expect(success.status, success.stderr).toBe(0)
+      expect(readFileSync(output, 'utf8')).toContain('baseline=v1.2.1')
+
+      writeFileSync(releases, JSON.stringify([[release('v1.2.2', false), older]]))
+      const blocked = plan()
+      expect(blocked.status).not.toBe(0)
+      expect(blocked.stderr).toContain('aipoch-open-science-1.2.2-win-x64-setup.exe.blockmap')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+)
 
 // Run the workflow's actual PowerShell selection boundary. The gh function supplies API pages and
 // records downloads locally; no GitHub traffic or real installer execution is possible.
