@@ -175,6 +175,8 @@ type ManagedInstallImpl = (options: {
 }>
 
 type ManagedCodexInstallImpl = (options: {
+  existingCodexPath?: string
+  signal?: AbortSignal
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
@@ -6023,6 +6025,54 @@ describe('installOpencode', () => {
 })
 
 describe('installCodex', () => {
+  it('discovers the managed adapter and an existing native CLI for first-run sign-in without installing', async () => {
+    const install = vi.fn()
+    const adapterPath = '/managed/adapter/index.js'
+    const nativePath = '/usr/local/bin/codex'
+    const service = createService(undefined, {
+      managedCodexAdapterPath: adapterPath,
+      codexExternalNative: { path: nativePath, version: 'codex-cli 0.157.1' },
+      installManagedCodexImpl: install
+    })
+    expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
+    const result = await service.installCodex(
+      { source: 'managed', signInAttemptId: 'login' },
+      vi.fn()
+    )
+    expect(result.ok).toBe(true)
+    expect((await repository.getSettings()).codex).toMatchObject({
+      resolvedPath: adapterPath,
+      nativePath
+    })
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('cancels only the matching sign-in installation when the managed adapter is missing', async () => {
+    const started = Promise.withResolvers<void>()
+    const nativePath = '/usr/local/bin/codex'
+    let signal: AbortSignal | undefined
+    const service = createService(undefined, {
+      codexExternalNative: { path: nativePath, version: 'codex-cli 0.157.1' },
+      installManagedCodexImpl: async (options) => {
+        expect(options.existingCodexPath).toBe(nativePath)
+        signal = options.signal
+        started.resolve()
+        await new Promise<void>((resolve) =>
+          signal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return { result: { installId: options.installId, ok: false } }
+      }
+    })
+    const pending = service.installCodex({ source: 'managed', signInAttemptId: 'owner' }, vi.fn())
+    const cancelled = expect(pending).rejects.toThrow()
+    await started.promise
+    await service.cancelCodexLogin('other')
+    expect(signal?.aborted).toBe(false)
+    await service.cancelCodexLogin('owner')
+    await cancelled
+    expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
+  })
+
   it('persists the managed adapter and native Codex pair', async () => {
     const service = createService(undefined, {
       installManagedCodexImpl: async ({ installId }) => ({

@@ -2566,6 +2566,7 @@
     "Sign in with Anthropic": "Mit Anthropic anmelden",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "Es wurde keine Codex-Anmeldedatei zum Importieren gefunden. Wählen Sie „{{signIn}}“, um dasselbe Konto zu verbinden.",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "Ihre Codex-Anmeldung konnte nicht importiert werden. Versuchen Sie es erneut oder wählen Sie „{{signIn}}“, um Ihr Konto zu verbinden.",
+    "Could not prepare Codex. Try again.": "Codex konnte nicht vorbereitet werden. Versuchen Sie es erneut.",
     "Sign in with Open-Science": "Mit Open-Science anmelden",
     "Sign in with browser": "Im Browser anmelden",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "Melden Sie sich mit Ihrem Browser an, um Ihr Claude-Abonnement zu verbinden. Wir öffnen Claude zur Autorisierung in Ihrem Browser und kehren dann direkt zurück.",

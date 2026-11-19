@@ -72,6 +72,7 @@ import {
 import {
   detectCodex,
   detectCodexComponents,
+  detectNativeCodex,
   parseVersion as parseCodexVersion,
   runAcpInitializeSmoke,
   type CodexDetectDeps
@@ -970,8 +971,36 @@ export class AgentRuntimeManager {
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
+        this.signInInstallId = request.signInAttemptId
         const settings = await this.repository.getSettings()
-        const configuredCodexPath = settings.codex?.nativePath
+        let configuredCodexPath = settings.codex?.nativePath
+        if (request.signInAttemptId) {
+          const deps = {
+            ...this.codexDetectDeps,
+            managedAdapterPath:
+              this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot),
+            managedCodexPath: configuredCodexPath ?? this.codexDetectDeps.managedCodexPath
+          }
+          const pair = await detectCodex(deps, signal)
+          signal.throwIfAborted()
+          if (pair?.nativeCodexPath && pair.nativeCodexVersion) {
+            await this.repository.setCodexInfo({
+              resolvedPath: pair.adapterPath,
+              version: pair.adapterVersion,
+              nativePath: pair.nativeCodexPath,
+              nativeVersion: pair.nativeCodexVersion
+            })
+            return { ok: true, installId }
+          }
+          // When only the adapter is missing, keep a supported CLI found on PATH.
+          if (!configuredCodexPath) {
+            const native = await detectNativeCodex(deps, signal)
+            if (native && isSupportedCodexCliVersion(native.version))
+              configuredCodexPath = native.path
+          }
+          signal.throwIfAborted()
+          onEvent({ kind: 'progress', phase: 'resolving', installId })
+        }
         const managedCodexPath =
           this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
         const externalCodexPath =
@@ -991,6 +1020,7 @@ export class AgentRuntimeManager {
           signal,
           ...(existingCodexPath ? { existingCodexPath } : {})
         })
+        signal.throwIfAborted()
         if (
           outcome.result.ok &&
           outcome.adapterPath &&
@@ -1004,6 +1034,12 @@ export class AgentRuntimeManager {
             nativePath: outcome.codexPath,
             nativeVersion: outcome.codexVersion
           })
+        } else if (outcome.result.ok && request.signInAttemptId) {
+          return {
+            installId,
+            ok: false,
+            error: 'Codex authentication runtime could not be prepared. Install Codex in Settings.'
+          }
         }
         return outcome.result
       }

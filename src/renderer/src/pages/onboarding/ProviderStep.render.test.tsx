@@ -377,6 +377,61 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledWith('account')
   })
 
+  it('keeps isolated Codex sign-in on the card through preparation failure, cancellation and retry', async () => {
+    const pending = Promise.withResolvers<{ ok: boolean; installId: string }>()
+    const prepare = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Download interrupted' })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ ok: true })
+    const login = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    const cancel = vi.fn(async () => {
+      pending.resolve({ ok: true, installId: 'cancelled' })
+    })
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      installCodex: prepare,
+      cancelCodexLogin: cancel,
+      loginIsolatedCodex: login,
+      persistProvider: vi.fn().mockResolvedValue('isolated'),
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-openai')!
+    await clickButton(/^Sign in with Open-Science$/)
+    expect(card.querySelector('[role="alert"]')?.textContent).toContain('Download interrupted')
+    await clickButton(/^Retry$/)
+    await act(async () => {
+      const states = useSettingsStore.getState().installStates
+      useSettingsStore.setState({
+        installStates: {
+          ...states,
+          codex: {
+            ...states.codex,
+            installProgress: {
+              kind: 'progress',
+              phase: 'downloading',
+              installId: 'x',
+              receivedBytes: 1,
+              totalBytes: 4
+            }
+          }
+        }
+      })
+    })
+    expect(card.querySelector('progress')?.value).toBe(0.25)
+    await act(async () =>
+      card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!.click()
+    )
+    expect(cancel).toHaveBeenCalledWith(prepare.mock.calls[1][1])
+    expect(login).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/^Sign in with Open-Science$/)
+    expect(login).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledWith('account')
+  })
+
   it('allows dismissing a failed Codex import and manually switching to cancellable browser sign-in', async () => {
     let finishLogin!: (result: ValidateProviderResult) => void
     const loginIsolatedCodex = vi.fn(

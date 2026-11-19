@@ -2893,6 +2893,7 @@
     "Sign in with Anthropic": "Войти с Anthropic",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "Файл входа Codex для импорта не найден. Выберите «{{signIn}}», чтобы подключить ту же учётную запись.",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "Не удалось импортировать данные входа Codex. Повторите попытку или выберите «{{signIn}}», чтобы подключить учётную запись.",
+    "Could not prepare Codex. Try again.": "Не удалось подготовить Codex. Повторите попытку.",
     "Sign in with Open-Science": "Войти с Open-Science",
     "Sign in with browser": "Войти через браузер",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "Войдите через браузер, чтобы подключить подписку Claude. Мы откроем Claude в браузере для авторизации, а затем вернём вас в приложение.",

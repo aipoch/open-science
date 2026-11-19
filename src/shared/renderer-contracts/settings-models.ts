@@ -46,7 +46,7 @@ export const settingsBeginXaiOAuthLoginContracts = {
     'settings',
     ['settings:cancel-claude-login', LOCAL]
   ),
-  'settings.cancelCodexLogin': callable<() => Promise<void>>()('settings', [
+  'settings.cancelCodexLogin': callable<(signInInstallId?: string) => Promise<void>>()('settings', [
     'settings:cancel-codex-login',
     LOCAL
   ])

@@ -679,6 +679,8 @@ export type CodexInstallSource = Exclude<ClaudeInstallSource, 'official-script'>
 // Codex supports only an app-managed bundle or the upstream npm-global adapter. Authentication is
 // always provider API-key based; ChatGPT/local Codex login is intentionally absent.
 export type InstallCodexRequest = {
+  // Onboarding probes the pair before installing and can cancel its own attempt.
+  signInAttemptId?: string
   source: CodexInstallSource
 }
 
