@@ -120,12 +120,10 @@ const resolveWindowsOwnershipRoot = (
     resolveConfigRootOverride(packaged, environment) ??
     (!packaged ? resolveBootstrapConfigRoot(home, false, environment) : undefined)
   const base = environment.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
-  const root = isolatedRoot
-    ? join(isolatedRoot, 'notebook-sandbox')
-    : join(base, 'Aipoch', 'Open-Science', 'notebook-sandbox')
-  // Ordinary supervision proofs stay outside the installation's receipt and ACL directory.
-  if (!inspectOwnership) return root
-  const current = join(root, WINDOWS_INSTALLATION_ID)
+  const applicationRoot = isolatedRoot ?? join(base, 'Aipoch', 'Open-Science')
+  // A damaged protection tree must not block ordinary Job Object supervision.
+  if (!inspectOwnership) return join(applicationRoot, 'notebook-supervision')
+  const current = join(applicationRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   if (isolatedRoot) return current
   const legacy = join(base, 'Aipoch', 'OpenScience', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const hasLegacy = containsOwnershipState(legacy)

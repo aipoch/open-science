@@ -258,6 +258,9 @@ Their authenticated gateway remains active, but software that ignores proxy sett
 An explicit Windows standard-mode preference also permits native Notebook, Shell, and package
 execution while protection components are installed or require repair. With no saved preference,
 the existing ownership receipt determines the mode.
+In explicit standard mode, temporary Job Object termination proofs use a sibling
+`notebook-supervision` directory. A damaged `notebook-sandbox` directory cannot prevent ordinary
+supervision. Cleanup still uses the proof path recorded for each process.
 Receipt-derived R admission checks the native ownership receipt and pending operations: an absent setup permits
 standard execution, while incomplete, damaged, or unreadable protection does not. The admission
 decision is checked again before launch; a protected R request never falls back to standard mode.

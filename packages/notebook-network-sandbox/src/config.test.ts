@@ -150,8 +150,8 @@ it('rejects conflicting Windows ownership records instead of choosing a second r
   expect(
     createRuntimeConfig(createOptions({ windowsProtectionEnabled: false }), 'x64', {
       LOCALAPPDATA: root
-    }).windowsProtectionEnabled
-  ).toBe(false)
+    }).windowsOwnershipRoot
+  ).toBe(join(root, 'Aipoch', 'Open-Science', 'notebook-supervision'))
 })
 
 it('uses the real E2E storage override before config without touching shared ownership', () => {

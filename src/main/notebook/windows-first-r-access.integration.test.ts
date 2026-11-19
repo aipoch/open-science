@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -121,8 +121,7 @@ it.skipIf(process.platform !== 'win32').for([
           resources: { root },
           policy: { allowedDomains: [], deniedDomains: [] }
         })
-        await mkdir(dirname(windowsOwnershipRoot), { recursive: true })
-        await writeFile(windowsOwnershipRoot, 'unusable protection directory')
+        await writeFile(dirname(windowsOwnershipRoot), 'unusable protection directory')
       }
       const expectedStatus = command ? 'standard' : 'setupRequired'
       expect(await owner.status()).toMatchObject({ kind: expectedStatus })
