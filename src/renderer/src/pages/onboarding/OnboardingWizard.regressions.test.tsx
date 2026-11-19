@@ -216,6 +216,8 @@ describe('Onboarding navigation regressions', () => {
     await clickButton(/test & continue/i)
     await clickButton(/^back$/i)
     await clickButton(/^continue$/i)
+    expect(findButton(/^skip$/i)?.disabled).toBe(true)
+    expect(findButton(/test & continue/i)?.disabled).toBe(true)
     await act(async () => {
       pending.resolve({ providerId: 'saved-1', validation: { ok: true, category: 'ok' } })
     })

@@ -10,6 +10,7 @@ import type { ValidateProviderResult, XaiOAuthLoginResult } from '../../../../sh
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
+import { useProviderStepOperation } from './use-provider-step-operation'
 import {
   clickButton,
   codexReadyState,
@@ -59,8 +60,15 @@ const Harness = ({
   const [value, setValue] = useState<ProviderFormValue>(
     () => initialValue ?? createEmptyProviderFormValue()
   )
+  const operation = useProviderStepOperation()
   return (
-    <ProviderStep formValue={value} setFormValue={setValue} onBack={onBack} onAdvance={onAdvance} />
+    <ProviderStep
+      operation={operation}
+      formValue={value}
+      setFormValue={setValue}
+      onBack={onBack}
+      onAdvance={onAdvance}
+    />
   )
 }
 

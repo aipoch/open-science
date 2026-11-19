@@ -374,8 +374,8 @@ const registerSettingsIpcHandlers = ({
     (_event, request: RefreshProviderModelsRequest) =>
       snapshotCommits.projectAfter(workflows.runtime.refreshProviderModels(request))
   )
-  ipcMainHandle('settings:use-onboarding-default-model', () =>
-    snapshotCommits.currentSnapshotAfter(service.useOnboardingDefaultModel())
+  ipcMainHandle('settings:add-onboarding-kilo-provider', () =>
+    snapshotCommits.currentSnapshotAfter(service.addOnboardingKiloProvider())
   )
   ipcMainHandle('settings:mark-onboarding-complete', () =>
     snapshotCommits.currentSnapshotAfter(service.markOnboardingComplete())

@@ -8,7 +8,6 @@ import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
-import { defaultVendorModel } from '../../shared/provider-model-policy'
 import { getOfficialVendor } from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
@@ -124,7 +123,6 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
 }
 
 const kiloVendor = getOfficialVendor('kilo')!
-const kiloDefaultModel = defaultVendorModel('kilo')!
 const isKiloProvider = (provider: StoredProvider): boolean =>
   provider.type === 'official' && provider.vendorId === kiloVendor.id
 
@@ -212,18 +210,15 @@ class SettingsRepository {
     )
   }
 
-  /** 跳过模型配置时原子化地创建并选中免费模型，重复调用复用已选配置。 */
-  async useOnboardingDefaultModel(): Promise<void> {
+  /** 跳过引导时只补齐 Kilo 供应商，由用户之后选择模型。 */
+  async addOnboardingKiloProvider(): Promise<void> {
     await this.mutate((settings) => {
-      if (settings.onboardingCompletedAt !== undefined || settings.activeProviderId) return settings
-      const existing = settings.providers.find(isKiloProvider)
-      const provider = existing ?? createDefaultKiloProvider(settings)
+      if (settings.onboardingCompletedAt !== undefined || settings.providers.some(isKiloProvider))
+        return settings
       return {
         ...settings,
         kiloDefaultInitialized: true,
-        providers: existing ? settings.providers : [...settings.providers, provider],
-        activeProviderId: provider.id,
-        activeModel: kiloDefaultModel
+        providers: [...settings.providers, createDefaultKiloProvider(settings)]
       }
     })
   }

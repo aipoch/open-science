@@ -7648,7 +7648,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "L’autorisation de lire ce fichier a été refusée. Vérifiez les droits d’accès et réessayez.",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "Le navigateur n’a pas pu afficher cette image. Elle est peut-être endommagée, non prise en charge ou trop volumineuse pour la mémoire disponible. Téléchargez l’original pour la consulter.",
     "Could not mark messages as read.": "Impossible de marquer les messages comme lus.",
-    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "Cette étape est facultative. Ignorez-la pour utiliser un modèle Kilo gratuit sans clé API. Des limites d’utilisation s’appliquent.",
+    "Skip to access free Kilo models.": "Passez cette étape pour accéder aux modèles Kilo gratuits.",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "Téléchargement annulé. Les fichiers terminés ont été conservés ; les autres restent sélectionnés.",
     "Download cancelled. No archive was replaced.": "Téléchargement annulé. Aucune archive n’a été remplacée.",
     "Cancelling download…": "Annulation du téléchargement…",

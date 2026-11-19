@@ -536,11 +536,28 @@ async function main(): Promise<void> {
     abortStartupIfStopping()
     const { settingsStore, repository } = await prepareApplicationLocations(configRoot)
     const launchingDesktop = process.argv.includes('--desktop')
-    const hasPriorDesktopSettings =
-      launchingDesktop && (await settingsStore.readExisting()) !== undefined
+    const existingSettings = await settingsStore.readExisting()
     abortStartupIfStopping()
-    const startupSettings = await repository.getSettings()
+    const startupSettings = existingSettings ?? (await repository.getSettings())
     abortStartupIfStopping()
+    let desktopKiloDefaults: Promise<void> | undefined
+    const initializeDesktopKiloDefaults = (): Promise<void> =>
+      (desktopKiloDefaults ??= (async () => {
+        // 桌面端可能接入已经运行的 CLI 服务，也要识别该服务随后保存的用户配置。
+        const current =
+          !existingSettings && !launchingDesktop ? await repository.getSettings() : undefined
+        const upgrading =
+          existingSettings !== undefined ||
+          current?.onboardingCompletedAt !== undefined ||
+          Boolean(current?.providers.length)
+        await repository.initializeDesktopKiloDefaults(upgrading)
+      })().catch((error) => {
+        desktopKiloDefaults = undefined
+        createLogger('settings').warn(
+          'Could not initialize desktop Kilo defaults.',
+          diagnosticErrorFields(error)
+        )
+      }))
     const localeOwner = new LocalePreferenceOwner(
       [Intl.DateTimeFormat().resolvedOptions().locale],
       repository,
@@ -583,8 +600,11 @@ async function main(): Promise<void> {
     ]
     const startupCommands: ApplicationCommandByNameDispatcher = {
       commandNames: () => runtime?.applicationCommands.desktop.commandNames() ?? earlyChannels,
-      invoke: (name, invocation) => {
-        if (runtime) return runtime.applicationCommands.desktop.invoke(name, invocation)
+      invoke: async (name, invocation) => {
+        if (runtime) {
+          if (name === 'settings:get-settings') await initializeDesktopKiloDefaults()
+          return runtime.applicationCommands.desktop.invoke(name, invocation)
+        }
         requireDesktopCaller(invocation.callerContext)
         switch (name) {
           case 'locale:initialize':
@@ -747,7 +767,7 @@ async function main(): Promise<void> {
             ].includes(channel)
           )
             throw new Error('Unknown desktop host command.')
-          return runtime.applicationCommands.desktop.invoke(channel, invocation)
+          return startupCommands.invoke(channel, invocation)
         }
       },
       permissionApprovalPresence: {
@@ -811,7 +831,7 @@ async function main(): Promise<void> {
     if (state.phase === 'blocked' && !process.argv.includes('--desktop'))
       throw Object.assign(new Error(state.error.message), state.error)
     await waitForVerifiedDatabaseStartup(databaseStartup, startupCancellation.signal)
-    if (launchingDesktop) await repository.initializeDesktopKiloDefaults(hasPriorDesktopSettings)
+    if (launchingDesktop) await initializeDesktopKiloDefaults()
 
     abortStartupIfStopping()
     startupReporter.phase('runtime')

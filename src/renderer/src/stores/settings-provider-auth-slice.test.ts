@@ -20,7 +20,7 @@ type ProviderCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
-  | 'useOnboardingDefaultModel'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'codeBuddyAccount'
@@ -104,7 +104,7 @@ const createCommands = (): CommandMocks => ({
   setActiveProvider: vi.fn().mockResolvedValue(snapshot()),
   setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
   saveValidatedProvider: vi.fn(),
-  useOnboardingDefaultModel: vi.fn(),
+  addOnboardingKiloProvider: vi.fn(),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),

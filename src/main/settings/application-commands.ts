@@ -140,7 +140,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getSkillMarketplaceBatch'
   | 'stopSkillMarketplaceBatch'
   | 'markOnboardingComplete'
-  | 'useOnboardingDefaultModel'
+  | 'addOnboardingKiloProvider'
   | 'createWslSupportHandoff'
   | 'openWslTerminal'
   | 'previewAgentHomeSkill'
@@ -418,11 +418,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'markOnboardingComplete'>
   >('settings:mark-onboarding-complete'),
-  useOnboardingDefaultModel: defineApplicationCommand<
-    'settings:use-onboarding-default-model',
+  addOnboardingKiloProvider: defineApplicationCommand<
+    'settings:add-onboarding-kilo-provider',
     readonly [],
     SettingsSnapshot
-  >('settings:use-onboarding-default-model'),
+  >('settings:add-onboarding-kilo-provider'),
   previewAgentHomeSkill: defineApplicationCommand<
     'settings:preview-agent-home-skill',
     readonly [request: PreviewAgentHomeSkillRequest],
@@ -661,7 +661,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
   settingsCoreApplicationCommands.getSkillMarketplaceDetail,
   settingsCoreApplicationCommands.markOnboardingComplete,
-  settingsCoreApplicationCommands.useOnboardingDefaultModel,
+  settingsCoreApplicationCommands.addOnboardingKiloProvider,
   settingsCoreApplicationCommands.previewAgentHomeSkill,
   settingsCoreApplicationCommands.previewGitHubSkill,
   settingsCoreApplicationCommands.previewSkillZip,
@@ -864,9 +864,9 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.markOnboardingComplete()
         ),
-      'settings:use-onboarding-default-model': () =>
+      'settings:add-onboarding-kilo-provider': () =>
         dependencies.snapshotCommits.currentSnapshotAfter(
-          dependencies.service.useOnboardingDefaultModel()
+          dependencies.service.addOnboardingKiloProvider()
         ),
       'settings:preview-agent-home-skill': ({ args }) =>
         dependencies.service.previewAgentHomeSkill(args[0]),

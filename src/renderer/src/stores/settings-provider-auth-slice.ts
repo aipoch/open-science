@@ -36,7 +36,7 @@ export type ProviderAuthActions = {
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
-  useOnboardingDefaultModel: () => Promise<void>
+  addOnboardingKiloProvider: () => Promise<void>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
   codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
@@ -78,7 +78,7 @@ type ProviderAuthCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
-  | 'useOnboardingDefaultModel'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'codeBuddyAccount'
@@ -196,8 +196,8 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     return { providerId, validation }
   },
 
-  useOnboardingDefaultModel: async () => {
-    reconcileSnapshot(await getCommands().useOnboardingDefaultModel())
+  addOnboardingKiloProvider: async () => {
+    reconcileSnapshot(await getCommands().addOnboardingKiloProvider())
     void refreshPreflight().catch(() => undefined)
   },
 

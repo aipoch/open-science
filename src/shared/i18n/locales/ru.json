@@ -7788,7 +7788,7 @@
     "Permission to read this file was denied. Check its access permissions and retry.": "Отказано в разрешении на чтение этого файла. Проверьте права доступа и повторите попытку.",
     "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "Браузер не смог отобразить это изображение. Возможно, оно повреждено, не поддерживается или превышает объём доступной памяти. Скачайте оригинал для просмотра.",
     "Could not mark messages as read.": "Не удалось отметить сообщения как прочитанные.",
-    "This step is optional. Skip to use a free Kilo model without an API key. Usage limits apply.": "Этот шаг необязателен. Пропустите его, чтобы использовать бесплатную модель Kilo без API-ключа. Действуют ограничения использования.",
+    "Skip to access free Kilo models.": "Пропустите этот шаг, чтобы выбрать бесплатную модель Kilo.",
     "Download cancelled. Completed files were kept; remaining files stay selected.": "Загрузка отменена. Готовые файлы сохранены; остальные остаются выбранными.",
     "Download cancelled. No archive was replaced.": "Загрузка отменена. Архив не был заменён.",
     "Cancelling download…": "Отмена загрузки…",

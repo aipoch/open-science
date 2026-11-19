@@ -335,6 +335,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.repository, 'SettingsRepository')).toEqual([
       'addComputeGrant',
       'addCustomServer',
+      'addOnboardingKiloProvider',
       'clearCodeBuddyInfo',
       'clearCodexInfo',
       'clearCodexIsolatedValidationIfExists',
@@ -345,6 +346,7 @@ describe('Settings backend ownership architecture', () => {
       'deleteProvider',
       'getSettings',
       'hasComputeGrant',
+      'initializeDesktopKiloDefaults',
       'listComputeGrants',
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
@@ -526,7 +528,7 @@ describe('Settings backend ownership architecture', () => {
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
-        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider addOnboardingKiloProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -695,6 +697,7 @@ describe('Settings backend ownership architecture', () => {
       'huggingFaceRuntime',
       'imageModel',
       'imageServices',
+      'kiloDefaultInitialized',
       'legacyDataMovePromptDismissedAt',
       'localShellRuntime',
       'localePreference',
@@ -788,7 +791,10 @@ describe('Settings backend ownership architecture', () => {
     expect(nodeEntry).toContain(
       'const { settingsStore, repository } = await prepareApplicationLocations(configRoot)'
     )
-    expect(nodeEntry).toContain('const startupSettings = await repository.getSettings()')
+    expect(nodeEntry).toContain('const existingSettings = await settingsStore.readExisting()')
+    expect(nodeEntry).toContain(
+      'const startupSettings = existingSettings ?? (await repository.getSettings())'
+    )
     expect(nodeEntry).toMatch(/createCoreRuntime\(\{[\s\S]*?\bsettingsStore,/u)
     const desktopEntry = readSource(resolve(projectRoot, 'src/main/index.ts'))
     expect(desktopEntry).not.toMatch(
