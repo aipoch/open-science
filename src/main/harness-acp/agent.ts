@@ -10,6 +10,7 @@ import {
   type AgentSession,
   type AgentSessionInspection,
   type AgentEvent,
+  type AgentModel,
   type AgentMessage,
   type ContentBlock,
   type ModelRequest,
@@ -33,6 +34,7 @@ import {
   type HarnessConfig
 } from './config'
 import { connectHarnessMcp } from './mcp'
+import type { HarnessSessionTracing, HarnessTracing } from './tracing'
 import { classifyFailure } from '../../shared/failure/classify'
 
 // Built-in Agent context accounting. The provider's reported input tokens are the authority; this
@@ -233,6 +235,7 @@ type Entry = {
   cancelWebTools(): void
   setScheduleTurn(ref: string | undefined): void
   session: AgentSession
+  tracing?: HarnessSessionTracing
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
   takeOutputTruncation(): boolean
@@ -289,7 +292,10 @@ const isContextOverflowResponse = async (
   )
 }
 
-export function createHarnessAcpAgent(directory: string): {
+export function createHarnessAcpAgent(
+  directory: string,
+  tracing?: HarnessTracing
+): {
   app: acp.AgentApp
   dispose(): Promise<void>
 } {
@@ -591,21 +597,23 @@ export function createHarnessAcpAgent(directory: string): {
         )
           throw new Error(message)
       }
+      const sessionTracing = tracing?.session(id, target.model, target.protocol)
+      const sessionModel: AgentModel = {
+        ...model,
+        stream(request, signal) {
+          if (request.useProviderOutputDefault) return model.stream(request, signal)
+          const available = target.contextWindow - meter.measure(request)
+          return model.stream(
+            { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
+            signal
+          )
+        }
+      }
       session = await openAgentSession({
         sessionId: id,
         store: ephemeral ? createMemoryAgentStore() : store,
-        model: {
-          ...model,
-          stream(request, signal) {
-            if (request.useProviderOutputDefault) return model.stream(request, signal)
-            const available = target.contextWindow - meter.measure(request)
-            return model.stream(
-              { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
-              signal
-            )
-          }
-        },
-        tools: mcp.tools,
+        model: sessionTracing?.wrapModel(sessionModel) ?? sessionModel,
+        tools: sessionTracing ? mcp.tools.map(sessionTracing.wrapTool) : mcp.tools,
         // Original results are already authorized evidence in this exact session; no external access.
         toolResults: toolLess
           ? undefined
@@ -626,6 +634,7 @@ export function createHarnessAcpAgent(directory: string): {
           admit: (request) => {
             admit(request, 'Summary exceeds the model context budget')
             meter.summarizing(request)
+            sessionTracing?.markCompaction(request.requestId)
           }
         },
         transformContext: (messages) => clearing.project(messages),
@@ -645,6 +654,7 @@ export function createHarnessAcpAgent(directory: string): {
       entries.set(id, {
         model: target.model,
         session,
+        tracing: sessionTracing,
         setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
           const observed = overflow
@@ -781,6 +791,9 @@ export function createHarnessAcpAgent(directory: string): {
           entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
+          const finishTrace = entry.tracing?.startTurn()
+          let traceOutcome: acp.StopReason | 'error' = 'error'
+          let traceRequestCount: number | undefined
           try {
             await entry.reconcile()
             const assertKnown = (checkpoint: AgentSessionInspection): void => {
@@ -848,16 +861,19 @@ export function createHarnessAcpAgent(directory: string): {
               throw new Error(
                 `Built-in Agent turn ${status}; recovery requires host reconciliation`
               )
+            const stopReason = entry.cancelled
+              ? 'cancelled'
+              : status === 'complete'
+                ? 'end_turn'
+                : status === 'cancelled'
+                  ? 'cancelled'
+                  : entry.takeOutputTruncation()
+                    ? 'max_tokens'
+                    : 'max_turn_requests'
+            traceOutcome = stopReason
+            traceRequestCount = requests.length
             return {
-              stopReason: entry.cancelled
-                ? 'cancelled'
-                : status === 'complete'
-                  ? 'end_turn'
-                  : status === 'cancelled'
-                    ? 'cancelled'
-                    : entry.takeOutputTruncation()
-                      ? 'max_tokens'
-                      : 'max_turn_requests',
+              stopReason,
               _meta: {
                 'open-science-agent/requests': requests.map(({ id, status, usage }) => ({
                   id,
@@ -869,6 +885,7 @@ export function createHarnessAcpAgent(directory: string): {
           } finally {
             entry.setScheduleTurn(undefined)
             entry.active = false
+            finishTrace?.(entry.cancelled ? 'cancelled' : traceOutcome, traceRequestCount)
           }
         })()
       )

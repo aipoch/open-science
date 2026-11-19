@@ -122,6 +122,29 @@ npm run dev
 The switch is off by default and applies only to the development server. Packaged builds ignore it
 and continue to require the certified, version-matched WSL2 assets.
 
+### Open-Science Agent traces
+
+To collect traces for harness evaluation, start the app or backend with
+`OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` set to the full OTLP/HTTP JSON trace URL.
+Tracing is disabled when the value is unset or invalid. For a local collector on port 4318,
+launch development from the repository root.
+
+```bash
+OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces npm run dev
+```
+
+The same environment variable works with `npm run dev:web` and `open-science start --no-open`.
+Stop any already-running backend before relaunching with the new environment.
+
+Send a turn with the Open-Science Agent and look for a `harness.turn` span with a
+`harness.model` child under the `open-science-agent` service in the collector. A turn that
+executes an MCP tool also emits a `harness.tool` span. Spans carry operational metadata such as
+the Agent session and model request IDs, timing, outcomes, and reported model token usage.
+The payload excludes prompts, generated text, tool arguments and results, credentials, and error
+details. Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
+Failed uploads are dropped without local logs or retries. Keep the Agent process open until the
+collector receives the spans, since closing the helper cancels pending uploads.
+
 ## Coding-agent navigation
 
 Run installation, development, and validation commands from the repository root:

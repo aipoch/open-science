@@ -3,6 +3,7 @@
     "src/main/harness-acp/agent.ts",
     "src/main/harness-acp/mcp.ts",
     "src/main/harness-acp/entry.ts",
+    "src/main/harness-acp/tracing.ts",
     "src/main/harness-acp/agent.integration.test.ts",
     "src/main/harness-acp/tool-receipts.ts",
     "src/main/harness-acp/tool-receipts.test.ts",

@@ -18,6 +18,7 @@ import {
   HARNESS_ACP_ARG,
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
+  HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_TOOL_LESS,
   harnessConfigSchema
 } from '../harness-acp/config'
@@ -56,6 +57,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         SystemRoot: process.env.SystemRoot,
         TEMP: process.env.TEMP,
         TMP: process.env.TMP,
+        [HARNESS_OTLP_TRACES_ENDPOINT]: process.env[HARNESS_OTLP_TRACES_ENDPOINT],
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
       }
     })

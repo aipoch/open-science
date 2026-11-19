@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { harnessFramework } from './harness'
 import { harnessConfigSchema, HARNESS_ACP_ARG } from '../harness-acp/config'
 import { isRuntimeHelper } from '../runtime-helper'
@@ -7,6 +7,8 @@ import { isProviderUsableByFramework } from '../../shared/settings-runtime'
 import type { AgentSpawnInput } from './types'
 
 describe('built-in Agent host boundary', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
   it('keeps credentials in ACP authentication and uses the runtime helper', () => {
     const config = harnessFramework.prepareModelConfig(
       {
@@ -47,6 +49,26 @@ describe('built-in Agent host boundary', () => {
     )
     expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
   })
+
+  it.each([undefined, 'http://127.0.0.1:4318/v1/traces'])(
+    'uses only the host trace endpoint (%s)',
+    (endpoint) => {
+      vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT', endpoint)
+      vi.stubEnv('OTEL_EXPORTER_OTLP_HEADERS', 'authorization=private')
+      const spawnProcess = vi.fn<NonNullable<AgentSpawnInput['spawnProcess']>>()
+      harnessFramework.spawn({
+        executablePath: resolve('out/backend/index.cjs'),
+        args: [HARNESS_ACP_ARG, resolve('data', 'sessions')],
+        env: { OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT: 'https://untrusted.example/v1/traces' },
+        spawnProcess
+      })
+      const childEnv = spawnProcess.mock.calls[0][2]?.env
+      expect(childEnv).toBeDefined()
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT).toBe(endpoint)
+      expect(childEnv).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS')
+    }
+  )
+
   it('rejects remote model credentials and unsupported subscription routes', () => {
     expect(
       harnessConfigSchema.safeParse({

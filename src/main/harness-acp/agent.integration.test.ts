@@ -20,6 +20,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { afterEach, expect, it, vi } from 'vitest'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
 import { createHarnessAcpAgent } from './agent'
+import { createHarnessTracing, type HarnessTracing } from './tracing'
 import {
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
@@ -229,7 +230,8 @@ async function fixture(
   allow: boolean | (() => Promise<boolean>) = true,
   contextWindow = 32768,
   inputCapabilities?: { images?: boolean; files?: boolean; audio?: boolean; video?: boolean },
-  token = 'local-test-token'
+  token = 'local-test-token',
+  tracing?: HarnessTracing
 ): Promise<{
   directory: string
   owner: ReturnType<typeof createHarnessAcpAgent>
@@ -240,7 +242,7 @@ async function fixture(
 }> {
   const directory = existing ?? (await mkdtemp(join(tmpdir(), 'harness-acp-')))
   if (!existing) cleanup.push(() => rm(directory, { recursive: true, force: true }))
-  const owner = createHarnessAcpAgent(directory)
+  const owner = createHarnessAcpAgent(directory, tracing)
   const updates: acp.SessionNotification[] = [],
     approvals: acp.RequestPermissionRequest[] = []
   const connection = acp
@@ -419,6 +421,140 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   )
   expect(thoughts).toHaveLength(2)
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
+})
+
+it('exports correlated OTLP spans for a tool turn and completes a turn when the collector fails', async () => {
+  type Attribute = { key: string; value: { stringValue?: string; intValue?: string } }
+  type Span = {
+    name: string
+    traceId: string
+    spanId: string
+    parentSpanId?: string
+    startTimeUnixNano: string
+    endTimeUnixNano: string
+    attributes: Attribute[]
+  }
+  type Export = {
+    resourceSpans: {
+      resource: { attributes: Attribute[] }
+      scopeSpans: { spans: Span[] }[]
+    }[]
+  }
+  const attributes = (entries: Attribute[]): Record<string, string | undefined> =>
+    Object.fromEntries(entries.map(({ key, value }) => [key, value.stringValue ?? value.intValue]))
+  const requests: { body: string; url?: string; authorization?: string; status: number }[] = []
+  let collectorStatus = 200
+  const rejection = Promise.withResolvers<void>()
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    const status = collectorStatus
+    requests.push({
+      body: Buffer.concat(chunks).toString(),
+      url: request.url,
+      authorization: request.headers.authorization,
+      status
+    })
+    if (status === 503) await rejection.promise
+    response.writeHead(status, { 'content-type': 'application/json' }).end('{}')
+  })
+  collector.listen(0, '127.0.0.1')
+  await once(collector, 'listening')
+  cleanup.push(async () => {
+    rejection.resolve()
+    collector.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      collector.close((error) => (error ? reject(error) : resolve()))
+    )
+  })
+  const tracing = createHarnessTracing(
+    `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`
+  )!
+  cleanup.push(async () => tracing.dispose())
+  const managed = await mcpServer(false, undefined, false, 'private-tool-result', true)
+  let step = 0
+  let modelToolName: string | undefined
+  const model = await modelServer((body, response) => {
+    if (step++ === 0) {
+      modelToolName = body.tools![0].function.name
+      finish(response, '', modelToolName, { value: { name: 'private-tool-input' } })
+    } else finish(response, 'private-model-output')
+  })
+  const f = await fixture(model.endpoint, undefined, true, 32768, undefined, undefined, tracing)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [managed.config],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'private-system-instructions' }
+  })
+  const result = await prompt(f.connection, sessionId, 'private-user-prompt')
+  expect(result.stopReason).toBe('end_turn')
+  expect(managed.calls).toEqual(['append'])
+  const receipts = result._meta?.['open-science-agent/requests'] as { id: string }[]
+  expect(receipts).toHaveLength(2)
+
+  const exportedResources = (status: number): Export['resourceSpans'] =>
+    requests
+      .filter((request) => request.status === status)
+      .flatMap(({ body }) => (JSON.parse(body) as Export).resourceSpans)
+  const exportedSpans = (status: number): Span[] =>
+    exportedResources(status).flatMap(({ scopeSpans }) => scopeSpans.flatMap(({ spans }) => spans))
+  await vi.waitFor(() => expect(exportedSpans(200)).toHaveLength(4), { timeout: 3000 })
+  for (const { resource } of exportedResources(200))
+    expect(attributes(resource.attributes)['service.name']).toBe('open-science-agent')
+  const spans = exportedSpans(200)
+  const turn = spans.find((span) => span.name === 'harness.turn')!
+  expect(attributes(turn.attributes)).toMatchObject({
+    'harness.session.id': sessionId,
+    'harness.outcome': 'end_turn',
+    'harness.request.count': '2'
+  })
+  for (const span of spans) {
+    expect(span.traceId).toMatch(/^[0-9a-f]{32}$/)
+    expect(span.traceId).toBe(turn.traceId)
+    expect(span.spanId).toMatch(/^[0-9a-f]{16}$/)
+    expect(span.startTimeUnixNano).toMatch(/^\d{19}$/)
+    expect(span.endTimeUnixNano).toMatch(/^\d{19}$/)
+    expect(BigInt(span.endTimeUnixNano)).toBeGreaterThanOrEqual(BigInt(span.startTimeUnixNano))
+    if (span !== turn) expect(span.parentSpanId).toBe(turn.spanId)
+  }
+  const modelSpans = spans.filter((span) => span.name === 'harness.model')
+  expect(modelSpans).toHaveLength(2)
+  for (const [index, receipt] of receipts.entries()) {
+    const modelSpan = modelSpans.find(
+      (span) => attributes(span.attributes)['harness.request.id'] === receipt.id
+    )!
+    expect(attributes(modelSpan.attributes)).toMatchObject({
+      'harness.outcome': index === 0 ? 'tools' : 'complete',
+      'harness.request.purpose': 'turn',
+      'gen_ai.request.model': 'test',
+      'gen_ai.usage.input_tokens': '100',
+      'gen_ai.usage.output_tokens': '10',
+      'gen_ai.usage.cache_read.input_tokens': '40'
+    })
+  }
+  const tool = spans.find((span) => span.name === 'harness.tool')!
+  expect(attributes(tool.attributes)).toMatchObject({
+    'gen_ai.tool.name': modelToolName,
+    'harness.outcome': 'complete'
+  })
+
+  collectorStatus = 503
+  const followUp = prompt(f.connection, sessionId, 'private-follow-up')
+  await vi.waitFor(() => expect(exportedSpans(503).length).toBeGreaterThan(0))
+  await vi.waitFor(() => expect(followUp).resolves.toMatchObject({ stopReason: 'end_turn' }))
+  rejection.resolve()
+  await vi.waitFor(
+    () =>
+      expect(exportedSpans(503)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'harness.turn' })])
+      ),
+    { timeout: 3000 }
+  )
+  for (const request of requests) {
+    expect(request.url).toBe('/v1/traces')
+    expect(request.authorization).toBeUndefined()
+    expect(request.body).not.toMatch(/private-|local-test-token/)
+  }
 })
 
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {
