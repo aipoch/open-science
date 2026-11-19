@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle, Settings2, Zap } from 'lucide-react'
+import { LoaderCircle, Settings2, X, Zap } from 'lucide-react'
 import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
 
 import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
@@ -1034,11 +1034,14 @@ const ProviderStep = ({
                               {isAuthorizing && (
                                 <Button
                                   type="button"
-                                  variant="outline"
-                                  className="onboarding-cancel-sign-in"
+                                  variant="secondary"
                                   aria-label={t('Cancel sign-in')}
                                   onClick={() => void cancelQuickAuthorization()}
                                 >
+                                  <X
+                                    aria-hidden="true"
+                                    className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                                  />
                                   {t('Cancel')}
                                 </Button>
                               )}
