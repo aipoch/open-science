@@ -323,7 +323,7 @@ describe('notebook run repository', () => {
     for (const frameId of [provisionalRoot, canonicalRoot, 'child-frame']) {
       const expectedIds = frameId === 'child-frame' ? ['child'] : ['manual', 'agent']
       const window = await repository.readSessionRunWindow(projectId, sessionId, 1, [], frameId)
-      expect(window.historyAgents).toEqual([
+      expect(window.agentSummaries).toEqual([
         {
           agentFrameId: canonicalRoot,
           isRoot: true,
@@ -1239,7 +1239,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
-      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
+      agentSummaries: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1254,7 +1254,7 @@ describe('notebook run repository', () => {
         expect.objectContaining({ runId: 'child' })
       ],
       total: 3,
-      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
+      agentSummaries: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1266,7 +1266,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
-      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
+      agentSummaries: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,
@@ -1287,7 +1287,7 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'legacy' })],
       total: 3,
-      historyAgents: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
+      agentSummaries: [expect.objectContaining({ agentFrameId: 'child-frame-1', runCount: 2 })],
       latestRunEnvironments: { python: 'historical-python' },
       historyPage: {
         hasEarlierRuns: true,

@@ -376,6 +376,7 @@ describe('NotebookPreview env gate (mounted)', () => {
       runJsonPath: '/tmp/proj/.notebook/run.json',
       cells: [],
       runCount: 0,
+      agentSummaries: [],
       runs: [],
       recentRuns: [],
       environments: [],
@@ -491,6 +492,7 @@ describe('NotebookPreview per-kernel tabs', () => {
               runJsonPath: '/tmp/proj/.notebook/run.json',
               cells: [],
               runCount: runs.length,
+              agentSummaries: summarizeNotebookHistory('session-1', runs),
               runs,
               recentRuns: runs,
               runStaleness,
@@ -1015,6 +1017,7 @@ describe('NotebookPreview per-kernel tabs', () => {
           cwd: '/tmp/proj',
           kernelStatus: 'idle',
           runCount: 1,
+          agentSummaries: summarizeNotebookHistory('session-1', [run]),
           notebookSessionRoot: '/tmp/proj/.notebook',
           dataRoot: '/tmp/proj/data',
           runtimeRoot: '/tmp/proj/.notebook/runtime',
@@ -1113,6 +1116,7 @@ describe('NotebookPreview per-kernel tabs', () => {
         cwd: '/tmp/proj',
         kernelStatus: 'idle',
         runCount: 0,
+        agentSummaries: [],
         latestRunEnvironments: {},
         runs: [],
         recentRuns: [],
@@ -1868,7 +1872,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     const recent = makeRun({ runId: 'recent', startedAt: 100 })
     await mountWithRuns([recent], [], {}, 'idle', {
       runCount: 2,
-      historyAgents: summarizeNotebookHistory('session-1', [old, recent]),
+      agentSummaries: summarizeNotebookHistory('session-1', [old, recent]),
       historyPage: { hasEarlierRuns: true, oldestCursor: { startedAt: 100, runId: 'recent' } }
     })
     const state = vi.mocked(window.api.notebook.state)
@@ -1902,7 +1906,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
     await mountWithRuns([recent], [], {}, 'idle', {
       runCount: 2,
-      historyAgents: summarizeNotebookHistory('session-1', [old, recent]),
+      agentSummaries: summarizeNotebookHistory('session-1', [old, recent]),
       historyPage: { hasEarlierRuns: true, oldestCursor: { startedAt: 100, runId: 'recent' } }
     })
     const state = vi.mocked(window.api.notebook.state)
@@ -2634,6 +2638,7 @@ describe('NotebookPreview per-environment selector', () => {
             kernelStatus: 'idle',
             runJsonPath: '/tmp/proj/.notebook/run.json',
             cells: [],
+            agentSummaries: summarizeNotebookHistory('session-1', runs),
             runs,
             recentRuns: runs,
             environments: liveEnvironments,

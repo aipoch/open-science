@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next'
 
 import type {
-  NotebookHistoryAgent,
+  NotebookAgentSummary,
   NotebookRunHistorySummary,
   NotebookRunRecord
 } from '../../../../shared/notebook'
@@ -99,13 +99,13 @@ const notebookFrameLabels = (
   session: Pick<ChatSession, 'id' | 'conversationGraph'>,
   t: TFunction,
   runs: readonly NotebookRunRecord[] = [],
-  historyAgents: readonly NotebookHistoryAgent[] = []
+  agentSummaries: readonly NotebookAgentSummary[] = []
 ): Record<string, string> => {
   const graph = session.conversationGraph
   const rootFrameId = notebookRootFrameId(session, runs)
   const labels: Record<string, string> = { [rootFrameId]: t('Main Agent') }
   let ordinal = 0
-  for (const agent of historyAgents) {
+  for (const agent of agentSummaries) {
     if (agent.isRoot) continue
     ordinal += 1
     const frame = graph?.frames.find((candidate) => candidate.id === agent.agentFrameId)
@@ -119,17 +119,17 @@ const notebookFrameLabels = (
   return labels
 }
 
-const notebookHistoryAgentsForSession = (
+const notebookAgentSummariesForSession = (
   session: Pick<ChatSession, 'id' | 'conversationGraph'>,
   runs: readonly NotebookRunRecord[],
-  agents: readonly NotebookHistoryAgent[]
-): NotebookHistoryAgent[] => {
+  agents: readonly NotebookAgentSummary[]
+): NotebookAgentSummary[] => {
   const rootFrameId = notebookRootFrameId(session, runs)
   return agents.map((agent) => (agent.isRoot ? { ...agent, agentFrameId: rootFrameId } : agent))
 }
 
 const notebookHistorySummaries = (
-  agents: readonly NotebookHistoryAgent[]
+  agents: readonly NotebookAgentSummary[]
 ): ReadonlyMap<string, NotebookRunHistorySummary> =>
   new Map(
     agents.map((agent) => {
@@ -155,7 +155,7 @@ export {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
-  notebookHistoryAgentsForSession,
+  notebookAgentSummariesForSession,
   notebookHistorySummaries,
   normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame

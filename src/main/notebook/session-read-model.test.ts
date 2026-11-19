@@ -283,7 +283,7 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      historyAgents: [
+      agentSummaries: [
         {
           agentFrameId: 'frame-old',
           isRoot: false,
@@ -342,7 +342,7 @@ describe('NotebookSessionReadModel', () => {
         ]
       }
     ]
-    expect(state.historyAgents).toEqual(expectedAgents)
+    expect(state.agentSummaries).toEqual(expectedAgents)
     const imported = await makeReadModel(storageRoot, undefined, repository).importedState(
       { projectId: session.projectId, sessionId: session.sessionId, workspaceCwd: session.cwd },
       [],
@@ -350,7 +350,7 @@ describe('NotebookSessionReadModel', () => {
       undefined,
       100
     )
-    expect(imported.historyAgents).toEqual(expectedAgents)
+    expect(imported.agentSummaries).toEqual(expectedAgents)
     expect(state.runCount).toBe(125)
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
@@ -388,7 +388,7 @@ describe('NotebookSessionReadModel', () => {
       latestDataKernel: 'r' as const
     }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      historyAgents: [],
+      agentSummaries: [],
       runs: [],
       total: 125,
       latestRunEnvironments: {},
@@ -426,7 +426,7 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      historyAgents: [],
+      agentSummaries: [],
       runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
       total: 125,
       latestRunEnvironments: {}

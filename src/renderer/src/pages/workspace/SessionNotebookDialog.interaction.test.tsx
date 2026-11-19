@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { summarizeNotebookHistory, type NotebookRunRecord } from '../../../../shared/notebook'
 import { SessionNotebookContent, SessionNotebookDialog } from './SessionNotebookDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -79,7 +79,11 @@ it.each([false, true])('opens mixed-root history with a canonical graph: %s', as
   vi.stubGlobal('api', {
     notebook: {
       getReference: vi.fn().mockResolvedValue({ sessionId }),
-      state: vi.fn().mockResolvedValue({ runs, runCount: runs.length }),
+      state: vi.fn().mockResolvedValue({
+        runs,
+        runCount: runs.length,
+        agentSummaries: summarizeNotebookHistory(sessionId, runs)
+      }),
       exportIpynb: vi.fn()
     }
   })
@@ -115,23 +119,16 @@ it.each([false, true])('opens mixed-root history with a canonical graph: %s', as
   })
 })
 
-it('keeps complete-history summary discovery when an older host omits historyAgents', async () => {
-  const sessionId = 'session-legacy-host'
+it('uses complete Agent summaries without a second summary request', async () => {
+  const sessionId = 'session-summary'
   const frameId = `root-frame-${sessionId}`
-  const state = vi.fn(async (request: { historySummaryFrameId?: string }) => ({
-    runs: [{ ...run, agentFrameId: frameId, rootFrameId: frameId }],
+  const recent = { ...run, agentFrameId: frameId, rootFrameId: frameId }
+  const earlier = { ...recent, runId: 'earlier-r', kernelKind: 'r' as const, startedAt: 0 }
+  const state = vi.fn().mockResolvedValue({
+    runs: [recent],
     runCount: 2,
-    ...(request.historySummaryFrameId
-      ? {
-          historySummary: {
-            agentFrameId: frameId,
-            runCount: 2,
-            kernelCounts: { python: 1, r: 1, repl: 0, bash: 0 },
-            latestDataKernel: 'python'
-          }
-        }
-      : {})
-  }))
+    agentSummaries: summarizeNotebookHistory(sessionId, [earlier, recent])
+  })
   vi.stubGlobal('api', {
     notebook: { getReference: vi.fn().mockResolvedValue({ sessionId }), state }
   })
@@ -139,10 +136,14 @@ it('keeps complete-history summary discovery when an older host omits historyAge
     root.render(<SessionNotebookDialog session={{ id: sessionId } as never} onClose={vi.fn()} />)
   )
   await waitFor(() => {
-    expect(state).toHaveBeenCalledWith(expect.objectContaining({ historySummaryFrameId: frameId }))
     expect(
       document.body.querySelector('button[aria-label="Download separate notebooks by kernel (2)"]')
     ).not.toBeNull()
+  })
+  expect(state).toHaveBeenCalledExactlyOnceWith({
+    sessionId,
+    projectId: undefined,
+    workspaceCwd: ''
   })
 })
 
@@ -229,21 +230,16 @@ describe('SessionNotebookContent export', () => {
 
   it('discovers and exports a kernel that exists only outside the recent window', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
-    const onLoadHistorySummary = vi.fn(async (agentFrameId: string) =>
-      agentFrameId === 'frame-child'
-        ? {
-            agentFrameId,
-            runCount: 12,
-            kernelCounts: { python: 0, r: 12, repl: 0, bash: 0 },
-            latestDataKernel: 'r' as const
-          }
-        : {
-            agentFrameId,
-            runCount: 1,
-            kernelCounts: { python: 1, r: 0, repl: 0, bash: 0 },
-            latestDataKernel: 'python' as const
-          }
-    )
+    const agentSummaries = summarizeNotebookHistory('session-1', [
+      run,
+      {
+        ...run,
+        runId: 'earlier-child-r',
+        agentFrameId: 'frame-child',
+        kernelKind: 'r',
+        startedAt: 0
+      }
+    ])
     await act(async () => {
       root.render(
         <SessionNotebookContent
@@ -251,7 +247,7 @@ describe('SessionNotebookContent export', () => {
           frameLabels={frameLabels}
           runs={[run]}
           status="ready"
-          onLoadHistorySummary={onLoadHistorySummary}
+          agentSummaries={agentSummaries}
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
@@ -275,7 +271,6 @@ describe('SessionNotebookContent export', () => {
       await Promise.resolve()
     })
 
-    expect(onLoadHistorySummary).toHaveBeenCalledWith('frame-child')
     expect(container.querySelector('[data-testid="session-notebook-tab-r"]')).not.toBeNull()
     expect(container.textContent).toContain(
       'No runs from this kernel are in the recent window. Downloads include the complete history.'

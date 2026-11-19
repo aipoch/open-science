@@ -9,7 +9,7 @@ import type {
   NotebookKernelInstanceIdentity,
   NotebookRunDocument,
   NotebookRunHistorySummary,
-  NotebookHistoryAgent,
+  NotebookAgentSummary,
   NotebookRunCursor,
   NotebookRunRecord,
   NotebookRunStatus,
@@ -1451,7 +1451,7 @@ class NotebookRunRepository {
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
     historySummary?: NotebookRunHistorySummary
-    historyAgents: NotebookHistoryAgent[]
+    agentSummaries: NotebookAgentSummary[]
     historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
   }> {
     const documents = await this.readSessionDocuments(projectId, sessionId)
@@ -1530,7 +1530,7 @@ class NotebookRunRepository {
     return {
       runs: [...mergedRuns.values()].sort(compareRuns),
       total,
-      historyAgents: summarizeNotebookHistory(
+      agentSummaries: summarizeNotebookHistory(
         sessionId,
         documents.flatMap((document) => document.runs)
       ),

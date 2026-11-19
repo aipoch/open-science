@@ -107,6 +107,7 @@ const state = (
   runJsonPath: '/notebook/run.json',
   cells: [],
   runCount: runs.length,
+  agentSummaries: [],
   latestRunEnvironments: {},
   runs,
   recentRuns: runs,

@@ -646,7 +646,7 @@ export type NotebookHistoryView = {
   latestRunId: string
 }
 
-export type NotebookHistoryAgent = {
+export type NotebookAgentSummary = {
   agentFrameId: string
   isRoot: boolean
   runCount: number
@@ -657,7 +657,7 @@ export type NotebookHistoryAgent = {
 export const summarizeNotebookHistory = (
   sessionId: string,
   runs: readonly NotebookRunRecord[]
-): NotebookHistoryAgent[] => {
+): NotebookAgentSummary[] => {
   const canonicalRoot = `root-frame-${sessionId}`
   const agents = new Map<
     string,
@@ -745,7 +745,7 @@ export type NotebookSessionState = {
   // Present only when state() requested one Agent's complete-history discovery metadata.
   historySummary?: NotebookRunHistorySummary
   // Complete Agent/kernel/environment discovery, independent of the bounded record window.
-  historyAgents?: NotebookHistoryAgent[]
+  agentSummaries: NotebookAgentSummary[]
   // Present on normal and cursor-paged renderer reads; omitted for sparse run-id/summary requests.
   historyPage?: NotebookRunPage
   runs: NotebookRunRecord[]

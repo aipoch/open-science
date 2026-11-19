@@ -50,7 +50,6 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
-import { summarizeNotebookHistory } from '../../../../shared/notebook'
 import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
@@ -74,7 +73,7 @@ import {
   createNotebookFrameFilterOptions,
   normalizeNotebookRootFrameRuns,
   notebookFrameLabels,
-  notebookHistoryAgentsForSession,
+  notebookAgentSummariesForSession,
   notebookHistorySummaries,
   pendingNotebookCode,
   projectNotebookRunsForFrame,
@@ -745,16 +744,16 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   ].sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
   const notebookSession = session ?? { id: item.notebook.sessionId }
   const frameRuns = normalizeNotebookRootFrameRuns(runs, notebookSession)
-  const historyAgents = notebookHistoryAgentsForSession(
+  const agentSummaries = notebookAgentSummariesForSession(
     notebookSession,
     runs,
-    notebookState?.historyAgents ?? summarizeNotebookHistory(notebookSession.id, runs)
+    notebookState?.agentSummaries ?? []
   )
   const pendingCode = pendingNotebookCode(session, frameRuns)
   const frameOptions = createNotebookFrameFilterOptions(
     frameRuns,
-    notebookFrameLabels(notebookSession, t, frameRuns, historyAgents),
-    notebookHistorySummaries(historyAgents),
+    notebookFrameLabels(notebookSession, t, frameRuns, agentSummaries),
+    notebookHistorySummaries(agentSummaries),
     false,
     pendingCode[0]?.frameId
   )
@@ -764,7 +763,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const projectedRuns = effectiveFrameFilter
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
-  const agentHistory = historyAgents.find(
+  const agentHistory = agentSummaries.find(
     (agent) => `frame:${agent.agentFrameId}` === effectiveFrameFilter
   )
 
