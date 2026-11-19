@@ -8508,6 +8508,8 @@
     "Required Web execution evidence cannot be shared under the current data policy.": "目前的資料政策不允許分享必要的網頁執行證據。",
     "Content unavailable": "內容無法使用",
     "Model-generated response": "模型產生的內容",
+    "Search query": "搜尋內容",
+    "Result limit": "結果上限",
     "Past 24 hours": "過去 24 小時",
     "Past week": "過去一週",
     "Past month": "過去一個月",

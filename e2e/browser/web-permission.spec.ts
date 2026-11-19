@@ -6,6 +6,17 @@ test('reviews built-in search parameters and preserves allow and deny responses'
   await page.goto('/web-permission.html?built-in-search=1&light=1&sites=1')
   const card = page.getByTestId('web-search-permission-card')
   await expect(card).toContainText('new foundation model release 2026')
+  await expect(card.getByText('Search query', { exact: true })).toBeVisible()
+  await expect(card.getByRole('term')).toHaveText([
+    'Time range',
+    'Result limit',
+    'Limit to these sites'
+  ])
+  await expect(card.getByRole('definition')).toHaveText([
+    'Past month',
+    'Up to 10 results',
+    'nature.comscience.org'
+  ])
   await expect(card).toContainText('Past month')
   await expect(card).toContainText('Up to 10 results')
   await expect(card).toContainText('nature.com')

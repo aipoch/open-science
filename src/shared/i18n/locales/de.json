@@ -8679,6 +8679,8 @@
     "Required Web execution evidence cannot be shared under the current data policy.": "Erforderliche Web-Ausführungsnachweise dürfen gemäß der aktuellen Datenrichtlinie nicht weitergegeben werden.",
     "Content unavailable": "Inhalt nicht verfügbar",
     "Model-generated response": "Vom Modell erzeugte Antwort",
+    "Search query": "Suchanfrage",
+    "Result limit": "Ergebnislimit",
     "Past 24 hours": "Letzte 24 Stunden",
     "Past week": "Letzte Woche",
     "Past month": "Letzter Monat",

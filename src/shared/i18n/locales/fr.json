@@ -8858,6 +8858,8 @@
     "Required Web execution evidence cannot be shared under the current data policy.": "La politique de données actuelle interdit le partage des preuves d’exécution web requises.",
     "Content unavailable": "Contenu indisponible",
     "Model-generated response": "Réponse générée par le modèle",
+    "Search query": "Requête de recherche",
+    "Result limit": "Limite de résultats",
     "Past 24 hours": "Dernières 24 heures",
     "Past week": "Dernière semaine",
     "Past month": "Dernier mois",
