@@ -2,7 +2,11 @@ import type { CatalogSnapshot } from '@aipoch/providers'
 import * as codeBuddyAuth from './codebuddy-auth'
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
-import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
+import {
+  LAB_PROVIDER_ID,
+  providerValidationRoute,
+  providerValidationSucceeded
+} from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,6 +23,7 @@ import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import { buildLabProviderRecord } from './lab-provider'
 
 vi.mock('electron', () => ({
   net: {
@@ -1332,6 +1337,67 @@ describe('ProviderAccountsModule', () => {
       vi.unstubAllGlobals()
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('protects the managed Lab record from generic saves and draft validation', async () => {
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [{ id: 'research', protocol: 'openai' }]
+    })
+    await repository.upsertProvider(lab)
+    const before = await repository.getSettings()
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+
+    const custom = {
+      id: LAB_PROVIDER_ID,
+      type: 'custom' as const,
+      baseUrl: 'https://api.example.com/v1',
+      model: 'replacement'
+    }
+    const managed = 'The Lab provider is managed in Settings → Lab.'
+    await expect(module.upsertProvider({ type: 'lab' })).rejects.toThrow(managed)
+    await expect(module.upsertProvider(custom)).rejects.toThrow(managed)
+    await expect(module.saveValidatedProvider(custom)).rejects.toThrow(managed)
+    await expect(module.validateProvider({ edit: custom })).rejects.toThrow(managed)
+    await expect(module.validateProvider({ draft: { type: 'lab' } })).rejects.toThrow(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('validates explicit and saved Lab model selections without stripping the public ID', async () => {
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [
+        { id: 'research', protocol: 'openai' },
+        { id: 'lab:research', protocol: 'openai' }
+      ],
+      default_model_id: 'lab:research'
+    })
+    await repository.upsertProvider(lab)
+    await repository.setAgentFramework('open-science-agent')
+    const modelIds: string[] = []
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      modelIds.push(JSON.parse(String(init.body)).model)
+      return Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+    })
+
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toMatchObject({
+      ok: true
+    })
+    await expect(
+      module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'lab:lab:research' })
+    ).resolves.toMatchObject({ ok: true })
+    await repository.setActiveProvider(LAB_PROVIDER_ID, 'lab:research')
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toMatchObject({
+      ok: true
+    })
+    await expect(
+      module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'research' })
+    ).resolves.toMatchObject({ ok: false, category: 'model-not-found', applied: false })
+    expect(modelIds).toEqual(['lab:research', 'lab:research', 'research'])
   })
 
   it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {

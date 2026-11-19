@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getLabServerUrlError,
   joinLabBaseUrl,
-  labModelId,
+  labModelIdFromBootstrap,
   labModelLabel,
   labModelSummaries,
   labModelWireId,
@@ -31,9 +31,10 @@ describe('Lab shared contract', () => {
   })
 
   it('namespaces model ids without changing the wire id', () => {
-    expect(labModelId('research-default')).toBe('lab:research-default')
-    expect(labModelId('lab:research-default')).toBe('lab:research-default')
+    expect(labModelIdFromBootstrap('research-default')).toBe('lab:research-default')
+    expect(labModelIdFromBootstrap('lab:research-default')).toBe('lab:lab:research-default')
     expect(labModelWireId('lab:research-default')).toBe('research-default')
+    expect(labModelWireId('lab:lab:research-default')).toBe('lab:research-default')
     expect(labModelWireId('research-default')).toBe('research-default')
     expect(labModelLabel('lab:research-default')).toBe('research-default')
   })
@@ -67,10 +68,11 @@ describe('Lab shared contract', () => {
   it('drops disabled or unavailable bootstrap models from the status summary', () => {
     const models = labModelSummaries([
       { id: 'a', name: 'A', protocol: 'openai', available: true },
+      { id: 'lab:a', protocol: 'openai' },
       { id: 'b', name: 'B', protocol: 'openai', enabled: false },
       { id: 'c', name: 'C', protocol: 'openai-response', available: false }
     ])
-    expect(models.map((model) => model.id)).toEqual(['lab:a'])
+    expect(models.map((model) => model.id)).toEqual(['lab:a', 'lab:lab:a'])
     expect(models[0]?.protocols).toEqual(['chat-completions'])
   })
 })

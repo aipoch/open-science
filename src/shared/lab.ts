@@ -226,15 +226,13 @@ export const getLabServerUrlError = (value: string): LabErrorCode | undefined =>
 
 export const normalizeLabServerUrl = (value: string): string => value.trim().replace(/\/+$/u, '')
 
-export const labModelId = (modelId: string): string =>
-  modelId.startsWith(LAB_MODEL_ID_PREFIX) ? modelId : `${LAB_MODEL_ID_PREFIX}${modelId}`
+export const labModelIdFromBootstrap = (modelId: string): string =>
+  `${LAB_MODEL_ID_PREFIX}${modelId}`
 
 export const labModelWireId = (modelId: string): string =>
   modelId.startsWith(LAB_MODEL_ID_PREFIX) ? modelId.slice(LAB_MODEL_ID_PREFIX.length) : modelId
 
 export const labModelLabel = (modelId: string): string => labModelWireId(modelId)
-
-export const labModelIdFromBootstrap = (modelId: string): string => labModelId(modelId)
 
 // The gateway serves only POST /v1/chat/completions and POST /v1/responses. Bootstrap advertises
 // either protocol ids; anything unknown is ignored rather than guessed.
@@ -433,7 +431,7 @@ export const labModelSummaries = (
       .filter((model) => model.enabled !== false && model.available !== false)
       .map((model) =>
         Object.freeze({
-          id: labModelId(model.id),
+          id: labModelIdFromBootstrap(model.id),
           name: model.name?.trim() || model.id,
           protocols: Object.freeze(labProtocolsToEndpoints(model)),
           streaming: model.streaming !== false

@@ -103,9 +103,10 @@ describe('Lab end-to-end model routing', () => {
             streaming: true,
             enabled: true,
             available: true
-          }
+          },
+          { id: 'lab:research-default', name: 'Prefixed Research', protocol: 'openai' }
         ],
-        default_model_id: 'research-default',
+        default_model_id: 'lab:research-default',
         model_base_url: '/v1'
       })),
       refreshToken: vi.fn(),
@@ -136,38 +137,59 @@ describe('Lab end-to-end model routing', () => {
         model: 'lab:research-default',
         label: 'research-default',
         selectable: true
+      }),
+      expect.objectContaining({
+        model: 'lab:lab:research-default',
+        label: 'lab:research-default',
+        selectable: true
       })
     ])
 
-    const target = projection.resolveRuntimeTarget(
+    const framework = {
+      id: 'open-science-agent',
+      supportedApiTypes: ['responses', 'messages', 'chat-completions']
+    } as const
+    const defaultTarget = projection.resolveRuntimeTarget(
+      labRecord,
+      { kind: 'configured' },
+      framework
+    )
+    expect(defaultTarget.effectiveModel).toBe('lab:lab:research-default')
+    const explicitTarget = projection.resolveRuntimeTarget(
       labRecord,
       { kind: 'required', model: 'lab:research-default' },
-      { id: 'open-science-agent', supportedApiTypes: ['responses', 'messages', 'chat-completions'] }
+      framework
     )
     const transports = new ProviderTransportOwner({
       getLabAccessToken: async () => 'at_live',
       createProtocolForwardingBridge: (targets, targetId, options) =>
         new ProtocolForwardingBridge(targets, targetId, fetch, options)
     })
-    const lease = await transports.acquireHarness(target, new AbortController().signal)
-    try {
-      const response = await fetch(`${lease.connection.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${lease.connection.token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'lab:research-default',
-          stream: false,
-          messages: [{ role: 'user', content: 'hello' }]
+    for (const [target, expectedId] of [
+      [defaultTarget, 'lab:research-default'],
+      [explicitTarget, 'research-default'],
+      [{ ...defaultTarget, effectiveModel: undefined }, 'lab:research-default']
+    ] as const) {
+      const lease = await transports.acquireHarness(target, new AbortController().signal)
+      try {
+        const response = await fetch(`${lease.connection.baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${lease.connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: target.effectiveModel ?? target.provider.model,
+            stream: false,
+            messages: [{ role: 'user', content: 'hello' }]
+          })
         })
-      })
-      expect(response.status).toBe(200)
-      expect(received.authorization).toBe('Bearer at_live')
-      expect(received.model).toBe('research-default')
-    } finally {
-      await lease.release()
+        expect(response.status).toBe(200)
+        expect(received.authorization).toBe('Bearer at_live')
+        expect(received.model).toBe(expectedId)
+      } finally {
+        await lease.release()
+      }
     }
   })
 })

@@ -983,7 +983,7 @@ describe('Lab account owner', () => {
     expect(reachable.state).toBe('signedOut')
   })
 
-  it('projects a refreshed catalog into the provider record used by the composer', async () => {
+  it('refreshes the Lab default and catalog while keeping the selected model', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
     const api = createApi()
@@ -991,8 +991,10 @@ describe('Lab account owner', () => {
     const credentials = new LabCredentialStore(dir)
     await seedSession(credentials)
     await owner.check()
+    await repository.setActiveProvider(LAB_PROVIDER_ID, 'lab:research-default')
     api.bootstrap.mockResolvedValue({
       ...BOOTSTRAP,
+      default_model_id: 'research-fast',
       models: [
         ...BOOTSTRAP.models,
         { id: 'research-fast', name: 'Research Fast', protocol: 'openai' }
@@ -1000,10 +1002,11 @@ describe('Lab account owner', () => {
     })
 
     await owner.refreshCatalog()
-    const record = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === LAB_PROVIDER_ID
-    )
-    expect(record?.fetchedModels).toContain('lab:research-fast')
+    const settings = await repository.getSettings()
+    const record = settings.providers.find((provider) => provider.id === LAB_PROVIDER_ID)
+    expect(settings.activeProviderId).toBe(LAB_PROVIDER_ID)
+    expect(settings.activeModel).toBe('lab:research-default')
+    expect(record?.model).toBe('lab:research-fast')
     expect(record?.fetchedModels).toEqual(['lab:research-default', 'lab:research-fast'])
     expect(record?.lastValidatedAt).toBeGreaterThan(0)
     const view = new ProviderRuntimeProjectionOwner().toProviderView(record!)

@@ -403,7 +403,7 @@ class ProviderTransportOwner {
           )
         : usesLab
           ? this.createProtocolForwardingBridge(
-              [this.labForwardingTarget(route.id, wire, endpoint!, model, provider.labServerUrl)],
+              [this.labForwardingTarget(route.id, wire, endpoint!, snapshot)],
               route.id
             )
           : wire === 'messages'
@@ -549,13 +549,7 @@ class ProviderTransportOwner {
             : planned.oauth === 'lab'
               ? this.createProtocolForwardingBridge(
                   [
-                    this.labForwardingTarget(
-                      planned.id,
-                      planned.wire,
-                      planned.endpoint!,
-                      model,
-                      candidate.provider.labServerUrl
-                    )
+                    this.labForwardingTarget(planned.id, planned.wire, planned.endpoint!, candidate)
                   ],
                   planned.id,
                   { token }
@@ -684,8 +678,7 @@ class ProviderTransportOwner {
                       targetId,
                       'chat-completions',
                       endpoint,
-                      model,
-                      provider.labServerUrl,
+                      input.activeTarget,
                       {
                         adaptRequest: adaptCodeBuddyChatCompletionsRequest
                       }
@@ -779,13 +772,7 @@ class ProviderTransportOwner {
       if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
       if (isLabProvider(candidate.provider.type)) {
         return Object.freeze(
-          this.labForwardingTarget(
-            planned.id,
-            'responses',
-            `${baseUrl}/responses`,
-            model,
-            candidate.provider.labServerUrl
-          )
+          this.labForwardingTarget(planned.id, 'responses', `${baseUrl}/responses`, candidate)
         )
       }
       return Object.freeze({
@@ -867,17 +854,10 @@ class ProviderTransportOwner {
                   if (!endpoint) throw new Error('The OpenCode Lab target is incomplete.')
                   return this.createProtocolForwardingBridge(
                     [
-                      this.labForwardingTarget(
-                        targetId,
-                        'chat-completions',
-                        endpoint,
-                        model,
-                        candidate.provider.labServerUrl,
-                        {
-                          ...(this.healthObservation(candidate) ?? {}),
-                          adaptStream: bufferChatCompletionsToolNames
-                        }
-                      )
+                      this.labForwardingTarget(targetId, 'chat-completions', endpoint, candidate, {
+                        ...(this.healthObservation(candidate) ?? {}),
+                        adaptStream: bufferChatCompletionsToolNames
+                      })
                     ],
                     targetId
                   )
@@ -981,21 +961,25 @@ class ProviderTransportOwner {
   // The one place that binds a Lab request to its institution: validate the deployment boundary,
   // translate the namespaced model id, and resolve a fresh host-owned credential per request.
   private prepareLabRequest(
-    model: string,
-    endpoint: string,
-    labServerUrl: string | undefined
+    target: ProviderRuntimeTarget,
+    endpoint: string
   ): Readonly<{
     endpoint: string
     model: string
     resolveCredential: (forceRefresh?: boolean) => Promise<string>
   }> {
+    const { effectiveModel, provider } = target
+    const { labServerUrl } = provider
     if (labServerUrl && !isLabDeploymentUrl(labServerUrl, endpoint)) {
       throw new Error('The Lab gateway endpoint left the configured deployment.')
     }
+    // Projection has already decoded provider.model. Only effectiveModel is namespaced.
+    const model = effectiveModel === undefined ? provider.model : labModelWireId(effectiveModel)
+    if (!model) throw new Error('The Lab gateway model is missing.')
     const expectedServerUrl = labServerUrl ?? new URL(endpoint).origin
     return Object.freeze({
       endpoint,
-      model: labModelWireId(model),
+      model,
       resolveCredential: (forceRefresh?: boolean) =>
         this.requireLabAccessToken(forceRefresh, expectedServerUrl)
     })
@@ -1005,12 +989,11 @@ class ProviderTransportOwner {
     id: string,
     wire: ModelProtocol,
     endpoint: string,
-    model: string,
-    labServerUrl: string | undefined,
+    target: ProviderRuntimeTarget,
     extra: Partial<ProtocolForwardingBridgeTarget> = {}
   ): ProtocolForwardingBridgeTarget {
     if (wire === 'messages') throw new Error('Lab models do not expose the Messages API.')
-    const prepared = this.prepareLabRequest(model, endpoint, labServerUrl)
+    const prepared = this.prepareLabRequest(target, endpoint)
     return Object.freeze({
       id,
       wire,
@@ -1113,7 +1096,7 @@ class ProviderTransportOwner {
       const targetModel = candidate.effectiveModel ?? candidate.provider.model
       const lab =
         isLabProvider(candidate.provider.type) && targetModel
-          ? this.prepareLabRequest(targetModel, targetBaseUrl, candidate.provider.labServerUrl)
+          ? this.prepareLabRequest(candidate, targetBaseUrl)
           : undefined
       return {
         ...this.healthObservation(candidate),

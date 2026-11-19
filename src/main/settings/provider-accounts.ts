@@ -24,7 +24,6 @@ import {
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
-import { labModelId } from '../../shared/lab'
 
 import type {
   ProviderDeletionScenarioModelHandling,
@@ -44,6 +43,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   ENDPOINT_PATHS,
+  LAB_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
@@ -52,7 +52,6 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isLabProvider,
-  labProviderIdentity,
   isXaiSubscriptionProvider,
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
@@ -133,6 +132,14 @@ type PreparedProvider = {
   settings: StoredSettings
   catalogBaseline?: ProviderCatalogState
 }
+
+type ResolvedProviderValidationTarget = {
+  provider: ResolvedProvider
+  storedId?: string
+  labModelId?: string
+}
+
+const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
 
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
@@ -322,6 +329,9 @@ class ProviderAccountsModule {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
   private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
+    if (isLabProvider(request.type) || request.id === LAB_PROVIDER_ID) {
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
+    }
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
@@ -357,9 +367,7 @@ class ProviderAccountsModule {
           ? claudeSharedProviderIdentity()
           : request.type === 'xai-subscription'
             ? xaiSubscriptionProviderIdentity()
-            : request.type === 'lab'
-              ? labProviderIdentity()
-              : undefined
+            : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -620,7 +628,7 @@ class ProviderAccountsModule {
   ): Promise<void> {
     const settings = await this.repository.getSettings()
     if (settings.providers.some((provider) => provider.id === id && isLabProvider(provider.type))) {
-      throw new Error('The Lab provider is managed in Settings → Lab.')
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
     }
     if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
       await this.xai.logout()
@@ -868,6 +876,7 @@ class ProviderAccountsModule {
       return result
     }
     if (request.draft) {
+      if (isLabProvider(request.draft.type)) throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
       assertProviderDraftLimits(request.draft)
       if (request.draft.type === 'custom') {
         const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '')
@@ -934,26 +943,22 @@ class ProviderAccountsModule {
   private async validateResolvedProvider(
     request: ValidateProviderRequest,
     settings: StoredSettings,
-    resolved: { provider: ResolvedProvider; storedId?: string },
+    resolved: ResolvedProviderValidationTarget,
     healthPolicy: 'all' | 'definitive-failures' = 'all'
   ): Promise<ValidateProviderResult> {
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
       : undefined
-    if (storedValidationTarget?.type === 'lab') {
-      const requestedModel = request.model ?? resolved.provider.model
-      const storedModel = requestedModel ? labModelId(requestedModel) : undefined
-      if (
-        storedModel &&
-        storedValidationTarget.fetchedModels !== undefined &&
-        !storedValidationTarget.fetchedModels.includes(storedModel)
-      ) {
-        return {
-          ok: false,
-          category: 'model-not-found',
-          message: `The Lab model "${storedModel}" is no longer available from this organization. Pick another model in Settings → Model.`,
-          applied: false
-        }
+    if (
+      resolved.labModelId &&
+      storedValidationTarget?.fetchedModels !== undefined &&
+      !storedValidationTarget.fetchedModels.includes(resolved.labModelId)
+    ) {
+      return {
+        ok: false,
+        category: 'model-not-found',
+        message: `The Lab model "${resolved.labModelId}" is no longer available from this organization. Pick another model in Settings → Model.`,
+        applied: false
       }
     }
     const validationGeneration = resolved.storedId
@@ -1267,18 +1272,19 @@ class ProviderAccountsModule {
   private resolveValidationTarget(
     request: ValidateProviderRequest,
     settings: StoredSettings
-  ): { provider: ResolvedProvider; storedId?: string } | undefined {
+  ): ResolvedProviderValidationTarget | undefined {
     if (request.providerId) {
       const stored = settings.providers.find((provider) => provider.id === request.providerId)
+      if (!stored) return undefined
       const model =
         request.model ??
-        (settings.activeProviderId === stored?.id ? settings.activeModel : undefined)
-      return stored
-        ? {
-            provider: this.resolveProvider(stored, model),
-            storedId: stored.id
-          }
-        : undefined
+        (settings.activeProviderId === stored.id ? settings.activeModel : undefined) ??
+        (stored.type === 'lab' ? (stored.model ?? stored.fetchedModels?.[0]) : undefined)
+      return {
+        provider: this.resolveProvider(stored, model),
+        storedId: stored.id,
+        ...(stored.type === 'lab' ? { labModelId: model } : {})
+      }
     }
     if (request.draft) return { provider: this.resolveDraft(request.draft) }
     return undefined

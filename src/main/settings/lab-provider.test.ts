@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { LabBootstrap } from '../../shared/lab'
+import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
 import { buildLabProviderRecord } from './lab-provider'
 
 const BOOTSTRAP: LabBootstrap = {
@@ -17,8 +18,9 @@ const BOOTSTRAP: LabBootstrap = {
       }
     },
     { id: 'plain-chat', protocol: 'openai' },
-    { id: 'non-streaming', protocol: 'openai', streaming: false },
-    { id: 'disabled-model', protocol: 'openai', enabled: false }
+    { id: 'lab:research-default', protocol: 'openai-response', streaming: false },
+    { id: 'disabled-model', protocol: 'openai', enabled: false },
+    { id: 'unavailable-model', protocol: 'openai', available: false }
   ],
   model_base_url: '/v1'
 }
@@ -36,10 +38,28 @@ describe('buildLabProviderRecord', () => {
     expect(record.fetchedModels).toEqual([
       'lab:research-default',
       'lab:plain-chat',
-      'lab:non-streaming'
+      'lab:lab:research-default'
     ])
-    expect(record.modelStreaming).toEqual({ 'lab:non-streaming': false })
+    expect(record.modelProtocols).toMatchObject({
+      'lab:research-default': ['chat-completions'],
+      'lab:lab:research-default': ['responses']
+    })
+    expect(record.modelStreaming).toEqual({ 'lab:lab:research-default': false })
   })
+
+  it.each([null, 'disabled-model', 'unavailable-model', 'unknown-model'])(
+    'leaves the default unset when the published default is %s',
+    (default_model_id) => {
+      const record = buildLabProviderRecord('https://lab.example.com', {
+        ...BOOTSTRAP,
+        default_model_id
+      })
+      expect(record.model).toBeUndefined()
+      expect(
+        resolveProviderEffectiveModel({ ...record, models: record.fetchedModels }, undefined)
+      ).toBe('lab:research-default')
+    }
+  )
 
   it('omits the map when no model advertises capabilities', () => {
     const record = buildLabProviderRecord('https://lab.example.com', {
