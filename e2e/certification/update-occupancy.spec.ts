@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { readFile, readdir, realpath } from 'node:fs/promises'
+import { readFile, readdir, readlink, realpath } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { dirname, join } from 'node:path'
 import { runWithCleanup, test } from '../fixtures/electron-app'
@@ -40,10 +40,16 @@ test('certifies real packaged update occupancy and recovery', async ({ app }, te
     }),
     contentType: 'application/json'
   })
-  const resources =
-    process.platform === 'darwin'
-      ? join(dirname(executable!), '..', 'Resources')
-      : join(dirname(executable!), 'resources')
+  const resources = brand.resources
+  const mountedImage = process.platform === 'linux' && executable!.endsWith('.AppImage')
+  if (mountedImage) {
+    const mounts = await readFile('/proc/self/mountinfo', 'utf8')
+    expect(
+      mounts
+        .split('\n')
+        .some((line) => line.split(' ')[4] === dirname(resources) && line.includes(' - fuse.'))
+    ).toBe(true)
+  }
   const installationRoot = await realpath(
     process.platform === 'darwin' ? join(resources, '..', '..') : dirname(resources)
   )
@@ -127,6 +133,43 @@ test('certifies real packaged update occupancy and recovery', async ({ app }, te
   // No IPC overrides. Manual Mac nightlies validate the real reader lease/native occupancy;
   // in-place candidates also exercise the candidate's complete update admission path.
   await recheck()
+  if (mountedImage) {
+    const imagePids = async (): Promise<number[]> => {
+      const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name))
+      const paths = await Promise.all(
+        pids.map((pid) => readlink(`/proc/${pid}/exe`).catch(() => undefined))
+      )
+      return pids.filter((_, index) => paths[index] === executable).map(Number)
+    }
+    const original = await imagePids()
+    const other = spawn(executable!, ['--appimage-mount'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const captured = captureFixtureProcess(other)
+    await runWithCleanup(
+      async () => {
+        const otherMount = String((await once(other.stdout!, 'data'))[0]).trim()
+        expect(otherMount).not.toBe(dirname(resources))
+        const newcomers = (await imagePids()).filter((pid) => !original.includes(pid))
+        expect(newcomers).toContain(other.pid)
+        expect(newcomers).toHaveLength(2) // the paused launcher and its separate FUSE daemon
+        const status = await app.page.evaluate(() => window.api.update.recheck())
+        expect(status).toMatchObject({
+          reason: 'installation-busy',
+          recovery: {
+            detail: 'foreign-process',
+            blockingProcesses: expect.arrayContaining(
+              newcomers.map((pid) => expect.objectContaining({ pid }))
+            )
+          }
+        })
+        await testInfo.attach('independent-appimage-mount-blocked', {
+          body: JSON.stringify({ otherMount, pids: newcomers, recovery: status.recovery }),
+          contentType: 'application/json'
+        })
+      },
+      () => cleanupFixtureProcess(captured)
+    )
+    await recheck()
+  }
   const node = join(resources, 'node-runtime', process.platform === 'win32' ? 'node.exe' : 'node')
   const foreign = spawn(node, ['-e', "process.stdout.write('ready');process.stdin.resume()"], {
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -168,10 +211,29 @@ test('certifies real packaged update occupancy and recovery', async ({ app }, te
       await recheck()
       await app.restart()
       await recheck()
-      await testInfo.attach('update-occupancy-recovered', {
-        body: await app.page.screenshot(),
-        contentType: 'image/png'
-      })
+      if (mountedImage) {
+        const recovered = await app.captureBrandState()
+        expect(recovered.resources).not.toBe(resources)
+        const mountinfo = await readFile('/proc/self/mountinfo', 'utf8')
+        const active = mountinfo.split('\n').filter((line) => line.includes(' - fuse.'))
+        expect(active.some((line) => line.split(' ')[4] === dirname(resources))).toBe(false)
+        expect(active.some((line) => line.split(' ')[4] === dirname(recovered.resources))).toBe(
+          true
+        )
+        await testInfo.attach('update-occupancy-recovered', {
+          body: JSON.stringify({
+            previous: resources,
+            current: recovered.resources,
+            image: executable
+          }),
+          contentType: 'application/json'
+        })
+      } else {
+        await testInfo.attach('update-occupancy-recovered', {
+          body: await app.page.screenshot(),
+          contentType: 'image/png'
+        })
+      }
     },
     () => cleanupFixtureProcess(captured)
   )

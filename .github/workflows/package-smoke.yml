@@ -241,7 +241,7 @@ jobs:
           trap 'sudo apt-get remove --yes open-science || true' EXIT
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
           sudo apt-get update
-          sudo apt-get install --yes gnome-keyring dbus-user-session ./dist/*.deb
+          sudo apt-get install --yes gnome-keyring dbus-user-session libfuse2t64 zlib1g-dev ./dist/*.deb
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
             --installed-executable "/opt/Open-Science/open-science" \
@@ -254,6 +254,23 @@ jobs:
             npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
           '
           node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
+
+      - name: Certify mounted AppImage update occupancy
+        if: ${{ !inputs.install_only && matrix.platform == 'linux' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          images=("$PWD"/dist/*.AppImage)
+          test "${#images[@]}" = 1
+          test -x "${images[0]}"
+          export OPEN_SCIENCE_E2E_EXECUTABLE="${images[0]}"
+          export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1
+          export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/appimage.json
+          xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
+            printf "update-occupancy-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/appimage
+          '
+          node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/appimage.json
 
       - name: Upload update occupancy evidence
         if: ${{ always() && !inputs.install_only }}

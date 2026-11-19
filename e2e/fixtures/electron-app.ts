@@ -66,14 +66,29 @@ const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
-  evidence: { packaged: boolean; appPath: string; executable: string; version: string },
+  evidence: {
+    packaged: boolean
+    appPath: string
+    executable: string
+    version: string
+    appImage?: string
+    appDir?: string
+  },
   environment: NodeJS.ProcessEnv = process.env
 ): void => {
   const revision = environment.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+  const expected = environment.OPEN_SCIENCE_E2E_EXECUTABLE
+  const mounted =
+    process.platform === 'linux' &&
+    expected?.endsWith('.AppImage') &&
+    evidence.appImage === expected &&
+    evidence.appDir &&
+    evidence.executable === join(evidence.appDir, 'open-science') &&
+    evidence.appPath === join(evidence.appDir, 'resources/app.asar')
   if (
     !evidence.packaged ||
     !evidence.appPath.endsWith('app.asar') ||
-    evidence.executable !== environment.OPEN_SCIENCE_E2E_EXECUTABLE ||
+    (!mounted && evidence.executable !== expected) ||
     (revision && !evidence.version.endsWith(`-nightly.g${revision.slice(0, 7)}`))
   ) {
     throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
@@ -335,6 +350,7 @@ const closeElectronApplicationForCleanup = async (
 }
 
 type BrandState = {
+  resources: string
   name: string
   packaged: boolean
   profile: string
@@ -1865,6 +1881,7 @@ class ElectronAppHarness implements ElectronApp {
     return this.runningApplication.evaluate(({ app, BrowserWindow, Menu }) => ({
       name: app.getName(),
       packaged: app.isPackaged,
+      resources: process.resourcesPath,
       profile: app.getPath('userData'),
       logs: app.getPath('logs'),
       title: BrowserWindow.getAllWindows()[0]?.getTitle() ?? '',
@@ -2108,6 +2125,8 @@ class ElectronAppHarness implements ElectronApp {
           packaged: app.isPackaged,
           appPath: app.getAppPath(),
           executable: process.execPath,
+          appImage: process.env.APPIMAGE,
+          appDir: process.env.APPDIR,
           version: app.getVersion()
         }))
         assertPackagedElectronIdentity(evidence)
