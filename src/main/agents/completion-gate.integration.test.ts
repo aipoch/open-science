@@ -58,7 +58,11 @@ const startLoop = (
   env: NodeJS.ProcessEnv
 ): {
   child: ChildProcessWithoutNullStreams
-  send: (code: string, controlInvocationId?: string) => Promise<KernelLoopResponse>
+  send: (
+    code: string,
+    controlInvocationId: string,
+    controlInvocationNonce: string
+  ) => Promise<KernelLoopResponse>
 } => {
   const child = spawn(process.execPath, [LOOP], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...env }
@@ -75,11 +79,21 @@ const startLoop = (
   })
   return {
     child,
-    send: (code, controlInvocationId) =>
+    send: (code, controlInvocationId, controlInvocationNonce) =>
       new Promise((resolve) => {
         const reqId = randomUUID()
         waiting.set(reqId, resolve)
-        child.stdin.write(framePythonRequest(reqId, code, controlInvocationId))
+        child.stdin.write(
+          framePythonRequest(
+            reqId,
+            code,
+            controlInvocationId,
+            undefined,
+            undefined,
+            undefined,
+            controlInvocationNonce
+          )
+        )
       })
   }
 }
@@ -929,7 +943,8 @@ describe('completion gate tracer bullet', () => {
         execute: async () => {
           const response = await loop.send(
             "const switched = await host.agents.switch('Approved Specialist'); return JSON.stringify({ switched, afterAwait: 'completed' })",
-            completionContext.toolInvocationId
+            completionContext.toolInvocationId,
+            releaseInvocation.nonce
           )
           expect(response.error).toBeNull()
           return JSON.parse(response.result ?? '{}') as { afterAwait?: string }
@@ -1048,7 +1063,8 @@ describe('completion gate tracer bullet', () => {
         execute: async () => {
           const response = await loop.send(
             "const switched = await host.agents.switch('Approved Specialist'); return JSON.stringify({ switched, afterAwait: 'completed' })",
-            completionContext.toolInvocationId
+            completionContext.toolInvocationId,
+            releaseInvocation.nonce
           )
           expect(response.error).toBeNull()
           return JSON.parse(response.result ?? '{}')

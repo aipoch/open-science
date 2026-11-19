@@ -1714,6 +1714,56 @@ describe('notebook run repository', () => {
     expect(reloaded?.runs[0]).toMatchObject({ runId: 'legacy-run-1', kernelKind: 'python' })
   })
 
+  it('reads legacy termination state without rewriting the historical document', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'legacy-termination'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-legacy-termination')
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const runJsonPath = join(document.notebookSessionRoot, 'run.json')
+    const legacyDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    legacyDocument.kernel = {
+      ...legacyDocument.kernel,
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: 'analysis' }]
+    }
+    legacyDocument.runs = [
+      {
+        runId: 'legacy-run-termination',
+        cellId: 'cell-legacy-termination',
+        source: 'agent',
+        script: "print('history')",
+        status: 'completed',
+        startedAt: 100,
+        endedAt: 200,
+        text: { stdout: 'history\n', stderr: '', traceback: '', plain: ['history'] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    ]
+    await writeFile(runJsonPath, JSON.stringify(legacyDocument, null, 2), 'utf8')
+    const before = await readFile(runJsonPath, 'utf8')
+
+    const reloaded = await new NotebookRunRepository(root).findExisting(projectId, sessionId)
+
+    expect(reloaded?.kernel).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: 'analysis' }]
+    })
+    expect(reloaded?.runs[0]).toMatchObject({
+      runId: 'legacy-run-termination',
+      kernelKind: 'python'
+    })
+    await expect(readFile(runJsonPath, 'utf8')).resolves.toBe(before)
+  })
+
   it('loads canonical projectId values before legacy aliases', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

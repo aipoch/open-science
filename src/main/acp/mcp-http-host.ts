@@ -72,6 +72,7 @@ type SessionEntry = {
   artifact?: ArtifactMcpEnvironment
   image?: ImageMcpEnvironment
   notebook?: NotebookMcpEnvironment
+  notebookRouteToken?: string
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
   planRouteToken?: string
@@ -219,10 +220,20 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
-  registerNotebook(routingId: string, environment: NotebookMcpEnvironment): void {
+  registerNotebook(routingId: string, environment: NotebookMcpEnvironment): () => void {
     const entry = this.sessions.get(routingId) ?? {}
+    const previousEnvironment = entry.notebook
+    const previousRouteToken = entry.notebookRouteToken
+    const routeToken = randomUUID()
     entry.notebook = environment
+    entry.notebookRouteToken = routeToken
     this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.notebookRouteToken !== routeToken) return
+      current.notebook = previousEnvironment
+      current.notebookRouteToken = previousRouteToken
+    }
   }
 
   registerSkillImport(routingId: string, environment: SkillImportMcpEnvironment): void {
@@ -477,10 +488,11 @@ class AgentMcpHttpHost {
       if (!token) throw new Error('No registered Web route')
       return `${route}?token=${encodeURIComponent(token)}`
     }
-    if (kind !== 'plan') return route
+    if (kind !== 'plan' && kind !== 'notebook') return route
 
-    const routeToken = this.sessions.get(routingId)?.planRouteToken
-    if (!routeToken) throw new Error(`No registered plan MCP session: ${routingId}`)
+    const entry = this.sessions.get(routingId)
+    const routeToken = kind === 'plan' ? entry?.planRouteToken : entry?.notebookRouteToken
+    if (!routeToken) throw new Error(`No registered ${kind} MCP session: ${routingId}`)
     // `token` is covered by the shared diagnostic URL redactor if this provider config is logged.
     return `${route}?token=${encodeURIComponent(routeToken)}`
   }
@@ -521,7 +533,8 @@ class AgentMcpHttpHost {
     }
 
     if (kind === 'notebook') {
-      if (!entry.notebook) return undefined
+      if (!entry.notebook || !routeToken || routeToken !== entry.notebookRouteToken)
+        return undefined
       const { createNotebookMcpServer } = await import('../notebook/mcp-server')
 
       return createNotebookMcpServer(entry.notebook)

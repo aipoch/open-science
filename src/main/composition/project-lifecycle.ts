@@ -232,8 +232,10 @@ export function composeProjectLifecycle({
         schedulesChanged(projectId, null)
       },
       completeProjectDeletion: (projectId) => {
+        const notebook = getNotebookService()
+        notebook.forgetDeletedExecutionIntents({ projectId })
         archiveCoordinator.releaseProjectDeletion(projectId)
-        getNotebookService().releaseProjectDeletion(projectId)
+        notebook.releaseProjectDeletion(projectId)
         reviewerProjectRuntime.releaseProjectDeletion(projectId)
       },
       abortProjectDeletion: async (projectId) => {
@@ -352,6 +354,7 @@ export function composeProjectLifecycle({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
+      getNotebookService().forgetDeletedExecutionIntents({ sessionIds })
       imageTasks?.cancelSessions(sessionIds)
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       const results = await Promise.allSettled([

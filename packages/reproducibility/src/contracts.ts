@@ -35,6 +35,7 @@ export type {
   ArtifactReproducibilityBarrierReason,
   ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityCheckLogBase,
+  ArtifactReproducibilityFailedStep,
   ArtifactReproducibilityReceiptComparison,
   ArtifactReproducibilityCheckComparison
 } from './evidence'

@@ -44,6 +44,9 @@ const HOST_SDK_DISCOVERY_GUIDANCE =
   "Use documented calls directly. Unknown options: `return JSON.stringify(await host.help('topic'))` gives field descriptions; `host.help()` is the role-aware catalog. Do not guess or inspect function source; do not prefetch topics. Check availability: catalog visibility does not grant access."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
+const NOTEBOOK_REJECTION_GUIDANCE =
+  'Memory/intent refusal: not started; explain and await explicit user Retry/Continue. Never auto-retry, queue/replay, poll memory or bypass via tools/languages/environments/Sessions/Subagents. Chat/approval/auto-continuation cannot unlock; released variables may vanish.'
+const NOTEBOOK_TOOL_REJECTION_GUIDANCE = 'Refusal requires explicit user Retry/Continue.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
 // guidance concise; the prompt and complete MCP schema share the tested static context budget.
@@ -52,13 +55,14 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
-  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle interpreters lose variables after 15 minutes or excess idle capacity; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
-  'Use the call forms in `repl_execute`; batch known independent operations when safe.',
+  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle/capacity reclamation loses variables; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
+  'Use call forms in `repl_execute`; batch safe independent operations.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
+  NOTEBOOK_REJECTION_GUIDANCE,
   'For a network block record, call `request_network_access` with its recordId and reason. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
@@ -72,6 +76,8 @@ type NotebookRpcConnection = LocalRpcTransport & {
   // Optional owner-scoped cleanup for provisional startup connections. Releasing an older connection
   // must not revoke a newer token issued under the same stable app Session id.
   release?: () => void
+  // Main-only preparation fence. The returned owner callback activates only this concrete token.
+  deferExecution?: () => () => void
 }
 
 type NotebookMcpEnvironment = NotebookRpcConnection &
@@ -288,7 +294,8 @@ const SWITCH_RUNTIME_DOC = [
 
 // Control-plane REPL contract, embedded as the repl_execute description so the agent always sees it.
 const REPL_EXECUTE_DOC = [
-  'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
+  'Persistent JavaScript control-plane REPL; Python/R use notebook_execute.',
+  NOTEBOOK_TOOL_REJECTION_GUIDANCE,
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
   'Gate optional namespaces with `await host.capabilities()`; see `self-awareness`.',
   'Host SDK: `host.llm(prompt)` for tool-less inference; `host.mcp(server, method, args)` for connectors; `host.compute` for jobs; `host.agents` for Specialists.',
@@ -296,8 +303,8 @@ const REPL_EXECUTE_DOC = [
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Images: `await host.viewImage({ path: "plot.png" })` or `{ versionId: "..." }`, never a string.',
   'Main/root agents: `await host.delegate({ name: "Check", task: "Self-contained assignment" }, { wait: true })`. Omit profile to inherit the parent; "Main Agent" is not a profile. Other profiles: exact id/name from host.agents.list(). Options/results: `host.help(\'delegate\')`. Delegate agents cannot delegate.',
-  'Foreground for results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate and read-only calls. Save runId; query/cancel via background_run, without frequent polling. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
-  'Restored conversation history does not restore variables after restart/idle reclamation. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Live globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Foreground: results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate, read-only calls. Save runId; background_run queries/cancels, never poll frequently. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
+  'Restored conversation history does not restore variables after restart/reclamation. Verify history/files to reconstruct; never probe old variable names or replay side-effecting calls. Globals persist; top-level return/await/redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides 30-minute wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); analysis: notebook_execute.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -317,19 +324,20 @@ const buildShellExecuteDoc = (
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
-      ? 'Returns { stdout, stderr, exitCode }. Host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 to avoid garbling. Native failures retain their exit code; unhandled cmdlet failures return exitCode 1. Inspect exitCode.'
+      ? 'Returns { stdout, stderr, exitCode }. UTF-8 host/cmdlet text; native programs must emit UTF-8. Native exit codes preserved; unhandled cmdlet failures return 1. Inspect exitCode.'
       : 'Returns { stdout, stderr, exitCode }; non-zero exits do not throw. Inspect exitCode.'
 
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change, or idle reclamation resets state; earlier commands are never replayed. TEMP/TMP may be deleted. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change or idle reclamation resets state; earlier commands are never replayed. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
     exitCodeContract,
-    'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
-    'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
-    'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
-    'Do NOT copy a generated notebook output into the workspace with this tool. Publish final user-facing files with `write_artifact_file`, using the same relative filename you saved with; it resolves against the notebook session data dir and copies safely on every platform.',
-    'One managed command only. Use notebook_execute for Python/R, repl_execute for JavaScript, manage_packages for installs; never run analysis scripts, inline code or installers here.'
+    NOTEBOOK_TOOL_REJECTION_GUIDANCE,
+    'Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
+    'Foreground for needed results; background:true for independent work. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
+    'Keep commands application-managed: background:true, never &, nohup, setsid, disown, Start-Process, Start-Job or equivalent detachment.',
+    'Do NOT copy a generated notebook output into the workspace here. Publish with `write_artifact_file`, using the same relative filename you saved with; it resolves against session data across platforms.',
+    'One managed command. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
 
@@ -1663,7 +1671,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description: [
-      'Run Python/R code as a persistent notebook cell.',
+      'Execute a persistent Python/R cell.',
+      NOTEBOOK_TOOL_REJECTION_GUIDANCE,
       'Uses the session binding, else the installed, enabled app-managed default. Multiple runtimes require explicit binding only without a usable default.',
       "artifactVersionInputs: this Run's provenance inputs (Version IDs); producerRunId=runId.",
       'Foreground for results needed now; background:true for longer independent work.',

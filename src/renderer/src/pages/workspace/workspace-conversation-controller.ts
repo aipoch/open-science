@@ -156,6 +156,14 @@ type WorkspaceConversationController = {
     submit: {
       draft: (intent: DraftSubmitIntent) => void
       restoredPlan: (response: RestoredPlanResponse) => Promise<void>
+      notebookContinuation: (intent: {
+        projectId: string
+        sessionId: string
+        cwd?: string
+        refusalId: string
+        messageBranchId?: string
+        text: string
+      }) => ReturnType<WorkspaceConversationRuntime['sendMessage']>
     }
     revise: (
       messageId: string,
@@ -763,7 +771,23 @@ const useWorkspaceConversationController = (
     }
 
     return {
-      submit: { draft: submitDraft, restoredPlan: submitRestoredPlan },
+      submit: {
+        draft: submitDraft,
+        restoredPlan: submitRestoredPlan,
+        notebookContinuation: (intent) =>
+          optionsRef.current.runtime.sendMessage({
+            projectId: intent.projectId,
+            sessionId: intent.sessionId,
+            cwd: intent.cwd,
+            requireExistingSession: true,
+            preserveSelection: true,
+            notebookContinuation: {
+              refusalId: intent.refusalId,
+              messageBranchId: intent.messageBranchId
+            },
+            text: intent.text
+          })
+      },
       revise: async (messageId, doc, annotations = []): Promise<EditedMessageSendResult> => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id

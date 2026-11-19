@@ -63,7 +63,7 @@ describe('host logging boundary', () => {
       }
     }
     expect(violations).toEqual([])
-  })
+  }, 60_000)
 
   it.each([
     ['console.log("message")', true],

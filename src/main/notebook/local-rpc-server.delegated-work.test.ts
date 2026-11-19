@@ -57,7 +57,11 @@ describe('authenticated delegatedWorkCall route', () => {
     })
     const response = await fetch(connection.endpoint, {
       method: 'POST',
-      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': end.nonce
+      },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
         params: {
@@ -107,7 +111,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method, params: query === undefined ? {} : { query } })
       })
@@ -171,12 +176,13 @@ describe('authenticated delegatedWorkCall route', () => {
       role: 'delegate',
       attemptId: 'attempt-1'
     })
-    const call = (token: string): Promise<Response> =>
+    const call = (token: string, nonce?: string): Promise<Response> =>
       fetch(child.endpoint, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          ...(nonce ? { 'x-open-science-control-invocation': nonce } : {})
         },
         body: JSON.stringify({
           method: 'delegatedOutputCall',
@@ -195,7 +201,7 @@ describe('authenticated delegatedWorkCall route', () => {
       attachmentIds: [],
       artifactIds: []
     })
-    const accepted = await call(child.token)
+    const accepted = await call(child.token, endInvocation.nonce)
     expect(accepted.status).toBe(200)
     await expect(accepted.json()).resolves.toEqual({ result: { accepted: true } })
     submitOutput.mockRejectedValueOnce(
@@ -207,7 +213,7 @@ describe('authenticated delegatedWorkCall route', () => {
         'count'
       )
     )
-    const rejected = await call(child.token)
+    const rejected = await call(child.token, endInvocation.nonce)
     await expect(rejected.json()).resolves.toEqual({
       error: {
         code: 'structured_output_validation_failed',
@@ -371,7 +377,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method, params })
       })
@@ -437,7 +444,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -552,7 +560,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -641,7 +650,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({
           method: 'delegatedWorkCall',
@@ -703,7 +713,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -776,7 +787,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({
           method: 'delegatedWorkCall',
@@ -841,7 +853,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method: 'delegatedWorkCall', params: { request } })
       })
@@ -883,7 +896,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -962,7 +976,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -1054,7 +1069,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -1110,7 +1126,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -1157,7 +1174,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -1210,7 +1228,8 @@ describe('authenticated delegatedWorkCall route', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method: 'delegatedWorkCall', params })
       })
@@ -1303,7 +1322,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',
@@ -1386,7 +1406,8 @@ describe('authenticated delegatedWorkCall route', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',

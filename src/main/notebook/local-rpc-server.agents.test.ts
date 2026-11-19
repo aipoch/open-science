@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
 
@@ -20,6 +21,7 @@ afterEach(async () => {
 const makeService = async (): Promise<NotebookRuntimeService> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'os-rpc-agents-'))
   return new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: storageRoot,
     dataRoot: storageRoot,
     projectId: 'default-project',

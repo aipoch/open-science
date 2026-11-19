@@ -3187,7 +3187,9 @@
         "src/main/notebook/shell-process-ownership.windows-posix.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/trust-bundle.ts",
-        "src/main/notebook/working-file-observer.ts"
+        "src/main/notebook/working-file-observer.ts",
+        "src/main/notebook/memory-policy-wsl.ts",
+        "src/main/notebook/memory-policy-wsl-reader.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -3344,7 +3346,12 @@
         "src/main/notebook/package-boundaries.architecture.test.ts",
         "src/main/notebook/powershell-search-parser.test.ts",
         "src/main/notebook/analysis-file-evidence.test.ts",
-        "src/main/notebook-payload.integration.test.ts"
+        "src/main/notebook-payload.integration.test.ts",
+        "src/main/notebook/memory-policy-wsl.test.ts",
+        "src/main/notebook/memory-policy-wsl-reader.test.ts",
+        "src/main/notebook/memory-policy-wsl-reader.integration.test.ts",
+        "src/main/notebook/execution-admission.test.ts",
+        "src/main/notebook/shell-wsl-admission.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",

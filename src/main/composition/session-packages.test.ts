@@ -7,6 +7,8 @@ import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtur
 import * as storageRoots from '../storage-root'
 import * as projectDatabase from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
+import { ArchiveCoordinator } from '../archive/coordinator'
+import { ProjectRepository } from '../projects/repository'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import {
   SessionPersistenceCoordinator,
@@ -87,11 +89,27 @@ async function createPublicationFixture(): Promise<{
     reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
     markReconciliationIncomplete: vi.fn()
   } satisfies SessionFileIndex)
+  const archiveCoordinator = new ArchiveCoordinator(
+    new ProjectRepository(async () => target.client, target.storageRoot),
+    owner,
+    {
+      isSessionBusy: () => false,
+      isProjectBusy: () => false,
+      liveSessionProjectId: () => undefined
+    }
+  )
   const compose = (): ReturnType<typeof composeSessionPackages> =>
     composeSessionPackages({
       settingsRepository: { getSettings: async () => ({}) },
       storedSettings: { pathsNormalizedAt: 1 },
       getDetectSessionExportBlockingSessions: () => () => [],
+      getSessionExportOwners: () => ({
+        archiveCoordinator,
+        sessionPersistenceCoordinator: owner,
+        // Publication recovery has no Notebook runtime or live process resources.
+        notebookService: { waitForSessionTeardown: async () => undefined }
+      }),
+      readImageTasks: async () => [],
       modules: { add: (_: undefined, create: () => { capability: unknown }) => create().capability }
     } as unknown as Parameters<typeof composeSessionPackages>[0])
   return { target, archive, repository, owner, compose }

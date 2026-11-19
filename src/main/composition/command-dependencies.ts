@@ -36,7 +36,11 @@ import { createPptxEditCommands } from '../pptx-edit/application-commands'
 import { createPptxDraftCommands } from '../pptx-edit/draft-commands'
 import { linkPdfContextWithCapability } from '../session-persistence/pdf-context-link-workflow'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from '../settings/ipc'
-import { withDataRootWrite } from '../storage/migration-state'
+import {
+  withDataRootWrite,
+  isMigrationInProgress,
+  isMigrationPending
+} from '../storage/migration-state'
 import type { composeAgentWorkflows } from './agent-completion'
 import type { composeAgentRuntime } from './agent-runtime'
 import type { composeArtifactSurfaces } from './artifact-surfaces'
@@ -195,6 +199,12 @@ export function composeCommandDependencies({
     },
     notebook: {
       workflows: notebookRuntime.notebookCommands,
+      resourceReleaseBlockedReason: () =>
+        sessionPackages.packageHandoffHeld.current
+          ? 'package-handoff'
+          : isMigrationInProgress() || isMigrationPending()
+            ? 'data-migration'
+            : undefined,
       readInputPreview: (request) => sessionAuthority.notebookInputRegistry.readPreview(request)
     },
     notebookEnvironment: notebookEnvironmentLifecycle,

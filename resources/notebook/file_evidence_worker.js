@@ -1,27 +1,50 @@
 'use strict'
 
 const { createHash, randomUUID } = require('node:crypto')
-const {
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  fsyncSync,
-  linkSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  realpathSync,
-  readSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-  statfsSync,
-  writeSync
-} = require('node:fs')
-const { dirname, join, relative, sep } = require('node:path')
+const fs = require('node:fs')
+const { closeSync, constants, fstatSync, fsyncSync, readSync, writeSync } = fs
+const { dirname, join, relative, resolve, sep, toNamespacedPath } = require('node:path')
+
+// SetCurrentDirectoryW rejects long paths even with a namespace prefix. On Windows each
+// request instead holds native directory leases and resolves relative IO against that binding.
+// POSIX retains the OS cwd binding and the existing no-follow/identity checks on both platforms.
+let directoryBinding
+const nativePublisher = () =>
+  require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node')
+const currentDirectory = () => directoryBinding?.path ?? process.cwd()
+const boundPath = (path) => toNamespacedPath(resolve(currentDirectory(), path))
+const changeDirectory = (path) => {
+  if (process.platform !== 'win32') return process.chdir(path)
+  const next = resolve(currentDirectory(), path)
+  const { dev, ino } = fs.lstatSync(toNamespacedPath(next), { bigint: true })
+  const lease = nativePublisher().openDirectoryLease(toNamespacedPath(next), dev, ino)
+  const previous = directoryBinding
+  directoryBinding = { path: next, lease }
+  if (previous) nativePublisher().closeDirectoryLease(previous.lease)
+}
+const releaseDirectory = () => {
+  if (!directoryBinding) return
+  nativePublisher().closeDirectoryLease(directoryBinding.lease)
+  directoryBinding = undefined
+}
+const pathOperation = (name, pathCount = 1) => {
+  const operation = fs[name]
+  if (process.platform !== 'win32') return operation
+  return (...args) =>
+    operation(...args.map((arg, index) => (index < pathCount ? boundPath(arg) : arg)))
+}
+const existsSync = pathOperation('existsSync')
+const linkSync = pathOperation('linkSync', 2)
+const lstatSync = pathOperation('lstatSync')
+const mkdirSync = pathOperation('mkdirSync')
+const openSync = pathOperation('openSync')
+const readdirSync = pathOperation('readdirSync')
+const realpathSync = pathOperation('realpathSync')
+const renameSync = pathOperation('renameSync', 2)
+const rmdirSync = pathOperation('rmdirSync')
+const rmSync = pathOperation('rmSync')
+const statSync = pathOperation('statSync')
+const statfsSync = pathOperation('statfsSync')
 const shadow = require('./file_evidence_shadow.js')
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024
@@ -202,8 +225,8 @@ const publishExclusiveFile = (name, contents, withoutLinks = false) => {
     }
     if (needsRename) {
       // The unpacked worker and standalone backend both ship this Node-API binary.
-      require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node').publishNoReplace(
-        process.cwd(),
+      nativePublisher().publishNoReplace(
+        process.platform === 'win32' ? boundPath('.') : currentDirectory(),
         '',
         temporaryName,
         name
@@ -464,10 +487,10 @@ const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
   if (!sameIdentity(actual, expectedIdentity)) {
     throw new Error(`File-evidence Activity quarantine identity changed: ${name}`)
   }
-  const rootPath = process.cwd()
+  const rootPath = currentDirectory()
   const rootIdentity = identity(statSync('.'))
   const markerName = ownershipFile(ownershipToken)
-  process.chdir(name)
+  changeDirectory(name)
   try {
     if (!sameIdentity(identity(statSync('.')), expectedIdentity)) {
       throw new Error(`File-evidence Activity quarantine identity changed: ${name}`)
@@ -488,7 +511,7 @@ const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
       throw new Error('File-evidence Activity quarantine lost its ownership marker.')
     }
   } finally {
-    process.chdir(rootPath)
+    changeDirectory(rootPath)
   }
   assertBoundRoot(rootIdentity)
   const revalidated = entryIdentity(name)
@@ -555,9 +578,9 @@ const removeReceiptOwnedDirectory = (
 const removeProjectTombstone = (name, ownershipToken, expectedRootIdentity) => {
   const expectedIdentity = entryIdentity(name)
   if (!expectedIdentity) return false
-  const rootPath = process.cwd()
+  const rootPath = currentDirectory()
   const markerName = ownershipFile(ownershipToken)
-  process.chdir(name)
+  changeDirectory(name)
   try {
     if (!sameIdentity(identity(statSync('.')), expectedIdentity)) {
       throw new Error('Notebook file-evidence Project tombstone changed before deletion.')
@@ -578,7 +601,7 @@ const removeProjectTombstone = (name, ownershipToken, expectedRootIdentity) => {
       throw new Error('Notebook file-evidence Project tombstone lost its ownership marker.')
     }
   } finally {
-    process.chdir(rootPath)
+    changeDirectory(rootPath)
   }
   assertBoundRoot(expectedRootIdentity)
   const actualIdentity = entryIdentity(name)
@@ -677,7 +700,7 @@ const ensureProject = (request) => {
   }
   const entries = readdirSync(projectName)
   if (entries.length === 0) {
-    process.chdir(projectName)
+    changeDirectory(projectName)
     try {
       if (!sameIdentity(identity(statSync('.')), projectIdentity)) {
         throw new Error('Notebook file-evidence Project directory changed during ownership.')
@@ -685,7 +708,7 @@ const ensureProject = (request) => {
       writeExclusiveFile(ownershipFile(receipt.ownershipToken), '')
       syncDirectory()
     } finally {
-      process.chdir('..')
+      changeDirectory('..')
     }
     assertBoundRoot(request.expectedRootIdentity)
   } else if (entries.length === 1 && entries[0] === ownershipFile(receipt.ownershipToken)) {
@@ -1087,7 +1110,7 @@ const backfillHistory = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const pool = bindBlobPool(request)
   const project = dirname(pool.path)
-  const lane = process.cwd()
+  const lane = currentDirectory()
   const laneKey = relative(project, lane).split(sep).join('/')
   if (
     !/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/frames\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(laneKey) ||
@@ -1735,7 +1758,7 @@ const begin = (request) => {
   try {
     mkdirSync(stagingName, { mode: 0o700 })
     stagingIdentity = identity(lstatSync(stagingName))
-    process.chdir(stagingName)
+    changeDirectory(stagingName)
     if (!sameIdentity(identity(statSync('.')), stagingIdentity)) {
       throw new Error('File-evidence staging directory changed during capture binding.')
     }
@@ -1743,14 +1766,14 @@ const begin = (request) => {
     if (receipt.poolAddressed) writeExclusiveFile(PIN_FILE, '')
     ownershipMarkerPublished = true
     syncDirectory()
-    process.chdir('..')
+    changeDirectory('..')
     assertBoundRoot(request.expectedRootIdentity)
     replaceJson(receiptName, {
       ...receipt,
       phase: 'allocated',
       stagingIdentity
     })
-    process.chdir(stagingName)
+    changeDirectory(stagingName)
     if (!sameIdentity(identity(statSync('.')), stagingIdentity)) {
       throw new Error('File-evidence staging directory changed after allocation.')
     }
@@ -1817,7 +1840,7 @@ const begin = (request) => {
     writeExclusiveFile(CAPTURE_FILE, serialized)
     syncDirectory()
     const captureChecksum = createHash('sha256').update(serialized).digest('hex')
-    process.chdir('..')
+    changeDirectory('..')
     assertBoundRoot(request.expectedRootIdentity)
     replaceJson(receiptName, {
       ...receipt,
@@ -1844,7 +1867,7 @@ const begin = (request) => {
   } catch (error) {
     try {
       if (stagingIdentity && sameIdentity(identity(statSync('.')), stagingIdentity))
-        process.chdir('..')
+        changeDirectory('..')
       assertBoundRoot(request.expectedRootIdentity)
       if (stagingIdentity && ownershipMarkerPublished) {
         removeReceiptOwnedDirectory(stagingName, stagingIdentity, receipt.ownershipToken, 'staging')
@@ -1933,7 +1956,7 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
   const expected = receipt.finalIdentity ?? receipt.stagingIdentity
   if (!sameIdentity(entryIdentity(receipt.finalName), expected))
     throw new Error('Published file-evidence directory identity mismatch.')
-  process.chdir(receipt.finalName)
+  changeDirectory(receipt.finalName)
   let result
   let shadowError
   try {
@@ -1943,7 +1966,7 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
     if (!receipt.poolAddressed && receipt.phase === 'capturing' && entryExists(CAPTURE_FILE)) {
       const capture = readCapture(receipt)
       const projectPrefix = blobPool.storageKeyPrefix.replace(/\/blobs$/u, '')
-      const lane = dirname(process.cwd())
+      const lane = realpathSync('..')
       const laneKey = relative(dirname(realpathSync(blobPool.path)), lane)
         .split(sep)
         .join('/')
@@ -2008,7 +2031,7 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
       }
     }
   } finally {
-    process.chdir('..')
+    changeDirectory('..')
     assertBoundRoot(request.expectedRootIdentity)
   }
   if (receipt.phase === 'capturing') {
@@ -2063,7 +2086,7 @@ const persist = (request) => {
   if (!stagingIdentity || !sameIdentity(stagingIdentity, receipt.stagingIdentity)) {
     throw new Error('File-evidence staging directory identity changed.')
   }
-  process.chdir(receipt.stagingName)
+  changeDirectory(receipt.stagingName)
   if (!sameIdentity(identity(statSync('.')), receipt.stagingIdentity)) {
     throw new Error('File-evidence staging directory changed before publication.')
   }
@@ -2225,7 +2248,7 @@ const persist = (request) => {
     if (receipt.poolAddressed) {
       const project = dirname(blobPool.path)
       writeNativeRecord(
-        dirname(process.cwd()),
+        dirname(currentDirectory()),
         blobPool.storageKeyPrefix.slice(0, -'/blobs'.length),
         project,
         capture,
@@ -2242,11 +2265,11 @@ const persist = (request) => {
     } else {
       publishExclusiveFile('evidence.json', serialized, receipt.poolAddressed)
     }
-    process.chdir('..')
+    changeDirectory('..')
     moveCapture(request, receipt)
     return finishPublished(request, receipt, blobPool, generations)
   } catch (error) {
-    if (sameIdentity(identity(statSync('.')), receipt.stagingIdentity)) process.chdir('..')
+    if (sameIdentity(identity(statSync('.')), receipt.stagingIdentity)) changeDirectory('..')
     throw error
   }
 }
@@ -2272,7 +2295,7 @@ const verifyPublishedEvidence = (receipt, expected) => {
     throw new Error('Published file-evidence directory identity mismatch.')
   }
   verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Activity')
-  process.chdir(receipt.finalName)
+  changeDirectory(receipt.finalName)
   let bytes
   try {
     bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
@@ -2290,7 +2313,7 @@ const verifyPublishedEvidence = (receipt, expected) => {
       throw new Error('Published file-evidence identity mismatch.')
     }
   } finally {
-    process.chdir('..')
+    changeDirectory('..')
   }
   assertBoundRoot(expected.expectedRootIdentity)
   const storageKey = `${receipt.storageKeyPrefix}/${receipt.finalName}/evidence.json`
@@ -2326,7 +2349,7 @@ const settlePublication = (receipt, expected) => {
     removeReceipt(receipt.receiptName)
     return
   }
-  const lane = process.cwd()
+  const lane = currentDirectory()
   const prefix = receipt.storageKeyPrefix.split('/').slice(0, 2).join('/')
   const project =
     receipt.storageKeyPrefix.split('/').length === 3
@@ -2428,14 +2451,14 @@ const reconcile = (request, sweepBlobs = true) => {
 // or turn an unsafe Project/Session path into a cleanup target.
 const reconcileComputeProject = (request) => {
   ensureProject(request)
-  const rootPath = process.cwd()
+  const rootPath = currentDirectory()
   const projectName = assertSafeName(request.projectName)
   const projectIdentity = entryIdentity(projectName)
-  process.chdir(projectName)
+  changeDirectory(projectName)
   let result
   try {
     assertBoundRoot(projectIdentity)
-    const projectPath = process.cwd()
+    const projectPath = currentDirectory()
     const ensureDirectory = (name) => {
       assertSafeName(name)
       if (!entryExists(name)) mkdirSync(name, { mode: 0o700 })
@@ -2456,7 +2479,7 @@ const reconcileComputeProject = (request) => {
       if (sessionName === 'blobs') throw new Error('Reserved file-evidence Session name.')
       assertBoundRoot(projectIdentity)
       const sessionIdentity = ensureDirectory(sessionName)
-      process.chdir(sessionName)
+      changeDirectory(sessionName)
       try {
         const result = reconcile(
           {
@@ -2471,7 +2494,7 @@ const reconcileComputeProject = (request) => {
         removedStagingEntries += result.removedStagingEntries
         removedActivityEntries += result.removedActivityEntries
       } finally {
-        process.chdir(projectPath)
+        changeDirectory(projectPath)
       }
       assertBoundRoot(projectIdentity)
       if (!sameIdentity(entryIdentity(sessionName), sessionIdentity)) {
@@ -2485,7 +2508,7 @@ const reconcileComputeProject = (request) => {
       removedBlobEntries: sweepBlobPool(bindBlobPool(binding))
     }
   } finally {
-    process.chdir(rootPath)
+    changeDirectory(rootPath)
   }
   assertBoundRoot(request.expectedRootIdentity)
   if (!sameIdentity(entryIdentity(projectName), projectIdentity)) {
@@ -2501,7 +2524,7 @@ const verifyLegacyNotebookPublishedEvidence = (receipt, expected) => {
     throw new Error('Published legacy Notebook file-evidence directory identity mismatch.')
   }
   verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'Notebook file-evidence Run')
-  process.chdir(receipt.finalName)
+  changeDirectory(receipt.finalName)
   try {
     const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
     if (createHash('sha256').update(bytes).digest('hex') !== expected.checksum) {
@@ -2516,7 +2539,7 @@ const verifyLegacyNotebookPublishedEvidence = (receipt, expected) => {
       throw new Error('Published legacy Notebook file-evidence identity mismatch.')
     }
   } finally {
-    process.chdir('..')
+    changeDirectory('..')
   }
   assertBoundRoot(expected.expectedRootIdentity)
   const storageKey = `${receipt.storageKeyPrefix}/${receipt.finalName}/evidence.json`
@@ -2796,7 +2819,7 @@ if (process.argv.includes('--serve')) {
   // Resident mode: one JSON request per line, each carrying its evidence root. The worker binds
   // that root for the request only; every operation still verifies the bound directory identity.
   // Returning to the neutral launch directory keeps no evidence directory open between requests.
-  const neutralDirectory = process.cwd()
+  const neutralDirectory = currentDirectory()
   const rejectOversized = () => {
     process.stdout.write(
       `${JSON.stringify({ ok: false, error: 'File-evidence worker request is too large.' })}\n`
@@ -2815,11 +2838,12 @@ if (process.argv.includes('--serve')) {
       let response
       try {
         const { root, request } = JSON.parse(line)
-        process.chdir(root)
+        changeDirectory(root)
         try {
           response = dispatch(request)
         } finally {
-          process.chdir(neutralDirectory)
+          if (process.platform === 'win32') releaseDirectory()
+          else changeDirectory(neutralDirectory)
         }
       } catch (error) {
         response = { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -2840,9 +2864,12 @@ if (process.argv.includes('--serve')) {
   process.stdin.on('end', () => {
     if (process.exitCode) return
     try {
+      if (process.platform === 'win32') changeDirectory(process.cwd())
       process.stdout.write(`${JSON.stringify(dispatch(JSON.parse(requestText)))}\n`)
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error))
+    } finally {
+      releaseDirectory()
     }
   })
 }

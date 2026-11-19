@@ -465,7 +465,6 @@ it.each(['local', 'imported'] as const)(
       sessionPackageService: service,
       translate: englishNativeTranslator,
       archiveCoordinator: archive,
-      sessionPersistenceCoordinator: persistence,
       applicationEvents: {
         publish: (channel, payload) => {
           if (channel === 'session:created')

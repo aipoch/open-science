@@ -101,6 +101,7 @@ import { type AppPermissionRequest, type RestoredPermissionContinuation } from '
 import type { AcpPermissionContext } from './permission-context'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
+import { markNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
@@ -401,6 +402,8 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      refreshNotebookConnection: (input) =>
+        this.providerSessionResumer.refreshNotebookConnection(input),
       onProviderPromptAccepted: (sessionId) => {
         this.durableContinuationContext.clearContextReset(sessionId)
       },
@@ -488,7 +491,16 @@ class AcpRuntime {
       ...(this.options.notebook?.prepareTurnInputs
         ? { prepareTurnInputs: this.options.notebook.prepareTurnInputs }
         : {}),
-      publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
+      publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) => {
+        // Native injection clarifies the currently running dispatch. It never mints another
+        // Notebook grant, including when its original intent has already been refused.
+        const intent = base.sessionCapabilities.notebookExecutionIntentFor(sessionId)
+        if (intent)
+          options.notebook?.rememberExecutionIntent?.(
+            { projectId: this.sessionEnvironment.projectId(sessionId), sessionId },
+            messageId,
+            intent
+          )
         this.publication.pushEvent({
           kind: 'message',
           level: 'info',
@@ -499,6 +511,7 @@ class AcpRuntime {
           ...(uploads && uploads.length > 0 ? { uploads: [...uploads] } : {}),
           ...(parts && parts.length > 0 ? { parts: [...parts] } : {})
         })
+      }
     })
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
@@ -1611,6 +1624,39 @@ class AcpRuntime {
       ...(imageCompatibility ? { imageCompatibility } : {}),
       close: prepared.close
     })
+  }
+
+  // Main's Task adapter calls this synchronously under TaskRunner's Session reservation. An
+  // automation prompt can inherit its root authority, but can never clear a previous refusal.
+  captureNotebookTaskIntent(request: AcpPromptRequest): AcpPromptRequest {
+    const notebook = this.options.notebook
+    if (!notebook) return request
+    const scope = {
+      projectId: this.sessionEnvironment.projectId(request.sessionId),
+      sessionId: request.sessionId,
+      messageBranchId: request.provenanceContext?.messageBranchId,
+      promptMessageId: request.provenanceContext?.promptMessageId
+    }
+    const origin = request.provenanceContext?.promptMessageId
+    let intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
+    intent ??= (
+      notebook.currentExecutionIntent
+        ? notebook.currentExecutionIntent(scope)
+        : this.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+    )?.forDescendant(request.provenanceContext)
+    if (!intent && origin && notebook.createExecutionIntent) {
+      // TaskRunner has accepted this exact first root under its Session reservation. Generic
+      // resume, application prompts and later roots cannot replace an existing refused context.
+      intent = notebook.createExecutionIntent(scope)
+      intent.prepareUserExecution()
+    }
+    if (!intent)
+      throw new Error(
+        'Notebook Task execution context is unavailable. Execution was not started; repair the runtime before starting a new Task.'
+      )
+    markNotebookExecutionIntent(request, intent)
+    if (origin) notebook.rememberExecutionIntent?.(scope, origin, intent)
+    return request
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.

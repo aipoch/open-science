@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
 import { SessionSizeLimitError } from '../../shared/session-persistence'
+import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
+import { notebookUserOperation } from '../notebook/execution-intent'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -139,6 +141,7 @@ describe('ACP application commands', () => {
       'acp:compact-session',
       'acp:connect',
       'acp:continue-interrupted-turn',
+      'acp:continue-notebook-execution',
       'acp:create-session',
       'acp:delete-session',
       'acp:discard-unavailable-plan',
@@ -302,6 +305,70 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
+  it('accepts a new Notebook execution prompt only from a current human caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      refusalId: 'refusal',
+      text: 'Continue execution after checking memory.'
+    }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueNotebookExecution,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller')
+    expect(dependencies.workflows.sendPrompt).not.toHaveBeenCalled()
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueNotebookExecution,
+        invocation([request], createWebCallerContext('local-web'))
+      )
+    ).resolves.toEqual(commandResponse)
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it.each(['sendPrompt', 'continueNotebookExecution'] as const)(
+    'expires %s execution authority when its document lease ends during prompt preparation',
+    async (command) => {
+      const dependencies = createDependencies()
+      let prepare!: () => void
+      const prepared = new Promise<void>((resolve) => (prepare = resolve))
+      vi.mocked(dependencies.workflows.sendPrompt).mockImplementation(async (request) => {
+        await prepared
+        notebookUserOperation(request)!.assertCurrent()
+        return snapshot
+      })
+      const router = createApplicationCommandRouter()
+      registerAcpCommands(router.registrar, dependencies)
+      const context = createWebCallerContext('notebook-human')
+      const leases = new ApplicationCallerLeaseRegistry()
+      const caller = leases.acquire(context)
+      const pending = router.dispatcher.invoke(acpCommands[command], {
+        callerContext: context,
+        callerLease: caller.lease,
+        args: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            refusalId: 'refusal',
+            text: 'Continue execution after checking memory.'
+          }
+        ]
+      })
+      await vi.waitFor(() => expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce())
+      const rejected = expect(pending).rejects.toThrow(/expired|current human caller/)
+      caller.release()
+      prepare()
+      await rejected
+      router.dispose()
+      leases.dispose()
+    }
+  )
+
   it.each([
     createElectronCallerContext(7),
     createWebCallerContext('local-web'),
@@ -342,11 +409,13 @@ describe('ACP application commands', () => {
 
     await router.dispatcher.invoke(acpCommands.sendPrompt, invocation([request]))
 
-    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith({
-      ...request,
-      continuation: undefined,
-      suppressUserMessage: undefined
-    })
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...request,
+        continuation: undefined,
+        suppressUserMessage: undefined
+      })
+    )
     expect(request.continuation.originatingTurnToken).toBe('renderer-forged-turn')
   })
 

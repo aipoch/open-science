@@ -1162,6 +1162,76 @@ describe('workspace conversation controller', () => {
     expect(latestComposer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
   })
 
+  it('submits Notebook continuation only on an explicit action with the affected Session scope', async () => {
+    const input = options()
+    const result = { sessionId: 'session-b', messageId: 'continuation-message' }
+    input.runtime.sendMessage = vi.fn().mockResolvedValue(result)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    await expect(
+      hook.result.current.actions.submit.notebookContinuation({
+        projectId: 'project-b',
+        sessionId: 'session-b',
+        cwd: '/workspace/project-b',
+        refusalId: 'refusal-b',
+        text: 'Reconsider the blocked Notebook work.'
+      })
+    ).resolves.toEqual(result)
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-b',
+      sessionId: 'session-b',
+      cwd: '/workspace/project-b',
+      requireExistingSession: true,
+      preserveSelection: true,
+      notebookContinuation: { refusalId: 'refusal-b' },
+      text: 'Reconsider the blocked Notebook work.'
+    })
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(input.resetNewConversationSettings).not.toHaveBeenCalled()
+  })
+
+  it('returns an unadmitted Notebook continuation without replaying or consuming the draft', async () => {
+    const input = options()
+    input.runtime.sendMessage = vi.fn().mockResolvedValue(undefined)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    await expect(
+      hook.result.current.actions.submit.notebookContinuation({
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        refusalId: 'refusal-a',
+        text: 'Reconsider the blocked Notebook work.'
+      })
+    ).resolves.toBeUndefined()
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    expect(hook.result.current.queue.items).toEqual([])
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it('propagates Notebook continuation failure to the invoking notice', async () => {
+    const input = options()
+    input.runtime.sendMessage = vi.fn().mockRejectedValue(new Error('Continuation unavailable'))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    await expect(
+      hook.result.current.actions.submit.notebookContinuation({
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        refusalId: 'refusal-a',
+        text: 'Reconsider the blocked Notebook work.'
+      })
+    ).rejects.toThrow('Continuation unavailable')
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    expect(hook.result.current.queue.items).toEqual([])
+    expect(input.composer.actions.setError).not.toHaveBeenCalled()
+  })
+
   it('branches from a completed Agent Message without consuming the composer draft', async () => {
     const input = options()
     const hook = renderController(input)

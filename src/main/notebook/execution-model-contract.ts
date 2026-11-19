@@ -3,6 +3,13 @@ export type NotebookKernelEpochOwnership = Readonly<{
   processKey: string
 }>
 
+// The Aggregate only carries the original Main-owned reference to its control connection. It
+// cannot inspect or create execution authority. This brand is erased and never enters a document.
+export declare const notebookExecutionIntentReference: unique symbol
+export type NotebookExecutionIntentReference = {
+  readonly [notebookExecutionIntentReference]: true
+}
+
 export type NativeTransientViewImage = Readonly<{
   data: string
   mimeType: 'image/png' | 'image/jpeg'

@@ -321,6 +321,11 @@ export const createApplicationModules = async (
     ...sessionFoundation,
     getDetectSessionExportBlockingSessions: () =>
       projectLifecycle.detectSessionExportBlockingSessions,
+    getSessionExportOwners: () => ({
+      archiveCoordinator: projectLifecycle.archiveCoordinator,
+      sessionPersistenceCoordinator: sessionAuthority.sessionPersistenceCoordinator,
+      notebookService: notebookRuntime.notebookService
+    }),
     readImageTasks: (scope) => imageTasks.list(scope, true),
     modules
   })
@@ -946,6 +951,7 @@ export const createApplicationModules = async (
     listAppIconPreviews
   })
   await composeBackendLifecycle({
+    notebookService: notebookRuntime.notebookService,
     settingsBootstrap,
     managedFiles,
     sessionAuthority,

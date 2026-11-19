@@ -5,6 +5,7 @@ import { NotebookLocalRpcServer } from './local-rpc-server'
 type RpcConnection = {
   endpoint: string
   token: string
+  nonce?: string
 }
 
 const callCapabilities = async (
@@ -14,7 +15,11 @@ const callCapabilities = async (
 ): Promise<{ response: Response; payload: Record<string, unknown> }> => {
   const response = await fetch(connection.endpoint, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...(connection.nonce ? { 'x-open-science-control-invocation': connection.nonce } : {})
+    },
     body: JSON.stringify({ method: 'capabilitiesCall', params })
   })
   return {
@@ -29,7 +34,11 @@ const callHostSdkHelp = async (
 ): Promise<{ response: Response; payload: Record<string, unknown> }> => {
   const response = await fetch(connection.endpoint, {
     method: 'POST',
-    headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+    headers: {
+      authorization: `Bearer ${connection.token}`,
+      'content-type': 'application/json',
+      ...(connection.nonce ? { 'x-open-science-control-invocation': connection.nonce } : {})
+    },
     body: JSON.stringify({ method: 'hostSdkHelp', params: { query } })
   })
   return {
@@ -154,7 +163,9 @@ describe('capabilitiesCall RPC', () => {
       toolInvocationId: 'tool-1'
     })
 
-    await expect(callCapabilities(connection)).resolves.toMatchObject({
+    await expect(
+      callCapabilities({ ...connection, nonce: endInvocation.nonce })
+    ).resolves.toMatchObject({
       payload: { result: { delegate: false, sendFrameMessage: false } }
     })
 
@@ -324,7 +335,9 @@ describe('capabilitiesCall RPC', () => {
       toolInvocationId: 'tool-1'
     })
 
-    await expect(callCapabilities(connection)).resolves.toMatchObject({
+    await expect(
+      callCapabilities({ ...connection, nonce: endInvocation.nonce })
+    ).resolves.toMatchObject({
       payload: { result: { viewImage: true } }
     })
 
@@ -333,7 +346,8 @@ describe('capabilitiesCall RPC', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method: 'viewImageCall', params: { source } })
       })
@@ -366,7 +380,9 @@ describe('capabilitiesCall RPC', () => {
       toolInvocationId: 'tool-1'
     })
 
-    await expect(callHostSdkHelp(connection, 'viewImage')).resolves.toMatchObject({
+    await expect(
+      callHostSdkHelp({ ...connection, nonce: endInvocation.nonce }, 'viewImage')
+    ).resolves.toMatchObject({
       payload: { result: { availability: { status: 'available' } } }
     })
 
@@ -398,7 +414,9 @@ describe('capabilitiesCall RPC', () => {
       toolInvocationId: 'tool-1'
     })
 
-    await expect(callCapabilities(connection)).resolves.toMatchObject({
+    await expect(
+      callCapabilities({ ...connection, nonce: endInvocation.nonce })
+    ).resolves.toMatchObject({
       payload: { result: { viewImage: true } }
     })
 
@@ -430,7 +448,9 @@ describe('capabilitiesCall RPC', () => {
       toolInvocationId: 'tool-1'
     })
 
-    await expect(callCapabilities(connection)).resolves.toMatchObject({
+    await expect(
+      callCapabilities({ ...connection, nonce: endInvocation.nonce })
+    ).resolves.toMatchObject({
       payload: { result: { viewImage: false } }
     })
 

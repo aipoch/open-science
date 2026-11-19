@@ -95,7 +95,9 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
-    notebook: EMPTY_OWNER,
+    notebook: {
+      workflows: { configureResourceReleaseGuard: vi.fn() }
+    } as unknown as ApplicationCommandCompositionDependencies['notebook'],
     notebookEnvironment: EMPTY_OWNER,
     notebookRuntime: EMPTY_OWNER,
     settingsCore: EMPTY_OWNER,

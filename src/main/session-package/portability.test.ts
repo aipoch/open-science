@@ -9,6 +9,8 @@ import { packageNativeTables } from './native-snapshot'
 import { SessionPackageService } from './service'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { NotebookRunRepository } from '../notebook/repository'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { SessionRepository } from '../session-persistence/repository'
 
 vi.mock('electron', () => ({
@@ -177,6 +179,20 @@ it.each([
       notebookSessionRoot: managedRoot,
       dataRoot: `${managedRoot}/data`,
       kernel: { runtimeRoot: '$DATA/runtime', pythonPath: `${workspace}/python` },
+      runtimeBindings: Object.fromEntries(
+        (['python', 'r'] as const).map((language) => [
+          language,
+          {
+            language,
+            runtimeId: `${workspace}/${language}`,
+            interpreterPath: `${workspace}/${language}`,
+            source: 'managed',
+            provenance: 'agent-created',
+            label: `Source ${language}`,
+            status: 'active'
+          }
+        ])
+      ),
       runs: [
         {
           runId: 'run',
@@ -235,12 +251,42 @@ it.each([
       expect(run.cwdAfter).toBe(dataRoot)
       expect(run.script).toBe(script)
       expect(document.kernel.pythonPath).toBeUndefined()
+      expect.soft(document.runtimeBindings).toBeUndefined()
       expect(
         await new SessionRepository(configRoot).loadSession(imported.projectId, imported.sessionId)
       ).toMatchObject({
         packageOrigin: { sourceProjectId: 'project', sourceSessionId: 'session' },
         cwd: ''
       })
+
+      const fork = await service.fork(imported)
+      const [forkDocument] = await new NotebookRunRepository(storageRoot).readSessionDocuments(
+        fork.projectId,
+        fork.sessionId
+      )
+      expect.soft(forkDocument.runtimeBindings).toBeUndefined()
+      expect(forkDocument.runs[0].script).toBe(script)
+      const runtime = new NotebookRuntimeService({
+        configRoot,
+        dataRoot: storageRoot,
+        projectId: fork.projectId,
+        discoverRuntimes: async () => [],
+        getAgentEnvironmentCreationEnabled: async () => false,
+        memoryPolicy: healthyNotebookMemoryPolicy(),
+        processSandbox: {
+          wrap: async () => {
+            throw new Error('Reading imported history must not start an interpreter')
+          }
+        }
+      })
+      try {
+        const state = await runtime.state({ ...fork, workspaceCwd: storageRoot })
+        expect(state.runtimeBindings.python).toBeUndefined()
+        expect(state.runtimeBindings.r).toBeUndefined()
+        expect(runtime.ownedResources()).toEqual([])
+      } finally {
+        await expect(runtime.dispose()).resolves.toEqual({ reaped: true })
+      }
 
       const origin = await service.readOrigin(imported)
       const forwarded = join(target.storageRoot, '再次 导出.science')
@@ -294,3 +340,61 @@ it.each([
     }
   }
 )
+
+it('imports a legacy Notebook run without kernelKind as a cold historical session', async () => {
+  const archive = await archiveWithFiles([], {
+    version: 1,
+    projectId: 'project',
+    sessionId: 'session',
+    updatedAt: 2,
+    workspaceCwd: '$DATA/notebooks/project/session',
+    notebookSessionRoot: '$DATA/notebooks/project/session',
+    dataRoot: '$DATA/notebooks/project/session/data',
+    kernel: { runtimeRoot: '$DATA/runtime', pythonPath: '/source/runtime/python' },
+    runs: [
+      {
+        runId: 'legacy-run',
+        cellId: 'legacy-cell',
+        source: 'agent',
+        status: 'completed',
+        startedAt: 1,
+        endedAt: 2,
+        script: "print('legacy')",
+        text: { stdout: 'legacy\n', stderr: '', traceback: '', plain: ['legacy'] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    ]
+  })
+  const target = await createProvenanceTestFixture()
+  const service = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    configRoot: join(target.storageRoot, 'config'),
+    getClient: async () => target.client
+  })
+  try {
+    const imported = await service.importFrom(archive)
+    const [document] = await new NotebookRunRepository(target.storageRoot).readSessionDocuments(
+      imported.projectId,
+      imported.sessionId
+    )
+
+    expect(document.runs[0]).toMatchObject({ kernelKind: 'python', script: "print('legacy')" })
+    expect(document.kernel).toMatchObject({
+      runtimeRoot: join(target.storageRoot, 'runtime'),
+      lastKnownStatus: 'idle'
+    })
+    expect(document.kernel.pythonPath).toBeUndefined()
+    expect(document.runs[0]?.status).toBe('completed')
+    expect(
+      await new SessionRepository(join(target.storageRoot, 'config')).loadSession(
+        imported.projectId,
+        imported.sessionId
+      )
+    ).toMatchObject({ packageOrigin: { sourceProjectId: 'project', sourceSessionId: 'session' } })
+  } finally {
+    await service.close()
+    await target.dispose()
+  }
+})

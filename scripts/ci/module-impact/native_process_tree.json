@@ -12,7 +12,9 @@
     "packages/process-tree-native/test/resource-snapshot.cjs",
     "packages/process-tree-native/test/windows-process-identity.cjs",
     "src/main/windows-process-query.ts",
-    "src/main/windows-process-query.test.ts"
+    "src/main/windows-process-query.test.ts",
+    "packages/process-tree-native/src/darwin_memory_pressure.cc",
+    "packages/process-tree-native/test/memory-pressure.cjs"
   ],
   "interfacePaths": [
     "packages/process-tree-native/index.cjs",
@@ -24,7 +26,8 @@
     "owner": ["src/main/windows-process-query.test.ts"],
     "contract": [
       "scripts/native-components.test.ts",
-      "src/main/resource-diagnostics/native.integration.test.ts"
+      "src/main/resource-diagnostics/native.integration.test.ts",
+      "src/main/notebook/memory-policy.native.integration.test.ts"
     ],
     "consumer": [
       "src/main/credential-identity/inventory-handoff.test.ts",

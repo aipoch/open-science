@@ -79,6 +79,7 @@
     "src/main/session-package/research-films.ts",
     "src/main/session-package/research-films-contract.ts",
     "src/main/session-package/research-films.test.ts",
+    "src/main/session-package/lifecycle-export.integration.test.ts",
     "src/main/session-package/web-evidence.ts",
     "src/main/session-package/web-evidence.test.ts",
     "src/main/session-package/web-evidence.integration.test.ts"
@@ -138,6 +139,7 @@
       "src/main/session-package/use-case-catalog.test.ts",
       "src/main/session-package/use-case-download.test.ts",
       "src/main/session-package/research-films.test.ts",
+      "src/main/session-package/lifecycle-export.integration.test.ts",
       "src/main/session-package/web-evidence.test.ts",
       "src/main/session-package/web-evidence.integration.test.ts"
     ],
@@ -158,6 +160,7 @@
       "src/main/session-persistence/prompt-preparation-restart.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts",
       "src/main/composition/research-film.test.ts"
     ]
   },

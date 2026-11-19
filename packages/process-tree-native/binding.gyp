@@ -5,7 +5,8 @@
       "sources": [
         "src/process_tree_native.cc",
         "src/windows_owned_process.cc",
-        "src/windows_resource_snapshot.cc"
+        "src/windows_resource_snapshot.cc",
+        "src/darwin_memory_pressure.cc"
       ],
       "defines": ["NAPI_VERSION=8"],
       "conditions": [

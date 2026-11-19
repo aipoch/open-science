@@ -192,6 +192,12 @@ const SessionCheck = ({
                         </span>
                         <span className="shrink-0 text-xs text-text-200">{status(row.status)}</span>
                       </div>
+                      {row.status === 'failed' && row.failedStep?.execution === 'not-started' ? (
+                        <p className="mt-1 text-xs text-text-300">
+                          {t('Notebook run {{number}}', { number: row.failedStep.runIndex + 1 })} ·{' '}
+                          {t('not started')}
+                        </p>
+                      ) : null}
                       {row.status === 'blocked' ? (
                         <p className="mt-1 text-xs text-text-300">
                           {row.reason === 'environment-transition'
