@@ -261,14 +261,13 @@ test('Electron briefly hints only when a new page adds papers beyond the viewpor
 }, info) => {
   await openCitationGraph(page, url)
   const frame = page.locator('[data-current-frame="true"]')
-  const hint = frame.getByText(
-    'New papers are outside the current view. Fit the graph to see all loaded papers.'
-  )
+  const hint = frame.locator('[data-citation-canvas] [role="status"]')
   const zoomIn = frame.getByRole('button', { name: 'Zoom in', exact: true })
   await zoomIn.click()
   await zoomIn.click()
   await expect(hint).toHaveCount(0)
   await frame.getByRole('button', { name: 'Load more' }).click()
+  await expect(hint).toHaveText('New papers off-screen. Fit graph.')
   await expect(hint).toBeVisible()
   await page.screenshot({ path: info.outputPath('citation-page-hint.png') })
   await expect(hint).toHaveCount(0, { timeout: 8000 })
