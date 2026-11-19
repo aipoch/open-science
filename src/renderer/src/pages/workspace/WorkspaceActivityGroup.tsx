@@ -1,3 +1,5 @@
+import { readPackageWebEvidence } from './workspace-package-web-evidence'
+import { WorkspacePackageWebActivityRow } from './WorkspacePackageWebActivityRow'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
@@ -16,6 +18,8 @@ import { WorkspaceSkillActivityRow } from './WorkspaceSkillActivityRow'
 import { WorkspaceSkillLoadRow } from './WorkspaceSkillLoadRow'
 import { WorkspaceManagePackagesActivityRow } from './WorkspaceManagePackagesActivityRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
+import { WorkspaceWebFetchActivityRow } from './WorkspaceWebFetchActivityRow'
+import { isBuiltinWebFetchActivity, readWebFetchResult } from './workspace-web-fetch-details'
 import {
   buildToolActivityDetails,
   getSkillLoadDocument,
@@ -34,7 +38,11 @@ import type {
   ActivityExpansionOverrides,
   ConversationActivityGroupItem
 } from './workspace-tool-activity-groups'
-import { formatWebSearchDetails } from './workspace-web-search-details'
+import {
+  formatWebSearchDetails,
+  isBuiltinWebSearchActivity,
+  readWebSearchResult
+} from './workspace-web-search-details'
 import {
   getCorrelatedNotebookRun,
   getToolExecutionPhase,
@@ -113,7 +121,7 @@ const ActivityGroupElapsed = ({
 const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
   activity,
   phase,
-  isSearch,
+  legacyIsSearch,
   expansionOverride,
   allowFolderAccess,
   notebookRunsById,
@@ -135,13 +143,21 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
 > & {
   activity: ConversationActivityGroupItem['activities'][number]
   phase: ReturnType<typeof getToolExecutionPhase>
-  isSearch: boolean
+  legacyIsSearch: boolean
   expansionOverride?: boolean
   boundJob?: JobSummary
 }): React.JSX.Element {
   const { t } = useTranslation()
   const correlatedNotebookRun = getCorrelatedNotebookRun(activity, notebookRunsById)
-  // Search rows get bespoke query/result details; other tools reuse the shared builder.
+  const packageEvidence = readPackageWebEvidence(activity)
+  const ownedWebFetch = isBuiltinWebFetchActivity(activity)
+  const fetchResult = ownedWebFetch ? readWebFetchResult(activity) : undefined
+  const terminal = phase === 'completed' || phase === 'failed'
+  const isWebFetch = ownedWebFetch && (fetchResult !== undefined || !terminal)
+  const ownedWebSearch = isBuiltinWebSearchActivity(activity)
+  const isSearch =
+    !isWebFetch &&
+    (ownedWebSearch ? readWebSearchResult(activity) !== undefined || !terminal : legacyIsSearch)
   const searchDetails = useMemo(
     () => (isSearch ? formatWebSearchDetails(activity) : undefined),
     [activity, isSearch]
@@ -151,16 +167,24 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
   // IPC-capable skill row resolves the document by invocation name instead of showing
   // the generic input/output JSON.
   const skillLoadDocument = useMemo(
-    () => (!isSearch ? getSkillLoadDocument(activity) : undefined),
-    [activity, isSearch]
+    () => (!isSearch && !isWebFetch ? getSkillLoadDocument(activity) : undefined),
+    [activity, isSearch, isWebFetch]
   )
   const skillLoadWithoutDocument = !skillLoadDocument && isSkillLoadActivity(activity)
   const toolDetails = useMemo(
     () =>
-      isSearch || skillLoadDocument || skillLoadWithoutDocument
+      packageEvidence || isWebFetch || isSearch || skillLoadDocument || skillLoadWithoutDocument
         ? undefined
         : buildToolActivityDetails(activity, t),
-    [activity, t, isSearch, skillLoadDocument, skillLoadWithoutDocument]
+    [
+      activity,
+      t,
+      packageEvidence,
+      isWebFetch,
+      isSearch,
+      skillLoadDocument,
+      skillLoadWithoutDocument
+    ]
   )
   // Detail presenters own their defaults; explicit user toggles always win.
   const isRowExpanded = expansionOverride ?? toolDetails?.defaultExpanded ?? false
@@ -170,7 +194,22 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
 
   return (
     <div key={activity.id} className="w-full overflow-hidden">
-      {showManagePackagesProgress ? (
+      {packageEvidence ? (
+        <WorkspacePackageWebActivityRow
+          activity={activity}
+          evidence={packageEvidence}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+        />
+      ) : isWebFetch ? (
+        <WorkspaceWebFetchActivityRow
+          activity={activity}
+          phase={phase}
+          result={fetchResult}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+        />
+      ) : showManagePackagesProgress ? (
         <WorkspaceManagePackagesActivityRow
           activity={activity}
           phase={phase}
@@ -370,7 +409,7 @@ const WorkspaceActivityGroup = ({
                 key={activity.id}
                 activity={activity}
                 phase={getToolExecutionPhase(activity, permission, notebookRunsById)}
-                isSearch={isSearchActivity(activity, group.activities, activityIndex)}
+                legacyIsSearch={isSearchActivity(activity, group.activities, activityIndex)}
                 expansionOverride={expansionOverrides[activity.id]}
                 allowFolderAccess={allowFolderAccess}
                 notebookRunsById={notebookRunsById}

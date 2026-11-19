@@ -9,7 +9,8 @@
     "src/renderer/src/components/SessionPackageImportError.tsx",
     "src/renderer/src/components/SessionPackageImportMenu.tsx",
     "src/renderer/src/components/session-package-import-menu-model.test.ts",
-    "src/renderer/src/components/session-package-import-menu-model.ts"
+    "src/renderer/src/components/session-package-import-menu-model.ts",
+    "src/renderer/src/components/PackageWebOmissions.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/PackageFileSelection.tsx",
@@ -240,5 +241,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Portable Web evidence adds a policy omission surface shared by package transfer and conversation history; retain full validation until this expanded source boundary is reviewed and reclassified."
 }

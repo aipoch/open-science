@@ -38,6 +38,7 @@ type PermissionPolicyContext = {
   permissionGrantSessionId?: string
   modelRoute?: import('../agent-framework/types').AgentModelRoute
   frameworkId?: AgentFrameworkId
+  hostWebOperation?: 'search' | 'fetch'
   shellDialect?: CommandShellDialect
   notebookShellRuntime?: ShellRuntimeBinding['kind']
   notebookShellRuntimeQualifier?: string
@@ -379,6 +380,8 @@ const resolveLegacyAutomaticPermissionReason = (
   if (context?.profile === 'full') {
     return 'full_access'
   }
+
+  if (context?.profile === 'auto' && context.hostWebOperation) return 'host_web_auto'
 
   const libraryIdentity = trustedMcpToolIdentity(params)
   if (

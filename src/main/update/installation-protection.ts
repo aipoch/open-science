@@ -1,3 +1,5 @@
+import { processBirthIdentity } from './windows-update-handoff'
+import { setTimeout as delay } from 'node:timers/promises'
 import { systemBootIdentity } from '../system-boot-identity'
 import { windowsProcessIsAlive } from '../windows-process-query'
 import { z } from 'zod'
@@ -360,6 +362,51 @@ function occupants(directory: string): InstallationRuntime[] {
   }
   return live
 }
+/** Snapshot live helpers before stopping their owner. Only observe those identities here;
+ * the final native handoff scan retains its independent, platform-specific budget. */
+export function captureInstallationHelperExit(
+  location: InstallationLocation,
+  runtime: InstallationRuntime
+): (signal?: AbortSignal) => Promise<void> {
+  const helpers = coordinated(location, (directory) =>
+    occupants(directory)
+      .filter((candidate) => isOwnedInstallationHelper(candidate, runtime))
+      .map(({ pid }) => ({ pid, birth: processBirthIdentity(pid) }))
+  )
+  return async (signal) => {
+    signal?.throwIfAborted()
+    if (!helpers.length) return
+    const timeout = AbortSignal.timeout(5000)
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    try {
+      while (
+        helpers.some(({ pid, birth }) => {
+          // Keep this OS observation below desktop composition; no service-stop dependency.
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+          }
+          const current = processBirthIdentity(pid)
+          // Unreadable identity is not proof of exit. A reused PID is not our old helper.
+          return !birth || !current || current === birth
+        })
+      ) {
+        await delay(50, undefined, { signal: combined })
+      }
+      combined.throwIfAborted()
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (timeout.aborted)
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'Services still hold this installation.'
+        )
+      throw error
+    }
+  }
+}
+
 export function captureInstallationManifest(
   installationRoot: string,
   version: string

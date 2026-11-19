@@ -1427,3 +1427,35 @@ it('retains host provenance in both durable activity projections', () => {
     messageBranchId: scope.messageBranchId
   })
 })
+
+it('persists host Web retry metadata without accepting unowned replacements', () => {
+  const { session, scope } = fixture()
+  const webInvocation = {
+    attempt: 2,
+    retryOf: 'original',
+    configGeneration: 'current',
+    retryEligible: true as const
+  }
+  const result = applyRuntimeSessionEvents(session, scope, [
+    event('tool', {
+      id: 'web-start',
+      timestamp: 2,
+      toolCallId: 'retry',
+      executionInvocationId: 'retry',
+      appOwned: true,
+      providerToolName: 'mcp__open_science_web__web_fetch',
+      status: 'in_progress',
+      webInvocation
+    }),
+    event('tool', {
+      id: 'web-end',
+      timestamp: 3,
+      toolCallId: 'retry',
+      status: 'failed',
+      webInvocation: { attempt: 99, configGeneration: 'unowned' }
+    })
+  ])
+  expect(result.activities?.[0].webInvocation).toEqual(webInvocation)
+  expect(result.conversationGraph?.activities[0].webInvocation).toEqual(webInvocation)
+  expect(result.activities?.[0].webInvocation).not.toBe(webInvocation)
+})

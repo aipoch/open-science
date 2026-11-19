@@ -8,6 +8,7 @@ import type {
   SessionPackageManifest,
   SessionPackagePreview
 } from '../../shared/session-package'
+import type { PackageWebOmission } from '../../shared/session-package-web'
 import { readPackageArchive, readPackageJson } from './archive'
 import { parseNativeRecords } from './native-snapshot'
 import { validatePackageRecords } from './validation'
@@ -45,7 +46,8 @@ export const readSession = async (directory: string): Promise<PersistedChatSessi
 }
 export const preview = (
   manifest: SessionPackageManifest,
-  session: PersistedChatSession
+  session: PersistedChatSession,
+  webOmissions?: PackageWebOmission[]
 ): SessionPackagePreview => ({
   title: manifest.source.title,
   projectName: manifest.source.projectName,
@@ -55,6 +57,7 @@ export const preview = (
     (entry) => entry.kind === 'file' || entry.kind === 'notebook'
   ).length,
   totalBytes: manifest.inventory.reduce((total, entry) => total + entry.sizeBytes, 0),
+  ...(webOmissions?.length ? { webOmissions } : {}),
   omissions: [
     ...manifest.omissions,
     ...manifest.excludedFiles.map((file) => ({
@@ -89,5 +92,5 @@ export const inspectSessionPackage = async (
     onProgress
   )
   onProgress?.({ phase: 'validating', importStage: 'validate-preview', stageProgress: 1 })
-  return preview(manifest, session)
+  return preview(manifest, session, records.webEvidence?.omissions)
 }

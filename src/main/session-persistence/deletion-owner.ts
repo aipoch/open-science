@@ -157,6 +157,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   computeJobs?: ComputeJobDeletionParticipant
   workspaceOwnership?: SessionWorkspaceOwnership
   preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
+  webEvidence?: { releaseSession(projectId: string, sessionId: string): Promise<void> }
   log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
@@ -188,6 +189,7 @@ class SessionPersistenceDeletionOwner {
   private readonly computeJobs: ComputeJobDeletionParticipant | undefined
   private readonly workspaceOwnership: SessionWorkspaceOwnership | undefined
   private readonly preparePackageDeletion: SessionPersistenceDeletionOwnerOptions['preparePackageDeletion']
+  private readonly webEvidence: SessionPersistenceDeletionOwnerOptions['webEvidence']
   private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
@@ -202,6 +204,7 @@ class SessionPersistenceDeletionOwner {
     this.computeJobs = options.computeJobs
     this.workspaceOwnership = options.workspaceOwnership
     this.preparePackageDeletion = options.preparePackageDeletion
+    this.webEvidence = options.webEvidence
     this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
@@ -430,6 +433,20 @@ class SessionPersistenceDeletionOwner {
             kind: 'reset'
           })
           onDeleted(deletedSessionIds)
+          // A failed Web cleanup leaves the prepared Session tombstone available for retry.
+          if (this.webEvidence) {
+            const outcomes = await Promise.allSettled(
+              deletedSessionIds.map((id) => this.webEvidence!.releaseSession(projectId, id))
+            )
+            const failures = outcomes.filter(
+              (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+            )
+            if (failures.length)
+              throw new AggregateError(
+                failures.map((failure) => failure.reason),
+                'Web evidence cleanup is incomplete.'
+              )
+          }
           return { status: 'completed' }
         } catch (error) {
           if (sessionAuthorityDeleted || !this.workspaceOwnership) throw error
@@ -596,6 +613,16 @@ class SessionPersistenceDeletionOwner {
 
     // Authority is gone. Each participant must get its completion attempt even if another fails;
     // their existing recovery paths own any unfinished work, and none may be rolled back to active.
+    if (this.webEvidence) {
+      failurePhase = 'release-web-evidence'
+      operation.phase(failurePhase)
+      try {
+        await this.webEvidence.releaseSession(projectId, sessionId)
+      } catch (error) {
+        operation.fail(error, { failurePhase })
+        cleanupErrors.push(error)
+      }
+    }
     if (this.computeJobs) {
       failurePhase = 'commit-compute-cleanup'
       operation.phase(failurePhase)

@@ -145,6 +145,69 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
 
+### Connect your own agent through MCP
+
+Choose your agent to see its setup options. For clients with local command access, the Open-Science CLI is also available.
+
+<p>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/workbuddy.svg" width="144" height="34" alt="WorkBuddy" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/codex.svg" width="144" height="34" alt="Codex CLI" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/claude-code.svg" width="144" height="34" alt="Claude Code" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/opencode.svg" width="144" height="34" alt="OpenCode" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/hermes.svg" width="144" height="34" alt="Hermes" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/antigravity.svg" width="144" height="34" alt="Antigravity" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/gemini.svg" width="144" height="34" alt="Gemini CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/grok-build.svg" width="144" height="34" alt="Grok Build" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kimi.svg" width="144" height="34" alt="Kimi CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/cursor.svg" width="144" height="34" alt="Cursor Agent" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/qwen.svg" width="144" height="34" alt="Qwen Code" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/qoder.svg" width="144" height="34" alt="Qoder CLI" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/copilot.svg" width="144" height="34" alt="GitHub Copilot" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/pi.svg" width="144" height="34" alt="Pi" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kiro.svg" width="144" height="34" alt="Kiro CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kilo.svg" width="144" height="34" alt="Kilo" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/vibe.svg" width="144" height="34" alt="Mistral Vibe" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/deepseek.svg" width="144" height="34" alt="DeepSeek TUI / Harness" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/reasonix.svg" width="144" height="34" alt="Reasonix" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/aider.svg" width="144" height="34" alt="Aider" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/devin.svg" width="144" height="34" alt="Devin" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/trae.svg" width="144" height="34" alt="Trae CLI" /></a>
+</p>
+
+Also listed in the [local client guide](packages/open-science/CLI.md#other-local-clients): Amp, AtomCode, Claude Desktop, Cline, CodeBuddy, MiMo, OpenClaw, Raven and Vela.
+
+After first-time setup,
+keep the Open-Science service running. If it is already running, go straight to the client
+configuration. To start it independently of the desktop app, run:
+
+```sh
+npx --yes @aipoch/open-science@latest start --no-open
+```
+
+In your agent client's custom MCP settings, add a local **stdio** server. For clients that
+accept `mcpServers` JSON, use the following macOS/Linux configuration with Node.js 22.13.0
+or later and npm on the client's PATH:
+
+```json
+{
+  "mcpServers": {
+    "open-science": {
+      "command": "npx",
+      "args": ["--yes", "@aipoch/open-science@latest", "mcp"]
+    }
+  }
+}
+```
+
+On Windows, set `"command": "cmd.exe"` and use
+`"args": ["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]`
+so the client can launch npm's command shim.
+
+Ask your agent to **list my Open-Science projects**. A successful `list_projects` call
+confirms it can reach your profile, even if the list is empty. You can then submit a research
+task and check its results from the agent or Open-Science. See the [MCP guide](packages/open-science/CLI.md#external-agents-through-mcp)
+for custom profiles, available tools and permissions.
+
 <a id="core-capabilities"></a>
 
 ## What can you do with AIPOCH Open-Science?

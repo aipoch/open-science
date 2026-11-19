@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
+  captureInstallationHelperExit,
   advanceInstallationUpdate,
   advanceInstallationUpdateAsync,
   captureInstallationManifestAsync,
@@ -554,10 +555,12 @@ it('admits authenticated current-runtime helpers before the gate but blocks hand
       inspectProcesses: () => [child.pid!],
       targetManifest: captureInstallationManifest(f.location.installationRoot, '2')
     })
+    const waitForHelpers = captureInstallationHelperExit(f.location, f.runtime)
     advanceInstallationUpdate(f.location, record.operationId, 'stopping')
     advanceInstallationUpdate(f.location, record.operationId, 'stopped', true)
     runtime.release()
     expect(() => advanceInstallationUpdate(f.location, record.operationId, 'handoff')).toThrow()
+    await expect(waitForHelpers()).rejects.toMatchObject({ reason: 'installation-busy' })
   } finally {
     const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
     child.kill('SIGKILL')
