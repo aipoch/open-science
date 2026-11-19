@@ -22,6 +22,11 @@ export const isPrivatePackageValue = (value: string): boolean => {
 // Only exempt a known authentication scheme; identifier-shaped values can still be secrets.
 export const isPrivatePackageField = (key: string, value: string): boolean => {
   if (!isSensitiveDiagnosticKey(key) || !isPrivatePackageValue(value)) return false
+  if (
+    /^(?:auth_mode|providerAuthMode)$/.test(key) &&
+    /^(?:anonymous|api_key|platform|managed)$/.test(value)
+  )
+    return false
   if (/^(?:token_type|tokenType)$/.test(key) && /^(?:Bearer|bearer)$/.test(value)) return false
   return true
 }

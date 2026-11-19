@@ -105,6 +105,7 @@ import {
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 import { mutateSessionDetailsAuthority } from './session-details-authority'
+import type { WebEvidenceLifecycle } from '../web/evidence-lifecycle'
 
 // Main-process package publisher supplies only a successfully persisted Session. The optional
 // context certifies that this operation's new Project is still hidden by its staging barrier.
@@ -484,7 +485,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         operation: () => Promise<T>
       ): Promise<T>
       withProjectStopped<T>(projectId: string, operation: () => Promise<T>): Promise<T>
-    }
+    },
+    private readonly webEvidence?: WebEvidenceLifecycle
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.notifySessionRecordProblems = publishSessionUpdate
@@ -522,6 +524,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
     this.repository = repository
     this.stateOwner = new SessionPersistenceStateOwner({
+      webEvidence,
       repository,
       fileIndex,
       provenance,
@@ -570,6 +573,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       computeJobs,
       workspaceOwnership,
       preparePackageDeletion,
+      webEvidence,
       log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
@@ -682,6 +686,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       }
       // Ordinary reads remain authoritative whenever they can see the Session.
       const durable = loaded.status === 'found' ? loaded.session : session
+      await this.webEvidence?.confirmPublication(durable)
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, durable)
       this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       this.stateOwner.recordSession(durable)
@@ -1565,13 +1570,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           const reservation = this.exportingSessions.get(sessionKey(session.projectId, session.id))
           if (reservation) return { released: reservation.released }
           await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-          return {
-            saved: await this.stateOwner.saveSession(
+          const save = (): Promise<PersistedChatSession> =>
+            this.stateOwner.saveSession(
               session,
               sanitizeRendererSaveSessionOptions(options, session),
               authority
             )
-          }
+          return { saved: await save() }
         }
       )
       if (result.saved) {

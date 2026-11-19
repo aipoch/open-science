@@ -1,11 +1,16 @@
 import { readPersistedFailure } from '../../shared/session-persistence/turn-outcome'
+import { WebService } from '../web/service'
+import { SearchService } from '../web/search-service'
+import { WebInvocationOwner } from '../web/invocation-owner'
+import { WebInvocationStore } from '../web/invocation-store'
+import { WebSnapshotStore } from '../web/snapshot-store'
 import { ScheduleMcp } from '../schedules/mcp'
 import type { ScheduleManagement } from '../schedules/management'
 import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -195,14 +200,15 @@ function finish(
   response: ServerResponse,
   text: string,
   tool?: string,
-  args: unknown = { value: 1 }
+  args: unknown = { value: 1 },
+  callId = 'call-1'
 ): void {
   const delta = tool
     ? {
         tool_calls: [
           {
             index: 0,
-            id: 'call-1',
+            id: callId,
             type: 'function',
             function: { name: tool, arguments: JSON.stringify(args) }
           }
@@ -734,6 +740,35 @@ it('rejects duplicate authentication, unsupported MCP and changed resume workspa
   expect(model.requests).toHaveLength(0)
 })
 
+it('reports an absent Fork checkpoint as missing while preserving corrupt or partial native Sessions', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  const missing = '11111111-1111-4111-8111-111111111111'
+  const request = (sessionId: string): Promise<acp.ResumeSessionResponse> =>
+    f.connection.agent.request(acp.methods.agent.session.resume, {
+      sessionId,
+      cwd: f.directory,
+      mcpServers: []
+    })
+  await expect(request(missing)).rejects.toMatchObject({ code: -32002 })
+  await writeFile(join(f.directory, `${missing}.json`), 'corrupt JSON')
+  await expect(request(missing)).rejects.toMatchObject({ code: -32603 })
+  await rm(join(f.directory, `${missing}.json`))
+  const created = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await f.connection.agent.request(acp.methods.agent.session.close, {
+    sessionId: created.sessionId
+  })
+  const binding = await readFile(join(f.directory, `${created.sessionId}.json`), 'utf8')
+  await rm(join(f.directory, `${created.sessionId}.json`))
+  await expect(request(created.sessionId)).rejects.toMatchObject({ code: -32603 })
+  await writeFile(join(f.directory, `${created.sessionId}.json`), binding)
+  await expect(request(created.sessionId)).resolves.toEqual(expect.any(Object))
+  expect(model.requests).toHaveLength(0)
+})
+
 it.each([false, true])(
   'compacts and continues after overflow through the subscription bridge (%s)',
   async (subscription) => {
@@ -905,7 +940,7 @@ it('closes an active session before acknowledging release and rejects further pr
   ).rejects.toThrow()
 })
 
-it.each(['notebook', 'plan'] as const)(
+it.each(['notebook', 'plan', 'web'] as const)(
   'recovers a lost %s receipt after helper reattachment without executing twice',
   async (kind) => {
     const root = await mkdtemp(join(tmpdir(), 'host-tool-recovery-'))
@@ -953,12 +988,34 @@ it.each(['notebook', 'plan'] as const)(
     }
     const register = (route: string): void => {
       if (kind === 'notebook') host.registerNotebook(route, environment)
-      else host.registerPlan(route, environment)
+      else if (kind === 'plan') host.registerPlan(route, environment)
+      else {
+        const web = new WebService({
+          store: new WebSnapshotStore(join(root, 'web')),
+          transport: async () => {
+            executions++
+            return {
+              body: Buffer.from('RECOVERED_EFFECT'),
+              contentType: 'text/plain',
+              finalUrl: 'https://example.org/'
+            }
+          }
+        })
+        host.registerWeb(route, {
+          fetchPage: (input, context) => web.fetch('app-session', input, context)
+        })
+      }
       host.registerReceiptScope(route, 'app-session', kind)
     }
     register('old-route')
-    const toolName = kind === 'notebook' ? 'repl_execute' : 'generate_plan'
-    const argumentsForTool = kind === 'notebook' ? { code: 'return 1' } : { approve: true }
+    const toolName =
+      kind === 'notebook' ? 'repl_execute' : kind === 'plan' ? 'generate_plan' : 'web_fetch'
+    const argumentsForTool =
+      kind === 'notebook'
+        ? { code: 'return 1' }
+        : kind === 'plan'
+          ? { approve: true }
+          : { url: 'https://example.org/' }
     let route = 'old-route',
       lost = false
     const proxy = createServer(async (request, response) => {
@@ -999,7 +1056,7 @@ it.each(['notebook', 'plan'] as const)(
     })
     const mcp: acp.McpServer = {
       type: 'http',
-      name: kind,
+      name: kind === 'web' ? 'open-science-web' : kind,
       url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}/mcp`,
       headers: []
     }
@@ -1681,5 +1738,279 @@ it.each([401, 403, 404, 413])(
     const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
     expect(failure).toMatchObject({ data: { status, requestId: 'bridge-request-123' } })
     expect(JSON.stringify(failure)).not.toContain('UPSTREAM_SECRET')
+  }
+)
+
+it('publishes authoritative cancellation for an in-flight Web invocation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'web-cancel-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+  cleanup.push(() => host.close())
+  const started = Promise.withResolvers<void>()
+  const aborted = Promise.withResolvers<void>()
+  const web = new WebService({
+    store: new WebSnapshotStore(join(root, 'web')),
+    transport: async (_url, signal) => {
+      started.resolve()
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted.resolve()
+            reject(signal.reason)
+          },
+          { once: true }
+        )
+      )
+    }
+  })
+  const { token } = await host.ensureStarted()
+  host.registerWeb('route', { fetchPage: (input, context) => web.fetch('session', input, context) })
+  host.registerReceiptScope('route', 'session', 'web')
+  const model = await modelServer((body, response) =>
+    finish(
+      response,
+      '',
+      body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!.function.name,
+      { url: 'https://example.org/' }
+    )
+  )
+  const f = await fixture(model.endpoint)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-web',
+        url: host.urlFor('web', 'route'),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      }
+    ]
+  })
+  const running = prompt(f.connection, sessionId)
+  await started.promise
+  await f.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId })
+  expect((await running).stopReason).toBe('cancelled')
+  await aborted.promise
+  expect(
+    f.updates.filter(({ update }) => update.sessionUpdate === 'tool_call_update')
+  ).toContainEqual(
+    expect.objectContaining({
+      update: expect.objectContaining({
+        _meta: expect.objectContaining({ 'open-science/web-cancelled': true }),
+        status: 'failed'
+      })
+    })
+  )
+})
+
+it('retains canonical Web identity on progress and terminal ACP updates', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'web-update-identity-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+  cleanup.push(() => host.close())
+  const service = new WebService({ store: new WebSnapshotStore(join(root, 'evidence')) })
+  const { token } = await host.ensureStarted()
+  host.registerWeb('route', {
+    fetchPage: (input, context) => service.fetch('session', input, context)
+  })
+  host.registerReceiptScope('route', 'session', 'web')
+  const model = await modelServer((body, response) => {
+    if (body.messages.some((message) => message.role === 'tool')) finish(response, 'Failed safely')
+    else
+      finish(
+        response,
+        '',
+        body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!.function.name,
+        { url: 'http://127.0.0.1/private' }
+      )
+  })
+  const f = await fixture(model.endpoint)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-web',
+        url: host.urlFor('web', 'route'),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      }
+    ]
+  })
+  expect((await prompt(f.connection, sessionId)).stopReason).toBe('end_turn')
+  const updates = f.updates
+    .map(({ update }) => update)
+    .filter((update) => update.sessionUpdate === 'tool_call_update')
+  expect(updates).toContainEqual(expect.objectContaining({ status: 'in_progress' }))
+  expect(updates).toContainEqual(expect.objectContaining({ status: 'failed' }))
+  for (const update of updates)
+    expect(update._meta?.toolName).toBe('mcp__open_science_web__web_fetch')
+})
+
+it.each(['chat-completions', 'messages', 'responses'] as const)(
+  'searches, fetches evidence, and cites the source through the %s harness',
+  async (protocol) => {
+    const root = await mkdtemp(join(tmpdir(), 'web-harness-evidence-'))
+    cleanup.push(() => rm(root, { recursive: true, force: true }))
+    const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+    cleanup.push(() => host.close())
+    const url = 'https://example.org/paper'
+    const text = 'The public dataset contains 42 observations.'
+    const citation = `The dataset contains 42 observations [Dataset](${url}).`
+    const search = vi.fn(async () => ({
+      sources: [
+        {
+          source_id: 'paper',
+          url,
+          title: 'Dataset',
+          snippet: 'Search excerpt',
+          evidence_kind: 'search_snippet' as const
+        }
+      ]
+    }))
+    const fetch = vi.fn(async () => ({
+      finalUrl: url,
+      contentType: 'text/plain',
+      body: Buffer.from(text)
+    }))
+    const snapshots = new WebSnapshotStore(join(root, 'snapshots'))
+    const store = new WebInvocationStore(join(root, 'invocations'))
+    const searchService = new SearchService({ provider: { search } })
+    const web = new WebService({ store: snapshots, transport: fetch })
+    const binding = { projectId: 'project', sessionId: 'session' }
+    const scope = {
+      ...binding,
+      branchId: 'branch',
+      agentFrameId: 'frame',
+      promptMessageId: 'prompt',
+      runtimeSegmentId: 'segment'
+    }
+    const owner = new WebInvocationOwner({
+      store,
+      scope: async () => scope,
+      execute: (_scope, operation, input, context) =>
+        operation === 'search'
+          ? searchService.search(binding.sessionId, input, context)
+          : web.fetch(scope.branchId, input, context),
+      publishSnapshot: (record, id, authorize) => snapshots.commit(record.branchId, id, authorize)
+    })
+    host.registerWeb('route', {
+      search: (input, context) => owner.execute(binding, 'search', input, context),
+      fetchPage: (input, context) => owner.execute(binding, 'fetch', input, context),
+      receiptSignal: (id) => owner.receiptSignal(binding, id),
+      receiptCommitted: (result) => owner.receiptCommitted(binding, result),
+      reconcileResult: (query) => owner.reconcileResult(binding, query)
+    })
+    host.registerReceiptScope('route', binding.sessionId, 'web')
+
+    const steps = [
+      { suffix: '__web_search', args: { query: 'public dataset', max_results: 1 } },
+      { suffix: '__web_fetch', args: { url } }
+    ]
+    const modelHistory: unknown[] = []
+    const model = await modelServer((body, response) => {
+      const request = body as unknown as {
+        messages?: unknown[]
+        input?: unknown[]
+        tools: { name?: string; function?: { name: string } }[]
+      }
+      modelHistory.push((request.messages ?? request.input)?.at(-1))
+      const step = steps[modelHistory.length - 1]
+      const tool = step
+        ? request.tools
+            .map(({ name, function: fn }) => name ?? fn?.name)
+            .find((name) => name?.endsWith(step.suffix))!
+        : undefined
+      const id = `web-call-${modelHistory.length}`
+      if (protocol === 'chat-completions') {
+        finish(response, citation, tool, step?.args, id)
+        return
+      }
+      const args = JSON.stringify(step?.args)
+      const events =
+        protocol === 'messages'
+          ? [
+              ...(tool
+                ? [
+                    {
+                      type: 'content_block_start',
+                      content_block: { type: 'tool_use', id, name: tool, input: {} }
+                    },
+                    {
+                      type: 'content_block_delta',
+                      delta: { type: 'input_json_delta', partial_json: args }
+                    },
+                    { type: 'content_block_stop' }
+                  ]
+                : [
+                    {
+                      type: 'content_block_delta',
+                      delta: { type: 'text_delta', text: citation }
+                    }
+                  ]),
+              { type: 'message_delta', delta: { stop_reason: tool ? 'tool_use' : 'end_turn' } },
+              { type: 'message_stop' }
+            ]
+          : [
+              tool
+                ? {
+                    type: 'response.output_item.done',
+                    item: { type: 'function_call', call_id: id, name: tool, arguments: args }
+                  }
+                : { type: 'response.output_text.delta', delta: citation },
+              { type: 'response.completed', response: {} }
+            ]
+      response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''))
+    })
+    const endpoint =
+      protocol === 'chat-completions'
+        ? model.endpoint
+        : model.endpoint.replace('/chat/completions', `/${protocol}`)
+    const f = await fixture(endpoint)
+    const { token } = await host.ensureStarted()
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-web',
+          url: host.urlFor('web', 'route'),
+          headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+        }
+      ]
+    })
+    expect(
+      (await prompt(f.connection, sessionId, 'Find the dataset and cite it.')).stopReason
+    ).toBe('end_turn')
+    expect(modelHistory).toHaveLength(3)
+    expect(JSON.stringify(modelHistory[1])).toContain(url)
+    expect(JSON.stringify(modelHistory[2])).toContain(text)
+    expect(search).toHaveBeenCalledExactlyOnceWith(steps[0].args, expect.any(AbortSignal))
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(url, expect.any(AbortSignal))
+    const updates = f.updates.map(({ update }) => update)
+    const completed = updates.filter(
+      (update) => update.sessionUpdate === 'tool_call_update' && update.status === 'completed'
+    )
+    expect(completed.map((update) => update._meta?.toolName)).toEqual([
+      'mcp__open_science_web__web_search',
+      'mcp__open_science_web__web_fetch'
+    ])
+    for (const update of completed) {
+      if (update.sessionUpdate !== 'tool_call_update') throw new Error('Expected a tool update')
+      const record = await store.read(binding, update.toolCallId)
+      expect(record.status).toBe('completed')
+      if (record.operation === 'search')
+        expect(record.searchAttempts).toMatchObject([{ status: 'ok', provider: { id: 'exa' } }])
+      else
+        expect(
+          (await snapshots.readCommitted(scope.branchId, record.result!.document!.snapshot_id)).text
+        ).toBe(text)
+    }
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: citation }
+      })
+    )
   }
 )

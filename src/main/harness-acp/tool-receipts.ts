@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm, stat, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
@@ -33,6 +33,9 @@ const canonical = (value: unknown): unknown =>
         )
       : value
 const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT'
+// A recovery reader and the original host request may finish concurrently, even through different
+// runtime host instances. The first durable result is immutable; recovery never replaces evidence.
+const completionWrites = new Map<string, Promise<void>>()
 
 /** Host-owned evidence only. A started receipt is never permission to repeat a side effect. */
 export class HarnessToolReceipts {
@@ -65,7 +68,12 @@ export class HarnessToolReceipts {
     }
   }
 
-  private async publish(directory: string, name: string, value: unknown): Promise<void> {
+  private async publish(
+    directory: string,
+    name: string,
+    value: unknown,
+    signal?: AbortSignal
+  ): Promise<void> {
     const serialized = JSON.stringify(value)
     if (Buffer.byteLength(serialized) > 32 * 1024 * 1024)
       throw new Error('Tool receipt exceeds storage budget')
@@ -78,6 +86,7 @@ export class HarnessToolReceipts {
       } finally {
         await file.close()
       }
+      signal?.throwIfAborted()
       await rename(temporary, join(directory, name))
       if (process.platform !== 'win32') {
         const dir = await open(directory, 'r')
@@ -102,15 +111,37 @@ export class HarnessToolReceipts {
     await this.publish(directory, 'started.json', { fingerprint })
   }
 
-  async complete(scope: string, query: ReceiptQuery, result: unknown): Promise<void> {
-    await this.assertActive(scope)
-    const { directory, fingerprint } = this.location(scope, query)
-    const started = JSON.parse(await readFile(join(directory, 'started.json'), 'utf8'))
-    if (started.fingerprint !== fingerprint) throw new Error('Tool receipt identity mismatch')
-    await this.publish(directory, 'result.json', {
-      fingerprint,
-      result: CallToolResultSchema.parse(result)
-    })
+  async complete(
+    scope: string,
+    query: ReceiptQuery,
+    result: unknown,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const ownedQuery = receiptQuerySchema.parse(structuredClone(query))
+    const ownedResult = CallToolResultSchema.parse(structuredClone(result))
+    const { directory, fingerprint } = this.location(scope, ownedQuery)
+    const key = resolve(directory)
+    const previous = completionWrites.get(key) ?? Promise.resolve()
+    const pending = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.assertActive(scope)
+        const started = JSON.parse(await readFile(join(directory, 'started.json'), 'utf8'))
+        if (started.fingerprint !== fingerprint) throw new Error('Tool receipt identity mismatch')
+        const existing = await this.read(scope, ownedQuery)
+        if (existing.status === 'completed') {
+          if (JSON.stringify(canonical(existing.result)) !== JSON.stringify(canonical(ownedResult)))
+            throw new Error('Tool receipt result already committed')
+          return
+        }
+        await this.publish(directory, 'result.json', { fingerprint, result: ownedResult }, signal)
+      })
+    completionWrites.set(key, pending)
+    try {
+      await pending
+    } finally {
+      if (completionWrites.get(key) === pending) completionWrites.delete(key)
+    }
   }
 
   async read(scope: string, query: ReceiptQuery): Promise<z.infer<typeof receiptResponseSchema>> {

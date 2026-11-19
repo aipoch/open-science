@@ -1,3 +1,4 @@
+import { PackageWebOmissions } from './PackageWebOmissions'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, FolderPlus, GalleryVerticalEnd, PackageOpen, Plus } from 'lucide-react'
@@ -131,6 +132,7 @@ export const PackageImportSelection = ({
                   </dd>
                 </div>
               </dl>
+              <PackageWebOmissions omissions={preview.webOmissions} />
               {preview.omissions.length ? (
                 <details className="border-t border-border pt-4 text-sm">
                   <summary className="w-fit cursor-pointer rounded-sm py-1 focus-visible:outline-2 focus-visible:outline-ring">

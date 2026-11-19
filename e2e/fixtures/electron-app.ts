@@ -364,6 +364,11 @@ type ElectronApp = {
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
+  captureWebNetworkState: () => Promise<{
+    platform: string
+    versions: Record<string, string | undefined>
+    proxyDirectives: Record<string, string[]>
+  }>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
@@ -474,6 +479,12 @@ const launchEnvironment = (
       'number_of_processors',
       'processor_architecture',
       'systemdrive',
+      // Keep the operator's transport policy while isolating provider credentials. Network
+      // acceptance must not silently become a direct connection when HOME is isolated.
+      'http_proxy',
+      'https_proxy',
+      'all_proxy',
+      'no_proxy',
       // Keep the test display and Secret Service session when isolating Linux HOME.
       'display',
       'xauthority',
@@ -2162,6 +2173,32 @@ class ElectronAppHarness implements ElectronApp {
   private get runningApplication(): ElectronApplication {
     if (!this.application) throw new Error('Electron application is not running.')
     return this.application
+  }
+
+  async captureWebNetworkState(): Promise<{
+    platform: string
+    versions: Record<string, string | undefined>
+    proxyDirectives: Record<string, string[]>
+  }> {
+    return this.runningApplication.evaluate(async ({ session }) => {
+      const endpoints = ['https://mcp.exa.ai/mcp', 'https://example.org/']
+      const proxyDirectives: Record<string, string[]> = {}
+      for (const endpoint of endpoints) {
+        proxyDirectives[endpoint] = (await session.defaultSession.resolveProxy(endpoint))
+          .split(';')
+          .map((directive) => directive.trim().split(/\s+/)[0])
+      }
+      // Never return proxy addresses, authentication, the environment or application settings.
+      return {
+        platform: process.platform,
+        versions: {
+          electron: process.versions.electron,
+          chromium: process.versions.chrome,
+          node: process.versions.node
+        },
+        proxyDirectives
+      }
+    })
   }
 
   private async findDelegatedHandoff(
