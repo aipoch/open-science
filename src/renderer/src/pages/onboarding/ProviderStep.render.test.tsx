@@ -142,13 +142,16 @@ describe('ProviderStep', () => {
     const silk = card.querySelector('[data-testid="silk"]')
     expect(silk).not.toBeNull()
 
-    fireEvent.mouseEnter(card)
+    fireEvent.pointerEnter(card, { pointerType: 'touch' })
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
+    fireEvent.pointerLeave(card, { pointerType: 'touch' })
+    fireEvent.pointerEnter(card, { pointerType: 'mouse' })
     expect(card.querySelector('[data-testid="silk"]')).not.toBeNull()
     expect(card.querySelector('.onboarding-provider-silk')?.classList.contains('is-active')).toBe(
       true
     )
 
-    fireEvent.mouseLeave(card)
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
     expect(card.querySelector('[data-testid="silk"]')).toBe(silk)
     expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
   })
