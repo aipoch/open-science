@@ -1,3 +1,4 @@
+import { ImageEditorBoundary } from '../../image-edit/ImageEditor'
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-contract'
 import { ImageOff } from 'lucide-react'
 import { useState } from 'react'
@@ -36,7 +37,7 @@ const ZoomableImage = ({
   onAnnotationError?: (error: AnnotationValidationError) => void
 }): React.JSX.Element => {
   return (
-    <ZoomablePreview>
+    <ZoomablePreview cursorMode="grab-when-zoomed">
       {annotationItem ? (
         <ImagePointAnnotationSurface
           item={annotationItem}
@@ -176,28 +177,38 @@ export const PreviewImageContent = ({
 
 export const ImagePreviewRenderer = ({
   item,
+  readOnly,
+  onPinImageSource,
+  onImageEditorVersionChange,
   activeAnnotations,
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
   onAnnotationError
 }: PreviewFileRendererProps): React.JSX.Element => (
-  <PreviewImageContent
-    path={item.path}
-    name={item.name}
-    source={item.source}
-    projectId={item.projectId}
-    sessionId={item.sessionId}
-    managedFileId={item.managedFileId}
-    selectedVersionId={item.selectedVersionId}
-    mimeType={item.mimeType}
-    size={item.size}
-    mtimeMs={item.mtimeMs}
-    annotationItem={item}
-    activeAnnotations={activeAnnotations}
-    onAddAnnotation={onAddAnnotation}
-    onUpdateAnnotationNote={onUpdateAnnotationNote}
-    onRemoveAnnotation={onRemoveAnnotation}
-    onAnnotationError={onAnnotationError}
-  />
+  <ImageEditorBoundary
+    item={item}
+    readOnly={readOnly}
+    onPinSource={onPinImageSource}
+    onVersionChange={onImageEditorVersionChange}
+  >
+    <PreviewImageContent
+      path={item.path}
+      name={item.name}
+      source={item.source}
+      projectId={item.projectId}
+      sessionId={item.sessionId}
+      managedFileId={item.managedFileId}
+      selectedVersionId={item.selectedVersionId}
+      mimeType={item.mimeType}
+      size={item.size}
+      mtimeMs={item.mtimeMs}
+      annotationItem={item}
+      activeAnnotations={activeAnnotations}
+      onAddAnnotation={onAddAnnotation}
+      onUpdateAnnotationNote={onUpdateAnnotationNote}
+      onRemoveAnnotation={onRemoveAnnotation}
+      onAnnotationError={onAnnotationError}
+    />
+  </ImageEditorBoundary>
 )

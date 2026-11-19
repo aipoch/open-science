@@ -2353,6 +2353,17 @@ describe('production delegated-work composition', () => {
     async (frameworkId) => {
       root = await mkdtemp(join(tmpdir(), `delegated-structured-${frameworkId}-`))
       const harness = await createCompositionHarness(root, frameworkId)
+      const run = harness.execution.run.bind(harness.execution)
+      const nextExecutionStart = (): Promise<void> => {
+        const started = Promise.withResolvers<void>()
+        vi.spyOn(harness.execution, 'run').mockImplementationOnce((...args) => {
+          const handle = run(...args)
+          started.resolve()
+          return handle
+        })
+        return started.promise
+      }
+      const initialStart = nextExecutionStart()
       const pending = harness.composition.host.delegate(harness.caller, {
         task: 'Extract a count',
         name: `Extract count ${frameworkId}`,
@@ -2363,7 +2374,8 @@ describe('production delegated-work composition', () => {
           additionalProperties: false
         }
       })
-      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      await initialStart
+      expect(harness.execution.controls()).toHaveLength(1)
       const control = harness.execution.controls()[0]
       await expect(
         harness.composition.host.submitOutput(
@@ -2413,6 +2425,7 @@ describe('production delegated-work composition', () => {
         accepted: { value: { count: 3 } }
       })
 
+      const dispatchStart = nextExecutionStart()
       const dispatched = await harness.composition.host.delegate(
         { ...harness.caller, toolInvocationId: 'missing-output-dispatch' },
         { task: 'May omit', name: 'May omit', outputSchema: { type: 'number' } },
@@ -2423,7 +2436,8 @@ describe('production delegated-work composition', () => {
           timeoutSeconds: 0
         })
       ).resolves.toEqual([expect.not.objectContaining({ structuredOutputUnsatisfied: true })])
-      await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+      await dispatchStart
+      expect(harness.execution.controls()).toHaveLength(2)
       harness.execution.control(dispatched.children[0].attemptId).complete('No structured value')
       await expect(
         harness.composition.host.collect(harness.caller, [
@@ -3843,6 +3857,13 @@ describe('production delegated-work composition', () => {
         }
       }
     })
+    const executionsStarted = Promise.withResolvers<void>()
+    const startExecution = harness.execution.run.bind(harness.execution)
+    vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+      const handle = startExecution(...args)
+      if (harness.execution.controls().length === 2) executionsStarted.resolve()
+      return handle
+    })
     const delegated = await harness.composition.host.delegate(
       harness.caller,
       [
@@ -3851,7 +3872,9 @@ describe('production delegated-work composition', () => {
       ],
       { wait: false }
     )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    // Synchronize with both executions instead of relying on expect.poll's default 1 s budget.
+    await executionsStarted.promise
+    expect(harness.execution.controls()).toHaveLength(2)
     for (const control of harness.execution.controls()) control.accept()
 
     const send = (

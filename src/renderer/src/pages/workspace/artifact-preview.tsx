@@ -276,7 +276,8 @@ const ManagedImageThumbnail = ({
       selectedVersionId
     },
     enabled && !hasFailed,
-    hasFailed
+    hasFailed,
+    true
   )
 
   if (imageState.status !== 'ready') return <FileTypePreview artifact={artifact} />

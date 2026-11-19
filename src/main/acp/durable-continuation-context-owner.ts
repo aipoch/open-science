@@ -19,7 +19,11 @@ import {
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionPersistenceCommands
+} from '../session-persistence/coordinator'
 import {
   validateElicitationAnswers,
   agentUserChoiceOutcomes,
@@ -27,7 +31,7 @@ import {
 } from './elicitation-owner'
 
 type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
-  Partial<SessionMutation>
+  Partial<SessionMutation & Pick<SessionPersistenceCommands, 'prepareRuntimeResume'>>
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
@@ -74,9 +78,25 @@ const isActivityVisibleOnBranch = (
 }
 
 class AcpDurableContinuationContextOwner {
+  private readonly contextResetSessionIds = new Set<string>()
+
+  markContextReset(sessionId: string): void {
+    this.contextResetSessionIds.add(sessionId)
+  }
+  requiresReplay(sessionId: string): boolean {
+    return this.contextResetSessionIds.has(sessionId)
+  }
+  clearContextReset(sessionId: string): void {
+    this.contextResetSessionIds.delete(sessionId)
+  }
+
   constructor(
     private readonly sessions?: DurableContinuationSessions,
-    private readonly publishSessionUpdated?: PublishDurableContinuationSession
+    private readonly publishSessionUpdated?: PublishDurableContinuationSession,
+    private readonly replaySource?: {
+      descriptor: () => HistoryReplayDescriptor
+      supportsImageInput: () => Promise<boolean>
+    }
   ) {}
 
   async prepare(input: {
@@ -84,9 +104,22 @@ class AcpDurableContinuationContextOwner {
     sessionId: string
     promptMessageId: string
     replay?: DurableContinuationReplay
+    replayIfContextReset?: boolean
+    forceReplay?: boolean
   }): Promise<DurableContinuationPreparation> {
+    let replay = input.replay
+    if (
+      !replay &&
+      this.replaySource &&
+      (input.forceReplay || (input.replayIfContextReset && this.requiresReplay(input.sessionId)))
+    ) {
+      replay = {
+        descriptor: this.replaySource.descriptor(),
+        supportsImageInput: await this.replaySource.supportsImageInput()
+      }
+    }
     const session = await this.loadSession(input.projectId, input.sessionId)
-    return this.prepareFromSession(session, input.promptMessageId, input.replay)
+    return this.prepareFromSession(session, input.promptMessageId, replay)
   }
 
   async prepareElicitation(input: {
@@ -99,9 +132,23 @@ class AcpDurableContinuationContextOwner {
     replacePreviousAnswer?: boolean
     retryContinuation?: boolean
     continuePrepared?: boolean
+    beforeAttachment?: boolean
     recovery?: { error: string }
     replay?: DurableContinuationReplay
+    replayIfContextReset?: boolean
   }): Promise<DurableElicitationContinuationPreparation> {
+    let replay = input.replay
+    if (
+      !replay &&
+      this.replaySource &&
+      input.replayIfContextReset &&
+      this.requiresReplay(input.sessionId)
+    ) {
+      replay = {
+        descriptor: this.replaySource.descriptor(),
+        supportsImageInput: await this.replaySource.supportsImageInput()
+      }
+    }
     const session = await this.loadSession(input.projectId, input.sessionId).catch(
       (error: unknown) => {
         if (!input.continuePrepared) throw error
@@ -110,7 +157,7 @@ class AcpDurableContinuationContextOwner {
       }
     )
     if (input.replacePreviousAnswer) {
-      return this.prepareElicitationRevision(session, input)
+      return this.prepareElicitationRevision(session, { ...input, replay })
     }
     if (input.action === 'cancel') {
       return this.endElicitation(session, input)
@@ -118,7 +165,7 @@ class AcpDurableContinuationContextOwner {
     const saved = input.retryContinuation || input.continuePrepared
     if (saved) this.assertRetry(session, input)
     const authority = this.resolvePendingElicitation(session, input, saved)
-    const continuation = this.prepareFromSession(session, authority.promptMessageId, input.replay)
+    const continuation = this.prepareFromSession(session, authority.promptMessageId, replay)
     const request = this.canonicalRequest(session.id, authority)
     // Commit the decision and adopt legacy transcript ownership in the same Main mutation.
     if (!this.sessions?.mutateRuntimeSession) {
@@ -126,6 +173,11 @@ class AcpDurableContinuationContextOwner {
     }
     const answers =
       input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
+    // The cold read normalizes a parked question. Persist that same recovery before
+    // comparing the request against the raw journal within the answer mutation.
+    if (input.beforeAttachment && !saved) {
+      await this.sessions.prepareRuntimeResume?.(input.projectId, input.sessionId)
+    }
     const commit = this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
       const current = this.resolvePendingElicitation(latest, input, saved)

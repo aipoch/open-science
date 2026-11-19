@@ -18,11 +18,12 @@ import {
 } from '../../shared/conversation-graph'
 import type {
   ArtifactMessageSnapshotFile,
+  ArtifactVersionEvidence,
   ProvenanceMessage,
   ProvenanceMessagePart
 } from '../../shared/artifact-provenance'
 import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { requireGeneratedArtifactVersion } from './provenance-version-kind'
 
 type ProvenanceMessageSnapshotOptions = {
   storageRoot: string
@@ -433,8 +434,8 @@ class ProvenanceMessageSnapshotRepository {
       return { kind: 'ordinary', projectId: session.projectId, sessionId: session.id }
     }
 
-    // The live graph is the final opportunity to freeze branch-scoped Messages. Deletion fails
-    // closed if any finalized output cannot be linked to immutable Message evidence.
+    // Freeze conversational outputs before removing the live graph. Independent edits retain
+    // their own connector evidence and never have a Message snapshot.
     await this.captureFinalizedMessages(session)
     const finalizedVersions = (
       await client.artifactVersion.findMany({
@@ -445,14 +446,31 @@ class ProvenanceMessageSnapshotRepository {
         },
         include: { messageSnapshot: true }
       })
-    ).map(requireAgentArtifactVersion)
-    if (finalizedVersions.some((version) => !version.messageSnapshot)) {
-      throw new Error(
-        'Session deletion requires Message snapshots for every finalized Artifact Version.'
-      )
-    }
+    ).map(requireGeneratedArtifactVersion)
     for (const version of finalizedVersions) {
-      if (!version.messageSnapshot) continue
+      if (version.promptMessageId === null && version.runtimeSegmentId === null) {
+        const evidence = JSON.parse(version.evidenceJson) as ArtifactVersionEvidence
+        if (
+          version.messageId !== null ||
+          version.messageSnapshotId !== null ||
+          sha256(version.evidenceJson) !== version.evidenceChecksum ||
+          evidence.project_id !== session.projectId ||
+          evidence.app_session_id !== session.id ||
+          evidence.artifact_id !== version.artifactId ||
+          evidence.version_id !== version.id ||
+          evidence.conversation.root_frame_id !== version.rootFrameId ||
+          evidence.conversation.agent_frame_id !== version.agentFrameId ||
+          evidence.conversation.message_branch_id !== version.messageBranchId
+        ) {
+          throw new Error('Session deletion requires valid image task provenance.')
+        }
+        continue
+      }
+      if (!version.messageSnapshot) {
+        throw new Error(
+          'Session deletion requires Message snapshots for every finalized Artifact Version.'
+        )
+      }
       await this.verifyReadySnapshot(version.messageSnapshot, {
         rootFrameId: version.rootFrameId,
         agentFrameId: version.agentFrameId,

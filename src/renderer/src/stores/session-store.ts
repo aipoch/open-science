@@ -29,6 +29,7 @@ import { projectInterruptedRun } from './session-store-run-terminal-helpers'
 export {
   createInitialSessionState,
   getExternallyHydratedSessionAuthority,
+  hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,
@@ -67,6 +68,7 @@ type SessionStore = SessionStoreData &
   SessionMessageGraphActions &
   SessionRunProjectionActions & {
     selectSession: (sessionId: string) => void
+    requestSessionDetailsRecovery: (request: { projectId: string; sessionId: string }) => void
     clearSelection: () => void
     markDisconnected: (sessionId: string, reason?: string) => void
     setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
@@ -125,9 +127,13 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
     set({ selectedSessionId: sessionId })
   },
 
+  requestSessionDetailsRecovery: (request) => {
+    set({ sessionDetailsRecoveryRequest: request })
+  },
+
   // Clears visible conversation selection without deleting session history.
   clearSelection: () => {
-    set({ selectedSessionId: undefined })
+    set({ selectedSessionId: undefined, sessionDetailsRecoveryRequest: undefined })
   },
 
   ...createSessionMessageGraphOwner<SessionStore>(set, get),

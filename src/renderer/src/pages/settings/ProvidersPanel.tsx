@@ -1,3 +1,4 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import { ErrorNotice } from '@/components/error-notice'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
@@ -55,6 +56,7 @@ type ProvidersPanelProps = {
   recoveryModel?: string
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
   // sub-view owned by SettingsPage, not by this panel.
+  onManageImages?: () => void
   onCreateProvider: () => void
   onEditProvider: (provider: ProviderView) => void
   // Shared with the page: the add/edit form's post-save validation also marks the provider busy, so
@@ -116,6 +118,7 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
 const ProvidersPanel = ({
   recoveryProviderId,
   recoveryModel,
+  onManageImages,
   onCreateProvider,
   onEditProvider,
   busyProviderId,
@@ -225,7 +228,9 @@ const ProvidersPanel = ({
   }, [cancelXaiOAuthLogin])
 
   // Subscription accounts stay visible for the frameworks that own their authentication transport.
+  const showCodeBuddyAccounts = agentFrameworkId === 'codebuddy' && isDesktopRenderer()
   const visibleProviders = providers.filter((provider) => {
+    if (provider.type === 'codebuddy-subscription') return showCodeBuddyAccounts
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type))
@@ -624,17 +629,19 @@ const ProvidersPanel = ({
       </SettingsSection>
 
       {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
-      <ScenarioModelList />
+      <ScenarioModelList onManageImages={onManageImages} />
 
       <SettingsSection
         title={t('Providers')}
         aria-label={t('Providers')}
         actionClassName="ml-auto"
         action={
-          <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
-            <Plus aria-hidden="true" />
-            {t('Add provider')}
-          </Button>
+          !showCodeBuddyAccounts && (
+            <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
+              <Plus aria-hidden="true" />
+              {t('Add provider')}
+            </Button>
+          )
         }
       >
         <ProviderList

@@ -406,11 +406,12 @@ it('honors app-owned grants for Pi tools while answering with provider allow_onc
     await client.project.create({ data: { id: 'project-pi', name: 'Pi permissions' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client })
     await seedDefaultPermissionGrants(registry, client)
-    const servers = ['open-science-notebook', 'pubmed']
+    const servers = ['open-science-notebook', 'pubmed', 'open-science-images']
     const allowedToolIdentities = new Set([
       'open-science-notebook/list_authorized_directories',
       'open-science-notebook/repl_execute',
-      'pubmed/search_articles'
+      'pubmed/search_articles',
+      'open-science-images/generate_image'
     ])
     const capabilityRevision = {}
     const piState = (appSessionId: string): PiPermissionState => ({
@@ -425,7 +426,8 @@ it('honors app-owned grants for Pi tools while answering with provider allow_onc
     })
     const connect = (
       emit: () => void,
-      grants: PermissionGrantRegistry = registry
+      grants: PermissionGrantRegistry = registry,
+      selectedProfile: 'ask' | 'auto' = 'ask'
     ): AcpPermissionContext => {
       const context = new AcpPermissionContext({
         emitPermissionRequest: emit,
@@ -435,7 +437,7 @@ it('honors app-owned grants for Pi tools while answering with provider allow_onc
           sessionSnapshot: () => ({
             cwd: root,
             frameworkId: 'pi',
-            permissionProfile: { selectedProfile: 'ask', autoReviewStrategy: 'conservative' }
+            permissionProfile: { selectedProfile, autoReviewStrategy: 'conservative' }
           }),
           hasActivePrimarySession: () => true,
           capturePrompt: (id) => ({
@@ -554,6 +556,24 @@ it('honors app-owned grants for Pi tools while answering with provider allow_onc
     ).resolves.toEqual(allowed)
     expect(reconnectEmit).toHaveBeenCalledTimes(2)
     expect(await restored.list()).toHaveLength(grantsBefore)
+
+    const imageName = 'mcp__open-science-images__generate_image'
+    const imageInput = { prompt: 'Draw a diagram' }
+    const autoEmit = vi.fn()
+    await expect(
+      call(connect(autoEmit, restored, 'auto'), 'chat-auto', 'image-auto', imageName, imageInput)
+    ).resolves.toEqual(allowed)
+    expect(autoEmit).not.toHaveBeenCalled()
+
+    const image = call(reconnected, 'chat-a', 'image-ask', imageName, imageInput)
+    await vi.waitFor(() => expect(reconnectEmit).toHaveBeenCalledTimes(3))
+    const imageApproval = reconnected.getPendingRequests()[0]
+    expect(imageApproval.options.map(({ scope }) => scope).filter(Boolean)).toEqual(['once'])
+    await reconnected.respondToPermission(
+      { requestId: imageApproval.requestId, optionId: 'deny' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(image).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
   } finally {
     for (const context of contexts) context.dispose()
     await client.$disconnect()

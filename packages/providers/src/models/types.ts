@@ -1,5 +1,5 @@
 /** Capability selects the invocation contract; provider/model IDs remain opaque wire identities. */
-export type ModelCapability = 'text-generation' | 'classification'
+export type ModelCapability = 'text-generation' | 'classification' | 'image-generation'
 export type ModelIdentity<C extends ModelCapability = ModelCapability> = Readonly<{
   providerId: string
   modelId: string

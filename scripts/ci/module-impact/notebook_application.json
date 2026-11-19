@@ -46,6 +46,7 @@
     "src/main/notebook/local-rpc-notebook-adapter.ts",
     "src/main/notebook/local-rpc-server.agents.test.ts",
     "src/main/notebook/local-rpc-server.capabilities.test.ts",
+    "src/main/notebook/local-rpc-server.image-generation.test.ts",
     "src/main/notebook/local-rpc-server.delegated-work.test.ts",
     "src/main/notebook/local-rpc-server.errors.test.ts",
     "src/main/notebook/local-rpc-server.frames.test.ts",

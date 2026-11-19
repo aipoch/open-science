@@ -59,7 +59,7 @@
     },
     {
       "root": "packages/literature-discovery",
-      "dependencies": ["packages/literature-citations"]
+      "dependencies": ["packages/literature-citations", "packages/resilient-download"]
     },
     {
       "root": "packages/specialists",

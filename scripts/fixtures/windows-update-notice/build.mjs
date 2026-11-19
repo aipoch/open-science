@@ -73,8 +73,7 @@ for (const [directory, version, code, hook] of [
     'windows-app-running.nsh',
     'windows-install-processes.nsh',
     'windows-program-cleanup.nsh',
-    'windows-install-diagnostics.nsh',
-    'windows-install-diagnostics.ps1'
+    'windows-install-diagnostics.nsh'
   ]) {
     await writeFile(join(projectDir, file), await readFile(`build/${file}`))
   }

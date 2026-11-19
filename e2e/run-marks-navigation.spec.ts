@@ -55,6 +55,7 @@ test('run marks land on the selected prompt in a real variable-height transcript
   const rendererErrors: string[] = []
   page.on('pageerror', (error) => rendererErrors.push(error.message))
   await openProjectSession(page, 'Run navigation', 'Variable history')
+  await page.getByRole('button', { name: 'Load full conversation', exact: true }).click()
   const viewport = page.getByRole('region', { name: 'Conversation' })
   const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
   await expect(viewport.locator('[data-message-id="navigation-user-119"]')).toBeAttached()
@@ -62,6 +63,7 @@ test('run marks land on the selected prompt in a real variable-height transcript
     page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
   await waitFrame()
   // Keyboard focus exposes each rail window; clicking still uses real pointer hit testing.
+  await rail.locator('[data-run-index="119"]').focus()
   for (const index of [110, 0, 30, 119]) {
     if (index === 0 || index === 119) await rail.locator(`[data-run-index="${index}"]`).focus()
     const mark = rail.locator(`[data-run-index="${index}"]`)

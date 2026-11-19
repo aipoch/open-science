@@ -17,3 +17,5 @@ export * from '../resources/math-fractions.mjs'
 export * from '../resources/link-labels.mjs'
 
 export { sameNativeFunctionDisplay } from './reader/native-function-display.js'
+
+export * from './reader/native-mixed-bullet.js'

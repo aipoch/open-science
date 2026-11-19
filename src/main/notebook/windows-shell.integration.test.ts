@@ -24,6 +24,7 @@ import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { createRootNotebookLane } from './lane-identity'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -517,12 +518,13 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           exitCode: 0,
           stdout: 'SESSION_READY'
         })
-        const installed = await adapter.execute(
-          request(
+        const installed = await adapter.execute({
+          ...request(
             first,
             'npm.cmd install -g ./fixture --offline --install-links --ignore-scripts --no-audit --no-fund'
-          )
-        )
+          ),
+          timeoutMs: NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
+        })
         expect(installed, JSON.stringify(installed)).toMatchObject({ exitCode: 0 })
         const shared = await adapter.execute(request(second, 'fixture-cli.cmd'))
         expect(shared, JSON.stringify(shared)).toMatchObject({

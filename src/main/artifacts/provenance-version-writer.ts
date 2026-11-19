@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 
 import type {
-  AppGeneratedArtifactProducer,
   ArtifactVersionFile,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
@@ -13,11 +12,12 @@ import type { FileDurability } from '@aipoch/durable-files'
 import { artifactFailureDiagnostic } from './pending-file-transaction'
 import { normalizeArtifactFilename } from './storage-layout'
 import type {
+  AppGeneratedArtifactWriteProducer,
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence
 } from './provenance-producer-capture'
 import type { ArtifactRepository } from './repository'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { requireGeneratedArtifactVersion } from './provenance-version-kind'
 import type { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import { assertDiskReserve, copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import {
@@ -121,7 +121,7 @@ type WriteVersionWithinSession = (
   request: CreateArtifactVersionRequest,
   publishCompatibilityRouting: PublishCompatibilityRouting,
   signal?: AbortSignal,
-  appGeneratedProducer?: AppGeneratedArtifactProducer
+  appGeneratedProducer?: AppGeneratedArtifactWriteProducer
 ) => Promise<ArtifactVersionFile>
 
 type ArtifactProvenanceVersionWriterOptions = {
@@ -137,7 +137,7 @@ type ArtifactProvenanceVersionWriterOptions = {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: { versionId: string; filename: string; checksum: string; sizeBytes: number },
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
     request: CreateArtifactVersionRequest
@@ -178,7 +178,7 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ): Promise<ArtifactVersionFile> {
     return this.withSessionWrite(request, (writeVersion) =>
       writeVersion(request, publishCompatibilityRouting, signal, appGeneratedProducer)
@@ -246,7 +246,7 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ): Promise<ArtifactVersionFile> {
     if (request.resourceReservationId) {
       if (
@@ -312,7 +312,7 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ): Promise<ArtifactVersionFile> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
@@ -338,7 +338,7 @@ class ArtifactProvenanceVersionWriter {
     })
 
     if (existing) {
-      const agentVersion = requireAgentArtifactVersion(existing)
+      const agentVersion = requireGeneratedArtifactVersion(existing)
       if (
         agentVersion.writeRequestChecksum !== writeRequestChecksum ||
         agentVersion.artifact.projectId !== projectId ||
@@ -468,22 +468,29 @@ class ArtifactProvenanceVersionWriter {
             })
           }
 
+          const imageEdit =
+            request.imageTaskId ||
+            (appGeneratedProducer?.kind === 'connector' &&
+              appGeneratedProducer.connectorId === 'image-model' &&
+              appGeneratedProducer.toolId === 'edit_image')
           const [latest, basedOnVersion] = await Promise.all([
             transaction.artifactVersion.aggregate({
               where: { artifactId: lineage.id },
               _max: { versionNumber: true }
             }),
-            transaction.artifactVersion.findFirst({
-              where: {
-                artifactId: lineage.id,
-                OR: [
-                  { artifactRunId, state: { in: ['pending', 'finalized'] } },
-                  ...(lineage.currentVersionId ? [{ id: lineage.currentVersionId }] : [])
-                ]
-              },
-              orderBy: { versionNumber: 'desc' },
-              select: { id: true }
-            })
+            imageEdit
+              ? undefined
+              : transaction.artifactVersion.findFirst({
+                  where: {
+                    artifactId: lineage.id,
+                    OR: [
+                      { artifactRunId, state: { in: ['pending', 'finalized'] } },
+                      ...(lineage.currentVersionId ? [{ id: lineage.currentVersionId }] : [])
+                    ]
+                  },
+                  orderBy: { versionNumber: 'desc' },
+                  select: { id: true }
+                })
           ])
           const versionNumber = (latest._max.versionNumber ?? 0) + 1
           const contentStorageKey = storageKey(
@@ -557,22 +564,33 @@ class ArtifactProvenanceVersionWriter {
               LOCAL_RESOURCE_BUDGETS.artifactSessionBytes
           )
 
-          return requireAgentArtifactVersion(
+          return requireGeneratedArtifactVersion(
             await transaction.artifactVersion.create({
               data: {
                 id: versionId,
                 artifactId: lineage.id,
                 versionNumber,
                 filename: request.filename,
-                basedOnVersionId: basedOnVersion?.id,
+                basedOnVersionId: imageEdit
+                  ? appGeneratedProducer?.inputFiles?.find(
+                      (input) =>
+                        input.sourceKind === 'artifact-version' && input.sourceFileId === lineage.id
+                    )?.inputFileVersionId
+                  : basedOnVersion?.id,
                 artifactRunId,
                 writeOperationId,
                 writeRequestChecksum,
                 rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
                 agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
                 messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
-                runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
-                promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
+                runtimeSegmentId:
+                  request.runtimeSegmentId === null
+                    ? null
+                    : assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
+                promptMessageId:
+                  request.promptMessageId === null
+                    ? null
+                    : assertSafeSegment(request.promptMessageId, 'prompt message id'),
                 notebookSessionId: prepared.notebookSessionId,
                 producerRunId: prepared.producerRunId,
                 producerRunIndex: prepared.producerRunIndex,
@@ -664,7 +682,7 @@ class ArtifactProvenanceVersionWriter {
           where: { id: persisted.artifactId },
           data: { filename: request.filename }
         })
-        return requireAgentArtifactVersion(
+        return requireGeneratedArtifactVersion(
           await transaction.artifactVersion.update({
             where: { id: persisted.id },
             data: { state: 'pending' }

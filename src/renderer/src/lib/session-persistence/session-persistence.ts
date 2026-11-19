@@ -65,6 +65,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,
@@ -143,14 +144,14 @@ const resetSessionContentCacheForTests = (): void => {
 const loadPersistedSession = async (
   request: LoadSessionRequest,
   api: SessionReadApi = window.api.sessions,
-  options: { bypassCache?: boolean } = {}
+  options: { bypassCache?: boolean; recoverSessionDetails?: boolean } = {}
 ): Promise<PersistedChatSession | undefined> => {
   const storeSummary = useSessionStore
     .getState()
     .sessions.find(
       (session) => session.id === request.sessionId && session.projectId === request.projectId
     )
-  if (!options.bypassCache) {
+  if (!options.bypassCache && !options.recoverSessionDetails) {
     const cached = sessionContentCache.get(sessionContentCacheKey(request))
     if (
       cached &&
@@ -162,7 +163,10 @@ const loadPersistedSession = async (
     }
   }
   if (typeof api.loadOne === 'function') {
-    const result = await api.loadOne(request)
+    const result = await api.loadOne({
+      ...request,
+      ...(options.recoverSessionDetails ? { recoverSessionDetails: true } : {})
+    })
     if (result) cacheSessionContent(result)
     return result
   }
@@ -775,10 +779,21 @@ const sessionWriteBaseRevision = (intent: SessionWriteIntent): number =>
 
 const isSessionWriteSatisfied = (
   intent: SessionWriteIntent,
-  authority: PersistedChatSession
+  authority: PersistedChatSession | SessionMetadataReceipt
 ): boolean => {
   if (authority.id !== intent.session.id || authority.projectId !== intent.session.projectId)
     return false
+  if (!('messages' in authority)) {
+    return (
+      intent.kind === 'fields' &&
+      !intent.options?.conversationCommands?.length &&
+      Object.entries(intent.changes).every(
+        ([field, change]) =>
+          (field === 'title' || field === 'pinned') &&
+          sessionPreferenceValuesEqual(field, change.after, authority[field])
+      )
+    )
+  }
   const acknowledged = new Set(authority.runtimeConversationCommandIds ?? [])
   const commands = retainActivePreparationCommands(intent.options?.conversationCommands ?? [])
   if (commands.some(({ id }) => !acknowledged.has(id))) return false
@@ -2265,7 +2280,8 @@ const loadPersistedSessions = async (
   preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection),
   preserveLocalDrafts = false,
   retainedNewSessionIds: ReadonlySet<string> = new Set(),
-  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void
+  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void,
+  reconnecting = false
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
   const previousSessions = preserveLocalDrafts ? useSessionStore.getState().sessions : []
   const restoreLocalDrafts = (): void => {
@@ -2298,9 +2314,18 @@ const loadPersistedSessions = async (
     const result = await api.list()
     if (!shouldHydrate()) return undefined
     const retrySessionId = currentSelection()?.sessionId
+    const previousSelection = reconnecting
+      ? previousSessions.find((session) => session.id === retrySessionId)
+      : undefined
+    const restoreRuntimeState =
+      previousSelection &&
+      (previousSelection.activeRun ||
+        previousSelection.status === 'running' ||
+        previousSelection.status.startsWith('waiting-'))
     const summariesToHydrate = result.sessions.filter(
       (session) =>
-        session.needsStartupRecovery || (!api.loadHistoryPage && session.id === retrySessionId)
+        session.needsStartupRecovery ||
+        (session.id === retrySessionId && (restoreRuntimeState || !api.loadHistoryPage))
     )
     const hydratedSessions = new Map(
       await Promise.all(
@@ -2331,7 +2356,13 @@ const loadPersistedSessions = async (
     const selected = selection?.sessionId ? hydratedSessions.get(selection.sessionId) : undefined
     useSessionStore
       .getState()
-      .hydrateSessionSummaries(result.sessions, selected, result.manifest, selection)
+      .hydrateSessionSummaries(
+        result.sessions,
+        selected,
+        result.manifest,
+        selection,
+        preserveLocalDrafts
+      )
     for (const hydrated of hydratedSessions.values()) {
       if (hydrated && hydrated.id !== selected?.id) {
         useSessionStore.getState().upsertPersistedSession(hydrated)
@@ -2532,16 +2563,36 @@ const createStoreSaver = (
           api.setPinned &&
           pendingSessionConversationCommands(session.id).length === 0
         ) {
+          const initialMetadata = (): { title: string; pinned: boolean } =>
+            acknowledgedMetadata.get(session.id) ?? {
+              title: previousSession?.title ?? session.title,
+              pinned: previousSession?.pinned === true
+            }
+          const intent = (): SessionFieldWriteIntent => {
+            const baseline = initialMetadata()
+            return {
+              kind: 'fields',
+              session: { id: session.id, projectId: session.projectId!, title: session.title },
+              baseRevision: sessionRevision(session),
+              changes: Object.fromEntries(
+                conflictRebaseFields.map((field) => [
+                  field,
+                  {
+                    before: baseline[field],
+                    after: session[field]
+                  }
+                ])
+              )
+            }
+          }
           tasks.push({
+            intent,
             target,
             failureContext: { conflictRebaseFields },
             run: () =>
               persistence.saveMetadata(target, async () => {
                 let receipt: SessionMetadataReceipt | undefined
-                let baseline = acknowledgedMetadata.get(session.id) ?? {
-                  title: previousSession?.title ?? session.title,
-                  pinned: previousSession?.pinned === true
-                }
+                let baseline = initialMetadata()
                 if (conflictRebaseFields.includes('title')) {
                   receipt = await api.rename!({
                     projectId: session.projectId,
@@ -3056,7 +3107,7 @@ const createStoreSaver = (
         ? persistence.recovery.trackSession(
             target,
             intent,
-            run as () => Promise<PersistedChatSession>
+            run as () => Promise<PersistedChatSession | SessionMetadataReceipt>
           )
         : run()
       return scheduled.then(
@@ -3127,6 +3178,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [sessionLoadErrorsBySession, setSessionLoadErrorsBySession] = useState<
     Readonly<Record<string, string>>
   >({})
+  // Store subscriptions can run before React effects flush, so keep the retry guard synchronous.
+  const sessionLoadErrorsBySessionRef = useRef(sessionLoadErrorsBySession)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
@@ -3148,6 +3201,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const sizeLimitTargets = useRef(new Set<string>())
   const abandonedSizeLimitTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
+  const catalogRefreshPending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const trackedRecoveryTargets = useRef(new Set<string>())
   const previousWriteNotice = useRef<{
@@ -3510,11 +3564,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteErrorRetryable(true)
   }, [])
   const retrySessionLoad = useCallback((projectId: string, sessionId: string): void => {
-    setSessionLoadErrorsBySession((current) => {
-      const next = { ...current }
-      delete next[`${projectId}\0${sessionId}`]
-      return next
-    })
+    const sessionLoadKey = `${projectId}\0${sessionId}`
+    const next = { ...sessionLoadErrorsBySessionRef.current }
+    delete next[sessionLoadKey]
+    sessionLoadErrorsBySessionRef.current = next
+    setSessionLoadErrorsBySession(next)
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
         session.projectId === projectId && session.id === sessionId
@@ -3537,12 +3591,67 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
-    setSessionLoadErrorsBySession({})
+    const nextSessionLoadErrors = {}
+    sessionLoadErrorsBySessionRef.current = nextSessionLoadErrors
+    setSessionLoadErrorsBySession(nextSessionLoadErrors)
     // Rechecking the catalog is not evidence that an outstanding write succeeded. Keep its
     // notice and Session write gates until a matching acknowledgement or authoritative
     // reconciliation resolves them.
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
+  const refreshCatalogAfterHydration = useCallback(async (): Promise<void> => {
+    if (!isHydrated || isLoading) {
+      catalogRefreshPending.current = true
+      return
+    }
+    const result = await loadPersistedSessions(
+      window.api.sessions,
+      () => true,
+      () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
+      true
+    )
+    if (!result) return
+    const pending = result.diagnostics?.catalogHydrationPending === true
+    const loadWarnings = result.diagnostics?.warnings ?? []
+    const sessionWarningCount = loadWarnings.filter(
+      (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
+    ).length
+    setCatalogRecovery(deriveSessionCatalogRecovery(result.diagnostics))
+    setHasCompleteSessionCatalog(
+      !pending && result.diagnostics?.isComplete !== false && sessionWarningCount === 0
+    )
+    setCanDeleteSessionsAndProjects(
+      !pending && result.diagnostics?.isProjectDeletionRecoveryComplete === true
+    )
+    if (!pending && result.diagnostics?.isComplete === false) {
+      setIsReady(false)
+      setLoadError(
+        result.diagnostics.failure === 'startup-reconciliation-failed'
+          ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
+          : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
+      )
+    } else {
+      setLoadError(undefined)
+    }
+  }, [isHydrated, isLoading])
+  const reportCatalogRefreshFailure = useCallback((error: unknown): void => {
+    reportPersistenceError(error, 'session-load')
+    setHasCompleteSessionCatalog(false)
+    setCanDeleteSessionsAndProjects(false)
+    setIsReady(false)
+    setLoadError(SAFE_SESSION_LOAD_ERROR)
+  }, [])
+  useEffect(() => {
+    const removeCatalogChanged = window.api.sessions.onCatalogChanged?.(() => {
+      void refreshCatalogAfterHydration().catch(reportCatalogRefreshFailure)
+    })
+    return removeCatalogChanged
+  }, [refreshCatalogAfterHydration, reportCatalogRefreshFailure])
+  useEffect(() => {
+    if (!isHydrated || isLoading || !catalogRefreshPending.current) return
+    catalogRefreshPending.current = false
+    void refreshCatalogAfterHydration().catch(reportCatalogRefreshFailure)
+  }, [isHydrated, isLoading, refreshCatalogAfterHydration, reportCatalogRefreshFailure])
   const retryWrites = useCallback(() => {
     const retained = liveSessionPersistence.recovery
       .getSnapshot()
@@ -3613,7 +3722,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
             }
             let candidate: PersistedChatSession | undefined
             if (intent.kind === 'fields') {
-              if (authority?.runtimeTranscriptOwner === 'main') {
+              if (
+                authority &&
+                (authority.runtimeTranscriptOwner === 'main' ||
+                  Object.keys(intent.changes).every(
+                    (field) => field === 'title' || field === 'pinned'
+                  ))
+              ) {
                 candidate = structuredClone(authority)
                 for (const [field, change] of Object.entries(intent.changes)) {
                   const key = field as SessionConflictRebaseField
@@ -3826,7 +3941,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const preferredSelection = recovering
         ? { sessionId: useSessionStore.getState().selectedSessionId }
         : retrySelection.current
-      setSessionLoadErrorsBySession({})
+      const nextSessionLoadErrors = {}
+      sessionLoadErrorsBySessionRef.current = nextSessionLoadErrors
+      setSessionLoadErrorsBySession(nextSessionLoadErrors)
       try {
         if (recovering) {
           // Let old requests settle into the retained registry before replacing their projection.
@@ -3855,12 +3972,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
               projectId: summary.projectId,
               sessionId: summary.id
             })
-            if (isMounted)
-              setSessionLoadErrorsBySession((current) => ({
-                ...current,
-                [`${summary.projectId}\0${summary.id}`]: SESSION_LOAD_ERROR_KEY
-              }))
-          }
+            if (isMounted) {
+              const sessionLoadKey = `${summary.projectId}\0${summary.id}`
+              const next = {
+                ...sessionLoadErrorsBySessionRef.current,
+                [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
+              }
+              sessionLoadErrorsBySessionRef.current = next
+              setSessionLoadErrorsBySession(next)
+            }
+          },
+          recovering
         )
         if (!result || !isMounted) return
         if (recovering || liveSessionPersistence.recovery.getSnapshot().length > 0) {
@@ -3886,15 +4008,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const sessionWarningCount = loadWarnings.filter(
           (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
         ).length
+        const catalogHydrationPending = result.diagnostics?.catalogHydrationPending === true
         setCatalogRecovery(deriveSessionCatalogRecovery(result.diagnostics))
         setHasCompleteSessionCatalog(
-          result.diagnostics?.isComplete !== false && sessionWarningCount === 0
+          !catalogHydrationPending &&
+            result.diagnostics?.isComplete !== false &&
+            sessionWarningCount === 0
         )
         setCanDeleteSessionsAndProjects(
-          result.diagnostics?.isProjectDeletionRecoveryComplete === true
+          !catalogHydrationPending && result.diagnostics?.isProjectDeletionRecoveryComplete === true
         )
 
-        if (result.diagnostics?.isComplete === false) {
+        if (result.diagnostics?.isComplete === false && !catalogHydrationPending) {
           setIsReady(false)
           setLoadError(
             result.diagnostics.failure === 'startup-reconciliation-failed'
@@ -4126,12 +4251,23 @@ const useSessionPersistence = (): SessionPersistenceState => {
         ) {
           presentOutstandingWriteFailures()
         }
-        const selected = state.sessions.find(
-          (session) =>
+        const recoveryRequest = state.sessionDetailsRecoveryRequest
+        const selected = state.sessions.find((session) => {
+          const needsSessionDetailsRecovery =
+            recoveryRequest?.projectId === session.projectId &&
+            recoveryRequest.sessionId === session.id
+          const sessionLoadKey = `${session.projectId}\0${session.id}`
+          const hasSessionLoadError =
+            sessionLoadErrorsBySessionRef.current[sessionLoadKey] !== undefined
+          const canStartSessionDetailsRecovery =
+            needsSessionDetailsRecovery && !hasLocalSessionWork(session) && !hasSessionLoadError
+          return (
             session.id === state.selectedSessionId &&
-            session.contentLoaded === false &&
-            !session.historyPage
-        )
+            (canStartSessionDetailsRecovery ||
+              (session.contentLoaded === false &&
+                (!session.historyPage || (needsSessionDetailsRecovery && !hasSessionLoadError))))
+          )
+        })
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
           const sessionLoadKey = `${selected.projectId}\0${selected.id}`
@@ -4141,21 +4277,47 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const isCurrentSessionLoad = (): boolean =>
             sessionLoadGenerations.current.get(sessionLoadKey) === sessionLoadGeneration
           const supportsPages = typeof window.api.sessions.loadHistoryPage === 'function'
-          void (
-            supportsPages
+          const recoveryRequest = useSessionStore.getState().sessionDetailsRecoveryRequest
+          const recoverSessionDetails =
+            recoveryRequest?.projectId === selected.projectId &&
+            recoveryRequest.sessionId === selected.id
+          const clearRecoveryRequest = (): void => {
+            const pending = useSessionStore.getState().sessionDetailsRecoveryRequest
+            if (pending?.projectId !== selected.projectId || pending.sessionId !== selected.id)
+              return
+            useSessionStore.setState((state) => ({
+              sessionDetailsRecoveryRequest: undefined,
+              sessions: state.sessions.map((session) =>
+                session.id === selected.id ? { ...session, needsStartupRecovery: false } : session
+              )
+            }))
+          }
+          const initialLoad = recoverSessionDetails
+            ? loadPersistedSession(
+                { projectId: selected.projectId, sessionId: selected.id },
+                undefined,
+                { bypassCache: true, recoverSessionDetails: true }
+              ).then((session) => {
+                return session
+              })
+            : supportsPages
               ? loadSessionHistoryPage({
                   projectId: selected.projectId,
                   sessionId: selected.id
-                }).then(() => undefined)
+                })
               : loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
-          )
-            .then((session) => {
+          void initialLoad
+            .then(async (session) => {
+              if (recoverSessionDetails) {
+                if (!session) throw new Error('Selected Session JSON is missing.')
+                if (supportsPages) useSessionStore.getState().upsertPersistedSession(session)
+                clearRecoveryRequest()
+              }
               if (!isMounted || !isCurrentSessionLoad()) return
-              setSessionLoadErrorsBySession((current) => {
-                const next = { ...current }
-                delete next[sessionLoadKey]
-                return next
-              })
+              const next = { ...sessionLoadErrorsBySessionRef.current }
+              delete next[sessionLoadKey]
+              sessionLoadErrorsBySessionRef.current = next
+              setSessionLoadErrorsBySession(next)
               if (supportsPages) return
               if (!session) throw new Error('Selected Session JSON is missing.')
               const unchangedSummary =
@@ -4200,13 +4362,38 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 projectId: selected.projectId,
                 sessionId: selected.id
               })
-              if (isMounted && isCurrentSessionLoad())
-                setSessionLoadErrorsBySession((current) => ({
-                  ...current,
+              if (isMounted && isCurrentSessionLoad()) {
+                const next = {
+                  ...sessionLoadErrorsBySessionRef.current,
                   [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
-                }))
+                }
+                sessionLoadErrorsBySessionRef.current = next
+                setSessionLoadErrorsBySession(next)
+              }
             })
-            .finally(() => loadingSessionContent.delete(selected.id))
+            .finally(() => {
+              loadingSessionContent.delete(selected.id)
+              const pendingRecovery = useSessionStore.getState().sessionDetailsRecoveryRequest
+              if (
+                isMounted &&
+                !recoverSessionDetails &&
+                pendingRecovery?.projectId === selected.projectId &&
+                pendingRecovery.sessionId === selected.id
+              ) {
+                const current = useSessionStore
+                  .getState()
+                  .sessions.find((session) => session.id === selected.id)
+                if (current && current.contentLoaded !== false && !hasLocalSessionWork(current)) {
+                  useSessionStore.setState((state) => ({
+                    sessions: state.sessions.map((session) =>
+                      session.id === selected.id ? { ...session, contentLoaded: false } : session
+                    )
+                  }))
+                } else {
+                  onStoreChange(useSessionStore.getState())
+                }
+              }
+            })
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       }

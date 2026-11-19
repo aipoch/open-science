@@ -49,9 +49,9 @@ describe('application database (integration)', () => {
     const before = await readLedger()
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0057_project_optimization_prompt',
-      applied: ['0058_session_schedules', '0059_session_history']
+      applied: ['0058_session_schedules', '0059_session_history', '0060_image_models']
     })
-    expect((await readLedger()).slice(0, -2)).toEqual(before)
+    expect((await readLedger()).slice(0, before.length)).toEqual(before)
     await expect(
       client.project.findUniqueOrThrow({ where: { id: project.id } })
     ).resolves.toMatchObject({ optimizationPrompt: 'Keep this prompt' })
@@ -189,7 +189,8 @@ describe('application database (integration)', () => {
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
         '0058_session_schedules',
-        '0059_session_history'
+        '0059_session_history',
+        '0060_image_models'
       ]
     })
 
@@ -1223,7 +1224,8 @@ describe('application database (integration)', () => {
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
         '0058_session_schedules',
-        '0059_session_history'
+        '0059_session_history',
+        '0060_image_models'
       ]
     })
 

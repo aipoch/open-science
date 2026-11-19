@@ -87,7 +87,7 @@ const require = createRequire(import.meta.url)
 const cjs: typeof api = require('@aipoch/resilient-download')
 assert.ok(realpathSync(require.resolve('@aipoch/resilient-download')).startsWith(process.cwd() + sep))
 for (const key of Object.keys(cjs) as Array<keyof typeof api>) assert.equal(cjs[key], api[key])
-assert.deepEqual(Object.keys(cjs).sort(), ['DownloadChecksumError', 'DownloadSourceError', 'SpeedMeter', 'resilientDownload'].sort())
+assert.deepEqual(Object.keys(cjs).sort(), ['DownloadChecksumError', 'DownloadSourceError', 'SpeedMeter', 'resilientDownload', 'publicDownloadUrl', 'isPublicDownloadAddress', 'requestPublicHttps'].sort())
 assert.ok(new cjs.DownloadChecksumError() instanceof api.DownloadSourceError)
 for (const path of ['/dist/index.js', '/src/index', '/resilient-download', '/errors', '/types']) {
   assert.throws(() => require('@aipoch/resilient-download' + path), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })

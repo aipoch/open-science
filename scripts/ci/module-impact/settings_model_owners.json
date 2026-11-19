@@ -3,16 +3,19 @@
     "src/main/settings/reviewer-model-owner.ts",
     "src/main/settings/scenario-model-owner.ts",
     "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts"
+    "src/main/settings/vision-model-owner.ts",
+    "src/main/settings/image-model-owner.test.ts",
+    "src/main/settings/image-model-owner.ts"
   ],
   "interfacePaths": [
     "src/main/settings/reviewer-model-owner.ts",
     "src/main/settings/scenario-model-owner.ts",
     "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts"
+    "src/main/settings/vision-model-owner.ts",
+    "src/main/settings/image-model-owner.ts"
   ],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/main/settings/image-model-owner.test.ts"],
     "contract": [
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -677,5 +680,6 @@
     "settings_ipc",
     "windows_sensitive"
   ],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Image model settings add an independent scenario owner and credential projection; retain full CI until the expanded boundary is reviewed."
 }

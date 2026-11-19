@@ -1,16 +1,13 @@
 import type {
   PendingFileTransactionOptions,
+  PendingFileTransactionRequest,
   PendingFileTransactionStorage
 } from './pending-file-contract'
 import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
-import type {
-  ArtifactFile,
-  ArtifactSourceFileObservation,
-  WritePendingArtifactFileRequest
-} from '../../shared/artifacts'
+import type { ArtifactFile, ArtifactSourceFileObservation } from '../../shared/artifacts'
 import { validateArtifactContentType } from './content-type'
 import {
   assertDiskReserve,
@@ -42,7 +39,7 @@ type BindPendingArtifactVersionRouting<Routing> = (
 ) => Promise<void>
 
 const runPendingFileTransaction = async <Result, Routing>(options: {
-  request: WritePendingArtifactFileRequest
+  request: PendingFileTransactionRequest
   writeOptions: PendingFileTransactionOptions
   storage: PendingFileTransactionStorage
   publishRouting: BindPendingArtifactVersionRouting<Routing>

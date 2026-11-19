@@ -22,7 +22,9 @@ import {
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { macAcceptance } from './macos-acceptance.mjs'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
+import { fencePrompt, retryFencePrompt, exerciseKernelFence } from './kernel-fence.mjs'
 
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
@@ -2985,6 +2987,8 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = 'Compaction preview complete.'
+        } else if (prompt.includes('MACOS_ACCEPTANCE_REQUEST:')) {
+          reply = await macAcceptance(context.params.sessionId, prompt, withMcpClient, toolResult)
         } else if (prompt.includes('Verify Runtime approval ')) {
           reply = await verifyRuntimeApproval(context, prompt)
         } else if (prompt.includes('Verify risky code Home wait status.')) {
@@ -3130,6 +3134,25 @@ if (process.argv.includes('--version')) {
                 )
               return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
             }
+          )
+        } else if (
+          prompt.includes(fencePrompt) ||
+          prompt.includes(retryFencePrompt) ||
+          (() => {
+            const normalized = prompt.replace(/\s+/gu, '')
+            return (
+              normalized.includes('inspect_packages') &&
+              normalized.includes('reportlab') &&
+              normalized.includes('PyMuPDF')
+            )
+          })()
+        ) {
+          const normalized = prompt.replace(/\s+/gu, '')
+          const retry =
+            prompt.includes(retryFencePrompt) ||
+            (!normalized.includes('manage_packages') && !normalized.includes('manage_environments'))
+          reply = await withMcpClient(context.params.sessionId, 'open-science-notebook', (client) =>
+            exerciseKernelFence(client, retry)
           )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)

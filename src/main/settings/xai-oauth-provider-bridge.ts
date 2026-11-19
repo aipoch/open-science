@@ -13,6 +13,7 @@ import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 
@@ -167,10 +168,11 @@ export class XaiOAuthProviderBridge {
         : this.wire === 'messages'
           ? messagesToResponses(body, this.target.model)
           : chatCompletionsToResponses(body, this.target.model)
-    let upstream = await this.request(upstreamBody, request, false)
+    const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
+    let upstream = await this.request(upstreamBody, request, false, fetchUpstream)
     if (upstream.status === 401) {
       await upstream.body?.cancel()
-      upstream = await this.request(upstreamBody, request, true)
+      upstream = await this.request(upstreamBody, request, true, fetchUpstream)
     }
     if (this.wire === 'responses' && upstream.ok && wantsStream) {
       response.writeHead(upstream.status, {
@@ -256,7 +258,8 @@ export class XaiOAuthProviderBridge {
   private async request(
     body: Record<string, unknown>,
     request: ProviderLoopbackHttpRequest,
-    forceRefresh: boolean
+    forceRefresh: boolean,
+    fetchUpstream: typeof fetch
   ): Promise<Response> {
     request.signal.throwIfAborted()
     let abort: () => void
@@ -272,7 +275,7 @@ export class XaiOAuthProviderBridge {
     } finally {
       request.signal.removeEventListener('abort', abort!)
     }
-    return fetchProviderRequest(this.fetchImpl, 'https://api.x.ai/v1/responses', {
+    return fetchProviderRequest(fetchUpstream, 'https://api.x.ai/v1/responses', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),

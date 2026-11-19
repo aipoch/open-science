@@ -64,6 +64,7 @@ describe('upgradeIfNeeded', () => {
       baseDeps(root, {
         platform: 'darwin',
         fetchBundle: async (...args) => {
+          expect(args[1]).toBe(2)
           languages.push(args[0].language)
           return original.fetchBundle(...args)
         },
@@ -110,7 +111,7 @@ describe('upgradeIfNeeded', () => {
   it('is a no-op when already at the expected version', async () => {
     const root = makeRoot()
     touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
-    writeReadyMarker(root, DEFAULT_ENV_VERSION, 't1')
+    writeReadyMarker(root, 2, 't1')
     const argvs: string[][] = []
     await new DefaultRuntimeProvisioner(
       baseDeps(root, { runArgv: async (a) => void argvs.push(a) })

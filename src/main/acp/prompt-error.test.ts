@@ -370,15 +370,15 @@ describe('classified failure facts across agent execution paths', () => {
       expect(classifyFailure(facts).category).toBe(category)
     }
   )
-  it('recognizes a typed provider resource-not-found response without an HTTP status', () => {
+  it('keeps an ambiguous provider resource-not-found distinct from an unavailable model', () => {
     const message = 'Example deployment unavailable'
     const error = RequestError.internalError(
       { errorName: 'APIError' },
       JSON.stringify({ error: { type: 'resource_not_found_error', message } })
     )
     expect(classifyFailure(collectPromptFailureFacts(error))).toEqual({
-      category: 'configuration',
-      reason: 'configuration/model-unavailable',
+      category: 'service',
+      reason: 'service/provider-error',
       responseMessage: message,
       diagnostics: { code: 'resource_not_found_error', raw: error.message }
     })
@@ -398,6 +398,7 @@ describe('classified failure facts across agent execution paths', () => {
       )
       expect(failure).toEqual({
         category: 'service',
+        reason: 'service/provider-error',
         responseMessage: message,
         diagnostics: {
           provider: 'Example Provider',
@@ -471,7 +472,7 @@ describe('compatibility bridge upstream status preservation', () => {
     it.each([
       [401, 'configuration'],
       [403, 'configuration'],
-      [404, 'configuration'],
+      [404, 'service'],
       [413, 'input']
     ] as const)(
       `${path} restores original status %i from the typed bridge envelope`,

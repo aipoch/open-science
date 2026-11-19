@@ -58,10 +58,14 @@ Function showCleanupFailure
   Push $R0
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File /oname=windows-install-diagnostics.ps1 "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.ps1"
+  !ifdef OPEN_SCIENCE_PROGRAM_CLEANUP_INCLUDED
+    !insertmacro extractUninstallHelper
+  !endif
   StrCpy $installDiagnosticMessagePath "$PLUGINSDIR\cleanup-notice.txt"
-  Delete "$installDiagnosticMessagePath"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action finalize -ReportPath "$cleanupReport" -ReportsDirectory "$PLUGINSDIR" -InstallPath "$INSTDIR" -ExitCode "$R0" -AppVersion "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" -ProductName "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" -Language $LANGUAGE -LogDirectory "$installDiagnosticDirectory" -MessagePath "$installDiagnosticMessagePath"'
+  Delete "$PLUGINSDIR\cleanup-notice.txt"
+  # Derive the notice path from the report inside the helper. nsExec truncates long expanded
+  # argument values, so passing the absolute message path directly is unsafe.
+  nsExec::ExecToStack '"$PLUGINSDIR\windows-uninstall-helper.exe" diagnostics --action finalize --report-path "$cleanupReport" --reports-directory "$PLUGINSDIR" --install-path "$INSTDIR" --exit-code "$R0" --app-version "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" --product-name "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" --language $LANGUAGE --log-directory "$installDiagnosticDirectory" --write-message-next-to-report'
   Pop $R1
   Pop $cleanupMessage
   Call readInstallDiagnosticMessage

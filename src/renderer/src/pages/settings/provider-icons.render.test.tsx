@@ -58,7 +58,7 @@ describe('ProviderKindIcon', () => {
     const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:anthropic" />)
 
     expect(html).toContain('<svg')
-    expect(html).toContain('<title>Anthropic</title>')
+    expect(html).toContain('viewBox="0 0 35 24"')
     expect(html).toContain('currentColor')
     expect(html).not.toContain('<img')
   })

@@ -116,6 +116,20 @@ if (params.has('long')) {
 }
 
 const history = params.has('history')
+if (!history) {
+  session.activities = [1.5, 2.5].map((index) => ({
+    id: `tool-${index}`,
+    kind: 'tool',
+    title: 'Inspect dataset',
+    toolKind: 'read',
+    status: 'completed',
+    promptMessageId: 'prompt',
+    eventIds: [],
+    sortIndex: index,
+    createdAt: now + index * 1000,
+    updatedAt: now + index * 1000
+  }))
+}
 if (history) {
   session.messages = Array.from({ length: 12 }, (_, index) => {
     const promptId = `history-${index}`

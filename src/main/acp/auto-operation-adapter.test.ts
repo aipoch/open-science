@@ -24,6 +24,15 @@ const routing = {
 }
 
 const cases = [
+  ['open-science-images', 'generate_image', { prompt: 'Draw an image' }],
+  [
+    'open-science-images',
+    'edit_image',
+    {
+      prompt: 'Recolor the image',
+      source: { sourceKind: 'artifact-version', sourceFileId: 'image', inputFileVersionId: 'v1' }
+    }
+  ],
   ['open-science-plan', 'generate_plan', { decision: 'approved' }],
   ['open-science-plan', 'generate_plan', { decision: 'rejected' }],
   ['open-science-plan', 'generate_plan', { approve: true }],
@@ -114,12 +123,21 @@ describe.each(['claude-code', 'codebuddy', 'opencode', 'codex', 'open-science-ag
             expect(
               resolveAutomaticPermission({ ...restored!, options: [] }, policy)
             ).toBeUndefined()
-            expect(
-              resolveAutomaticPermission(
-                { ...restored!, toolCall: { ...restored!.toolCall, rawInput: { unknown: true } } },
-                policy
-              )
-            ).toBeUndefined()
+            if (server === 'open-science-images') {
+              expect(
+                resolveAutomaticPermission(restored!, { ...policy, profile: 'ask' })
+              ).toBeUndefined()
+            } else {
+              expect(
+                resolveAutomaticPermission(
+                  {
+                    ...restored!,
+                    toolCall: { ...restored!.toolCall, rawInput: { unknown: true } }
+                  },
+                  policy
+                )
+              ).toBeUndefined()
+            }
             expect(resolveAutomaticPermission(request, policy)).toBeUndefined()
           }
         } finally {

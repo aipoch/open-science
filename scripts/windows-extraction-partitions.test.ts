@@ -34,12 +34,6 @@ beforeAll(() => {
     'OPEN_SCIENCE_HELPER_TEST_SEAMS'
   ])
 }, 30_000)
-// The diagnostics script stays PowerShell; it runs only on failure paths.
-const powershell = join(
-  process.env.SystemRoot || 'C:\\Windows',
-  'System32/WindowsPowerShell/v1.0/powershell.exe'
-)
-
 function fixture(): string {
   const parent = resolve('tmp/extraction-partition-tests')
   mkdirSync(parent, { recursive: true })
@@ -312,27 +306,22 @@ class Extractor { static int Main(string[] args) {
         const notice = join(f.root, 'notice.txt')
         for (const action of ['record', 'finalize']) {
           const diagnostic = spawnSync(
-            powershell,
+            helper,
             [
-              '-NoProfile',
-              '-NonInteractive',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              resolve('build/windows-install-diagnostics.ps1'),
-              '-Action',
+              'diagnostics',
+              '--action',
               action,
-              '-ReportPath',
+              '--report-path',
               reportPath,
-              '-Phase',
+              '--phase',
               'extract-new-program-files',
-              '-ErrorSource',
+              '--error-source',
               'powershell-extractor',
-              '-ExitCode',
+              '--exit-code',
               String(result.status),
-              '-LogDirectory',
+              '--log-directory',
               join(f.root, 'logs'),
-              '-MessagePath',
+              '--message-path',
               notice
             ],
             { windowsHide: true, encoding: 'utf16le', timeout: 30_000 }

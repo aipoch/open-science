@@ -2215,9 +2215,17 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
   })
 
-  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
-    'refreshes Shell capabilities in both directions for %s conversations',
-    async (frameworkId) => {
+  it.each(
+    (
+      ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi', 'open-science-agent'] as const
+    ).flatMap((frameworkId) =>
+      (['requestShellCapabilityRefresh', 'requestImageCapabilityRefresh'] as const).map(
+        (refresh) => ({ frameworkId, refresh })
+      )
+    )
+  )(
+    '$refresh refreshes capabilities in both directions for $frameworkId conversations',
+    async ({ frameworkId, refresh }) => {
       const created: ReturnType<typeof createFakeRuntime>[] = []
       const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
         const fake = createFakeRuntime({
@@ -2237,7 +2245,7 @@ describe('AcpRuntimeCoordinator', () => {
       const defaultSession = await coordinator.createSession()
       const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
 
-      await coordinator.requestShellCapabilityRefresh()
+      await coordinator[refresh]()
 
       expect(created[0].requestRetirement).toHaveBeenCalledOnce()
       expect(created[1].requestRetirement).toHaveBeenCalledOnce()
@@ -2265,7 +2273,7 @@ describe('AcpRuntimeCoordinator', () => {
       expect(created[3].sendPrompt).toHaveBeenCalledOnce()
 
       // Switching back refreshes the same conversations again rather than restoring a stale owner.
-      await coordinator.requestShellCapabilityRefresh()
+      await coordinator[refresh]()
       expect(created[2].requestRetirement).toHaveBeenCalledOnce()
       expect(created[3].requestRetirement).toHaveBeenCalledOnce()
       await coordinator.resumeSession({ sessionId: defaultSession.sessionId, cwd: '/workspace' })
@@ -5642,54 +5650,57 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].applyModelChange).toHaveBeenCalledWith(target)
   })
 
-  it('detaches idle sessions while an active turn retires and resumes them on a fresh runtime', async () => {
-    const retirement = createDeferred<void>()
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: 'claude-code',
-        sessionIds: created.length === 0 ? ['active-session', 'idle-session'] : ['fresh-session'],
-        callbacks
+  it.each(['requestSkillsReload', 'requestImageCapabilityRefresh'] as const)(
+    '%s detaches idle sessions while an active turn retires and resumes them on a fresh runtime',
+    async (refresh) => {
+      const retirement = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: created.length === 0 ? ['active-session', 'idle-session'] : ['fresh-session'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
 
-    const activeSession = await coordinator.createSession({ projectId: 'other-project' })
-    const idleSession = await coordinator.createSession({ projectId: 'deleting-project' })
-    created[0].emitState({
-      promptInFlight: true,
-      promptInFlightSessionIds: [activeSession.sessionId]
-    })
-    created[0].requestRetirement.mockReturnValue(retirement.promise)
-    const reloadRequest = coordinator.requestSkillsReload()
+      const activeSession = await coordinator.createSession({ projectId: 'other-project' })
+      const idleSession = await coordinator.createSession({ projectId: 'deleting-project' })
+      created[0].emitState({
+        promptInFlight: true,
+        promptInFlightSessionIds: [activeSession.sessionId]
+      })
+      created[0].requestRetirement.mockReturnValue(retirement.promise)
+      const reloadRequest = coordinator[refresh]()
 
-    expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
-    expect(coordinator.getSnapshot().sessionResumeRequiredIds).toEqual([activeSession.sessionId])
-    expect(coordinator.getOwnedSessionIds()).toEqual([
-      activeSession.sessionId,
-      idleSession.sessionId
-    ])
-    expect(coordinator.liveSessionProjectId(idleSession.sessionId)).toBe('deleting-project')
-    await expect(
-      coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'stale turn' })
-    ).rejects.toThrow('resume')
-    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+      expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
+      expect(coordinator.getSnapshot().sessionResumeRequiredIds).toEqual([activeSession.sessionId])
+      expect(coordinator.getOwnedSessionIds()).toEqual([
+        activeSession.sessionId,
+        idleSession.sessionId
+      ])
+      expect(coordinator.liveSessionProjectId(idleSession.sessionId)).toBe('deleting-project')
+      await expect(
+        coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'stale turn' })
+      ).rejects.toThrow('resume')
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
 
-    await coordinator.resumeSession({
-      sessionId: idleSession.sessionId,
-      cwd: '/workspace',
-      previousFrameworkId: 'claude-code'
-    })
-    await coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'fresh turn' })
+      await coordinator.resumeSession({
+        sessionId: idleSession.sessionId,
+        cwd: '/workspace',
+        previousFrameworkId: 'claude-code'
+      })
+      await coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'fresh turn' })
 
-    expect(created).toHaveLength(2)
-    expect(created[1].resumeSession).toHaveBeenCalledOnce()
-    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+      expect(created).toHaveLength(2)
+      expect(created[1].resumeSession).toHaveBeenCalledOnce()
+      expect(created[1].sendPrompt).toHaveBeenCalledOnce()
 
-    retirement.resolve()
-    await reloadRequest
-  })
+      retirement.resolve()
+      await reloadRequest
+    }
+  )
 
   it.each(['Prefer Python.', ''])(
     'reloads only the affected project runtime when context becomes %j',

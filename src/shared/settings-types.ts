@@ -1,3 +1,5 @@
+import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
+import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
   AgentHomeSkillRef,
   GitHubRepositorySearchView,
@@ -46,6 +48,7 @@ export type ProviderType =
   | 'official'
   | 'codex-shared'
   | 'codex-isolated'
+  | 'codebuddy-subscription'
   | 'xai-subscription'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
@@ -129,10 +132,14 @@ export type ProviderValidationFailure = {
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Human configuration revision; legacy records start at zero.
   configRevision?: number
   id: string
   type: ProviderType
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
   // Host-derived capability of the built-in Agent; native Codex remains independently available.
@@ -460,6 +467,8 @@ export type ReadinessPreflight = Preflight & {
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
+  catalogParameters?: Record<string, string>
+  catalogDraftToken?: string
   type: ProviderType
   codexTransport?: CodexSubscriptionTransport
   name?: string
@@ -575,12 +584,18 @@ export type SaveValidatedProviderResult = {
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
 // catalog with the account's current models).
 export type RefreshProviderModelsRequest = {
-  providerId: string
+  providerId?: string
+  draft?: ProviderDraft
+  expectedConfigRevision?: number
 }
 
 // Outcome of a model-list refresh. On success `models` is the fetched list (also persisted on the
 // provider); on failure the caller keeps the bundled catalog and can surface `message`.
 export type RefreshProviderModelsResult = {
+  catalog?: CatalogSnapshot
+  catalogStatus?: CatalogStatus
+  draftToken?: string
+  code?: CatalogErrorCode
   ok: boolean
   models?: string[]
   category: ValidationCategory
@@ -1136,14 +1151,12 @@ export type ConnectorsSnapshot = {
   ncbi: NcbiCredentialsView
   // Optional only for compatibility with an older main process during local development.
   openAlex?: OpenAlexCredentialView
-  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
-export type SetSemanticScholarCredentialRequest = { apiKey: string }
 export type SetOpenAlexCredentialRequest = { apiKey: string }
 export type ValidateOpenAlexCredentialRequest = { apiKey: string }
 export type OpenAlexCredentialValidation =

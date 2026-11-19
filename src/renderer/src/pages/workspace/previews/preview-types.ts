@@ -15,6 +15,8 @@ export type ActivePdfTranslation = {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  onPinImageSource?: () => void
+  onImageEditorVersionChange?: (item: PreviewFileItem | undefined) => void
   readOnly?: boolean
   presentation?: 'reader' | 'search'
   annotationVersionId?: string

@@ -18,28 +18,28 @@ import {
   type LiteratureLibrarySaveResult
 } from '../../shared/literature-save'
 import type { AgentPdfAcquisitionResult } from './agent-pdf-acquisition'
-import { literatureReadPresentation } from './mcp-server'
-
-const LITERATURE_LIBRARY_MCP_SERVER_NAME = 'open-science-library'
-const LITERATURE_LIBRARY_SEARCH_TOOL_NAME = 'search_library'
-const LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME = 'read_library_abstract'
-const LITERATURE_LIBRARY_READ_PDF_TOOL_NAME = 'read_library_pdf'
-const LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME = 'format_references'
-const LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME = 'format_citation_document'
-const LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME = 'prepare_latex_bundle'
-const LITERATURE_LIBRARY_SAVE_TOOL_NAME = 'save_to_inbox'
+import { literatureReadPresentation } from './mcp-contract'
+import {
+  LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME,
+  LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME,
+  LITERATURE_LIBRARY_MCP_SERVER_NAME,
+  LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME,
+  LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME,
+  LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
+  LITERATURE_LIBRARY_READ_SCOPES,
+  LITERATURE_LIBRARY_SAVE_TOOL_NAME,
+  LITERATURE_LIBRARY_SCOPES,
+  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
+  type LiteratureLibraryScope
+} from './library-mcp-contract'
 const LITERATURE_SAVE_ARGUMENT_RECOVERY = `${TOOL_ARGUMENT_RECOVERY} Reuse retrieved metadata rather than re-extracting PDFs or troubleshooting runtimes to fix argument formatting.`
-const LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT = 20
 const LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS = 38_000
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS = 1_200
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS = 200
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT = 5
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_MAX_CHARACTERS = 5_000
-export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
 // Reads name their record directly, so `items` has no selection to apply there.
-export const LITERATURE_LIBRARY_READ_SCOPES = ['library', 'project', 'collection'] as const
-
-type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
 
 const argumentError = (code: string, message: string): Error =>
   new Error(`${code}: ${message} ${TOOL_ARGUMENT_RECOVERY}`)
@@ -909,6 +909,8 @@ export {
   LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
   LITERATURE_LIBRARY_SEARCH_TOOL_NAME
 }
+export { LITERATURE_LIBRARY_READ_SCOPES, LITERATURE_LIBRARY_SCOPES } from './library-mcp-contract'
+export type { LiteratureLibraryScope } from './library-mcp-contract'
 export type {
   LiteratureLibraryDiscovery,
   LiteratureLibraryFormatDocumentRequest,
@@ -924,7 +926,6 @@ export type {
   LiteratureLibraryReadPdfResult,
   LiteratureLibrarySaveRequest,
   LiteratureLibrarySaveResult,
-  LiteratureLibraryScope,
   LiteratureLibrarySearchRequest,
   LiteratureLibrarySearchResult
 }

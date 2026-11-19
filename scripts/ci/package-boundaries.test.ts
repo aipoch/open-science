@@ -447,11 +447,14 @@ it('Compute host edits never register or select upstream Compute units', async (
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     if (
       path.startsWith('src/main/literature/') ||
-      path.startsWith('src/renderer/src/pages/literature/')
+      path.startsWith('src/renderer/src/pages/literature/') ||
+      path === 'src/main/settings/document-store.ts'
     ) {
       expect(plan.mode, path).toBe('full')
       expect(plan.reasonChains).toContainEqual(
-        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+        expect.stringMatching(
+          /^(main_literature|page_literature|settings_repository) -> .+ -> full$/
+        )
       )
       continue
     }
@@ -521,11 +524,14 @@ it('selects durable file consumers downstream without testing unchanged prerequi
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     if (
       path.startsWith('src/main/literature/') ||
-      path.startsWith('src/renderer/src/pages/literature/')
+      path.startsWith('src/renderer/src/pages/literature/') ||
+      path === 'src/main/settings/document-store.ts'
     ) {
       expect(plan.mode, path).toBe('full')
       expect(plan.reasonChains).toContainEqual(
-        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+        expect.stringMatching(
+          /^(main_literature|page_literature|settings_repository) -> .+ -> full$/
+        )
       )
       continue
     }
@@ -585,29 +591,14 @@ it('routes download package changes downstream and honors full host owners', asy
     `${packageRoot}/src/errors.ts`,
     `${packageRoot}/src/download-speed.ts`
   ]) {
-    expect(createPackageTestPlan([path], registry).selected, path).toEqual([packageRoot])
+    expect(createPackageTestPlan([path], registry).selected.sort(), path).toEqual(
+      [packageRoot, 'packages/literature-discovery', 'packages/literature-library'].sort()
+    )
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        `${packageRoot}/src/resilient-download.test.ts`,
-        `${packageRoot}/src/transport.test.ts`,
-        'src/main/update/downloader.test.ts',
-        'src/main/local-models/download.test.ts',
-        'src/main/local-models/owner.test.ts',
-        'src/main/notebook/environment-download.contract.test.ts',
-        'src/main/notebook/windows-runtime-download.contract.test.ts',
-        'src/main/session-package/transfer.test.ts'
-      ])
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContain(
+      `resilient_download -> ${loadModuleImpactManifest().modules.resilient_download.fullTestReason} -> full`
     )
-    expect(plan.capabilityOverlays).toEqual(
-      expect.arrayContaining(['windows_sensitive', 'notebook_network_sandbox'])
-    )
-    for (const entry of registry.packages)
-      expect(
-        plan.testFiles.some((file) => file.startsWith(entry.root + '/')),
-        `${path} -> ${entry.root}`
-      ).toBe(entry.root === packageRoot)
   }
   for (const [path, test] of [
     ['src/main/update/downloader.ts', 'src/main/update/downloader.test.ts'],
