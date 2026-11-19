@@ -114,41 +114,30 @@ function NetworkLogContent(): React.JSX.Element {
   }
   const field = (
     key: 'address' | 'projectId' | 'sessionId' | 'notebookRunId',
-    label: string
+    label: string,
+    className?: string
   ): React.JSX.Element => (
     <Input
+      className={className}
       aria-label={label}
       placeholder={label}
       value={filters[key] ?? ''}
       onChange={(e) => setFilters({ ...filters, [key]: e.target.value })}
     />
   )
-  const searchButton = (
-    <Button
-      type="submit"
-      size="sm"
-      variant="outline"
-      disabled={busy}
-      className={advanced ? 'col-start-2 w-full sm:col-start-3' : undefined}
-    >
-      {busy ? t('Loading…') : t('Search')}
-    </Button>
-  )
   return (
     <>
       <div className="space-y-4">
         <form
-          className={
-            advanced
-              ? 'grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'
-              : 'flex flex-wrap items-center gap-2'
-          }
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
           onSubmit={(e) => {
             e.preventDefault()
             void load({ ...filters, ...queryRange(range) })
           }}
         >
-          <div className="col-span-full flex flex-wrap items-center gap-2">
+          <div
+            className={`flex flex-wrap items-center gap-2 ${advanced ? 'col-span-full' : 'sm:col-span-2'}`}
+          >
             <select
               className={selectClass}
               aria-label={t('Network mode')}
@@ -179,34 +168,33 @@ function NetworkLogContent(): React.JSX.Element {
               <option value="allowed">{t('Allowed')}</option>
               <option value="blocked">{t('Blocked')}</option>
             </select>
+            <select
+              className={selectClass}
+              aria-label={t('Result')}
+              value={filters.outcome ?? ''}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  outcome: (e.target.value as NotebookNetworkAuditQuery['outcome']) || undefined
+                })
+              }
+            >
+              <option value="">{t('All results')}</option>
+              {Object.entries(labels)
+                .filter(([key]) => key !== 'allowed' && key !== 'blocked')
+                .map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+            </select>
+            {field('sessionId', t('Session ID'), 'w-32')}
           </div>
-          {!advanced && searchButton}
           <div id="network-log-advanced" className={advanced ? 'contents' : 'hidden'}>
-            <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-3">
               {field('address', t('Address'))}
               {field('projectId', t('Project ID'))}
-              {field('sessionId', t('Session ID'))}
               {field('notebookRunId', t('Notebook run ID'))}
-              <select
-                className={selectClass}
-                aria-label={t('Result')}
-                value={filters.outcome ?? ''}
-                onChange={(e) =>
-                  setFilters({
-                    ...filters,
-                    outcome: (e.target.value as NotebookNetworkAuditQuery['outcome']) || undefined
-                  })
-                }
-              >
-                <option value="">{t('All results')}</option>
-                {Object.entries(labels)
-                  .filter(([key]) => key !== 'allowed' && key !== 'blocked')
-                  .map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-              </select>
             </div>
             <div className="col-span-full min-w-0 space-y-1 sm:col-span-1">
               <label htmlFor="network-log-from" className="text-xs">
@@ -236,7 +224,7 @@ function NetworkLogContent(): React.JSX.Element {
             type="button"
             size="sm"
             variant="ghost"
-            className={advanced ? 'w-full' : 'ms-auto'}
+            className="w-full"
             aria-expanded={advanced}
             aria-controls="network-log-advanced"
             onClick={(event) => {
@@ -246,7 +234,14 @@ function NetworkLogContent(): React.JSX.Element {
             {t('Advanced options')}
             <ChevronDown aria-hidden="true" className={advanced ? 'size-4 rotate-180' : 'size-4'} />
           </Button>
-          {advanced && searchButton}
+          <Button
+            type="submit"
+            size="sm"
+            disabled={busy}
+            className="col-start-2 w-full sm:col-start-3"
+          >
+            {busy ? t('Loading…') : t('Search')}
+          </Button>
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
         {page?.warnings.length ? (
