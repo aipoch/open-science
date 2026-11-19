@@ -51,8 +51,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('opens paged-session history with both provisional and canonical root runs', async () => {
-  const sessionId = 'paged-dialog-session'
+it.each([false, true])('opens mixed-root history with a canonical graph: %s', async (withGraph) => {
+  const sessionId = `paged-dialog-session-${withGraph}`
   const runs = [
     {
       ...run,
@@ -67,19 +67,43 @@ it('opens paged-session history with both provisional and canonical root runs', 
       agentFrameId: 'root-frame-pending-dialog',
       rootFrameId: 'root-frame-pending-dialog',
       script: 'print("agent-history")'
+    },
+    {
+      ...run,
+      runId: 'child',
+      agentFrameId: 'child-frame',
+      rootFrameId: 'root-frame-pending-dialog',
+      script: 'print("child-history")'
     }
   ]
   vi.stubGlobal('api', {
     notebook: {
       getReference: vi.fn().mockResolvedValue({ sessionId }),
-      state: vi.fn().mockResolvedValue({ runs, runCount: 2 }),
+      state: vi.fn().mockResolvedValue({ runs, runCount: runs.length }),
       exportIpynb: vi.fn()
     }
   })
   await act(async () => {
     root.render(
       <SessionNotebookDialog
-        session={{ id: sessionId, projectId: 'project-1', contentLoaded: false } as never}
+        session={
+          {
+            id: sessionId,
+            projectId: 'project-1',
+            contentLoaded: withGraph,
+            ...(withGraph
+              ? {
+                  conversationGraph: {
+                    rootFrameId: `root-frame-${sessionId}`,
+                    frames: [
+                      { id: `root-frame-${sessionId}`, kind: 'root' },
+                      { id: 'child-frame', kind: 'delegate', delegateName: 'Child' }
+                    ]
+                  }
+                }
+              : {})
+          } as never
+        }
         onClose={vi.fn()}
       />
     )
@@ -87,6 +111,7 @@ it('opens paged-session history with both provisional and canonical root runs', 
   await waitFor(() => {
     expect(document.body.textContent).toContain('manual-history')
     expect(document.body.textContent).toContain('agent-history')
+    expect(document.body.textContent).not.toContain('child-history')
   })
 })
 

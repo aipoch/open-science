@@ -565,11 +565,30 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
   }
 
-  it.each(['root-frame-session-1', 'root-frame-pending-session-1', undefined])(
-    'shows paged-session history without loading the transcript (root %s)',
-    async (rootFrameId) => {
+  it.each([
+    { rootFrameId: 'root-frame-session-1' },
+    { rootFrameId: 'root-frame-pending-session-1' },
+    { rootFrameId: undefined },
+    { rootFrameId: 'root-frame-pending-session-1', graphRootFrameId: 'root-frame-session-1' }
+  ])(
+    'shows history without loading the transcript (root $rootFrameId, graph $graphRootFrameId)',
+    async ({ rootFrameId, graphRootFrameId }) => {
       useSessionStore.setState({
-        sessions: [{ id: 'session-1', projectId: 'proj', contentLoaded: false }]
+        sessions: [
+          {
+            id: 'session-1',
+            projectId: 'proj',
+            contentLoaded: Boolean(graphRootFrameId),
+            ...(graphRootFrameId
+              ? {
+                  conversationGraph: {
+                    rootFrameId: graphRootFrameId,
+                    frames: [{ id: graphRootFrameId, kind: 'root' }]
+                  }
+                }
+              : {})
+          }
+        ]
       } as never)
 
       await mountWithRuns([
@@ -584,7 +603,7 @@ describe('NotebookPreview per-kernel tabs', () => {
       expect(container.textContent).toContain('persisted-history')
       expect(container.textContent).toContain('manual-history')
       expect(container.textContent).not.toContain('No code has run in this view yet.')
-      expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(false)
+      expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(Boolean(graphRootFrameId))
       expect(window.api.notebook.state).toHaveBeenCalledWith({
         projectId: 'proj',
         sessionId: 'session-1',

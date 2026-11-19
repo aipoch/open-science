@@ -72,19 +72,20 @@ const notebookRootFrameId = (
   )
 }
 
-// Pending Sessions keep their provisional Conversation Graph IDs when the provider later binds the
-// final Session ID. Renderer-originated terminal runs use the final Session's canonical root ID, so
-// fold that alias back into the graph root before building or applying the Agent filter.
+// Root provenance can outlive Session rebinding. Project provisional and canonical root Runs onto
+// the current presentation root before filtering, while retaining every child Frame identity.
 const normalizeNotebookRootFrameRuns = (
   runs: readonly NotebookRunRecord[],
   session: Pick<ChatSession, 'id' | 'conversationGraph'>
 ): NotebookRunRecord[] => {
   const rootFrameId = notebookRootFrameId(session, runs)
   const canonicalRootFrameId = `root-frame-${session.id}`
-  if (rootFrameId === canonicalRootFrameId) return [...runs]
-
   return runs.map((run) =>
-    run.agentFrameId === canonicalRootFrameId ? { ...run, agentFrameId: rootFrameId } : run
+    run.agentFrameId !== rootFrameId &&
+    (run.agentFrameId === canonicalRootFrameId ||
+      (run.agentFrameId !== undefined && run.agentFrameId === run.rootFrameId))
+      ? { ...run, agentFrameId: rootFrameId }
+      : run
   )
 }
 
