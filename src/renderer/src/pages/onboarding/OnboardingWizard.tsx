@@ -548,7 +548,7 @@ const OnboardingWizard = ({
           tabIndex={-1}
           className={cn(
             'onboarding-entry-shell',
-            (entryPhase === 'connect' || entryPhase === 'advanced') && 'is-wide',
+            entryPhase === 'connect' && 'is-connect',
             entryPhase === 'advanced' && 'is-advanced',
             entryPhase === 'ready' && 'is-ready'
           )}
