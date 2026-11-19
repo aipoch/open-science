@@ -156,6 +156,15 @@ export class MemoryPolicyService {
     this.unsubscribe = options.adapter.subscribe?.((event) => this.invalidate(event))
   }
 
+  matchesDefaultScope(executionScope: string): boolean {
+    const defaultScope = this.options.adapter.defaultExecutionScope
+    return (
+      !this.closed &&
+      (executionScope === defaultScope ||
+        executionScope === this.domains.get(defaultScope ?? 'default')?.observation?.executionScope)
+    )
+  }
+
   getState(request: Request = {}): Promise<MemoryPolicyObservation> {
     if (request.signal?.aborted) return Promise.reject(abortError())
     const key = request.executionScope ?? this.options.adapter.defaultExecutionScope ?? 'default'
@@ -505,7 +514,7 @@ export class MemoryPolicyService {
       status: 'unavailable',
       reason: unavailable(code, detail),
       source: state?.sample?.source ?? this.options.adapter.platform,
-      executionScope: state?.sample?.executionScope ?? key,
+      executionScope: state?.observation?.executionScope ?? key,
       ...(state?.sampledAt === undefined ? {} : { sampledAt: state.sampledAt }),
       ...(age === undefined ? {} : { sampleAgeMs: age })
     }

@@ -5,7 +5,12 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { loadNotebookMemoryPolicyConfig } from './memory-policy-config'
 
 export type NotebookMemoryPolicyPort = Pick<MemoryPolicyService, 'getState' | 'currentState'> &
-  Partial<Pick<MemoryPolicyService, 'subscribe' | 'setActive' | 'invalidate' | 'dispose'>>
+  Partial<
+    Pick<
+      MemoryPolicyService,
+      'matchesDefaultScope' | 'subscribe' | 'setActive' | 'invalidate' | 'dispose'
+    >
+  >
 
 export const createNotebookMemoryPolicy = async (
   configRoot: string,

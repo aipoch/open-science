@@ -87,6 +87,8 @@ import { projectNotebookDependencies, type AnalyzedNotebookRun } from '@aipoch/n
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
 import { HostViewImageError } from './host-view-image-service'
+import { MemoryPolicyError, MemoryPolicyService, type MemoryPolicyAdapter } from './memory-policy'
+import { WindowsMemoryPolicyAdapter } from './memory-policy-platform'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 
 let storageRoot: string | undefined
@@ -226,17 +228,133 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
-  it('reads memory state for the requested execution domain', async () => {
+  it('rejects unowned memory scopes without sampling or retaining them', async () => {
+    const root = await createStorageRoot()
+    const sample = vi
+      .fn<MemoryPolicyAdapter['sample']>()
+      .mockRejectedValue(
+        new MemoryPolicyError('execution-domain-unavailable', 'Unrecognized memory scope')
+      )
+    const policy = new MemoryPolicyService({ adapter: { platform: 'linux', sample } })
+    const publish = vi.fn()
+    policy.subscribe(publish)
     const service = new NotebookRuntimeService({
-      configRoot: '/tmp/notebook-scoped-state',
-      dataRoot: '/tmp/notebook-scoped-state',
+      configRoot: root,
+      dataRoot: root,
       projectId: 'project',
-      memoryPolicy: healthyNotebookMemoryPolicy()
+      memoryPolicy: policy
+    })
+    try {
+      for (const executionScope of ['test:unowned', 'wsl:retired', '']) {
+        await expect(service.getMemoryPolicyState({ executionScope })).rejects.toThrow(
+          'no longer matches the current execution domain'
+        )
+      }
+      expect(sample).not.toHaveBeenCalled()
+      policy.invalidate()
+      expect(publish).not.toHaveBeenCalled()
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('accepts the configured host memory scope before the first sample', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: new MemoryPolicyService({ adapter: new WindowsMemoryPolicyAdapter() })
     })
     try {
       await expect(
-        service.getMemoryPolicyState({ executionScope: 'wsl:Ubuntu' })
-      ).resolves.toMatchObject({ executionScope: 'wsl:Ubuntu', status: 'healthy' })
+        service.getMemoryPolicyState({ executionScope: 'windows:host' })
+      ).resolves.toMatchObject({
+        executionScope: 'windows:host',
+        status: 'unavailable',
+        reason: 'memory-component-unavailable'
+      })
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('refreshes the observed Linux cgroup through the same host sampler after a read failure', async () => {
+    const root = await createStorageRoot()
+    const executionScope = 'linux:cgroup-v2:/notebook'
+    let now = 1000
+    const sample = vi.fn<MemoryPolicyAdapter['sample']>().mockResolvedValue({
+      platform: 'linux',
+      source: 'linux-proc-cgroup-v2',
+      executionScope,
+      facts: { availableBytes: 800, totalBytes: 1000, overcommitMode: 0 }
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: new MemoryPolicyService({
+        adapter: { platform: 'linux', sample },
+        now: () => now,
+        wallNow: () => now
+      })
+    })
+    try {
+      await expect(service.getMemoryPolicyState({})).resolves.toMatchObject({ executionScope })
+      await expect(service.getMemoryPolicyState({ executionScope })).resolves.toMatchObject({
+        status: 'healthy',
+        executionScope
+      })
+      expect(sample).toHaveBeenCalledOnce()
+
+      now += 3000
+      sample.mockRejectedValueOnce(new Error('Temporary read failure'))
+      await expect(service.getMemoryPolicyState({ executionScope })).resolves.toMatchObject({
+        status: 'unavailable',
+        executionScope
+      })
+      now += 30_000
+      await expect(service.getMemoryPolicyState({ executionScope })).resolves.toMatchObject({
+        status: 'healthy',
+        executionScope
+      })
+      expect(sample.mock.calls.map(([, scope]) => scope)).toEqual([undefined, undefined, undefined])
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('reads a WSL memory scope only while the original Shell owner provides its policy', async () => {
+    const root = await createStorageRoot()
+    const executionScope = 'wsl:Ubuntu'
+    const host = healthyNotebookMemoryPolicy()
+    const readHost = vi.spyOn(host, 'getState')
+    const guest = healthyNotebookMemoryPolicy()
+    const guestState = guest.currentState({ executionScope })
+    const readGuest = vi.spyOn(guest, 'getState').mockResolvedValue(guestState)
+    const memoryPolicy = vi.fn((scope: string) => (scope === executionScope ? guest : undefined))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: host,
+      shellProcess: { memoryPolicy, execute: vi.fn() }
+    })
+    try {
+      await expect(service.getMemoryPolicyState({ executionScope })).resolves.toMatchObject({
+        executionScope,
+        status: 'healthy'
+      })
+      const sample = Promise.withResolvers<typeof guestState>()
+      readGuest.mockReturnValueOnce(sample.promise)
+      const pending = service.getMemoryPolicyState({ executionScope })
+      memoryPolicy.mockReturnValue(undefined)
+      sample.resolve(guestState)
+      await expect(pending).rejects.toThrow('no longer matches the current execution domain')
+      await expect(service.getMemoryPolicyState({ executionScope })).rejects.toThrow(
+        'no longer matches the current execution domain'
+      )
+      expect(readHost).not.toHaveBeenCalled()
     } finally {
       await service.dispose()
     }

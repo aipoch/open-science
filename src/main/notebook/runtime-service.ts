@@ -590,13 +590,26 @@ class NotebookRuntimeService {
   async getMemoryPolicyState(
     request: NotebookMemoryPolicyStateRequest
   ): Promise<NotebookMemoryPolicyState> {
-    const policy =
-      (request.executionScope && this.shellProcess.memoryPolicy?.(request.executionScope)) ||
-      (await this.getMemoryPolicy())
+    const { executionScope } = request
+    const guestPolicy =
+      executionScope === undefined ? undefined : this.shellProcess.memoryPolicy?.(executionScope)
+    const policy = guestPolicy ?? (await this.getMemoryPolicy())
+    const scopeMismatch = 'The visible memory check no longer matches the current execution domain.'
     // UI input cannot create sampler domains or silently substitute a host sample for WSL.
-    const state = await policy.getState({ executionScope: request.executionScope })
-    if (request.executionScope && request.executionScope !== state.executionScope) {
-      throw new Error('The visible memory check no longer matches the current execution domain.')
+    if (
+      executionScope !== undefined &&
+      !guestPolicy &&
+      !policy.matchesDefaultScope?.(executionScope)
+    ) {
+      throw new Error(scopeMismatch)
+    }
+    const state = await policy.getState()
+    if (
+      executionScope !== undefined &&
+      (executionScope !== state.executionScope ||
+        (guestPolicy && this.shellProcess.memoryPolicy?.(executionScope) !== guestPolicy))
+    ) {
+      throw new Error(scopeMismatch)
     }
     return projectNotebookMemoryPolicyState(state)
   }
