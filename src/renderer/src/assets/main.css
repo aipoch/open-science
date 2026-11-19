@@ -521,6 +521,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   inset: 0;
   z-index: 0;
   overflow: hidden;
+  border-radius: inherit;
   opacity: 0.35;
   filter: blur(7px) saturate(0.72) contrast(0.82);
   pointer-events: none;
@@ -554,6 +555,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-silk::after {
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background: color-mix(in oklab, var(--bg-000) 24%, transparent);
   backdrop-filter: blur(3px);
   content: '';
@@ -573,6 +575,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-card::after {
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background: linear-gradient(
     120deg,
     transparent,
