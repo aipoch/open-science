@@ -899,6 +899,34 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     background-clip: padding-box;
   }
 
+  /* Keep the matrix's native scrollbar draggable without a scroll gesture on macOS.
+     Explicit sizing opts Chromium out of overlay scrollbars; overflow-auto still
+     removes the horizontal bar when every comparison column fits. */
+  [data-slot='comparison-matrix-scroll'] {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  [data-slot='comparison-matrix-scroll']::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  [data-slot='comparison-matrix-scroll']::-webkit-scrollbar-track,
+  [data-slot='comparison-matrix-scroll']::-webkit-scrollbar-corner {
+    background: var(--bg-200);
+  }
+
+  [data-slot='comparison-matrix-scroll']::-webkit-scrollbar-thumb {
+    border: 2px solid var(--bg-200);
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--foreground) 30%, var(--bg-200));
+  }
+
+  [data-slot='comparison-matrix-scroll']::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--foreground) 45%, var(--bg-200));
+  }
+
   .scrollbar-auto-hide:hover::-webkit-scrollbar-thumb,
   .scrollbar-auto-hide:focus-within::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--border) 72%, transparent);
