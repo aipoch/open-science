@@ -208,6 +208,18 @@ confirms it can reach your profile, even if the list is empty. You can then subm
 task and check its results from the agent or Open-Science. See the [MCP guide](packages/open-science/CLI.md#external-agents-through-mcp)
 for custom profiles, available tools and permissions.
 
+#### Install the optional research skill
+
+Give your external agent a [workflow for submitting research and checking results](skills/open-science-research/SKILL.md).
+From your agent's project directory, run this command and choose your client:
+
+```sh
+npx skills add aipoch/open-science --skill open-science-research
+```
+
+The installer adds the instructions to your selected agent. Configure the MCP connection above
+to make the tools available. Try asking, “List my Open-Science projects.”
+
 <a id="core-capabilities"></a>
 
 ## What can you do with AIPOCH Open-Science?
