@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-upgrade-smoke-${{ github.event.client_payload.tag || inputs.tag }}
+  group: windows-upgrade-smoke-${{ github.event_name == 'schedule' && 'daily' || inputs.signed_run_id || github.event.client_payload.tag || inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -65,6 +65,9 @@ jobs:
         id: current
         shell: pwsh
         run: |
+          if ($env:CURRENT_TAG -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'Select a stable release tag for the post-release upgrade drill.'
+          }
           $releasedSha = git rev-parse "$($env:CURRENT_TAG)^{commit}"
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releasedSha)) {
             exit 1

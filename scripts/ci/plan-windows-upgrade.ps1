@@ -33,4 +33,3 @@ $changed = @(git diff --name-only $compare HEAD -- @paths)
 "version_c=$($stable.Major).$($stable.Minor).$($stable.Build + 2)" >> $env:GITHUB_OUTPUT
 "forward=$([bool]$changed.Count)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
 "Baseline $tag ($base), candidate $env:GITHUB_SHA. Updater or packaging changes since $compare : $($changed -join ', ')" >> $env:GITHUB_STEP_SUMMARY
-
