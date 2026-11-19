@@ -498,7 +498,7 @@ export async function composeResearchFilm({
       const { issues } = await check({ htmlPath, includeFrames: false }, signal)
       signal.throwIfAborted()
       filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
-      return issues.filter((issue) => issue.app || issue.textLayout)
+      return issues
     },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,

@@ -446,7 +446,10 @@ export async function generateResearchFilm(
       const candidate = { ...result, title, scriptScore, usedSessionApp }
       if (!review || !spec) return candidate
       options.onProgress?.({ phase: 'verifying' })
-      visualIssues = await review(options.source, result.playerPath, spec, options.signal)
+      const observations = await review(options.source, result.playerPath, spec, options.signal)
+      // The player explicitly marks non-text observations as advisory. Keep the app fallback
+      // and respect custom reviewers that request repairs without a text classification.
+      visualIssues = observations.filter((issue) => issue.app || issue.textLayout !== false)
       options.signal.throwIfAborted()
       if (!visualIssues.length) return candidate
       const textOnly = visualIssues.every((issue) => issue.textLayout && !issue.app)

@@ -155,5 +155,11 @@ window.__checkFilm = () => {
       message:
         'The session app could not be shown. Use a drawn illustration of the research subject.'
     })
-  return { issues: issues.slice(0, 64), frames }
+  // Keep all observations for the host. Only measured text defects request a layout repair.
+  return {
+    issues: issues
+      .slice(0, 64)
+      .map((issue) => ({ ...issue, textLayout: issue.textLayout === true })),
+    frames
+  }
 }

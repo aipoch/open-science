@@ -75,7 +75,12 @@ it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML b
       preparationMs: 2
     }))
     const issue = { scene: 'result', script: 'anims/result.js', message: 'Two labels overlap' }
-    const reviewPlayer = vi.fn().mockResolvedValueOnce([issue]).mockResolvedValueOnce([])
+    const reviewPlayer = vi
+      .fn()
+      .mockResolvedValueOnce([issue])
+      .mockResolvedValueOnce([
+        { scene: 'result', textLayout: false, message: 'Panel extends outside the safe area.' }
+      ])
     await generateResearchFilm({
       source,
       directory,

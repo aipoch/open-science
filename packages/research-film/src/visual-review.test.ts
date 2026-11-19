@@ -52,9 +52,9 @@ it('checks canvas content independently of its panel and requires a visible end 
   )
   const inspect = (): ReturnType<typeof filmVisualCheckSchema.parse> =>
     filmVisualCheckSchema.parse(player.__checkFilm())
-  expect(inspect().issues.map((i) => [i.scene, i.message])).toEqual([
-    ['result', expect.stringContaining('draws nothing')],
-    ['outro', expect.stringContaining('end card')]
+  expect(inspect().issues.map((i) => [i.scene, i.textLayout, i.message])).toEqual([
+    ['result', false, expect.stringContaining('draws nothing')],
+    ['outro', false, expect.stringContaining('end card')]
   ])
   expect(frames.mock.calls.length).toBeGreaterThan(15)
   cards.mockReturnValue([
