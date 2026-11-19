@@ -1,8 +1,11 @@
 import { randomBytes } from 'node:crypto'
+import { constants, open } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
 
 const MAX_QUEUED_SPANS = 256
 const EXPORT_TIMEOUT_MS = 2_000
+const MAX_HEADERS_FILE_BYTES = 8_192
 const SERVICE_NAME = 'open-science-agent'
 const timeOriginNanos = BigInt(Math.round(performance.timeOrigin * 1_000)) * 1_000n
 const unixNanos = (): string =>
@@ -160,9 +163,41 @@ export type HarnessTracing = {
   dispose(): void
 }
 
+async function loadExportHeaders(filePath: string | undefined): Promise<Headers> {
+  const headers = new Headers()
+  if (filePath) {
+    const file = await open(filePath, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile() || stat.size > MAX_HEADERS_FILE_BYTES)
+        throw new Error('Invalid OTLP headers file')
+      const buffer = Buffer.alloc(stat.size)
+      for (let offset = 0; offset < buffer.length;) {
+        const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset)
+        if (!bytesRead) throw new Error('Incomplete OTLP headers file')
+        offset += bytesRead
+      }
+      const values: unknown = JSON.parse(buffer.toString('utf8'))
+      if (!values || typeof values !== 'object' || Array.isArray(values))
+        throw new Error('Expected an OTLP headers object')
+      for (const [name, value] of Object.entries(values)) {
+        if (typeof value !== 'string') throw new Error('Expected an OTLP header string')
+        headers.set(name, value)
+      }
+    } finally {
+      await file.close()
+    }
+  }
+  headers.set('content-type', 'application/json')
+  return headers
+}
+
 /** Best-effort OTLP/HTTP JSON, owned by the ACP helper. No global SDK, logging or disk queue. */
-export function createHarnessTracing(endpoint: string | undefined): HarnessTracing | undefined {
-  if (!endpoint?.trim()) return undefined
+export function createHarnessTracing(
+  endpoint: string | undefined,
+  headersFile?: string
+): HarnessTracing | undefined {
+  if (!endpoint?.trim() || (headersFile && !isAbsolute(headersFile))) return undefined
   let url: URL
   try {
     url = new URL(endpoint)
@@ -176,6 +211,7 @@ export function createHarnessTracing(endpoint: string | undefined): HarnessTraci
   let queued: FinishedSpan[] = []
   let exporting = false
   let scheduled: NodeJS.Immediate | undefined
+  let exportHeaders: Promise<Headers> | undefined
 
   function scheduleExport(): void {
     if (scheduled || exporting || !queued.length || lifetime.signal.aborted) return
@@ -190,9 +226,13 @@ export function createHarnessTracing(endpoint: string | undefined): HarnessTraci
     queued = []
     exporting = true
     try {
+      // Resolve credentials lazily, on the export path. A configured file must load successfully
+      // before this helper sends any traces.
+      const headers = await (exportHeaders ??= loadExportHeaders(headersFile))
+      if (lifetime.signal.aborted) return
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({
           resourceSpans: [
             {

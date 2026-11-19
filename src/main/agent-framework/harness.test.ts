@@ -51,20 +51,26 @@ describe('built-in Agent host boundary', () => {
   })
 
   it.each([undefined, 'http://127.0.0.1:4318/v1/traces'])(
-    'uses only the host trace endpoint (%s)',
+    'uses only host trace configuration (%s)',
     (endpoint) => {
+      const headersFile = endpoint ? resolve('private', 'otel-headers.json') : undefined
       vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT', endpoint)
+      vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE', headersFile)
       vi.stubEnv('OTEL_EXPORTER_OTLP_HEADERS', 'authorization=private')
       const spawnProcess = vi.fn<NonNullable<AgentSpawnInput['spawnProcess']>>()
       harnessFramework.spawn({
         executablePath: resolve('out/backend/index.cjs'),
         args: [HARNESS_ACP_ARG, resolve('data', 'sessions')],
-        env: { OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT: 'https://untrusted.example/v1/traces' },
+        env: {
+          OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT: 'https://untrusted.example/v1/traces',
+          OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE: resolve('untrusted', 'headers.json')
+        },
         spawnProcess
       })
       const childEnv = spawnProcess.mock.calls[0][2]?.env
       expect(childEnv).toBeDefined()
       expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT).toBe(endpoint)
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE).toBe(headersFile)
       expect(childEnv).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS')
     }
   )
