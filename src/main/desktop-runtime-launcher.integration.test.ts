@@ -111,9 +111,10 @@ ${fixtureSource
       });return;
     }
     if(req.url==='/stop') {
+      // The writer must outlive the backend on Windows to hold the reader's input open.
       const writer=require('node:child_process').spawn(${JSON.stringify(process.execPath)}, ['-e',
         "const fs=require('node:fs');const timer=setInterval(()=>{if(fs.existsSync(process.argv[1])||!fs.existsSync(require('node:path').dirname(process.argv[1])))clearInterval(timer)},20);setTimeout(()=>process.exit(0),120000).unref()",
-        ${JSON.stringify(join(root, 'release-reader'))}], {stdio:['ignore','inherit','inherit']});
+        ${JSON.stringify(join(root, 'release-reader'))}], {detached:true,windowsHide:true,stdio:['ignore','inherit','inherit']});
       writer.once('spawn',()=>{ writer.unref();res.end('stopping');server.close(); });return;
     }
     res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration`
@@ -294,22 +295,32 @@ server.listen(`
         })
         const waitForHelpers = captureInstallationHelperExit(location, record.runtime)
         advanceInstallationUpdate(location, record.operationId, 'stopping')
-        await fetch(`http://127.0.0.1:${replacement.port}/stop`, {
+        const stopped = await fetch(`http://127.0.0.1:${replacement.port}/stop`, {
           headers: {
             authorization: 'Bearer ' + 'x'.repeat(43),
             'x-open-science-runtime-generation': replacement.generation
           }
         })
+        expect(stopped.status).toBe(200)
         await vi.waitFor(() => expect(processBirthIdentity(replacement.pid)).toBeUndefined())
+        expect(processBirthIdentity(reader!.pid!)).toBe(readerBirth)
         advanceInstallationUpdate(location, record.operationId, 'stopped', true, true)
         try {
           await expect(
             advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
-          ).rejects.toMatchObject({ reason: 'installation-busy' })
+          ).rejects.toMatchObject({
+            reason: 'installation-busy',
+            recovery: {
+              blockingProcesses: expect.arrayContaining([
+                expect.objectContaining({ pid: reader!.pid })
+              ])
+            }
+          })
         } finally {
           await writeFile(join(root, 'release-reader'), '')
           await waitForHelpers()
         }
+        expect(processBirthIdentity(reader!.pid!)).toBeUndefined()
         await expect(
           advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
         ).resolves.toMatchObject({ phase: 'handoff' })
