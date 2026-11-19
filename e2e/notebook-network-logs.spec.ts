@@ -137,9 +137,14 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   expect(expandedActions.y).toBeGreaterThanOrEqual(end!.y + end!.height)
   await expect(advanced).toHaveAttribute('data-variant', 'default')
   await expect(advanced).toHaveAttribute('aria-pressed', 'true')
-  expect(await advanced.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(
-    searchColor
-  )
+  const activeStyle = await advanced.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { backgroundColor: style.backgroundColor, filter: style.filter }
+  })
+  expect(activeStyle.backgroundColor).toBe(searchColor)
+  expect(activeStyle.filter).not.toBe('none')
+  await expect(advanced.locator('svg')).toHaveAttribute('style', /transform: none/)
+  await expect(advanced.locator('svg')).toHaveAttribute('style', /transition: none/)
   for (const label of ['Network mode', 'Decision', 'Result', ...advancedLabels]) {
     const box = await settings.getByLabel(label, { exact: true }).boundingBox()
     expect(box!.height).toBeCloseTo(expandedActions.height, 0)
@@ -176,26 +181,19 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await submit.click()
   await expect(empty).toBeVisible()
   expect(await retentionFilter.boundingBox()).toEqual(footerBox)
-  expect(
-    (await settings.getByRole('button', { name: 'Save', exact: true }).boundingBox())!.height
-  ).toBe(footerBox!.height)
+  await expect(settings.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
   await retentionFilter.click()
   await expect(page.getByRole('option')).toHaveText(['7', '15', '30', '90', '180', '365'])
   await settings.screenshot({ path: testInfo.outputPath('retention-options.png') })
   await page.getByRole('option', { name: '30', exact: true }).click()
-  await settings.getByRole('button', { name: 'Save', exact: true }).click()
-  const confirmation = page.getByRole('alertdialog', { name: 'Shorten network log retention?' })
-  await expect(confirmation).toBeVisible()
-  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
-  expect((await page.evaluate(() => window.api.network.queryNotebookLogs({}))).retentionDays).toBe(
-    90
-  )
-  await settings.getByRole('button', { name: 'Save', exact: true }).click()
-  await confirmation.getByRole('button', { name: 'Confirm', exact: true }).click()
-  await expect(confirmation).toBeHidden()
-  expect((await page.evaluate(() => window.api.network.queryNotebookLogs({}))).retentionDays).toBe(
-    30
-  )
+  await expect
+    .poll(() =>
+      page
+        .evaluate(() => window.api.network.queryNotebookLogs({}))
+        .then((page) => page.retentionDays)
+    )
+    .toBe(30)
+  await expect(retentionFilter).toHaveText('30')
   await settings.getByRole('button', { name: 'Back to network', exact: true }).click()
   await expect(access.getByRole('button', { name: 'Open', exact: true })).toBeVisible()
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click()

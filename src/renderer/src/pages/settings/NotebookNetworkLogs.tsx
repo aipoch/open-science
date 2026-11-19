@@ -17,7 +17,6 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
-import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import type {
   NotebookNetworkAuditPage,
@@ -57,8 +56,7 @@ function NetworkLogContent(): React.JSX.Element {
   const [range, setRange] = useState(lastSevenDays)
   const [advanced, setAdvanced] = useState(false)
   const [days, setDays] = useState('90'),
-    [saving, setSaving] = useState(false),
-    [confirm, setConfirm] = useState(false)
+    [saving, setSaving] = useState(false)
   const mounted = useRef(true),
     sequence = useRef(0),
     applied = useRef<NotebookNetworkAuditQuery>(queryRange(range)),
@@ -97,18 +95,25 @@ function NetworkLogContent(): React.JSX.Element {
       mounted.current = false
     }
   }, [load])
-  const save = async (): Promise<void> => {
-    if (saving) return
+  const updateRetention = async (value: string): Promise<void> => {
+    if (!page || saving) return
+    const next = Number(value)
+    const previous = page.retentionDays
+    setDays(value)
+    if (!Number.isInteger(next) || next < 1 || next > 3650 || next === previous) return
     setSaving(true)
     setError(undefined)
     try {
-      const retained = await window.api.network.setNotebookLogRetention(Number(days))
+      const retained = await window.api.network.setNotebookLogRetention(next)
       if (mounted.current) {
-        setPage((previous) => (previous ? { ...previous, retentionDays: retained } : previous))
-        setConfirm(false)
+        setPage((current) => (current ? { ...current, retentionDays: retained } : current))
+        setDays(String(retained))
       }
     } catch {
-      if (mounted.current) setError(t('Could not save network log retention.'))
+      if (mounted.current) {
+        setDays(String(previous))
+        setError(t('Could not save network log retention.'))
+      }
     } finally {
       if (mounted.current) setSaving(false)
     }
@@ -267,13 +272,16 @@ function NetworkLogContent(): React.JSX.Element {
                 <SplitButtonTrigger
                   size="icon-sm"
                   variant="default"
-                  className={advanced ? 'h-8 w-9 bg-primary/80 hover:bg-primary/70' : 'h-8 w-9'}
+                  className={advanced ? 'h-8 w-9 brightness-90 hover:brightness-80' : 'h-8 w-9'}
                   aria-label={t('Advanced options')}
                   aria-controls="network-log-advanced"
                   aria-pressed={advanced}
                   title={t('Advanced options')}
                 >
-                  <SlidersHorizontal aria-hidden="true" />
+                  <SlidersHorizontal
+                    aria-hidden="true"
+                    style={{ transform: 'none', transition: 'none' }}
+                  />
                 </SplitButtonTrigger>
               </SplitButtonGroup>
             </SplitButton>
@@ -375,9 +383,37 @@ function NetworkLogContent(): React.JSX.Element {
             <p className="p-4 text-sm text-muted-foreground">{t('No matching network records.')}</p>
           ) : null}
         </div>
-        <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-end gap-3">
+        <div className="sticky bottom-0 z-20 flex shrink-0 items-end justify-between gap-3">
+          <div className="space-y-1">
+            <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
+              {t('Retention days')}
+            </label>
+            <Select
+              value={days}
+              onValueChange={(value) => void updateRetention(value)}
+              disabled={!page || saving}
+            >
+              <SelectTrigger
+                id="network-log-days"
+                className={fieldClass}
+                aria-label={t('Retention days')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(new Set([...retentionPresets, page?.retentionDays ?? 90]))
+                  .sort((a, b) => a - b)
+                  .map((value) => (
+                    <SelectItem key={value} value={String(value)}>
+                      {value}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
           {page?.cursor ? (
             <Button
+              className="ms-auto"
               variant="outline"
               disabled={busy}
               onClick={() => void load({ ...applied.current, cursor: page.cursor }, true)}
@@ -385,65 +421,8 @@ function NetworkLogContent(): React.JSX.Element {
               {t('Load more')}
             </Button>
           ) : null}
-          <div className="ms-auto flex flex-wrap items-end justify-end gap-2">
-            <div className="space-y-1">
-              <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
-                {t('Retention days')}
-              </label>
-              <Select value={days} onValueChange={setDays} disabled={!page || saving}>
-                <SelectTrigger
-                  id="network-log-days"
-                  className={fieldClass}
-                  aria-label={t('Retention days')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Array.from(new Set([...retentionPresets, page?.retentionDays ?? 90]))
-                    .sort((a, b) => a - b)
-                    .map((value) => (
-                      <SelectItem key={value} value={String(value)}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8"
-              disabled={
-                !page ||
-                saving ||
-                !Number.isInteger(Number(days)) ||
-                Number(days) < 1 ||
-                Number(days) > 3650 ||
-                Number(days) === page.retentionDays
-              }
-              onClick={() => {
-                if (page && Number(days) < page.retentionDays) setConfirm(true)
-                else void save()
-              }}
-            >
-              {saving ? t('Saving…') : t('Save')}
-            </Button>
-          </div>
         </div>
       </div>
-      <ConfirmActionDialog
-        open={confirm}
-        title={t('Shorten network log retention?')}
-        description={t(
-          'Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.'
-        )}
-        cancelLabel={t('Cancel')}
-        confirmLabel={t('Confirm')}
-        loading={saving}
-        destructive
-        onCancel={() => setConfirm(false)}
-        onConfirm={() => void save()}
-      />
     </>
   )
 }
@@ -456,6 +435,9 @@ export function NotebookNetworkLogs(): React.JSX.Element {
         <h1 className="text-lg font-medium">{t('Notebook network logs')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {t('Allowed and blocked Notebook connections, grouped by their original network mode.')}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('Retention changes apply immediately. Cleanup runs every 3 days and does not reset.')}
         </p>
       </div>
       <NetworkLogContent />

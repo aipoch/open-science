@@ -41,12 +41,12 @@ it('loads on entry as a secondary page with the last seven local dates and advan
 it('displays a previously saved custom retention without changing it on entry', async () => {
   query.mockResolvedValueOnce({ records: [], retentionDays: 45, warnings: [] })
   await act(async () => root.render(<NotebookNetworkLogs />))
-  const save = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Save')!
   expect(document.querySelector('button[aria-label="Retention days"]')?.textContent).toBe('45')
-  expect(save.disabled).toBe(true)
-  await act(async () => save.click())
+  expect(
+    [...document.querySelectorAll('button')].some((button) => button.textContent === 'Save')
+  ).toBe(false)
   expect(retention).not.toHaveBeenCalled()
-  expect(document.body.textContent).not.toContain('Shorten network log retention?')
+  expect(document.body.textContent).toContain('Retention changes apply immediately.')
 })
 
 it('keeps the last successful query when a new filter fails before loading more', async () => {
