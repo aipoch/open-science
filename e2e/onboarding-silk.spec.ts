@@ -45,6 +45,9 @@ test('shows Silk on every provider and advances only the hovered texture', async
   await expect.poll(() => pixels(canvas)).not.toBe(moving)
   await card.screenshot({ path: info.outputPath('anthropic-hover.png') })
   await heading.hover()
+  // Keyboard focus exposes controls but must not restart the Silk after mouse leave.
+  await card.getByRole('button').first().focus()
+  await expect(card.getByRole('button').first()).toBeFocused()
   const stopped = await allFrames()
   expect(stopped.filter((_, i) => i !== index)).toEqual(idle.filter((_, i) => i !== index))
   // Sample across multiple presented frames; leaving must freeze the last pose, not reset it.

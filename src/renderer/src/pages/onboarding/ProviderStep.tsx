@@ -650,95 +650,101 @@ const ProviderStep = ({
                     isKeyMode && 'is-key-mode'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
-                  onMouseEnter={() => setHoveredQuickCardId(card.id)}
-                  onMouseLeave={() => setHoveredQuickCardId(undefined)}
+                  onPointerEnter={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(card.id)
+                  }}
+                  onPointerLeave={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(undefined)
+                  }}
                 >
-                  <ProviderSilkBackground
-                    color={card.accent}
-                    active={hoveredQuickCardId === card.id}
-                  />
-                  <div className="onboarding-provider-card-body">
-                    <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
-                    <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
-                    <p>{t(card.description)}</p>
-                  </div>
-                  <div className="onboarding-provider-card-actions">
-                    {showKeyForm ? (
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          handleQuickKeySubmit(card)
-                        }}
-                        className="onboarding-provider-key-form"
-                      >
-                        <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
-                        <div className="onboarding-provider-key-row">
-                          <input
-                            id={`onboarding-key-${card.id}`}
-                            type="password"
-                            value={quickKeys[card.id] ?? ''}
-                            disabled={isSaving}
-                            onChange={(event) => handleQuickKeyChange(card, event.target.value)}
-                            placeholder={t('Enter your API key')}
-                            autoComplete="off"
-                            required
-                          />
-                          <Button
-                            type="submit"
-                            size="icon"
-                            aria-label={t('Test connection and connect')}
-                            title={t('Test connection and connect')}
-                            disabled={isSaving}
-                          >
-                            {isSaving && quickCardId === card.id ? (
-                              <LoaderCircle
-                                className="animate-spin motion-reduce:animate-none"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <Zap aria-hidden="true" />
-                            )}
-                          </Button>
-                        </div>
-                        {quickCardId === card.id && showProviderErrors && formErrors.key ? (
-                          <p className="text-xs text-destructive">{t(formErrors.key)}</p>
-                        ) : null}
-                        {subscriptionAvailable ? (
+                  <div className="onboarding-provider-card-surface">
+                    <ProviderSilkBackground
+                      color={card.accent}
+                      active={hoveredQuickCardId === card.id}
+                    />
+                    <div className="onboarding-provider-card-body">
+                      <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
+                      <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
+                      <p>{t(card.description)}</p>
+                    </div>
+                    <div className="onboarding-provider-card-actions">
+                      {showKeyForm ? (
+                        <form
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            handleQuickKeySubmit(card)
+                          }}
+                          className="onboarding-provider-key-form"
+                        >
+                          <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
+                          <div className="onboarding-provider-key-row">
+                            <input
+                              id={`onboarding-key-${card.id}`}
+                              type="password"
+                              value={quickKeys[card.id] ?? ''}
+                              disabled={isSaving}
+                              onChange={(event) => handleQuickKeyChange(card, event.target.value)}
+                              placeholder={t('Enter your API key')}
+                              autoComplete="off"
+                              required
+                            />
+                            <Button
+                              type="submit"
+                              size="icon"
+                              aria-label={t('Test connection and connect')}
+                              title={t('Test connection and connect')}
+                              disabled={isSaving}
+                            >
+                              {isSaving && quickCardId === card.id ? (
+                                <LoaderCircle
+                                  className="animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Zap aria-hidden="true" />
+                              )}
+                            </Button>
+                          </div>
+                          {quickCardId === card.id && showProviderErrors && formErrors.key ? (
+                            <p className="text-xs text-destructive">{t(formErrors.key)}</p>
+                          ) : null}
+                          {subscriptionAvailable ? (
+                            <button
+                              type="button"
+                              className="onboarding-provider-card-link"
+                              onClick={() => {
+                                setQuickMode(undefined)
+                                setQuickCardId(undefined)
+                              }}
+                            >
+                              {t('Use an account instead')}
+                            </button>
+                          ) : null}
+                        </form>
+                      ) : (
+                        <>
+                          {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
+                          {subscriptionAvailable ? (
+                            <Button
+                              type="button"
+                              onClick={() => void chooseQuickProvider(card, 'account')}
+                              disabled={isSaving}
+                              className="w-full"
+                            >
+                              {t('Continue with {{provider}}', { provider: card.title })}
+                            </Button>
+                          ) : null}
                           <button
                             type="button"
                             className="onboarding-provider-card-link"
-                            onClick={() => {
-                              setQuickMode(undefined)
-                              setQuickCardId(undefined)
-                            }}
-                          >
-                            {t('Use an account instead')}
-                          </button>
-                        ) : null}
-                      </form>
-                    ) : (
-                      <>
-                        {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
-                        {subscriptionAvailable ? (
-                          <Button
-                            type="button"
-                            onClick={() => void chooseQuickProvider(card, 'account')}
+                            onClick={() => void chooseQuickProvider(card, 'key')}
                             disabled={isSaving}
-                            className="w-full"
                           >
-                            {t('Continue with {{provider}}', { provider: card.title })}
-                          </Button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="onboarding-provider-card-link"
-                          onClick={() => void chooseQuickProvider(card, 'key')}
-                          disabled={isSaving}
-                        >
-                          {t('Have an API key?')}
-                        </button>
-                      </>
-                    )}
+                            {t('Have an API key?')}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </article>
               )

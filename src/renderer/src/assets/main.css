@@ -517,6 +517,15 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     transform 180ms ease,
     box-shadow 180ms ease;
 }
+/* Clip the composited blur layers together, leaving the border and shadow on the outer card. */
+.onboarding-provider-card-surface {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  border-radius: calc(1rem - 1px);
+  clip-path: inset(0 round calc(1rem - 1px));
+}
 .onboarding-provider-silk {
   position: absolute;
   inset: 0;
@@ -577,7 +586,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   opacity: 0.22;
   backdrop-filter: blur(1.5px) saturate(0.9);
 }
-.onboarding-provider-card::after {
+.onboarding-provider-card-surface::after {
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -592,8 +601,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   pointer-events: none;
   transition: opacity 360ms ease;
 }
-.onboarding-provider-card:hover::after,
-.onboarding-provider-card:focus-within::after {
+.onboarding-provider-card:hover .onboarding-provider-card-surface::after,
+.onboarding-provider-card:focus-within .onboarding-provider-card-surface::after {
   opacity: 0.3;
 }
 .onboarding-provider-card:hover,
@@ -708,12 +717,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   );
   box-shadow: var(--shadow-card);
 }
-.dark .onboarding-provider-card::after {
+.dark .onboarding-provider-card-surface::after {
   opacity: 0.14;
   transition: opacity 360ms ease;
 }
-.dark .onboarding-provider-card:hover::after,
-.dark .onboarding-provider-card:focus-within::after {
+.dark .onboarding-provider-card:hover .onboarding-provider-card-surface::after,
+.dark .onboarding-provider-card:focus-within .onboarding-provider-card-surface::after {
   opacity: 0.07;
 }
 .dark .onboarding-provider-card:hover,
