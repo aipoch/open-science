@@ -1,6 +1,11 @@
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { PersistedChatSession, PersistedToolActivity } from '../src/shared/session-persistence'
+import {
+  MAX_PERSISTED_SESSION_BYTES,
+  type PersistedChatSession,
+  type PersistedToolActivity
+} from '../src/shared/session-persistence'
+import { SessionJournalStore } from '../src/main/session-persistence/journal'
 import type { NotebookRunRecord } from '../src/shared/notebook'
 import {
   createLinearConversationGraph,
@@ -533,8 +538,11 @@ for (const { count, contextLines } of [
         // Notebook data root is separate from settings/Session storage; derive the latter from
         // the profiler's documented fixture root, without inspecting any user storage.
         const sessionPath = join(dataRoot, '..', 'storage', 'sessions', projectId, `${id}.json`)
-        metrics.sessionFileBytes = (await stat(sessionPath)).size
-        const durable = JSON.parse(await readFile(sessionPath, 'utf8'))
+        const durable = await new SessionJournalStore({
+          maxBytes: MAX_PERSISTED_SESSION_BYTES
+        }).read(sessionPath)
+        if (!durable) throw new Error('Capacity Session disappeared after restart')
+        metrics.sessionFileBytes = durable.storageBytes
         let allReviewSourceBytes = 0,
           reviewSourceCopies = 0
         const uniqueReviewSources = new Set<string>()
@@ -547,7 +555,7 @@ for (const { count, contextLines } of [
           }
           for (const child of Object.values(value)) visit(child)
         }
-        visit(durable)
+        visit(durable.document)
         const uniqueReviewSourceBytes = [...uniqueReviewSources].reduce(
           (sum, code) => sum + Buffer.byteLength(code),
           0

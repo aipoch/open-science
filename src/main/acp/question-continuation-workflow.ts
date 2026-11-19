@@ -105,6 +105,7 @@ class AcpQuestionContinuationWorkflow {
         answers: response.answers,
         retryContinuation: response.retryContinuation,
         continuePrepared: !response.prepareContinuation && continuePrepared,
+        beforeAttachment: !this.deps.hasActiveSession(request.sessionId),
         ...(response.continuationFailure !== undefined
           ? { recovery: { error: response.continuationFailure.slice(0, 4_000) } }
           : {})

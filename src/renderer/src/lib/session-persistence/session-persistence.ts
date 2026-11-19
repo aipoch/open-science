@@ -2304,7 +2304,8 @@ const loadPersistedSessions = async (
     const retrySessionId = currentSelection()?.sessionId
     const summariesToHydrate = result.sessions.filter(
       (session) =>
-        session.needsStartupRecovery || (!api.loadHistoryPage && session.id === retrySessionId)
+        session.needsStartupRecovery ||
+        (session.id === retrySessionId && (preserveLocalDrafts || !api.loadHistoryPage))
     )
     const hydratedSessions = new Map(
       await Promise.all(

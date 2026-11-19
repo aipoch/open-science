@@ -656,6 +656,7 @@ describe('renderer session persistence bridge', () => {
     }
     const api = createApi({
       loadOne,
+      loadHistoryPage: vi.fn(),
       list: vi.fn().mockResolvedValue({
         sessions: [summary],
         manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: fresh.id }
