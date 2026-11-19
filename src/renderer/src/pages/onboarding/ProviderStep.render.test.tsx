@@ -338,8 +338,12 @@ describe('ProviderStep', () => {
     })
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-openai')!
-    const picker = card.querySelector<HTMLButtonElement>('[aria-label="Codex authentication"]')!
-    expect(picker.textContent).toContain('Import existing Codex sign-in')
+    const [importButton, signInButton] = card.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Codex authentication"] button'
+    )
+    expect(importButton?.textContent).toBe('Import existing Codex sign-in')
+    expect(signInButton?.textContent).toBe('Sign in with Open-Science')
+    expect(importButton.getAttribute('aria-pressed')).toBe('true')
     await clickButton(/Continue with OpenAI/)
     const warning = container.querySelector('[data-notice-level="warning"]')!
     expect(warning.querySelector('[role="alert"]')?.textContent).toContain('Missing auth.json')
@@ -347,8 +351,8 @@ describe('ProviderStep', () => {
     expect(loginIsolatedCodex).not.toHaveBeenCalled()
     await clickButton(/^Dismiss$/)
     expect(container.contains(warning)).toBe(false)
-    expect(picker.textContent).toContain('Import existing Codex sign-in')
-    await selectOption('Codex authentication', 'Sign in with Open-Science')
+    expect(importButton.getAttribute('aria-pressed')).toBe('true')
+    await act(async () => signInButton.click())
     expect(loginIsolatedCodex).not.toHaveBeenCalled()
     await clickButton(/Continue with OpenAI/)
     expect(saveProvider).toHaveBeenCalledTimes(1)
@@ -358,15 +362,15 @@ describe('ProviderStep', () => {
     expect(loginIsolatedCodex).toHaveBeenCalledOnce()
     fireEvent.pointerLeave(card, { pointerType: 'mouse' })
     expect(card.classList.contains('is-authorizing')).toBe(true)
-    expect(picker.disabled).toBe(true)
+    expect(signInButton.disabled).toBe(true)
     const cancel = card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!
     await act(async () => cancel.click())
     expect(cancelCodexLogin).toHaveBeenCalledOnce()
     await act(async () => finishLogin({ ok: true, category: 'ok' }))
     expect(setActiveProvider).not.toHaveBeenCalled()
     expect(onAdvance).not.toHaveBeenCalled()
-    expect(picker.disabled).toBe(false)
-    expect(picker.textContent).toContain('Sign in with Open-Science')
+    expect(signInButton.disabled).toBe(false)
+    expect(signInButton.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('keeps the Claude API-key option without changing the framework', async () => {

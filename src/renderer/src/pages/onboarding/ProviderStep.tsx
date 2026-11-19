@@ -21,7 +21,7 @@ import {
   useSettingsStore
 } from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
-import { CodexAuthSelect, ProviderForm, type CodexAuthMode } from '../settings/ProviderForm'
+import { ProviderForm, type CodexAuthMode } from '../settings/ProviderForm'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
 import {
@@ -141,6 +141,10 @@ const QUICK_SUBSCRIPTIONS: Partial<
     subscription: 'Sign in with your xAI account'
   }
 }
+
+const bundledModelCount = new Set(
+  OFFICIAL_VENDORS.flatMap((vendor) => vendor.models.map((model) => model.id))
+).size
 
 const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
   ...OFFICIAL_VENDORS.map((vendor) => ({
@@ -680,12 +684,11 @@ const ProviderStep = ({
         <header className="onboarding-quick-header">
           <div>
             <h1>{t('Bring the AI you already use.')}</h1>
-            <p>{t('Connect an account to start your research in Open-Science.')}</p>
+            <p>{t('Connect your AI account to start researching in Open-Science.')}</p>
             <p className="onboarding-provider-count">
-              {t(
-                '{{providerCount}} provider presets plus custom gateways are available in Open-Science.',
-                { providerCount: OFFICIAL_VENDORS.length }
-              )}
+              {t('Our catalog includes {{modelCount}} chat models.', {
+                modelCount: bundledModelCount
+              })}
             </p>
           </div>
           <div className="onboarding-step-dots" aria-label={t('Step 2 of 3')}>
@@ -789,11 +792,28 @@ const ProviderStep = ({
                         <>
                           {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
                           {card.subscriptionKind === 'codex-subscription' && (
-                            <CodexAuthSelect
-                              value={codexAuthMode}
-                              disabled={isSaving}
-                              onChange={setCodexAuthMode}
-                            />
+                            <div
+                              role="group"
+                              aria-label={t('Codex authentication')}
+                              className="mb-2 grid grid-cols-2 gap-1.5"
+                            >
+                              {(['codex-shared', 'codex-isolated'] as const).map((mode) => (
+                                <Button
+                                  key={mode}
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  aria-pressed={codexAuthMode === mode}
+                                  disabled={isSaving}
+                                  className="h-auto min-w-0 py-1.5 text-xs whitespace-normal aria-pressed:border-primary aria-pressed:bg-primary/15"
+                                  onClick={() => setCodexAuthMode(mode)}
+                                >
+                                  {mode === 'codex-shared'
+                                    ? t('Import existing Codex sign-in')
+                                    : t('Sign in with Open-Science')}
+                                </Button>
+                              ))}
+                            </div>
                           )}
                           {subscriptionAvailable ? (
                             <div className="flex items-center gap-2">
@@ -811,6 +831,7 @@ const ProviderStep = ({
                                 <Button
                                   type="button"
                                   variant="outline"
+                                  className="border-status-warning-foreground/30 bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/90 hover:text-status-warning-foreground dark:border-status-warning-dark-foreground/40 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/90 dark:hover:text-status-warning-dark-foreground"
                                   aria-label={t('Cancel sign-in')}
                                   onClick={() => void cancelQuickAuthorization()}
                                 >
