@@ -6,7 +6,9 @@ import {
 import { resolveProviderOutputLimit } from '../settings/provider-env'
 import { preferredEndpoint } from '../../shared/settings-runtime'
 import { spawn } from 'node:child_process'
-import { isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { resolveBootstrapConfigRoot } from '../storage/config-root'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
@@ -19,12 +21,24 @@ import {
   HARNESS_ACP_ARG,
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
+  HARNESS_OTLP_ENV_FILE,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS_FILE,
   HARNESS_TOOL_LESS,
   harnessConfigSchema
 } from '../harness-acp/config'
 import type { AgentFramework } from './types'
+
+function traceEnvFile(executablePath: string): string | undefined {
+  try {
+    const runtime = runtimeMetadataIfConfigured()
+    return runtime?.packaged
+      ? join(resolveBootstrapConfigRoot(runtime.homePath, true), '.env')
+      : resolve(dirname(executablePath), '../..', '.env')
+  } catch {
+    return undefined
+  }
+}
 
 export const harnessFramework: AgentFramework<'open-science-agent'> = {
   id: 'open-science-agent',
@@ -60,6 +74,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         TEMP: process.env.TEMP,
         TMP: process.env.TMP,
         ...nodeRuntimeEnvironment(),
+        [HARNESS_OTLP_ENV_FILE]: traceEnvFile(input.executablePath),
         [HARNESS_OTLP_TRACES_ENDPOINT]: process.env[HARNESS_OTLP_TRACES_ENDPOINT],
         [HARNESS_OTLP_TRACES_HEADERS_FILE]: process.env[HARNESS_OTLP_TRACES_HEADERS_FILE],
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
