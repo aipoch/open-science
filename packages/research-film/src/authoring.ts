@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import {
   parseResearchVideoScreenplay,
@@ -23,6 +23,7 @@ import {
 } from './script-review.js'
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
+  ResearchFilmDraftError,
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint,
   type ResearchFilmCorrection as Correction
@@ -347,6 +348,16 @@ export async function authorResearchFilmSource(options: {
   return { specPath, title: spec.title, spec, scriptScore }
 }
 
+// The loose screenplay and animations must travel with the standalone player and source bundle.
+const draftFiles = ['output', 'video.json', 'anims'] as const
+async function moveFilmDraft(from: string, to: string): Promise<void> {
+  const entries = await readdir(from)
+  for (const name of draftFiles) {
+    if (name === 'anims' && !entries.includes(name)) continue
+    await rename(join(from, name), join(to, name))
+  }
+}
+
 /** Complete source-to-player pipeline. Storage publication and model leases remain host-owned. */
 export async function generateResearchFilm(
   options: Parameters<typeof authorResearchFilmSource>[0] & {
@@ -384,74 +395,116 @@ export async function generateResearchFilm(
   let visualIssues: FilmVisualIssue[] = []
   let drawSessionApp = false
   const reviewedScripts = new Map<string, string>()
-  for (let pass = 0; ; pass++) {
-    const { specPath, title, spec, scriptScore } = await authorResearchFilmSource({
-      ...options,
-      checkpoint,
-      visualIssues,
-      reviewedScripts,
-      drawSessionApp: drawSessionApp ? (pass === 0 ? 'switch' : 'continue') : undefined,
-      onAnimations: pass ? undefined : options.onAnimations
-    })
-    options.signal.throwIfAborted()
-    if (pass === 0) options.onProgress?.({ phase: 'loading' })
-    const result = await options.generate(
-      {
-        specPath,
-        mode: options.source.provenance.mode,
-        retainNarration: Boolean(options.checkpoint),
-        modelDirectory: options.modelDirectory,
-        engineDirectory: options.engineDirectory,
-        outputDirectory: join(options.directory, 'output'),
-        provenance: {
-          ...options.source.provenance,
-          kind: 'session-source-snapshot',
-          ...(scriptScore !== undefined && { scriptScore }),
-          ...(options.drawnSessionApp && { sessionAppMode: 'drawn' }),
-          modelRevision: options.modelRevision
-        }
-      },
-      options.signal,
-      pass === 0 ? options.onProgress : undefined
-    )
-    const usedSessionApp = Boolean(
-      spec && 'libs' in spec && Array.isArray(spec.libs) && spec.libs.includes('libs/app.js')
-    )
-    if (!review || !spec) return { ...result, title, scriptScore, usedSessionApp }
-    options.onProgress?.({ phase: 'verifying' })
-    visualIssues = await review(options.source, result.playerPath, spec, options.signal)
-    options.signal.throwIfAborted()
-    if (!visualIssues.length) return { ...result, title, scriptScore, usedSessionApp }
-    const useDrawing = usedSessionApp && (visualIssues.some((i) => i.app) || pass >= 3)
-    if (pass >= 3 && !useDrawing)
-      throw new Error(
-        'The HTML film still needs visual repairs. ' +
-          visualIssues
-            .slice(0, 6)
-            .map((issue) => `${issue.scene}: ${issue.message}`)
-            .join(' ')
-      )
-    options.onProgress?.({ phase: 'repairing' })
-    const { shared, scripts } = researchVideoAnimationPlan(spec)
-    reviewedScripts.clear()
-    if (useDrawing) {
-      drawSessionApp = true
-      visualIssues = []
-      pass = -1
-    } else
-      for (const name of [...shared, ...scripts])
-        reviewedScripts.set(
-          name,
-          await readFile(join(options.directory, name), {
-            encoding: 'utf8',
-            signal: options.signal
-          })
-        )
-
-    // These are private staging files. Narration and authoring checkpoints survive rebuilding.
-    for (const name of ['output', 'video.json', 'anims']) {
-      options.signal.throwIfAborted()
+  const bestDirectory = join(options.directory, 'best-layout')
+  let best:
+    { defects: number; result: Awaited<ReturnType<typeof generateResearchFilm>> } | undefined
+  let ownsBestDirectory = false
+  const restoreBest = async (
+    result: Awaited<ReturnType<typeof generateResearchFilm>>
+  ): Promise<typeof result> => {
+    for (const name of draftFiles)
       await rm(join(options.directory, name), { recursive: true, force: true })
+    await moveFilmDraft(bestDirectory, options.directory)
+    options.signal.throwIfAborted()
+    return result
+  }
+  let textRepairs = 0
+  try {
+    for (let pass = 0; ; pass++) {
+      const { specPath, title, spec, scriptScore } = await authorResearchFilmSource({
+        ...options,
+        checkpoint,
+        visualIssues,
+        reviewedScripts,
+        drawSessionApp: drawSessionApp ? (pass === 0 ? 'switch' : 'continue') : undefined,
+        onAnimations: pass ? undefined : options.onAnimations
+      })
+      options.signal.throwIfAborted()
+      if (pass === 0) options.onProgress?.({ phase: 'loading' })
+      const result = await options.generate(
+        {
+          specPath,
+          mode: options.source.provenance.mode,
+          retainNarration: Boolean(options.checkpoint),
+          modelDirectory: options.modelDirectory,
+          engineDirectory: options.engineDirectory,
+          outputDirectory: join(options.directory, 'output'),
+          provenance: {
+            ...options.source.provenance,
+            kind: 'session-source-snapshot',
+            ...(scriptScore !== undefined && { scriptScore }),
+            ...(options.drawnSessionApp && { sessionAppMode: 'drawn' }),
+            modelRevision: options.modelRevision
+          }
+        },
+        options.signal,
+        pass === 0 ? options.onProgress : undefined
+      )
+      const usedSessionApp = Boolean(
+        spec && 'libs' in spec && Array.isArray(spec.libs) && spec.libs.includes('libs/app.js')
+      )
+      const candidate = { ...result, title, scriptScore, usedSessionApp }
+      if (!review || !spec) return candidate
+      options.onProgress?.({ phase: 'verifying' })
+      visualIssues = await review(options.source, result.playerPath, spec, options.signal)
+      options.signal.throwIfAborted()
+      if (!visualIssues.length) return candidate
+      const textOnly = visualIssues.every((issue) => issue.textLayout && !issue.app)
+      const better = textOnly && (!best || visualIssues.length < best.defects)
+      if (textOnly && textRepairs >= 3) {
+        if (better || !best) return candidate
+        return await restoreBest(best.result)
+      }
+      if (textOnly) textRepairs++
+      const useDrawing =
+        usedSessionApp && (visualIssues.some((i) => i.app) || (!textOnly && pass >= 3))
+      if (pass >= 3 && !textOnly && !useDrawing)
+        throw new Error(
+          'The HTML film still needs visual repairs. ' +
+            visualIssues
+              .slice(0, 6)
+              .map((issue) => `${issue.scene}: ${issue.message}`)
+              .join(' ')
+        )
+      options.onProgress?.({ phase: 'repairing' })
+      const { shared, scripts } = researchVideoAnimationPlan(spec)
+      reviewedScripts.clear()
+      if (useDrawing) {
+        drawSessionApp = true
+        visualIssues = []
+        pass = -1
+      } else
+        for (const name of [...shared, ...scripts])
+          reviewedScripts.set(
+            name,
+            await readFile(join(options.directory, name), {
+              encoding: 'utf8',
+              signal: options.signal
+            })
+          )
+
+      // These are private staging files. Narration and authoring checkpoints survive rebuilding.
+      if (better) {
+        if (!ownsBestDirectory) {
+          await mkdir(bestDirectory)
+          ownsBestDirectory = true
+        } else {
+          for (const name of draftFiles)
+            await rm(join(bestDirectory, name), { recursive: true, force: true })
+        }
+        await moveFilmDraft(options.directory, bestDirectory)
+        best = { defects: visualIssues.length, result: candidate }
+        continue
+      }
+      for (const name of draftFiles) {
+        options.signal.throwIfAborted()
+        await rm(join(options.directory, name), { recursive: true, force: true })
+      }
     }
+  } catch (error) {
+    if (!best || !(error instanceof ResearchFilmDraftError) || options.signal.aborted) throw error
+    return await restoreBest(best.result)
+  } finally {
+    if (ownsBestDirectory) await rm(bestDirectory, { recursive: true, force: true })
   }
 }

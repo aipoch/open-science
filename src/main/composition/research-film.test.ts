@@ -374,7 +374,7 @@ it.each(outcomes)(
         const realTimeout = AbortSignal.timeout
         const timeout = vi
           .spyOn(AbortSignal, 'timeout')
-          .mockImplementation((ms) => (ms === 300_000 ? deadline.signal : realTimeout(ms)))
+          .mockImplementation((ms) => (ms === 10 * 60_000 ? deadline.signal : realTimeout(ms)))
         mocks.run.mockImplementation(
           ({ signal }: { signal: AbortSignal }) =>
             new Promise((_, reject) => {
@@ -670,7 +670,7 @@ it.each([
   const timeout = vi
     .spyOn(AbortSignal, 'timeout')
     .mockImplementation((ms) =>
-      scenario === 'deadline' && ms === 300_000 && mocks.run.mock.calls.length === 0
+      scenario === 'deadline' && ms === 10 * 60_000 && mocks.run.mock.calls.length === 0
         ? deadline.signal
         : realTimeout(ms)
     )

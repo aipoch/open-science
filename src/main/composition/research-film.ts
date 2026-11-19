@@ -16,6 +16,7 @@ import {
   createVideoExportTools,
   researchFilmResources,
   ResearchFilmOutputLimitError,
+  ResearchFilmDraftError,
   ResearchFilmIncompleteError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
@@ -254,7 +255,7 @@ export async function composeResearchFilm({
       }
       try {
         filmLog.info('film model request', fields)
-        const modelDeadline = AbortSignal.timeout(300_000)
+        const modelDeadline = AbortSignal.timeout(10 * 60_000)
         const inferenceSignal = AbortSignal.any([signal, modelDeadline])
         const response = await Promise.resolve()
           .then(() =>
@@ -309,7 +310,10 @@ export async function composeResearchFilm({
                 signal
               )
             signal.throwIfAborted()
-            if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
+            if (timedOut)
+              throw new ResearchFilmDraftError(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, {
+                cause: error
+              })
             throw error
           })
         filmLog.info('film model response', {
@@ -358,6 +362,7 @@ export async function composeResearchFilm({
         return response.text
       } catch (error) {
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && error instanceof ResearchFilmDraftError) return ''
         const used = automaticRetries.get(source) ?? 0
         if (!retryable || attempt >= 1 || used >= 2) throw error
         // Reserve synchronously: parallel animation lanes share one allowance.
@@ -493,8 +498,7 @@ export async function composeResearchFilm({
       const { issues } = await check({ htmlPath, includeFrames: false }, signal)
       signal.throwIfAborted()
       filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
-      // A failed session app has a drawing fallback. Layout observations are advisory.
-      return issues.filter((issue) => issue.app)
+      return issues.filter((issue) => issue.app || issue.textLayout)
     },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,

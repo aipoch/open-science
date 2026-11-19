@@ -66,6 +66,7 @@ it('checks canvas content independently of its panel and requires a visible end 
     {
       scene: 'result',
       script: 'anims/result.js',
+      textLayout: true,
       message: expect.stringContaining('FINISH / Intermediate visits')
     }
   ])

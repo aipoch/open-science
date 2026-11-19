@@ -100,6 +100,56 @@ it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML b
     await rm(directory, { recursive: true, force: true })
   }
 })
+it.each([false, true])(
+  'publishes the earliest least-defective draft after text repairs (invalid last revision: %s)',
+  async (invalidRevision) => {
+    const directory = await mkdtemp(join(tmpdir(), 'film-best-layout-'))
+    const counts = [5, 2, 2, 4]
+    let pass = 0
+    try {
+      const result = await generateResearchFilm({
+        source,
+        directory,
+        author: {
+          writeScreenplay: async () => JSON.stringify(spec),
+          writeAnimation: async () =>
+            invalidRevision && pass === 3 ? 'function (' : '// draft ' + (pass + 1)
+        },
+        generate: async ({ outputDirectory }) => {
+          ++pass
+          await mkdir(outputDirectory)
+          const playerPath = join(outputDirectory, 'player.html'),
+            sourcePath = join(outputDirectory, 'sources.zip')
+          await writeFile(playerPath, 'player ' + pass)
+          await writeFile(sourcePath, 'sources ' + pass)
+          return { playerPath, sourcePath, duration: pass, preparationMs: 1 }
+        },
+        reviewPlayer: async () =>
+          Array.from({ length: counts[pass - 1] }, (_, i) => ({
+            scene: 'hook',
+            script: 'anims/hook.js',
+            textLayout: true,
+            message: 'Overlapping label ' + i
+          })),
+        signal: new AbortController().signal,
+        modelDirectory: 'model',
+        modelRevision: 'v',
+        engineDirectory: 'engine'
+      })
+      expect(pass).toBe(invalidRevision ? 3 : 4)
+      expect(result.duration).toBe(2)
+      expect(await readFile(result.playerPath, 'utf8')).toBe('player 2')
+      expect(await readFile(result.sourcePath, 'utf8')).toBe('sources 2')
+      expect(await readFile(join(directory, 'anims/hook.js'), 'utf8')).toBe('// draft 2')
+      await expect(readFile(join(directory, 'best-layout/video.json'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 it('replaces a failed session app with a drawing and rechecks later repairs', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'film-app-fallback-'))
   try {

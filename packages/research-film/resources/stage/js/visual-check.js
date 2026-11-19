@@ -4,11 +4,16 @@ window.__checkFilm = () => {
   const issues = window.__checkCaptions().slice(0, 32)
   const frames = []
   const seen = new Set()
-  function report(scene, message, script) {
-    const key = JSON.stringify([scene, script, message])
+  function report(scene, message, script, textLayout = false) {
+    const key = JSON.stringify([scene, script, message, textLayout])
     if (seen.has(key) || issues.length >= 64) return
     seen.add(key)
-    issues.push({ scene, ...(script ? { script } : {}), message: message.slice(0, 500) })
+    issues.push({
+      scene,
+      ...(textLayout && { textLayout: true }),
+      ...(script ? { script } : {}),
+      message: message.slice(0, 500)
+    })
   }
   const overlap = (a, b) =>
     Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]) > 6 &&
@@ -58,11 +63,16 @@ window.__checkFilm = () => {
         if (x < 24 || y < 24 || x + w > W - 24 || y + h > H - 24)
           report(scene.id, box.id + ' extends outside the safe area.')
         for (const text of box.overflow)
-          report(scene.id, box.id + ' clips the text "' + text + '".')
+          report(scene.id, box.id + ' clips the text "' + text + '".', undefined, true)
         for (const [j, other] of boxes.entries()) {
           if (i === j || (other.id.startsWith('panel:') && j < i)) continue
           if (overlap(box.rect, other.rect))
-            report(scene.id, box.id + ' overlaps ' + other.id + '.')
+            report(
+              scene.id,
+              box.id + ' overlaps ' + other.id + '.',
+              undefined,
+              window.__filmTextOverlaps(box.id, other.id)
+            )
         }
       }
       for (const a of animations) {
@@ -85,13 +95,15 @@ window.__checkFilm = () => {
             's into the scene: ' +
             hit.key +
             '. Move them into separate areas.',
-          script
+          script,
+          true
         )
       for (const hit of a.diag.outside)
         report(
           scene.id,
           hit.what + ' is ' + hit.by + ' px outside the canvas at ' + hit.t + 's into the scene.',
-          script
+          script,
+          hit.what.startsWith('text "') || hit.what === '<text>'
         )
       for (const hit of a.diag.cardSpill)
         report(
@@ -103,7 +115,8 @@ window.__checkFilm = () => {
             ' px past its card at ' +
             hit.t +
             's. Resize the card or use k.readoutCard.',
-          script
+          script,
+          true
         )
       if (!ink.has(a) && !a.diag.errors.length)
         report(scene.id, 'The animation draws nothing while its panel is visible.', script)
