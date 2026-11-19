@@ -9,7 +9,8 @@ import type { NotebookRunRecord } from '../../shared/notebook'
 import {
   NotebookRunRepository,
   NotebookRunSubmissionConflictError,
-  getNotebookSessionRoot
+  getNotebookSessionRoot,
+  getNotebookRunJsonPath
 } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 import { getNotebookInputRoot } from './input-staging'
@@ -283,96 +284,127 @@ describe('notebook run repository', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('counts and exports both root aliases without including a child or rewriting provenance', async () => {
-    const repository = new NotebookRunRepository(await createStorageRoot())
-    const projectId = 'default-project'
-    const sessionId = 'canonical-session'
-    const provisionalRoot = 'root-frame-pending-session'
-    const canonicalRoot = `root-frame-${sessionId}`
-    const records = [
-      { id: 'manual', frame: canonicalRoot, root: canonicalRoot },
-      { id: 'agent', frame: provisionalRoot, root: provisionalRoot },
-      { id: 'child', frame: 'child-frame', root: provisionalRoot }
-    ]
-    for (const [index, record] of records.entries()) {
-      const lane =
-        record.id === 'child'
-          ? createFrameNotebookLane(projectId, sessionId, record.frame)
-          : createRootNotebookLane(projectId, sessionId, record.frame)
-      await repository.loadOrCreate({ projectId, sessionId, workspaceCwd: '/workspace', lane })
-      await repository.appendRun({
-        projectId,
-        sessionId,
-        lane,
-        run: admittedRun({
-          runId: record.id,
-          cellId: record.id,
-          submissionIdentity: undefined,
-          submissionFingerprint: undefined,
-          startedAt: index,
-          status: 'completed',
-          script: `print("${record.id}")`,
-          rootFrameId: record.root,
-          agentFrameId: record.frame,
-          messageBranchId: `branch-${index}`,
-          environment: index === 1 ? 'analysis' : 'default-python'
+  it.each([false, true])(
+    'counts and exports root aliases without rewriting provenance (missing root: %s)',
+    async (missingRoot) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const projectId = 'default-project'
+      const sessionId = 'canonical-session'
+      const provisionalRoot = 'provisional-owner'
+      const canonicalRoot = `root-frame-${sessionId}`
+      const records = [
+        { id: 'manual', frame: canonicalRoot, root: 'explicit-root-owner' },
+        { id: 'agent', frame: provisionalRoot, root: missingRoot ? undefined : provisionalRoot },
+        {
+          id: 'child',
+          frame: 'root-frame-unrelated-delegate',
+          root: missingRoot ? undefined : provisionalRoot
+        }
+      ]
+      for (const [index, record] of records.entries()) {
+        const lane =
+          record.id === 'child'
+            ? createFrameNotebookLane(projectId, sessionId, record.frame)
+            : createRootNotebookLane(projectId, sessionId, record.frame)
+        await repository.loadOrCreate({ projectId, sessionId, workspaceCwd: '/workspace', lane })
+        await repository.appendRun({
+          projectId,
+          sessionId,
+          lane,
+          run: admittedRun({
+            runId: record.id,
+            cellId: record.id,
+            submissionIdentity: undefined,
+            submissionFingerprint: undefined,
+            startedAt: index,
+            status: 'completed',
+            script: `print("${record.id}")`,
+            rootFrameId: record.root,
+            agentFrameId: record.frame,
+            messageBranchId: `branch-${index}`,
+            environment: index === 1 ? 'analysis' : 'default-python'
+          })
         })
-      })
-    }
-    const exporter = new NotebookExportReader({ repository, defaultProjectId: projectId })
-    for (const frameId of [provisionalRoot, canonicalRoot, 'child-frame']) {
-      const expectedIds = frameId === 'child-frame' ? ['child'] : ['manual', 'agent']
-      const window = await repository.readSessionRunWindow(projectId, sessionId, 1, [], frameId)
-      expect(window.agentSummaries).toEqual([
+      }
+      const stored = await repository.readSessionDocuments(projectId, sessionId)
+      const runPath = getNotebookRunJsonPath(root, projectId, sessionId)
+      const storedBytes = await readFile(runPath, 'utf8')
+      const exporter = new NotebookExportReader({ repository, defaultProjectId: projectId })
+      for (const frameId of [provisionalRoot, canonicalRoot, 'root-frame-unrelated-delegate']) {
+        const expectedIds =
+          frameId === 'root-frame-unrelated-delegate' ? ['child'] : ['manual', 'agent']
+        const window = await repository.readSessionRunWindow(projectId, sessionId, 1, [], frameId)
+        expect(window.agentSummaries).toEqual([
+          {
+            agentFrameId: canonicalRoot,
+            isRoot: true,
+            runCount: 2,
+            views: [
+              { kernelKind: 'python', environment: 'analysis', runCount: 1, latestRunId: 'agent' },
+              {
+                kernelKind: 'python',
+                environment: 'default-python',
+                runCount: 1,
+                latestRunId: 'manual'
+              }
+            ]
+          },
+          {
+            agentFrameId: 'root-frame-unrelated-delegate',
+            isRoot: false,
+            runCount: 1,
+            views: [
+              {
+                kernelKind: 'python',
+                environment: 'default-python',
+                runCount: 1,
+                latestRunId: 'child'
+              }
+            ]
+          }
+        ])
+        expect(window.historySummary).toMatchObject({
+          agentFrameId: frameId,
+          runCount: expectedIds.length,
+          kernelCounts: { python: expectedIds.length }
+        })
+        const exported = await exporter.readKernel({
+          projectId,
+          sessionId,
+          workspaceCwd: '/workspace',
+          kernel: 'python',
+          agentFrameFilter: frameId
+        })
+        const notebook = JSON.parse(exported.data) as { cells: { source: string[] }[] }
+        expect(notebook.cells.map((cell) => cell.source.join(''))).toEqual(
+          expectedIds.map((id) => `print("${id}")`)
+        )
+      }
+      expect(
+        await new NotebookRunRepository(root).readSessionDocuments(projectId, sessionId)
+      ).toEqual(stored)
+      expect(await readFile(runPath, 'utf8')).toBe(storedBytes)
+      const targeted = await repository.readSessionRunWindow(projectId, sessionId, 0, [
+        'agent',
+        'child'
+      ])
+      expect(targeted.runs).toMatchObject([
+        { runId: 'agent', agentFrameId: provisionalRoot, rootFrameId: provisionalRoot },
         {
-          agentFrameId: canonicalRoot,
-          isRoot: true,
-          runCount: 2,
-          views: [
-            { kernelKind: 'python', environment: 'analysis', runCount: 1, latestRunId: 'agent' },
-            {
-              kernelKind: 'python',
-              environment: 'default-python',
-              runCount: 1,
-              latestRunId: 'manual'
-            }
-          ]
-        },
-        {
-          agentFrameId: 'child-frame',
-          isRoot: false,
-          runCount: 1,
-          views: [
-            {
-              kernelKind: 'python',
-              environment: 'default-python',
-              runCount: 1,
-              latestRunId: 'child'
-            }
-          ]
+          runId: 'child',
+          agentFrameId: 'root-frame-unrelated-delegate',
+          rootFrameId: missingRoot ? undefined : provisionalRoot
         }
       ])
-      expect(window.historySummary).toMatchObject({
-        agentFrameId: frameId,
-        runCount: expectedIds.length,
-        kernelCounts: { python: expectedIds.length }
-      })
-      const exported = await exporter.readKernel({
-        projectId,
-        sessionId,
-        workspaceCwd: '/workspace',
-        kernel: 'python',
-        agentFrameFilter: frameId
-      })
-      const notebook = JSON.parse(exported.data) as { cells: { source: string[] }[] }
-      expect(notebook.cells.map((cell) => cell.source.join(''))).toEqual(
-        expectedIds.map((id) => `print("${id}")`)
+      expect((await repository.readSessionRuns(projectId, sessionId))[0].rootFrameId).toBe(
+        'explicit-root-owner'
       )
+      expect(
+        (await repository.readSessionRuns(projectId, sessionId)).map((run) => run.agentFrameId)
+      ).toEqual(records.map((record) => record.frame))
     }
-    expect(
-      (await repository.readSessionRuns(projectId, sessionId)).map((run) => run.agentFrameId)
-    ).toEqual(records.map((record) => record.frame))
-  })
+  )
 
   it('atomically returns the canonical Run for a repeated submission', async () => {
     const root = await createStorageRoot()

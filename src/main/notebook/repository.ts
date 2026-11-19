@@ -1430,10 +1430,33 @@ class NotebookRunRepository {
     return documents
   }
 
+  // History views may infer a missing root identity from the physical root document. Its path
+  // is normalized from the requested lane, not trusted from disk. Leave raw provenance readers,
+  // explicit identities and child documents unchanged, and never mutate cached records.
+  private historyRuns(
+    document: NotebookRunDocument,
+    projectId: string,
+    sessionId: string
+  ): NotebookRunRecord[] {
+    if (
+      document.notebookSessionRoot !==
+      getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
+    ) {
+      return document.runs
+    }
+    return document.runs.map((run) =>
+      run.agentFrameId &&
+      run.agentFrameId !== `root-frame-${sessionId}` &&
+      run.rootFrameId === undefined
+        ? { ...run, rootFrameId: run.agentFrameId }
+        : run
+    )
+  }
+
   async readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]> {
     const documents = await this.readSessionDocuments(projectId, sessionId)
     return documents
-      .flatMap((document) => document.runs)
+      .flatMap((document) => this.historyRuns(document, projectId, sessionId))
       .sort(
         (left, right) => left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
       )
@@ -1454,7 +1477,10 @@ class NotebookRunRepository {
     agentSummaries: NotebookAgentSummary[]
     historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
   }> {
-    const documents = await this.readSessionDocuments(projectId, sessionId)
+    const documents = (await this.readSessionDocuments(projectId, sessionId)).map((document) => ({
+      ...document,
+      runs: this.historyRuns(document, projectId, sessionId)
+    }))
     const runs: NotebookRunRecord[] = []
     const requestedRunIds = new Set(includeRunIds)
     const requestedRuns = new Map<string, NotebookRunRecord>()
