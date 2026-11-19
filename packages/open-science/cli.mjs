@@ -10,6 +10,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -51,7 +52,7 @@ Commands:
   stop --force  Stop the local service even with an App connected; running tasks may be interrupted
   status      Show local service status, App sessions, and persistent running
   url         Print the authenticated web URL
-  mcp         Serve research tools over MCP stdio (--config-root <path> or --profile <path>)
+  mcp         Start or reuse the local service and serve research tools over MCP stdio (--profile <path>)
   doctor --json  Inspect headless readiness
   runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
@@ -1022,6 +1023,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       return { state, started: false }
     }
   }
+  options.signal?.throwIfAborted()
   if (options.appPath)
     throw new CliUsageError(
       '--app-path is no longer used for Node startup. Install the standalone backend package.'
@@ -1038,6 +1040,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const childEnv = {
     ...process.env,
     OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT: '1',
+    OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4',
     OPEN_SCIENCE_WEB_PORT: String(port)
   }
   // A computed default is not an override: injecting it would make the backend select
@@ -1061,10 +1064,14 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const startupTimeoutMs = options.timeoutMs ?? START_TIMEOUT_MS
   try {
     installationLease = protectInstallationStartup(backend.entry, configRoot)
-    capture = await startLaunchLogReader(backend.command, logFd)
+    capture = await startLaunchLogReader(backend.command, logFd, {
+      entryPath: backend.entry,
+      packaged: !backend.development
+    })
+    options.signal?.throwIfAborted()
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
-      stdio: ['ignore', capture.input, capture.input],
+      stdio: ['ignore', capture.input, capture.input, 'ignore', capture.control],
       windowsHide: true,
       env: childEnv
     })
@@ -1072,10 +1079,12 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs)
     child.unref()
     capture.input.destroy()
+    capture.control.destroy()
 
     startup = await startupPromise
   } finally {
     capture?.input.destroy()
+    capture?.control.destroy()
     closeSync(logFd)
     installationLease?.release()
   }
@@ -2494,7 +2503,26 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'mcp') {
     const { runResearchMcpServer } = await import('./mcp.mjs')
     const { version } = await readCliMetadata()
-    await runResearchMcpServer({ configRoot: options.configRoot, version })
+    await runResearchMcpServer({
+      version,
+      startService: async (signal) => {
+        // stdout belongs to the MCP transport. The persistent service has its own startup log.
+        const { state } = await startCommand(
+          { configRoot: options.configRoot, open: false, signal },
+          {
+            ...DEFAULT_DEPS,
+            log: () => {},
+            sleep: (ms) => delay(ms, undefined, { signal }),
+            fetch: (url, init) =>
+              fetch(url, {
+                ...init,
+                signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
+              })
+          }
+        )
+        return state.configRoot
+      }
+    })
   } else if (command === 'init') await initCommand(options)
   else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)

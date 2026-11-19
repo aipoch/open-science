@@ -17,6 +17,8 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
   const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-'))
   cleanup.push(() => rm(profile, { recursive: true, force: true }))
   const requests: Array<{ url: string; method: string; body: unknown }> = []
+  const startupRequested = Promise.withResolvers<void>()
+  const allowStartup = Promise.withResolvers<void>()
   const token = 'mcp-fixture-secret'
   const run = { id: 'r1', sessionId: 's1', projectId: 'p1', status: 'running' }
   const http = createServer(async (req, res) => {
@@ -29,6 +31,8 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
     requests.push({ url: req.url!, method: req.method!, body: body ? JSON.parse(body) : undefined })
     res.setHeader('content-type', 'application/json')
     if (req.url === '/api/bootstrap') {
+      startupRequested.resolve()
+      await allowStartup.promise
       res.end('{}')
       return
     }
@@ -55,13 +59,28 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
   })
   const client = new Client({ name: 'external-agent', version: '1.0.0' })
   cleanup.push(() => client.close())
+  cleanup.push(async () => allowStartup.resolve())
   let stderr = ''
   transport.stderr?.on('data', (data) => {
     stderr += data.toString()
   })
   await client.connect(transport)
+  // Initialization starts the service before any tool call; discovery stays usable meanwhile.
+  await startupRequested.promise
   expect((await client.listTools()).tools).toHaveLength(27)
-  expect(requests).toHaveLength(0)
+  const ownerPath = join(profile, 'runtime-owner.json')
+  await writeFile(ownerPath, '{}')
+  allowStartup.resolve()
+  const blocked = await client.callTool({
+    name: 'start_run',
+    arguments: { projectId: 'p1', prompt: 'Research' }
+  })
+  expect(blocked.isError).toBe(true)
+  expect(blocked.content).toEqual([
+    { type: 'text', text: expect.stringContaining('startup_unconfirmed') }
+  ])
+  expect(requests.some((request) => request.method === 'POST')).toBe(false)
+  await rm(ownerPath)
   const started = await client.callTool({
     name: 'start_run',
     arguments: { projectId: 'p1', prompt: 'Research' }
@@ -89,9 +108,32 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
 it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
   'terminates on %s without writing non-protocol stdout',
   async (event) => {
-    const child = spawn(process.execPath, [resolve('packages/open-science/cli.mjs'), 'mcp'], {
-      stdio: 'pipe'
+    const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-exit-'))
+    cleanup.push(() => rm(profile, { recursive: true, force: true }))
+    const probing = Promise.withResolvers<void>()
+    const owner = createServer(() => probing.resolve()) // Hold the owner probe open until disconnect.
+    owner.listen(0, '127.0.0.1')
+    await once(owner, 'listening')
+    cleanup.push(async () => {
+      owner.closeAllConnections()
+      await new Promise<void>((done) => owner.close(() => done()))
     })
+    await writeFile(join(profile, 'web-token'), 'test')
+    await writeFile(
+      join(profile, 'runtime-owner.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: process.pid,
+        port: (owner.address() as { port: number }).port,
+        host: 'node',
+        generation: 'mcp-exit'
+      })
+    )
+    const child = spawn(
+      process.execPath,
+      [resolve('packages/open-science/cli.mjs'), 'mcp', '--profile', profile],
+      { stdio: 'pipe' }
+    )
     cleanup.push(async () => {
       if (child.exitCode === null) child.kill()
     })
@@ -99,7 +141,6 @@ it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
     child.stdout.on('data', (data) => {
       output += data.toString()
     })
-    const exited = once(child, 'exit')
     child.stdin.write(
       JSON.stringify({
         jsonrpc: '2.0',
@@ -114,6 +155,10 @@ it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
     )
     await once(child.stdout, 'data')
     expect(JSON.parse(output).result.serverInfo.name).toBe('open-science')
+    child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+    await probing.promise
+    // The owner probe normally waits five seconds. Closing the adapter must interrupt it.
+    const exited = once(child, 'exit', { signal: AbortSignal.timeout(3000) })
     if (event === 'EOF') child.stdin.end()
     else child.kill(event)
     const [code, signal] = await exited

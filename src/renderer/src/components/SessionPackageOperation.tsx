@@ -1,3 +1,4 @@
+import { PackageWebOmissions } from './PackageWebOmissions'
 import { importSessionPackage } from '@/lib/session-package-import'
 import {
   packageOperationPresentation,
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  Copy,
   Info,
   LoaderCircle,
   PackageOpen,
@@ -60,11 +62,18 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useOrgCaseStore } from '@/stores/org-cases-store'
 import { createSessionReplayItem } from '@/pages/workspace/workspace-session-actions'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
+
+const packageErrorText = (error: string | undefined, t: TFunction): string | undefined =>
+  error === 'Required Web execution evidence cannot be shared under the current data policy.'
+    ? t('Required Web execution evidence cannot be shared under the current data policy.')
+    : error
 
 const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
   const identity = operation.result?.imported
@@ -113,6 +122,7 @@ const operationStatus = (
         validating: t('Validating package…'),
         compressing: t('Compressing package…'),
         saving: t('Saving package…'),
+        uploading: t('Uploading package…'),
         importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
         'choosing-location': t('Waiting for a save location…'),
         confirming: t('Waiting for import confirmation…'),
@@ -138,7 +148,9 @@ const operationStatus = (
           ? t('Fork completed')
           : operation.kind === 'import'
             ? t('Session imported')
-            : t('Session package exported')
+            : operation.result?.uploadedCase
+              ? t('Session package uploaded')
+              : t('Session package exported')
       : operation.state === 'failed'
         ? operation.kind === 'fork'
           ? t('Fork failed')
@@ -581,16 +593,29 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     useCaseSlug,
     browserReceipt,
     open,
+    orgCaseDraft,
+    retryOrgCaseUpload,
+    setOrgCaseDraft,
     receive,
     setOpen,
     dismiss: dismissLocal
   } = usePackageOperationStore()
+  const lab = useSettingsStore((state) => state.lab)
   const awayFromHome = useNavigationStore((state) => state.view !== 'home')
   const currentProjectId = useNavigationStore((state) => state.activeProjectId)
   const operation = packageOperationPresentation(
     sourceOperation,
     browserReceipt,
     awayFromHome || open
+  )
+  const fallbackSessionTitle = useSessionStore((state) =>
+    operation?.session
+      ? state.sessions.find(
+          (item) =>
+            item.id === operation.session?.sessionId &&
+            item.projectId === operation.session?.projectId
+        )?.title
+      : undefined
   )
   const destinationName = useProjectStore(
     (state) =>
@@ -603,10 +628,35 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
   const retryPending = useRef(false)
+  const [copiedUploadOperationId, setCopiedUploadOperationId] = useState<string>()
+  const copyTimerRef = useRef<number | null>(null)
   const [riskAcceptedFor, setRiskAcceptedFor] = useState<string>()
   if (riskAcceptedFor && (!open || riskAcceptedFor !== operation?.id)) setRiskAcceptedFor(undefined)
   const titleRef = useRef<HTMLHeadingElement>(null)
   const navigationIntent = useRef<{ operationId: string; revision: number } | undefined>(undefined)
+  const refreshedUploadId = useRef<string | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    },
+    []
+  )
+  useEffect(() => {
+    if (
+      sourceOperation?.kind !== 'export' ||
+      sourceOperation.state !== 'succeeded' ||
+      !sourceOperation.result?.uploadedCase ||
+      refreshedUploadId.current === sourceOperation.id
+    )
+      return
+    refreshedUploadId.current = sourceOperation.id
+    if (
+      useSettingsStore.getState().lab?.state === 'authenticated' &&
+      typeof window.api?.sessions?.orgCasesList === 'function'
+    ) {
+      void useOrgCaseStore.getState().loadCases({ page: 1 })
+    }
+  }, [sourceOperation])
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
   // Only remote Web loses the dialog: local Web and Electron both own these operations.
   const isRemoteWeb =
@@ -677,6 +727,55 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     Boolean(operation.session && operation.sensitiveContent?.length) &&
     !operation.cleanupPending &&
     !operation.result?.recovery
+  const canUploadToOrg =
+    lab?.state === 'authenticated' && !isRemoteWeb && !operation.browserReceiptOnly
+  const copiedUploadCode = copiedUploadOperationId === operation.id
+  const copyUploadCode = (code: string): void => {
+    const targetOperationId = operation.id
+    const markCopied = (): void => {
+      setCopiedUploadOperationId(targetOperationId)
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => {
+        copyTimerRef.current = null
+        setCopiedUploadOperationId((current) =>
+          current === targetOperationId ? undefined : current
+        )
+      }, 1500)
+    }
+    const copyViaTextarea = (): void => {
+      const area = document.createElement('textarea')
+      area.value = code
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const copied = document.execCommand('copy')
+      document.body.removeChild(area)
+      if (!copied) throw new Error('copy failed')
+    }
+    const writeText = navigator.clipboard?.writeText
+    if (writeText) {
+      void writeText
+        .call(navigator.clipboard, code)
+        .then(markCopied)
+        .catch(() => {
+          try {
+            copyViaTextarea()
+            markCopied()
+          } catch {
+            // Ignore clipboard errors when copy is unavailable.
+          }
+        })
+      return
+    }
+    try {
+      copyViaTextarea()
+      markCopied()
+    } catch {
+      // Ignore clipboard errors when copy is unavailable.
+    }
+  }
   const selecting = operation.state === 'awaiting-selection'
   const OperationIcon =
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
@@ -901,7 +1000,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             />
           ))}
           {operation.browserReceiptOnly && error ? (
-            <ErrorNotice inline role="alert" tone="amber" description={error} />
+            <ErrorNotice
+              inline
+              role="alert"
+              tone="amber"
+              description={packageErrorText(error, t)}
+            />
           ) : null}
         </div>
       ) : null}
@@ -1049,10 +1153,61 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               </div>
                             </div>
                             <PackageProgressMeter operation={operation} />
+                            {operation.state === 'succeeded' ? (
+                              <PackageWebOmissions
+                                omissions={
+                                  operation.result?.webOmissions ??
+                                  operation.summary?.webOmissions ??
+                                  operation.importPreview?.webOmissions
+                                }
+                              />
+                            ) : null}
                             {operation.state === 'succeeded' && operation.result?.filePath ? (
                               <p className="break-all text-sm text-muted-foreground">
                                 {operation.result.filePath}
                               </p>
+                            ) : null}
+                            {operation.state === 'succeeded' && operation.result?.uploadedCase ? (
+                              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3">
+                                <div className="min-w-0 flex-1 space-y-0.5">
+                                  <p className="text-xs text-muted-foreground">
+                                    {t('Organization case')}
+                                  </p>
+                                  <p className="break-words text-sm font-medium text-foreground">
+                                    {operation.result.uploadedCase.name}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1">
+                                  <span className="text-xs text-muted-foreground">
+                                    {t('Share code')}
+                                  </span>
+                                  <code
+                                    data-testid="uploaded-org-case-code"
+                                    className="font-mono text-sm font-semibold tracking-wider text-foreground"
+                                  >
+                                    {operation.result.uploadedCase.code}
+                                  </code>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={t('Copy share code')}
+                                    title={copiedUploadCode ? t('Copied') : t('Copy share code')}
+                                    onClick={() =>
+                                      copyUploadCode(operation.result!.uploadedCase!.code)
+                                    }
+                                  >
+                                    {copiedUploadCode ? (
+                                      <Check
+                                        className="size-3.5 text-status-success-foreground dark:text-status-success-dark-foreground"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <Copy className="size-3.5" aria-hidden="true" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
                             ) : null}
                             {operation.state === 'succeeded' &&
                             operation.kind === 'import' &&
@@ -1072,7 +1227,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               className="min-w-0 flex-1 basis-64"
                               role="alert"
                               tone="amber"
-                              description={error ?? operation.error}
+                              description={packageErrorText(error ?? operation.error, t)}
                             />
                             {operation.state === 'failed' ? (
                               <details className="min-w-0 pt-0.5 text-xs text-muted-foreground open:basis-full">
@@ -1165,6 +1320,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   key={operation.id}
                   files={operation.files ?? []}
                   summary={operation.summary}
+                  defaultTitle={operation.sessionTitle ?? fallbackSessionTitle}
+                  canUploadToOrg={canUploadToOrg}
+                  initialOrgCase={orgCaseDraft}
+                  openOrgCaseByDefault={retryOrgCaseUpload}
                   notice={
                     <>
                       {notices}
@@ -1173,21 +1332,32 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                           inline
                           role="alert"
                           tone="amber"
-                          description={error ?? operation.error}
+                          description={packageErrorText(error ?? operation.error, t)}
                         />
                       ) : null}
                     </>
                   }
                   onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                  onSelect={(excludedStorageKeys, includePdfNotes, includeResearchFilms) =>
+                  onSelect={(
+                    excludedStorageKeys,
+                    includePdfNotes,
+                    includeResearchFilms,
+                    uploadTarget
+                  ) => {
+                    setOrgCaseDraft(
+                      uploadTarget
+                        ? { name: uploadTarget.name, description: uploadTarget.description }
+                        : null
+                    )
                     void respond({
                       action: 'select',
                       operationId: operation.id,
                       excludedStorageKeys,
                       includePdfNotes,
-                      ...(includeResearchFilms ? { includeResearchFilms: true } : {})
+                      ...(includeResearchFilms ? { includeResearchFilms: true } : {}),
+                      ...(uploadTarget ? { destination: 'org-case', orgCase: uploadTarget } : {})
                     })
-                  }
+                  }}
                 >
                   {transferSettings}
                 </PackageFileSelection>

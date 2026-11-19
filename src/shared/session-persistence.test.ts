@@ -2387,6 +2387,67 @@ describe('context usage persistence', () => {
 })
 
 describe('sanitizeToolActivity', () => {
+  it('round-trips bounded Web attempt metadata only with host-owned invocation identity', () => {
+    const webInvocation = {
+      attempt: 2,
+      retryOf: 'original',
+      configGeneration: 'generation',
+      retryEligible: true
+    }
+    const input = { id: 'web-retry', appOwned: true, executionInvocationId: 'retry', webInvocation }
+    const saved = sanitizeToolActivity(input)!
+    expect(saved.webInvocation).toEqual(webInvocation)
+    expect(saved.webInvocation).not.toBe(webInvocation)
+    expect(sanitizeToolActivity(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    for (const overrides of [
+      { appOwned: false },
+      { executionInvocationId: undefined },
+      { webInvocation: { ...webInvocation, attempt: 0 } },
+      { webInvocation: { ...webInvocation, attempt: Infinity } },
+      { webInvocation: { ...webInvocation, configGeneration: 'x'.repeat(129) } },
+      { webInvocation: { ...webInvocation, retryOf: 'x'.repeat(513) } },
+      { webInvocation: { ...webInvocation, retryEligible: 'true' } },
+      { webInvocation: { ...webInvocation, futureAuthority: true } }
+    ])
+      expect(sanitizeToolActivity({ ...input, ...overrides })).not.toHaveProperty('webInvocation')
+  })
+  it('restores closed package Web display evidence without retry authority', () => {
+    const packet = {
+      schema: 'open-science.package-web.v1',
+      activityId: 'original-row',
+      invocationId: 'local-invocation',
+      operation: 'fetch',
+      status: 'unavailable',
+      provenance: { origin: 'independent-fetch', policyVersion: 'unknown-v1' },
+      sources: [],
+      omissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
+    const input = {
+      id: 'local-row',
+      appOwned: true,
+      providerToolName: 'mcp__open_science_web__web_fetch',
+      executionInvocationId: 'local-invocation',
+      webInvocation: { attempt: 1, configGeneration: 'old', retryEligible: true },
+      packageWebEvidence: packet
+    }
+    const saved = sanitizeToolActivity(input)!
+    expect(saved.packageWebEvidence).toEqual(packet)
+    expect(saved.webInvocation).not.toHaveProperty('retryEligible')
+    expect(sanitizeToolActivity(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    for (const overrides of [
+      { appOwned: false },
+      { executionInvocationId: 'different-invocation' },
+      { providerToolName: 'mcp__external__web_fetch' },
+      { providerToolName: 'mcp__open_science_web__web_search' },
+      { packageWebEvidence: { ...packet, cursor: 'executable-cursor' } },
+      { packageWebEvidence: { ...packet, requestUrl: 'javascript:alert(1)' } }
+    ]) {
+      expect(sanitizeToolActivity({ ...input, ...overrides })).not.toHaveProperty(
+        'packageWebEvidence'
+      )
+    }
+  })
+
   it('restores option annotations independently with the same tolerance as descriptions', () => {
     const options = [
       { value: 'both', label: 'Both', description: ' Context ', pros: ' Benefit ', cons: ' Cost ' },
@@ -2670,11 +2731,11 @@ describe('sanitizeToolActivity', () => {
     ).toBe('declined')
     expect(
       sanitizeToolActivity({
-        id: 'tool-unknown',
+        id: 'tool-cancelled',
         status: 'completed',
         toolDisposition: 'cancelled'
       })?.toolDisposition
-    ).toBeUndefined()
+    ).toBe('cancelled')
   })
 
   it('truncates oversized terminal output', () => {

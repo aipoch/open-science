@@ -14,8 +14,8 @@ const routeList = (endpoints: readonly ModelProtocol[], t: TFunction): string =>
   endpoints.map((endpoint) => ENDPOINT_PATHS[endpoint]).join(t(' or '))
 
 export const modelUnavailableReason = (
-  option: Pick<ConfiguredModelCatalogEntry, 'label' | 'metadata' | 'unavailableReason'>,
-  provider: Pick<ProviderView, 'type' | 'apiEndpoints'>,
+  option: Pick<ConfiguredModelCatalogEntry, 'model' | 'label' | 'metadata' | 'unavailableReason'>,
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints' | 'modelProtocols'>,
   frameworkName: string,
   frameworkEndpoints: readonly ModelProtocol[],
   t: TFunction
@@ -26,10 +26,13 @@ export const modelUnavailableReason = (
       'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
     )
   }
+  if (option.unavailableReason === 'streaming-unsupported') {
+    return t('This model does not support streaming. Pick a streaming-capable model for the Agent.')
+  }
 
   return t('{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.', {
     model: option.label,
-    modelRoutes: routeList(configuredModelApiEndpoints(provider, option.metadata), t),
+    modelRoutes: routeList(configuredModelApiEndpoints(provider, option.metadata, option.model), t),
     framework: frameworkName,
     frameworkRoutes: routeList(frameworkEndpoints, t)
   })

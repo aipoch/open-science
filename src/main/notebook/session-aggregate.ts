@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import type { NotebookKernelEpochOwnership } from './execution-model-contract'
+import type { NotebookOwnedResource } from './owned-resources'
+import type {
+  NotebookExecutionIntentReference,
+  NotebookKernelEpochOwnership
+} from './execution-model-contract'
 export type { NotebookKernelEpochOwnership } from './execution-model-contract'
 
 import type {
@@ -30,7 +34,7 @@ import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
 import type { TransientViewImage } from './execution-model-contract'
-import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
+import { notebookLaneKey, notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
@@ -94,6 +98,7 @@ export type NotebookSessionRuntimeBinding = NotebookRuntimeBinding & {
 }
 
 export type NotebookSessionExecutionRequest = {
+  executionAdmission?: import('./execution-admission').NotebookExecutionAdmission
   // App-owned identity used to seal per-run file evidence. Optional keeps injected executors and
   // direct tests source-compatible; production execution always supplies it.
   runId?: string
@@ -132,6 +137,7 @@ export type NotebookSessionExecutionRequest = {
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.
   controlInvocationId?: string
+  controlInvocationNonce?: string
 }
 
 export type NotebookSessionExecutionResult = {
@@ -193,10 +199,12 @@ export type NotebookSessionExecutor<
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
+  resources?: () => NotebookOwnedResource[]
   monitoredProcesses?: () => import('./process-monitor').MonitoredKernelProcess[]
   idleProcesses?: () => Array<{
     identity: object
     processKey: string
+    executionDomain?: 'host'
     release: () => Promise<boolean>
   }>
 }
@@ -210,6 +218,7 @@ export type NotebookSessionExecutorGeneration = symbol
 type NotebookKernelEpochSlot = {
   ownership: NotebookKernelEpochOwnership
   interpreterIdentity?: string
+  cleanupResource?: NotebookOwnedResource
 }
 
 export type NotebookSessionOwnedExecutor<
@@ -224,7 +233,11 @@ export type NotebookSessionMcpRpcConnection = {
   endpoint: string
   socketPath?: string
   token: string
-  beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
+  beginControlInvocation?(
+    context: TrustedControlInvocationIdentity,
+    intent?: NotebookExecutionIntentReference,
+    credential?: string
+  ): (() => void) & { readonly nonce?: string }
   completeControlInvocation?: (
     controlInvocationId: string,
     signal?: AbortSignal
@@ -613,6 +626,59 @@ export class NotebookSessionAggregate<
     return this.executorValue.idleProcesses?.() ?? []
   }
 
+  resources(
+    afterRelease?: (resource: NotebookOwnedResource) => Promise<void>
+  ): NotebookOwnedResource[] {
+    const generation = this.executorGenerationValue
+    const resources = new Map(
+      (this.executorValue.resources?.() ?? []).map((resource) => [resource.identity, resource])
+    )
+    for (const slot of this.kernelEpochs.values()) {
+      if (slot.cleanupResource) resources.set(slot.cleanupResource.identity, slot.cleanupResource)
+    }
+    return Array.from(resources.values(), (resource) => {
+      const slot = resource.processKey ? this.kernelEpochs.get(resource.processKey) : undefined
+      const ownedSlot = slot?.ownership.id === resource.kernelEpochId ? slot : undefined
+      return {
+        ...resource,
+        projectId: this.projectId,
+        sessionId: this.sessionId,
+        laneKey: notebookLaneKey(this.lane),
+        executorGeneration: generation,
+        ...(ownedSlot?.cleanupResource ? { phase: 'cleanup-pending' as const } : {}),
+        retainForRelease: () => {
+          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot)
+            ownedSlot.cleanupResource = resource
+        },
+        release: async () => {
+          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
+            ownedSlot.cleanupResource = resource
+          }
+          const result = await resource.release()
+          if (!result.reaped) return result
+          const currentSlot = resource.processKey
+            ? this.kernelEpochs.get(resource.processKey)
+            : undefined
+          // A retired epoch can still need projection if no replacement owns the process key.
+          if (currentSlot && currentSlot !== ownedSlot)
+            return { ...result, projection: 'complete' as const }
+          try {
+            if (this.executorGenerationValue === generation) await afterRelease?.(resource)
+            if (ownedSlot) {
+              await this.onKernelEpochsRetired?.([ownedSlot.ownership])
+              if (this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
+                await this.retireKernelEpochs([ownedSlot.ownership.processKey], false)
+              }
+            }
+            return { ...result, projection: 'complete' as const }
+          } catch (error) {
+            return { ...result, projection: 'failed' as const, error }
+          }
+        }
+      }
+    })
+  }
+
   monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
     return this.executorValue.monitoredProcesses?.() ?? []
   }
@@ -684,6 +750,8 @@ export class NotebookSessionAggregate<
   }
 
   execute(request: Request): Promise<Result> {
+    if (!this.executorGenerationActive)
+      return Promise.reject(new Error('Notebook executor cleanup is incomplete.'))
     return this.executorValue.execute(request)
   }
 
@@ -707,6 +775,10 @@ export class NotebookSessionAggregate<
     if (reset) void this.retireKernelEpoch(processKey).catch(() => undefined)
     const existing = this.kernelEpochs.get(processKey)
     if (existing) {
+      if (existing.cleanupResource)
+        throw new Error(
+          'Notebook kernel cleanup projection is incomplete. Retry cleanup before executing.'
+        )
       if (interpreterIdentity === undefined) return existing.ownership
       if (existing.interpreterIdentity === undefined) {
         existing.interpreterIdentity = interpreterIdentity
@@ -728,9 +800,11 @@ export class NotebookSessionAggregate<
     await this.retireKernelEpochs([processKey])
   }
 
-  private async retireKernelEpochs(processKeys: readonly string[]): Promise<void> {
+  private async retireKernelEpochs(processKeys: readonly string[], finalize = true): Promise<void> {
     const epochs = processKeys.flatMap((processKey) => {
-      const epoch = this.kernelEpochs.get(processKey)?.ownership
+      const slot = this.kernelEpochs.get(processKey)
+      if (finalize && slot?.cleanupResource) return []
+      const epoch = slot?.ownership
       this.kernelEpochs.delete(processKey)
       if (epoch && this.mcpRpcConnection?.epoch === epoch) {
         const connection = this.mcpRpcConnection.connection
@@ -740,7 +814,7 @@ export class NotebookSessionAggregate<
       }
       return epoch ? [epoch] : []
     })
-    if (epochs.length > 0) await this.onKernelEpochsRetired?.(epochs)
+    if (finalize && epochs.length > 0) await this.onKernelEpochsRetired?.(epochs)
   }
 
   ownsExecutorGeneration(generation: NotebookSessionExecutorGeneration): boolean {
@@ -799,11 +873,17 @@ export class NotebookSessionAggregate<
     }
     const executor = this.executorValue
     this.executorGenerationActive = false
+    for (const processKey of this.kernelStatuses.keys())
+      this.setKernelStatus(processKey, 'terminated')
     const lifecycleDrain = this.executorLifecycleQueue
     await lifecycleDrain
     const result = await executor.shutdown()
+    if (!result.reaped) return result
     this.releaseMcpRpcConnection()
-    await this.retireKernelEpochs([...this.kernelEpochs.keys()])
+    await this.onKernelEpochsRetired?.(
+      [...this.kernelEpochs.values()].map(({ ownership }) => ownership)
+    )
+    await this.retireKernelEpochs([...this.kernelEpochs.keys()], false)
     return result
   }
 

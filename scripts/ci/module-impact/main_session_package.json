@@ -70,13 +70,19 @@
     "src/main/session-package/materialize.ts",
     "src/main/session-package/materialize.test.ts",
     "src/main/session-package/content-verification.test.ts",
+    "src/main/session-package/org-cases.ts",
+    "src/main/session-package/org-cases.test.ts",
     "src/main/session-package/use-case-catalog.ts",
     "src/main/session-package/use-case-catalog.test.ts",
     "src/main/session-package/use-case-download.ts",
     "src/main/session-package/use-case-download.test.ts",
     "src/main/session-package/research-films.ts",
     "src/main/session-package/research-films-contract.ts",
-    "src/main/session-package/research-films.test.ts"
+    "src/main/session-package/research-films.test.ts",
+    "src/main/session-package/lifecycle-export.integration.test.ts",
+    "src/main/session-package/web-evidence.ts",
+    "src/main/session-package/web-evidence.test.ts",
+    "src/main/session-package/web-evidence.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -90,9 +96,12 @@
     "src/main/session-package/browser-import.ts",
     "src/main/session-package/browser-import-protocol.ts",
     "src/main/session-package/literature-source.ts",
+    "src/main/session-package/org-cases.ts",
     "src/main/session-package/use-case-catalog.ts",
     "src/main/session-package/research-films.ts",
-    "src/main/session-package/research-films-contract.ts"
+    "src/main/session-package/research-films-contract.ts",
+    "src/main/session-package/web-evidence.ts",
+    "src/shared/session-package-web.ts"
   ],
   "consumerModules": ["research_video"],
   "testFiles": {
@@ -126,9 +135,13 @@
       "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/content-verification.test.ts",
+      "src/main/session-package/org-cases.test.ts",
       "src/main/session-package/use-case-catalog.test.ts",
       "src/main/session-package/use-case-download.test.ts",
-      "src/main/session-package/research-films.test.ts"
+      "src/main/session-package/research-films.test.ts",
+      "src/main/session-package/lifecycle-export.integration.test.ts",
+      "src/main/session-package/web-evidence.test.ts",
+      "src/main/session-package/web-evidence.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -147,6 +160,7 @@
       "src/main/session-persistence/prompt-preparation-restart.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts",
       "src/main/composition/research-film.test.ts"
     ]
   },

@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { registerNotebookMemoryTerminal } from '@/stores/notebook-memory-notice-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
@@ -1091,7 +1092,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Sends terminal code through the same notebook interpreter and history path as agent code.
   const submitTerminalCode = async (): Promise<void> => {
     const epoch = getDesktopRuntimeEpoch()
-    const code = terminalCode.trim()
+    const draft = terminalCode
+    const code = draft.trim()
 
     if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
       return
@@ -1109,14 +1111,19 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       const executionState = latestNotebookState.current
       if (executionState?.activeWrite || executionState?.activeRunId) return
 
-      setTerminalCode('')
-      await window.api.notebook.execute({
+      const result = await window.api.notebook.execute({
         ...createNotebookRequest(item.notebook),
         code,
         source: 'user',
         inputKind: 'terminal',
         language: activeDataLanguage
       })
+
+      if (result.recovery?.execution === 'not-started' || result.kernelDispatched === false) {
+        await loadNotebookState()
+        return
+      }
+      setTerminalCode((current) => (current === draft ? '' : current))
 
       // Manual commands produce root-lane history. Reveal the result only if this view still owns
       // the submission; failed admission and later navigation retain their original context.
@@ -1130,12 +1137,44 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       }
       await loadNotebookState()
     } catch (error) {
-      setTerminalCode(code)
       setActionError(getErrorMessage(error))
     } finally {
       setSubmittingTarget(undefined)
     }
   }
+
+  const terminalRetryOwner = useId()
+  const latestTerminalSubmit = useRef(submitTerminalCode)
+  useEffect(() => {
+    latestTerminalSubmit.current = submitTerminalCode
+  })
+  const terminalRetryId = `${terminalRetryOwner}:${selectedTarget}:${recoveryEpoch}`
+  const terminalRetryEnabled = !isTerminalLocked && Boolean(terminalCode.trim())
+  useEffect(() => {
+    if (
+      isNamespaceLost ||
+      isHistoricalEnvironmentView ||
+      !selectedTarget ||
+      recoveryPhase !== 'connected'
+    )
+      return
+    return registerNotebookMemoryTerminal({
+      id: terminalRetryId,
+      projectId: resolveProjectId(item.notebook),
+      sessionId: item.notebook.sessionId,
+      target: selectedTarget,
+      enabled: terminalRetryEnabled,
+      retry: () => latestTerminalSubmit.current()
+    })
+  }, [
+    terminalRetryId,
+    isNamespaceLost,
+    isHistoricalEnvironmentView,
+    selectedTarget,
+    recoveryPhase,
+    item.notebook,
+    terminalRetryEnabled
+  ])
 
   const handleAbortWrite = async (): Promise<void> => {
     const write = notebookState?.activeWrite

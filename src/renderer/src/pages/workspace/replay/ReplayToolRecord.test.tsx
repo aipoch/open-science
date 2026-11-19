@@ -171,6 +171,17 @@ describe('read-only saved tool interactions', () => {
     expect(container.textContent).toContain('7')
     expect(container.querySelectorAll('button,input,select')).toHaveLength(0)
   })
+  it('shows a cancelled Web tool as cancelled in raw replay', () => {
+    const { container } = render(
+      <ReplayToolRecord
+        activity={{ ...activity, toolDisposition: 'cancelled', toolKind: 'search' }}
+        showResults
+      />
+    )
+    expect(container.textContent).toContain('Cancelled')
+    expect(container.textContent).not.toContain('Permission request was closed.')
+  })
+
   it('bounds large archived payloads and explicitly offers the full original record', () => {
     const { container } = render(
       <ReplayToolRecord

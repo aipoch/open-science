@@ -7717,6 +7717,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/ConversationPicker.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
+      'src/renderer/src/pages/workspace/NotebookResourcePanel.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
       'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',

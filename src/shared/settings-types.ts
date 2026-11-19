@@ -17,6 +17,7 @@ import {
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'
+import type { LabModelCapabilities, LabView } from './lab'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { AgentModelRoute, AgentFrameworkId } from './agent-framework-id'
 export type { AgentFrameworkId } from './agent-framework-id'
@@ -50,6 +51,7 @@ export type ProviderType =
   | 'codex-isolated'
   | 'codebuddy-subscription'
   | 'xai-subscription'
+  | 'lab'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -167,6 +169,16 @@ export type ProviderView = {
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
   // or the single configured model for custom. Derived from the registry in main.
   models: string[]
+  // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
+  // means the provider-level apiEndpoints apply to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Per-model streaming support for app-managed catalogs (Lab). Absent means streaming is
+  // supported; false makes the model unavailable to streaming-only runtimes.
+  modelStreaming?: Record<string, boolean>
+  // Exact Lab deployment address for app-managed Lab providers; non-secret.
+  labServerUrl?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.
@@ -299,6 +311,9 @@ export type SettingsSnapshot = {
   // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
+  // Optional Lab enterprise connection status. Absent on builds without the Lab feature and on
+  // every snapshot produced before the Lab owner has been constructed.
+  lab?: LabView
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
   agentFrameworks: AgentFrameworkView[]

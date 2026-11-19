@@ -1,3 +1,7 @@
+import {
+  bindLaunchLogReader,
+  restartWithLaunchLogReader
+} from '../../packages/open-science/launch-log.mjs'
 import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
 import { ResourceLogStore } from './resource-diagnostics/store'
 import { resourceActivity } from './resource-diagnostics/activity'
@@ -158,6 +162,13 @@ async function main(): Promise<void> {
     configRoot,
     generation,
     pid: process.pid
+  })
+  const launchLogControl = await bindLaunchLogReader().catch((error: unknown) => {
+    createLogger('node-runtime').warn(
+      'Launch log ownership unavailable; update admission remains protected',
+      diagnosticErrorFields(error)
+    )
+    return undefined
   })
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
@@ -379,12 +390,7 @@ async function main(): Promise<void> {
       const exitCode = failed || credentialFailure ? 1 : (startupExitCode ?? 0)
       process.exitCode = exitCode
       if (restartRequested && !desktopWillRestart && exitCode === 0) {
-        const { spawn } = await import('node:child_process')
-        const child = spawn(process.execPath, process.argv.slice(1), {
-          detached: true,
-          stdio: 'inherit',
-          env: process.env
-        })
+        const child = restartWithLaunchLogReader(launchLogControl)
         child.once('error', (error) => {
           createLogger('node-runtime').error('restart failed', diagnosticErrorFields(error))
           process.exitCode = 1

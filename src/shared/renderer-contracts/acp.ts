@@ -4,6 +4,7 @@ import type {
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpContinueInterruptedTurnRequest,
+  AcpContinueNotebookExecutionRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpDeleteSessionRequest,
@@ -55,6 +56,9 @@ export const contracts = {
   'acp.continueInterruptedTurn': callable<
     (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:continue-interrupted-turn']),
+  'acp.continueNotebookExecution': callable<
+    (request: AcpContinueNotebookExecutionRequest) => Promise<AcpStateCommandResponse>
+  >()('acp', ['acp:continue-notebook-execution']),
   'acp.createSession': callable<
     (request?: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY]),

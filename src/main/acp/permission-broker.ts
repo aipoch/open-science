@@ -1189,8 +1189,12 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
-    const isWebSearch = !isMcp && isNativeWebSearchPermission(params, policyContext)
-    const isWebFetch = !isMcp && isNativeWebFetchPermission(params, policyContext)
+    const isWebSearch =
+      policyContext?.hostWebOperation === 'search' ||
+      (!isMcp && isNativeWebSearchPermission(params, policyContext))
+    const isWebFetch =
+      policyContext?.hostWebOperation === 'fetch' ||
+      (!isMcp && isNativeWebFetchPermission(params, policyContext))
     const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
@@ -1308,11 +1312,12 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
-      providerToolName: isWebSearch
-        ? 'WebSearch'
-        : isWebFetch
-          ? 'WebFetch'
-          : extractProviderToolName(params.toolCall),
+      providerToolName:
+        isWebSearch && !isMcp
+          ? 'WebSearch'
+          : isWebFetch && !isMcp
+            ? 'WebFetch'
+            : extractProviderToolName(params.toolCall),
       isMcp,
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,

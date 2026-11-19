@@ -30,7 +30,9 @@ import { createArtifactHandlers } from '../artifacts/ipc'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { markNotebookExecutionIntent, notebookExecutionIntent } from '../notebook/execution-intent'
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex,
@@ -305,6 +307,7 @@ const createFrameworkCompositionHarness = async (
   const immutableInputPath = join(dataRoot, 'framework-input.txt')
   await writeFile(immutableInputPath, 'framework evidence\n', 'utf8')
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: dataRoot,
     dataRoot,
     projectId: 'project-1',
@@ -381,6 +384,7 @@ const createFrameworkCompositionHarness = async (
           const branch = graph.branches.find(({ id }) => id === childFrame.activeBranchId)!
           const prompt = graph.messages.find(({ id }) => id === branch.headMessageId)!
           const capability = await server!.issueDelegatedNotebookConnection({
+            executionIntent: notebookExecutionIntent(input),
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,
             rootFrameId: graph.rootFrameId,
@@ -587,6 +591,8 @@ const createFrameworkCompositionHarness = async (
       return { path: immutableInputPath, filename: 'framework-input.txt' }
     }
   )
+  // Model the trusted Main prompt entry; derived Attempts inherit this same intent.
+  markNotebookExecutionIntent(harness.caller, service.createExecutionIntent(harness.caller.session))
   context.harness = harness
   context.composition = harness.composition
   return Object.assign(harness, { controls })
@@ -1734,7 +1740,8 @@ describe('production delegated-work composition', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'x-open-science-control-invocation': endInvocation.nonce
         },
         body: JSON.stringify({ method, params })
       })
@@ -2556,19 +2563,35 @@ describe('production delegated-work composition', () => {
       const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
         resolvePermissionPrompts
       })
-      const pending = harness.composition.host.delegate(
-        harness.caller,
-        { task: 'Check the cohort', name: 'Cohort' },
-        { wait: false }
-      )
-      // A finished root prompt or a later prompt must not alter the admitted execution.
-      currentPolicy = initialPolicy === 'none' ? undefined : 'none'
-      await pending
-      await vi.waitFor(() => expect(harness.execution.controls()).toHaveLength(1))
-      expect(harness.execution.controls()[0].input.permissionPrompts).toBe(initialPolicy)
-      expect(resolvePermissionPrompts).toHaveBeenCalledOnce()
-      expect(JSON.stringify(harness.durable())).not.toContain('permissionPrompts')
-      await harness.composition.root.stopSession(harness.session.id)
+      const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+      vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementation(async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        return startAttemptRuntime(...args)
+      })
+      const executionStarted = Promise.withResolvers<void>()
+      const startExecution = harness.execution.run.bind(harness.execution)
+      vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+        const handle = startExecution(...args)
+        executionStarted.resolve()
+        return handle
+      })
+      try {
+        const pending = harness.composition.host.delegate(
+          harness.caller,
+          { task: 'Check the cohort', name: 'Cohort' },
+          { wait: false }
+        )
+        // A finished root prompt or a later prompt must not alter the admitted execution.
+        currentPolicy = initialPolicy === 'none' ? undefined : 'none'
+        await pending
+        await executionStarted.promise
+        expect(harness.execution.controls()).toHaveLength(1)
+        expect(harness.execution.controls()[0].input.permissionPrompts).toBe(initialPolicy)
+        expect(resolvePermissionPrompts).toHaveBeenCalledOnce()
+        expect(JSON.stringify(harness.durable())).not.toContain('permissionPrompts')
+      } finally {
+        await harness.composition.root.stopSession(harness.session.id)
+      }
     }
   )
 
@@ -2680,7 +2703,8 @@ describe('production delegated-work composition', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-open-science-control-invocation': endInvocation.nonce
       },
       body: JSON.stringify({
         method: 'delegatedWorkCall',

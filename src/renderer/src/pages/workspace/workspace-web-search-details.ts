@@ -1,16 +1,27 @@
 import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk'
 
 import type { ToolActivity } from '@/stores/session-store-contract'
+import { sanitizeToolDetailText } from '../../../../shared/tool-detail-sanitizer'
+import { searchInputSchema, type WebResult } from '../../../../shared/web-tools'
+import {
+  isBuiltinWebActivity,
+  readBuiltinWebResult,
+  safeWebUrl
+} from './workspace-web-fetch-details'
 
 type WebSearchResult = {
   title: string
   url: string
+  snippet?: string
+  publishedAt?: string
 }
 
 type WebSearchDetails = {
   query: string
   resultCount: number
   results: WebSearchResult[]
+  builtin?: true
+  webResult?: WebResult
 }
 
 type WebSearchContentParts = {
@@ -362,8 +373,38 @@ const hasWebSearchContentEvidence = (activity: ToolActivity): boolean => {
   return hasParsedSearchQuery || hasPlainTextQuery
 }
 
+const isBuiltinWebSearchActivity = (activity: ToolActivity): boolean =>
+  isBuiltinWebActivity(activity, 'search')
+const readWebSearchResult = (activity: ToolActivity): WebResult | undefined =>
+  readBuiltinWebResult(activity, 'search')
+
+const formatBuiltinWebSearchDetails = (activity: ToolActivity): WebSearchDetails => {
+  const webResult = readWebSearchResult(activity)
+  const request = searchInputSchema.safeParse(webResult?.request ?? activity.rawInput)
+  return {
+    builtin: true,
+    webResult,
+    query: request.success ? sanitizeToolDetailText(request.data.query) : '',
+    resultCount: webResult?.returned_count ?? 0,
+    results: (webResult?.sources ?? []).flatMap((source) => {
+      const url = safeWebUrl(source.url)
+      return url
+        ? [
+            {
+              url,
+              title: sanitizeToolDetailText(source.title ?? new URL(url).hostname),
+              ...(source.snippet ? { snippet: sanitizeToolDetailText(source.snippet) } : {}),
+              ...(source.published_at ? { publishedAt: source.published_at } : {})
+            }
+          ]
+        : []
+    })
+  }
+}
+
 // Builds the UI-ready web-search details from all known ACP tool content shapes.
 const formatWebSearchDetails = (activity: ToolActivity): WebSearchDetails => {
+  if (isBuiltinWebSearchActivity(activity)) return formatBuiltinWebSearchDetails(activity)
   const { parsedContent, plainTextContent } = collectWebSearchContentParts(activity)
   const parsedQuery = parsedContent.map(extractQueryFromUnknown).find(Boolean)
   const plainTextQuery = plainTextContent.map(extractQueryFromText).find(Boolean)
@@ -388,5 +429,10 @@ const formatWebSearchDetails = (activity: ToolActivity): WebSearchDetails => {
   }
 }
 
-export { formatWebSearchDetails, hasWebSearchContentEvidence }
+export {
+  formatWebSearchDetails,
+  hasWebSearchContentEvidence,
+  isBuiltinWebSearchActivity,
+  readWebSearchResult
+}
 export type { WebSearchDetails, WebSearchResult }

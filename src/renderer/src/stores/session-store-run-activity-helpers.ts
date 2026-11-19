@@ -22,8 +22,9 @@ export type UpsertToolActivityInput = {
   promptExecutionId?: string
   title?: string
   status?: string
-  toolDisposition?: 'declined' | 'permission-closed'
+  toolDisposition?: 'declined' | 'permission-closed' | 'cancelled'
   executionInvocationId?: string
+  webInvocation?: ToolActivity['webInvocation']
   // Set only by the main-process permission owner, never by provider metadata.
   appOwned?: true
   providerToolName?: string
@@ -206,6 +207,7 @@ export const projectToolActivity = (
       status: mergeToolActivityStatus(existingActivity.status, nextStatus),
       toolDisposition: input.toolDisposition ?? existingActivity.toolDisposition,
       executionInvocationId: input.executionInvocationId ?? existingActivity.executionInvocationId,
+      webInvocation: input.webInvocation ?? existingActivity.webInvocation,
       appOwned: input.appOwned ?? existingActivity.appOwned,
       providerToolName: input.providerToolName ?? existingActivity.providerToolName,
       toolKind: input.toolKind ?? existingActivity.toolKind,
@@ -241,6 +243,7 @@ export const projectToolActivity = (
     status: nextStatus ?? 'pending',
     toolDisposition: input.toolDisposition,
     executionInvocationId: input.executionInvocationId,
+    webInvocation: input.webInvocation,
     appOwned: input.appOwned,
     eventIds: [input.eventId],
     sortIndex: createSortIndex(),

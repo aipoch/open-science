@@ -16,6 +16,7 @@ import type {
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { LabModelCapabilities } from '../../shared/lab'
 import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -113,6 +114,20 @@ export type StoredProvider = {
   modelCatalog?: CatalogSnapshot
   modelCatalogStatus?: CatalogStatus
   catalogParameters?: Record<string, string>
+  // Per-model protocol sets for app-managed heterogeneous catalogs (Lab). Keys are the stored model
+  // ids (namespaced for Lab); absent means apiEndpoints applies to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Per-model streaming support for app-managed catalogs (Lab). Absent means the legacy
+  // assumption (streaming is supported).
+  modelStreaming?: Record<string, boolean>
+  // Exact Lab deployment address this record was derived from (non-secret). Used to bind the model
+  // catalog and host-owned credentials to one institution even when two deployments share an origin.
+  labServerUrl?: string
+  // Monotonic per-catalog-write identity used to conditionally clean up a stale Lab catalog without
+  // deleting a newer login's record at the same address.
+  labCatalogToken?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string

@@ -38,8 +38,10 @@ import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.win
 import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { IdleInterpreter } from './idle-reclamation'
+import type { NotebookOwnedResource } from './owned-resources'
 
 type RuntimeSession = NotebookSessionAggregate
+type PendingOperation<Result> = Promise<Result> & { resource: NotebookOwnedResource }
 const log = createLogger('notebook:file-evidence-lifecycle')
 
 type NotebookExecutorLifecycleCallbacks = {
@@ -121,12 +123,98 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
   private readonly idleTeardowns = new Map<string, Promise<boolean>>()
+  private readonly retainedReleaseHolds = new Set<string>()
+  private readonly retainedReleases = new Map<
+    string,
+    { projectId: string; sessionId: string; operation: Promise<void> }
+  >()
+
+  resourceReleaseBlockedReason(scope: {
+    projectId: string
+    sessionId: string
+  }): string | undefined {
+    if (this.terminal || this.shutdownAllPromise) return 'application-stopping'
+    if (
+      this.deletingProjectIds.has(scope.projectId) ||
+      this.deletingSessionIds.has(scope.sessionId)
+    )
+      return 'session-unavailable'
+    if (this.retainedReleaseHolds.has(JSON.stringify([scope.projectId, scope.sessionId])))
+      return 'release-in-progress'
+    return this.idleTeardowns.has(scope.sessionId) ? 'cleanup-in-progress' : undefined
+  }
+
+  holdSessionResources(scope: { projectId: string; sessionId: string }): () => void {
+    const key = JSON.stringify([scope.projectId, scope.sessionId])
+    this.assertScopeAvailable(scope.projectId, scope.sessionId)
+    if (this.shutdownAllPromise || this.idleTeardowns.has(scope.sessionId))
+      throw new Error(
+        'Notebook teardown is already in progress. Refresh before releasing resources.'
+      )
+    this.retainedReleaseHolds.add(key)
+    return () => this.retainedReleaseHolds.delete(key)
+  }
+
+  observeSessionRelease(
+    scope: { projectId: string; sessionId: string },
+    operation: Promise<void>
+  ): void {
+    const key = JSON.stringify([scope.projectId, scope.sessionId])
+    const entry = { ...scope, operation }
+    this.retainedReleases.set(key, entry)
+    void operation
+      .finally(() => {
+        if (this.retainedReleases.get(key) === entry) this.retainedReleases.delete(key)
+      })
+      .catch(() => undefined)
+  }
+
+  async waitForSessionTeardown(
+    scope: { projectId?: string; sessionId?: string } = {}
+  ): Promise<void> {
+    await Promise.allSettled([
+      ...[...this.retainedReleases.entries()].flatMap(([key, entry]) => {
+        const [, sessionId] = JSON.parse(key) as [string, string]
+        return (scope.projectId === undefined || scope.projectId === entry.projectId) &&
+          (scope.sessionId === undefined || scope.sessionId === sessionId)
+          ? [entry.operation]
+          : []
+      }),
+      ...(scope.sessionId
+        ? [this.idleTeardowns.get(scope.sessionId)].filter((entry) => entry !== undefined)
+        : [...this.idleTeardowns.values()])
+    ])
+  }
+
+  resources(scope: { projectId?: string; sessionId?: string } = {}): NotebookOwnedResource[] {
+    const matches = (resource: { projectId?: string; sessionId?: string }): boolean =>
+      (scope.projectId === undefined || resource.projectId === scope.projectId) &&
+      (scope.sessionId === undefined || resource.sessionId === scope.sessionId)
+    const pending = new Set<PendingOperation<unknown>>([
+      ...Array.from(this.pendingEnsuresByProject.values()).flatMap((entries) => [...entries]),
+      ...Array.from(this.pendingOperationsByProject.values()).flatMap((entries) => [...entries])
+    ])
+    return [
+      ...Array.from(this.options.sessions.values())
+        .filter(matches)
+        .flatMap((session) =>
+          session.resources(async (resource) => {
+            if (this.options.sessions.get(session.lane) !== session) return
+            if (resource.processKey)
+              await this.persistKernelStatus(session, 'terminated', resource.processKey)
+            this.notifyChanged(session)
+          })
+        ),
+      ...Array.from(pending, ({ resource }) => resource).filter(matches)
+    ]
+  }
 
   hasPendingWork(sessionId: string): boolean {
     return (
       this.terminal ||
       Boolean(
         this.shutdownAllPromise ||
+        [...this.retainedReleases.values()].some((entry) => entry.sessionId === sessionId) ||
         this.pendingOperationsBySession.get(sessionId)?.size ||
         this.pendingEnsuresBySession.get(sessionId)?.size
       )
@@ -137,6 +225,7 @@ class NotebookSessionLifecycleOwner {
     return [...this.options.sessions.values()].flatMap((session) =>
       session.idleProcesses().map((process) => ({
         identity: process.identity,
+        executionDomain: process.executionDomain,
         projectId: session.projectId,
         sessionId: session.sessionId,
         group: process.processKey === 'repl' ? ('repl' as const) : ('data' as const),
@@ -158,27 +247,26 @@ class NotebookSessionLifecycleOwner {
                       return false
                     if (!stillIdle() || this.hasPendingWork(session.sessionId)) return false
                     if (this.options.sessions.get(session.lane) !== session) return false
-                    const instance = kernelInstanceForProcessKey(process.processKey)
-                    let stopped: boolean
-                    try {
-                      stopped = await process.release()
-                    } catch (error) {
-                      // Routing may already be invalidated even if tree cleanup could not be verified.
-                      await this.projectKernelTerminated(
-                        session.lane,
-                        instance.kind,
-                        'environment' in instance ? instance.environment : undefined
-                      )
-                      throw error
+                    const owned = this.resources({
+                      projectId: session.projectId,
+                      sessionId: session.sessionId
+                    }).find((resource) => resource.identity === process.identity)
+                    if (!owned) {
+                      const stopped = await process.release()
+                      if (stopped) {
+                        const instance = kernelInstanceForProcessKey(process.processKey)
+                        await this.projectKernelIdleShutdown(
+                          session.lane,
+                          instance.kind,
+                          'environment' in instance ? instance.environment : undefined
+                        )
+                      }
+                      return stopped
                     }
-                    if (stopped) {
-                      await this.projectKernelIdleShutdown(
-                        session.lane,
-                        instance.kind,
-                        'environment' in instance ? instance.environment : undefined
-                      )
-                    }
-                    return stopped
+                    owned.retainForRelease?.()
+                    const result = await owned.release()
+                    if (result.projection === 'failed') throw result.error
+                    return result.reaped
                   }
                 )
             },
@@ -218,10 +306,16 @@ class NotebookSessionLifecycleOwner {
   private readonly announcedAgentLaneKeys = new Set<string>()
   private readonly deletingProjectIds = new Set<string>()
   private readonly deletingSessionIds = new Set<string>()
-  private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
-  private readonly pendingEnsuresBySession = new Map<string, Set<Promise<RuntimeSession>>>()
-  private readonly pendingOperationsByProject = new Map<string, Set<Promise<unknown>>>()
-  private readonly pendingOperationsBySession = new Map<string, Set<Promise<unknown>>>()
+  private readonly pendingEnsuresByProject = new Map<
+    string,
+    Set<PendingOperation<RuntimeSession>>
+  >()
+  private readonly pendingEnsuresBySession = new Map<
+    string,
+    Set<PendingOperation<RuntimeSession>>
+  >()
+  private readonly pendingOperationsByProject = new Map<string, Set<PendingOperation<unknown>>>()
+  private readonly pendingOperationsBySession = new Map<string, Set<PendingOperation<unknown>>>()
   private readonly operationAbortControllersByProject = new Map<string, Set<AbortController>>()
   private readonly operationAbortControllersBySession = new Map<string, Set<AbortController>>()
   private terminal = false
@@ -258,9 +352,15 @@ class NotebookSessionLifecycleOwner {
     } catch (error) {
       return Promise.reject(error)
     }
+    const controller = new AbortController()
+    const assertCreationAvailable = (): void => {
+      this.assertDeletionAvailable(projectId, request.sessionId)
+      if (controller.signal.aborted)
+        throw new Error('Notebook session initialization was cancelled.')
+    }
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
       await this.options.ensureProcessRecovery(notebookLaneKey(lane))
-      this.assertDeletionAvailable(projectId, request.sessionId)
+      assertCreationAvailable()
       await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadOrCreate({
         projectId: projectId,
@@ -297,6 +397,7 @@ class NotebookSessionLifecycleOwner {
         })
       })
 
+      assertCreationAvailable()
       const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({
         sessionId: request.sessionId,
@@ -328,7 +429,7 @@ class NotebookSessionLifecycleOwner {
 
       try {
         await this.options.runtimeBindings.reload(session, document.runtimeBindings)
-        this.assertDeletionAvailable(projectId, request.sessionId)
+        assertCreationAvailable()
         return session
       } catch (error) {
         await session.shutdownExecutor().catch(() => undefined)
@@ -339,13 +440,29 @@ class NotebookSessionLifecycleOwner {
         }
         throw error
       }
-    })
+    }) as PendingOperation<RuntimeSession>
+    ensuring.resource ??= {
+      identity: ensuring,
+      group: 'operation',
+      kind: 'ensure',
+      phase: 'starting',
+      startedAt: Date.now(),
+      projectId,
+      sessionId: request.sessionId,
+      laneKey: notebookLaneKey(lane),
+      release: async () => {
+        controller.abort()
+        await ensuring.catch(() => undefined)
+        return { reaped: true }
+      }
+    }
     const pending =
-      this.pendingEnsuresByProject.get(projectId) ?? new Set<Promise<RuntimeSession>>()
+      this.pendingEnsuresByProject.get(projectId) ?? new Set<PendingOperation<RuntimeSession>>()
     pending.add(ensuring)
     this.pendingEnsuresByProject.set(projectId, pending)
     const sessionPending =
-      this.pendingEnsuresBySession.get(request.sessionId) ?? new Set<Promise<RuntimeSession>>()
+      this.pendingEnsuresBySession.get(request.sessionId) ??
+      new Set<PendingOperation<RuntimeSession>>()
     sessionPending.add(ensuring)
     this.pendingEnsuresBySession.set(request.sessionId, sessionPending)
     void ensuring
@@ -401,12 +518,28 @@ class NotebookSessionLifecycleOwner {
     const running = new Promise<Result>((resolve, reject) => {
       resolveRunning = resolve
       rejectRunning = reject
-    })
-    const pending = this.pendingOperationsByProject.get(projectId) ?? new Set<Promise<unknown>>()
+    }) as PendingOperation<Result>
+    running.resource = {
+      identity: running,
+      group: 'operation',
+      kind: 'session-work',
+      phase: 'running',
+      startedAt: Date.now(),
+      projectId,
+      sessionId: request.sessionId,
+      laneKey: notebookLaneKey(this.laneForRequest(request)),
+      release: async () => {
+        controller.abort(new Error('Notebook operation was released.'))
+        await running.catch(() => undefined)
+        return { reaped: true }
+      }
+    }
+    const pending =
+      this.pendingOperationsByProject.get(projectId) ?? new Set<PendingOperation<unknown>>()
     pending.add(running)
     this.pendingOperationsByProject.set(projectId, pending)
     const sessionPending =
-      this.pendingOperationsBySession.get(request.sessionId) ?? new Set<Promise<unknown>>()
+      this.pendingOperationsBySession.get(request.sessionId) ?? new Set<PendingOperation<unknown>>()
     sessionPending.add(running)
     this.pendingOperationsBySession.set(request.sessionId, sessionPending)
     // Register before invoking the operation so a synchronous teardown can observe the lease, while
@@ -622,10 +755,7 @@ class NotebookSessionLifecycleOwner {
   ): Promise<T> {
     const releaseFence = this.options.shellExecution.fenceShellRuns(scope)
     try {
-      const idle = scope.sessionId
-        ? [this.idleTeardowns.get(scope.sessionId)].filter(Boolean)
-        : [...this.idleTeardowns.values()]
-      if (idle.length) await Promise.allSettled(idle)
+      await this.waitForSessionTeardown(scope)
       await this.options.shellExecution.cancelShellRuns(scope, reason)
       return await cleanup()
     } finally {
@@ -673,6 +803,8 @@ class NotebookSessionLifecycleOwner {
   private assertScopeAvailable(projectId: string, sessionId: string): void {
     if (this.terminal) throw new Error('Notebook runtime is disposed.')
     this.assertDeletionAvailable(projectId, sessionId)
+    if (this.retainedReleaseHolds.has(JSON.stringify([projectId, sessionId])))
+      throw new Error('Notebook resources are being released. Start a new execution after cleanup.')
   }
 
   private assertDeletionAvailable(projectId: string, sessionId: string): void {
@@ -705,11 +837,11 @@ class NotebookSessionLifecycleOwner {
         }
         return result
       })
-    const shutdown = (
-      this.idleTeardowns.size ? Promise.allSettled(this.idleTeardowns.values()).then(stop) : stop()
-    ).finally(() => {
-      if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
-    })
+    const shutdown = this.waitForSessionTeardown()
+      .then(stop)
+      .finally(() => {
+        if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
+      })
     this.shutdownAllPromise = shutdown
     return shutdown
   }
@@ -719,9 +851,7 @@ class NotebookSessionLifecycleOwner {
     this.beginDisposal()
     const stop = (): Promise<{ reaped: boolean }> =>
       this.options.runtimeBindings.withGlobalTeardown(() => this.options.sessions.dispose())
-    const disposal = this.idleTeardowns.size
-      ? Promise.allSettled(this.idleTeardowns.values()).then(stop)
-      : stop()
+    const disposal = this.waitForSessionTeardown().then(stop)
     this.disposalPromise = disposal
     return disposal
   }

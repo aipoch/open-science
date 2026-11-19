@@ -20,6 +20,11 @@ import {
   notebookGetBackgroundRunCommand,
   notebookInspectNamespaceCommand,
   notebookProjectActivityCommand,
+  notebookProjectResourcesCommand,
+  notebookReleaseSessionResourcesCommand,
+  notebookResourceReleaseCommand,
+  notebookRetryResourceReleaseCommand,
+  notebookMemoryPolicyStateCommand,
   notebookProcessMonitorCommand,
   notebookTerminateMonitoredProcessCommand,
   notebookReadInputPreviewCommand,
@@ -38,6 +43,7 @@ import {
   notebookEnvironmentStatusCommand
 } from './environment-application-commands'
 import type { NotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
+import { notebookUserOperation, withNotebookUserOperation } from './execution-intent'
 import {
   createNotebookCommandWorkflows,
   type NotebookCommandRuntime,
@@ -79,6 +85,147 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
+  it.each([localCaller, remoteCaller])(
+    'marks a current $location human terminal operation and retains the lease fence',
+    async (caller) => {
+      const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+      const runtime = { execute } as unknown as NotebookCommandRuntime
+      const router = createApplicationCommandRouter()
+      installNotebookApplicationCommands(router.registrar, {
+        workflows: createNotebookCommandWorkflows(runtime),
+        readInputPreview: vi.fn()
+      })
+      const request = {
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'print(1)',
+        source: 'user' as const,
+        inputKind: 'terminal' as const
+      }
+      const controller = new AbortController()
+      const call = invocation([request] as const, caller)
+      const callerLease = { ...call.callerLease, signal: controller.signal }
+      try {
+        await router.dispatcher.invoke(notebookExecuteCommand, { ...call, callerLease })
+
+        const operation = notebookUserOperation(execute.mock.calls[0][0])
+        expect(operation).toEqual({ assertCurrent: expect.any(Function) })
+        expect(execute).toHaveBeenCalledExactlyOnceWith(
+          withNotebookUserOperation(request, operation!)
+        )
+        expect(notebookUserOperation(request)).toBeUndefined()
+        expect(() => operation!.assertCurrent()).not.toThrow()
+        controller.abort()
+        expect(() => operation!.assertCurrent()).toThrow(/current human|lease/i)
+        await expect(
+          router.dispatcher.invoke(notebookExecuteCommand, { ...call, callerLease })
+        ).rejects.toThrow(/current human|lease/i)
+        expect(execute).toHaveBeenCalledOnce()
+      } finally {
+        router.dispose()
+      }
+    }
+  )
+
+  it.each(['automation', 'agent-session'] as const)(
+    'does not grant a %s caller explicit retry authority from forged terminal fields',
+    async (principalKind) => {
+      const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+      const runtime = { execute } as unknown as NotebookCommandRuntime
+      const router = createApplicationCommandRouter()
+      installNotebookApplicationCommands(router.registrar, {
+        workflows: createNotebookCommandWorkflows(runtime),
+        readInputPreview: vi.fn()
+      })
+      const caller = createCallerContext({
+        ...localCaller,
+        principalKind,
+        actionOrigin: principalKind
+      })
+      const request = {
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'print(1)',
+        source: 'user' as const,
+        inputKind: 'terminal' as const
+      }
+      try {
+        await router.dispatcher.invoke(notebookExecuteCommand, invocation([request], caller))
+
+        expect(execute).toHaveBeenCalledExactlyOnceWith(request)
+        expect(notebookUserOperation(execute.mock.calls[0][0])).toBeUndefined()
+      } finally {
+        router.dispose()
+      }
+    }
+  )
+
+  it('does not mark ordinary user execution as an explicit terminal operation', async () => {
+    const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+    const runtime = { execute } as unknown as NotebookCommandRuntime
+    const router = createApplicationCommandRouter()
+    installNotebookApplicationCommands(router.registrar, {
+      workflows: createNotebookCommandWorkflows(runtime),
+      readInputPreview: vi.fn()
+    })
+    const request = {
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'print(1)',
+      source: 'user' as const
+    }
+    try {
+      await router.dispatcher.invoke(notebookExecuteCommand, invocation([request]))
+
+      expect(execute).toHaveBeenCalledExactlyOnceWith(request)
+      expect(notebookUserOperation(execute.mock.calls[0][0])).toBeUndefined()
+    } finally {
+      router.dispose()
+    }
+  })
+
+  it.each(['automation', 'agent-session'] as const)(
+    'does not expose resource management authority to %s callers',
+    async (principalKind) => {
+      const runtime = {
+        getProjectResources: vi.fn(),
+        releaseSessionResources: vi.fn(),
+        getResourceRelease: vi.fn(),
+        retryResourceRelease: vi.fn()
+      } as unknown as NotebookCommandRuntime
+      const workflows = createNotebookCommandWorkflows(runtime, {
+        withSessionAvailable: async (_project, _session, operation) => operation(),
+        isSessionResourceReadable: async () => true,
+        assertSessionResourceReleaseAvailable: () => undefined
+      })
+      const router = createApplicationCommandRouter()
+      installNotebookApplicationCommands(router.registrar, { workflows, readInputPreview: vi.fn() })
+      const caller = createCallerContext({
+        ...localCaller,
+        principalKind,
+        actionOrigin: principalKind
+      })
+      const scope = {
+        projectId: 'project',
+        sessionId: 'session',
+        revision: 'revision',
+        operationId: 'release'
+      }
+      for (const command of [
+        notebookProjectResourcesCommand,
+        notebookReleaseSessionResourcesCommand,
+        notebookResourceReleaseCommand,
+        notebookRetryResourceReleaseCommand
+      ]) {
+        await expect(
+          router.dispatcher.invoke(command as never, invocation([scope], caller) as never)
+        ).rejects.toThrow(/current human/i)
+      }
+      for (const operation of Object.values(runtime)) expect(operation).not.toHaveBeenCalled()
+      router.dispose()
+    }
+  )
+
   it('routes exact monitored instance IDs locally and rejects remote monitor/control requests', async () => {
     const processMonitor = vi.fn(async () => ({ instances: [] }))
     const terminateMonitoredProcess = vi.fn(async () => {})
@@ -86,7 +233,8 @@ describe('Notebook application commands', () => {
     installNotebookApplicationCommands(router.registrar, {
       workflows: {
         processMonitor,
-        terminateMonitoredProcess
+        terminateMonitoredProcess,
+        configureResourceReleaseGuard: vi.fn()
       } as unknown as NotebookCommandWorkflows,
       readInputPreview: vi.fn()
     })
@@ -113,7 +261,7 @@ describe('Notebook application commands', () => {
     expect(terminateMonitoredProcess).toHaveBeenCalledOnce()
   })
 
-  it('owns exactly the 24 renderer-callable Notebook and Environment commands', () => {
+  it('owns exactly the 29 renderer-callable Notebook and Environment commands', () =>
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
@@ -121,6 +269,11 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook:run-index' }),
       expect.objectContaining({ name: 'notebook:state' }),
       expect.objectContaining({ name: 'notebook:project-activity' }),
+      expect.objectContaining({ name: 'notebook:project-resources' }),
+      expect.objectContaining({ name: 'notebook:release-session-resources' }),
+      expect.objectContaining({ name: 'notebook:resource-release' }),
+      expect.objectContaining({ name: 'notebook:retry-resource-release' }),
+      expect.objectContaining({ name: 'notebook:memory-policy-state' }),
       expect.objectContaining({ name: 'notebook:process-monitor' }),
       expect.objectContaining({ name: 'notebook:terminate-monitored-process' }),
       expect.objectContaining({ name: 'notebook:inspect-namespace' }),
@@ -142,13 +295,13 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook-env:provision' }),
       expect.objectContaining({ name: 'notebook-env:repair' }),
       expect.objectContaining({ name: 'notebook-env:cancel' })
-    ])
-  })
+    ]))
 
   it('routes Notebook commands through the owner workflows and input-preview port', async () => {
     const workflowMethods = [
       'state',
       'projectActivity',
+      'memoryPolicyState',
       'inspectNamespace',
       'reference',
       'beginCodeCell',
@@ -165,7 +318,7 @@ describe('Notebook application commands', () => {
       'shutdown'
     ] as const
     const workflows = Object.fromEntries(
-      workflowMethods.map((method) => [
+      ['configureResourceReleaseGuard', ...workflowMethods].map((method) => [
         method,
         vi.fn(async (request: unknown) => ({ method, request }))
       ])
@@ -182,6 +335,7 @@ describe('Notebook application commands', () => {
     const cases = [
       [notebookStateCommand, [session], 'state'],
       [notebookProjectActivityCommand, [{ projectId: 'project-1' }], 'projectActivity'],
+      [notebookMemoryPolicyStateCommand, [{ executionScope: 'darwin:host' }], 'memoryPolicyState'],
       [
         notebookInspectNamespaceCommand,
         [{ ...session, language: 'python', environment: 'default-python' }],
@@ -287,6 +441,7 @@ describe('Notebook application commands', () => {
     const exportIpynb = vi.fn()
     const exportIpynbAll = vi.fn()
     const workflows = {
+      configureResourceReleaseGuard: vi.fn(),
       exportIpynb,
       exportIpynbAll
     } as unknown as NotebookCommandWorkflows

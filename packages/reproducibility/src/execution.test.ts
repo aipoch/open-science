@@ -20,6 +20,8 @@ import { reproductionRecipes } from './test-support'
 import { executeArtifactReproducibility } from './test-support'
 import { type ArtifactReproducibilityExecutionEvent } from './index'
 import { canonicalJson, sha256, type CanonicalJson } from './canonical'
+import { createMicromambaExecutor, environmentChildCleanup } from '@aipoch/environment'
+import { once } from 'node:events'
 
 const environmentLock = {
   schemaVersion: 1,
@@ -210,6 +212,48 @@ const fixture = async (
 }
 
 describe('Artifact reproducibility execution', () => {
+  it.each(['not-started', 'may-have-run'] as const)(
+    'reports a failed step as %s in the result event and existing log',
+    async (disposition) => {
+      const root = await mkdtemp(join(tmpdir(), 'reproduction-step-failure-'))
+      try {
+        const { execution } = await fixture(root)
+        const events: ArtifactReproducibilityExecutionEvent[] = []
+        await expect(
+          executeArtifactReproducibility(
+            {
+              execution,
+              frontierId: 'original-inputs',
+              evidence: reproductionEvidence(root),
+              onEvent: (event) => events.push(event)
+            },
+            {
+              createRuntime: async () => ({
+                execute: async () => ({
+                  status: 'failed',
+                  recovery: { execution: disposition },
+                  stdout: '',
+                  stderr: 'Memory check refused execution.',
+                  traceback: ''
+                }),
+                shutdown: async () => ({ reaped: true })
+              })
+            }
+          )
+        ).rejects.toThrow('Reproducibility step step:run-1 failed')
+        expect(events.find(({ type }) => type === 'step-output')).toMatchObject({
+          failedStep: { stepId: 'step:run-1', runIndex: 0, execution: disposition },
+          entries: [
+            { stepId: 'step:run-1', text: `${disposition}: Memory check refused execution.` }
+          ]
+        })
+        expect(events.some(({ type }) => type === 'step-completed')).toBe(false)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each([
     ['result.rds', 'unsupported-format'],
     ['result.h5ad', 'unsupported-format'],
@@ -843,6 +887,8 @@ describe('Artifact reproducibility execution', () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-storage-'))
     const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-attempt-'))
     const { execution, output } = await fixture(storageRoot)
+    let proofAvailable = false
+    let retainedCleanup: (() => Promise<{ reaped: boolean }>) | undefined
     const runtime: NotebookReproductionRuntime = {
       execute: async ({ sessionRoot }) => {
         await writeFile(join(sessionRoot, 'data', 'result.txt'), output)
@@ -855,7 +901,7 @@ describe('Artifact reproducibility execution', () => {
           outputs: []
         }
       },
-      shutdown: async () => ({ reaped: false })
+      shutdown: vi.fn(async () => ({ reaped: proofAvailable }))
     }
 
     await expect(
@@ -863,12 +909,22 @@ describe('Artifact reproducibility execution', () => {
         {
           execution,
           frontierId: 'original-inputs',
-          evidence: reproductionEvidence(storageRoot)
+          evidence: reproductionEvidence(storageRoot),
+          onCleanupRetained: (cleanup) => {
+            retainedCleanup = cleanup
+          }
         },
         { createAttemptRoot: async () => attemptRoot, createRuntime: async () => runtime }
       )
     ).rejects.toThrow(/teardown could not be confirmed/)
     await expect(access(attemptRoot)).resolves.toBeUndefined()
+    expect(retainedCleanup).toBeTypeOf('function')
+    await expect(retainedCleanup!()).resolves.toEqual({ reaped: false })
+    proofAvailable = true
+    await expect(retainedCleanup!()).resolves.toEqual({ reaped: true })
+    expect(runtime.shutdown).toHaveBeenCalledTimes(3)
+    await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    await rm(storageRoot, { recursive: true, force: true })
   })
 
   it('retains the attempt if an environment restore worker cannot be stopped before runtime creation', async () => {
@@ -891,6 +947,102 @@ describe('Artifact reproducibility execution', () => {
       )
     ).rejects.toThrow(/teardown could not be confirmed/)
     await expect(access(attemptRoot)).resolves.toBeUndefined()
+  })
+
+  it('requires the original installer proof even after kernel shutdown succeeds', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-installer-'))
+    const attemptRoot = join(storageRoot, 'attempt')
+    const { execution } = await fixture(storageRoot)
+    let installerProof = false
+    const terminateTree = vi.fn(async (child: import('node:child_process').ChildProcess) => {
+      if (!installerProof) return { reaped: false }
+      if (child.exitCode !== null || child.signalCode !== null) return { reaped: true }
+      const closed = once(child, 'close')
+      child.kill('SIGKILL')
+      await closed
+      return { reaped: true }
+    })
+    const cancellation = new AbortController()
+    const installerError = await createMicromambaExecutor({ terminateTree })(
+      [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+      undefined,
+      cancellation.signal,
+      () => cancellation.abort()
+    ).catch((error: unknown) => error)
+    let retainedCleanup: (() => Promise<{ reaped: boolean }>) | undefined
+    const shutdown = vi.fn(async () => ({ reaped: true }))
+    try {
+      await expect(
+        executeArtifactReproducibility(
+          {
+            execution,
+            frontierId: 'original-inputs',
+            evidence: reproductionEvidence(storageRoot),
+            onCleanupRetained: (cleanup) => {
+              retainedCleanup = cleanup
+            }
+          },
+          {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime: async () => ({
+              execute: async () => {
+                throw installerError
+              },
+              shutdown
+            })
+          }
+        )
+      ).rejects.toThrow('RUNTIME_CHILD_UNCONFIRMED')
+      expect(shutdown).toHaveBeenCalledOnce()
+      await expect(retainedCleanup!()).resolves.toEqual({ reaped: false })
+      await expect(access(attemptRoot)).resolves.toBeUndefined()
+      installerProof = true
+      await expect(retainedCleanup!()).resolves.toEqual({ reaped: true })
+      await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(
+        terminateTree.mock.calls.every(
+          ([child]) => child === environmentChildCleanup(installerError)!.identity
+        )
+      ).toBe(true)
+    } finally {
+      installerProof = true
+      await environmentChildCleanup(installerError)!.release()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps unknown installer ownership blocked after a successful kernel shutdown', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-unknown-installer-'))
+    const attemptRoot = join(storageRoot, 'attempt')
+    const { execution } = await fixture(storageRoot)
+    let retainedCleanup: (() => Promise<{ reaped: boolean }>) | undefined
+    try {
+      await expect(
+        executeArtifactReproducibility(
+          {
+            execution,
+            frontierId: 'original-inputs',
+            evidence: reproductionEvidence(storageRoot),
+            onCleanupRetained: (cleanup) => {
+              retainedCleanup = cleanup
+            }
+          },
+          {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime: async () => ({
+              execute: async () => {
+                throw new Error('RUNTIME_CHILD_UNCONFIRMED')
+              },
+              shutdown: async () => ({ reaped: true })
+            })
+          }
+        )
+      ).rejects.toThrow('RUNTIME_CHILD_UNCONFIRMED')
+      await expect(retainedCleanup!()).resolves.toEqual({ reaped: false })
+      await expect(access(attemptRoot)).resolves.toBeUndefined()
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 
   it('rejects a source snapshot that drifted after the recipe was sealed', async () => {

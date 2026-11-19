@@ -15,6 +15,8 @@ import {
   PackageOperationIndicator
 } from './SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { useOrgCaseStore } from '@/stores/org-cases-store'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
@@ -200,8 +202,12 @@ beforeEach(() => {
     open: false,
     excludedStorageKeys: null,
     selectionPreset: 'full',
-    threshold: '256'
+    threshold: '256',
+    orgCaseDraft: null,
+    retryOrgCaseUpload: false
   })
+  useSettingsStore.setState({ lab: undefined })
+  useOrgCaseStore.getState().reset()
 })
 
 it('releases measured layout when the dialog changes to a fork', async () => {
@@ -678,6 +684,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
   document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
   document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+  useSettingsStore.setState({ lab: undefined })
+  useOrgCaseStore.getState().reset()
 })
 
 it('starts with a simple export summary and reveals optional controls on request', async () => {
@@ -2827,3 +2835,290 @@ it.each([false, true])(
     )
   }
 )
+
+it('localizes the known required Web evidence export restriction with an isolated locale', async () => {
+  const { createInstance } = await import('i18next')
+  const { I18nextProvider } = await import('react-i18next')
+  const error = 'Required Web execution evidence cannot be shared under the current data policy.'
+  const locale = createInstance()
+  await locale.init({
+    lng: 'test',
+    keySeparator: false,
+    nsSeparator: false,
+    resources: { test: { translation: { [error]: 'Localized Web policy restriction' } } },
+    interpolation: { escapeValue: false }
+  })
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => ({
+        ...snapshot,
+        state: 'failed',
+        progress: { phase: 'saving' },
+        error
+      }))
+    }
+  })
+  await act(async () =>
+    root.render(
+      <I18nextProvider i18n={locale}>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </I18nextProvider>
+    )
+  )
+  const alert = document.querySelector('[role="alert"]')
+  expect(alert?.textContent).toContain('Localized Web policy restriction')
+  expect(alert?.textContent).not.toContain(error)
+})
+
+it('shows terminal Web omissions after large selection summaries have been released', async () => {
+  const completed: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'succeeded',
+    progress: { phase: 'saving' },
+    files: undefined,
+    summary: undefined,
+    importPreview: undefined,
+    result: {
+      filePath: '/exports/research.science',
+      webOmissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
+  }
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => completed)
+    }
+  })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  expect(document.querySelector('[data-testid="package-web-omissions"]')?.textContent).toContain(
+    'Sharing permission has not been confirmed'
+  )
+  expect(document.body.textContent).toContain('Fetched page text')
+  expect(document.body.textContent).toContain('/exports/research.science')
+})
+
+it('hides Export and upload when Lab is not authenticated', async () => {
+  vi.stubGlobal('api', { sessions: { packageOperation: vi.fn(async () => undefined) } })
+  useSettingsStore.setState({ lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    sessionTitle: 'My Research Session'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(
+    [...document.querySelectorAll('button')].some((item) =>
+      item.textContent?.includes('Export and upload')
+    )
+  ).toBe(false)
+})
+
+it('expands editable case name and description, uploads when confirmed, displays share code, and refreshes org cases', async () => {
+  const packageOperation = vi.fn(async () => undefined)
+  const orgCasesList = vi.fn(async () => ({
+    ok: true as const,
+    page: { items: [], total: 0, page: 1, page_size: 20 }
+  }))
+  const writeText = vi.fn(async () => undefined)
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true
+  })
+
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation,
+      orgCasesList
+    }
+  })
+  useSettingsStore.setState({
+    lab: {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+  })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    sessionTitle: 'Alpha Session Title'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+
+  await act(async () => button('Export and upload').click())
+  const nameInput = document.querySelector<HTMLInputElement>('input[value="Alpha Session Title"]')!
+  expect(nameInput).not.toBeNull()
+
+  const setInputValue = (el: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
+    const prototype =
+      el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  await act(async () => {
+    setInputValue(nameInput, '   ')
+  })
+  await act(async () => button('Confirm and upload').click())
+  expect(document.body.textContent).toContain('Enter a case name.')
+  expect(packageOperation).not.toHaveBeenCalled()
+
+  const descInput = document.querySelector<HTMLTextAreaElement>('textarea')!
+  await act(async () => {
+    setInputValue(nameInput, 'Curated Org Case')
+    setInputValue(descInput, 'Validated steps and parameters')
+  })
+  await act(async () => button('Confirm and upload').click())
+
+  expect(packageOperation).toHaveBeenCalledWith({
+    action: 'select',
+    operationId: snapshot.id,
+    excludedStorageKeys: ['artifacts/p/s/small', 'artifacts/p/s/large', 'artifacts/p/s/oversized'],
+    includePdfNotes: false,
+    destination: 'org-case',
+    orgCase: {
+      name: 'Curated Org Case',
+      description: 'Validated steps and parameters'
+    }
+  })
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: snapshot.id,
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'running',
+      progress: { phase: 'uploading', completedBytes: 512, totalBytes: 1024 }
+    })
+  )
+  expect(document.body.textContent).toContain('Uploading package…')
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: snapshot.id,
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'succeeded',
+      progress: { phase: 'uploading', completedBytes: 1024, totalBytes: 1024 },
+      result: {
+        uploadedCase: {
+          id: 'case_99',
+          name: 'Curated Org Case',
+          code: '7Q2M9X4B'
+        }
+      }
+    })
+  )
+
+  expect(document.body.textContent).toContain('Session package uploaded')
+  expect(document.body.textContent).toContain('Curated Org Case')
+  expect(document.querySelector('[data-testid="uploaded-org-case-code"]')?.textContent).toBe(
+    '7Q2M9X4B'
+  )
+  expect(
+    [...document.querySelectorAll('button')].some((item) =>
+      item.textContent?.includes('Show in folder')
+    )
+  ).toBe(false)
+  expect(orgCasesList).toHaveBeenCalledWith({ page: 1, pageSize: 20 })
+
+  const copyBtn = document.querySelector<HTMLButtonElement>('button[aria-label="Copy share code"]')!
+  await act(async () => copyBtn.click())
+  expect(writeText).toHaveBeenCalledWith('7Q2M9X4B')
+})
+
+it('preserves edited org-case draft across Try again on upload failure and clears it after Close', async () => {
+  const exportPackage = vi.fn(async () => ({ saved: false }))
+  const packageOperation = vi.fn(async () => undefined)
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation,
+      exportPackage,
+      orgCasesList: vi.fn(async () => ({
+        ok: true as const,
+        page: { items: [], total: 0, page: 1, page_size: 20 }
+      }))
+    }
+  })
+  useSettingsStore.setState({
+    lab: {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+  })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    id: 'op-fail-1',
+    sessionTitle: 'Default Title'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  await act(async () => button('Export and upload').click())
+
+  const nameInput = document.querySelector<HTMLInputElement>('input[value="Default Title"]')!
+  const setInputValue = (el: HTMLInputElement, value: string): void => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  await act(async () => setInputValue(nameInput, 'Saved Draft Name'))
+  await act(async () => button('Confirm and upload').click())
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: 'op-fail-1',
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'failed',
+      progress: { phase: 'uploading' },
+      error: 'Upload failed'
+    })
+  )
+  await act(async () => button('Try again').click())
+  expect(exportPackage).toHaveBeenCalledWith(snapshot.session)
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      ...snapshot,
+      id: 'op-retry-2',
+      sessionTitle: 'Default Title'
+    })
+  )
+  expect(document.querySelector<HTMLInputElement>('input[value="Saved Draft Name"]')).not.toBeNull()
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: 'op-retry-2',
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'failed',
+      progress: { phase: 'uploading' },
+      error: 'Upload failed'
+    })
+  )
+  await act(async () => button('Close').click())
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      ...snapshot,
+      id: 'op-fresh-3',
+      sessionTitle: 'Default Title'
+    })
+  )
+  expect(document.querySelector('input[value="Saved Draft Name"]')).toBeNull()
+})

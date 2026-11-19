@@ -17,6 +17,11 @@ import {
   type CreateNotebookReproductionRuntimeDependencies
 } from './reproduction-runtime'
 import { pythonBin, rScriptBin } from '@aipoch/environment'
+import { healthyNotebookExecutionAdmission } from './memory-policy.test-support'
+import {
+  NotebookExecutionAdmissionError,
+  type NotebookExecutionAdmission
+} from './execution-admission'
 
 const serializeLock = (
   platform: string = process.platform,
@@ -78,7 +83,10 @@ describe('Notebook reproduction runtime', () => {
     )
   })
   const replayAcrossLocks = async (
-    locks: NotebookEnvironmentLock[]
+    locks: NotebookEnvironmentLock[],
+    createExecutionAdmission: (
+      signal?: AbortSignal
+    ) => NotebookExecutionAdmission = healthyNotebookExecutionAdmission
   ): Promise<{
     replay: (
       index: number,
@@ -136,6 +144,7 @@ describe('Notebook reproduction runtime', () => {
         requirements,
         storageRoot,
         attemptRoot,
+        createExecutionAdmission,
         processSandbox: { wrap: vi.fn() },
         projectId: 'project',
         sessionId: 'session',
@@ -181,6 +190,30 @@ describe('Notebook reproduction runtime', () => {
       })
     return { replay, runMicromamba, execute, environmentProgress, requirements }
   }
+
+  it('stops an isolated reproduction step before dispatch when memory is refused', async () => {
+    const lock: NotebookEnvironmentLock = JSON.parse(serializeLock())
+    let refused = false
+    const { replay, execute } = await replayAcrossLocks([lock], () => ({
+      prepare: async () => {
+        if (refused)
+          throw new NotebookExecutionAdmissionError(
+            'NOTEBOOK_MEMORY_PRESSURE',
+            'Execution was not started.'
+          )
+      },
+      assertCurrent: () => undefined
+    }))
+    expect((await replay(0)).status).toBe('completed')
+    refused = true
+    expect(await replay(0)).toMatchObject({
+      status: 'failed',
+      kernelDispatched: false,
+      executionStarted: false,
+      recovery: { execution: 'not-started' }
+    })
+    expect(execute).toHaveBeenCalledOnce()
+  })
 
   it('restores the captured state at each R runtime step', async () => {
     const lock: NotebookEnvironmentLock = JSON.parse(serializeLock(process.platform, 'r'))
@@ -402,6 +435,7 @@ describe('Notebook reproduction runtime', () => {
         requirements: [requirement],
         storageRoot,
         attemptRoot,
+        createExecutionAdmission: healthyNotebookExecutionAdmission,
         processSandbox,
         projectId: 'artifact-reproducibility',
         sessionId: 'reproduction-1',
@@ -905,6 +939,7 @@ describe('Notebook reproduction runtime', () => {
         requirements,
         storageRoot,
         attemptRoot,
+        createExecutionAdmission: healthyNotebookExecutionAdmission,
         processSandbox: { wrap: vi.fn() },
         projectId: 'artifact-reproducibility',
         sessionId: 'reproduction-1'

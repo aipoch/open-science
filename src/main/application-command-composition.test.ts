@@ -95,7 +95,9 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
-    notebook: EMPTY_OWNER,
+    notebook: {
+      workflows: { configureResourceReleaseGuard: vi.fn() }
+    } as unknown as ApplicationCommandCompositionDependencies['notebook'],
     notebookEnvironment: EMPTY_OWNER,
     notebookRuntime: EMPTY_OWNER,
     settingsCore: EMPTY_OWNER,
@@ -340,6 +342,10 @@ describe('application command composition', () => {
       'sessions:import-package',
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
+      'sessions:org-case-cancel-import',
+      'sessions:org-case-detail',
+      'sessions:org-case-import',
+      'sessions:org-cases-list',
       'sessions:package-operation',
       'sessions:rename',
       'sessions:retry-runtime-terminal-commit',

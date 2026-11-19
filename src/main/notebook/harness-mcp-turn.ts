@@ -59,7 +59,11 @@ export async function openNotebookHarnessTurn(input: {
 }): Promise<NotebookHarnessTurn> {
   const { authority, promptMessageId, ownerExecutionId } = input.execution
   if (!ownerExecutionId.trim()) throw new Error('Missing Notebook turn owner')
-  const bound = structuredClone({ ...input.environment, release: undefined })
+  const bound = structuredClone({
+    ...input.environment,
+    release: undefined,
+    deferExecution: undefined
+  })
   const scope = authority.getArtifactTurnScope(bound.sessionId)
   if (
     !scope ||

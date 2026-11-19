@@ -167,6 +167,7 @@ const createRuntimeHarness = (options: {
   )
   const target = Object.create(AcpRuntime.prototype) as Record<string, unknown>
   Object.assign(target, {
+    options: {},
     planService: service,
     planInteractions: interactions,
     sessionInteractions,

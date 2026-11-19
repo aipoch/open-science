@@ -722,7 +722,8 @@ describe('PR Gate workflow', () => {
             'linux-notebook-isolation',
             'e2e',
             'source-regressions',
-            'macos-smoke'
+            'macos-smoke',
+            'update-occupancy'
           ]
         },
         comparison_base_sha: {
@@ -1029,6 +1030,8 @@ describe('PR Gate workflow', () => {
           PACKAGE_RESULT: 'skipped',
           PACKAGE_SOURCE_REQUIRED: 'false',
           PACKAGE_SOURCE_RESULT: 'skipped',
+          UPDATE_OCCUPANCY_REQUIRED: 'false',
+          UPDATE_OCCUPANCY_RESULT: 'skipped',
           EVENT_NAME: 'pull_request',
           PR_GATE_PLAN: planJson,
           PR_GATE_NEEDS: needsJson,
@@ -2663,10 +2666,14 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
           PACKAGE_RESULT: 'success',
           PACKAGE_SOURCE_REQUIRED: 'true',
           PACKAGE_SOURCE_RESULT: 'success',
+          UPDATE_OCCUPANCY_REQUIRED: 'true',
+          UPDATE_OCCUPANCY_RESULT: 'success',
           ...extra
         }
       }).status
     expect(run({})).toBe(0)
+    expect(run({ UPDATE_OCCUPANCY_RESULT: outcome })).toBe(1)
+    expect(run({ UPDATE_OCCUPANCY_REQUIRED: 'false', UPDATE_OCCUPANCY_RESULT: 'skipped' })).toBe(0)
     expect(run({ RUNTIME_RESULT: outcome })).toBe(1)
     expect(run({ PACKAGE_RESULT: outcome })).toBe(1)
     expect(run({ PACKAGE_SOURCE_RESULT: outcome })).toBe(1)
@@ -2679,6 +2686,10 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
         PACKAGE_RESULT: 'skipped'
       })
     ).toBe(0)
+    expect(workflow.jobs.gate.needs).toContain('update_occupancy')
+    expect(step.env?.UPDATE_OCCUPANCY_REQUIRED).toBe(
+      workflow.jobs.update_occupancy.if?.replace("needs.preflight.result == 'success' && ", '')
+    )
     expect(step.env?.RUNTIME_REQUIRED).toBe(
       workflow.jobs.runtime_checks.if?.replace("needs.preflight.result == 'success' && ", '')
     )

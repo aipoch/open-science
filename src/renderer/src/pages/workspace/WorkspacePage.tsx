@@ -9,6 +9,7 @@ import {
 } from './previews/library-reference-actions'
 import { requestComposerFocus } from './composer-focus-events'
 import type { LiteratureReference } from '../../../../shared/session-persistence'
+import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
 import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
 import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import type { SessionDiagnosticIdentity } from '../../../../shared/session-diagnostics'
@@ -764,7 +765,15 @@ const WorkspacePage = ({
       actionTarget: authenticationOperationTarget
     }
   )
+  const labSignInExpired = useSettingsStore((state) => {
+    if (state.lab?.state !== 'expired') return false
+    const providerId = activeAgentConfiguration?.providerId
+    return Boolean(
+      providerId && state.providers.find((provider) => provider.id === providerId)?.type === 'lab'
+    )
+  })
   const conversation = useWorkspaceConversationController({
+    cancelInFlightRun: labSignInExpired,
     activeSession,
     projectId: scopedProjectId,
     currentDraftKey,
@@ -1597,6 +1606,9 @@ const WorkspacePage = ({
   }
   const canOpenProjectCompute =
     typeof window.api.notebook?.getProjectActivity === 'function' &&
+    typeof window.api.notebook?.getProjectResources === 'function' &&
+    typeof window.api.notebook?.releaseSessionResources === 'function' &&
+    typeof window.api.notebook?.retryResourceRelease === 'function' &&
     typeof window.api.notebook?.onChanged === 'function' &&
     typeof window.api.compute?.jobsList === 'function' &&
     typeof window.api.compute?.onJobUpdated === 'function'
@@ -1626,6 +1638,47 @@ const WorkspacePage = ({
             : undefined
         }
       >
+        <NotebookMemoryNoticeBridge
+          projectId={activeProjectId}
+          canManage={isSessionPersistenceReady && canOpenProjectCompute}
+          onContinue={async (event) => {
+            if (event.source === 'reproduction') {
+              const session = useSessionStore
+                .getState()
+                .sessions.find(
+                  ({ id, projectId }) => id === event.sessionId && projectId === event.projectId
+                )
+              if (!session)
+                throw new Error(
+                  t('Open the affected project to retry or manage its Notebook resources.')
+                )
+              setCheckSession(session)
+              return
+            }
+            if (!event.refusalId) return
+            if (typeof window.api.acp?.continueNotebookExecution !== 'function') {
+              throw new Error(
+                t('Notebook continuation is unavailable. Update the application before retrying.')
+              )
+            }
+            const result = await conversation.actions.submit.notebookContinuation({
+              projectId: event.projectId,
+              sessionId: event.sessionId,
+              cwd: event.workspaceCwd,
+              refusalId: event.refusalId,
+              messageBranchId: event.messageBranchId,
+              text: t(
+                'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
+              )
+            })
+            if (!result)
+              throw new Error(
+                t(
+                  'Notebook continuation could not be started. The previous request remains stopped.'
+                )
+              )
+          }}
+        />
         {projectSessionCleanups.map((cleanup) => (
           <ErrorNotice
             key={cleanup.sessionId}

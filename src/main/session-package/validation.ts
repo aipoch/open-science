@@ -21,6 +21,7 @@ import type { PackageRecords } from './records-contract'
 import { installPackageReproducibility, validatePackageReproducibility } from './reproducibility'
 import { validatePackageRoCrateMetadata } from './ro-crate'
 import { assertNoExcludedContentCopies, validateExcludedFiles } from './selection'
+import { validatePackageWebEvidence } from './web-evidence'
 
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
@@ -62,6 +63,22 @@ export const validatePackageRecords = async (
   onProgress?: (progress: PackageProgress) => void,
   destination = false
 ): Promise<void> => {
+  if (records.webEvidence) validatePackageWebEvidence(records.webEvidence)
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-result-v2')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-evidence-v2'))
+  )
+    throw new Error('Web evidence reader capability declaration is invalid.')
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-restricted-result-v1')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-restricted-result-v1'))
+  )
+    throw new Error('Restricted Web reader capability declaration is invalid.')
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-search-operations-v1')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-search-operations-v1'))
+  )
+    throw new Error('Web operation protocol reader capability declaration is invalid.')
   if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
     throw new Error('Literature package capability declaration is invalid.')
   if (

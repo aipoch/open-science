@@ -50,9 +50,8 @@ const NotebookStep = ({ onBack, onComplete }: NotebookStepProps): React.JSX.Elem
   return (
     <>
       <CardContent className="flex-1 p-0">
-        {/* Reuse the complete Settings surface so discovery, interpreter controls, language logos,
-            managed setup, progress, recovery, and cancellation stay identical in both places. */}
         <RuntimesPanel
+          showLocalShell={false}
           headingAs="h2"
           title={t('Notebook runtime (optional)')}
           description={t(
