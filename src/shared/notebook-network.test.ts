@@ -415,3 +415,30 @@ it('migrates obsolete HTTPS domain exceptions without broadening HTTP/IP authori
   ])
   expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
 })
+
+describe('shared Agent and Notebook HTTP rules', () => {
+  it('projects an exact shared destination into strict Notebook policy', () => {
+    const policy = buildNotebookNetworkPolicy({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict',
+      strictWhitelist: [],
+      trustedPrivateDestinations: [
+        {
+          sharedWithAgent: true,
+          hostname: 'gateway.example',
+          port: 8080,
+          protocol: 'http',
+          approvedAddresses: []
+        }
+      ]
+    })
+    expect(policy.strictWhitelist).toEqual([
+      expect.objectContaining({
+        hostnamePattern: 'gateway.example',
+        port: 8080,
+        protocol: 'http',
+        origin: 'manual'
+      })
+    ])
+  })
+})

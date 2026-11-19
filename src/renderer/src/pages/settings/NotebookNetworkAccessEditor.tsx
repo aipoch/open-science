@@ -8,7 +8,10 @@ import type {
   NotebookStrictWhitelistEntry,
   TrustedPrivateDestination
 } from '../../../../shared/notebook-network-settings'
-import { normalizeTrustedPrivateDestinations } from '../../../../shared/notebook-network'
+import {
+  effectiveNotebookStrictWhitelist,
+  normalizeTrustedPrivateDestinations
+} from '../../../../shared/notebook-network'
 import {
   trustedDestinationId,
   requiresNetworkException,
@@ -125,9 +128,10 @@ export function NotebookNetworkAccessEditor({
   const strict = currentMode === 'strict'
   const editingExisting = Boolean(editor?.id || editor?.original)
   const editorOpen = Boolean(editor)
-  const rules = settings.strictWhitelist ?? []
-  const groups = settings.strictWhitelistGroups ?? []
+  const strictRules = settings.strictWhitelist ?? []
   const manual = (settings.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
+  const rules = effectiveNotebookStrictWhitelist(settings)
+  const groups = settings.strictWhitelistGroups ?? []
   const grants = (settings.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)
   const showSearch = strict || manual.length + grants.length > 10
   // Rule edits retain their baseline. A different effective mode invalidates all local intent.
@@ -250,8 +254,23 @@ export function NotebookNetworkAccessEditor({
     void commit({ ...base, mode: pendingMode }, base, undefined, true)
   }
   const removeStrictRule = (ruleId: string): void => {
+    const shared = manual.find(
+      (rule) => rule.sharedWithAgent && trustedDestinationId(rule) === ruleId
+    )
+    if (shared) {
+      void commit(
+        {
+          ...settings,
+          trustedPrivateDestinations: (settings.trustedPrivateDestinations ?? []).filter(
+            (item) => item !== shared
+          )
+        },
+        settings
+      )
+      return
+    }
     void commit(
-      { ...settings, strictWhitelist: rules.filter((item) => item.id !== ruleId) },
+      { ...settings, strictWhitelist: strictRules.filter((item) => item.id !== ruleId) },
       settings
     )
   }
@@ -291,7 +310,7 @@ export function NotebookNetworkAccessEditor({
       }
       void commit(next, base)
     }
-    if (strict) {
+    if (strict && !editor.original) {
       let groupId = group
       let groups = [...(base.strictWhitelistGroups ?? [])]
       if (group === '__new__') {
@@ -753,7 +772,8 @@ export function NotebookNetworkAccessEditor({
               </summary>
               {rows.map((rule) => (
                 <div key={rule.id}>
-                  {editor?.id === rule.id ? (
+                  {editor?.id === rule.id ||
+                  (editor?.original && trustedDestinationId(editor.original) === rule.id) ? (
                     editorForm
                   ) : (
                     <div className={rowClass}>
@@ -769,7 +789,12 @@ export function NotebookNetworkAccessEditor({
                       <Button
                         variant="ghost"
                         disabled={busy || !!editor}
-                        onClick={() => open(rule)}
+                        onClick={() => {
+                          const shared = manual.find(
+                            (item) => item.sharedWithAgent && trustedDestinationId(item) === rule.id
+                          )
+                          open(shared ? undefined : rule, shared)
+                        }}
                       >
                         {t('Edit')}
                       </Button>

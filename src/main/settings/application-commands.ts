@@ -1003,12 +1003,22 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:test-classification')
         return dependencies.service.classification.probe(args[0])
       },
-      'settings:save-validated-provider': ({ args }) =>
-        dependencies.snapshotCommits.projectAfter(
-          dependencies.runtime.saveValidatedProvider(args[0])
-        ),
-      'settings:validate-provider': ({ args }) =>
-        dependencies.snapshotCommits.projectAfter(dependencies.service.validateProvider(args[0]))
+      'settings:save-validated-provider': ({ args, callerContext }) => {
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.runtime.saveValidatedProvider({
+            ...args[0],
+            allowInsecureHttp: callerContext.location === 'local'
+          })
+        )
+      },
+      'settings:validate-provider': ({ args, callerContext }) => {
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.validateProvider({
+            ...args[0],
+            allowInsecureHttp: callerContext.location === 'local'
+          })
+        )
+      }
     })
     return scope.complete()
   } catch (error) {

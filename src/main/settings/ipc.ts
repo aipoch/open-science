@@ -320,10 +320,12 @@ const registerSettingsIpcHandlers = ({
     }
   )
   ipcMainHandle('settings:save-validated-provider', (_event, request: UpsertProviderRequest) =>
-    snapshotCommits.projectAfter(workflows.runtime.saveValidatedProvider(request))
+    snapshotCommits.projectAfter(
+      workflows.runtime.saveValidatedProvider({ ...request, allowInsecureHttp: true })
+    )
   )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
-    snapshotCommits.projectAfter(service.validateProvider(request))
+    snapshotCommits.projectAfter(service.validateProvider({ ...request, allowInsecureHttp: true }))
   )
   ipcMainHandle('settings:cancel-codex-login', () => service.cancelCodexLogin())
   ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())

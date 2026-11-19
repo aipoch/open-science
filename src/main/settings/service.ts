@@ -42,6 +42,7 @@ import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 import { ProviderTransportOwner } from './provider-transport-owner'
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 import {
   HarnessSessionOwner,
   type HarnessSession,
@@ -635,6 +636,7 @@ class SettingsService {
       resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
     })
     this.providers = new ProviderAccountsModule({
+      commitSharedDestination: (write) => this.notebookNetwork.commitSharedDestination(write),
       repository: this.repository,
       storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
@@ -667,6 +669,13 @@ class SettingsService {
       this.repository,
       new ProviderTransportOwner({
         onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
+        isProviderHttpAllowed: async (url) => {
+          const settings = await this.repository.getSettings()
+          return providerNetworkDestinationIsTrusted(
+            url,
+            settings.notebookNetwork?.trustedPrivateDestinations ?? []
+          )
+        },
         getXaiOAuthAccessToken: (forceRefresh) =>
           this.providers.getXaiOAuthAccessToken(forceRefresh)
       })

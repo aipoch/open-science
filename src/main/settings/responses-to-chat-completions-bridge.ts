@@ -151,6 +151,7 @@ export class ResponsesToChatCompletionsBridge {
         catalog,
         target: {
           url: chatUrl(this.target.baseUrl),
+          isInsecureHttpAllowed: this.target.isInsecureHttpAllowed,
           ...(this.target.key ? { key: this.target.key } : {}),
           ...(this.target.model ? { model: this.target.model } : {}),
           ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
@@ -475,7 +476,12 @@ export class ResponsesToChatCompletionsBridge {
       return
     }
     const startedAt = Date.now()
-    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(target.baseUrl), {
+    const upstreamUrl = chatUrl(target.baseUrl)
+    const allowInsecureHttp = target.isInsecureHttpAllowed
+      ? await target.isInsecureHttpAllowed(upstreamUrl)
+      : target.allowInsecureHttp
+    const upstream = await fetchProviderRequest(this.fetchImpl, upstreamUrl, {
+      allowInsecureHttp,
       method: 'POST',
       headers,
       body: chatRequestBody,

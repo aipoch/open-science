@@ -66,6 +66,8 @@ type JsonObject = Record<string, any>
 
 type NativeResponsesCompatibilityTarget = {
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
   resolveKey?: (forceRefresh?: boolean) => Promise<string>
@@ -732,7 +734,11 @@ export class NativeResponsesCompatibilityProxy {
     try {
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const url = responsesUrl(this.target.baseUrl)
+      const allowInsecureHttp = this.target.isInsecureHttpAllowed
+        ? await this.target.isInsecureHttpAllowed(url)
+        : this.target.allowInsecureHttp
       const response = await fetchProviderRequest(this.fetchImpl, url, {
+        allowInsecureHttp,
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1042,7 +1048,12 @@ export class NativeResponsesCompatibilityProxy {
       )
       const providerRequestStartedAt = Date.now()
       const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
-      let upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
+      const upstreamUrl = responsesUrl(target.baseUrl)
+      const allowInsecureHttp = target.isInsecureHttpAllowed
+        ? await target.isInsecureHttpAllowed(upstreamUrl)
+        : target.allowInsecureHttp
+      let upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
+        allowInsecureHttp,
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -1050,7 +1061,11 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
+        const retryAllowInsecureHttp = target.isInsecureHttpAllowed
+          ? await target.isInsecureHttpAllowed(upstreamUrl)
+          : target.allowInsecureHttp
+        upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
+          allowInsecureHttp: retryAllowInsecureHttp,
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,

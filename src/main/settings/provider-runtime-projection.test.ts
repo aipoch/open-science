@@ -1183,3 +1183,25 @@ it('rejects a persisted remote HTTP provider before projecting credentials into 
 })
 
 await configureTestElectronHost(await import('electron'))
+
+it('projects the shared HTTP grant only when the backend supplies it', () => {
+  const owner = new ProviderRuntimeProjectionOwner()
+  const provider: StoredProvider = {
+    id: 'http-gateway',
+    type: 'custom',
+    name: 'HTTP gateway',
+    baseUrl: 'http://gateway.example:8080/v1',
+    model: 'model',
+    keyRef: 'enc:key',
+    apiEndpoints: ['messages']
+  }
+  const framework = getAgentFramework('claude-code')
+  expect(() => owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)).toThrow(
+    /HTTPS/
+  )
+  expect(
+    owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework, {
+      allowInsecureHttp: true
+    }).provider.allowInsecureHttp
+  ).toBe(true)
+})

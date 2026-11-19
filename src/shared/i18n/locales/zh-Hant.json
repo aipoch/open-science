@@ -590,7 +590,6 @@
     "Requested results {{start}}–{{end}}": "請求第 {{start}}–{{end}} 筆結果",
     "Starting at result {{start}}": "從第 {{start}} 筆結果開始",
     "First row is used as column headers": "首列用作欄標題",
-    "Notebook network access": "Notebook 網路存取",
     "Notebook network protection": "Notebook 網路保護",
     "Install bubblewrap to use Notebook isolation on Linux.": "請安裝 bubblewrap，以便在 Linux 上使用 Notebook 隔離。",
     "The macOS sandbox service is unavailable.": "macOS 沙箱服務無法使用。",
@@ -6925,7 +6924,6 @@
     "Protection is not active. These rules apply only to protected execution.": "保護未啟用。這些規則僅適用於受保護的執行。",
     "Saving rules resets protected connections and may interrupt transfers.": "儲存規則會重設受保護的連線，可能中斷正在進行的傳輸。",
     "Your network rules have not been saved. Discard them and leave?": "網路規則尚未儲存。要捨棄變更並離開嗎？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "這將允許 Notebook 程式碼從 {{domain}} 讀取資料並向其傳送資料。僅允許您信任的網域。您可以隨時在「設定 > 網路 > Notebook 網路存取」中撤銷已儲存的存取權限。",
     "Choose what to keep": "選擇保留內容",
     "Deleted or not imported": "已刪除或未匯入",
     "Keep both as separate notes": "保留為兩則獨立筆記",
@@ -8442,6 +8440,9 @@
     "Test generation": "測試生成",
     "Image generation test passed.": "圖片生成測試通過。",
     "Test image generation?": "測試圖片生成？",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "使用 {{model}} 生成一張測試圖片。服務供應商可能會對此請求收費。"
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "使用 {{model}} 生成一張測試圖片。服務供應商可能會對此請求收費。",
+    "Agent & Notebook network": "智能體與 Notebook 網路",
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Agent & Notebook network.": "這將允許 Notebook 程式碼從 {{domain}} 讀取資料並向其傳送資料。僅允許您信任的網域。您可以隨時在「設定 > 網路 > 智能體與 Notebook 網路」中撤銷已儲存的存取權限。",
+    "Remote HTTP model endpoints are shared with Agent & Notebook network after you save this model. API keys and model traffic are not encrypted in transit.": "儲存此模型後，遠端 HTTP 模型端點會與智能體與 Notebook 網路共用。API 金鑰與模型流量在傳輸過程中不會加密。"
   }
 }

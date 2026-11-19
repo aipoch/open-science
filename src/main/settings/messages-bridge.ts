@@ -47,6 +47,8 @@ const upstreamOrigin = (baseUrl: string): string | undefined => {
 export type MessagesBridgeTarget = Readonly<{
   id: string
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
   model: string
@@ -205,10 +207,15 @@ export class MessagesBridge {
     const startedAt = Date.now()
     let upstream: Response
     try {
+      const upstreamUrl = `${baseUrl}${requestUrl.pathname}${requestUrl.search}`
+      const allowInsecureHttp = target.isInsecureHttpAllowed
+        ? await target.isInsecureHttpAllowed(upstreamUrl)
+        : target.allowInsecureHttp
       upstream = await fetchProviderRequest(
         withProviderConnectionMarker(this.fetchImpl, response),
-        `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
+        upstreamUrl,
         {
+          allowInsecureHttp,
           method: 'POST',
           headers: headersToForward,
           body,

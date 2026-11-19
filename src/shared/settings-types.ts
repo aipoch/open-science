@@ -501,6 +501,8 @@ export type UpsertProviderRequest = ProviderDraft & {
   // renderer loaded it. It affects command semantics only and is never persisted.
   requireExisting?: boolean
   expectedConfigRevision?: number
+  /** Main-owned capability; IPC writers set this only for a local explicit test/save. */
+  allowInsecureHttp?: boolean
   // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
   // Ordinary edits remain app-owned and never cross that external profile boundary.
   reimportCodexAuthentication?: boolean
@@ -532,6 +534,8 @@ export type ValidateProviderRequest = {
   draft?: ProviderDraft
   // Optional model override for validating a saved provider before that model becomes active.
   model?: string
+  /** Main-owned capability; never accepted from remote callers. */
+  allowInsecureHttp?: boolean
 }
 
 // Structured validation outcome so the renderer can render an actionable message per category.

@@ -17,7 +17,10 @@ import {
 } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
-import { type NotebookNetworkSettings } from '../../shared/notebook-network-settings'
+import {
+  type NotebookNetworkSettings,
+  type TrustedPrivateDestination
+} from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
@@ -237,6 +240,8 @@ class SettingsRepository {
     existingId?: string,
     configEdit?: {
       expectedConfigRevision?: number
+      networkDestination?: TrustedPrivateDestination
+      previouslyShared?: boolean
       catalogBaseline?: ProviderCatalogState
       validationMatches?: (merged: StoredProvider) => boolean
       expectedValidationState?: Pick<
@@ -315,8 +320,32 @@ class SettingsRepository {
             ? { ...provider, codexAutoUseHttps: true }
             : provider
       } else providers.push(provider)
+      const networkDestination = configEdit?.networkDestination
+      const rules = settings.notebookNetwork?.trustedPrivateDestinations ?? []
+      const existingRule =
+        networkDestination &&
+        rules.find(
+          (rule) =>
+            !rule.managedGrantId &&
+            rule.protocol === networkDestination.protocol &&
+            rule.hostname === networkDestination.hostname &&
+            rule.port === networkDestination.port
+        )
+      if (networkDestination && configEdit?.previouslyShared && !existingRule?.sharedWithAgent)
+        throw new Error('Network access changed. Test the connection again.')
+      const notebookNetwork = networkDestination
+        ? normalizeNotebookNetworkSettings({
+            ...settings.notebookNetwork,
+            trustedPrivateDestinations: existingRule
+              ? rules.map((rule) =>
+                  rule === existingRule ? { ...rule, sharedWithAgent: true } : rule
+                )
+              : [...rules, networkDestination]
+          })
+        : settings.notebookNetwork
       return {
         ...settings,
+        ...(networkDestination ? { notebookNetwork } : {}),
         providers,
         // A custom provider has one model. Keep its active selection in the same save so
         // validation and runtime resolution cannot keep using the model from before the edit.

@@ -692,3 +692,45 @@ it('refuses a persisted remote HTTP target before forwarding a prompt or credent
     await bridge.close()
   }
 })
+
+it('rechecks shared HTTP authorization for every open-session request', async () => {
+  let allowed = true
+  const upstream = vi.fn<typeof fetch>(async () =>
+    Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+  )
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'shared-http',
+        wire: 'chat-completions',
+        endpoint: 'http://remote-gateway.invalid/v1/chat/completions',
+        key: 'PRIVATE_KEY_CANARY',
+        model: 'test-model',
+        isInsecureHttpAllowed: async () => allowed
+      }
+    ],
+    'shared-http',
+    upstream
+  )
+  const connection = await bridge.start()
+  try {
+    const request = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] })
+      })
+
+    expect((await request()).status).toBe(200)
+    allowed = false
+    const blocked = await request()
+    expect(blocked.ok).toBe(false)
+    expect(await blocked.text()).toContain('HTTPS')
+    expect(upstream).toHaveBeenCalledTimes(1)
+  } finally {
+    await bridge.close()
+  }
+})

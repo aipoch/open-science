@@ -614,7 +614,12 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
   const bridge = new ResponsesToChatCompletionsBridge(
-    { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
+    {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      allowInsecureHttp: provider.allowInsecureHttp
+    },
     fetchImpl
   )
   return validateProviderThroughLocalResponsesAdapter(
@@ -645,7 +650,12 @@ const validateProviderThroughNativeResponsesCompatibility = async (
   }
 
   const proxy = new NativeResponsesCompatibilityProxy(
-    { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
+    {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      allowInsecureHttp: provider.allowInsecureHttp
+    },
     createBoundedValidationFetch(fetchImpl)
   )
   return validateProviderThroughLocalResponsesAdapter(
@@ -704,6 +714,7 @@ const validateCustomProvider = async (
 
   try {
     const response = await fetchProviderRequest(fetchImpl, request.url, {
+      allowInsecureHttp: provider.allowInsecureHttp,
       method: 'POST',
       headers: request.headers,
       body: request.body,

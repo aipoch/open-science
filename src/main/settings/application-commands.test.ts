@@ -558,7 +558,10 @@ describe('Settings core application commands', () => {
       reasoningEffort: 'low'
     })
     expect(serviceMethod('setSubagentModel')).toHaveBeenCalledWith({ mode: 'inherit' })
-    expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
+    expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({
+      providerId: 'provider-1',
+      allowInsecureHttp: false
+    })
   })
 
   it('rejects local-only commands before an owner can run', async () => {

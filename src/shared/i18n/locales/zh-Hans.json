@@ -590,7 +590,6 @@
     "Requested results {{start}}–{{end}}": "请求第 {{start}}–{{end}} 条结果",
     "Starting at result {{start}}": "从第 {{start}} 条结果开始",
     "First row is used as column headers": "首行用作列标题",
-    "Notebook network access": "Notebook 网络访问",
     "Notebook network protection": "Notebook 网络保护",
     "Install bubblewrap to use Notebook isolation on Linux.": "请安装 bubblewrap，以便在 Linux 上使用 Notebook 隔离。",
     "The macOS sandbox service is unavailable.": "macOS 沙箱服务不可用。",
@@ -6925,7 +6924,6 @@
     "Protection is not active. These rules apply only to protected execution.": "保护未启用。这些规则仅适用于受保护的执行。",
     "Saving rules resets protected connections and may interrupt transfers.": "保存规则会重置受保护的连接，可能中断正在进行的传输。",
     "Your network rules have not been saved. Discard them and leave?": "网络规则尚未保存。要放弃更改并离开吗？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。",
     "Choose what to keep": "选择保留内容",
     "Deleted or not imported": "已删除或未导入",
     "Keep both as separate notes": "保留为两条独立笔记",
@@ -8442,6 +8440,9 @@
     "Test generation": "测试生成",
     "Image generation test passed.": "图片生成测试通过。",
     "Test image generation?": "测试图片生成？",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "使用 {{model}} 生成一张测试图片。服务提供商可能会对此请求收费。"
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "使用 {{model}} 生成一张测试图片。服务提供商可能会对此请求收费。",
+    "Agent & Notebook network": "智能体与 Notebook 网络",
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Agent & Notebook network.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > 智能体与 Notebook 网络”中撤销已保存的访问权限。",
+    "Remote HTTP model endpoints are shared with Agent & Notebook network after you save this model. API keys and model traffic are not encrypted in transit.": "保存此模型后，远程 HTTP 模型端点会与智能体与 Notebook 网络共用。API 密钥和模型流量在传输过程中不会加密。"
   }
 }

@@ -590,7 +590,6 @@
     "Requested results {{start}}–{{end}}": "要求した結果 {{start}}～{{end}} 件目",
     "Starting at result {{start}}": "結果 {{start}} 件目から",
     "First row is used as column headers": "先頭行を列見出しとして使用します",
-    "Notebook network access": "Notebook のネットワークアクセス",
     "Notebook network protection": "Notebook のネットワーク保護",
     "Install bubblewrap to use Notebook isolation on Linux.": "Linux で Notebook の分離機能を使用するには bubblewrap をインストールしてください。",
     "The macOS sandbox service is unavailable.": "macOS のサンドボックスサービスを利用できません。",
@@ -6925,7 +6924,6 @@
     "Protection is not active. These rules apply only to protected execution.": "保護は有効ではありません。これらのルールは保護された実行にのみ適用されます。",
     "Saving rules resets protected connections and may interrupt transfers.": "ルールを保存すると保護された接続がリセットされ、転送が中断する場合があります。",
     "Your network rules have not been saved. Discard them and leave?": "ネットワークルールは未保存です。変更を破棄して移動しますか？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > Notebook のネットワークアクセス」で取り消せます。",
     "Choose what to keep": "保持する内容を選択",
     "Deleted or not imported": "削除済みまたは未インポート",
     "Keep both as separate notes": "別々のノートとして両方を保持",
@@ -8442,6 +8440,9 @@
     "Test generation": "生成をテスト",
     "Image generation test passed.": "画像生成テストに成功しました。",
     "Test image generation?": "画像生成をテストしますか？",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} でテスト画像を1枚生成します。このリクエストに対してプロバイダーから料金が請求される場合があります。"
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} でテスト画像を1枚生成します。このリクエストに対してプロバイダーから料金が請求される場合があります。",
+    "Agent & Notebook network": "エージェントと Notebook のネットワーク",
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Agent & Notebook network.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > エージェントと Notebook のネットワーク」で取り消せます。",
+    "Remote HTTP model endpoints are shared with Agent & Notebook network after you save this model. API keys and model traffic are not encrypted in transit.": "このモデルを保存すると、リモート HTTP モデルエンドポイントはエージェントと Notebook のネットワークと共有されます。API キーとモデル通信は転送中に暗号化されません。"
   }
 }

@@ -41,6 +41,7 @@ import {
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
 import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
+import { providerNetworkAuthority } from '../../../../shared/provider-network-authorization'
 
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
@@ -321,6 +322,11 @@ const ProviderForm = ({
   // A loopback custom gateway starts with the local-server presets visible, but the user can still
   // collapse them after that automatic reveal.
   const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
+  const remoteHttpCustomGateway = Boolean(
+    isCustom &&
+    providerNetworkAuthority(value.baseUrl)?.protocol === 'http' &&
+    !loopbackCustomGateway
+  )
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       value.codexTransport !== 'auto' ||
@@ -807,6 +813,13 @@ const ProviderForm = ({
             {errors.baseUrl ? (
               <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
                 {t(errors.baseUrl)}
+              </p>
+            ) : null}
+            {remoteHttpCustomGateway ? (
+              <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                {t(
+                  'Remote HTTP model endpoints are shared with Agent & Notebook network after you save this model. API keys and model traffic are not encrypted in transit.'
+                )}
               </p>
             ) : null}
           </div>

@@ -602,7 +602,6 @@
     "Requested results {{start}}–{{end}}": "Resultados solicitados {{start}}–{{end}}",
     "Starting at result {{start}}": "Desde el resultado {{start}}",
     "First row is used as column headers": "La primera fila se usa como encabezados de columna",
-    "Notebook network access": "Acceso de red de Notebook",
     "Notebook network protection": "Protección de red de Notebook",
     "Install bubblewrap to use Notebook isolation on Linux.": "Instale bubblewrap para usar el aislamiento de Notebook en Linux.",
     "The macOS sandbox service is unavailable.": "El servicio de sandbox de macOS no está disponible.",
@@ -7251,7 +7250,6 @@
     "Protection is not active. These rules apply only to protected execution.": "La protección no está activa. Estas reglas solo se aplican a la ejecución protegida.",
     "Saving rules resets protected connections and may interrupt transfers.": "Guardar las reglas restablece las conexiones protegidas y puede interrumpir las transferencias.",
     "Your network rules have not been saved. Discard them and leave?": "No se han guardado las reglas de red. ¿Descartar los cambios y salir?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Esto permite que el código de Notebook lea datos de {{domain}} y envíe datos a ese dominio. Permita solo dominios de confianza. Puede revocar el acceso guardado en cualquier momento en Configuración > Red > Acceso de red de Notebook.",
     "Choose what to keep": "Elegir qué conservar",
     "Deleted or not imported": "Eliminado o sin importar",
     "Keep both as separate notes": "Conservar ambas como notas independientes",
@@ -8792,6 +8790,9 @@
     "Test generation": "Probar generación",
     "Image generation test passed.": "La prueba de generación de imágenes se completó correctamente.",
     "Test image generation?": "¿Probar la generación de imágenes?",
-    "Generate one test image with {{model}}. Your provider may charge for this request.": "Se generará una imagen de prueba con {{model}}. El proveedor podría cobrar por esta solicitud."
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Se generará una imagen de prueba con {{model}}. El proveedor podría cobrar por esta solicitud.",
+    "Agent & Notebook network": "Red de Agente y Notebook",
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Agent & Notebook network.": "Esto permite que el código de Notebook lea datos de {{domain}} y envíe datos a ese dominio. Permita solo dominios de confianza. Puede revocar el acceso guardado en cualquier momento en Configuración > Red > Red de Agente y Notebook.",
+    "Remote HTTP model endpoints are shared with Agent & Notebook network after you save this model. API keys and model traffic are not encrypted in transit.": "Los endpoints de modelos HTTP remotos se comparten con la red de Agente y Notebook después de guardar este modelo. Las claves de API y el tráfico del modelo no están cifrados durante el tránsito."
   }
 }

@@ -3841,7 +3841,7 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('opens Notebook network access from the Runtimes network summary', async () => {
+  it('opens Agent & Notebook network from the Runtimes network summary', async () => {
     useRuntimeSettingsStore.setState({
       envs: { python: [], r: [] },
       loaded: true,
@@ -3860,7 +3860,7 @@ describe('SettingsPage layout', () => {
     })
 
     const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.querySelector('h3')?.textContent).toBe('Notebook network access')
+    expect(banner?.querySelector('h3')?.textContent).toBe('Agent & Notebook network')
 
     const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
       (button) => button.textContent?.trim() === 'Manage access'
@@ -3871,7 +3871,7 @@ describe('SettingsPage layout', () => {
     })
 
     expect(document.body.querySelector('[aria-label="Back to network"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('Notebook network access')
+    expect(document.body.textContent).toContain('Agent & Notebook network')
     expect(document.body.textContent).toContain('Trusted unsafe networks')
   })
 
@@ -3939,7 +3939,7 @@ describe('SettingsPage layout', () => {
     expect(navButton('Network')?.getAttribute('aria-current')).toBe('page')
     expect(document.body.querySelector('[aria-label="Back to network"]')).toBeNull()
     expect(document.body.querySelector('[aria-label="Custom public domains"]')).toBeNull()
-    expect(document.body.querySelector('[aria-label="Notebook network access"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Agent & Notebook network"]')).toBeNull()
     expect(document.body.querySelector('[aria-label="Network status"]')).not.toBeNull()
   })
 

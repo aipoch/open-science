@@ -29,6 +29,8 @@ type CompatibilityWire = 'messages' | 'responses'
 
 export type ChatCompletionsCompatibilityTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   endpoint: string
   key?: string
   model: string
@@ -99,7 +101,11 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
+    const allowInsecureHttp = this.target.isInsecureHttpAllowed
+      ? await this.target.isInsecureHttpAllowed(this.target.endpoint)
+      : this.target.allowInsecureHttp
     const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
+      allowInsecureHttp,
       method: 'POST',
       headers,
       body: JSON.stringify(upstreamBody),

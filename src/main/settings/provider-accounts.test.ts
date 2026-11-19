@@ -1334,6 +1334,50 @@ describe('ProviderAccountsModule', () => {
     }
   })
 
+  it('atomically saves a remote HTTP provider and its shared network rule', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 1, output_tokens: 1 }
+        })
+      )
+    )
+    const result = await module.saveValidatedProvider({
+      type: 'custom',
+      name: 'HTTP gateway',
+      baseUrl: 'http://Gateway.Example:8080/v1',
+      model: 'model',
+      key: 'key',
+      allowInsecureHttp: true
+    })
+    expect(result.providerId).toBeDefined()
+    const settings = await repository.getSettings()
+    expect(settings.notebookNetwork?.trustedPrivateDestinations).toEqual([
+      {
+        sharedWithAgent: true,
+        hostname: 'gateway.example',
+        port: 8080,
+        protocol: 'http',
+        approvedAddresses: []
+      }
+    ])
+
+    await module.deleteProvider(result.providerId!)
+    expect((await repository.getSettings()).notebookNetwork?.trustedPrivateDestinations).toEqual([
+      {
+        sharedWithAgent: true,
+        hostname: 'gateway.example',
+        port: 8080,
+        protocol: 'http',
+        approvedAddresses: []
+      }
+    ])
+  })
+
   it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
       authenticated: true,

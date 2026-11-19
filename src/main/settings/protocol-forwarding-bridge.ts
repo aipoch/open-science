@@ -42,6 +42,8 @@ type ProviderErrorSnapshot = Readonly<{
 export type ProtocolForwardingBridgeTarget = Readonly<{
   id: string
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   wire: keyof typeof WIRE_PATH
   endpoint: string
   key?: string
@@ -232,10 +234,14 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
+    const allowInsecureHttp = target.isInsecureHttpAllowed
+      ? await target.isInsecureHttpAllowed(endpoint.toString())
+      : target.allowInsecureHttp
     const upstream = await fetchProviderRequest(
       withProviderConnectionMarker(transport, response),
       endpoint,
       {
+        allowInsecureHttp,
         method: 'POST',
         headers: headersToForward,
         body,

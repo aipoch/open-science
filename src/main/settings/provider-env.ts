@@ -56,6 +56,8 @@ export type ResolvedProvider = {
   supportsImageInput?: boolean
   // Explicit only for user-defined gateways; official providers use vendorId for transport mapping.
   reasoningEffortTransport?: CustomReasoningEffortTransport
+  /** Main-owned runtime capability granted by the shared Agent & Notebook network rule. */
+  allowInsecureHttp?: boolean
 }
 
 // A context window is not a model's output limit; leave unlisted models to their runtime.

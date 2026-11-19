@@ -23,6 +23,10 @@ import {
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import {
+  providerNetworkDestination,
+  providerNetworkDestinationIsTrusted
+} from '../../shared/provider-network-authorization'
 
 import type {
   ProviderDeletionScenarioModelHandling,
@@ -98,6 +102,7 @@ import type { XaiOAuthControllerPort } from './xai-oauth'
 import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
+  commitSharedDestination?: (write: () => Promise<void>) => Promise<void>
   storageRoot: string
   userClaudeDir: string
   userCodexDir: string
@@ -313,7 +318,9 @@ class ProviderAccountsModule {
     return changed
   }
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
-    return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
+    return this.auth.serializeAccountMutation(() =>
+      this.upsertProviderNow({ ...request, allowInsecureHttp: false })
+    )
   }
   private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
     assertProviderDraftLimits(request)
@@ -462,7 +469,9 @@ class ProviderAccountsModule {
       const model = request.model?.trim() || existing?.model
       const tokenLimits = resolveCustomTokenLimits(request, existing)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
-      const baseUrlError = getCustomProviderBaseUrlError(baseUrl)
+      const baseUrlError = getCustomProviderBaseUrlError(baseUrl, {
+        allowInsecureHttp: request.allowInsecureHttp === true
+      })
       if (baseUrlError) throw new Error(baseUrlError)
       if (!model) throw new Error('Model is required for a custom provider.')
       // Local loopback gateways serve without a key; a remote gateway still requires one.
@@ -551,13 +560,20 @@ class ProviderAccountsModule {
   async saveValidatedProvider(
     request: UpsertProviderRequest
   ): Promise<SaveValidatedProviderResult> {
-    const prepared = await this.prepareProviderEdit(request)
+    const prepared = await this.prepareProviderEdit({
+      ...request,
+      allowInsecureHttp: request.allowInsecureHttp === true
+    })
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
-    const tested = this.resolveProvider(prepared.provider)
+    const tested = this.resolveProvider(prepared.provider, undefined, true)
     const expectedValidationState =
-      saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
+      saved &&
+      this.sameValidationTarget(
+        tested,
+        this.resolveProvider(saved, undefined, request.allowInsecureHttp === true)
+      )
         ? {
             lastValidatedAt: saved.lastValidatedAt,
             lastValidatedTarget: saved.lastValidatedTarget,
@@ -585,23 +601,35 @@ class ProviderAccountsModule {
       if (!prepared.requireExisting && exists)
         throw new Error('Provider configuration changed. Your draft has not been saved.')
       assertProviderCapacity(current.providers.length, exists)
-      await this.repository.upsertProvider(
-        provider,
-        prepared.requireExisting ? provider.id : undefined,
-        {
-          catalogBaseline: prepared.catalogBaseline,
-          expectedConfigRevision: prepared.expectedConfigRevision,
-          expectedValidationState,
-          validationMatches: (merged) => {
-            const matches = this.sameValidationTarget(
-              tested,
-              this.resolveProvider(merged, tested.model)
-            )
-            if (!matches) validation.applied = false
-            return matches
+      const networkDestination =
+        provider.type === 'custom' ? providerNetworkDestination(provider.baseUrl ?? '') : undefined
+      const persist = async (): Promise<void> => {
+        await this.repository.upsertProvider(
+          provider,
+          prepared.requireExisting ? provider.id : undefined,
+          {
+            catalogBaseline: prepared.catalogBaseline,
+            expectedConfigRevision: prepared.expectedConfigRevision,
+            expectedValidationState,
+            networkDestination,
+            previouslyShared: providerNetworkDestinationIsTrusted(
+              provider.baseUrl ?? '',
+              prepared.settings.notebookNetwork?.trustedPrivateDestinations ?? []
+            ),
+            validationMatches: (merged) => {
+              const matches = this.sameValidationTarget(
+                tested,
+                this.resolveProvider(merged, tested.model, true)
+              )
+              if (!matches) validation.applied = false
+              return matches
+            }
           }
-        }
-      )
+        )
+      }
+      if (networkDestination && this.options.commitSharedDestination)
+        await this.options.commitSharedDestination(persist)
+      else await persist()
     })
     return { validation, providerId: provider.id }
   }
@@ -832,7 +860,10 @@ class ProviderAccountsModule {
       throw new Error('Choose exactly one provider validation target.')
     if (request.edit) {
       if (request.model !== undefined) throw new Error('Edit validation uses the form model.')
-      const prepared = await this.prepareProviderEdit(request.edit)
+      const prepared = await this.prepareProviderEdit({
+        ...request.edit,
+        allowInsecureHttp: request.allowInsecureHttp === true
+      })
       const result = await this.validateProviderEdit(prepared.provider, prepared.settings)
       const current = (await this.repository.getSettings()).providers.find(
         ({ id }) => id === prepared.provider.id
@@ -846,10 +877,10 @@ class ProviderAccountsModule {
         const model = result.testedTarget.model
         const original = prepared.settings.providers.find(({ id }) => id === current.id)
         if (original && !isDeepStrictEqual(original.modelCatalog, current.modelCatalog)) {
-          const tested = this.resolveProvider(prepared.provider, model)
+          const tested = this.resolveProvider(prepared.provider, model, true)
           if (
-            this.sameValidationTarget(tested, this.resolveProvider(original, model)) &&
-            !this.sameValidationTarget(tested, this.resolveProvider(current, model))
+            this.sameValidationTarget(tested, this.resolveProvider(original, model, true)) &&
+            !this.sameValidationTarget(tested, this.resolveProvider(current, model, true))
           )
             return { ...result, applied: false }
         }
@@ -859,7 +890,9 @@ class ProviderAccountsModule {
     if (request.draft) {
       assertProviderDraftLimits(request.draft)
       if (request.draft.type === 'custom') {
-        const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '')
+        const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '', {
+          allowInsecureHttp: request.allowInsecureHttp === true
+        })
         if (baseUrlError) throw new Error(baseUrlError)
       }
     }
@@ -877,12 +910,12 @@ class ProviderAccountsModule {
     candidate: StoredProvider,
     settings: StoredSettings
   ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
-    const provider = this.resolveProvider(candidate)
+    const provider = this.resolveProvider(candidate, undefined, true)
     const saved = settings.providers.find(({ id }) => id === candidate.id)
     // A failure belongs to the saved connection only when the tested input resolves to that exact
     // connection. Candidate credentials and routes must never change the original account's health.
     const storedId =
-      saved && this.sameValidationTarget(provider, this.resolveProvider(saved))
+      saved && this.sameValidationTarget(provider, this.resolveProvider(saved, undefined, true))
         ? saved.id
         : undefined
     const result = await this.validateResolvedProvider(
@@ -1067,7 +1100,7 @@ class ProviderAccountsModule {
     const model =
       request.model ??
       (latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined)
-    const latestResolved = this.resolveProvider(stored, model)
+    const latestResolved = this.resolveProvider(stored, model, resolved.provider.allowInsecureHttp)
     if (!this.sameValidationTarget(resolved.provider, latestResolved)) {
       return { ...result, applied: false }
     }
@@ -1128,7 +1161,10 @@ class ProviderAccountsModule {
                 current.lastValidationFailure.target === undefined
               ))) &&
           (current.configRevision ?? 0) === (storedValidationTarget?.configRevision ?? 0) &&
-          this.sameValidationTarget(resolved.provider, this.resolveProvider(current, currentModel))
+          this.sameValidationTarget(
+            resolved.provider,
+            this.resolveProvider(current, currentModel, resolved.provider.allowInsecureHttp)
+          )
         )
       },
       result,
@@ -1180,16 +1216,23 @@ class ProviderAccountsModule {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget {
-    return this.runtimeProjection.resolveRuntimeTarget(storedProvider, selection, framework)
+    return this.runtimeProjection.resolveRuntimeTarget(
+      storedProvider,
+      selection,
+      framework,
+      options
+    )
   }
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget[] {
-    return this.runtimeProjection.resolveRuntimeModelCatalog(storedProvider, framework)
+    return this.runtimeProjection.resolveRuntimeModelCatalog(storedProvider, framework, options)
   }
 
   resolveRuntimeReasoningEffortProfile(
@@ -1202,12 +1245,19 @@ class ProviderAccountsModule {
     )
   }
 
-  resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
-    return this.runtimeProjection.resolveProvider(provider, modelOverride)
+  resolveProvider(
+    provider: StoredProvider,
+    modelOverride?: string,
+    allowInsecureHttp = false
+  ): ResolvedProvider {
+    return this.runtimeProjection.resolveProvider(provider, modelOverride, allowInsecureHttp)
   }
 
-  private resolveDraft(draft: ProviderDraft): ResolvedProvider {
-    return resolveProviderDraft(draft)
+  private resolveDraft(draft: ProviderDraft, allowInsecureHttp = false): ResolvedProvider {
+    return {
+      ...resolveProviderDraft(draft),
+      ...(allowInsecureHttp ? { allowInsecureHttp: true } : {})
+    }
   }
 
   // The route-mismatch sentence for a provider the active framework cannot drive, or undefined
@@ -1244,12 +1294,13 @@ class ProviderAccountsModule {
         (settings.activeProviderId === stored?.id ? settings.activeModel : undefined)
       return stored
         ? {
-            provider: this.resolveProvider(stored, model),
+            provider: this.resolveProvider(stored, model, request.allowInsecureHttp === true),
             storedId: stored.id
           }
         : undefined
     }
-    if (request.draft) return { provider: this.resolveDraft(request.draft) }
+    if (request.draft)
+      return { provider: this.resolveDraft(request.draft, request.allowInsecureHttp === true) }
     return undefined
   }
 

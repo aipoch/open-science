@@ -100,6 +100,16 @@ class NotebookNetworkSettingsOwner {
     return operation
   }
 
+  // Provider and rule commit together in the repository, ordered with edits and gateway refreshes.
+  commitSharedDestination(write: () => Promise<void>): Promise<void> {
+    const operation = this.writeTail.then(async () => {
+      await write()
+      await this.options.apply(await this.readAndReconcile())
+    })
+    this.writeTail = operation.catch(() => {})
+    return operation
+  }
+
   private async readAndReconcile(): Promise<NotebookNetworkSettings> {
     const current = normalizeNotebookNetworkSettings(
       (await this.options.repository.getSettings()).notebookNetwork

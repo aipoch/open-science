@@ -159,7 +159,8 @@ class ProviderRuntimeProjectionOwner {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget {
     // Native Codex owns an omitted default; the built-in Agent must pin its model before launch.
     const modelSelection =
@@ -172,7 +173,11 @@ class ProviderRuntimeProjectionOwner {
             requestedModel: storedProvider.model ?? defaultVendorModel('openai')
           }
         : selection
-    const target = this.resolveProviderTarget(storedProvider, modelSelection)
+    const target = this.resolveProviderTarget(
+      storedProvider,
+      modelSelection,
+      options.allowInsecureHttp
+    )
     return this.withFramework(target, framework)
   }
 
@@ -199,7 +204,8 @@ class ProviderRuntimeProjectionOwner {
 
   resolveProviderTarget(
     storedProvider: StoredProvider,
-    selection: RuntimeProviderModelSelection
+    selection: RuntimeProviderModelSelection,
+    allowInsecureHttp = false
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     // Preserve pinned IDs for history; reject continuation rather than silently selecting another model.
@@ -246,7 +252,7 @@ class ProviderRuntimeProjectionOwner {
       )
     }
 
-    const provider = this.resolveProvider(storedProvider, effectiveModel)
+    const provider = this.resolveProvider(storedProvider, effectiveModel, allowInsecureHttp)
 
     return this.providerTarget(
       storedProvider,
@@ -283,7 +289,8 @@ class ProviderRuntimeProjectionOwner {
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget[] {
     const { vendorId } = storedProvider
     if (storedProvider.type === 'official' && vendorId) {
@@ -308,7 +315,7 @@ class ProviderRuntimeProjectionOwner {
         })
     }
     return this.availableModels(storedProvider).map((model) =>
-      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework, options)
     )
   }
 
@@ -322,7 +329,11 @@ class ProviderRuntimeProjectionOwner {
     )
   }
 
-  resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+  resolveProvider(
+    provider: StoredProvider,
+    modelOverride?: string,
+    allowInsecureHttp = false
+  ): ResolvedProvider {
     if (provider.type === 'codebuddy-subscription') {
       const codeBuddySite = codeBuddySiteForId(provider.id)
       if (!codeBuddySite) throw new Error('Invalid CodeBuddy provider ID.')
@@ -335,7 +346,7 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'custom' && provider.baseUrl) {
-      const error = getCustomProviderBaseUrlError(provider.baseUrl)
+      const error = getCustomProviderBaseUrlError(provider.baseUrl, { allowInsecureHttp })
       if (error) throw new Error(error)
     }
     const key =
@@ -383,6 +394,7 @@ class ProviderRuntimeProjectionOwner {
         ? {}
         : { codexAutoUseHttps: provider.codexAutoUseHttps }),
       baseUrl: provider.baseUrl,
+      ...(allowInsecureHttp ? { allowInsecureHttp: true } : {}),
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(provider.type === 'custom' && provider.maxInputTokens !== undefined
