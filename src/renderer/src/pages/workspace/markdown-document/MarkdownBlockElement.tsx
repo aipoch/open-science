@@ -1,5 +1,26 @@
-import { ArrowDown, ArrowUp, ChevronRight, Copy, GripVertical, Plus, Trash2 } from 'lucide-react'
-import { memo, useMemo, useRef, useState } from 'react'
+import {
+  ArrowDown,
+  ArrowUp,
+  CalendarDays,
+  ChevronRight,
+  CodeXml,
+  Copy,
+  GripVertical,
+  Heading1,
+  Heading2,
+  Heading3,
+  Image as ImageIcon,
+  List,
+  ListOrdered,
+  ListTodo,
+  Minus,
+  Plus,
+  SquareChevronDown,
+  Table2,
+  TextQuote,
+  Trash2
+} from 'lucide-react'
+import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react'
 import { NodeApi, RangeApi, type TElement } from 'platejs'
 import {
   PlateElement,
@@ -13,6 +34,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
@@ -38,7 +60,7 @@ import {
   type MarkdownInsertKind
 } from './markdown-blocks'
 
-const drags = new WeakMap<object, TElement>()
+const drags = new WeakMap<object, { element: TElement; clearDropTarget?: () => void }>()
 const DRAG_TYPE = 'application/x-openscience-markdown-block'
 
 const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Element => {
@@ -46,24 +68,36 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
   const editor = useEditorRef()
   const inserted = useRef(false)
   const insertedPath = useRef<number[] | undefined>(undefined)
+  const dragged = useRef(false)
+  const [dragging, setDragging] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
   const [dateOpen, setDateOpen] = useState(false)
   const [date, setDate] = useState('')
-  const choices = useMemo(
+  const choiceGroups = useMemo(
     () =>
       [
-        ['h1', t('Heading 1')],
-        ['h2', t('Heading 2')],
-        ['h3', t('Heading 3')],
-        ['bullet', t('Bulleted list')],
-        ['numbered', t('Numbered list')],
-        ['checklist', t('Checklist')],
-        ['table', t('Table')],
-        ['image', t('Image')],
-        ['code', t('Code block')],
-        ['quote', t('Block quote')],
-        ['divider', t('Divider')],
-        ['dropdown', t('Dropdown')]
+        [
+          ['h1', t('Heading 1'), Heading1],
+          ['h2', t('Heading 2'), Heading2],
+          ['h3', t('Heading 3'), Heading3]
+        ],
+        [
+          ['bullet', t('Bulleted list'), List],
+          ['numbered', t('Numbered list'), ListOrdered],
+          ['checklist', t('Checklist'), ListTodo]
+        ],
+        [
+          ['table', t('Table'), Table2],
+          ['image', t('Image'), ImageIcon],
+          ['code', t('Code block'), CodeXml],
+          ['quote', t('Block quote'), TextQuote],
+          ['divider', t('Divider'), Minus]
+        ],
+        [
+          ['date', t('Date'), CalendarDays],
+          ['dropdown', t('Dropdown'), SquareChevronDown]
+        ]
       ] as const,
     [t]
   )
@@ -72,7 +106,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
       contentEditable={false}
       className={cn(
         'absolute -left-14 top-0.5 z-10 transition-opacity',
-        menuOpen || dateOpen
+        menuOpen || actionsOpen || dateOpen || dragging
           ? 'opacity-100'
           : 'opacity-0 group-hover/block:opacity-100 group-focus-within/block:opacity-100'
       )}
@@ -92,7 +126,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                   variant="ghost"
                   size="icon-xs"
                   aria-label={t('Insert block')}
-                  className="focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
+                  className="cursor-pointer focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
                 >
                   <Plus aria-hidden="true" />
                 </Button>
@@ -102,7 +136,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
           </Tooltip>
           <DropdownMenuContent
             align="start"
-            className="max-h-80 overflow-y-auto"
+            className="w-56"
             onCloseAutoFocus={(event) => {
               if (dateOpen) {
                 event.preventDefault()
@@ -118,30 +152,36 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
               }
             }}
           >
-            {choices.map(([kind, label]) => (
-              <DropdownMenuItem
-                key={kind}
-                onSelect={() => {
-                  const currentPath = editor.api.findPath(element)
-                  if (!currentPath) return
-                  insertedPath.current = insertMarkdownBlock(editor, currentPath, kind)
-                  inserted.current = true
-                }}
-              >
-                {label}
-              </DropdownMenuItem>
+            {choiceGroups.map((group, index) => (
+              <Fragment key={group[0][0]}>
+                {index > 0 ? <DropdownMenuSeparator className="mx-2 my-1.5" /> : null}
+                <DropdownMenuGroup>
+                  {group.map(([kind, label, Icon]) => (
+                    <DropdownMenuItem
+                      key={kind}
+                      className="min-h-9 gap-3 px-2.5"
+                      onSelect={() => {
+                        if (kind === 'date') {
+                          setDate('')
+                          setDateOpen(true)
+                          return
+                        }
+                        const currentPath = editor.api.findPath(element)
+                        if (!currentPath) return
+                        insertedPath.current = insertMarkdownBlock(editor, currentPath, kind)
+                        inserted.current = true
+                      }}
+                    >
+                      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span>{label}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+              </Fragment>
             ))}
-            <DropdownMenuItem
-              onSelect={() => {
-                setDate('')
-                setDateOpen(true)
-              }}
-            >
-              {t('Date')}
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <DropdownMenu onOpenChange={setMenuOpen}>
+        <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
           <Tooltip>
             <TooltipTrigger
               asChild
@@ -155,14 +195,35 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                   variant="ghost"
                   size="icon-xs"
                   aria-label={t('Drag block')}
-                  className="focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
+                  className="cursor-grab active:cursor-grabbing focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
                   draggable
+                  onPointerDownCapture={(event) => {
+                    // Keep Radix from opening on press without cancelling native HTML dragging.
+                    if (event.button === 0 && !event.ctrlKey) {
+                      dragged.current = false
+                      event.stopPropagation()
+                    }
+                  }}
+                  onClick={(event) => {
+                    if (!dragged.current || event.detail === 0) setActionsOpen(true)
+                  }}
                   onDragStart={(event) => {
-                    drags.set(editor, element)
+                    // This is a whole-block move, not Slate's selected-text drag operation.
+                    event.stopPropagation()
+                    dragged.current = true
+                    setDragging(true)
+                    drags.set(editor, { element })
                     event.dataTransfer.setData(DRAG_TYPE, 'block')
                     event.dataTransfer.effectAllowed = 'move'
+                    const block = event.currentTarget.closest<HTMLElement>('[data-markdown-block]')
+                    if (block) event.dataTransfer.setDragImage(block, 0, 0)
                   }}
-                  onDragEnd={() => drags.delete(editor)}
+                  onDragEnd={(event) => {
+                    event.stopPropagation()
+                    drags.get(editor)?.clearDropTarget?.()
+                    drags.delete(editor)
+                    setDragging(false)
+                  }}
                 >
                   <GripVertical aria-hidden="true" />
                 </Button>
@@ -177,17 +238,20 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                 <ChevronRight className="ml-auto size-4" aria-hidden="true" />
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                {choices.map(([kind, label]) => (
-                  <DropdownMenuItem
-                    key={kind}
-                    onSelect={() => {
-                      const path = editor.api.findPath(element)
-                      if (path) turnMarkdownBlockInto(editor, path, kind)
-                    }}
-                  >
-                    {label}
-                  </DropdownMenuItem>
-                ))}
+                {choiceGroups
+                  .flat()
+                  .filter(([kind]) => kind !== 'date')
+                  .map(([kind, label]) => (
+                    <DropdownMenuItem
+                      key={kind}
+                      onSelect={() => {
+                        const path = editor.api.findPath(element)
+                        if (path) turnMarkdownBlockInto(editor, path, kind)
+                      }}
+                    >
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSeparator />
@@ -424,6 +488,8 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
   const readOnly = useReadOnly()
   const { t } = useTranslation()
   const path = editor.api.findPath(element) ?? []
+  const [dropPosition, setDropPosition] = useState<'before' | 'after'>()
+  const clearDropTarget = useCallback(() => setDropPosition(undefined), [setDropPosition])
   useSelectionVersion()
   const selection = editor.selection
   const caretInElement = Boolean(
@@ -536,22 +602,53 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
   if (!root) return rendered
   return (
     <div
-      className="group/block relative min-h-7"
+      className={cn(
+        'group/block relative min-h-7',
+        dropPosition &&
+          'after:pointer-events-none after:absolute after:inset-x-0 after:z-20 after:h-0.5 after:rounded-full after:bg-primary',
+        dropPosition === 'before' && 'after:top-0',
+        dropPosition === 'after' && 'after:bottom-0'
+      )}
       data-markdown-block
+      data-drop-position={dropPosition}
       onDragOver={(event) => {
-        if (!readOnly && drags.has(editor) && event.dataTransfer.types.includes(DRAG_TYPE)) {
-          event.preventDefault()
-          event.dataTransfer.dropEffect = 'move'
-        }
-      }}
-      onDrop={(event) => {
-        const source = drags.get(editor)
-        if (readOnly || !source || !event.dataTransfer.types.includes(DRAG_TYPE)) return
+        const drag = drags.get(editor)
+        if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
         event.preventDefault()
         event.stopPropagation()
-        const from = editor.api.findPath(source)
-        if (from) moveMarkdownBlockTo(editor, from, path[0])
+        event.dataTransfer.dropEffect = 'move'
+        if (drag.element === element) {
+          drag.clearDropTarget?.()
+          return
+        }
+        if (drag.clearDropTarget !== clearDropTarget) {
+          drag.clearDropTarget?.()
+          drag.clearDropTarget = clearDropTarget
+        }
+        const bounds = event.currentTarget.getBoundingClientRect()
+        setDropPosition(event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after')
+      }}
+      onDragLeave={(event) => {
+        if (
+          !(event.relatedTarget instanceof Node) ||
+          !event.currentTarget.contains(event.relatedTarget)
+        )
+          clearDropTarget()
+      }}
+      onDrop={(event) => {
+        const drag = drags.get(editor)
+        if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
+        event.preventDefault()
+        event.stopPropagation()
+        drag.clearDropTarget?.()
         drags.delete(editor)
+        const from = editor.api.findPath(drag.element)
+        const target = editor.api.findPath(element)
+        if (!from || !target || drag.element === element) return
+        const bounds = event.currentTarget.getBoundingClientRect()
+        const boundary = target[0] + (event.clientY < bounds.top + bounds.height / 2 ? 0 : 1)
+        // Removing a source above the insertion boundary shifts that boundary up by one.
+        moveMarkdownBlockTo(editor, from, boundary - (from[0] < boundary ? 1 : 0))
       }}
     >
       {rendered}

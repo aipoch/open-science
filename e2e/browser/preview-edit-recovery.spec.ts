@@ -88,7 +88,8 @@ test('Markdown opens editable, renders typed syntax and saves only on request', 
   await expect(save).toBeEnabled()
   // Deliberately exceed the removed 900ms autosave window.
   await page.waitForTimeout(1200)
-  const saveCount = () => page.evaluate(() => window.previewEditRecovery.saves.length)
+  const saveCount = (): Promise<number> =>
+    page.evaluate(() => window.previewEditRecovery.saves.length)
   expect(await saveCount()).toBe(0)
   await save.click()
   await expect(save).toBeDisabled()
@@ -212,6 +213,104 @@ test('block menu inserts editable content and drag reorders whole blocks', async
   await expect
     .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
     .toBe('## Inserted heading\n\n# Current\n')
+})
+
+for (const edge of ['before', 'after'] as const) {
+  test(`holding the block handle drags a paragraph ${edge} its target without opening a menu`, async ({
+    page
+  }, testInfo) => {
+    await page.goto('/preview-edit-recovery.html?features&success')
+    const editor = page.getByTestId('markdown-plate-editor')
+    const blocks = editor.locator('[data-markdown-block]')
+    const paragraphs = editor.locator('p')
+    await expect(paragraphs.first()).toHaveText('Paragraph 1 for scrolling.')
+    const original = await paragraphs.allTextContents()
+    await blocks.nth(1).hover()
+    const handle = blocks.nth(1).getByRole('button', { name: 'Drag block', exact: true })
+    const source = (await handle.boundingBox())!
+    const target = (await blocks.nth(3).boundingBox())!
+
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+    await page.mouse.down()
+    await page.waitForTimeout(450)
+    await expect(page.getByRole('menu')).toBeHidden()
+    const x = target.x + target.width / 2
+    const y = target.y + target.height * (edge === 'before' ? 0.25 : 0.75)
+    await page.mouse.move(x, y, { steps: 12 })
+    // Native HTML dragover needs a second mouse movement on the target.
+    await page.mouse.move(x, y + 1)
+    await expect(blocks.nth(3)).toHaveAttribute('data-drop-position', edge)
+    await page.screenshot({ path: testInfo.outputPath(`paragraph-drop-${edge}.png`) })
+    await page.mouse.up()
+
+    const moved = [...original]
+    const [first] = moved.splice(0, 1)
+    moved.splice(edge === 'before' ? 1 : 2, 0, first)
+    await expect(paragraphs).toHaveText(moved)
+    await expect(page.getByRole('menu')).toBeHidden()
+    await expect(editor.locator('[data-drop-position]')).toHaveCount(0)
+    await editor.focus()
+    await editor.press('ControlOrMeta+z')
+    await expect(paragraphs).toHaveText(original)
+    await editor.press('ControlOrMeta+Shift+z')
+    await expect(paragraphs).toHaveText(moved)
+
+    // Move the same paragraph upwards again, placing it before the first paragraph.
+    const movedBlock = blocks.nth(edge === 'before' ? 2 : 3)
+    await movedBlock.hover()
+    await movedBlock
+      .getByRole('button', { name: 'Drag block', exact: true })
+      .dragTo(blocks.nth(1), {
+        targetPosition: { x: 40, y: 2 }
+      })
+    await expect(paragraphs).toHaveText(original)
+    await expect(editor.locator('[data-drop-position]')).toHaveCount(0)
+    expect(await page.evaluate(() => window.previewEditRecovery.saves)).toHaveLength(0)
+  })
+}
+
+test('cancelling a block drag clears its indicator without changing the document', async ({
+  page
+}) => {
+  await page.goto('/preview-edit-recovery.html?features&success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  const blocks = editor.locator('[data-markdown-block]')
+  const paragraphs = editor.locator('p')
+  await expect(paragraphs.first()).toHaveText('Paragraph 1 for scrolling.')
+  const original = await paragraphs.allTextContents()
+  await blocks.nth(1).hover()
+  const handle = blocks.nth(1).getByRole('button', { name: 'Drag block', exact: true })
+  const source = (await handle.boundingBox())!
+  const target = (await blocks.nth(3).boundingBox())!
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(target.x + 40, target.y + 2, { steps: 12 })
+  await page.mouse.move(target.x + 40, target.y + 3)
+  // The preceding moves enter the paragraph and then its text span; move again for dragover.
+  await page.mouse.move(target.x + 40, target.y + 3)
+  await expect(blocks.nth(3)).toHaveAttribute('data-drop-position', 'before')
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect(editor.locator('[data-drop-position]')).toHaveCount(0)
+  await expect(paragraphs).toHaveText(original)
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
+  await handle.click()
+  await expect(page.getByRole('menuitem', { name: 'Duplicate', exact: true })).toBeVisible()
+})
+
+test('block handle still opens its menu by click and keyboard', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('h1').hover()
+  const handle = editor.getByRole('button', { name: 'Drag block', exact: true })
+  await handle.click()
+  await expect(page.getByRole('menuitem', { name: 'Duplicate', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(handle).toBeFocused()
+  await handle.press('Enter')
+  await expect(page.getByRole('menuitem', { name: 'Duplicate', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(handle).toBeFocused()
 })
 
 test('checklist and dropdown choices survive Markdown serialization', async ({ page }) => {

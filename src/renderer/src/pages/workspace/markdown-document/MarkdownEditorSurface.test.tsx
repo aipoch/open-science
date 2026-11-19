@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MarkdownEditorSurface } from './MarkdownEditorSurface'
@@ -132,6 +132,7 @@ describe('MarkdownEditorSurface', () => {
       expect(button.classList.contains('focus-visible:shadow-none!')).toBe(true)
 
       fireEvent(button, new MouseEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))
+      if (button === dragButton) fireEvent.click(button)
       await waitFor(() => expect(button.getAttribute('aria-expanded')).toBe('true'))
       expect(controls?.classList.contains('opacity-100')).toBe(true)
       expect(controls?.classList.contains('opacity-0')).toBe(false)
@@ -140,6 +141,121 @@ describe('MarkdownEditorSurface', () => {
       await waitFor(() => expect(button.getAttribute('aria-expanded')).toBe('false'))
       expect(controls?.classList.contains('opacity-0')).toBe(true)
     }
+  })
+
+  it('waits for a click rather than opening the block menu on pointer down', async () => {
+    render(<MarkdownEditorSurface source={'First\n\nSecond\n'} onChange={vi.fn()} />)
+    const handle = screen.getAllByRole('button', { name: 'Drag block' })[0]
+
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))
+    expect(handle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.pointerUp(handle)
+    fireEvent.click(handle)
+    expect(await screen.findByRole('menu')).toBeTruthy()
+  })
+
+  it.each([
+    { from: 0, to: 2, y: 25, expected: 'Second\n\nFirst\n\nThird\n' },
+    { from: 0, to: 2, y: 75, expected: 'Second\n\nThird\n\nFirst\n' },
+    { from: 2, to: 0, y: 25, expected: 'Third\n\nFirst\n\nSecond\n' },
+    { from: 2, to: 0, y: 75, expected: 'First\n\nThird\n\nSecond\n' }
+  ])('drops block $from at block $to with pointer y=$y', async ({ from, to, y, expected }) => {
+    const onChange = vi.fn()
+    render(<MarkdownEditorSurface source={'First\n\nSecond\n\nThird\n'} onChange={onChange} />)
+    const blocks = screen
+      .getByTestId('markdown-plate-editor')
+      .querySelectorAll<HTMLElement>('[data-markdown-block]')
+    const handle = within(blocks[from]).getByRole('button', { name: 'Drag block' })
+    const bounds = vi
+      .spyOn(blocks[to], 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(0, 0, 100, 100))
+    const dataTransfer = {
+      types: ['application/x-openscience-markdown-block'],
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: '',
+      dropEffect: ''
+    }
+    const dispatchDrag = (target: Element, type: string, clientY = 0): void => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientY })
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      fireEvent(target, event)
+    }
+
+    dispatchDrag(handle, 'dragstart')
+    dispatchDrag(blocks[to], 'dragover', y)
+    expect(blocks[to].getAttribute('data-drop-position')).toBe(y < 50 ? 'before' : 'after')
+    expect(dataTransfer.dropEffect).toBe('move')
+    dispatchDrag(blocks[to], 'drop', y)
+    dispatchDrag(handle, 'dragend')
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expected))
+    expect(
+      screen.getByTestId('markdown-plate-editor').querySelector('[data-drop-position]')
+    ).toBeNull()
+    fireEvent.click(handle, { detail: 1 })
+    expect(screen.queryByRole('menu')).toBeNull()
+    bounds.mockRestore()
+  })
+
+  it('groups insert options with decorative icons and preserves block insertion', async () => {
+    render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
+
+    fireEvent(
+      screen.getByRole('button', { name: 'Insert block' }),
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false })
+    )
+    const menu = await screen.findByRole('menu')
+    const groups = within(menu).getAllByRole('group')
+    expect(
+      groups.map((group) =>
+        within(group)
+          .getAllByRole('menuitem')
+          .map((item) => item.textContent)
+      )
+    ).toEqual([
+      ['Heading 1', 'Heading 2', 'Heading 3'],
+      ['Bulleted list', 'Numbered list', 'Checklist'],
+      ['Table', 'Image', 'Code block', 'Block quote', 'Divider'],
+      ['Date', 'Dropdown']
+    ])
+    expect(within(menu).getAllByRole('separator')).toHaveLength(3)
+    for (const item of within(menu).getAllByRole('menuitem')) {
+      expect(item.querySelectorAll('svg')).toHaveLength(1)
+      expect(item.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    }
+
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Heading 2' }))
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    expect(
+      screen.getByRole('heading', { level: 2 }).getAttribute('data-markdown-placeholder')
+    ).toBe('Heading 2')
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    expect(editor.selection).toEqual({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 }
+    })
+  })
+
+  it('opens the date picker from the final insert group before inserting a date', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownEditorSurface source={'Before\n'} onChange={onChange} />)
+
+    fireEvent(
+      screen.getByRole('button', { name: 'Insert block' }),
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Date' }))
+
+    const dateInput = await screen.findByLabelText('Date')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.change(dateInput, { target: { value: '2026-11-19' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('Before\n\n2026-11-19\n'))
+    expect(screen.queryByLabelText('Date')).toBeNull()
   })
 
   it('renders actual per-key editor transformations and reports their Markdown', async () => {
