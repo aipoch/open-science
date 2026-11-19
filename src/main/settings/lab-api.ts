@@ -349,7 +349,7 @@ export class LabApi {
     )
     const user = isRecord(body.user) ? body.user : undefined
     const device = isRecord(body.device) ? body.device : undefined
-    if (typeof user?.id !== 'string' || typeof device?.id !== 'string') {
+    if (typeof user?.id !== 'string' || !user.id.trim() || typeof device?.id !== 'string') {
       throw new LabApiError('invalid-response', 'Lab returned an invalid bootstrap response.')
     }
     const models: LabBootstrapModel[] = Array.isArray(body.models)

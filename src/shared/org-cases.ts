@@ -57,11 +57,11 @@ export function isAllowedOrgCaseDownloadUrl(rawUrl: string): boolean {
  * out or switches account/organization/server.
  */
 export function buildLabConnectionKey(
-  lab: Pick<LabView, 'state' | 'serverUrl' | 'accountName' | 'orgId'> | undefined
+  lab: Pick<LabView, 'state' | 'serverUrl' | 'accountId' | 'orgId'> | undefined
 ): string {
   if (!lab) return 'none'
   if (lab.state !== 'authenticated') return `${lab.state}:${lab.serverUrl ?? ''}`
-  return `authenticated:${lab.serverUrl ?? ''}:${lab.orgId ?? ''}:${lab.accountName ?? ''}`
+  return JSON.stringify([lab.state, lab.serverUrl ?? '', lab.orgId ?? '', lab.accountId])
 }
 
 export const orgCaseIdSchema = z.string().regex(ORG_CASE_ID_REGEX)

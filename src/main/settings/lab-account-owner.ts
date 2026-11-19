@@ -734,6 +734,7 @@ export class LabAccountOwner {
     const view = this.publish({
       state: 'authenticated',
       serverUrl,
+      accountId: bootstrap.user.id,
       accountName: bootstrap.user.display_name,
       orgId: bootstrap.user.org_id,
       deviceName: bootstrap.device.name,

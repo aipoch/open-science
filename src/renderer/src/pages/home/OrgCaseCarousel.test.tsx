@@ -5,7 +5,8 @@ import type { LabView } from '../../../../shared/lab'
 import type {
   OrgCaseDetail,
   OrgCaseDownloadSnapshot,
-  OrgCaseItem
+  OrgCaseItem,
+  OrgCasesPage
 } from '../../../../shared/org-cases'
 import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connection'
@@ -96,6 +97,7 @@ describe('UseCaseCarousel organization cases source', () => {
       lab: {
         state: 'authenticated',
         serverUrl: 'https://lab.example.com',
+        accountId: 'usr_1',
         accountName: 'Alice',
         orgId: 'org_1'
       } as LabView
@@ -231,25 +233,23 @@ describe('UseCaseCarousel organization cases source', () => {
     await waitFor(() => expect(screen.getByText('Package verification failed')).toBeTruthy())
   })
 
-  it('discards stale search results and clears items when switching Lab organizations', async () => {
-    let resolveOldList:
-      | ((value: {
-          ok: true
-          page: { items: OrgCaseItem[]; total: number; page: number; page_size: number }
-        }) => void)
-      | undefined
+  it.each([
+    { scope: 'organization switch', change: { orgId: 'org_2' } },
+    { scope: 'same-name account switch', change: { accountId: 'usr_2' } }
+  ])('clears old Lab cases and ignores late results on $scope', async ({ change }) => {
+    const oldCase = makeOrgCase({ name: 'Previous Account Study' })
+    const oldRequest = Promise.withResolvers<{ ok: true; page: OrgCasesPage }>()
     const orgCasesList = vi
       .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveOldList = resolve
-          })
-      )
+      .mockResolvedValueOnce({
+        ok: true as const,
+        page: { items: [oldCase], total: 1, page: 1, page_size: 20 }
+      })
+      .mockReturnValueOnce(oldRequest.promise)
       .mockResolvedValueOnce({
         ok: true as const,
         page: {
-          items: [makeOrgCase({ id: 'case_org_b', name: 'Org B Study', code: 'B2B2B2B2' })],
+          items: [makeOrgCase({ id: 'case_current', name: 'Current Account Study' })],
           total: 1,
           page: 1,
           page_size: 20
@@ -260,27 +260,32 @@ describe('UseCaseCarousel organization cases source', () => {
 
     render(<UseCaseCarousel variant="marketplace" />)
     fireEvent.click(screen.getByTestId('use-case-source-organization'))
+    expect(await screen.findByText(oldCase.name)).toBeTruthy()
 
-    await waitFor(() => expect(orgCasesList).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh organization cases' }))
+    expect(orgCasesList).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('rnaseq.science')).toBeTruthy()
 
-    // Switch organization before old request resolves
+    const refreshedLab = {
+      ...useSettingsStore.getState().lab!,
+      accountName: 'Alice Chen',
+      modelCount: 2
+    }
+    act(() => useSettingsStore.setState({ lab: refreshedLab }))
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    expect(orgCasesList).toHaveBeenCalledTimes(2)
+
+    act(() => useSettingsStore.setState({ lab: { ...refreshedLab, ...change } }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByText(oldCase.name)).toBeNull()
+
     await act(async () => {
-      useSettingsStore.setState({
-        lab: {
-          state: 'authenticated',
-          serverUrl: 'https://lab.example.com',
-          accountName: 'Bob',
-          orgId: 'org_b'
-        } as LabView
-      })
-    })
-
-    // Old request resolves late -> must be discarded!
-    await act(async () => {
-      resolveOldList?.({
+      oldRequest.resolve({
         ok: true,
         page: {
-          items: [makeOrgCase({ id: 'case_org_a', name: 'Old Org A Study', code: 'A1A1A1A1' })],
+          items: [makeOrgCase({ id: 'case_stale', name: 'Late Result' })],
           total: 1,
           page: 1,
           page_size: 20
@@ -288,8 +293,8 @@ describe('UseCaseCarousel organization cases source', () => {
       })
     })
 
-    await waitFor(() => expect(screen.getByText('Org B Study')).toBeTruthy())
-    expect(screen.queryByText('Old Org A Study')).toBeNull()
+    expect(await screen.findByText('Current Account Study')).toBeTruthy()
+    expect(screen.queryByText('Late Result')).toBeNull()
   })
 
   it('supports compact marketplace inline OrgCaseDetailsPage navigation and handoff import', async () => {

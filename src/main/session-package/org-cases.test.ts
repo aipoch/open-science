@@ -424,10 +424,17 @@ describe('OrgCaseService', () => {
     expect(enqueuePackageFile).not.toHaveBeenCalled()
   })
 
-  it('cancels in-flight download on user cancel or Lab server/account switch and never calls enqueuePackageFile', async () => {
+  it.each([
+    {
+      scope: 'server and organization switch',
+      change: { serverUrl: 'https://lab-b.example.com', orgId: 'org_b' }
+    },
+    { scope: 'same-name account switch', change: { accountId: 'usr_2' } }
+  ])('cancels pending Lab operations on $scope', async ({ change }) => {
     let view: LabView = {
       state: 'authenticated',
       serverUrl: 'https://lab-a.example.com',
+      accountId: 'usr_1',
       accountName: 'Alice',
       orgId: 'org_a'
     }
@@ -477,13 +484,11 @@ describe('OrgCaseService', () => {
 
     await vi.waitFor(() => expect(releaseDownload).toBeTypeOf('function'))
 
-    // Switching organization / server aborts both list and download cleanly
-    view = {
-      state: 'authenticated',
-      serverUrl: 'https://lab-b.example.com',
-      accountName: 'Bob',
-      orgId: 'org_b'
-    }
+    view = { ...view, accountName: 'Alice Chen' }
+    service.handleLabViewChanged(view)
+    expect(service.hasActiveDownload()).toBe(true)
+
+    view = { ...view, ...change }
     service.handleLabViewChanged(view)
 
     await expect(searchPromise).resolves.toEqual({ ok: false, errorCode: 'cancelled' })

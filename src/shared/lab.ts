@@ -69,6 +69,7 @@ export type LabModelSummary = Readonly<{
 export type LabView = Readonly<{
   state: LabConnectionState
   serverUrl?: string
+  accountId?: string
   accountName?: string
   orgId?: string
   deviceName?: string

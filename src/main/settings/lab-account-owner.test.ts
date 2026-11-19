@@ -191,6 +191,7 @@ describe('Lab account owner', () => {
     const before = await repository.getSettings()
     const view = await owner.check()
     expect(view.state).toBe('authenticated')
+    expect(view.accountId).toBe('usr_1')
     expect(view.accountName).toBe('Researcher')
     expect(view.modelCount).toBe(1)
 
@@ -224,6 +225,7 @@ describe('Lab account owner', () => {
 
     await owner.check()
     await vi.waitFor(() => expect(owner.getView().usage).toMatchObject({ available: true }))
+    expect(owner.getView().accountId).toBe(BOOTSTRAP.user.id)
     expect(owner.getView().usage?.effective?.limitedBy).toBe('token')
     expect(api.usage).toHaveBeenCalledWith(SERVER, 'at_1')
   })

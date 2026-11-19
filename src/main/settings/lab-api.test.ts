@@ -149,7 +149,7 @@ describe('Lab API client', () => {
     )
     const api = new LabApi({ fetch: fetchMock })
     const bootstrap = await api.bootstrap(SERVER, 'at_1')
-    expect(bootstrap.user.display_name).toBe('Researcher')
+    expect(bootstrap.user).toMatchObject({ id: 'usr_1', display_name: 'Researcher' })
     expect(bootstrap.models[0]).toMatchObject({
       id: 'research-default',
       protocols: ['openai', 'openai-response'],
@@ -160,6 +160,19 @@ describe('Lab API client', () => {
       }
     })
     expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
+  })
+
+  it.each(['', '  '])('rejects bootstrap with an empty user ID %j', async (id) => {
+    const api = new LabApi({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(200, {
+          user: { id, display_name: 'Researcher' },
+          device: { id: 'dev_1' }
+        })
+      )
+    })
+
+    await expect(api.bootstrap(SERVER, 'at_1')).rejects.toMatchObject({ code: 'invalid-response' })
   })
 
   it('reads the authenticated usage snapshot without exposing the token', async () => {
