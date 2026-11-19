@@ -2855,6 +2855,8 @@
     "Sign in separately (isolated)": "单独登录（隔离）",
     "Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.": "通过浏览器 OAuth 登录。设置卡片会打开浏览器，让你用 Claude 账号登录。凭据存储在 <code>~/.claude</code> 中。",
     "Sign in with Anthropic": "使用 Anthropic 账号登录",
+    "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "没有找到可导入的 Codex 登录文件。你可以选择「{{signIn}}」连接同一个账号。",
+    "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "未能导入已有的 Codex 登录。你可以重试，或选择「{{signIn}}」连接账号。",
     "Sign in with Open-Science": "用 Open-Science 登录",
     "Sign in with browser": "通过浏览器登录",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "通过浏览器登录以连接你的 Claude 订阅。我们会在浏览器中打开 Claude 进行授权，然后带你回到这里。",

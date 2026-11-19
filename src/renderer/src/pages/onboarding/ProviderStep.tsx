@@ -13,6 +13,8 @@ import type {
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
+import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
+import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import { cn } from '@/lib/utils'
 import {
@@ -223,7 +225,26 @@ const ProviderStep = ({
   // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
   // not littered with "required" messages. A `*` on each label signals the requirement up front.
   const [showProviderErrors, setShowProviderErrors] = useState(false)
-  const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
+  const [feedback, setValidationMessage] = useState<
+    string | { summary: string; details?: string }
+  >()
+  const validationMessage = typeof feedback === 'object' ? feedback.summary : feedback
+  const codexImportFailure = (cause: unknown) => {
+    const details =
+      cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : undefined
+    const signIn = t('Sign in with Open-Science')
+    const summary =
+      details && unwrapIpcErrorDetail(details) === CODEX_IMPORT_FILE_MISSING_MESSAGE
+        ? t(
+            'No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.',
+            { signIn }
+          )
+        : t(
+            'Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.',
+            { signIn }
+          )
+    return { summary, details }
+  }
   const [validationOk, setValidationOk] = useState(false)
   const [quickCardId, setQuickCardId] = useState<string>()
   const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
@@ -538,7 +559,11 @@ const ProviderStep = ({
       }
 
       setValidationOk(validation.ok)
-      setValidationMessage(describeValidation(validation, tSettings))
+      setValidationMessage(
+        variant === 'quick' && value.type === 'codex-shared' && !validation.ok
+          ? codexImportFailure(validation.message)
+          : describeValidation(validation, tSettings)
+      )
 
       if (validation.ok) {
         if (signal && providerId)
@@ -554,6 +579,10 @@ const ProviderStep = ({
       if (!mounted.current) return
       if (value.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
       setValidationOk(false)
+      if (variant === 'quick' && value.type === 'codex-shared') {
+        setValidationMessage(codexImportFailure(error))
+        return
+      }
       setValidationMessage(
         error instanceof Error
           ? localizeProviderResourceMessage(error.message, tSettings)
@@ -608,6 +637,11 @@ const ProviderStep = ({
         await handleSaveProvider(nextValue, attempt.signal)
     } catch (error) {
       if (!mounted.current || attempt.signal.aborted) return
+      if (mode === 'codex-shared') {
+        setValidationOk(false)
+        setValidationMessage(codexImportFailure(error))
+        return
+      }
       setValidationOk(false)
       setValidationMessage(
         error instanceof Error
@@ -867,6 +901,8 @@ const ProviderStep = ({
               level="warning"
               role="alert"
               description={validationMessage}
+              errorCode={typeof feedback === 'object' ? feedback.details : undefined}
+              diagnosticsLabel={t('Error details')}
               className="mt-3 border-status-warning-foreground/30 bg-status-warning-surface dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface"
               secondaryButton={{
                 label: t('Dismiss'),

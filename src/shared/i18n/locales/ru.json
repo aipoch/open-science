@@ -2890,6 +2890,8 @@
     "Sign in separately (isolated)": "Войти отдельно (изолированно)",
     "Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.": "Войти через браузер OAuth. В карточке настроек откроется ваш браузер для входа в аккаунт Claude. Учётные данные будут сохранены в <code>~/.claude</code>.",
     "Sign in with Anthropic": "Войти с Anthropic",
+    "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "Файл входа Codex для импорта не найден. Выберите «{{signIn}}», чтобы подключить ту же учётную запись.",
+    "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "Не удалось импортировать данные входа Codex. Повторите попытку или выберите «{{signIn}}», чтобы подключить учётную запись.",
     "Sign in with Open-Science": "Войти с Open-Science",
     "Sign in with browser": "Войти через браузер",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "Войдите через браузер, чтобы подключить подписку Claude. Мы откроем Claude в браузере для авторизации, а затем вернём вас в приложение.",

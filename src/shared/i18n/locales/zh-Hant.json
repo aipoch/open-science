@@ -2853,6 +2853,8 @@
     "Sign in separately (isolated)": "單獨登入（隔離）",
     "Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.": "透過瀏覽器 OAuth 登入。設定卡片會開啟瀏覽器，讓你用 Claude 帳號登入。憑證儲存在 <code>~/.claude</code> 中。",
     "Sign in with Anthropic": "使用 Anthropic 帳號登入",
+    "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "找不到可匯入的 Codex 登入檔案。你可以選擇「{{signIn}}」連接同一個帳號。",
+    "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "無法匯入現有的 Codex 登入資訊。請再試一次，或選擇「{{signIn}}」連接帳號。",
     "Sign in with Open-Science": "用 Open-Science 登入",
     "Sign in with browser": "以瀏覽器登入",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "透過瀏覽器登入以連接你的 Claude 訂閱。我們會在瀏覽器中開啟 Claude 進行授權，然後帶你回到這裡。",

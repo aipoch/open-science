@@ -2870,6 +2870,8 @@
     "Sign in separately (isolated)": "Iniciar sesión por separado (aislado)",
     "Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.": "Inicie sesión a través del navegador OAuth. La tarjeta de Configuración abrirá su navegador para iniciar sesión con su cuenta Claude. Sus credenciales se almacenan en <code>~/.claude</code>.",
     "Sign in with Anthropic": "Iniciar sesión con Anthropic",
+    "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "No se encontró ningún archivo de inicio de sesión de Codex para importar. Seleccione «{{signIn}}» para conectar la misma cuenta.",
+    "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "No se pudo importar el inicio de sesión de Codex. Inténtelo de nuevo o seleccione «{{signIn}}» para conectar su cuenta.",
     "Sign in with Open-Science": "Iniciar sesión con Open-Science",
     "Sign in with browser": "Iniciar sesión con el navegador",
     "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back.": "Inicie sesión con su navegador para conectar su suscripción Claude. Abriremos Claude en su navegador para autorizarlo y luego lo traeremos de regreso.",
