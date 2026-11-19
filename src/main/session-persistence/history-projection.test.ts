@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -171,14 +172,14 @@ const session = (tools = 100): PersistedChatSession => ({
     {
       id: 'artifact',
       kind: 'managed-file',
-      path: '/artifact/result.txt',
-      fileUrl: 'file:///artifact/result.txt'
+      path: join(tmpdir(), 'artifact', 'result.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'result.txt')).href
     },
     {
       id: 'unrelated',
       kind: 'managed-file',
-      path: '/artifact/old.txt',
-      fileUrl: 'file:///artifact/old.txt'
+      path: join(tmpdir(), 'artifact', 'old.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'old.txt')).href
     }
   ]
 })
@@ -601,8 +602,8 @@ describe('SQLite Session display history', () => {
     const added = {
       id: 'late-artifact',
       kind: 'managed-file' as const,
-      path: '/artifact/late.txt',
-      fileUrl: 'file:///artifact/late.txt'
+      path: join(tmpdir(), 'artifact', 'late.txt'),
+      fileUrl: pathToFileURL(join(tmpdir(), 'artifact', 'late.txt')).href
     }
     const next = {
       ...full,

@@ -358,6 +358,7 @@ describe('ACP session capability owner', () => {
 
   it('binds first-turn Literature routing to the provider Session after session/new', async () => {
     const registerLiterature = vi.fn()
+    const isEnabled = vi.fn(async () => false)
     const handlerFor = vi.fn(() => ({ readDocument: vi.fn() }))
     const host = {
       ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
@@ -372,7 +373,7 @@ describe('ACP session capability owner', () => {
       notebook: undefined,
       skillImport: undefined,
       literature: {
-        isEnabled: vi.fn(async () => false),
+        isEnabled,
         handlerFor
       },
       mcpHttpHost: host
@@ -392,6 +393,69 @@ describe('ACP session capability owner', () => {
     expect(provision.descriptor.capabilities).toContain('literature')
     expect(handlerFor).toHaveBeenLastCalledWith('session-1', 'project-1')
     expect(registerLiterature).toHaveBeenCalledTimes(2)
+    expect(isEnabled).not.toHaveBeenCalled()
+  })
+
+  it('does not read persistent Literature authority through a provisional routing alias', async () => {
+    const isEnabled = vi.fn(async () => false)
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: { isEnabled, handlerFor: () => ({ readDocument: vi.fn() }) },
+      mcpHttpHost: host
+    })
+
+    await owner.provision({
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(isEnabled).not.toHaveBeenCalled()
+  })
+
+  it('reads persistent Literature authority with the stable App Session ID', async () => {
+    const isEnabled = vi.fn(async () => true)
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: { isEnabled, handlerFor: () => ({ readDocument: vi.fn() }) },
+      mcpHttpHost: host
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(isEnabled).toHaveBeenCalledExactlyOnceWith('session-1', 'project-1')
+    expect(provision.descriptor.capabilities).toContain('literature')
   })
 
   it('keeps concurrent first-turn Literature routes distinct within one millisecond', async () => {
