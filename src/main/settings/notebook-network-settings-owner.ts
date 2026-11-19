@@ -122,7 +122,7 @@ class NotebookNetworkSettingsOwner {
 
   selectWindowsProtection(
     enabled: boolean,
-    refresh: () => Promise<void>
+    refresh?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
     return this.enqueue(
       (current) => ({ ...current, windowsProtectionEnabled: enabled }),

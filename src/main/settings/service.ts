@@ -890,6 +890,12 @@ class SettingsService {
     return result
   }
 
+  // After physical removal or failed setup, a Shell refresh cannot restore protection.
+  private async restoreStandardAfterSetup(): Promise<void> {
+    await this.notebookNetwork.selectWindowsProtection(false)
+    await this.refreshNotebookShellCapabilities()
+  }
+
   reviewNotebookPrivateDestination(
     request: PrivateDestinationRequest
   ): Promise<PrivateDestinationReview> {
@@ -940,16 +946,30 @@ class SettingsService {
     return this.serializeWindowsProtection(async () => {
       const previous = await this.notebookNetwork.get()
       const switching = previous.windowsProtectionEnabled === false
-      if (switching) await this.switchWindowsProtection(true)
-      let result: { cancelled: boolean }
-      try {
-        result = await this.installNotebookNetworkImpl()
-      } catch (error) {
-        if (switching) await this.switchWindowsProtection(false)
-        throw error
+      const install = async (): Promise<void> => {
+        if (switching) await this.notebookNetwork.selectWindowsProtection(true)
+        let result: { cancelled: boolean }
+        try {
+          result = await this.installNotebookNetworkImpl()
+        } catch (error) {
+          if (switching) {
+            try {
+              await this.restoreStandardAfterSetup()
+            } catch (restoreError) {
+              throw new AggregateError(
+                [error, restoreError],
+                'Windows Notebook setup and recovery failed.'
+              )
+            }
+          }
+          throw error
+        }
+        if (!result.cancelled) await this.refreshNotebookShellCapabilities()
+        else if (switching) await this.restoreStandardAfterSetup()
       }
-      if (result.cancelled && switching) await this.switchWindowsProtection(false)
-      if (!result.cancelled) await this.refreshNotebookShellCapabilities()
+      // Keep the same execution fence until setup has succeeded or the old choice is restored.
+      if (previous.windowsProtectionEnabled === true) await install()
+      else await this.withNotebookFolderPolicyChange(install)
       return this.getNotebookNetworkStatusImpl()
     })
   }
@@ -960,12 +980,14 @@ class SettingsService {
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
     return this.serializeWindowsProtection(async () => {
-      const result = await this.removeNotebookNetworkImpl()
-      if (!result.cancelled) {
-        const settings = await this.notebookNetwork.get()
-        if (settings.windowsProtectionEnabled === true) await this.switchWindowsProtection(false)
+      const settings = await this.notebookNetwork.get()
+      const remove = async (): Promise<void> => {
+        if ((await this.removeNotebookNetworkImpl()).cancelled) return
+        if (settings.windowsProtectionEnabled === true) await this.restoreStandardAfterSetup()
         else await this.refreshNotebookShellCapabilities()
       }
+      if (settings.windowsProtectionEnabled === false) await remove()
+      else await this.withNotebookFolderPolicyChange(remove)
       return this.getNotebookNetworkStatusImpl()
     })
   }
