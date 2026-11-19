@@ -1364,6 +1364,7 @@
     "Could not load version history.": "无法加载版本历史记录。",
     "Could not load token usage.": "无法加载词元用量。",
     "Could not load runtimes.": "无法加载运行时。",
+    "Could not install Claude Code. Try again.": "无法安装 Claude Code。请重试。",
     "Could not mark as read. Try again.": "无法标记为已读。请重试。",
     "Could not mark this completed session as read. Try again.": "无法将此已完成的会话标记为已读。请重试。",
     "Could not open the log file.": "无法打开日志文件。",

@@ -1323,6 +1323,7 @@
     "Could not load version history.": "Impossible de charger l’historique des versions.",
     "Could not load token usage.": "Impossible de charger l’utilisation des jetons.",
     "Could not load runtimes.": "Impossible de charger les environnements d'exécution.",
+    "Could not install Claude Code. Try again.": "Impossible d’installer Claude Code. Réessayez.",
     "Could not mark as read. Try again.": "Impossible de marquer comme lu. Essayer à nouveau.",
     "Could not mark this completed session as read. Try again.": "Impossible de marquer cette session terminée comme lue. Essayer à nouveau.",
     "Could not open the log file.": "Impossible d'ouvrir le fichier journal.",

@@ -1245,6 +1245,7 @@
     "Could not load version history.": "Der Versionsverlauf konnte nicht geladen werden.",
     "Could not load token usage.": "Die Token-Nutzung konnte nicht geladen werden.",
     "Could not load runtimes.": "Laufzeiten konnten nicht geladen werden.",
+    "Could not install Claude Code. Try again.": "Claude Code konnte nicht installiert werden. Versuchen Sie es erneut.",
     "Could not mark as read. Try again.": "Das Element konnte nicht als gelesen markiert werden. Versuchen Sie es erneut.",
     "Could not mark this completed session as read. Try again.": "Diese abgeschlossene Sitzung konnte nicht als gelesen markiert werden. Versuchen Sie es erneut.",
     "Could not open the log file.": "Die Protokolldatei konnte nicht geöffnet werden.",

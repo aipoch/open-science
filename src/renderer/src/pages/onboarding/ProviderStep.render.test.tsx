@@ -34,6 +34,11 @@ let root: Root
 
 beforeEach(() => {
   resetOnboardingStores()
+  useSettingsStore.setState({
+    detectClaude: vi
+      .fn()
+      .mockResolvedValue({ found: true, path: '/bin/claude', version: '2.1.209' })
+  })
   stubWindowApi()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -233,7 +238,8 @@ describe('ProviderStep', () => {
     expect(card.textContent).toContain('Use your eligible Claude subscription')
     expect(card.querySelector('input')).toBeNull()
     await clickButton(/Continue with Anthropic/)
-    expect(setAgentFramework).toHaveBeenCalledWith('claude-code')
+    expect(setAgentFramework).toHaveBeenCalledWith('claude-code', { runtimeAlreadyDetected: true })
+    expect(useSettingsStore.getState().installClaude).not.toHaveBeenCalled()
     expect(persistProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'claude-shared' }))
     expect(loginSharedClaude).toHaveBeenCalledOnce()
     expect(setActiveProvider).toHaveBeenCalledWith('claude-account')
@@ -272,6 +278,62 @@ describe('ProviderStep', () => {
     expect(card.classList.contains('is-authorizing')).toBe(true)
     await act(async () => attempts[1]({ ok: true, category: 'ok' }))
     expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['local launch error', { cliLaunchFailed: true }, 1],
+    ['account or network rejection', {}, 0],
+    ['cancelled authorization', { cancelled: true }, 0]
+  ] as const)('only repairs a broken CLI: %s', async (_name, flags, count) => {
+    const login = vi.fn().mockResolvedValue({ ok: false, category: 'unknown', ...flags })
+    useSettingsStore.setState({
+      loginSharedClaude: login,
+      persistProvider: vi.fn().mockResolvedValue('claude')
+    })
+    const onAdvance = vi.fn()
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(useSettingsStore.getState().installClaude).toHaveBeenCalledTimes(count)
+    expect(login).toHaveBeenCalledTimes(1 + count)
+    expect(onAdvance).not.toHaveBeenCalled()
+  })
+
+  it('keeps install failures on the card and retries without advancing a cancelled installation', async () => {
+    const pending = Promise.withResolvers<{ installId: string; ok: boolean }>()
+    const login = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    const install = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Download interrupted' })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ ok: true })
+    const cancel = vi.fn(async () => {
+      pending.resolve({ installId: 'second', ok: true })
+    })
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      detectClaude: vi.fn().mockResolvedValue({ found: false }),
+      installClaude: install,
+      loginSharedClaude: login,
+      cancelSharedClaudeLogin: cancel,
+      persistProvider: vi.fn().mockResolvedValue('claude'),
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    await clickButton(/Continue with Anthropic/)
+    expect(card.querySelector('[role="alert"]')?.textContent).toContain('Download interrupted')
+    expect(login).not.toHaveBeenCalled()
+    await clickButton(/Continue with Anthropic/)
+    expect(card.querySelector('progress')?.hasAttribute('value')).toBe(false)
+    await act(async () =>
+      card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!.click()
+    )
+    expect(cancel).toHaveBeenCalledWith(install.mock.calls[1][2])
+    expect(login).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/Continue with Anthropic/)
+    expect(login).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledWith('account')
   })
 
   it('stops subscription login if the compatible framework cannot be selected', async () => {

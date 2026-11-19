@@ -1291,6 +1291,7 @@
     "Could not load version history.": "버전 기록을 불러올 수 없습니다.",
     "Could not load token usage.": "토큰 사용량을 불러올 수 없습니다.",
     "Could not load runtimes.": "런타임을 로드할 수 없습니다.",
+    "Could not install Claude Code. Try again.": "Claude Code를 설치하지 못했습니다. 다시 시도하세요.",
     "Could not mark as read. Try again.": "읽음으로 표시할 수 없습니다. 다시 시도해 보세요.",
     "Could not mark this completed session as read. Try again.": "완료된 세션을 읽음으로 표시할 수 없습니다. 다시 시도하세요.",
     "Could not open the log file.": "로그 파일을 열 수 없습니다.",
