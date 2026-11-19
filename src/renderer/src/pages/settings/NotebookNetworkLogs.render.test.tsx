@@ -19,12 +19,21 @@ beforeEach(() => {
 })
 afterEach(() => {
   act(() => root.unmount())
+  vi.useRealTimers()
   container.remove()
   delete (window as unknown as { api?: unknown }).api
 })
-it('loads on entry as a secondary page without rendering a dialog trigger', async () => {
+it('loads on entry as a secondary page with the last seven local dates and advanced search collapsed', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 0, 3, 17))
   await act(async () => root.render(<NotebookNetworkLogs />))
-  expect(query).toHaveBeenCalledWith({})
+  expect(query).toHaveBeenCalledWith({
+    from: new Date(2025, 11, 28).getTime(),
+    to: new Date(2026, 0, 3, 23, 59, 59, 999).getTime()
+  })
+  expect(container.querySelector('[aria-expanded="false"][aria-controls]')?.textContent).toContain(
+    'Advanced search'
+  )
   expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('No matching network records.')
   expect(document.body.textContent).toContain('Retention days')
@@ -79,7 +88,6 @@ it('keeps the last successful query when a new filter fails before loading more'
     return { ...firstPage, records: [] }
   })
   await act(async () => root.render(<NotebookNetworkLogs />))
-  await act(async () => container.querySelector('button')!.click())
   await act(async () => {
     fireEvent.change(document.querySelector('[aria-label="Network mode"]')!, {
       target: { value: 'strict' }
@@ -92,5 +100,5 @@ it('keeps the last successful query when a new filter fails before loading more'
       [...document.querySelectorAll('button')].find((b) => b.textContent === 'Load more')!
     )
   )
-  expect(query).toHaveBeenLastCalledWith({ cursor: 'cursor-relaxed' })
+  expect(query).toHaveBeenLastCalledWith({ ...query.mock.calls[0][0], cursor: 'cursor-relaxed' })
 })

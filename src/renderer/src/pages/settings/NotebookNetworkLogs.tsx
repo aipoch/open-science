@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,20 +15,40 @@ import type {
 
 const selectClass = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
 
+function localMinute(date: Date): string {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function lastSevenDays(): { from: string; to: string } {
+  const end = new Date()
+  const start = new Date(end)
+  start.setDate(start.getDate() - 6)
+  start.setHours(0, 0, 0, 0)
+  end.setHours(23, 59, 0, 0)
+  return { from: localMinute(start), to: localMinute(end) }
+}
+
+function queryRange({ from, to }: { from: string; to: string }): NotebookNetworkAuditQuery {
+  return {
+    ...(from && { from: new Date(from).getTime() }),
+    ...(to && { to: new Date(to).getTime() + 59_999 })
+  }
+}
+
 function NetworkLogContent(): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const [page, setPage] = useState<NotebookNetworkAuditPage>()
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string>()
   const [filters, setFilters] = useState<NotebookNetworkAuditQuery>({})
-  const [from, setFrom] = useState(''),
-    [to, setTo] = useState('')
+  const [range, setRange] = useState(lastSevenDays)
+  const [advanced, setAdvanced] = useState(false)
   const [days, setDays] = useState('90'),
     [saving, setSaving] = useState(false),
     [confirm, setConfirm] = useState(false)
   const mounted = useRef(true),
     sequence = useRef(0),
-    applied = useRef<NotebookNetworkAuditQuery>({})
+    applied = useRef<NotebookNetworkAuditQuery>(queryRange(range))
   const load = useCallback(
     async (query: NotebookNetworkAuditQuery, append = false) => {
       const id = ++sequence.current
@@ -57,34 +78,11 @@ function NetworkLogContent(): React.JSX.Element {
   )
   useEffect(() => {
     mounted.current = true
-    let cancelled = false
-    const id = ++sequence.current
-    void readWithDeadline(() => window.api.network.queryNotebookLogs({}), 30_000)
-      .then((result) => {
-        if (cancelled || sequence.current !== id) return
-        setPage(result)
-        applied.current = {}
-        setDays(String(result.retentionDays))
-      })
-      .catch(() => {
-        if (!cancelled && sequence.current === id) setError(t('Could not load network logs.'))
-      })
-      .finally(() => {
-        if (!cancelled && sequence.current === id) setBusy(false)
-      })
+    void load(applied.current)
     return () => {
-      cancelled = true
       mounted.current = false
     }
-  }, [t])
-  const search = (): void => {
-    const query = {
-      ...filters,
-      ...(from ? { from: new Date(from).getTime() } : {}),
-      ...(to ? { to: new Date(to).getTime() } : {})
-    }
-    void load(query)
-  }
+  }, [load])
   const save = async (): Promise<void> => {
     if (saving) return
     setSaving(true)
@@ -129,93 +127,115 @@ function NetworkLogContent(): React.JSX.Element {
     <>
       <div className="space-y-4">
         <form
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
-            search()
+            void load({ ...filters, ...queryRange(range) })
           }}
         >
-          <select
-            className={selectClass}
-            aria-label={t('Network mode')}
-            value={filters.mode ?? ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                mode: (e.target.value as NotebookNetworkAuditQuery['mode']) || undefined
-              })
-            }
-          >
-            <option value="">{t('All modes')}</option>
-            <option value="relaxed">{t('Relaxed')}</option>
-            <option value="strict">{t('Strict')}</option>
-          </select>
-          {field('address', t('Address'))}
-          {field('projectId', t('Project ID'))}
-          {field('sessionId', t('Session ID'))}
-          {field('notebookRunId', t('Notebook run ID'))}
-          <select
-            className={selectClass}
-            aria-label={t('Decision')}
-            value={filters.decision ?? ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                decision: (e.target.value as NotebookNetworkAuditQuery['decision']) || undefined
-              })
-            }
-          >
-            <option value="">{t('All decisions')}</option>
-            <option value="allowed">{t('Allowed')}</option>
-            <option value="blocked">{t('Blocked')}</option>
-          </select>
-          <select
-            className={selectClass}
-            aria-label={t('Result')}
-            value={filters.outcome ?? ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                outcome: (e.target.value as NotebookNetworkAuditQuery['outcome']) || undefined
-              })
-            }
-          >
-            <option value="">{t('All results')}</option>
-            {Object.entries(labels)
-              .filter(([key]) => key !== 'allowed' && key !== 'blocked')
-              .map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-          </select>
-          <div className="col-span-full grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
-            <div className="space-y-1">
-              <label htmlFor="network-log-from" className="text-xs">
-                {t('From')}
-              </label>
-              <Input
-                id="network-log-from"
-                type="datetime-local"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className={selectClass}
+              aria-label={t('Network mode')}
+              value={filters.mode ?? ''}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  mode: (e.target.value as NotebookNetworkAuditQuery['mode']) || undefined
+                })
+              }
+            >
+              <option value="">{t('All modes')}</option>
+              <option value="relaxed">{t('Relaxed')}</option>
+              <option value="strict">{t('Strict')}</option>
+            </select>
+            <select
+              className={selectClass}
+              aria-label={t('Decision')}
+              value={filters.decision ?? ''}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  decision: (e.target.value as NotebookNetworkAuditQuery['decision']) || undefined
+                })
+              }
+            >
+              <option value="">{t('All decisions')}</option>
+              <option value="allowed">{t('Allowed')}</option>
+              <option value="blocked">{t('Blocked')}</option>
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-expanded={advanced}
+              aria-controls="network-log-advanced"
+              onClick={(event) => {
+                if (!advanced || event.currentTarget.form?.reportValidity()) setAdvanced(!advanced)
+              }}
+            >
+              {t('Advanced search')}
+              <ChevronDown
+                aria-hidden="true"
+                className={advanced ? 'size-4 rotate-180' : 'size-4'}
               />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor="network-log-to" className="text-xs">
-                {t('To')}
-              </label>
-              <Input
-                id="network-log-to"
-                type="datetime-local"
-                min={from || undefined}
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-              />
-            </div>
+            </Button>
             <Button type="submit" size="sm" variant="outline" disabled={busy}>
               {busy ? t('Loading…') : t('Search')}
             </Button>
+          </div>
+          <div id="network-log-advanced" hidden={!advanced}>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {field('address', t('Address'))}
+              {field('projectId', t('Project ID'))}
+              {field('sessionId', t('Session ID'))}
+              {field('notebookRunId', t('Notebook run ID'))}
+              <select
+                className={selectClass}
+                aria-label={t('Result')}
+                value={filters.outcome ?? ''}
+                onChange={(e) =>
+                  setFilters({
+                    ...filters,
+                    outcome: (e.target.value as NotebookNetworkAuditQuery['outcome']) || undefined
+                  })
+                }
+              >
+                <option value="">{t('All results')}</option>
+                {Object.entries(labels)
+                  .filter(([key]) => key !== 'allowed' && key !== 'blocked')
+                  .map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+              </select>
+              <div className="col-span-full grid grid-cols-1 items-end gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label htmlFor="network-log-from" className="text-xs">
+                    {t('From')}
+                  </label>
+                  <Input
+                    id="network-log-from"
+                    type="datetime-local"
+                    value={range.from}
+                    onChange={(e) => setRange({ ...range, from: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="network-log-to" className="text-xs">
+                    {t('To')}
+                  </label>
+                  <Input
+                    id="network-log-to"
+                    type="datetime-local"
+                    min={range.from || undefined}
+                    value={range.to}
+                    onChange={(e) => setRange({ ...range, to: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </form>
         {error ? <ErrorNotice inline title={error} /> : null}
@@ -228,8 +248,8 @@ function NetworkLogContent(): React.JSX.Element {
             )}
           />
         ) : null}
-        <div aria-busy={busy} className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-left text-xs">
+        <div aria-busy={busy} className="overflow-x-auto">
+          <table className="w-full border-separate border-spacing-x-0 border-spacing-y-1 text-left text-xs [&_tr>:first-child]:rounded-l-md [&_tr>:last-child]:rounded-r-md">
             <thead className="bg-muted">
               <tr>
                 {[
@@ -249,7 +269,10 @@ function NetworkLogContent(): React.JSX.Element {
             </thead>
             <tbody>
               {page?.records.map((record) => (
-                <tr key={record.data.eventId} className="border-t align-top">
+                <tr
+                  key={record.data.eventId}
+                  className="align-top odd:bg-muted/35 even:bg-muted/65"
+                >
                   <td className="whitespace-nowrap p-2">
                     {new Date(record.t).toLocaleString(i18n.language)}
                   </td>
@@ -356,11 +379,6 @@ function NetworkLogContent(): React.JSX.Element {
             >
               {saving ? t('Saving…') : t('Save')}
             </Button>
-            <p className="basis-full text-right text-xs text-muted-foreground">
-              {t(
-                'Retain at least the selected number of days. Expired files are checked every 3 days.'
-              )}
-            </p>
           </div>
         </div>
       </div>

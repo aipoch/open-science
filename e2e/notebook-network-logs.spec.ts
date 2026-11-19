@@ -46,6 +46,11 @@ test('queries daily network logs on demand and confirms retention changes', asyn
       .map((v) => JSON.stringify(v) + '\n')
       .join('')
   )
+  const older = new Date(Date.parse(now) - 9 * 86_400_000).toISOString()
+  await writeFile(
+    join(dir, `notebook-${older.slice(0, 10)}.log`),
+    JSON.stringify({ ...row('strict', 'run-older'), t: older }) + '\n'
+  )
   const page = app.page
   const settings = await openSettingsPage(page, 'Network')
   await expect(
@@ -64,6 +69,32 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   ).toHaveCount(0)
   await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toBeVisible()
+  const advanced = settings.getByRole('button', { name: 'Advanced search' })
+  const olderCell = settings.getByRole('cell', { name: 'run-older', exact: true })
+  const advancedLabels = [
+    'Address',
+    'Project ID',
+    'Session ID',
+    'Notebook run ID',
+    'Result',
+    'From',
+    'To'
+  ]
+  await expect(advanced).toHaveAttribute('aria-expanded', 'false')
+  for (const label of advancedLabels)
+    await expect(settings.getByLabel(label, { exact: true })).toBeHidden()
+  await expect(olderCell).toHaveCount(0)
+  await settings.screenshot({ path: testInfo.outputPath('network-logs.png') })
+  await advanced.click()
+  for (const label of advancedLabels)
+    await expect(settings.getByLabel(label, { exact: true })).toBeVisible()
+  await settings.screenshot({ path: testInfo.outputPath('advanced-search.png') })
+  await settings
+    .getByLabel('From', { exact: true })
+    .fill(new Date(Date.parse(older) - 86_400_000).toISOString().slice(0, 10) + 'T00:00')
+  await advanced.click()
+  await settings.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(olderCell).toBeVisible()
   await settings.getByLabel('Network mode', { exact: true }).selectOption('strict')
   await settings.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toHaveCount(0)
@@ -82,7 +113,6 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   expect((await page.evaluate(() => window.api.network.queryNotebookLogs({}))).retentionDays).toBe(
     30
   )
-  await settings.screenshot({ path: testInfo.outputPath('network-logs.png') })
   await settings.getByRole('button', { name: 'Back to network', exact: true }).click()
   await expect(access.getByRole('button', { name: 'Open', exact: true })).toBeVisible()
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
@@ -109,6 +139,6 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   const journal = JSON.parse(await readFile(join(extracted, 'logs/network/notebook.json'), 'utf8'))
   expect(
     journal.records.map((record: NotebookNetworkAuditRecord) => record.data.mode).sort()
-  ).toEqual(['relaxed', 'strict'])
+  ).toEqual(['relaxed', 'strict', 'strict'])
   expect(journal.truncated).toBe(false)
 })

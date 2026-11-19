@@ -8407,7 +8407,7 @@
     "No matching network records.": "No hay registros de red coincidentes.",
     "Shorten network log retention?": "¿Reducir el período de conservación de los registros de red?",
     "Allowed and blocked Notebook connections, grouped by their original network mode.": "Conexiones de Notebook permitidas y bloqueadas, agrupadas por su modo de red original.",
-    "Retain at least the selected number of days. Expired files are checked every 3 days.": "Se conservan al menos los días seleccionados. Los archivos caducados se revisan cada 3 días.",
+    "Advanced search": "Búsqueda avanzada",
     "Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.": "Los registros antiguos podrán eliminarse en la próxima limpieza. Los registros eliminados no se pueden recuperar.",
     "Some records could not be written or read, or expired files could not be cleaned up.": "No se pudieron escribir o leer algunos registros, o limpiar los archivos caducados.",
     "Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.": "Incluye direcciones de destino e identificadores de ejecución. Solo se incluyen registros dentro del ámbito de este diagnóstico.",

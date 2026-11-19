@@ -8061,7 +8061,7 @@
     "No matching network records.": "一致するネットワーク記録はありません。",
     "Shorten network log retention?": "ネットワークログの保持期間を短縮しますか？",
     "Allowed and blocked Notebook connections, grouped by their original network mode.": "許可およびブロックされた Notebook 接続を、発生時のネットワークモード別に表示します。",
-    "Retain at least the selected number of days. Expired files are checked every 3 days.": "選択した日数以上保持します。期限切れファイルは3日ごとに確認して削除します。",
+    "Advanced search": "詳細検索",
     "Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.": "古い記録は次回のクリーンアップで削除対象になります。削除した記録は復元できません。",
     "Some records could not be written or read, or expired files could not be cleaned up.": "一部の記録を書き込みまたは読み込めなかったか、期限切れファイルを削除できませんでした。",
     "Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.": "宛先アドレスと実行識別子を含みます。この診断の対象範囲内の記録のみが含まれます。",

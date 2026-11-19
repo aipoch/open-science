@@ -8061,7 +8061,7 @@
     "No matching network records.": "没有符合条件的网络记录。",
     "Shorten network log retention?": "缩短网络日志保留期限？",
     "Allowed and blocked Notebook connections, grouped by their original network mode.": "记录允许和拦截的 Notebook 连接，按发生时的网络模式区分。",
-    "Retain at least the selected number of days. Expired files are checked every 3 days.": "至少保留所选天数，每 3 天检查并清理过期文件。",
+    "Advanced search": "高级查询",
     "Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.": "旧记录将在下次清理时符合删除条件。已删除的记录无法恢复。",
     "Some records could not be written or read, or expired files could not be cleaned up.": "部分记录无法写入或读取，或过期文件无法清理。",
     "Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.": "包含目标地址和执行标识，仅收集本次诊断范围内的记录。",

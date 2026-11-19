@@ -8230,7 +8230,7 @@
     "No matching network records.": "Keine passenden Netzwerkeinträge.",
     "Shorten network log retention?": "Aufbewahrungsdauer der Netzwerkprotokolle verkürzen?",
     "Allowed and blocked Notebook connections, grouped by their original network mode.": "Erlaubte und blockierte Notebook-Verbindungen, nach ihrem damaligen Netzwerkmodus gruppiert.",
-    "Retain at least the selected number of days. Expired files are checked every 3 days.": "Mindestens die gewählte Anzahl an Tagen aufbewahren. Abgelaufene Dateien werden alle 3 Tage geprüft.",
+    "Advanced search": "Erweiterte Suche",
     "Older records will become eligible for deletion at the next cleanup. Deleted records cannot be recovered.": "Ältere Einträge können bei der nächsten Bereinigung gelöscht werden. Gelöschte Einträge lassen sich nicht wiederherstellen.",
     "Some records could not be written or read, or expired files could not be cleaned up.": "Einige Einträge konnten nicht geschrieben oder gelesen oder abgelaufene Dateien nicht bereinigt werden.",
     "Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.": "Enthält Zieladressen und Ausführungskennungen. Nur Einträge im Umfang dieser Diagnose werden aufgenommen.",
