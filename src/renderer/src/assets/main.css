@@ -770,14 +770,6 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   background: var(--bg-10);
   color: var(--text-000);
 }
-.onboarding-provider-validation {
-  margin-top: 0.8rem;
-  color: var(--destructive);
-  font-size: 0.75rem;
-}
-.onboarding-provider-validation.is-ok {
-  color: var(--primary);
-}
 .onboarding-quick-footer,
 .onboarding-ready-actions {
   display: flex;
