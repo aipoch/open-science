@@ -163,9 +163,21 @@ for (const scenario of scenarios) {
           label
         )
       const toggle = async (): Promise<void> => {
-        const box = await collapseButton.boundingBox()
-        // Use a real pointer without Playwright scrolling the target into view first.
-        await page.mouse.click(box!.x + 80, box!.y + box!.height / 2)
+        // On shorter native windows only the lower edge of the header may be in the scroller.
+        // Click its visible intersection without scrolling the transcript under measurement.
+        const point = await collapseButton.evaluate((button) => {
+          const bounds = button.getBoundingClientRect()
+          const scroller = button
+            .closest('[data-slot="message-scroller-viewport"]')!
+            .getBoundingClientRect()
+          const x = bounds.x + Math.min(80, bounds.width / 2)
+          const y =
+            (Math.max(bounds.top, scroller.top) + Math.min(bounds.bottom, scroller.bottom)) / 2
+          if (!button.contains(document.elementFromPoint(x, y)))
+            throw new Error('The visible tool control does not receive the pointer.')
+          return { x, y }
+        })
+        await page.mouse.click(point.x, point.y)
       }
       await mark('initial')
       if ('cycle' in scenario) {
