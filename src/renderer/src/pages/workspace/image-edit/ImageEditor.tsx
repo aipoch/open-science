@@ -493,13 +493,20 @@ function ActiveImageEditor({
         }
         return switchImageEditorSource(completed, result, task.edit.source)
       }
-      return {
+      const finished = {
         ...current,
         submission: { ...current.submission, preparing: false, stopping: false, error: undefined },
         selectedCandidate: undefined,
         browsing: undefined,
         composerCollapsed: false
       }
+      if (current.browsing && (task.state === 'cancelled' || task.state === 'failed'))
+        return switchImageEditorSource(
+          finished,
+          current.browsing.item,
+          current.browsing.inputSource
+        )
+      return finished
     })
   }, [
     task,

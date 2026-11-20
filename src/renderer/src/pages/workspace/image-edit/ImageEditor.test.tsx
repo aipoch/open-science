@@ -1969,6 +1969,42 @@ it('does not steal the viewed source when a result arrives, and can revise the s
   expect(startTask.mock.calls[1][0].edit.source.sourceVersionId).toBe('v1')
 })
 
+it.each(['cancelled', 'failed'] as const)(
+  'keeps the browsed version and its input when a task is %s',
+  async (state) => {
+    await render()
+    await click('Edit image')
+    await fill('Image editing instruction', 'Create a second version')
+    await click('Send image edit')
+    await finishEdit()
+    await click('source.png')
+    await fill('Image editing instruction', 'Retry this edit later')
+    await click('Send image edit')
+    await click('Result 1')
+    const canvas = (): string | null | undefined =>
+      container.querySelector('[aria-label="Image editing canvas"] img')?.getAttribute('src')
+    expect(canvas()).toBe('blob:v2')
+
+    vi.mocked(window.api.imageTasks.list).mockResolvedValue(
+      owner!.tasks.map((task) =>
+        task.state === 'running' ? { ...task, state, updatedAt: task.updatedAt + 1 } : task
+      )
+    )
+    await act(async () => {
+      await owner!.reloadTasks({ projectId: 'p', sessionId: 's' })
+    })
+    expect(canvas()).toBe('blob:v2')
+    expect([...owner!.drafts.values()][0]).toMatchObject({
+      source: { selectedVersionId: 'v2' },
+      inputSource: { sourceVersionId: 'v1' }
+    })
+    await click('source.png')
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+      'Retry this edit later'
+    )
+  }
+)
+
 it('retains the submitted draft when leaving, and resumes the same task on return', async () => {
   await render()
   await click('Edit image')
