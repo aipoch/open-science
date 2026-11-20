@@ -363,6 +363,9 @@ class BackendRoutePlanner {
                   ...(candidate.provider.cloudflare && {
                     cloudflare: candidate.provider.cloudflare
                   }),
+                  ...(candidate.provider.azureChatBaseUrl && {
+                    azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+                  }),
                   model,
                   ...(candidate.provider.vendorId === 'apodex'
                     ? { backgroundModel: 'apodex-1.1-mini' }

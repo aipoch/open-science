@@ -1103,7 +1103,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     editingProvider?.type === formValue.type &&
     editingProvider.vendorId === formValue.vendorId &&
     sameCloudflareGateway(editingProvider.cloudflare, formValue.cloudflare) &&
-    sameManualProviderCredentialScope(editingProvider.manualConnection, formValue.manualConnection)
+    sameManualProviderCredentialScope(
+      formValue.vendorId,
+      editingProvider.manualConnection,
+      formValue.manualConnection
+    )
       ? editingProvider
       : undefined
   const regionalCredential =

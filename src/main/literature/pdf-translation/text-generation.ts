@@ -1,4 +1,4 @@
-import { cloudflareGatewayFetch } from '../../settings/cloudflare-gateway-transport'
+import { providerGatewayFetch } from '../../settings/provider-gateway-fetch'
 import type { CloudflareGateway } from '../../../shared/cloudflare-gateway'
 import { encodeStoredModelProtocol } from '../../../shared/model-protocol-storage'
 import { createHash } from 'node:crypto'
@@ -16,6 +16,7 @@ export type ProviderTextGenerationConfiguration = Readonly<{
   type: 'custom' | 'official'
   key?: string
   cloudflare?: CloudflareGateway
+  azureChatBaseUrl?: string
   baseUrl?: string
   chatCompletionsBaseUrl?: string
   apiEndpoints?: readonly ModelProtocol[]
@@ -86,7 +87,7 @@ export class ProviderTextGenerationService {
     const model = createProvider({
       id: provider.vendorId ?? 'custom',
       key: provider.key,
-      fetch: cloudflareGatewayFetch(this.fetchImpl, provider),
+      fetch: providerGatewayFetch(this.fetchImpl, provider),
       textGeneration: {
         ...provider,
         reasoningEffortTransport: provider.reasoningEffortTransport,

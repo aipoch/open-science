@@ -12,7 +12,43 @@ type ManualProviderDefinition = Readonly<{
   baseUrl: (location: string, protocol: ModelProtocol) => string
 }>
 
+/** 接受资源名或匹配当前协议的公有云推理 URI。 */
+function parseFoundryLocation(location: string, protocol: ModelProtocol): string | undefined {
+  const resourceName = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+  const serviceHost = 'services.ai.azure.com'
+  if (resourceName.test(location)) return `${location}.${serviceHost}`
+
+  const url = URL.parse(location.includes('://') ? location : `https://${location}`)
+  if (
+    !url ||
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.hash ||
+    (url.search && (protocol !== 'chat-completions' || url.search !== '?api-version=v1'))
+  )
+    return undefined
+
+  const suffixes = protocol === 'messages' ? [serviceHost] : [serviceHost, 'openai.azure.com']
+  const suffix = suffixes.find((domain) => url.hostname.endsWith(`.${domain}`))
+  if (!suffix || !resourceName.test(url.hostname.slice(0, -(suffix.length + 1)))) return undefined
+  const path = url.pathname.replace(/\/$/, '')
+  const validPaths =
+    protocol === 'messages'
+      ? ['', '/anthropic', '/anthropic/v1/messages']
+      : ['', '/openai/v1', '/openai/v1/chat/completions']
+  return validPaths.includes(path) ? url.hostname : undefined
+}
+
 const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> = {
+  'microsoft-foundry': {
+    defaultConnection: { location: '', protocol: 'messages' },
+    protocols: ['messages', 'chat-completions'],
+    parseLocation: parseFoundryLocation,
+    baseUrl: (hostname, protocol) =>
+      `https://${hostname}/${protocol === 'messages' ? 'anthropic' : 'openai/v1'}`
+  },
   'aws-bedrock': {
     defaultConnection: { location: 'us-east-1', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
@@ -50,7 +86,14 @@ export const sameManualProviderConnection = (
   left?.location.trim().toLowerCase() === right?.location.trim().toLowerCase() &&
   left?.protocol === right?.protocol
 
-export const sameManualProviderCredentialScope = (
+export function sameManualProviderCredentialScope(
+  vendorId: OfficialVendorId | undefined,
   left?: ManualProviderConnection,
   right?: ManualProviderConnection
-): boolean => left?.location.trim().toLowerCase() === right?.location.trim().toLowerCase()
+): boolean {
+  if (!left || !right) return left === right
+  const location = (connection: ManualProviderConnection): string =>
+    (vendorId && resolveManualProviderConnection(vendorId, connection)?.connection.location) ||
+    connection.location.trim().toLowerCase()
+  return location(left) === location(right)
+}

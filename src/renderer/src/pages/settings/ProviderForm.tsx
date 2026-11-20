@@ -331,6 +331,9 @@ const ProviderForm = ({
     vendor?.id === 'cloudflare-ai-gateway'
       ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
       : undefined
+  const isFoundry = vendor?.id === 'microsoft-foundry'
+  const modelLabel = isFoundry ? t('Deployment name') : t('Model')
+  const manualLocationLabel = isFoundry ? t('Azure resource name or endpoint') : t('Region')
   const manualProvider = manualProviderDefinition(vendor?.id)
   const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
   const keyLabel = cloudflare
@@ -388,12 +391,12 @@ const ProviderForm = ({
   const modelField = (
     <div className="space-y-1.5">
       <label className={fieldLabelClassName} htmlFor="provider-model">
-        {t('Model')}
+        {modelLabel}
         <RequiredMark />
       </label>
       <Input
         id="provider-model"
-        aria-label={t('Model')}
+        aria-label={modelLabel}
         aria-required="true"
         aria-invalid={Boolean(errors.model) || undefined}
         aria-describedby={errors.model ? 'provider-model-error' : undefined}
@@ -1191,12 +1194,12 @@ const ProviderForm = ({
         <>
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-manual-location">
-              {t('Region')}
+              {manualLocationLabel}
               <RequiredMark />
             </label>
             <Input
               id="provider-manual-location"
-              aria-label={t('Region')}
+              aria-label={manualLocationLabel}
               aria-required="true"
               aria-invalid={Boolean(errors.location) || undefined}
               aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
@@ -1206,7 +1209,11 @@ const ProviderForm = ({
                 const next = { ...manualConnection, location: event.target.value }
                 onChange({
                   manualConnection: next,
-                  ...(!sameManualProviderCredentialScope(manualConnection, next) && { key: '' })
+                  ...(!sameManualProviderCredentialScope(
+                    value.vendorId,
+                    manualConnection,
+                    next
+                  ) && { key: '' })
                 })
               }}
             />

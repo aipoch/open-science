@@ -35,6 +35,7 @@ export type ResolvedProvider = {
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
   vendorId?: OfficialVendorId
   cloudflare?: CloudflareGateway
+  azureChatBaseUrl?: string
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
   // Exact Lab deployment address; host-owned credential resolution must match this address.

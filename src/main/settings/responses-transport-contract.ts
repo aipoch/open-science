@@ -14,6 +14,7 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   baseUrl: string
   key?: string
   cloudflare?: CloudflareGateway
+  azureChatBaseUrl?: string
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
   // Codex uses a catalog model for its local metadata; bridge providers may need a different

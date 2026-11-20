@@ -21,6 +21,10 @@ export function resolveManualProviderTarget(
     vendorId,
     baseUrl,
     ...(protocol === 'chat-completions' && { chatCompletionsBaseUrl: baseUrl }),
+    ...(protocol === 'chat-completions' &&
+      vendorId === 'microsoft-foundry' && {
+        azureChatBaseUrl: baseUrl
+      }),
     ...(protocol === 'responses' && { responsesBaseUrl: baseUrl }),
     model: model.trim(),
     apiEndpoints: [protocol],

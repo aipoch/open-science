@@ -1,4 +1,4 @@
-import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
+import { providerGatewayFetch } from './provider-gateway-fetch'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
@@ -159,7 +159,7 @@ export class ResponsesToChatCompletionsBridge {
             ? { reasoningEffortTransport: this.target.reasoningEffortTransport }
             : {})
         },
-        fetchImpl: cloudflareGatewayFetch(this.fetchImpl, this.target),
+        fetchImpl: providerGatewayFetch(this.fetchImpl, this.target),
         timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
         maxResponseBytes: this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
         signal: signal
@@ -476,7 +476,7 @@ export class ResponsesToChatCompletionsBridge {
       return
     }
     const startedAt = Date.now()
-    const fetchUpstream = cloudflareGatewayFetch(this.fetchImpl, target)
+    const fetchUpstream = providerGatewayFetch(this.fetchImpl, target)
     const upstream = await fetchProviderRequest(fetchUpstream, chatUrl(target.baseUrl), {
       method: 'POST',
       headers,

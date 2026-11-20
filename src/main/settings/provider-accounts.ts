@@ -402,7 +402,11 @@ class ProviderAccountsModule {
         existing.type === provider.type &&
         existing.vendorId === provider.vendorId &&
         sameCloudflareGateway(existing.cloudflare, provider.cloudflare) &&
-        sameManualProviderCredentialScope(existing.manualConnection, provider.manualConnection)
+        sameManualProviderCredentialScope(
+          provider.vendorId,
+          existing.manualConnection,
+          provider.manualConnection
+        )
       ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask

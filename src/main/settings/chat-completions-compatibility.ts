@@ -1,5 +1,5 @@
 import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
-import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
+import { providerGatewayFetch } from './provider-gateway-fetch'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -34,6 +34,7 @@ export type ChatCompletionsCompatibilityTarget = Readonly<{
   endpoint: string
   key?: string
   cloudflare?: CloudflareGateway
+  azureChatBaseUrl?: string
   model: string
   wire: CompatibilityWire
   maxOutputTokens?: number
@@ -102,7 +103,7 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
-    const fetchUpstream = cloudflareGatewayFetch(this.fetchImpl, this.target)
+    const fetchUpstream = providerGatewayFetch(this.fetchImpl, this.target)
     const upstream = await fetchProviderRequest(fetchUpstream, this.target.endpoint, {
       method: 'POST',
       headers,

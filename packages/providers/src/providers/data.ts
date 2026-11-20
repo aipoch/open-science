@@ -2065,6 +2065,17 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: false }
   },
   {
+    id: 'microsoft-foundry',
+    label: 'Microsoft Foundry',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions'],
+    messagesApiKeyHeader: true,
+    apiKeyUrl: 'https://ai.azure.com/',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
     id: 'kilo',
     label: 'Kilo Gateway',
     baseUrl: 'https://ai-gateway.kilo.ai/api',

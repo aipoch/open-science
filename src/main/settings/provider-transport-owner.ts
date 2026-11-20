@@ -415,6 +415,9 @@ class ProviderTransportOwner {
                     baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
                     key: provider.key,
                     ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+                    ...(provider.azureChatBaseUrl && {
+                      azureChatBaseUrl: provider.azureChatBaseUrl
+                    }),
                     model,
                     useApiKeyHeader:
                       provider.vendorId === 'anthropic' ||
@@ -432,6 +435,9 @@ class ProviderTransportOwner {
                     endpoint: endpoint!,
                     key: provider.key,
                     ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+                    ...(provider.azureChatBaseUrl && {
+                      azureChatBaseUrl: provider.azureChatBaseUrl
+                    }),
                     model
                   }
                 ],
@@ -540,7 +546,10 @@ class ProviderTransportOwner {
         if (!model) continue
         const credentials = {
           ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-          ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare })
+          ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare }),
+          ...(candidate.provider.azureChatBaseUrl && {
+            azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+          })
         }
         const bridge =
           planned.oauth === 'xai'
@@ -659,6 +668,7 @@ class ProviderTransportOwner {
             wire: transport.wire,
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
             ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+            ...(provider.azureChatBaseUrl && { azureChatBaseUrl: provider.azureChatBaseUrl }),
             ...(provider.key ? { key: provider.key } : {}),
             model,
             ...(transport.wire === 'messages' && maxOutputTokens !== undefined
@@ -705,6 +715,9 @@ class ProviderTransportOwner {
                       endpoint,
                       ...(provider.key ? { key: provider.key } : {}),
                       ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+                      ...(provider.azureChatBaseUrl && {
+                        azureChatBaseUrl: provider.azureChatBaseUrl
+                      }),
                       model,
                       adaptRequest: adaptCodeBuddyChatCompletionsRequest
                     }
@@ -733,7 +746,7 @@ class ProviderTransportOwner {
       selector ??= createCodeBuddySkillSelectorTransport({
         activeTarget: {
           ...input.activeTarget,
-          provider: { ...routedProvider, cloudflare: undefined },
+          provider: { ...routedProvider, cloudflare: undefined, azureChatBaseUrl: undefined },
           apiEndpoints: ['chat-completions']
         },
         ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
@@ -882,6 +895,9 @@ class ProviderTransportOwner {
                         ...(candidate.provider.cloudflare && {
                           cloudflare: candidate.provider.cloudflare
                         }),
+                        ...(candidate.provider.azureChatBaseUrl && {
+                          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+                        }),
                         model
                       }
                     ],
@@ -896,6 +912,9 @@ class ProviderTransportOwner {
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                         ...(candidate.provider.cloudflare && {
                           cloudflare: candidate.provider.cloudflare
+                        }),
+                        ...(candidate.provider.azureChatBaseUrl && {
+                          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
                         }),
                         model,
                         ...(candidate.provider.vendorId &&
@@ -1215,6 +1234,9 @@ class ProviderTransportOwner {
         key: candidate.provider.key,
         vendorId: candidate.provider.vendorId,
         ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare }),
+        ...(candidate.provider.azureChatBaseUrl && {
+          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+        }),
         reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
         model: candidate.effectiveModel ?? candidate.provider.model,
         reasoningEffort: effort,

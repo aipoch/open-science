@@ -220,6 +220,8 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "セッションパッケージを Lab にアップロードできませんでした。接続を確認して再試行してください。"
   },
   "renderer": {
+    "Deployment name": "デプロイ名",
+    "Azure resource name or endpoint": "Azure リソース名またはエンドポイント",
     "Enter a valid provider endpoint.": "有効なプロバイダーエンドポイントを入力してください。",
     "Account ID": "アカウント ID",
     "Gateway ID": "ゲートウェイ ID",

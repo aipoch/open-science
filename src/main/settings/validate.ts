@@ -1,4 +1,5 @@
-import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
+import { manualProviderDefinition } from '../../shared/manual-provider'
+import { providerGatewayFetch } from './provider-gateway-fetch'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
@@ -197,7 +198,7 @@ const buildChatCompletionsValidationRequest = (
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
           max_tokens:
-            provider.cloudflare || provider.vendorId === 'aws-bedrock'
+            provider.cloudflare || manualProviderDefinition(provider.vendorId)
               ? 64
               : provider.vendorId === 'requesty'
                 ? 16
@@ -642,7 +643,8 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
       baseUrl: targetBaseUrl,
       key: provider.key,
       model: provider.model,
-      ...(provider.cloudflare && { cloudflare: provider.cloudflare })
+      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+      ...(provider.azureChatBaseUrl && { azureChatBaseUrl: provider.azureChatBaseUrl })
     },
     fetchImpl
   )
@@ -732,7 +734,7 @@ const validateCustomProvider = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const fetchUpstream = cloudflareGatewayFetch(fetchImpl, provider)
+    const fetchUpstream = providerGatewayFetch(fetchImpl, provider)
     const response = await fetchProviderRequest(fetchUpstream, request.url, {
       method: 'POST',
       headers: request.headers,
@@ -770,7 +772,7 @@ const validateCustomProvider = async (
     const isMessagesProbe = request.endpoint === 'messages'
     const requiresChatReply =
       request.endpoint === 'chat-completions' &&
-      (provider.cloudflare?.mode === 'rest' || provider.vendorId === 'aws-bedrock')
+      (provider.cloudflare?.mode === 'rest' || manualProviderDefinition(provider.vendorId))
     if (category === 'ok' && (isMessagesProbe || requiresChatReply)) {
       let bodyText = ''
       try {
