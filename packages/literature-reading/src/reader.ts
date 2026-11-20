@@ -303,6 +303,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
   private readonly extracted = new Map<string, SharedExtraction>()
   private readonly extractedChars = new Map<string, number>()
   private readonly indexBuilds = new Map<string, Promise<void>>()
+  private readonly activeSearches = new Set<Promise<unknown>>()
   private readonly inFlight = new Set<SharedExtraction>()
   private closed = false
 
@@ -313,7 +314,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     this.extracted.clear()
     this.extractedChars.clear()
     for (const entry of entries) entry.controller.abort(new Error('Literature reader is closed.'))
-    await Promise.allSettled(entries.map((entry) => entry.result))
+    await Promise.allSettled([...entries.map((entry) => entry.result), ...this.activeSearches])
   }
   async readDocument(reference: Reference, cursor?: string): Promise<ReadDocumentResult> {
     return this.readBatch(await this.resolveDocument(reference, cursor === undefined), cursor)
@@ -322,10 +323,10 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     references: readonly Reference[],
     query: string
   ): Promise<SearchDocumentsResult> {
-    return this.search(
-      await Promise.all(references.map((reference) => this.resolveDocument(reference))),
-      query
+    const documents = await Promise.all(
+      references.map((reference) => this.resolveDocument(reference))
     )
+    return this.trackSearch(this.search(documents, query))
   }
   async classificationEvidence(
     reference: Reference,
@@ -354,7 +355,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       chunks.length <= 8
     const candidates = complete
       ? chunks
-      : (await abortable(this.search([document], query, signal), signal)).passages
+      : (await abortable(this.trackSearch(this.search([document], query, signal)), signal)).passages
     signal?.throwIfAborted()
     const passages: { pageStart: number; pageEnd: number; content: string }[] = []
     let bytes = 0
@@ -563,6 +564,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     signal?: AbortSignal
   ): Promise<SearchDocumentsResult> {
     signal?.throwIfAborted()
+    if (this.closed) throw new Error('Literature reader is closed.')
     const byExtractionId = new Map<string, ExtractedDocument[]>()
     const descriptorByExtractionId = new Map<
       string,
@@ -702,6 +704,15 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     } finally {
       await index?.close()
     }
+  }
+
+  private trackSearch<T>(pending: Promise<T>): Promise<T> {
+    this.activeSearches.add(pending)
+    pending.then(
+      () => this.activeSearches.delete(pending),
+      () => this.activeSearches.delete(pending)
+    )
+    return pending
   }
 
   private async ensureIndexed(

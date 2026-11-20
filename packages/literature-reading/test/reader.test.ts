@@ -145,11 +145,17 @@ it('cancels an index-open wait and closes a late connection before starting inde
   await vi.waitFor(() => expect(open).toHaveBeenCalledOnce())
   controller.abort(new Error('cancel index'))
   await expect(pending).rejects.toThrow('cancel index')
+  let closed = false
+  const closing = reader.close().then(() => {
+    closed = true
+  })
+  await Promise.resolve()
+  expect(closed).toBe(false)
   gate.resolve(connection)
-  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+  await closing
+  expect(close).toHaveBeenCalledOnce()
   expect(hasExtraction).not.toHaveBeenCalled()
   expect(onIndexError).not.toHaveBeenCalled()
-  await reader.close()
 })
 it.each([
   'open-science-pdfjs-verified-bytes-v2',
