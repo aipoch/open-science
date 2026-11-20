@@ -262,3 +262,15 @@ it.each(['native', 'local'] as const)(
     expect(document.querySelector('input[type="file"]')).toBeNull()
   }
 )
+
+it('records a specific failure message when a use-case import is blocked before creating an operation', async () => {
+  const importPackage = vi.fn(async () => {
+    throw new Error('A Session package operation is already in progress.')
+  })
+  stubWebApi(importPackage)
+  await importSessionPackage(undefined, { useCase: 'research-example' })
+  expect(usePackageOperationStore.getState().useCaseFailure).toBe('research-example')
+  expect(usePackageOperationStore.getState().useCaseFailureMessage).toBe(
+    'Another package operation is already in progress. Wait for it to finish, then try again.'
+  )
+})

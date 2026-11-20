@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFile, access } from 'node:fs/promises'
 import * as storageUsage from '../storage/usage'
-import { downloadUseCase } from './use-case-download'
+import { downloadUseCase, UseCaseDownloadError } from './use-case-download'
 
 const bytes = Buffer.from('example archive')
 const entry = {
@@ -175,4 +175,67 @@ it('allows a healthy download to continue beyond ten minutes', async () => {
     timeout.mockRestore()
     vi.useRealTimers()
   }
+})
+
+it('classifies manifest, network, timeout, server, unavailable, and verification download failures', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'))
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'timeout' })
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockRejectedValueOnce(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('connect ECONNRESET'), { code: 'ECONNRESET' })
+      })
+    )
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'network' })
+
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(Response.json([entry]))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'unavailable' })
+
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(Response.json([entry]))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'server' })
+
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(Response.json([entry]))
+      .mockResolvedValueOnce(new Response(Buffer.alloc(bytes.length)))
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toBeInstanceOf(UseCaseDownloadError)
+
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('unexpected internal failure')))
+  const unknown = await downloadUseCase('research', new AbortController().signal, () => {}).catch(
+    (error) => error
+  )
+  expect(unknown).toBeInstanceOf(Error)
+  expect(unknown).not.toBeInstanceOf(UseCaseDownloadError)
+  expect((unknown as Error).message).toBe('unexpected internal failure')
 })

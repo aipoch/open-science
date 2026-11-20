@@ -41,7 +41,11 @@ export const importSessionPackage = async (
     usePackageOperationStore.getState().setOpen(true)
     return
   }
-  usePackageOperationStore.setState({ errorKind: undefined, useCaseFailure: undefined })
+  usePackageOperationStore.setState({
+    errorKind: undefined,
+    useCaseFailure: undefined,
+    useCaseFailureMessage: undefined
+  })
   importing = true
   usePackageOperationStore.getState().setImportError(undefined)
   const previousId = usePackageOperationStore.getState().operation?.id
@@ -86,7 +90,17 @@ export const importSessionPackage = async (
       return
     }
     if (file && 'useCase' in file) {
-      usePackageOperationStore.setState({ useCaseFailure: file.useCase })
+      const detail = caught instanceof Error ? caught.message : String(caught)
+      const useCaseFailureMessage =
+        detail === 'A Session package operation is already in progress.'
+          ? i18n.t(
+              'Another package operation is already in progress. Wait for it to finish, then try again.'
+            )
+          : undefined
+      usePackageOperationStore.setState({
+        useCaseFailure: file.useCase,
+        useCaseFailureMessage
+      })
       return
     }
     usePackageOperationStore
