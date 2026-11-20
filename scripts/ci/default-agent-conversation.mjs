@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 // Exact behavior inventory: a successful wrapper or an empty/skipped selection cannot certify it.
 export const DEFAULT_AGENT_CASES = [
   ...['chat-completions', 'responses', 'messages'].map((protocol) => ({
-    file: 'certification/default-agent-conversation.spec.ts',
+    file: 'default-agent-conversation.spec.ts',
     title: `default Agent completes two turns over ${protocol}`
   })),
   ...[

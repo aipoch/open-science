@@ -128,6 +128,38 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
   return evidence
 }
 
+// Stapling changes artifact bytes, not the checks that certified the candidate. Preserve the
+// original run attempt and receipts even when notarization is rerun in a later attempt.
+const refreshPlatformEvidence = async ({ argv, environment = process.env }) => {
+  const platform = argumentValue(argv, '--platform')
+  const artifactDirectory = argumentValue(argv, '--artifact-dir')
+  const output = argumentValue(argv, '--output')
+  if (
+    !platform?.startsWith('macos-') ||
+    !PLATFORMS.includes(platform) ||
+    !artifactDirectory ||
+    !output
+  )
+    throw new Error(
+      'Refresh requires a macOS platform, artifact directory and existing evidence path.'
+    )
+  const evidence = JSON.parse(await readFile(resolve(output), 'utf8'))
+  if (
+    evidence.schemaVersion !== 1 ||
+    evidence.platform !== platform ||
+    evidence.source?.sha !== environment.GITHUB_SHA ||
+    evidence.source?.runId !== environment.GITHUB_RUN_ID ||
+    evidence.checks?.packageSmoke !== 'passed' ||
+    evidence.checks?.defaultAgentConversation !== 'passed'
+  )
+    throw new Error('Cannot refresh uncertified or unrelated macOS artifacts.')
+  assertDefaultAgentEvidence(evidence.defaultAgentConversation, { ...evidence.source, platform })
+  assertDatabaseMigrationCertification(evidence.databaseMigration)
+  evidence.artifacts = await artifactEvidence(resolve(artifactDirectory))
+  await writeFile(resolve(output), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8')
+  return evidence
+}
+
 const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) => {
   const outputArgument = argumentValue(argv, '--output')
   const currentTag = argumentValue(argv, '--current-tag')
@@ -364,6 +396,7 @@ const aggregateEvidence = async ({ argv }) => {
 const main = async () => {
   const argv = process.argv.slice(2)
   if (argv[0] === 'write') await writePlatformEvidence({ argv: argv.slice(1) })
+  else if (argv[0] === 'refresh') await refreshPlatformEvidence({ argv: argv.slice(1) })
   else if (argv[0] === 'write-windows-update') {
     await writeWindowsUpdateEvidence({ argv: argv.slice(1) })
   } else if (argv[0] === 'aggregate') await aggregateEvidence({ argv: argv.slice(1) })
@@ -379,4 +412,10 @@ if (invokedAsScript) {
   })
 }
 
-export { aggregateEvidence, artifactEvidence, writePlatformEvidence, writeWindowsUpdateEvidence }
+export {
+  aggregateEvidence,
+  artifactEvidence,
+  writePlatformEvidence,
+  refreshPlatformEvidence,
+  writeWindowsUpdateEvidence
+}

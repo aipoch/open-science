@@ -1,10 +1,10 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { expect } from '@playwright/test'
-import { test } from '../fixtures/electron-app'
-import { submitPromptViaUi } from '../fixtures/conversation'
-import { openSettingsPage } from '../fixtures/settings-preferences'
-import { createProject } from './helpers'
+import { test } from './fixtures/electron-app'
+import { submitPromptViaUi } from './fixtures/conversation'
+import { openSettingsPage } from './fixtures/settings-preferences'
+import { createProject } from './certification/helpers'
 
 for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
   test(

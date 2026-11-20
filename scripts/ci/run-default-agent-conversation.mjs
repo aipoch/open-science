@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { verifyDefaultAgentReport } from './default-agent-conversation.mjs'
@@ -16,12 +16,14 @@ if (!GITHUB_SHA || !GITHUB_RUN_ID || !GITHUB_RUN_ATTEMPT || !DEFAULT_AGENT_PLATF
 const directory = 'test-results/default-agent-conversation'
 mkdirSync(directory, { recursive: true })
 const reportPath = `${directory}/playwright.json`
+rmSync(reportPath, { force: true })
+rmSync(`${directory}/certification.json`, { force: true })
 const run = spawnSync(
   process.execPath,
   [
     require.resolve('@playwright/test/cli'),
     'test',
-    'e2e/certification/default-agent-conversation.spec.ts',
+    'e2e/default-agent-conversation.spec.ts',
     'e2e/builtin-harness.spec.ts',
     'e2e/harness-provider-errors.spec.ts',
     '--grep',

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aggregateEvidence,
   artifactEvidence,
+  refreshPlatformEvidence,
   writePlatformEvidence,
   writeWindowsUpdateEvidence
 } from './release-certification-evidence.mjs'
@@ -39,6 +40,50 @@ describe('release certification evidence', () => {
       { name: 'a.dmg', sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       { name: 'b.zip', sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
     ])
+  })
+
+  it('preserves the original conversation receipt and attempt when stapling changes macOS bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-evidence-refresh-'))
+    const output = join(root, 'certification-macos-arm64.json')
+    const original = {
+      schemaVersion: 1,
+      platform: 'macos-arm64',
+      source: { sha: 'a'.repeat(40), runId: '42', runAttempt: '2' },
+      checks: { packageSmoke: 'passed', defaultAgentConversation: 'passed' },
+      defaultAgentConversation: conversationEvidence('macos-arm64'),
+      databaseMigration: {
+        schemaVersion: 1,
+        compatibilityFloor: {
+          migrationId: '0001_runtime_schema_baseline',
+          migrationChecksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525',
+          sqliteVersion: '3.46.0'
+        },
+        checks: {
+          freshInstall: 'passed',
+          legacyAdoption: 'passed',
+          reopen: 'passed',
+          specialPath: 'passed'
+        }
+      },
+      artifacts: [{ name: 'app.dmg', sha256: 'old-digest' }]
+    }
+    await writeFile(output, JSON.stringify(original))
+    await writeFile(join(root, 'app.dmg'), 'stapled')
+    const input = {
+      argv: ['--platform', 'macos-arm64', '--artifact-dir', root, '--output', output],
+      environment: { GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '3' }
+    }
+    const refreshed = await refreshPlatformEvidence(input)
+    expect(refreshed).toEqual({ ...original, artifacts: await artifactEvidence(root) })
+    await expect(
+      refreshPlatformEvidence({
+        ...input,
+        environment: { ...input.environment, GITHUB_RUN_ID: '43' }
+      })
+    ).rejects.toThrow('unrelated')
+    delete refreshed.defaultAgentConversation
+    await writeFile(output, JSON.stringify(refreshed))
+    await expect(refreshPlatformEvidence(input)).rejects.toThrow('conversation')
   })
 
   it('writes one platform record tied to the workflow run and source SHA', async () => {

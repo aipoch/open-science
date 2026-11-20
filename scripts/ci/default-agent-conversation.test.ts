@@ -76,7 +76,7 @@ describe('default Agent release certification', () => {
         'test',
         'e2e/builtin-harness.spec.ts',
         'e2e/harness-provider-errors.spec.ts',
-        'e2e/certification/default-agent-conversation.spec.ts',
+        'e2e/default-agent-conversation.spec.ts',
         '--grep',
         '@default-agent-release',
         '--list',

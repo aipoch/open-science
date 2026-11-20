@@ -55,7 +55,7 @@ termination can leave a file in the OS temporary directory; it contains test arg
 ### Packaged default Agent conversations
 
 The release suite selects eleven journeys using `@default-agent-release` from
-`e2e/certification/default-agent-conversation.spec.ts`, `e2e/builtin-harness.spec.ts`, and
+`e2e/default-agent-conversation.spec.ts`, `e2e/builtin-harness.spec.ts`, and
 `e2e/harness-provider-errors.spec.ts`. `scripts/ci/run-default-agent-conversation.mjs` requires a
 packaged executable and executes the production selection without retries. The exact inventory
 and first-attempt report validator live in `scripts/ci/default-agent-conversation.mjs`.
