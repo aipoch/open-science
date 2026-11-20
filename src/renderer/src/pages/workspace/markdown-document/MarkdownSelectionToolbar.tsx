@@ -184,13 +184,16 @@ export const MarkdownSelectionToolbar = ({
   }
   const send = async (comment = false): Promise<void> => {
     if (!onSendSelection || !savedRange.current || pending) return
-    const quote = editor.api.string(savedRange.current)
+    const range = savedRange.current
+    const quote = editor.api.string(range)
     if (!quote.trim()) return
     setPending(true)
     setError(undefined)
     try {
       const accepted = await onSendSelection({ quote }, comment ? note.trim() : undefined)
       if (accepted) {
+        // Finish this selection without focusing the editor or disturbing a newer selection.
+        if (editor.selection === range) editor.tf.collapse({ edge: 'end' })
         setPopup(undefined)
         setNote('')
       } else setError(t(comment ? 'Comment failed' : 'Selection action failed'))

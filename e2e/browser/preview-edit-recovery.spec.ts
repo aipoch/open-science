@@ -153,6 +153,18 @@ test('inline agent request sends the unsaved document without saving it', async 
   await expect(editor).toContainText('Unsaved evidence')
 })
 
+test('sending a selection dismisses its toolbar after attaching the quote', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.click()
+  await editor.press('ControlOrMeta+a')
+  await page.getByTestId('markdown-selection-action-send').click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.annotations.length))
+    .toBe(1)
+  await expect(page.getByTestId('markdown-floating-toolbar')).toBeHidden()
+})
+
 test('selection actions format, link, copy and send comments without saving', async ({
   page,
   context
