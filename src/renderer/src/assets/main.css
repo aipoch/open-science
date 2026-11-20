@@ -542,10 +542,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   border-radius: 1rem;
   background: linear-gradient(
     155deg,
-    color-mix(in oklab, var(--provider-accent) 70%, var(--bg-000)),
-    var(--bg-000)
+    color-mix(in oklab, var(--provider-accent) 20%, var(--bg-000)),
+    var(--bg-000) 52%,
+    color-mix(in oklab, var(--provider-accent) 28%, var(--bg-000))
   );
-  background-size: 180% 180%;
   box-shadow: 0 0.7rem 2rem color-mix(in oklab, var(--provider-accent) 14%, transparent);
   transition:
     transform 180ms ease,
@@ -566,7 +566,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   z-index: 0;
   overflow: hidden;
   border-radius: inherit;
-  opacity: 0.52;
+  opacity: var(--silk-idle-opacity, 0.3);
   filter: blur(1.8px) saturate(0.76) contrast(0.84);
   pointer-events: none;
   background:
@@ -612,7 +612,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     backdrop-filter 480ms ease;
 }
 .onboarding-provider-silk.is-active {
-  opacity: 0.68;
+  opacity: var(--silk-hover-opacity, 0.42);
   filter: blur(0.45px) saturate(0.96) contrast(0.96);
 }
 .onboarding-provider-silk.is-active::after {
@@ -663,7 +663,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 .onboarding-provider-card-body p {
   margin-top: 0.5rem;
-  color: color-mix(in oklab, var(--foreground) 74%, transparent);
+  color: color-mix(in oklab, var(--foreground) 90%, transparent);
   font-size: 0.78rem;
   line-height: 1.65;
 }
@@ -671,7 +671,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   min-height: 8.35rem;
   padding: 2rem 1.35rem 1.25rem;
   border-top: 0;
-  background: color-mix(in oklab, var(--bg-000) 32%, transparent);
+  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-000) 56%, transparent));
   backdrop-filter: blur(12px) saturate(1.05);
   -webkit-backdrop-filter: blur(12px) saturate(1.05);
   opacity: 0;
@@ -789,6 +789,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 /* Dark cards keep the brand tint near the top without lifting the whole surface to gray.
    Scope monochrome asset treatment here so Settings and colored brand marks stay unchanged. */
 .dark .onboarding-provider-card {
+  --silk-idle-opacity: 0.52;
+  --silk-hover-opacity: 0.68;
   border-color: color-mix(in oklab, var(--provider-accent) 24%, var(--border));
   background-image: linear-gradient(
     165deg,
@@ -797,6 +799,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     var(--bg-10)
   );
   box-shadow: var(--shadow-card);
+  background-size: 180% 180%;
 }
 .dark .onboarding-provider-card-surface::after {
   opacity: 0.14;
