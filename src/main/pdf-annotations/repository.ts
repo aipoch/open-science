@@ -191,15 +191,17 @@ const readAnnotations = async (
   const activeProjects = new Set(projects.map((project) => project.id))
   for (const deletion of deletions) activeProjects.delete(deletion.projectId)
   const activeVersions = new Set(versions.map((version) => version.id))
-  const activeSources = sources.filter((source) =>
-    source.projectId ? activeProjects.has(source.projectId) : activeVersions.has(source.versionId)
-  )
+  const candidatesByDocument = Map.groupBy(sources, (source) => source.documentId)
+  for (const [documentId, bindings] of candidatesByDocument) {
+    const live = bindings.filter((source) =>
+      source.projectId ? activeProjects.has(source.projectId) : activeVersions.has(source.versionId)
+    )
+    // Internal snapshots retain Trash records when the document has no live navigation route.
+    if (live.length) candidatesByDocument.set(documentId, live)
+  }
   return rows.flatMap((row) => {
-    const live = activeSources.filter((source) => source.documentId === row.documentId)
-    // Internal resource snapshots retain Trash records; prefer a live navigation route when one exists.
-    const candidates = live.length
-      ? live
-      : sources.filter((source) => source.documentId === row.documentId)
+    const candidates = candidatesByDocument.get(row.documentId)
+    if (!candidates) return []
     const source =
       (preferredProjectId
         ? (candidates.find((source) => source.projectId === preferredProjectId) ??
