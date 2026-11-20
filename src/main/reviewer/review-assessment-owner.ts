@@ -192,12 +192,14 @@ const cleanupReviewerResources = async (
   let reviewerBridgeScoped: boolean | undefined
   let runtimeCleanupFailed = false
   let runtimeCleanupError: unknown
+  let providerClosed: Promise<void> | undefined
 
   if (reviewerSession) {
     try {
       const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
       rejectedToolCalls = disposition.rejectedToolCalls
       reviewerBridgeScoped = disposition.reviewerBridgeScoped
+      providerClosed = disposition.providerClosed
     } catch (error) {
       runtimeCleanupFailed = true
       runtimeCleanupError = error
@@ -211,6 +213,7 @@ const cleanupReviewerResources = async (
       error: error instanceof Error ? error.message : String(error)
     })
   }
+  await providerClosed
 
   return {
     rejectedToolCalls,

@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import {
   createJournalAgentStore,
+  createMemoryAgentStore,
   openAgentSession,
   type AgentSession,
   type AgentSessionInspection,
@@ -23,6 +24,7 @@ import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/resp
 import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_TOOL_LESS,
   HARNESS_OWNER,
@@ -357,9 +359,12 @@ export function createHarnessAcpAgent(directory: string): {
       return closing
     }
     try {
-      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const ephemeral = params._meta?.[HARNESS_EPHEMERAL_SESSION] === true
       const bindingFile = join(directory, `${id}.json`)
       const rawOwner = params._meta?.[HARNESS_OWNER]
+      if (ephemeral && (resume || rawOwner !== undefined))
+        throw new Error('Ephemeral sessions cannot have a durable owner or be resumed')
+      if (!ephemeral) await mkdir(directory, { recursive: true, mode: 0o700 })
       const owner = rawOwner === undefined ? undefined : harnessOwnerSchema.parse(rawOwner)
       const binding = {
         cwd: resolve(params.cwd),
@@ -388,7 +393,7 @@ export function createHarnessAcpAgent(directory: string): {
           await writeFile(temporary, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
           await rename(temporary, bindingFile)
         }
-      } else await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
+      }
       const instructions = params._meta?.[HARNESS_INSTRUCTIONS] ?? ''
       if (typeof instructions !== 'string') throw new Error('Invalid host instructions')
       const toolLess = params._meta?.[HARNESS_TOOL_LESS] === true
@@ -401,6 +406,8 @@ export function createHarnessAcpAgent(directory: string): {
         signal,
         beforePermission: flush
       })
+      if (!resume && !ephemeral)
+        await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
       const notify = (update: acp.SessionUpdate): void => {
         notifications = notifications
           .then(() => context.notify(acp.methods.client.session.update, { sessionId: id, update }))
@@ -586,7 +593,7 @@ export function createHarnessAcpAgent(directory: string): {
       }
       session = await openAgentSession({
         sessionId: id,
-        store,
+        store: ephemeral ? createMemoryAgentStore() : store,
         model: {
           ...model,
           stream(request, signal) {

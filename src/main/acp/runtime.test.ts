@@ -18125,10 +18125,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 0,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Claude Code preserves hyphens in MCP server names in real tool traces, so the permission title
@@ -18171,10 +18174,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 0,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
@@ -18213,10 +18219,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'reject-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 1,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   it('counts reviewer tool calls rejected by the strict gate', async () => {
@@ -18247,10 +18256,13 @@ describe('ACP runtime session management', () => {
     await session.prompt([{ type: 'text', text: 'run a shell command' }])
 
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 1,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Regression: Pi Reviewer sessions had no permission correlation context, so every reviewer MCP
@@ -18328,10 +18340,13 @@ describe('ACP runtime session management', () => {
       notebook: rejected,
       native: rejected
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 2,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {

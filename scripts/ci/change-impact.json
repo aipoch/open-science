@@ -221,6 +221,7 @@
         "src/main/agent-framework/codex.ts",
         "src/main/agent-framework/opencode.ts",
         "src/main/agent-framework/pi-runtime.ts",
+        "src/main/agent-framework/reviewer-mcp-transport.ts",
         "src/main/agent-framework/types.ts",
         "src/main/app-lifecycle.ts",
         "packages/reproducibility/**",

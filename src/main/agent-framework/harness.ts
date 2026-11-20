@@ -36,6 +36,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
     env: {}
   }),
   acceptsStdioMcp: false,
+  acceptsReviewerMcpSocket: true,
   supportsLiveEffortChange: false,
   supportedApiTypes: ['responses', 'messages', 'chat-completions'],
   spawn(input) {
