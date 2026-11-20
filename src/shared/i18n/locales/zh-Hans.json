@@ -8763,6 +8763,20 @@
     "Past year": "过去一年",
     "Limit to these sites": "仅限这些网站",
     "Up to {{count}} results_other": "最多 {{count}} 条结果",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "已有其他包操作正在进行中，请等待其完成后重试。"
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "已有其他包操作正在进行中，请等待其完成后重试。",
+    "Generating image…": "正在生成图片…",
+    "New image ready": "新图片已生成",
+    "View image": "查看图片",
+    "Revise last edit": "调整上次编辑",
+    "Continue editing": "继续编辑",
+    "Generate new version": "生成新版本",
+    "Expand instructions": "展开指令",
+    "Collapse instructions": "收起指令",
+    "Hide instructions": "隐藏指令",
+    "View source image": "查看原图",
+    "Add instruction": "添加指令",
+    "Click to edit image. Alt-click to add a note.": "点击编辑图片，按住 Alt／Option 点击添加批注。",
+    "Click to edit": "点击编辑",
+    "Generate another version to compare.": "生成另一个版本后即可对比。"
   }
 }

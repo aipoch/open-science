@@ -9271,6 +9271,20 @@
     "Up to {{count}} results_few": "Не более {{count}} результатов",
     "Up to {{count}} results_many": "Не более {{count}} результатов",
     "Up to {{count}} results_other": "Не более {{count}} результата",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "Уже выполняется другая операция с пакетом. Дождитесь её завершения и повторите попытку."
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "Уже выполняется другая операция с пакетом. Дождитесь её завершения и повторите попытку.",
+    "Generating image…": "Создание изображения…",
+    "New image ready": "Новое изображение готово",
+    "View image": "Посмотреть изображение",
+    "Revise last edit": "Изменить последнюю правку",
+    "Continue editing": "Продолжить редактирование",
+    "Generate new version": "Создать новую версию",
+    "Expand instructions": "Развернуть инструкции",
+    "Collapse instructions": "Свернуть инструкции",
+    "Hide instructions": "Скрыть инструкции",
+    "View source image": "Посмотреть исходное изображение",
+    "Add instruction": "Добавить инструкцию",
+    "Click to edit image. Alt-click to add a note.": "Нажмите, чтобы редактировать изображение. Alt + щелчок — добавить заметку.",
+    "Click to edit": "Нажмите для редактирования",
+    "Generate another version to compare.": "Создайте ещё одну версию для сравнения."
   }
 }

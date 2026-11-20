@@ -15,6 +15,7 @@ export type ActivePdfTranslation = {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  imageEditPresentation?: 'panel' | 'expanded-panel' | 'dialog'
   onPinImageSource?: () => void
   onImageEditorVersionChange?: (item: PreviewFileItem | undefined) => void
   readOnly?: boolean

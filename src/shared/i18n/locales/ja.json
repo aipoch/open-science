@@ -8763,6 +8763,20 @@
     "Past year": "過去1年",
     "Limit to these sites": "対象サイト",
     "Up to {{count}} results_other": "最大{{count}}件の結果",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "別のパッケージ操作がすでに進行中です。完了するまで待ってからもう一度お試しください。"
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "別のパッケージ操作がすでに進行中です。完了するまで待ってからもう一度お試しください。",
+    "Generating image…": "画像を生成中…",
+    "New image ready": "新しい画像が完成しました",
+    "View image": "画像を表示",
+    "Revise last edit": "前回の編集を修正",
+    "Continue editing": "編集を続ける",
+    "Generate new version": "新しいバージョンを生成",
+    "Expand instructions": "指示を展開",
+    "Collapse instructions": "指示を折りたたむ",
+    "Hide instructions": "指示を非表示",
+    "View source image": "元の画像を表示",
+    "Add instruction": "指示を追加",
+    "Click to edit image. Alt-click to add a note.": "クリックして画像を編集。Alt キーを押しながらクリックしてメモを追加。",
+    "Click to edit": "クリックして編集",
+    "Generate another version to compare.": "比較するには別のバージョンを生成してください。"
   }
 }

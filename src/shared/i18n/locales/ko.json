@@ -8761,6 +8761,20 @@
     "Past year": "지난 1년",
     "Limit to these sites": "다음 사이트로 제한",
     "Up to {{count}} results_other": "최대 {{count}}개 결과",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "다른 패키지 작업이 이미 진행 중입니다. 작업이 완료된 후 다시 시도해 주세요."
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "다른 패키지 작업이 이미 진행 중입니다. 작업이 완료된 후 다시 시도해 주세요.",
+    "Generating image…": "이미지 생성 중…",
+    "New image ready": "새 이미지가 준비되었습니다",
+    "View image": "이미지 보기",
+    "Revise last edit": "이전 편집 수정",
+    "Continue editing": "계속 편집",
+    "Generate new version": "새 버전 생성",
+    "Expand instructions": "지시 펼치기",
+    "Collapse instructions": "지시 접기",
+    "Hide instructions": "지시 숨기기",
+    "View source image": "원본 이미지 보기",
+    "Add instruction": "지시 추가",
+    "Click to edit image. Alt-click to add a note.": "클릭하여 이미지를 편집합니다. Alt 키를 누른 채 클릭하여 메모를 추가합니다.",
+    "Click to edit": "클릭하여 편집",
+    "Generate another version to compare.": "비교하려면 다른 버전을 생성하세요."
   }
 }

@@ -8936,6 +8936,20 @@
     "Limit to these sites": "Auf diese Websites beschränken",
     "Up to {{count}} results_one": "Bis zu {{count}} Ergebnis",
     "Up to {{count}} results_other": "Bis zu {{count}} Ergebnisse",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "Ein anderer Paketvorgang läuft bereits. Warten Sie, bis er abgeschlossen ist, und versuchen Sie es erneut."
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "Ein anderer Paketvorgang läuft bereits. Warten Sie, bis er abgeschlossen ist, und versuchen Sie es erneut.",
+    "Generating image…": "Bild wird generiert…",
+    "New image ready": "Neues Bild ist fertig",
+    "View image": "Bild ansehen",
+    "Revise last edit": "Letzte Bearbeitung anpassen",
+    "Continue editing": "Weiter bearbeiten",
+    "Generate new version": "Neue Version generieren",
+    "Expand instructions": "Anweisungen erweitern",
+    "Collapse instructions": "Anweisungen einklappen",
+    "Hide instructions": "Anweisungen ausblenden",
+    "View source image": "Originalbild ansehen",
+    "Add instruction": "Anweisung hinzufügen",
+    "Click to edit image. Alt-click to add a note.": "Klicken, um das Bild zu bearbeiten. Alt-Klick, um eine Notiz hinzuzufügen.",
+    "Click to edit": "Zum Bearbeiten klicken",
+    "Generate another version to compare.": "Erzeugen Sie eine weitere Version zum Vergleichen."
   }
 }

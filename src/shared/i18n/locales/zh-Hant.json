@@ -8763,6 +8763,20 @@
     "Past year": "過去一年",
     "Limit to these sites": "僅限這些網站",
     "Up to {{count}} results_other": "最多 {{count}} 筆結果",
-    "Another package operation is already in progress. Wait for it to finish, then try again.": "已有其他封裝操作正在進行中，請等待完成後重試。"
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "已有其他封裝操作正在進行中，請等待完成後重試。",
+    "Generating image…": "正在產生圖片…",
+    "New image ready": "新圖片已產生",
+    "View image": "檢視圖片",
+    "Revise last edit": "調整上次編輯",
+    "Continue editing": "繼續編輯",
+    "Generate new version": "產生新版本",
+    "Expand instructions": "展開指令",
+    "Collapse instructions": "收合指令",
+    "Hide instructions": "隱藏指令",
+    "View source image": "檢視原圖",
+    "Add instruction": "新增指令",
+    "Click to edit image. Alt-click to add a note.": "點擊編輯圖片，按住 Alt／Option 點擊新增批註。",
+    "Click to edit": "點擊編輯",
+    "Generate another version to compare.": "產生另一個版本後即可比較。"
   }
 }

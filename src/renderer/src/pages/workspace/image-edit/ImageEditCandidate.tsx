@@ -45,7 +45,8 @@ export function ImageEditCandidate({
             onClick={onSelect}
             aria-label={label}
             aria-pressed={selected}
-            className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-image-strip-version={item.selectedVersionId}
           >
             {image.status === 'ready' ? (
               <img
@@ -57,6 +58,9 @@ export function ImageEditCandidate({
             ) : (
               <span className="block h-9 w-12 rounded bg-bg-200" />
             )}
+            {item.versionNumber !== undefined ? (
+              <span className="text-[10px] leading-none text-text-100">v{item.versionNumber}</span>
+            ) : null}
           </button>
         </TooltipTrigger>
         <TooltipContent side="top">{label}</TooltipContent>

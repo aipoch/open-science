@@ -152,6 +152,7 @@ export function ImageEditCanvas({
   return (
     <div
       ref={surface}
+      data-image-edit-surface
       className="relative size-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
       tabIndex={locked ? -1 : 0}
       role="group"
