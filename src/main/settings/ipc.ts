@@ -325,8 +325,12 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     snapshotCommits.projectAfter(service.validateProvider(request))
   )
-  ipcMainHandle('settings:cancel-codex-login', () => service.cancelCodexLogin())
-  ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
+  ipcMainHandle('settings:cancel-codex-login', (_event, signInInstallId?: string) =>
+    service.cancelCodexLogin(signInInstallId)
+  )
+  ipcMainHandle('settings:cancel-claude-login', (_event, signInInstallId?: string) =>
+    service.cancelClaudeLogin(signInInstallId)
+  )
   ipcMainHandle('settings:login-shared-claude', () =>
     snapshotCommits.projectAfter(workflows.runtime.loginClaudeShared())
   )

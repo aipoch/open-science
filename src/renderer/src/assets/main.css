@@ -128,6 +128,1038 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 }
 
+/* First-run onboarding entry: the quick path is intentionally a modal surface so the existing
+   workspace remains the visual context while the user chooses an account or API key. */
+.onboarding-entry-root {
+  position: relative;
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  overflow: hidden;
+  isolation: isolate;
+  background: transparent;
+  color: var(--text-000);
+}
+
+.onboarding-entry-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: color-mix(in oklab, var(--foreground) 28%, transparent);
+}
+
+.onboarding-entry-shell {
+  position: relative;
+  z-index: 1;
+  width: min(650px, calc(100vw - 2rem));
+  max-height: min(840px, calc(100svh - 1.5rem));
+  overflow: hidden;
+  border: 0;
+  /* Initial dialog focus must not frame the modal; controls keep their own focus outlines. */
+  outline: none;
+  border-radius: 1.25rem;
+  background: var(--bg-000);
+  box-shadow:
+    var(--shadow-dialog),
+    0 1.5rem 5rem color-mix(in oklab, var(--foreground) 18%, transparent);
+  transition:
+    width 520ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    max-height 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.onboarding-entry-shell.is-connect {
+  width: min(1200px, calc(100vw - 1.5rem));
+}
+
+.onboarding-entry-shell.is-advanced {
+  width: min(1040px, calc(100vw - 2rem));
+  height: min(760px, calc(100svh - 2rem));
+}
+.onboarding-advanced {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+.onboarding-advanced-header {
+  flex-shrink: 0;
+  padding: 1.5rem 1.5rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.onboarding-advanced-header h1 {
+  margin: 0 0 1rem;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.65rem;
+}
+.onboarding-advanced-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+}
+.onboarding-advanced-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.onboarding-advanced-agent {
+  border-top: 1px solid var(--border);
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.onboarding-advanced-model-header {
+  padding: 1.25rem 1.5rem 0.75rem;
+}
+.onboarding-advanced-model-content {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.onboarding-advanced-model-footer {
+  padding: 0.8rem 1.5rem;
+}
+.onboarding-agent-panel {
+  padding: 0;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] {
+  padding: 0;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] > :first-child {
+  gap: 0.75rem;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] h2 {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+.onboarding-advanced .onboarding-advanced-content :is(h2, h3) {
+  font-size: 1.0625rem;
+  line-height: 1.5rem;
+  font-weight: 500;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] > :last-child {
+  margin-top: 1rem;
+}
+
+.onboarding-entry-shell.is-ready {
+  width: min(900px, calc(100vw - 2rem));
+}
+
+.onboarding-entry-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-000);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.35rem;
+  letter-spacing: -0.035em;
+}
+
+.onboarding-entry-brand-mark,
+.onboarding-guide-brand-mark {
+  display: inline-block;
+  width: 1.55rem;
+  height: 1.55rem;
+  object-fit: contain;
+}
+
+.onboarding-welcome {
+  position: relative;
+  display: flex;
+  min-height: min(680px, calc(100svh - 2rem));
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 2.5rem 2.25rem;
+  text-align: center;
+}
+
+.onboarding-welcome-art {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(100%, 31rem);
+  height: 23rem;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  place-items: center;
+  transition: transform 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.onboarding-welcome-animation {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.onboarding-welcome-lottie,
+.onboarding-welcome-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.onboarding-welcome-lottie {
+  overflow: hidden;
+  color: var(--primary);
+}
+
+.onboarding-welcome-lottie.is-hidden {
+  display: none;
+}
+
+.onboarding-welcome-lottie svg {
+  width: min(100%, 31rem);
+  height: 100%;
+}
+
+.onboarding-welcome-fallback {
+  overflow: hidden;
+}
+
+.onboarding-welcome.is-complete .onboarding-welcome-art {
+  transform: translate(-50%, calc(-50% - 6rem)) scale(0.88);
+}
+.dark .onboarding-entry-brand-mark,
+.dark .onboarding-guide-brand-mark,
+.dark .onboarding-welcome-logo > img,
+.dark .onboarding-lottie-logo {
+  filter: brightness(0) invert(0.92);
+}
+
+.onboarding-welcome-logo {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+}
+
+.onboarding-welcome-logo > img {
+  width: 11rem;
+  height: 11rem;
+  object-fit: contain;
+}
+
+.onboarding-ring {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent);
+  border-radius: 50%;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  animation: onboarding-ring-gather 3.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.onboarding-ring span {
+  position: absolute;
+  left: 50%;
+  top: -0.45rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.onboarding-ring span:nth-child(2) {
+  transform: translateX(-50%) rotate(90deg) translateX(8.3rem) rotate(-90deg);
+}
+.onboarding-ring span:nth-child(3) {
+  top: auto;
+  bottom: -0.45rem;
+}
+.onboarding-ring span:nth-child(4) {
+  left: auto;
+  right: -1.8rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.onboarding-ring-outer {
+  width: 21rem;
+  height: 13rem;
+}
+.onboarding-ring-inner {
+  width: 14rem;
+  height: 8rem;
+  animation-delay: 0.25s;
+  animation-duration: 3.2s;
+  border-color: color-mix(in oklab, var(--primary) 30%, transparent);
+}
+.onboarding-ring-convergence {
+  width: 9rem;
+  height: 5rem;
+  animation-delay: 0.5s;
+  animation-duration: 3s;
+  border-color: color-mix(in oklab, var(--primary) 42%, transparent);
+}
+
+@keyframes onboarding-ring-gather {
+  0% {
+    opacity: 0.82;
+    transform: rotate(0deg) scale(1);
+  }
+  62% {
+    opacity: 0.82;
+    transform: rotate(240deg) scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(540deg) scale(0.12);
+  }
+}
+
+.onboarding-welcome-copy {
+  margin-top: 22rem;
+  opacity: 0;
+  transform: translateY(0.75rem);
+  transition:
+    opacity 650ms ease,
+    transform 650ms ease;
+}
+
+.onboarding-welcome.is-complete .onboarding-welcome-copy {
+  margin-top: 22rem;
+  opacity: 1;
+  transform: none;
+}
+
+.onboarding-welcome-copy h1,
+.onboarding-ready h1,
+.onboarding-quick-header h1 {
+  margin: 0;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 400;
+  letter-spacing: -0.04em;
+}
+
+.onboarding-welcome-copy p,
+.onboarding-ready-subtitle,
+.onboarding-quick-header p {
+  margin-top: 0.7rem;
+  color: var(--muted-foreground);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.onboarding-quick-connect,
+.onboarding-ready {
+  display: flex;
+  min-height: min(760px, calc(100svh - 1.5rem));
+  flex-direction: column;
+  padding: 2rem 2.5rem 1.5rem;
+}
+
+.onboarding-quick-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.onboarding-quick-header h1 {
+  margin-top: 0.7rem;
+  font-size: clamp(1.9rem, 4vw, 2.45rem);
+}
+.onboarding-quick-header h1 + p {
+  margin-top: 0.35rem;
+}
+.onboarding-provider-count {
+  margin-top: 0.3rem !important;
+  line-height: 1.2 !important;
+}
+.onboarding-step-dots {
+  display: flex;
+  gap: 0.35rem;
+  padding-top: 0.3rem;
+}
+.onboarding-step-dots span {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--border);
+}
+.onboarding-step-dots span.is-active {
+  width: 1.35rem;
+  border-radius: 0.25rem;
+  background: var(--primary);
+}
+
+.onboarding-provider-viewport {
+  margin: 2.5rem -2.5rem 0;
+  overflow: visible;
+}
+.onboarding-provider-track {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  /* Horizontal scrolling also clips vertically; reserve room for lift and shadows.
+     Negative margins keep the surrounding header and footer in their original positions. */
+  margin-block: -2rem -2.25rem;
+  padding: 2rem 2.5rem 3rem;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+}
+.onboarding-provider-card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 26rem;
+  flex: 0 0 17.5rem;
+  flex-direction: column;
+  overflow: hidden;
+  scroll-snap-align: center;
+  border: 1px solid color-mix(in oklab, var(--provider-accent) 35%, var(--border));
+  border-radius: 1rem;
+  background: linear-gradient(
+    155deg,
+    color-mix(in oklab, var(--provider-accent) 70%, var(--bg-000)),
+    var(--bg-000)
+  );
+  background-size: 180% 180%;
+  box-shadow: 0 0.7rem 2rem color-mix(in oklab, var(--provider-accent) 14%, transparent);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+/* Clip the composited blur layers together, leaving the border and shadow on the outer card. */
+.onboarding-provider-card-surface {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  border-radius: calc(1rem - 1px);
+  clip-path: inset(0 round calc(1rem - 1px));
+}
+.onboarding-provider-silk {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0.52;
+  filter: blur(1.8px) saturate(0.76) contrast(0.84);
+  pointer-events: none;
+  background:
+    radial-gradient(
+        circle at 17% 26%,
+        color-mix(in oklab, var(--provider-accent) 42%, transparent) 0 1px,
+        transparent 1.25px
+      )
+      0 0 / 5px 5px,
+    repeating-linear-gradient(
+      38deg,
+      transparent 0 2.8rem,
+      color-mix(in oklab, var(--provider-accent) 14%, transparent) 3rem 3.25rem,
+      transparent 3.5rem 6.4rem
+    ),
+    linear-gradient(
+      25deg,
+      color-mix(in oklab, var(--provider-accent) 26%, transparent),
+      transparent 68%
+    );
+  transition:
+    opacity 420ms ease,
+    filter 420ms ease;
+}
+.onboarding-provider-silk > div,
+.onboarding-provider-silk canvas {
+  width: 100%;
+  height: 100%;
+}
+.onboarding-provider-silk::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--provider-accent) 10%, transparent);
+  opacity: 0.62;
+  backdrop-filter: blur(4px) saturate(0.8);
+  content: '';
+  pointer-events: none;
+  transition:
+    opacity 480ms ease,
+    background-color 420ms ease,
+    backdrop-filter 480ms ease;
+}
+.onboarding-provider-silk.is-active {
+  opacity: 0.68;
+  filter: blur(0.45px) saturate(0.96) contrast(0.96);
+}
+.onboarding-provider-silk.is-active::after {
+  background: color-mix(in oklab, var(--provider-accent) 6%, transparent);
+  opacity: 0.22;
+  backdrop-filter: blur(1.5px) saturate(0.9);
+}
+.onboarding-provider-card-surface::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    120deg,
+    transparent,
+    color-mix(in oklab, var(--bg-000) 24%, transparent),
+    transparent
+  );
+  content: '';
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity 360ms ease;
+}
+.onboarding-provider-card:hover .onboarding-provider-card-surface::after,
+.onboarding-provider-card:focus-within .onboarding-provider-card-surface::after {
+  opacity: 0.3;
+}
+.onboarding-provider-card:hover,
+.onboarding-provider-card:focus-within {
+  z-index: 2;
+  transform: translateY(-0.25rem);
+  box-shadow: 0 1rem 2.4rem color-mix(in oklab, var(--provider-accent) 23%, transparent);
+}
+.onboarding-provider-card-body,
+.onboarding-provider-card-actions {
+  position: relative;
+  z-index: 1;
+}
+.onboarding-provider-card-body {
+  flex: 1;
+  padding: 1.45rem;
+}
+.onboarding-provider-card-body h2 {
+  margin-top: 1.1rem;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.65rem;
+  font-weight: 400;
+  letter-spacing: -0.035em;
+}
+.onboarding-provider-card-body p {
+  margin-top: 0.5rem;
+  color: color-mix(in oklab, var(--foreground) 74%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+.onboarding-provider-card-actions {
+  min-height: 8.35rem;
+  padding: 2rem 1.35rem 1.25rem;
+  border-top: 0;
+  background: color-mix(in oklab, var(--bg-000) 32%, transparent);
+  backdrop-filter: blur(12px) saturate(1.05);
+  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.65rem);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.onboarding-provider-card:hover .onboarding-provider-card-actions,
+.onboarding-provider-card:focus-within .onboarding-provider-card-actions,
+.onboarding-provider-card.is-authorizing .onboarding-provider-card-actions,
+.onboarding-provider-card.is-key-mode .onboarding-provider-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.onboarding-provider-card-actions small {
+  display: block;
+  margin-bottom: 0.7rem;
+  color: color-mix(in oklab, var(--foreground) 75%, transparent);
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+.onboarding-install-progress {
+  margin-bottom: 0.7rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+}
+.onboarding-install-progress progress {
+  display: block;
+  width: 100%;
+  height: 0.375rem;
+  overflow: hidden;
+  appearance: none;
+  border-radius: 999px;
+}
+.onboarding-install-progress progress::-webkit-progress-bar {
+  background: var(--bg-300);
+}
+.onboarding-install-progress progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 160ms ease-out;
+}
+.onboarding-install-progress progress:indeterminate::-webkit-progress-bar {
+  background: linear-gradient(var(--primary), var(--primary)) left center / 36% 100% no-repeat
+    var(--bg-300);
+  animation: onboarding-download-pending 1.6s ease-in-out infinite alternate;
+}
+@keyframes onboarding-download-pending {
+  to {
+    background-position: right center;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-install-progress progress:indeterminate::-webkit-progress-bar {
+    animation: none;
+  }
+  .onboarding-install-progress progress::-webkit-progress-value {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .onboarding-install-progress progress {
+    appearance: auto;
+  }
+}
+.onboarding-provider-card-link {
+  display: block;
+  margin: 0.55rem auto 0;
+  color: color-mix(in oklab, var(--foreground) 78%, transparent);
+  font-size: 0.72rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+.onboarding-provider-card-link:hover {
+  color: var(--foreground);
+}
+.onboarding-provider-key-form label {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: color-mix(in oklab, var(--foreground) 78%, transparent);
+  font-size: 0.7rem;
+}
+.onboarding-provider-key-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.onboarding-provider-key-row input,
+.onboarding-provider-key-row button {
+  box-sizing: border-box;
+  height: 2.3rem;
+}
+.onboarding-provider-key-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid color-mix(in oklab, var(--foreground) 20%, transparent);
+  background: color-mix(in oklab, var(--bg-000) 55%, transparent);
+  padding: 0.55rem 0.65rem;
+  color: var(--foreground);
+  font-size: 0.72rem;
+}
+.onboarding-provider-key-row button {
+  width: 2.3rem;
+  min-width: 2.3rem;
+  padding: 0;
+}
+.onboarding-provider-key-row button svg {
+  width: 0.95rem;
+}
+/* Dark cards keep the brand tint near the top without lifting the whole surface to gray.
+   Scope monochrome asset treatment here so Settings and colored brand marks stay unchanged. */
+.dark .onboarding-provider-card {
+  border-color: color-mix(in oklab, var(--provider-accent) 24%, var(--border));
+  background-image: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--provider-accent) 22%, var(--bg-10)),
+    color-mix(in oklab, var(--provider-accent) 6%, var(--bg-10)) 65%,
+    var(--bg-10)
+  );
+  box-shadow: var(--shadow-card);
+}
+.dark .onboarding-provider-card-surface::after {
+  opacity: 0.14;
+  transition: opacity 360ms ease;
+}
+.dark .onboarding-provider-card:hover .onboarding-provider-card-surface::after,
+.dark .onboarding-provider-card:focus-within .onboarding-provider-card-surface::after {
+  opacity: 0.07;
+}
+.dark .onboarding-provider-card:hover,
+.dark .onboarding-provider-card:focus-within {
+  border-color: color-mix(in oklab, var(--provider-accent) 45%, var(--text-200));
+  box-shadow:
+    var(--shadow-card),
+    0 0.5rem 1.5rem color-mix(in oklab, var(--provider-accent) 12%, transparent);
+}
+.dark
+  :is(
+    .onboarding-provider-card-openai,
+    .onboarding-provider-card-anthropic,
+    .onboarding-provider-card-xai
+  )
+  .onboarding-provider-card-body
+  > img {
+  filter: brightness(0) invert(0.92);
+}
+.dark .onboarding-provider-card-body h2 {
+  color: var(--text-000);
+}
+.dark .onboarding-provider-card-body p {
+  color: var(--text-100);
+}
+.dark .onboarding-provider-card-actions {
+  border-top: 0;
+  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 52%, transparent));
+  backdrop-filter: blur(14px) saturate(1.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+}
+.dark .onboarding-provider-card-actions small,
+.dark .onboarding-provider-key-form label,
+.dark .onboarding-provider-card-link {
+  color: var(--text-200);
+}
+.dark .onboarding-provider-card-link:hover {
+  color: var(--text-000);
+}
+.dark .onboarding-provider-key-row input {
+  border-color: color-mix(in oklab, var(--text-300) 35%, transparent);
+  border-radius: 0.5rem;
+  background: var(--bg-10);
+  color: var(--text-000);
+}
+.onboarding-quick-footer,
+.onboarding-ready-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: auto;
+  padding-top: 1.25rem;
+}
+.onboarding-quick-footer > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.onboarding-quick-footer button {
+  min-height: 1.9rem;
+  font-size: 0.75rem;
+}
+.onboarding-quick-footer svg,
+.onboarding-quick-footer > div > button > span {
+  width: 0.9rem;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.onboarding-ready {
+  text-align: center;
+  align-items: center;
+}
+.onboarding-ready h1 {
+  margin-top: 2rem;
+}
+.onboarding-ready-subtitle {
+  margin-top: 0.65rem;
+}
+.onboarding-connection-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+  color: var(--text-100);
+  font-size: 0.75rem;
+}
+.onboarding-connection-summary svg {
+  width: 0.9rem;
+  color: var(--primary);
+}
+.onboarding-guide {
+  width: 100%;
+  margin-top: 1.5rem;
+  text-align: left;
+}
+.onboarding-guide-art {
+  position: relative;
+  height: 17rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--bg-10);
+  padding: 1.2rem 1.4rem;
+}
+
+.onboarding-guide-gif {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.onboarding-guide-cycle-signal {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+  animation: onboarding-guide-cycle 5.2s linear both;
+}
+
+@keyframes onboarding-guide-cycle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.onboarding-guide-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+}
+.onboarding-guide-brand-mark {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-width: 1px;
+}
+.onboarding-guide-window-action {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.25rem 0.45rem;
+}
+.onboarding-guide-heading {
+  margin-top: 1.25rem;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+}
+.onboarding-guide-tabs {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.8rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.57rem;
+}
+.onboarding-guide-tabs span:first-child {
+  border-bottom: 2px solid var(--primary);
+  padding-bottom: 0.45rem;
+  color: var(--text-000);
+}
+.onboarding-guide-cases {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.onboarding-guide-case {
+  position: relative;
+  display: flex;
+  min-height: 5.4rem;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--bg-000);
+  padding: 0.5rem;
+  font-size: 0.55rem;
+  transition:
+    box-shadow 200ms ease,
+    transform 200ms ease;
+}
+.onboarding-guide-case.is-focused {
+  transform: translateY(-0.18rem);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+.onboarding-guide-paper,
+.onboarding-guide-bars,
+.onboarding-guide-scatter {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3.4rem;
+  background: color-mix(in oklab, var(--primary) 10%, var(--bg-10));
+}
+.onboarding-guide-paper {
+  margin: 0.45rem auto;
+  width: 2.2rem;
+  height: 2.4rem;
+  background: var(--bg-000);
+  box-shadow: 0 0.2rem 0.5rem color-mix(in oklab, var(--foreground) 15%, transparent);
+}
+.onboarding-guide-bars {
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 0.8rem,
+    color-mix(in oklab, var(--primary) 70%, transparent) 0.8rem 1.25rem,
+    transparent 1.25rem 1.7rem
+  );
+}
+.onboarding-guide-scatter {
+  background:
+    radial-gradient(circle at 30% 40%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 62% 65%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 76% 30%, var(--primary) 0 0.14rem, transparent 0.16rem);
+}
+.onboarding-guide-new-project {
+  position: absolute;
+  top: 1rem;
+  right: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg-000);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.6rem;
+  transition: box-shadow 200ms ease;
+}
+.onboarding-guide-new-project.is-focused {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+.onboarding-guide-cursor {
+  position: absolute;
+  right: -0.6rem;
+  bottom: -1.2rem;
+  width: 1.2rem;
+  height: 1.6rem;
+  transform: rotate(-18deg);
+  border: 2px solid var(--foreground);
+  background: var(--bg-000);
+  clip-path: polygon(0 0, 100% 67%, 62% 69%, 78% 100%, 56% 100%, 42% 73%, 14% 92%);
+}
+.onboarding-guide-caption {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+.onboarding-guide-caption h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.onboarding-guide-caption p {
+  margin-top: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+.onboarding-guide-indicators {
+  display: flex;
+  gap: 0.35rem;
+  padding-top: 0.2rem;
+}
+.onboarding-guide-indicators span {
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: var(--border);
+}
+.onboarding-guide-indicators span.is-active {
+  width: 1.15rem;
+  border-radius: 0.25rem;
+  background: var(--primary);
+}
+.onboarding-ready-actions {
+  width: 100%;
+  padding-top: 1.25rem;
+}
+.onboarding-ready-actions > button:last-child {
+  min-width: 12rem;
+}
+.onboarding-ready-footnote {
+  margin-top: 0.55rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+@media (max-width: 680px) {
+  .onboarding-entry-shell,
+  .onboarding-entry-shell.is-connect,
+  .onboarding-entry-shell.is-advanced,
+  .onboarding-entry-shell.is-ready {
+    width: calc(100vw - 1rem);
+    max-height: calc(100svh - 1rem);
+    border-radius: 1rem;
+  }
+  .onboarding-welcome,
+  .onboarding-quick-connect,
+  .onboarding-ready {
+    min-height: calc(100svh - 1rem);
+    padding: 1.35rem 1.15rem 1.15rem;
+  }
+  .onboarding-welcome-art {
+    height: 18rem;
+  }
+  .onboarding-welcome-copy,
+  .onboarding-welcome.is-complete .onboarding-welcome-copy {
+    margin-top: 19rem;
+  }
+  .onboarding-welcome.is-complete .onboarding-welcome-art {
+    transform: translate(-50%, calc(-50% - 5rem)) scale(0.8);
+  }
+  .onboarding-ring-outer {
+    width: 17rem;
+    height: 10rem;
+  }
+  .onboarding-ring-inner {
+    width: 11rem;
+    height: 6rem;
+  }
+  .onboarding-ring-convergence {
+    width: 8rem;
+    height: 4.5rem;
+  }
+  .onboarding-provider-viewport {
+    margin-left: -1.15rem;
+    margin-right: -1.15rem;
+  }
+  .onboarding-provider-track {
+    padding-left: 1.15rem;
+    padding-right: 1.15rem;
+  }
+  .onboarding-provider-card {
+    flex-basis: min(17.5rem, calc(100vw - 3.5rem));
+    min-height: 24rem;
+  }
+  .onboarding-quick-footer {
+    align-items: flex-end;
+  }
+  .onboarding-guide-cases {
+    gap: 0.35rem;
+  }
+  .onboarding-guide-case {
+    font-size: 0.45rem;
+  }
+}
+
+.onboarding-provider-skip-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--destructive);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-entry-shell,
+  .onboarding-welcome-art,
+  .onboarding-welcome-copy,
+  .onboarding-provider-card,
+  .onboarding-provider-card-actions,
+  .onboarding-guide-case,
+  .onboarding-guide-new-project {
+    transition: none;
+  }
+  .onboarding-ring,
+  .onboarding-provider-card {
+    animation: none;
+  }
+}
+
 /* The annotate trigger hangs below the selection's last line, inside a transcript row whose
    `content-visibility: auto` containment makes it a stacking context. Later sibling rows and
    the composer card would otherwise paint over the trigger whenever it overhangs its row, so

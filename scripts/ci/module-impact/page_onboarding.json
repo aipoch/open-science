@@ -9,6 +9,9 @@
     "src/renderer/src/pages/onboarding/LocationStep.tsx",
     "src/renderer/src/pages/onboarding/NotebookStep.render.test.tsx",
     "src/renderer/src/pages/onboarding/NotebookStep.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingEntry.render.test.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingEntry.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingWelcome.render.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWizard.tsx",
@@ -32,6 +35,8 @@
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/LocationStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/NotebookStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/OnboardingEntry.render.test.tsx",
+      "src/renderer/src/pages/onboarding/OnboardingWelcome.render.test.tsx",
       "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
       "src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx",
       "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
@@ -46,5 +51,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The first-run onboarding flow now owns its entry and welcome presentation files, which intentionally extends the existing reviewed page boundary while retaining the same end-to-end onboarding contract."
 }

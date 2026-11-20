@@ -72,6 +72,7 @@ import {
 import {
   detectCodex,
   detectCodexComponents,
+  detectNativeCodex,
   parseVersion as parseCodexVersion,
   runAcpInitializeSmoke,
   type CodexDetectDeps
@@ -362,6 +363,7 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
+  private signInInstallId?: string
   private activeInstallAbort: AbortController | undefined
   private activeInstallCompletion: Promise<Error | undefined> | undefined
   private readonly installCoordinator: SettingsInstallCoordinator
@@ -841,6 +843,7 @@ export class AgentRuntimeManager {
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
+        this.signInInstallId = request.signInAttemptId
         const registries =
           request.managedRegistry === 'npmmirror'
             ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
@@ -864,12 +867,16 @@ export class AgentRuntimeManager {
             return { installId, ok: false, error }
           }
 
+          if (request.signInAttemptId && !isSupportedClaudeCliVersion(installedVersion))
+            return { installId, ok: false, error: CLAUDE_CLI_INCOMPATIBLE_MESSAGE }
           await this.repository.setClaudeInfo({
             resolvedPath: outcome.resolvedPath,
-            version: outcome.version
+            version: installedVersion
           })
         }
 
+        if (request.signInAttemptId && outcome.result.ok && !outcome.resolvedPath)
+          return { installId, ok: false, error: CLAUDE_EXECUTABLE_MISSING_MESSAGE }
         return outcome.result
       }
 
@@ -966,8 +973,36 @@ export class AgentRuntimeManager {
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
+        this.signInInstallId = request.signInAttemptId
         const settings = await this.repository.getSettings()
-        const configuredCodexPath = settings.codex?.nativePath
+        let configuredCodexPath = settings.codex?.nativePath
+        if (request.signInAttemptId) {
+          const deps = {
+            ...this.codexDetectDeps,
+            managedAdapterPath:
+              this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot),
+            managedCodexPath: configuredCodexPath ?? this.codexDetectDeps.managedCodexPath
+          }
+          const pair = await detectCodex(deps, signal)
+          signal.throwIfAborted()
+          if (pair?.nativeCodexPath && pair.nativeCodexVersion) {
+            await this.repository.setCodexInfo({
+              resolvedPath: pair.adapterPath,
+              version: pair.adapterVersion,
+              nativePath: pair.nativeCodexPath,
+              nativeVersion: pair.nativeCodexVersion
+            })
+            return { ok: true, installId }
+          }
+          // When only the adapter is missing, keep a supported CLI found on PATH.
+          if (!configuredCodexPath) {
+            const native = await detectNativeCodex(deps, signal)
+            if (native && isSupportedCodexCliVersion(native.version))
+              configuredCodexPath = native.path
+          }
+          signal.throwIfAborted()
+          onEvent({ kind: 'progress', phase: 'resolving', installId })
+        }
         const managedCodexPath =
           this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
         const externalCodexPath =
@@ -987,6 +1022,7 @@ export class AgentRuntimeManager {
           signal,
           ...(existingCodexPath ? { existingCodexPath } : {})
         })
+        signal.throwIfAborted()
         if (
           outcome.result.ok &&
           outcome.adapterPath &&
@@ -1000,6 +1036,12 @@ export class AgentRuntimeManager {
             nativePath: outcome.codexPath,
             nativeVersion: outcome.codexVersion
           })
+        } else if (outcome.result.ok && request.signInAttemptId) {
+          return {
+            installId,
+            ok: false,
+            error: 'Codex authentication runtime could not be prepared. Install Codex in Settings.'
+          }
         }
         return outcome.result
       }
@@ -1015,6 +1057,12 @@ export class AgentRuntimeManager {
       if (result.ok) await this.detectCodex(signal)
       return result
     })
+  }
+
+  async cancelSignInInstall(id: string): Promise<void> {
+    if (!id || id !== this.signInInstallId) return
+    this.activeInstallAbort?.abort()
+    await this.activeInstallCompletion
   }
 
   private async runExclusiveInstall(
@@ -1050,6 +1098,7 @@ export class AgentRuntimeManager {
         cleanupFailure = error
       })
     } finally {
+      this.signInInstallId = undefined
       this.activeInstallAbort = undefined
       this.activeInstallCompletion = undefined
       lease.release()

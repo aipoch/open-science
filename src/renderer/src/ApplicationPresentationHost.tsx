@@ -201,20 +201,32 @@ const ApplicationPresentationContent = ({
   if (startup.settings.startupView === 'onboarding') {
     return (
       <>
+        {/* Render the real landing page immediately, but keep it inactive until setup closes. */}
+        <div inert aria-hidden="true">
+          <HomePage
+            isActive={false}
+            canDeleteProjects={false}
+            hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+            catalogRecovery={sessions.catalogRecovery}
+            onOpenGlobalSearch={events.globalSearch.open}
+          />
+        </div>
         <EnvStatusBanner
           ui={startup.environment.ui}
           onRetry={startup.environment.retry}
           statusError={startup.environment.statusError}
         />
-        <Suspense
-          fallback={
-            <main className="flex min-h-svh items-center justify-center bg-background text-foreground">
-              <OpenScienceLogoLoader />
-            </main>
-          }
-        >
-          <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
-        </Suspense>
+        <div className="fixed inset-0 z-40 overflow-y-auto">
+          <Suspense
+            fallback={
+              <main className="flex min-h-svh items-center justify-center bg-transparent text-foreground">
+                <OpenScienceLogoLoader />
+              </main>
+            }
+          >
+            <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} showWelcome />
+          </Suspense>
+        </div>
       </>
     )
   }

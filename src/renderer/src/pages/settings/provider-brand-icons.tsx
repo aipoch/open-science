@@ -36,6 +36,16 @@ export const ClaudeColor = (props: BrandIconProps): React.JSX.Element => (
   </svg>
 )
 
+export const AnthropicMono = (props: BrandIconProps): React.JSX.Element => (
+  <svg {...iconProps(props)} viewBox="0 0 35 24" aria-hidden="true">
+    <path d="M24.5475 0H19.3384L28.8374 24H34.0465L24.5475 0Z" fill="currentColor" />
+    <path
+      d="M9.49897 0L0 24H5.31125L7.25395 18.96H17.1914L19.1341 24H24.4454L14.9464 0H9.49897ZM8.97193 14.5029L12.2227 6.06857L15.4735 14.5029H8.97193Z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
 export const CodexMono = (props: BrandIconProps): React.JSX.Element => (
   <svg {...iconProps(props)}>
     <title>Codex</title>

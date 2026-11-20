@@ -1,23 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { LoaderCircle, Settings2, X, Zap } from 'lucide-react'
+import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
 
+import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
+import { describeInstallProgress } from '../settings/claude-install-progress'
 import { Button } from '@/components/ui/button'
+import { ProviderSilkBackground } from '@/components/react-bits/ProviderSilkBackground'
 import { ErrorNotice } from '@/components/error-notice'
 import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type {
+  ClaudeInstallResult,
   UpsertProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
+import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
+import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
+import { cn } from '@/lib/utils'
 import {
   selectActiveAgentFramework,
   selectFrameworkApiEndpoints,
   useSettingsStore
 } from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
-import { ProviderForm } from '../settings/ProviderForm'
+import { ProviderForm, type CodexAuthMode } from '../settings/ProviderForm'
+import { ProviderKindIcon } from '../settings/provider-icons'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
 import {
   createEmptyProviderFormValue,
@@ -65,8 +75,101 @@ type ProviderStepProps = {
   providerId?: string
   onProviderSaved?: (id: string | undefined) => void
   onBack: () => void
-  onAdvance: () => void
+  onAdvance: (method?: 'account' | 'api-key') => void
+  variant?: 'form' | 'quick'
+  children?: React.ReactNode
+  canContinue?: boolean
+  onBusyChange?: (busy: boolean) => void
+  onAdvanced?: () => void
+  onSkip?: () => void | Promise<void>
+  isSkipping?: boolean
+  skipError?: string
 }
+
+type QuickProviderCard = {
+  id: string
+  kindKey: string
+  subscriptionKind?: string
+  title: string
+  description: string
+  subscription: string
+  accent: string
+}
+
+const PROVIDER_ACCENTS: Partial<Record<OfficialVendorId, string>> = {
+  openai: '#111111',
+  anthropic: '#d97757',
+  xai: '#dce3ea',
+  apodex: '#437dc4',
+  deepseek: '#5786fe',
+  bailian: '#7347ff',
+  bailianplan: '#7347ff',
+  zhipu: '#3d5afe',
+  glmcodingplan: '#3d5afe',
+  kimi: '#5d51e8',
+  kimiforcode: '#5d51e8',
+  minimax: '#e73562',
+  stepfun: '#0160ff',
+  stepplan: '#0160ff',
+  xiaomimimo: '#ff6900',
+  sensenova: '#5b29da',
+  volcengine: '#006eff',
+  tencent: '#006eff',
+  tencentcodingplan: '#006eff',
+  tencenttokenplan: '#006eff',
+  nvidia: '#76b900',
+  'opencode-go': '#b9b9b9',
+  opencode: '#b9b9b9',
+  openrouter: '#7624f4',
+  requesty: '#1677ff'
+}
+
+const QUICK_SUBSCRIPTIONS: Partial<
+  Record<
+    OfficialVendorId,
+    Pick<QuickProviderCard, 'subscriptionKind' | 'description' | 'subscription'>
+  >
+> = {
+  openai: {
+    subscriptionKind: 'codex-subscription',
+    description: 'Use an existing Codex profile or sign in with a separate Open-Science profile.',
+    subscription: 'Use your eligible ChatGPT subscription'
+  },
+  anthropic: {
+    subscriptionKind: 'claude-subscription',
+    description: 'Use an existing Claude profile or sign in with a separate Open-Science profile.',
+    subscription: 'Use your eligible Claude subscription'
+  },
+  xai: {
+    subscriptionKind: 'xai-subscription',
+    description: 'Sign in to your xAI subscription with a browser device code.',
+    subscription: 'Sign in with your xAI account'
+  }
+}
+
+const bundledModelCount = new Set(
+  OFFICIAL_VENDORS.flatMap((vendor) => vendor.models.map((model) => model.id))
+).size
+
+const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
+  ...OFFICIAL_VENDORS.map((vendor) => ({
+    id: vendor.id,
+    kindKey: `official:${vendor.id}`,
+    title: vendor.label,
+    description: 'API key — models provided',
+    subscription: '',
+    accent: PROVIDER_ACCENTS[vendor.id] ?? '#dce3ea',
+    ...QUICK_SUBSCRIPTIONS[vendor.id]
+  })),
+  {
+    id: 'more',
+    kindKey: 'custom',
+    title: 'Custom Gateway',
+    description: 'Use a compatible endpoint or connect another model provider.',
+    subscription: '',
+    accent: '#dbe8ff'
+  }
+]
 
 // Model provider step: configure and validate the provider new research sessions will use. Reuses
 // the settings page's ProviderForm so both surfaces stay in sync.
@@ -76,9 +179,17 @@ const ProviderStep = ({
   providerId: savedProviderId,
   onProviderSaved,
   onBack,
-  onAdvance
+  onAdvance,
+  variant = 'form',
+  children,
+  canContinue = true,
+  onBusyChange,
+  onAdvanced,
+  onSkip,
+  isSkipping = false,
+  skipError
 }: ProviderStepProps): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   // Validation copy is shared with the settings page and lives in the `settings` namespace, so this
   // step holds a second, settings-scoped t for describeValidation.
   const { t: tSettings } = useTranslation()
@@ -99,6 +210,19 @@ const ProviderStep = ({
   const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
+  const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth'>()
+  const [installError, setInstallError] = useState<string>()
+  const [quickCardId, setQuickCardId] = useState<string>()
+  const progress = useSettingsStore(
+    (state) =>
+      state.installStates[quickCardId === 'openai' ? 'codex' : 'claude-code'].installProgress
+  )
+  const preparingCodex = quickCardId === 'openai' && authStage === 'detect'
+  const installing = authStage === 'install' || (preparingCodex && Boolean(progress))
+  const installProgress = installing && progress ? describeInstallProgress(progress, t) : undefined
+  const pendingInstall = useRef<
+    { id: string; cancel: (id: string) => Promise<void>; settled: Promise<unknown> } | undefined
+  >(undefined)
   const [isSaving, setIsSaving] = useState(false)
   const mounted = useRef(false)
   useEffect(() => {
@@ -107,8 +231,8 @@ const ProviderStep = ({
       mounted.current = false
     }
   }, [])
-  const advanceIfMounted = (): void => {
-    if (mounted.current) onAdvance()
+  const advanceIfMounted = (method: 'account' | 'api-key' = 'api-key'): void => {
+    if (mounted.current) onAdvance(method)
   }
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
   const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
@@ -117,21 +241,56 @@ const ProviderStep = ({
   // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
   // not littered with "required" messages. A `*` on each label signals the requirement up front.
   const [showProviderErrors, setShowProviderErrors] = useState(false)
-  const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
+  const [feedback, setValidationMessage] = useState<
+    string | { summary: string; details?: string }
+  >()
+  const validationMessage = typeof feedback === 'object' ? feedback.summary : feedback
+  const codexImportFailure = (cause: unknown) => {
+    const details =
+      cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : undefined
+    const signIn = t('Sign in with Open-Science')
+    const summary =
+      details && unwrapIpcErrorDetail(details) === CODEX_IMPORT_FILE_MISSING_MESSAGE
+        ? t(
+            'No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.',
+            { signIn }
+          )
+        : t(
+            'Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.',
+            { signIn }
+          )
+    return { summary, details }
+  }
   const [validationOk, setValidationOk] = useState(false)
+  const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
+  const [quickMode, setQuickMode] = useState<'key' | undefined>()
+  const [quickKeys, setQuickKeys] = useState<Record<string, string>>(() =>
+    formValue.type === 'official' && formValue.vendorId
+      ? { [formValue.vendorId]: formValue.key }
+      : {}
+  )
+  // Combined advanced setup locks runtime selection while its provider is being tested.
+  useEffect(() => {
+    onBusyChange?.(isSaving)
+    return () => onBusyChange?.(false)
+  }, [isSaving, onBusyChange])
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
   // clean. The ref is written only from event handlers/effects, never during render.
+  const quickAuth = useRef<AbortController | undefined>(undefined)
   const codexLoginPendingRef = useRef(false)
   const claudeLoginPendingRef = useRef(false)
   const claudeSharedLoginPendingRef = useRef(false)
   const xaiLoginPendingRef = useRef(false)
   const xaiLoginCancelledRef = useRef(false)
+
   useEffect(
     () => () => {
+      quickAuth.current?.abort()
+      if (pendingInstall.current) void pendingInstall.current.cancel(pendingInstall.current.id)
       if (codexLoginPendingRef.current) void cancelCodexLogin()
       if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
       if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
@@ -191,7 +350,7 @@ const ProviderStep = ({
           await setActiveProvider(claudeProviderIdRef.current)
         }
         setIsClaudeSignInOpen(false)
-        advanceIfMounted()
+        advanceIfMounted('account')
       }
 
       return result
@@ -206,20 +365,29 @@ const ProviderStep = ({
     }
   }
 
-  const handleSaveProvider = async (): Promise<void> => {
+  const handleSaveProvider = async (
+    valueOverride?: ProviderFormValue,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    if (!canContinue) return
+    const value = valueOverride ?? formValue
+    // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
+    const currentSettings = useSettingsStore.getState()
+    const currentFrameworkEndpoints = selectFrameworkApiEndpoints(currentSettings)
+    const valueFormErrors = getProviderFormErrors(value)
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
-    if (hasProviderFormErrors(formErrors)) {
+    if (hasProviderFormErrors(valueFormErrors)) {
       setShowProviderErrors(true)
       return
     }
 
     const providerValue =
-      formValue.type === 'official'
+      value.type === 'official'
         ? {
-            ...formValue,
-            model: providerFormModelForFramework(formValue, frameworkEndpoints) ?? formValue.model
+            ...value,
+            model: providerFormModelForFramework(value, currentFrameworkEndpoints) ?? value.model
           }
-        : formValue
+        : value
 
     // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
     // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
@@ -227,10 +395,11 @@ const ProviderStep = ({
     if (
       !isProviderUsableByFramework(
         { apiEndpoints: providerFormApiEndpoints(providerValue), type: providerValue.type },
-        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+        { id: currentSettings.agentFrameworkId, supportedApiTypes: currentFrameworkEndpoints }
       )
     ) {
-      const label = activeFramework?.displayName ?? t('The selected agent')
+      const label =
+        selectActiveAgentFramework(currentSettings)?.displayName ?? t('The selected agent')
       setValidationOk(false)
       setValidationMessage(
         t(
@@ -245,16 +414,18 @@ const ProviderStep = ({
     setValidationMessage(undefined)
 
     try {
-      if (formValue.type === 'codex-isolated') {
+      if (value.type === 'codex-isolated') {
         // Isolated sign-in is explicit: persist the provider first, then run the browser login.
         // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
         // unverified, so the user can retry without re-entering anything.
-        const providerId = await persistProvider(toUpsertRequest(formValue))
+        const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         // Arm the unmount teardown for exactly the duration of the main-process login.
         codexLoginPendingRef.current = true
         const validation = await loginIsolatedCodex().finally(() => {
-          codexLoginPendingRef.current = false
+          if (!signal?.aborted) codexLoginPendingRef.current = false
         })
+        signal?.throwIfAborted()
 
         // A discarded sign-in (the provider was switched/edited while the browser flow was open) can
         // report ok but was never recorded on the stored provider — advancing would finish onboarding
@@ -272,14 +443,15 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          advanceIfMounted()
+          signal?.throwIfAborted()
+          advanceIfMounted('account')
         }
         return
       }
 
-      if (formValue.type === 'claude-isolated') {
+      if (value.type === 'claude-isolated') {
         manualClaudePasteWonRef.current = false
-        const providerId = await persistProvider(toUpsertRequest(formValue))
+        const providerId = await persistProvider(toUpsertRequest(value))
         claudeProviderIdRef.current = providerId
         claudeLoginPendingRef.current = true
         setIsClaudeSignInOpen(true)
@@ -311,17 +483,19 @@ const ProviderStep = ({
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
           if (providerId) await setActiveProvider(providerId)
-          advanceIfMounted()
+          advanceIfMounted('account')
         }
         return
       }
 
-      if (formValue.type === 'claude-shared') {
-        const providerId = await persistProvider(toUpsertRequest(formValue))
+      if (value.type === 'claude-shared') {
+        const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         claudeSharedLoginPendingRef.current = true
         const validation = await loginSharedClaude().finally(() => {
-          claudeSharedLoginPendingRef.current = false
+          if (!signal?.aborted) claudeSharedLoginPendingRef.current = false
         })
+        signal?.throwIfAborted()
 
         if (validation.cancelled) {
           setValidationOk(false)
@@ -342,24 +516,28 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          advanceIfMounted()
+          signal?.throwIfAborted()
+          advanceIfMounted('account')
         }
         return
       }
 
-      if (formValue.type === 'xai-subscription') {
-        const providerId = await persistProvider(toUpsertRequest(formValue))
+      if (value.type === 'xai-subscription') {
+        const providerId = await persistProvider(toUpsertRequest(value))
+        signal?.throwIfAborted()
         xaiLoginCancelledRef.current = false
         xaiLoginPendingRef.current = true
         let validation: ValidateProviderResult
         try {
           const session = await beginXaiOAuthLogin()
+          signal?.throwIfAborted()
           if (xaiLoginCancelledRef.current) return
           setXaiSession(session)
           ;({ validation } = await waitXaiOAuthLogin())
         } finally {
-          xaiLoginPendingRef.current = false
+          if (!signal?.aborted) xaiLoginPendingRef.current = false
         }
+        signal?.throwIfAborted()
         if (xaiLoginCancelledRef.current) return
         setXaiSession(undefined)
         if (validation.applied === false) {
@@ -371,14 +549,18 @@ const ProviderStep = ({
         setValidationMessage(describeValidation(validation, tSettings))
         if (validation.ok) {
           await setActiveProvider(providerId)
-          advanceIfMounted()
+          signal?.throwIfAborted()
+          advanceIfMounted('account')
         }
         return
       }
 
-      const { providerId, validation } = await saveAndActivateProvider(
-        toUpsertRequest(providerValue, savedProviderId)
-      )
+      const request = toUpsertRequest(providerValue, savedProviderId)
+      // Shared Codex checks the local profile; defer activation until the attempt is still current.
+      const { providerId, validation } = signal
+        ? await currentSettings.saveProvider(request)
+        : await saveAndActivateProvider(request)
+      signal?.throwIfAborted()
       // Persistence survives Back even though this page's permission to navigate does not.
       if (providerId) onProviderSaved?.(providerId)
       if (!mounted.current) return
@@ -393,17 +575,191 @@ const ProviderStep = ({
       }
 
       setValidationOk(validation.ok)
-      setValidationMessage(describeValidation(validation, tSettings))
+      setValidationMessage(
+        variant === 'quick' && value.type === 'codex-shared' && !validation.ok
+          ? codexImportFailure(validation.message)
+          : describeValidation(validation, tSettings)
+      )
 
       if (validation.ok) {
-        advanceIfMounted()
+        if (signal && providerId)
+          await setActiveProvider(providerId, providerValue.model || undefined)
+        signal?.throwIfAborted()
+        advanceIfMounted(value.type === 'codex-shared' ? 'account' : 'api-key')
       }
     } catch (error) {
+      if (signal?.aborted) return
       if (error instanceof Error && error.message === 'Provider no longer exists.') {
         onProviderSaved?.(undefined)
       }
       if (!mounted.current) return
-      if (formValue.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
+      if (value.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
+      setValidationOk(false)
+      if (variant === 'quick' && value.type === 'codex-shared') {
+        setValidationMessage(codexImportFailure(error))
+        return
+      }
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      if (!signal) setIsSaving(false)
+    }
+  }
+
+  const prepareQuickRuntime = async (
+    signal: AbortSignal,
+    prepare: (id: string) => Promise<ClaudeInstallResult>,
+    cancel: (id: string) => Promise<void>,
+    failureMessage: string
+  ): Promise<void> => {
+    signal.throwIfAborted()
+    const id = crypto.randomUUID()
+    const operation = prepare(id)
+    pendingInstall.current = { id, cancel, settled: operation }
+    try {
+      const result = await operation
+      signal.throwIfAborted()
+      if (!result.ok) throw new Error(result.error || failureMessage)
+    } catch (error) {
+      if (!signal.aborted) setInstallError(error instanceof Error ? error.message : failureMessage)
+      throw error
+    } finally {
+      if (pendingInstall.current?.id === id) pendingInstall.current = undefined
+    }
+  }
+
+  // Use the shared CLI profile for both OAuth and ACP. Only a local launch failure can
+  // retry via installation; an OAuth rejection or failed subscription probe must stay visible.
+  const connectQuickClaude = async (
+    value: ProviderFormValue,
+    signal: AbortSignal
+  ): Promise<void> => {
+    const settings = useSettingsStore.getState()
+    setAuthStage('detect')
+    let installed = false
+    const install = async (): Promise<void> => {
+      signal.throwIfAborted()
+      installed = true
+      setAuthStage('install')
+      await prepareQuickRuntime(
+        signal,
+        (id) => settings.installClaude('managed', undefined, id),
+        cancelSharedClaudeLogin,
+        t('Could not install Claude Code. Try again.')
+      )
+    }
+    const detected = await settings.detectClaude()
+    signal.throwIfAborted()
+    if (!detected.found || !detected.path || !isSupportedClaudeCliVersion(detected.version))
+      await install()
+    signal.throwIfAborted()
+    if (useSettingsStore.getState().agentFrameworkId !== 'claude-code') {
+      await settings.setAgentFramework('claude-code', { runtimeAlreadyDetected: true })
+      signal.throwIfAborted()
+    }
+    const providerId = await persistProvider(toUpsertRequest(value))
+    signal.throwIfAborted()
+    const signIn = async (): Promise<ValidateProviderResult> => {
+      setAuthStage('auth')
+      claudeSharedLoginPendingRef.current = true
+      try {
+        return await loginSharedClaude()
+      } finally {
+        if (!signal.aborted) claudeSharedLoginPendingRef.current = false
+      }
+    }
+    let validation = await signIn()
+    signal.throwIfAborted()
+    if (
+      !installed &&
+      !validation.cancelled &&
+      validation.applied !== false &&
+      validation.cliLaunchFailed
+    ) {
+      await install()
+      signal.throwIfAborted()
+      validation = await signIn()
+      signal.throwIfAborted()
+    }
+    if (validation.cancelled) return
+    if (validation.applied === false)
+      throw new Error(
+        t('The Claude provider changed during sign-in. Review the selection and try again.')
+      )
+    if (!validation.ok) throw new Error(describeValidation(validation, tSettings))
+    await setActiveProvider(providerId)
+    signal.throwIfAborted()
+    advanceIfMounted('account')
+  }
+
+  const chooseQuickProvider = async (
+    card: QuickProviderCard,
+    mode: 'account' | 'key' | CodexAuthMode
+  ): Promise<void> => {
+    if (isSaving || quickAuth.current) return
+    if (card.kindKey === 'custom') {
+      onAdvanced?.()
+      return
+    }
+
+    const kindKey = mode === 'key' ? card.kindKey : card.subscriptionKind
+    if (!kindKey) return
+
+    const nextValue = {
+      ...createEmptyProviderFormValue(providerKindPatch(kindKey)),
+      ...(mode === 'codex-shared' || mode === 'codex-isolated' ? { type: mode } : {}),
+      key: mode === 'key' ? (quickKeys[card.id] ?? '') : '',
+      providerFormTouched: true
+    }
+    setInstallError(undefined)
+    setQuickCardId(card.id)
+    setQuickMode(mode === 'key' ? 'key' : undefined)
+    setFormValue(nextValue)
+    if (mode === 'key') return
+
+    const attempt = new AbortController()
+    quickAuth.current = attempt
+    // Quick setup chooses the provider first, so resolve its subscription runtime before login.
+    setIsSaving(true)
+    setValidationMessage(undefined)
+    try {
+      if (card.subscriptionKind === 'claude-subscription') {
+        await connectQuickClaude(nextValue, attempt.signal)
+        return
+      }
+      const settings = useSettingsStore.getState()
+      if (mode === 'codex-isolated') {
+        setAuthStage('detect')
+        await prepareQuickRuntime(
+          attempt.signal,
+          (id) => settings.installCodex('managed', id),
+          cancelCodexLogin,
+          t('Could not prepare Codex. Try again.')
+        )
+        setAuthStage('auth')
+      }
+      const targetFramework =
+        card.subscriptionKind === 'codex-subscription' &&
+        settings.agentFrameworkId !== 'open-science-agent'
+          ? 'codex'
+          : settings.agentFrameworkId
+      if (targetFramework !== settings.agentFrameworkId) {
+        if (mode === 'codex-isolated')
+          await settings.setAgentFramework(targetFramework, { runtimeAlreadyDetected: true })
+        else await settings.setAgentFramework(targetFramework)
+      }
+      if (mounted.current && !attempt.signal.aborted)
+        await handleSaveProvider(nextValue, attempt.signal)
+    } catch (error) {
+      if (!mounted.current || attempt.signal.aborted) return
+      if (mode === 'codex-shared') {
+        setValidationOk(false)
+        setValidationMessage(codexImportFailure(error))
+        return
+      }
       setValidationOk(false)
       setValidationMessage(
         error instanceof Error
@@ -411,13 +767,376 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
+      if (!attempt.signal.aborted) {
+        quickAuth.current = undefined
+        setAuthStage(undefined)
+        setIsSaving(false)
+      }
+    }
+  }
+
+  const cancelQuickAuthorization = async (): Promise<void> => {
+    const attempt = quickAuth.current
+    if (!attempt || attempt.signal.aborted) return
+    attempt.abort()
+    try {
+      const install = pendingInstall.current
+      if (install) {
+        await install.cancel(install.id)
+        await install.settled.catch(() => undefined)
+      } else if (codexLoginPendingRef.current) {
+        codexLoginPendingRef.current = false
+        await cancelCodexLogin()
+      } else if (claudeSharedLoginPendingRef.current) {
+        claudeSharedLoginPendingRef.current = false
+        await cancelSharedClaudeLogin()
+      } else if (xaiLoginPendingRef.current) {
+        xaiLoginPendingRef.current = false
+        setXaiSession(undefined)
+        await cancelXaiOAuthLogin()
+      }
+    } catch (error) {
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      quickAuth.current = undefined
+      setAuthStage(undefined)
       setIsSaving(false)
     }
   }
 
+  const handleQuickKeyChange = (card: QuickProviderCard, key: string): void => {
+    setQuickKeys((current) => ({ ...current, [card.id]: key }))
+    setQuickCardId(card.id)
+    setQuickMode('key')
+    const nextValue = {
+      ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
+      key,
+      providerFormTouched: true
+    }
+    setFormValue(nextValue)
+  }
+
+  const handleQuickKeySubmit = (card: QuickProviderCard): void => {
+    if (isSaving) return
+    setQuickCardId(card.id)
+    const nextValue = {
+      ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
+      key: quickKeys[card.id] ?? '',
+      providerFormTouched: true
+    }
+    setFormValue(nextValue)
+    void handleSaveProvider(nextValue)
+  }
+
+  if (variant === 'quick') {
+    return (
+      <section className="onboarding-quick-connect" data-onboarding-entry="connect">
+        <header className="onboarding-quick-header">
+          <div>
+            <h1>{t('Bring the AI you already use.')}</h1>
+            <p>{t('Connect your AI account to start researching in Open-Science.')}</p>
+            <p className="onboarding-provider-count">
+              {t('Our catalog includes {{modelCount}} chat models.', {
+                modelCount: bundledModelCount
+              })}
+            </p>
+          </div>
+          <div className="onboarding-step-dots" aria-label={t('Step 2 of 3')}>
+            <span />
+            <span className="is-active" />
+            <span />
+          </div>
+        </header>
+
+        <div className="onboarding-provider-viewport">
+          <div className="onboarding-provider-track">
+            {QUICK_PROVIDER_CARDS.map((card) => {
+              const isKeyMode = quickCardId === card.id && quickMode === 'key'
+              const isAuthorizing =
+                isSaving && quickCardId === card.id && !isKeyMode && Boolean(card.subscriptionKind)
+              const subscriptionAvailable = Boolean(card.subscriptionKind)
+              const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
+
+              return (
+                <article
+                  key={card.id}
+                  className={cn(
+                    'onboarding-provider-card',
+                    `onboarding-provider-card-${card.id}`,
+                    isKeyMode && 'is-key-mode',
+                    (isAuthorizing || (quickCardId === card.id && installError)) && 'is-authorizing'
+                  )}
+                  style={{ '--provider-accent': card.accent } as React.CSSProperties}
+                  onPointerEnter={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(card.id)
+                  }}
+                  onPointerLeave={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(undefined)
+                  }}
+                >
+                  <div className="onboarding-provider-card-surface">
+                    <ProviderSilkBackground
+                      color={card.accent}
+                      active={hoveredQuickCardId === card.id}
+                    />
+                    <div className="onboarding-provider-card-body">
+                      <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
+                      <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
+                      <p>{t(card.description)}</p>
+                    </div>
+                    <div className="onboarding-provider-card-actions">
+                      {showKeyForm ? (
+                        <form
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            handleQuickKeySubmit(card)
+                          }}
+                          className="onboarding-provider-key-form"
+                        >
+                          <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
+                          <div className="onboarding-provider-key-row">
+                            <input
+                              id={`onboarding-key-${card.id}`}
+                              type="password"
+                              value={quickKeys[card.id] ?? ''}
+                              disabled={isSaving}
+                              onChange={(event) => handleQuickKeyChange(card, event.target.value)}
+                              placeholder={t('Enter your API key')}
+                              autoComplete="off"
+                              required
+                            />
+                            <Button
+                              type="submit"
+                              size="icon"
+                              aria-label={t('Test connection and connect')}
+                              title={t('Test connection and connect')}
+                              disabled={isSaving}
+                            >
+                              {isSaving && quickCardId === card.id ? (
+                                <LoaderCircle
+                                  className="animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Zap aria-hidden="true" />
+                              )}
+                            </Button>
+                          </div>
+                          {quickCardId === card.id && showProviderErrors && formErrors.key ? (
+                            <p className="text-xs text-destructive">{t(formErrors.key)}</p>
+                          ) : null}
+                          {subscriptionAvailable ? (
+                            <button
+                              type="button"
+                              className="onboarding-provider-card-link"
+                              onClick={() => {
+                                setQuickMode(undefined)
+                                setQuickCardId(undefined)
+                              }}
+                            >
+                              {t('Use an account instead')}
+                            </button>
+                          ) : null}
+                        </form>
+                      ) : (
+                        <>
+                          {quickCardId === card.id && installError && (
+                            <ErrorNotice
+                              level="warning"
+                              role="alert"
+                              description={installError}
+                              primaryButton={
+                                card.id === 'openai'
+                                  ? {
+                                      label: t('Retry'),
+                                      onClick: () =>
+                                        void chooseQuickProvider(card, 'codex-isolated')
+                                    }
+                                  : undefined
+                              }
+                              secondaryButton={{
+                                label: t('Dismiss'),
+                                onClick: () => {
+                                  setInstallError(undefined)
+                                  setValidationMessage(undefined)
+                                }
+                              }}
+                            />
+                          )}
+                          {isAuthorizing && installing && (
+                            <div className="onboarding-install-progress">
+                              <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs tabular-nums">
+                                <span>{installProgress?.label ?? t('Installing…')}</span>
+                                {installProgress?.fraction != null && (
+                                  <span aria-hidden="true" className="font-medium">
+                                    {Math.min(
+                                      1,
+                                      Math.max(0, installProgress.fraction)
+                                    ).toLocaleString(i18n?.language, { style: 'percent' })}
+                                  </span>
+                                )}
+                              </div>
+                              <progress
+                                aria-label={installProgress?.label ?? t('Installing…')}
+                                max={1}
+                                value={installProgress?.fraction}
+                              />
+                            </div>
+                          )}
+                          {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
+                          {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
+                            <div
+                              role="group"
+                              aria-label={t('Codex authentication')}
+                              className="grid grid-cols-2 gap-1.5"
+                            >
+                              {(['codex-shared', 'codex-isolated'] as const).map((mode) => (
+                                <Button
+                                  key={mode}
+                                  type="button"
+                                  size="sm"
+                                  disabled={isSaving}
+                                  className="h-auto min-w-0 py-1.5 text-xs whitespace-normal"
+                                  onClick={() => void chooseQuickProvider(card, mode)}
+                                >
+                                  {mode === 'codex-shared'
+                                    ? t('Import existing Codex sign-in')
+                                    : t('Sign in with Open-Science')}
+                                </Button>
+                              ))}
+                            </div>
+                          ) : subscriptionAvailable ? (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                onClick={
+                                  isAuthorizing
+                                    ? undefined
+                                    : () => void chooseQuickProvider(card, 'account')
+                                }
+                                disabled={isSaving}
+                                aria-busy={isAuthorizing}
+                                className="min-w-0 flex-1"
+                              >
+                                {isAuthorizing
+                                  ? installing
+                                    ? t('Installing…')
+                                    : authStage === 'detect'
+                                      ? t('Detecting…')
+                                      : t('Signing in…')
+                                  : t('Continue with {{provider}}', { provider: card.title })}
+                              </Button>
+                              {isAuthorizing && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  aria-label={t('Cancel sign-in')}
+                                  onClick={() => void cancelQuickAuthorization()}
+                                >
+                                  <X
+                                    aria-hidden="true"
+                                    className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                                  />
+                                  {t('Cancel')}
+                                </Button>
+                              )}
+                            </div>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="onboarding-provider-card-link"
+                            onClick={() => void chooseQuickProvider(card, 'key')}
+                            disabled={isSaving}
+                          >
+                            {t('Have an API key?')}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </div>
+
+        {validationMessage &&
+          !installError &&
+          (validationOk ? (
+            <p className="mt-3 text-xs text-primary" role="status">
+              {validationMessage}
+            </p>
+          ) : (
+            <ErrorNotice
+              level="warning"
+              role="alert"
+              description={validationMessage}
+              errorCode={typeof feedback === 'object' ? feedback.details : undefined}
+              diagnosticsLabel={t('Error details')}
+              className="mt-3 border-status-warning-foreground/30 bg-status-warning-surface dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface"
+              secondaryButton={{
+                label: t('Dismiss'),
+                onClick: () => setValidationMessage(undefined)
+              }}
+            />
+          ))}
+
+        <footer className="onboarding-quick-footer">
+          <Button type="button" variant="ghost" onClick={onBack} disabled={isSaving}>
+            {t('Back', { context: 'step' })}
+          </Button>
+          <div>
+            <Button
+              type="button"
+              variant="ghost"
+              data-onboarding-action="skip"
+              onClick={onSkip}
+              disabled={isSaving || isSkipping}
+            >
+              <span aria-hidden="true">↗</span>
+              {t('Skip for now, explore first')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              data-onboarding-action="advanced"
+              onClick={onAdvanced}
+              disabled={isSaving || isSkipping}
+            >
+              <Settings2 aria-hidden="true" />
+              {t('Advanced options')}
+            </Button>
+          </div>
+          {skipError ? (
+            <p className="onboarding-provider-skip-error" role="alert">
+              {skipError}
+            </p>
+          ) : null}
+        </footer>
+        <ClaudeIsolatedSignInModal
+          open={isClaudeSignInOpen}
+          onOpenChange={setIsClaudeSignInOpen}
+          onSubmit={handleClaudeTokenFallback}
+          browserSignInPending={isSaving && isClaudeSignInOpen}
+        />
+        <XaiOAuthSignInDialog
+          open={Boolean(xaiSession)}
+          session={xaiSession}
+          error={validationMessage}
+          onCancel={() => void cancelQuickAuthorization()}
+        />
+      </section>
+    )
+  }
+
   return (
     <>
-      <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
+      <CardHeader className="onboarding-advanced-model-header gap-1 rounded-t-lg px-6 py-5">
         <h2 tabIndex={-1} className="text-[15px] font-semibold">
           {t('Connect a model')}
         </h2>
@@ -434,7 +1153,7 @@ const ProviderStep = ({
       </CardHeader>
       <Separator className="bg-border-200" />
 
-      <CardContent className="flex-1 px-6 py-5">
+      <CardContent className="onboarding-advanced-model-content flex-1 px-6 py-5">
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <ErrorNotice
@@ -479,7 +1198,13 @@ const ProviderStep = ({
           ) : null}
         </section>
       </CardContent>
-      <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      {children}
+      <CardFooter className="onboarding-advanced-model-footer sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+        {!canContinue ? (
+          <p className="mr-auto text-xs text-text-100">
+            {t('Complete every required item above to continue.')}
+          </p>
+        ) : null}
         {isSaving && formValue.type === 'codex-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
             {t('Cancel sign-in')}
@@ -519,7 +1244,7 @@ const ProviderStep = ({
         <Button
           type="button"
           onClick={() => void handleSaveProvider()}
-          disabled={isSaving}
+          disabled={isSaving || !canContinue}
           className="px-4"
           aria-busy={Boolean(isSaving)}
         >
