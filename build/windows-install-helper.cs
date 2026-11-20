@@ -33,7 +33,7 @@ public static class InstallHelper {
       var options = ParseOptions(args);
       switch (args[0]) {
         case "copy-prepared":
-          CopyPrepared(Required(options, "source"), Required(options, "target"), Required(options, "lists"));
+          CopyPrepared(Required(options, "root"), Required(options, "target"), Required(options, "lists"));
           break;
         case "prepare":
         case "publish":
@@ -467,10 +467,14 @@ public static class InstallHelper {
   // Read exclusively the archive members named by the signed installer. Write into its private
   // publication tree so the existing destination ACL and data-root checks still apply. A partial
   // copy can be overwritten by the normal extractor without introducing any extra entries.
-  static void CopyPrepared(string source, string target, string lists) {
+  static void CopyPrepared(string root, string target, string lists) {
     var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
     if (principal.IsInRole(WindowsBuiltInRole.Administrator))
       throw new IOException("Elevated installers use the embedded archive.");
+    var id = Environment.GetEnvironmentVariable("OPEN_SCIENCE_PREPARED_ID") ?? "";
+    if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"\A[a-f0-9]{32}\z"))
+      throw new InvalidDataException("Invalid prepared package identifier.");
+    var source = Path.Combine(Path.GetFullPath(root), id, "payload");
     using (InstallDirectory.Hold(source))
     using (InstallDirectory.Hold(target)) {
       var directories = File.ReadAllLines(Path.Combine(lists, "all-directories.txt"));

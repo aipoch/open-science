@@ -175,9 +175,9 @@ FunctionEnd
       !ifdef isUpdated
       ${If} ${isUpdated}
       ${AndIf} $installMode == "CurrentUser"
-        ReadEnvStr $R0 OPEN_SCIENCE_USE_STAGED_UPDATE
-        ${If} $R0 == "1"
-          nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" copy-prepared --source "$EXEDIR\open-science-prepared\payload" --target "$publicationDirectory" --lists "$PLUGINSDIR"'
+        ReadEnvStr $R0 OPEN_SCIENCE_PREPARED_ID
+        ${If} $R0 != ""
+          nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" copy-prepared --root "$EXEDIR\..\open-science-prepared" --target "$publicationDirectory" --lists "$PLUGINSDIR"'
           Pop $publicationResult
           Pop $publicationOutput
           StrCmp $publicationResult "0" publication_payload_ready

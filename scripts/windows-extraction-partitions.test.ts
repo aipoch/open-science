@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync
 } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -154,14 +155,18 @@ describe('Windows extraction partition generation', () => {
 describe.skipIf(process.platform !== 'win32')('real Windows partition extraction', () => {
   it('publishes only manifest bytes from the prepared tree or requests embedded extraction', () => {
     const f = payload()
-    const source = join(f.root, 'input')
+    const id = '1234567890abcdef'.repeat(2)
+    const source = join(f.root, id, 'payload')
+    mkdirSync(join(f.root, id))
+    renameSync(join(f.root, 'input'), source)
     const copy = (target: string): ReturnType<typeof spawnSync> => {
       mkdirSync(target)
       return spawnSync(
         helper,
-        ['copy-prepared', '--source', source, '--target', target, '--lists', f.lists],
+        ['copy-prepared', '--root', f.root, '--target', target, '--lists', f.lists],
         {
           windowsHide: true,
+          env: { ...process.env, OPEN_SCIENCE_PREPARED_ID: id },
           encoding: 'utf16le'
         }
       )

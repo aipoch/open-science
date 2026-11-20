@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { basename, dirname, join } from 'node:path'
 import { installationFs } from './installation-filesystem'
@@ -14,6 +14,21 @@ const exec = promisify(execFile)
 const preparedName = 'open-science-prepared'
 const log = createLogger('windows-prepared-update')
 type Prepared = { version: string; sha512: string; executable: string; fileName: string }
+
+// Keep published payloads outside the SDK's replaceable pending/ tree. A short cache key
+// leaves room for nested Windows paths; the receipt still verifies the full SHA-512.
+export function preparedWindowsUpdateId(executable: string, sha512: string): string {
+  return createHash('sha256')
+    .update(executable.toLowerCase())
+    .update('\0')
+    .update(sha512)
+    .digest('hex')
+    .slice(0, 32)
+}
+
+function preparedRoot(pending: string): string {
+  return join(dirname(pending), preparedName)
+}
 
 function sameExecutable(recorded: unknown, executable: string): boolean {
   if (recorded === executable) return true
@@ -97,14 +112,16 @@ export async function stageWindowsDesktopVersion(status: UpdateStatus): Promise<
     return
   const pending = await pendingDirectory()
   if (!pending || dirname(localPath).toLowerCase() !== pending.toLowerCase()) return
-  const prepared = await readPreparedWindowsUpdate(pending, process.execPath, status.current)
-  if (prepared?.version === latest && prepared.sha512 === artifactSha512) return
   const receipt = {
     version: latest,
     sha512: artifactSha512,
     fileName: basename(localPath),
     executable: installationFs.realpathSync.native(process.execPath)
   }
+  const root = preparedRoot(pending)
+  const destination = join(root, preparedWindowsUpdateId(receipt.executable, artifactSha512))
+  if (existsSync(destination)) return
+  await fs.mkdir(root, { recursive: true })
   const stage = await fs.mkdtemp(join(pending, 'prepare-'))
   try {
     await exec(resolveWindowsPowerShellExecutable(), powershellArguments(verifiedScript(extract)), {
@@ -115,9 +132,12 @@ export async function stageWindowsDesktopVersion(status: UpdateStatus): Promise<
       flag: 'wx',
       flush: true
     })
-    // Only a complete extraction becomes visible. The SDK owns the pending cache and clears
-    // older downloads, including abandoned temporary trees, when it downloads a replacement.
-    await fs.rename(stage, join(pending, preparedName))
+    // Concurrent preparation of identical signed bytes can share the first published result.
+    try {
+      await fs.rename(stage, destination)
+    } catch (error) {
+      if (!existsSync(destination)) throw error
+    }
   } finally {
     await fs.rm(stage, { recursive: true, force: true })
   }
@@ -128,10 +148,18 @@ export async function readPreparedWindowsUpdate(
   executable: string,
   current: string
 ): Promise<Prepared | undefined> {
-  const marker = join(pending, preparedName, 'ready.json')
+  const infoFile = join(pending, 'update-info.json')
+  if (!existsSync(infoFile)) return
+  const info = JSON.parse(await fs.readFile(infoFile, 'utf8'))
+  if (typeof info.sha512 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(info.sha512)) return
+  const canonical = installationFs.realpathSync.native(executable)
+  const marker = join(
+    preparedRoot(pending),
+    preparedWindowsUpdateId(canonical, info.sha512),
+    'ready.json'
+  )
   if (!existsSync(marker)) return
   const receipt: Prepared = JSON.parse(await fs.readFile(marker, 'utf8'))
-  const info = JSON.parse(await fs.readFile(join(pending, 'update-info.json'), 'utf8'))
   if (
     !sameExecutable(receipt.executable, executable) ||
     typeof receipt.version !== 'string' ||
@@ -140,7 +168,6 @@ export async function readPreparedWindowsUpdate(
     typeof receipt.fileName !== 'string' ||
     !/^[^\\/:]+\.exe$/i.test(receipt.fileName) ||
     receipt.fileName !== info.fileName ||
-    !/^[A-Za-z0-9+/]{86}==$/.test(receipt.sha512) ||
     receipt.sha512 !== info.sha512
   )
     return
@@ -156,15 +183,14 @@ $temp = [IO.DriveInfo]::new([IO.Path]::GetPathRoot([IO.Path]::GetTempPath()))
 if ($temp.AvailableFreeSpace -lt ($unpacked + $lock.Length) -or $target.AvailableFreeSpace -lt $unpacked) { throw 'Insufficient installation space' }
 $parent = [Diagnostics.Process]::GetProcessById([int]$env:OPEN_SCIENCE_UPDATE_PARENT)
 $null = $parent.Handle
-$stage = Join-Path ([IO.Path]::GetDirectoryName($file)) 'open-science-prepared'
+$stage = [IO.Path]::GetDirectoryName($env:OPEN_SCIENCE_UPDATE_ACK)
 [IO.File]::Move((Join-Path $stage 'ready.json'), (Join-Path $stage 'installing.json'))
 [IO.File]::WriteAllText($env:OPEN_SCIENCE_UPDATE_ACK, '')
 if (!$parent.WaitForExit(30000)) { throw 'Desktop did not exit' }
 try {
-  $env:OPEN_SCIENCE_USE_STAGED_UPDATE = '1'
   $setup = Start-Process -FilePath $file -ArgumentList '/S --updated /currentuser' -Wait -PassThru
 } finally {
-  Remove-Item Env:\OPEN_SCIENCE_USE_STAGED_UPDATE -ErrorAction SilentlyContinue
+  Remove-Item Env:\OPEN_SCIENCE_PREPARED_ID -ErrorAction SilentlyContinue
   $next = [Diagnostics.ProcessStartInfo]::new($env:OPEN_SCIENCE_UPDATE_SOURCE, $env:OPEN_SCIENCE_UPDATE_ARGUMENTS)
   $next.UseShellExecute = $false
   $next.WorkingDirectory = $env:OPEN_SCIENCE_UPDATE_LAUNCH_CWD
@@ -174,7 +200,7 @@ try {
 
 export function startWindowsUpdateSupervisor(
   script: string,
-  cwd: string,
+  stage: string,
   env: NodeJS.ProcessEnv
 ): Promise<boolean> {
   const root = env.SystemRoot || env.WINDIR
@@ -184,12 +210,13 @@ export function startWindowsUpdateSupervisor(
   // Only the fixed switches and base64-encoded script enter cmd. All launch data stays in env.
   const command =
     '""%OPEN_SCIENCE_UPDATE_POWERSHELL%" ' + powershellArguments(script).join(' ') + '"'
-  const ack = join(cwd, preparedName, 'accepted-' + randomUUID())
+  const ack = join(stage, 'accepted-' + randomUUID())
   const worker = spawn(
     join(root, 'System32', 'cmd.exe'),
     ['/d', '/q', '/v:off', '/s', '/c', command],
     {
-      cwd,
+      // Avoid pinning the payload directory while the successor reclaims it.
+      cwd: dirname(stage),
       detached: true,
       windowsHide: true,
       windowsVerbatimArguments: true,
@@ -230,12 +257,44 @@ function launchInstaller(pending: string, receipt: Prepared): Promise<boolean> {
     .slice(1)
     .map((arg) => '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"')
     .join(' ')
-  return startWindowsUpdateSupervisor(verifiedScript(install), pending, {
+  const stage = join(
+    preparedRoot(pending),
+    preparedWindowsUpdateId(receipt.executable, receipt.sha512)
+  )
+  return startWindowsUpdateSupervisor(verifiedScript(install), stage, {
     ...installerEnv(pending, receipt),
+    OPEN_SCIENCE_PREPARED_ID: basename(stage),
     OPEN_SCIENCE_UPDATE_PARENT: String(process.pid),
     OPEN_SCIENCE_UPDATE_LAUNCH_CWD: process.cwd(),
     OPEN_SCIENCE_UPDATE_ARGUMENTS: args
   })
+}
+
+export async function reclaimInstalledWindowsUpdates(
+  pending: string,
+  executable: string,
+  current: string
+): Promise<void> {
+  const root = preparedRoot(pending)
+  if (!existsSync(root) || !(await fs.lstat(root)).isDirectory()) return
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue
+    const stage = join(root, entry.name)
+    try {
+      const installing = join(stage, 'installing.json')
+      const marker = existsSync(installing) ? installing : join(stage, 'ready.json')
+      const receipt: Prepared = JSON.parse(await fs.readFile(marker, 'utf8'))
+      if (
+        sameExecutable(receipt.executable, executable) &&
+        preparedWindowsUpdateId(receipt.executable, receipt.sha512) === entry.name &&
+        stable.test(receipt.version) &&
+        !isNewer(receipt.version, current)
+      )
+        await fs.rm(stage, { recursive: true, force: true })
+    } catch (error) {
+      log.warn('Could not reclaim prepared update', { error: String(error) })
+    }
+  }
 }
 
 export async function applyPreparedWindowsUpdate(options: {
@@ -246,32 +305,9 @@ export async function applyPreparedWindowsUpdate(options: {
   try {
     const pending = await pendingDirectory()
     if (!pending) return false
-    const stage = join(pending, preparedName)
-    // A user can choose the regular "Restart to update" before the next cold launch. That
-    // install leaves an unclaimed ready receipt. Reclaim its prepared files on startup too.
-    for (const marker of ['installing.json', 'ready.json']) {
-      const file = join(stage, marker)
-      if (!existsSync(file)) continue
-      const previous: Prepared = JSON.parse(await fs.readFile(file, 'utf8'))
-      if (
-        sameExecutable(previous.executable, process.execPath) &&
-        stable.test(previous.version) &&
-        !isNewer(previous.version, options.current)
-      ) {
-        await fs.rm(stage, { recursive: true, force: true })
-        return false
-      }
-      if (marker === 'installing.json') {
-        log.info('Prepared installer was already attempted', { version: previous.version })
-        return false
-      }
-    }
+    await reclaimInstalledWindowsUpdates(pending, process.execPath, options.current)
     const receipt = await readPreparedWindowsUpdate(pending, process.execPath, options.current)
-    if (!receipt) {
-      if (existsSync(join(stage, 'ready.json')))
-        log.warn('Prepared receipt does not match the SDK download or installation')
-      return false
-    }
+    if (!receipt) return false
     if (!(await options.enabled())) {
       log.info('Automatic installation is disabled or unavailable', { version: receipt.version })
       return false

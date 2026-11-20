@@ -3,7 +3,17 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -581,6 +591,36 @@ const runElectronUpdater = async ({
         PATH: ''
       }
     : env
+  const preparedRoot = join(
+    win32.dirname(win32.dirname(expectedInstaller)),
+    'open-science-prepared'
+  )
+  let claimedFixture
+  if (coldLaunch) {
+    // Model an already-claimed, superseded build of the same version. Only the SDK's current
+    // installer is genuine; the desktop must leave this receipt alone until the new app starts.
+    const sha512 = createHash('sha512').update('superseded smoke fixture').digest('base64')
+    const canonical = await realpath(executable)
+    const id = createHash('sha256')
+      .update(canonical.toLowerCase())
+      .update('\0')
+      .update(sha512)
+      .digest('hex')
+      .slice(0, 32)
+    const directory = join(preparedRoot, id)
+    await mkdir(directory, { recursive: true })
+    claimedFixture = join(directory, 'installing.json')
+    await writeFile(
+      claimedFixture,
+      JSON.stringify({
+        executable: canonical,
+        version: expectedVersion,
+        sha512,
+        fileName: basename(expectedInstaller)
+      }),
+      { flag: 'wx' }
+    )
+  }
   const child = spawn(executable, ['--remote-debugging-port=0'], {
     env: appEnv,
     windowsHide: true
@@ -745,17 +785,29 @@ const runElectronUpdater = async ({
 
     if (coldLaunch) {
       phase = 'background-extraction'
-      const prepared = join(win32.dirname(expectedInstaller), 'open-science-prepared', 'ready.json')
       await waitFor(
         'verified background extraction',
         async () => {
-          const receipt = JSON.parse(await readFile(prepared, 'utf8'))
-          return (
-            receipt.version === expectedVersion && receipt.fileName === basename(expectedInstaller)
+          const sdk = JSON.parse(
+            await readFile(join(win32.dirname(expectedInstaller), 'update-info.json'), 'utf8')
           )
+          for (const name of await readdir(preparedRoot)) {
+            if (name === basename(win32.dirname(claimedFixture))) continue
+            const receipt = JSON.parse(
+              await readFile(join(preparedRoot, name, 'ready.json'), 'utf8')
+            )
+            if (
+              receipt.version === expectedVersion &&
+              receipt.fileName === basename(expectedInstaller) &&
+              receipt.sha512 === sdk.sha512
+            )
+              return true
+          }
+          return false
         },
         UPDATE_TIMEOUT_MS
       )
+      await stat(claimedFixture)
       await page.evaluate(() => {
         void window.api.databaseStartup.quit()
       })
@@ -1173,17 +1225,10 @@ const main = async () => {
         cachedInstaller
       )
       successor.shortcutVersions = [previousVersion, currentVersion]
-      const stage = join(updaterCache, 'pending', 'open-science-prepared')
-      if (
-        await stat(stage).then(
-          () => true,
-          (error) => {
-            if (error.code === 'ENOENT') return false
-            throw error
-          }
+      if ((await readdir(join(updaterCache, 'open-science-prepared'))).length)
+        throw new Error(
+          'The new desktop did not reclaim the installed and superseded preparations.'
         )
-      )
-        throw new Error('The new desktop did not reclaim its prepared payload.')
     }
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
