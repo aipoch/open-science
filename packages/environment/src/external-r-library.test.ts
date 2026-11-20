@@ -25,6 +25,7 @@ describe('external R package installation', () => {
         ['--slave', '-e', expect.stringContaining('.libPaths()')],
         expect.objectContaining({ timeout: 15000, windowsHide: true })
       )
+      expect(execute.mock.calls[0][1][2]).not.toMatch(/[\r\n]/)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -113,6 +114,7 @@ describe('external R package installation', () => {
         expect(args).not.toContain('-m')
         expect(args.at(-1)).toContain(JSON.stringify(library))
         expect(args.at(-1)).toContain('installed.packages(lib.loc=destination)')
+        expect(args.at(-1)).not.toMatch(/[\r\n]/)
         expect(result).toMatchObject({ ok: code === 0, needsRestart: code === 0, method: 'cran' })
         expect(result.attempts).toEqual([
           expect.objectContaining({
