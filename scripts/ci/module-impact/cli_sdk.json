@@ -10,6 +10,7 @@
     "packages/open-science/agent-delivery-directory.mjs",
     "packages/open-science/agent-notebook-readiness.mjs",
     "packages/open-science/agent-package-capabilities.mjs",
+    "packages/open-science/agent-setup-action.mjs",
     "packages/open-science/local-file-delivery.mjs",
     "packages/open-science/cli.mjs",
     "packages/open-science/cli.test.ts",
