@@ -2,6 +2,7 @@ import { streamChatToResponses } from '../../test/stream-harness'
 import { describe, expect, it, vi } from 'vitest'
 
 import { completionToResponse, upstreamErrorMessage } from './response'
+import { createResponseStreamState } from './stream-state'
 
 describe('Responses result protocol adapter', () => {
   it('maps Chat Completions output text and tool calls to a Responses response', () => {
@@ -170,6 +171,26 @@ describe('Responses result protocol adapter', () => {
       upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
     ).toBe('Model deepseek-v4-flash does not exist')
     expect(upstreamErrorMessage('plain upstream failure', 400)).toBe('plain upstream failure')
+  })
+
+  it.each([
+    ['stop', 'completed'],
+    ['length', 'incomplete'],
+    [undefined, 'failed']
+  ] as const)('keeps the creation time through a %s finish reason', (finishReason, status) => {
+    using clock = vi.spyOn(Date, 'now').mockReturnValue(10_000)
+    const stream = createResponseStreamState('model-a', [])
+    expect(stream.drain()).toMatchObject([
+      { type: 'response.created', response: { status: 'in_progress', created_at: 10 } },
+      { type: 'response.in_progress', response: { status: 'in_progress', created_at: 10 } }
+    ])
+
+    clock.mockReturnValue(12_000)
+    if (finishReason) stream.consume({ choices: [{ finish_reason: finishReason }] })
+    stream.finish(undefined, false)
+    expect(stream.drain()).toMatchObject([
+      { type: `response.${status}`, response: { status, created_at: 10 } }
+    ])
   })
 
   it('assembles fragmented tool calls and emits ordered terminal SSE events', async () => {

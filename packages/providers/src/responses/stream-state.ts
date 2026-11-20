@@ -38,12 +38,9 @@ export function createResponseStreamState(
   let reasoning = ''
   let usage: JsonObject | undefined
   let sequence = 0
-  emit('response.created', sequence++, {
-    response: responseEnvelope(responseId, model, [])
-  })
-  emit('response.in_progress', sequence++, {
-    response: responseEnvelope(responseId, model, [])
-  })
+  const response = responseEnvelope(responseId, model, output, 'in_progress')
+  emit('response.created', sequence++, { response })
+  emit('response.in_progress', sequence++, { response })
 
   let terminalFinishReason: string | undefined
   const ensureToolItem = (index: number): JsonObject => {
@@ -190,13 +187,18 @@ export function createResponseStreamState(
           item
         })
       }
+      const terminalResponse = { ...response, usage: usage ?? null }
       if (streamError instanceof ResponsesProtocolError) {
         log.warn('bridge unsupported upstream output', { model, type: streamError.type })
         emit('response.failed', sequence++, {
-          response: responseEnvelope(responseId, model, output, undefined, 'failed', {
-            type: streamError.type,
-            message: streamError.message
-          })
+          response: {
+            ...response,
+            status: 'failed',
+            error: {
+              type: streamError.type,
+              message: streamError.message
+            }
+          }
         })
       } else if (streamError) {
         log.warn('bridge stream error', {
@@ -204,34 +206,42 @@ export function createResponseStreamState(
           error: streamError instanceof Error ? streamError.message : String(streamError)
         })
         emit('response.failed', sequence++, {
-          response: responseEnvelope(responseId, model, output, usage, 'failed', {
-            type: 'upstream_error',
-            message: 'Upstream stream ended before completion'
-          })
+          response: {
+            ...terminalResponse,
+            status: 'failed',
+            error: {
+              type: 'upstream_error',
+              message: 'Upstream stream ended before completion'
+            }
+          }
         })
       } else if (terminal.status === 'completed' && terminalFinishReason) {
         emit('response.completed', sequence++, {
-          response: responseEnvelope(responseId, model, output, usage)
+          response: { ...terminalResponse, status: 'completed' }
         })
       } else if (terminalFinishReason) {
         log.warn('bridge stream incomplete', { model, finishReason: terminalFinishReason })
         emit('response.incomplete', sequence++, {
           response: {
-            ...responseEnvelope(responseId, model, output, usage, 'incomplete'),
-            incomplete_details: terminal.incomplete_details
+            ...terminalResponse,
+            ...terminal
           }
         })
       } else if (sawDone) {
         emit('response.completed', sequence++, {
-          response: responseEnvelope(responseId, model, output, usage)
+          response: { ...terminalResponse, status: 'completed' }
         })
       } else {
         log.warn('bridge stream truncated (no terminal finish_reason)', { model })
         emit('response.failed', sequence++, {
-          response: responseEnvelope(responseId, model, output, usage, 'failed', {
-            type: 'upstream_incomplete',
-            message: 'Upstream stream ended without a terminal finish_reason'
-          })
+          response: {
+            ...terminalResponse,
+            status: 'failed',
+            error: {
+              type: 'upstream_incomplete',
+              message: 'Upstream stream ended without a terminal finish_reason'
+            }
+          }
         })
       }
 
