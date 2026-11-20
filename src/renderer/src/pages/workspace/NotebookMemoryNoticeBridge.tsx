@@ -43,7 +43,6 @@ export const NotebookMemoryNoticeBridge = ({
       ? terminal.retry
       : undefined
   useEffect(() => window.api.notebook?.onMemoryRejected?.(presentNotebookMemoryRejection), [])
-  useEffect(() => window.api.notebook?.onMemoryPolicyChanged?.(observeNotebookMemoryPolicy), [])
 
   const memory = rejection?.memory
   const polling = useRef(false)
@@ -255,6 +254,7 @@ export const NotebookMemoryNoticeBridge = ({
 // Render in the shared bottom stack, never in the workspace's height-constrained grid.
 export const NotebookMemoryPressureNotice = (): React.JSX.Element | null => {
   const { t } = useTranslation()
+  useEffect(() => window.api.notebook?.onMemoryPolicyChanged?.(observeNotebookMemoryPolicy), [])
   const pressure = useNotebookMemoryNoticeStore((state) => state.pressure)
   const rejection = useNotebookMemoryNoticeStore((state) => state.rejection)
   if (!pressure || rejection) return null

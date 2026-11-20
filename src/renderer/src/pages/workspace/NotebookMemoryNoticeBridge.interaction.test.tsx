@@ -26,9 +26,11 @@ let container: HTMLDivElement
 let changed: (event: NotebookMemoryPolicyChangedEvent) => void
 let rejected: (event: NotebookMemoryRejectedEvent) => void
 const execute = vi.fn()
+const unsubscribeMemoryPolicy = vi.fn()
 
 beforeEach(() => {
   execute.mockReset()
+  unsubscribeMemoryPolicy.mockReset()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
     terminal: undefined,
@@ -45,7 +47,7 @@ beforeEach(() => {
       }),
       onMemoryPolicyChanged: vi.fn((listener) => {
         changed = listener
-        return vi.fn()
+        return unsubscribeMemoryPolicy
       }),
       execute
     }
@@ -137,7 +139,12 @@ it('keeps a failed explicit continuation visible and dismisses only after a succ
 it('updates recovery without running and opens the existing Compute preview on Manage', async () => {
   const continueExecution = vi.fn()
   await act(async () =>
-    root.render(<NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />)
+    root.render(
+      <>
+        <NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />
+        <NotebookMemoryPressureNotice />
+      </>
+    )
   )
   await act(async () =>
     rejected({
@@ -181,20 +188,18 @@ it('updates recovery without running and opens the existing Compute preview on M
 })
 
 it.each(['warning', 'critical'] as const)(
-  'dismisses background %s pressure without a modal or repeated polling notices',
+  'dismisses background %s pressure outside the workspace without repeated notices',
   async (pressureLevel) => {
     vi.useFakeTimers()
     try {
       await act(async () =>
         root.render(
-          <>
-            <NotebookMemoryNoticeBridge projectId="project" />
-            <BottomNoticeStack>
-              <NotebookMemoryPressureNotice />
-            </BottomNoticeStack>
-          </>
+          <BottomNoticeStack>
+            <NotebookMemoryPressureNotice />
+          </BottomNoticeStack>
         )
       )
+      expect(window.api.notebook.onMemoryPolicyChanged).toHaveBeenCalledOnce()
       const pressure: NotebookMemoryPolicyChangedEvent = {
         hasLiveResources: true,
         memory: {
@@ -235,6 +240,8 @@ it.each(['warning', 'critical'] as const)(
       await act(async () => changed({ ...pressure, hasLiveResources: false }))
       expect(screen.queryByRole('status')).toBeNull()
       expect(execute).not.toHaveBeenCalled()
+      await act(async () => root.render(null))
+      expect(unsubscribeMemoryPolicy).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
