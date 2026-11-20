@@ -462,6 +462,11 @@ deadline on two hosted runs. The CLI case in the same job still passed. The asyn
 now allows up to 12 seconds for the same kernel query. A timeout or invalid identity still
 blocks update recovery; the test continues to require a real identity for both launchers.
 
+Upstream review also found that a prompt-only `get_run` query could use a completed Notebook
+run from another message branch. Pending reviews and execution results now use the same
+resolved branch. A regression test records real repository evidence from both branches and
+checks the inferred branch, explicit branch, and prompt-only fallback without an intent.
+
 A Linux arm64 preview was built from `bde5ca99bcab6509a0f86e387c42bdb4fddcc805`. The npm install
 check passed; the CLI and native archives had SHA-256
 `ef06ee92e0fd3c56c7ff3f0b02ecdc80ccec02fe1616eb422cf91ceb872ba09b` and

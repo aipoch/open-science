@@ -237,6 +237,55 @@ async function productionKernelHarness(language: 'python' | 'r' | 'repl'): Promi
 }
 
 describe('host-owned one-shot execution admission', () => {
+  it('scopes terminal Notebook evidence to the registered intent branch', async () => {
+    const { service, request } = await harness(1)
+    const scope = { projectId: request.projectId, sessionId: request.sessionId }
+    const query = { ...scope, promptMessageId: 'study-prompt' }
+    const provenanceContext = {
+      promptMessageId: query.promptMessageId,
+      messageBranchId: 'other-branch',
+      rootFrameId: 'root-frame-session',
+      agentFrameId: 'root-frame-session',
+      runtimeSegmentId: 'segment'
+    }
+    const other = await service.execute({ ...request, code: 'print(1)', provenanceContext })
+    const otherEvidence = {
+      status: 'completed',
+      notebookRunId: other.runId,
+      messageBranchId: 'other-branch',
+      kernelDispatched: true
+    }
+    await expect(service.inspectTaskExecution(query)).resolves.toMatchObject(otherEvidence)
+
+    const intent = service.createExecutionIntent({
+      ...scope,
+      promptMessageId: 'original-prompt',
+      messageBranchId: 'study-branch'
+    })
+    service.rememberExecutionIntent(scope, query.promptMessageId, intent)
+    await expect(service.inspectTaskExecution(query)).resolves.toEqual({
+      ...query,
+      status: 'unconfirmed',
+      messageBranchId: 'study-branch',
+      reasonCode: 'notebook_evidence_unavailable'
+    })
+    await expect(
+      service.inspectTaskExecution({ ...query, messageBranchId: 'other-branch' })
+    ).resolves.toMatchObject(otherEvidence)
+
+    const own = await service.execute({
+      ...request,
+      code: 'print(2)',
+      provenanceContext: { ...provenanceContext, messageBranchId: 'study-branch' }
+    })
+    await expect(service.inspectTaskExecution(query)).resolves.toMatchObject({
+      status: 'completed',
+      notebookRunId: own.runId,
+      messageBranchId: 'study-branch',
+      kernelDispatched: true
+    })
+  })
+
   it.each(['ask', 'auto'] as const)(
     'reports pre-dispatch Notebook runtime review only for a pending decision in %s',
     async (profile) => {

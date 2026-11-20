@@ -1628,16 +1628,15 @@ class NotebookRuntimeService {
         }
       }
     }
+    const branch = request.messageBranchId ?? intent?.scope.messageBranchId
     const runs = promptMessageId
       ? (await this.repository.readSessionRuns(projectId, sessionId)).filter(
           (run) =>
             run.source === 'agent' &&
             run.promptMessageId === promptMessageId &&
-            (request.messageBranchId === undefined ||
-              run.messageBranchId === request.messageBranchId)
+            (branch === undefined || run.messageBranchId === branch)
         )
       : []
-    const branch = request.messageBranchId ?? intent?.scope.messageBranchId
     const pendingReviews = promptMessageId ? this.pendingNotebookReviews?.(sessionId) : undefined
     const runtimeReview = pendingReviews?.find(
       (review) =>
@@ -1663,11 +1662,7 @@ class NotebookRuntimeService {
         }
       }
     }
-    const activeRuns = runs.filter(
-      (run) =>
-        (run.status === 'queued' || run.status === 'running') &&
-        (!branch || run.messageBranchId === branch)
-    )
+    const activeRuns = runs.filter((run) => run.status === 'queued' || run.status === 'running')
     const awaitingReview = activeRuns.findLast((run) =>
       pendingReviews?.some((review) => review.kind === 'code' && review.runId === run.runId)
     )
