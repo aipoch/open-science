@@ -158,6 +158,18 @@ jobs:
           pattern: '@(macos-*|linux-*|windows-x64|cli-*|nightly-ready)'
           merge-multiple: true
 
+      - name: Checkout trusted conversation gate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && github.sha || 'refs/heads/main' }}
+          persist-credentials: false
+          path: trusted-conversation-gate
+          sparse-checkout: scripts/ci/default-agent-conversation.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Require default Agent conversation certification
+        run: node trusted-conversation-gate/scripts/ci/default-agent-conversation.mjs published artifacts/RELEASE-CERTIFICATION.json
+
       - name: Verify prepared nightly metadata
         run: |
           test -s artifacts/SHA256SUMS.txt
@@ -222,6 +234,18 @@ jobs:
           path: artifacts
           pattern: '@(macos-*|linux-*|windows-x64|cli-*|nightly-ready)'
           merge-multiple: true
+
+      - name: Checkout trusted conversation gate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && github.sha || 'refs/heads/main' }}
+          persist-credentials: false
+          path: trusted-conversation-gate
+          sparse-checkout: scripts/ci/default-agent-conversation.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Require default Agent conversation certification
+        run: node trusted-conversation-gate/scripts/ci/default-agent-conversation.mjs published artifacts/RELEASE-CERTIFICATION.json
 
       - name: Verify prepared nightly metadata
         run: |

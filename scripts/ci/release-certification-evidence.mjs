@@ -5,6 +5,8 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { assertDefaultAgentEvidence } from './default-agent-conversation.mjs'
+
 const PLATFORMS = ['linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64', 'windows-x64']
 const DISTRIBUTABLE = /\.(?:AppImage|deb|dmg|exe|zip)$/
 const CHECK_STATES = ['passed', 'not-applicable']
@@ -64,6 +66,7 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
   const packageSmoke = argumentValue(argv, '--package-smoke')
   const databaseMigrationCertification = argumentValue(argv, '--database-migration-certification')
   const authenticode = argumentValue(argv, '--authenticode')
+  const conversationPath = argumentValue(argv, '--default-agent-conversation')
   if (
     !PLATFORMS.includes(platform) ||
     !artifactDirectoryArgument ||
@@ -72,6 +75,7 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
     !CHECK_STATES.includes(visualRegression) ||
     !['passed', 'not-applicable'].includes(packageSmoke) ||
     !databaseMigrationCertification ||
+    !conversationPath ||
     !['passed', 'not-required', 'not-applicable'].includes(authenticode)
   ) {
     throw new Error(
@@ -80,7 +84,7 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
         '--visual-regression <passed|not-applicable> ' +
         '--package-smoke <passed|not-applicable> ' +
         '--database-migration-certification <path> ' +
-        '--authenticode <passed|not-required|not-applicable>'
+        '--authenticode <passed|not-required|not-applicable> --default-agent-conversation <path>'
     )
   }
   const artifactDirectory = resolve(artifactDirectoryArgument)
@@ -99,7 +103,17 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
       runId: environment.GITHUB_RUN_ID,
       runAttempt: environment.GITHUB_RUN_ATTEMPT
     },
+    defaultAgentConversation: assertDefaultAgentEvidence(
+      JSON.parse(await readFile(resolve(conversationPath), 'utf8')),
+      {
+        platform,
+        sha: environment.GITHUB_SHA,
+        runId: environment.GITHUB_RUN_ID,
+        runAttempt: environment.GITHUB_RUN_ATTEMPT
+      }
+    ),
     checks: {
+      defaultAgentConversation: 'passed',
       electronP0,
       visualRegression,
       packageSmoke,
@@ -263,6 +277,9 @@ const aggregateEvidence = async ({ argv }) => {
         throw new Error(`Release artifact digest does not match evidence: ${artifact.name}.`)
       }
     }
+    assertDefaultAgentEvidence(record.defaultAgentConversation, { ...record.source, platform })
+    if (record.checks.defaultAgentConversation !== 'passed')
+      throw new Error(`Default Agent conversation did not pass for ${platform}.`)
     if (record.checks.packageSmoke !== 'passed') {
       throw new Error(`Package smoke did not pass for ${platform}.`)
     }
