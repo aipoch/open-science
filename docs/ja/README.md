@@ -53,18 +53,18 @@
 
 > このドキュメントは英語版 `README.md` の翻訳です。内容に相違がある場合は、[英語版](../../README.md)が優先されます。
 
-### 💡 AIPOCH Open-Science v1.3.0 の更新
+### 💡 AIPOCH Open-Science v1.3.1 の更新
 
-_2026 年 11 月 18 日_
+_2026 年 11 月 19 日_
 
-- **定時の研究タスク**：繰り返しまたは一回限りのスケジュールを設定すると、セッションと Notebook タスクが自動的に開始されます。各実行はワークスペース内に独自の記録付きで開かれます。
-- **画像の生成と編集**：設定済みのプロバイダーで画像を生成し、フォローアップの編集で反復改良できます。すべてのバリアントが新しいバージョンとして比較・再利用可能です。
-- **編集可能なプレゼンテーション**：PowerPoint ファイルはその場でテキスト編集（フォント、サイズ、色、配置）ができ、スライド構造は維持されます。
-- **フィルムのリプレイ**：フィルム操作を別ブランチにリプレイして独立した出力を得られ、セッションメニューから直接フィルムを開け、生成前にトークン使用量を確認できます。
-- **より賢いエージェントの質問**：エージェントが入力を求める際、各オプションのトレードオフが示されるため、結果を踏まえて判断できます。
-- **信頼性と速度**：長いセッション履歴が増分で永続化され、停止したフィルムやパッケージ転送が自動回復し、Windows のインストールと更新が軽量化され、起動が速くなります。
+- **Web 検索とページの読み取り**：組み込みエージェントが Web を検索し、公開ページを読み取れます。検索の承認ではクエリが読みやすいカードで表示され、引用されたソースは会話とともに保持されます。
+- **引用グラフ**：論文の参考文献と被引用論文をインタラクティブなグラフとして探索できます。関連する任意の論文を中心に再配置し、方向で絞り込めます。
+- **アプリを開かずに MCP を利用**：外部エージェントを MCP 経由で接続すると Open-Science サービスが自動で起動し、30 を超えるエージェントとクライアント向けのセットアップオプションが用意されています。
+- **Lab モデルと組織のケース**：Lab アカウントでサインインすると、組織のモデルを使用し、チームメイトと研究ケースを検索、インポート、共有できます。
+- **最新のモデル一覧と、より明確なエラー**：設定からプロバイダーのモデル一覧を更新でき、プロバイダーへのリクエストが失敗した際には原因と次の手順が表示されます。
+- **1.3.0 からの更新**：1.3.0 のアップデーターが、別のプロセスがインストール先を使用していると報告した場合は、Open-Science を完全に終了し、ダウンロードしたパッケージを手動でインストールしてください。
 
-[v1.3.0 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[v1.3.1 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
 
 <a id="share-your-research"></a>
 
@@ -172,6 +172,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 | 文献に基づいて回答する     | LitQA2-FullText        | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
 | 引用付きの回答をまとめる   | ScholarQA-CS2          | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
 | 研究ワークフローを実行する | ASI-Bench              | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
+| ML・NLP の実験を再現する   | AstaBench SUPER-Expert | DeepSeek Flash/Max を使った 45 タスクのローカル評価で output_match/mean **46.30%**。                                                                             |
 | 科学研究のタスクを実行する | TB-Science 0.1         | 70 タスク、GPT-6 Astra/max：ローカル実行 210 回中 **145 回合格**（**69.05%**）。公式順位ではなく、各実行の記録は未公開です。                                     |
 | 生物医学データを分析する   | BiomniBench-DA         | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
 | 公表された結果の再現       | CORE-Bench-Hard        | CORE-Bench-Hard — ローカル評価ではテスト37件中36件に正答（97.30%）。最終集計には再試行を含みます。                                                               |
@@ -182,7 +183,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 
 **評価範囲：** 報告は、記載されたモデルとデータ分割による 2026 年 8 月から 11 月のローカル・内部実行を対象とし、現行リリース用に再実行したものではありません。参考スコアは過去のスナップショットであり、リアルタイムの順位ではありません。異なるベンチマーク系列のスコアは直接比較できず、数値の差は統計的有意性を示しません。
 
-詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。
+詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。 [SUPER-Expert のローカル結果](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)も参照してください。
 
 [CORE-Bench-Hard · 再現性評価レポート](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

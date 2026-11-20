@@ -2489,6 +2489,28 @@ it.each([
   }
 })
 
+it.each([true, false])(
+  'requires distinct centered tiers inside a ceiling fraction: %s',
+  (aligned) => {
+    const items: FractionItem[] = [
+      { i: 0, text: '⌈', fontSize: 10, baseline: 100, bounds: [4, 98, 8, 108] },
+      { i: 1, text: '𝑟', fontSize: 7.2, baseline: 104, bounds: [9, 104, 13.5, 110] },
+      { i: 2, text: '3', fontSize: 5.5, baseline: 106.5, bounds: [14, 106, 17, 112] },
+      {
+        i: 3,
+        text: '5',
+        fontSize: 7.2,
+        baseline: 96.5,
+        bounds: [11.2, 96, aligned ? 15.2 : 18.5, 102]
+      },
+      { i: 4, text: '⌉', fontSize: 10, baseline: 100, bounds: [18.5, 98, 22.5, 108] }
+    ]
+    const result = resolveInlineFractions(items, 100, 10)
+    expect(result.map(({ label }) => label)).toEqual(aligned ? ['⌈ 𝑟³/5 ⌉'] : [])
+    if (aligned) expect(result[0].indices).toEqual([0, 1, 2, 3, 4])
+  }
+)
+
 it.each(['4', '16', '128', '1024'])(
   'centered small letter-over-integer tiers preserve their complete fraction: %s',
   (denominator) => {
@@ -3165,5 +3187,111 @@ it.each([10, 11, 13])(
       caller.release()
       registry.dispose()
     }
+  }
+)
+
+it.each(['complete', 'flat script', 'detached script', 'changed target'] as const)(
+  'moves a terminal native logarithmic mass ratio with its generated operator: %s',
+  (variant) => {
+    const source = 'The display uses log10M⋆/M⊙.',
+      target = variant === 'changed target' ? '图中采用 log10M⋆/M●。' : '图中采用 log10M⋆/M⊙。',
+      parts = [
+        ['The display uses log', 'CMR9', 1, 0, 61, 146],
+        ['10', 'CMR6', 2 / 3, -2.2, 147.2, 153.6],
+        ['M', 'CMMI9', 1, 0, 154.7, 163.8],
+        ['⋆', 'CMMI6', 2 / 3, -1, 163.6, 166.7],
+        ['/M', 'CMMI9', 1, 0, 167.5, 180.6],
+        ['⊙', 'CMSY6', 2 / 3, -1, 180.4, 185.3]
+      ] as const,
+      markers: ScientificScriptMarker[] = parts.map(
+        ([label, fontName, scale, drop, left, right], index) => {
+          const rise = label === '⋆' && variant === 'flat script' ? 0 : drop,
+            offset = label === '⊙' && variant === 'detached script' ? 6 : 0,
+            baseline = 700 + rise
+          return {
+            label,
+            fontName,
+            scale,
+            rise,
+            baseline,
+            sourceOffset: parts.slice(0, index).reduce((size, [text]) => size + text.length, 0),
+            bounds: [left + offset, baseline, right + offset, baseline + 8 * scale],
+            sourceIndices: [index]
+          }
+        }
+      )
+
+    expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+      variant === 'complete'
+        ? [
+            {
+              sourceOffset: source.indexOf('10'),
+              targetOffset: target.indexOf('10'),
+              label: '10M⋆/M⊙',
+              sourceIndices: [1, 2, 3, 4, 5],
+              baselineIndex: 2,
+              nativeScriptGroup: true,
+              needsInlineReflow: true
+            }
+          ]
+        : []
+    )
+    if (variant === 'changed target')
+      expect(resolveNestedScriptGroups(source, source, markers)).toHaveLength(1)
+  }
+)
+
+it.each(['raised', 'flat', 'changed exponent'] as const)(
+  'matches an explicit mass power to its complete native script group: %s',
+  (variant) => {
+    const expression = 'M⋆ = 6 × 10¹²M⊙'
+    const source = 'The sample mass is ' + expression + '.'
+    const expected = variant === 'changed exponent' ? '13' : '12'
+    const target = '测得 M⋆ = 6 × 10^' + expected + 'M⊙。'
+    const objects = [
+      ['M', 'M', 'CMMI10', 1, 0, 100, 110],
+      ['⋆', '⋆', 'CMMI7', 0.7, -1.5, 109.7, 113.2],
+      ['= 6', '= 6', 'CMR10', 1, 0, 118.2, 133.5],
+      ['×', '×', 'CMSY10', 1, 0, 137.9, 142.7],
+      ['10', '10', 'CMR10', 1, 0, 147.4, 156.1],
+      ['¹²', '12', 'CMR7', 0.7, 3.6, 157.3, 164.1],
+      ['M', 'M', 'CMMI10', 1, 0, 165.4, 175.4],
+      ['⊙', '⊙', 'CMSY7', 0.7, -1.5, 175.2, 180.3]
+    ] as const
+    let cursor = source.indexOf(expression)
+    const markers: ScientificScriptMarker[] = objects.map(
+      ([spelling, label, fontName, scale, offset, left, right], index) => {
+        const sourceOffset = source.indexOf(spelling, cursor)
+        cursor = sourceOffset + spelling.length
+        const rise = variant === 'flat' && label === '12' ? 0 : offset
+        const baseline = 700 + rise
+        return {
+          sourceOffset,
+          label,
+          fontName,
+          scale,
+          rise,
+          baseline,
+          bounds: [left, baseline, right, baseline + 7 * scale],
+          sourceIndices: [index]
+        }
+      }
+    )
+    expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+      variant === 'raised'
+        ? [
+            {
+              sourceOffset: source.indexOf(expression),
+              targetOffset: target.indexOf('M⋆'),
+              label: expression.replace('¹²', '^12'),
+              sourceLabel: expression,
+              sourceIndices: [0, 1, 2, 3, 4, 5, 6, 7],
+              baselineIndex: 0,
+              nativeScriptGroup: true,
+              needsInlineReflow: true
+            }
+          ]
+        : []
+    )
   }
 )

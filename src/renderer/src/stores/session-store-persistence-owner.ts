@@ -436,7 +436,9 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   }
 }
 
-const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
+export const hydrateSessionSummary = (
+  summary: Omit<SessionSummary, 'number'> & Pick<ChatSession, 'number'>
+): ChatSession => ({
   number: summary.number,
   id: summary.id,
   projectId: summary.projectId,

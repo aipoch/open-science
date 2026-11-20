@@ -589,9 +589,6 @@ export function createResearchVideoPresentationOwner(options: {
       const hasBuiltOutput =
         resumable?.built &&
         (!options.reviewPlayer || request.mode === 'operation-replay' || resumable.visualChecked) &&
-        (!options.reviewScript ||
-          request.mode === 'operation-replay' ||
-          resumable.built.scriptScore === 9) &&
         resumable.outputFingerprint &&
         resumable.outputFingerprint ===
           (await diskStep(() =>
@@ -698,7 +695,7 @@ export function createResearchVideoPresentationOwner(options: {
           // first so that a cancellation during this write cannot remove it in finally.
           checkpointStarted = true
         })
-        for (const file of ['files', 'anims', 'libs', 'video.json', 'output'])
+        for (const file of ['files', 'anims', 'libs', 'video.json', 'output', 'best-layout'])
           await diskStep(() => rm(join(job!, file), { recursive: true, force: true }))
         await diskStep(() => mkdir(join(job!, 'files')))
         const stagedChecksums: string[] = []

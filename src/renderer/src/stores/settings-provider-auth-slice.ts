@@ -36,6 +36,7 @@ export type ProviderAuthActions = {
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
+  addOnboardingKiloProvider: () => Promise<void>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
   codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
@@ -77,6 +78,7 @@ type ProviderAuthCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'codeBuddyAccount'
@@ -182,11 +184,21 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   },
 
   saveAndActivateProvider: async (request) => {
-    const result = await get().saveProvider(request)
-    if (result.providerId) {
-      await get().setActiveProvider(result.providerId, normalizeProviderModel(request.model))
+    if (request.type !== 'official' && request.type !== 'custom') {
+      const result = await get().saveProvider(request)
+      if (result.providerId && result.validation.ok && result.validation.applied !== false)
+        await get().setActiveProvider(result.providerId, normalizeProviderModel(request.model))
+      return result
     }
-    return result
+    const { providerId = '', validation } = await get().saveValidatedProvider(request)
+    if (providerId && validation.ok && validation.applied !== false)
+      await get().setActiveProvider(providerId, normalizeProviderModel(request.model))
+    return { providerId, validation }
+  },
+
+  addOnboardingKiloProvider: async () => {
+    reconcileSnapshot(await getCommands().addOnboardingKiloProvider())
+    void refreshPreflight().catch(() => undefined)
   },
 
   validateProvider: async (request) => {

@@ -57,7 +57,14 @@ describe('Lab loopback callback host', () => {
     const pending = host.waitFor('state-1', 5_000)
     const response = await fetch(`${redirectUri}?code=code_1&state=state-1`)
     expect(response.status).toBe(200)
+    expect(await response.text()).toContain('window.close()')
     await expect(pending).resolves.toEqual({ code: 'code_1' })
+
+    const missingCode = host.waitFor('state-empty', 5_000)
+    const invalid = await fetch(`${redirectUri}?state=state-empty`)
+    expect(invalid.status).toBe(400)
+    expect(await invalid.text()).not.toContain('window.close()')
+    await expect(missingCode).resolves.toEqual({})
 
     const wrong = host.waitFor('state-2', 5_000)
     const rejected = await fetch(`${redirectUri}?code=code_2&state=state-wrong`)

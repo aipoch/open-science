@@ -266,18 +266,20 @@
         capBox.replaceChildren(...chunk.words.map(([word]) => h('span', { class: 'w on' }, word)))
         const [x, y, w, height] = rectOf(capBox)
         const rows = new Set([...capBox.children].map((span) => span.offsetTop))
-        if (
-          rows.size > 1 ||
-          x < 24 ||
-          y < 24 ||
-          x + w > W - 24 ||
-          y + height > H - 24 ||
-          capBox.scrollWidth > capBox.clientWidth + 2
-        ) {
+        // A readable wrap or a narrow margin alone should not spend a repair attempt.
+        const clipped =
+          x < 0 ||
+          y < 0 ||
+          x + w > W ||
+          y + height > H ||
+          capBox.scrollWidth > capBox.clientWidth + 2 ||
+          capBox.scrollHeight > capBox.clientHeight + 2
+        if (clipped || rows.size > 1 || x < 24 || y < 24 || x + w > W - 24 || y + height > H - 24) {
           const time = chunk.words[0][1]
           const sc = TL.scenes[sceneAt(time)]
           issues.push({
             scene: sc.id,
+            textLayout: clipped,
             line: sc.lines.findIndex((line) => time <= sc.start + line.t1 + 0.001),
             message:
               'This caption does not fit on one row inside the safe area: "' +
@@ -291,6 +293,38 @@
     }
     return issues
   }
+  // Only measure glyph ranges when two visible panel boxes intersect.
+  window.__filmTextOverlaps = (first, second) => {
+    const textRects = (id) => {
+      const el = stage.querySelector('[data-box="' + CSS.escape(id) + '"]')
+      if (!el) return []
+      const nodes = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const range = document.createRange()
+      const rects = []
+      while (nodes.nextNode()) {
+        if (
+          !nodes.currentNode.textContent.trim() ||
+          !nodes.currentNode.parentElement.checkVisibility({
+            opacityProperty: true,
+            visibilityProperty: true
+          })
+        )
+          continue
+        range.selectNodeContents(nodes.currentNode)
+        rects.push(...range.getClientRects())
+      }
+      return rects
+    }
+    const a = textRects(first)
+    const b = textRects(second)
+    return a.some((r) =>
+      b.some((s) => {
+        const w = Math.min(r.right, s.right) - Math.max(r.left, s.left)
+        const h = Math.min(r.bottom, s.bottom) - Math.max(r.top, s.top)
+        return w > 0 && h > 0 && w * h > 0.15 * Math.min(r.width * r.height, s.width * s.height)
+      })
+    )
+  }
   window.__layout = () => {
     const out = []
     stage.querySelectorAll('[data-box]').forEach((el) => {
@@ -302,8 +336,8 @@
           (n) =>
             n.children.length === 0 &&
             n.textContent.trim() &&
-            n.scrollWidth > n.clientWidth + 2 &&
-            getComputedStyle(n).overflow !== 'visible'
+            ((n.scrollWidth > n.clientWidth + 2 && getComputedStyle(n).overflowX !== 'visible') ||
+              (n.scrollHeight > n.clientHeight + 2 && getComputedStyle(n).overflowY !== 'visible'))
         )
         .map((n) => n.textContent.trim().slice(0, 40))
       out.push({ id: el.dataset.box, rect: rectOf(el), overflow: over })

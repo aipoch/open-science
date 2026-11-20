@@ -19,6 +19,49 @@ const healthy = (platform: 'win32' | 'linux', executionScope: string): MemoryPol
 })
 
 describe('host and original execution-domain admission', () => {
+  it('allows fresh macOS warnings and recovery but refuses critical, invalidated and stale samples', async () => {
+    let now = 0
+    let pressureLevel: 'normal' | 'warning' | 'critical' = 'warning'
+    let sequence = 1
+    const policy = new MemoryPolicyService({
+      adapter: {
+        platform: 'darwin',
+        sample: async () => ({
+          platform: 'darwin',
+          source: 'darwin-sysctl-dispatch',
+          executionScope: 'darwin:host',
+          facts: { pressureLevel, pressureEventSequence: sequence }
+        })
+      },
+      now: () => now,
+      wallNow: () => now
+    })
+    const onRejected = vi.fn()
+    const admission = createNotebookExecutionAdmission({ policy: async () => policy, onRejected })
+    try {
+      await admission.prepare('dispatch')
+      admission.assertCurrent('dispatch')
+      expect(onRejected).not.toHaveBeenCalled()
+
+      pressureLevel = 'critical'
+      sequence++
+      policy.invalidate({ pressureLevel })
+      expect(() => admission.assertCurrent('dispatch')).toThrow('NOTEBOOK_MEMORY_UNAVAILABLE')
+      await expect(admission.prepare('dispatch')).rejects.toThrow('NOTEBOOK_MEMORY_PRESSURE')
+
+      pressureLevel = 'normal'
+      policy.invalidate({ pressureLevel })
+      await admission.prepare('dispatch')
+      expect(policy.currentState().reason.code).toBe('mac-memory-recovering')
+      admission.assertCurrent('dispatch')
+
+      now = 2001
+      expect(() => admission.assertCurrent('dispatch')).toThrow('NOTEBOOK_MEMORY_UNAVAILABLE')
+    } finally {
+      policy.dispose()
+    }
+  })
+
   it('checks host freshness again after awaiting the guest before the final dispatch commit', async () => {
     let now = 0
     const host = new MemoryPolicyService({

@@ -179,15 +179,21 @@ export const resolveNativeLatinAccents = (objects) => {
   return result
 }
 
-// A separately painted CMSY slash must move with its complete native equality.
+// A separately painted math-symbol slash moves with its complete native equality.
 // Neither a detached mark nor source spelling alone proves a negated relation.
-export const resolveNativeNegatedEqualities = (objects) => {
+export const resolveNativeNegatedEqualities = (objects, allowLegacySlash = false) => {
   const result = [],
     used = new Set()
   for (const slash of objects) {
+    const latinModern = /^(?:[A-Z]{6}\+)?LMMathSymbols10-Regular$/u.test(slash.fontName ?? '')
     if (
-      slash.text.trim() !== '\u0338' ||
-      !/^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(slash.fontName ?? '') ||
+      (slash.text.trim() !== '\u0338' &&
+        !(
+          allowLegacySlash &&
+          slash.text.trim() === '6' &&
+          /^(?:[A-Z]{6}\+)?CMSY10$/u.test(slash.fontName ?? '')
+        )) ||
+      (!latinModern && !/^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(slash.fontName ?? '')) ||
       !(slash.size > 0) ||
       !Number.isFinite(slash.baseline)
     )
@@ -196,7 +202,11 @@ export const resolveNativeNegatedEqualities = (objects) => {
       if (
         base.i !== slash.i + 1 ||
         base.text.trim() !== '=' ||
-        !/^(?:[A-Z]{6}\+)?CMR(?:5|6|7|8|9|10|12)$/u.test(base.fontName ?? '') ||
+        !(
+          latinModern
+            ? /^(?:[A-Z]{6}\+)?LMRoman10-Regular$/u
+            : /^(?:[A-Z]{6}\+)?CMR(?:5|6|7|8|9|10|12)$/u
+        ).test(base.fontName ?? '') ||
         base.size !== slash.size ||
         !Number.isFinite(base.baseline) ||
         Math.abs(base.baseline - slash.baseline) > 0.01

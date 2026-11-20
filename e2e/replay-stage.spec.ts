@@ -11,8 +11,10 @@ import {
 import { createServer, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import type { ReplayEvidenceReference } from '../src/shared/replay'
 
 type ReplayFixtureWindow = Window & {
+  discussionCapture: { stepId: string; evidence: ReplayEvidenceReference[] }
   replayFixture: {
     seek: (time: number) => void
     prepare: (mode: string, timeout: number) => void
@@ -108,6 +110,67 @@ const seek = async (page: Page, time: number): Promise<void> => {
 }
 const chart =
   '<svg xmlns="http://www.w3.org/2000/svg" width="560" height="300"><rect width="560" height="300" fill="white"/><path d="M30 260L280 40L530 200" fill="none" stroke="#167f85" stroke-width="12"/></svg>'
+
+// These presentation controls also run in the Web UI; no Electron fixture is needed.
+base(
+  'historical Ask icons appear on hover, keyboard focus and touch without moving records',
+  async ({ page }, info) => {
+    await page.goto(`${url}?panel=1`)
+    const panel = page.getByTestId('replay-panel')
+    await panel.getByRole('slider', { name: 'Replay progress' }).focus()
+    await page.keyboard.press('End')
+    const record = panel.locator('[data-replay-step="question"]')
+    const ask = record.getByRole('button', { name: 'Ask', exact: true })
+    await page.mouse.move(0, 0)
+    await expect(ask).toHaveCSS('opacity', '0')
+    await expect(ask).toHaveCSS('pointer-events', 'none')
+    await expect(ask).toHaveText('')
+    const before = await record.boundingBox()
+    await record.hover()
+    await expect(ask).toHaveCSS('opacity', '1')
+    expect(await record.boundingBox()).toEqual(before)
+    await ask.hover()
+    await expect(page.getByRole('tooltip', { name: 'Ask about this step' })).toBeVisible()
+    await ask.click()
+    expect(
+      await page.evaluate(() => (window as unknown as ReplayFixtureWindow).discussionCapture.stepId)
+    ).toBe('question')
+    await page.mouse.move(0, 0)
+    await expect(ask).toHaveCSS('opacity', '0')
+    await record.focus()
+    await page.keyboard.press('Tab')
+    await expect(record.locator('time')).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(ask).toBeFocused()
+    await expect(ask).toHaveCSS('opacity', '1')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('textbox', { name: 'Discussion question' })).toBeFocused()
+
+    await panel.getByRole('button', { name: 'Notebook', exact: true }).click()
+    const notebook = panel.locator('[data-replay-run-item="run-1"]')
+    const askRun = notebook.getByRole('button', { name: 'Ask', exact: true })
+    await page.mouse.move(0, 0)
+    await expect(askRun).toHaveCSS('opacity', '0')
+    await notebook.hover()
+    await expect(askRun).toHaveCSS('opacity', '1')
+    await askRun.click()
+    expect(
+      await page.evaluate(
+        () => (window as unknown as ReplayFixtureWindow).discussionCapture.evidence
+      )
+    ).toEqual([expect.objectContaining({ kind: 'notebook-run', id: 'run-1' })])
+
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await page.mouse.move(0, 0)
+    await expect(askRun).toHaveCSS('opacity', '1')
+    await expect(askRun).toHaveCSS('width', '44px')
+    await expect(askRun).toHaveCSS('height', '44px')
+    expect(await notebook.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    await panel.screenshot({ path: info.outputPath('replay-touch-ask.png') })
+    await cdp.detach()
+  }
+)
 
 test('independent 1280×720 Stage paints the same frame by sequential advance and direct seek', async ({
   page,

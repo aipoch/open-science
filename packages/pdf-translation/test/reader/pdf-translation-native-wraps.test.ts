@@ -23,6 +23,61 @@ const extract = (items: PdfLayoutTextItem[]): ReturnType<typeof groupPdfTranslat
 const sources = (items: PdfLayoutTextItem[]): string[] =>
   extract(items).units.map((unit) => unit.source)
 
+it.each([false, true])('joins the measurement with its panel caption (shifted=%s)', (shifted) => {
+  const items = [
+    item('Figure 2.', 50, 391, 40, 9, 'label', false),
+    item('(Top Left) Filtered observations across the field. (Top', 95, 391, 455, 9, 'caption'),
+    item(
+      'Center) A map of the same area. (Top Right) Objects located within',
+      50,
+      402,
+      500,
+      9,
+      'caption'
+    ),
+    item('3', shifted ? 52 : 50, 413, 4.5, 9, 'caption', false),
+    item('r', 54.5, 413, 4.5, 9, 'math', false),
+    item('m', 59, 414, 4, 6, 'script', false),
+    item('≈', 67, 413, 7, 9, 'symbol', false),
+    item('2.5', 77, 413, 11.5, 9, 'caption', false),
+    item('′', 88.5, 409, 2, 6, 'script', false),
+    item(
+      'of the center (left) and in a matching control area (right). We mark one point with a',
+      94,
+      413,
+      417,
+      9,
+      'caption',
+      false
+    ),
+    item('⋆', 514, 413, 6, 12, 'symbol', false),
+    item('due to', 524, 413, 26, 9, 'caption'),
+    item(
+      'its influence on the fit. (Bottom Left) Residual plot for the selected observations.',
+      50,
+      424,
+      500,
+      9,
+      'caption'
+    ),
+    item(
+      '(Bottom Center) Results from a second pass. (Bottom Right) Distribution of all values.',
+      50,
+      435,
+      500,
+      9,
+      'caption'
+    ),
+    item('ACKNOWLEDGMENTS', 230, 465, 140, 10, 'section')
+  ].map((run) => ({ ...run, fontVertical: false, fontAscent: 0.89, fontDescent: -0.216 }))
+  const { units } = extract(items)
+  const caption = units.find((unit) => unit.items.includes('1:0'))
+  expect(caption?.source.includes('located within 3rm ≈ 2.5′')).toBe(!shifted)
+  expect(caption?.source.includes('due to its influence')).toBe(!shifted)
+  expect(caption?.items).toEqual(items.slice(0, shifted ? 3 : 14).map((_, index) => `1:${index}`))
+  expect(units.find((unit) => unit.items.includes('1:14'))?.source).toBe('ACKNOWLEDGMENTS')
+})
+
 it.each(['overprint', 'separate letter', 'ordinary next row'])(
   'isolates the component rights notice only with a closed abstract and code row (%s)',
   (proof) => {
@@ -3620,3 +3675,181 @@ it('retains several complete sentences within a numbered method record', () => {
   expect(first.source).toContain('measured. It then compares')
   expect(first.items).not.toContain('1:3')
 })
+
+it.each(['wrapped', 'no abstract witness', 'no new paragraph'])(
+  'keeps a punctuated final word with its full-width keyword list (%s)',
+  (condition) => {
+    const runs = [
+      item(
+        condition === 'no abstract witness'
+          ? 'The measured values are accurate within expected thresholds in the report.'
+          : 'The measured values are accurate within reference intervals in the report.',
+        83,
+        325,
+        313,
+        9,
+        'body',
+        false
+      ),
+      item('Keywords:', 58, 365, 46, 10, 'label', false),
+      { ...item(' ', 104, 365, 6, 10, 'label', false), height: 0 },
+      item('Measurements, temperature, accuracy, calibration, reference', 110, 365, 438, 10),
+      item('intervals.', 58, 377, 29, 10),
+      item(
+        'The following paragraph explains the equipment used for the measurements.',
+        condition === 'no new paragraph' ? 58 : 70,
+        401,
+        270,
+        10,
+        'body',
+        false
+      )
+    ].map((run) => ({ ...run, fontAscent: 0.68, fontDescent: -0.22, fontVertical: false }))
+    const result = extract(runs)
+    const owner = result.units.find((unit) => unit.items.includes('1:1'))
+    expect(owner?.items).toEqual(condition === 'wrapped' ? ['1:1', '1:3', '1:4'] : ['1:1', '1:3'])
+    if (condition === 'wrapped') expect(owner?.source).toMatch(/reference intervals\.$/u)
+    expectNativeOwnership(result, runs)
+  }
+)
+
+it.each(['wrapped', 'separate lane'])(
+  'keeps a wrapped Ångström resolution with its native prose (%s)',
+  (shape) => {
+    const x = shape === 'wrapped' ? 50 : 75
+    const runs = [
+      item('The first measurement uses the stable set of optical components.', 59, 600, 500, 10),
+      item(
+        'We repeated the acquisition using the same settings with a resolution of',
+        50,
+        612.5,
+        510,
+        10
+      ),
+      item('2.6 ˚', x, 625, 23.5, 10, 'body', false),
+      item('A.', x + 16, 625, 10.2, 10),
+      item(
+        'The next paragraph reports an independent test of the calibration.',
+        59,
+        637.5,
+        500,
+        10
+      ),
+      item('This measurement used a separate reference for the comparison.', 50, 650, 510, 10)
+    ].map((run) => ({ ...run, fontAscent: 0.69, fontDescent: -0.21, fontVertical: false }))
+    const result = extract(runs)
+    const owner = result.units.find((unit) => unit.items.includes('1:1'))
+    expect(owner?.items.includes('1:2')).toBe(shape === 'wrapped')
+    expect(owner?.items.includes('1:3')).toBe(shape === 'wrapped')
+    expect(owner?.items.includes('1:4')).toBe(false)
+    expectNativeOwnership(result, runs)
+  }
+)
+
+it.each(['wrapped', 'unrelated field'])(
+  'keeps the last word of a wrapped keyword taxonomy with its list (%s)',
+  (shape) => {
+    const runs = [
+      item('Key words:', 42, 393, 47, 10, 'label', false),
+      { ...item(' ', 89, 393, 6, 10, 'label', false), height: 0 },
+      item(
+        'methods: fitting – equipment: calibration – materials: sampling – controls: response' +
+          (shape === 'wrapped' ? ' and' : ''),
+        95,
+        393,
+        451,
+        10
+      ),
+      item('uncertainty', 42, 405.5, 32, 10),
+      item('1 INTRODUCTION', 42, 453, 80, 9, 'label'),
+      item('In the following section we discuss the setup for the measurements.', 52, 467, 390, 9)
+    ].map((run) => ({ ...run, fontAscent: 0.69, fontDescent: -0.21, fontVertical: false }))
+    const result = extract(runs)
+    const owner = result.units.find((unit) => unit.items.includes('1:2'))
+    expect(owner?.items.includes('1:3')).toBe(shape === 'wrapped')
+    expect(owner?.items.includes('1:4')).toBe(false)
+    expectNativeOwnership(result, runs)
+  }
+)
+
+it.each([true, false])(
+  'joins a Roman-numbered title only on its native column center (%s)',
+  (centered) => {
+    const runs = [
+      item('II.', 324, 600, 15, 9, 'heading', false),
+      item(' ', 339, 600, 10, 9, 'heading', false),
+      item('COMPARISON OF THE RESULTS WITH', 349, 600, 206, 9, 'heading'),
+      item('MEASUREMENTS', centered ? 400 : 412, 610.5, 79, 9, 'heading', false),
+      item('', 479, 610.5, 0, 9, 'heading'),
+      item('During the final inspection we compared each measured range', 327, 636, 235, 10),
+      item('with the predicted interval for the system.', 317, 647.5, 155, 10)
+    ].map((run) => ({ ...run, fontVertical: false, fontAscent: 0.8, fontDescent: -0.2 }))
+    const { units } = extract(runs)
+    const title = units.find((unit) => unit.items.includes('1:0'))
+    expect(title?.items.includes('1:3')).toBe(centered)
+    if (centered) {
+      expect(title?.source).toBe('II. COMPARISON OF THE RESULTS WITH MEASUREMENTS')
+      expect(title?.fragments).toHaveLength(2)
+    }
+    expect(units.find((unit) => unit.items.includes('1:5'))?.items).toEqual(['1:5', '1:6'])
+  }
+)
+
+it.each(['matching sequence', 'skipped number', 'different typeface', 'off center'])(
+  'joins a series of two-line native Roman titles only with a shared heading layout (%s)',
+  (fixture) => {
+    const titles = [
+      ['OPTICAL MAPPING OF THE', 'SAMPLE'],
+      ['CALIBRATION AND MEASUREMENT', 'RANGE'],
+      ['LIGHT SOURCES AND', 'DETECTORS']
+    ]
+    const items = titles
+      .flatMap(([title, tail], index) => {
+        const marks = ['I.', 'II.', fixture === 'skipped number' ? 'IV.' : 'III.']
+        const y = 130 + 130 * index
+        const fullWidth = index === 2 ? 160 : 206
+        const start = (352 - fullWidth) / 2
+        const markWidth = 7 + 4 * index
+        const font = index === 2 && fixture === 'different typeface' ? 'alternate' : 'heading'
+        return [
+          item(marks[index], start, y, markWidth, 9, font, false),
+          { ...item(' ', start + markWidth, y, 10, 9, font, false), height: 0 },
+          item(title, start + markWidth + 10, y, fullWidth - markWidth - 10, 9, font),
+          item(
+            tail,
+            index === 2 && fixture === 'off center' ? 156 : 149,
+            y + 10.5,
+            54,
+            9,
+            font,
+            false
+          ),
+          item('', 203, y + 10.5, 0, 9, font),
+          item('A stable reference measures the range of each sensor', 63, y + 37, 236, 10),
+          item(
+            'throughout the experiment with enough power to establish the baseline.',
+            53,
+            y + 48.5,
+            244,
+            10
+          )
+        ]
+      })
+      .map((run) => ({ ...run, fontVertical: false, fontAscent: 0.8, fontDescent: -0.2 }))
+    const result = extract(items)
+    for (const [index, [title, tail]] of titles.entries()) {
+      const mark = index * 7
+      const owner = result.units.find((u) => u.items.includes(`1:${mark}`))
+      expect(owner?.items.includes(`1:${mark + 3}`)).toBe(fixture === 'matching sequence')
+      if (fixture === 'matching sequence') {
+        expect(owner?.source).toBe(`${'I'.repeat(index + 1)}. ${title} ${tail}`)
+        expect(owner?.fragments).toHaveLength(2)
+      }
+      expect(result.units.find((u) => u.items.includes(`1:${mark + 5}`))?.items).toEqual([
+        `1:${mark + 5}`,
+        `1:${mark + 6}`
+      ])
+    }
+    expectNativeOwnership(result, items)
+  }
+)

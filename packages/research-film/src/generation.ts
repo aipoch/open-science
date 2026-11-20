@@ -82,7 +82,7 @@ export class ResearchVideoBuildCleanupError extends Error {
   }
 }
 
-const GENERATION_IDLE_TIMEOUT_MS = 4 * 60_000
+const GENERATION_IDLE_TIMEOUT_MS = 8 * 60_000
 
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {

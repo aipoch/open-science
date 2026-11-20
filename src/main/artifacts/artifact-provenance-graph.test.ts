@@ -187,19 +187,33 @@ const recipeRun = (
 
 describe('artifact provenance graph', () => {
   it('retains advisory cross-language file dependencies from notebook projection', () => {
+    const path = 'outputs/intermediate.csv'
+    const observed = (relation: string, id: string): Record<string, unknown> => ({
+      relation,
+      relativePath: path,
+      pathPortability: 'relative',
+      authority: 'advisory',
+      generation: generation(id, path, checksum('a'))
+    })
     const graph = sealArtifactProvenanceGraph({
       target: target(),
       notebookActivities: [
-        notebookActivity('run-1', 1, []),
-        notebookActivity('run-2', 2, [
-          {
-            relation: 'created',
-            relativePath: 'result.csv',
-            pathPortability: 'relative',
-            authority: 'advisory',
-            generation: generation('g-target', 'result.csv', checksum('b'))
-          }
-        ])
+        notebookActivity('run-1', 1, [observed('created', 'written')]),
+        notebookActivity(
+          'run-2',
+          2,
+          [
+            observed('present-before', 'initial'),
+            {
+              relation: 'created',
+              relativePath: 'result.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-target', 'result.csv', checksum('b'))
+            }
+          ],
+          { fileReads: 'partial', state: 'partial' }
+        )
       ],
       computeActivities: [],
       notebookDependencies: {
@@ -215,12 +229,22 @@ describe('artifact provenance graph', () => {
               producerRunId: 'run-1',
               path: 'outputs/intermediate.csv',
               checksum: checksum('a'),
-              confidence: 'verified'
+              generationId: 'written',
+              confidence: 'advisory'
             }
           ]
         }
       }
     })
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        kind: 'used',
+        activityId: 'run-2',
+        entityId: 'file-generation:written',
+        observedGenerationId: 'initial',
+        authority: 'advisory'
+      })
+    )
     expect(graph.edges).toContainEqual({
       kind: 'depends-on',
       activityId: 'run-2',

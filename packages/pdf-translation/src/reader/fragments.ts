@@ -27,7 +27,22 @@ export function pdfTranslationLayoutFragments(
       width: Math.max(a.x + a.width, b.x + b.width) - x,
       height: Math.max(a.y + a.height, b.y + b.height) - y
     }
-    let otherContent = false
+    const intersects = (candidate: typeof rect, other: typeof rect): boolean =>
+      candidate.x < other.x + other.width &&
+      candidate.x + candidate.width > other.x &&
+      candidate.y < other.y + other.height &&
+      candidate.y + candidate.height > other.y
+    // Widening a row can cover a same-unit expression retained on its left.
+    // Keep the native regions separate when the union would claim new ink.
+    let otherContent = result
+      .slice(0, -1)
+      .some(
+        (earlier) =>
+          earlier.pageNumber === fragment.pageNumber &&
+          intersects(rect, earlier.rect) &&
+          !intersects(a, earlier.rect) &&
+          !intersects(b, earlier.rect)
+      )
     for (const other of source.units) {
       if (other === unit) continue
       for (const f of other.fragments) {

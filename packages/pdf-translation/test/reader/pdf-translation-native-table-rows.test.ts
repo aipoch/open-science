@@ -983,3 +983,151 @@ test.each(['symbolic', 'unclosed', 'mixed', 'drift'])(
     )
   }
 )
+
+test.each([0, 4])('keeps a complete comparison grid native (right rail shift %s)', (shift) => {
+  const native = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    eol = true,
+    font = 9,
+    face = 'table'
+  ): PdfLayoutTextItem => ({ ...item(text, x, y, width, font, eol, face), fontVertical: false })
+  const pairs = [
+    ['Sampling interval', 'Reported estimate'],
+    ['Peak measurement', 'Estimated peak'],
+    ['Signal variation', 'Expected variation'],
+    ['Normalized score', 'Adjusted score'],
+    ['Initial reading', 'Initial model state'],
+    ['Station calibration', 'Model calibration'],
+    ['Observed residual', 'Model residual'],
+    ['Baseline correction', 'Drift correction'],
+    ['Selection criterion', 'Selection threshold'],
+    ['Mean deviation', 'Predicted deviation'],
+    ['Reference sample', 'Reference prediction']
+  ]
+  const blocks = extract([
+    native(
+      'The discussion continues independently in this column.',
+      53.7,
+      205,
+      228,
+      true,
+      10,
+      'body'
+    ),
+    native(
+      'The assumptions can be tested by comparing the two estimates.',
+      53.7,
+      217,
+      232,
+      true,
+      10,
+      'body'
+    ),
+    native('TABLE II. Monthly samples versus quarterly estimates.', 316.8, 218, 246),
+    native('The left side lists the measured quantities used in the test.', 317, 228.5, 244),
+    native('The right side shows the outcomes of the model.', 317, 239, 187),
+    native('Measured quantity', 319, 258, 85, false),
+    native('Predicted quantity', 449, 258, 92),
+    ...pairs.flatMap(([left, right], row) => {
+      const y = 271 + row * 12.85
+      if (row === 3)
+        return [
+          native(left, 319, y, 87, false),
+          native('a', 449, y, 8, false, 9, 'formula'),
+          native('m', 457, y + 1, 4, true, 6, 'script')
+        ]
+      return [native(left, 319, y, 90, false), native(right, 449 + (row === 5 ? shift : 0), y, 104)]
+    }),
+    native(
+      'We next consider how these predictions change under different conditions.',
+      317,
+      439,
+      245,
+      true,
+      10,
+      'body'
+    ),
+    native(
+      'This comparison is independent of the preceding measurement protocol.',
+      317,
+      451,
+      246,
+      true,
+      10,
+      'body'
+    )
+  ])
+  const table = blocks.filter(({ items }) =>
+    items.some((id) => +id.split(':')[1] >= 5 && +id.split(':')[1] < 30)
+  )
+  assert.equal(table.flatMap(({ items }) => items).length, 25)
+  const headers = table.filter(({ items }) => items.includes('1:5') || items.includes('1:6'))
+  assert.ok(headers.length)
+  assert.ok(headers.every(({ sourceOnly }) => sourceOnly === (shift ? undefined : true)))
+  if (!shift) assert.ok(table.every(({ sourceOnly }) => sourceOnly))
+  for (const prefix of ['TABLE II.', 'We next consider'])
+    assert.equal(blocks.find(({ source }) => source.startsWith(prefix))?.sourceOnly, undefined)
+})
+
+test.each([0, 4])(
+  'separates narrow headers on measured right-aligned rails (drift %s)',
+  (drift) => {
+    const native = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'body',
+      hasEOL = false,
+      font = 12
+    ): PdfLayoutTextItem => ({
+      ...item(str, x, y, width, font, hasEOL, fontName),
+      fontVertical: false
+    })
+    const blocks = extract([
+      native('The reduced program contains the following blocks:', 72, 307, 330, 'body', true),
+      native('Provenance', 156, 329, 61),
+      native('Block count', 271, 329, 90),
+      native('Maximum size', 371, 329, 68.5, 'body', true),
+      native('N', 156, 349, 11.3, 'variable'),
+      native('5', 167.3, 350.8, 4.2, 'script', false, 8),
+      native(',', 171.5, 350.8, 2.35, 'script', false, 8),
+      native('∅', 173.85, 350.8, 6.2, 'script', false, 8),
+      native('26', 349.3, 349, 11.7, 'numeral'),
+      native('140', 421.9, 349, 17.6, 'numeral', true),
+      native('N', 156, 363, 11.3, 'variable'),
+      native('5,D', 167.3, 364.8, 11, 'script', false, 8),
+      native('with', 184, 363, 23),
+      native('|', 212, 363, 3.3, 'variable'),
+      native('D', 215.3, 363, 9.7, 'variable'),
+      native('|', 225, 363, 3.3, 'variable'),
+      native('= 2', 232, 363, 18.3, 'numeral'),
+      native('100', 343.4, 363, 17.6, 'numeral'),
+      native('90', 427.8 + drift, 363, 11.7, 'numeral', true),
+      native('Simple restrictions', 156, 377, 105),
+      native('3121', 337.6, 377, 23.4, 'numeral'),
+      native('1', 433.6, 377, 5.9, 'numeral', true),
+      native(
+        'Exact reduction preserves the same optimum in every case.',
+        72,
+        398,
+        410,
+        'body',
+        true
+      )
+    ])
+    const headers = blocks.filter(({ items }) => items.includes('1:2') || items.includes('1:3'))
+    assert.deepEqual(
+      headers.map(({ source }) => source),
+      drift ? ['Block count Maximum size'] : ['Block count', 'Maximum size']
+    )
+    assert.ok(headers.every(({ tableCell }) => tableCell))
+    assert.deepEqual(
+      headers.flatMap(({ items }) => items),
+      ['1:2', '1:3']
+    )
+  }
+)

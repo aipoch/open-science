@@ -7,7 +7,7 @@ import { defineConfig } from 'vite'
 
 const fixtureRoot = resolve('e2e/browser/fixture')
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: fixtureRoot,
   resolve: {
     alias: {
@@ -34,12 +34,15 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       // New regression pages must be emitted too, rather than silently serving index.html.
-      input: readdirSync(fixtureRoot, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
-        .map((entry) => resolve(fixtureRoot, entry.name))
-        .sort()
+      input:
+        mode === 'citation-graph'
+          ? resolve(fixtureRoot, 'literature-recovery.html')
+          : readdirSync(fixtureRoot, { withFileTypes: true })
+              .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
+              .map((entry) => resolve(fixtureRoot, entry.name))
+              .sort()
     }
   },
   preview: { host: '127.0.0.1', port: 4178, strictPort: true },
   server: { host: '127.0.0.1', port: 4178, strictPort: true, fs: { allow: [process.cwd()] } }
-})
+}))

@@ -105,6 +105,8 @@ it('times out a build worker that stops sending progress', async () => {
   try {
     await building.promise
     await vi.advanceTimersByTimeAsync(4 * 60_000)
+    expect(worker.terminate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
     expect(worker.terminate).toHaveBeenCalledOnce()
     await result
     expect(failed).toHaveBeenCalledWith(
@@ -238,7 +240,7 @@ it('bounds a stuck request and fences the generator until the child reports exit
     })
     const result = generate(input(root), controller.signal).catch((error) => error)
     await entered.promise
-    await vi.advanceTimersByTimeAsync(180_000)
+    await vi.advanceTimersByTimeAsync(6 * 60_000)
     expect(child.disconnect).toHaveBeenCalledOnce()
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     await vi.advanceTimersByTimeAsync(5000)

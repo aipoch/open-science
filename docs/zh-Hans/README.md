@@ -53,18 +53,18 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.3.0 更新
+### 💡 AIPOCH Open-Science v1.3.1 更新
 
-_2026 年 11 月 18 日_
+_2026 年 11 月 19 日_
 
-- **定时研究任务**：设置周期性或一次性计划，自动启动会话和 Notebook 任务——每次运行都在工作区中打开并保留独立记录。
-- **图像生成与编辑**：使用已配置的提供商生成图像，并通过后续编辑迭代；每个版本都可对比、回溯和复用。
-- **可编辑的演示文稿**：PowerPoint 文件可直接编辑文本——字体、字号、颜色和对齐——幻灯片结构保持不变。
-- **影片重放**：将影片操作重放到新分支并获得独立输出，从会话菜单直接打开影片，生成前即可查看 token 用量。
-- **更智能的代理提问**：代理请求输入时，各选项会说明取舍，让你了解后果后再做决定。
-- **可靠性与速度**：长会话历史增量持久化，中断的影片与打包传输可自行恢复，Windows 安装与更新更精简，应用启动更快进入项目。
+- **网页搜索与页面阅读**：内置 Agent 可以搜索网页并阅读公开页面；搜索审批会以易读的卡片展示查询内容，引用的来源会随对话保留。
+- **引用图谱**：以交互式图谱探索论文的参考文献与施引论文——可重新聚焦到任一相关论文，并按引用方向筛选。
+- **无需打开应用即可使用 MCP**：通过 MCP 连接外部 Agent 会自动启动 Open-Science 服务，设置选项涵盖 30 多种 Agent 与客户端。
+- **Lab 模型与组织案例**：登录 Lab 账号即可使用组织为你分配的模型，并可搜索、导入或与团队成员共享研究案例。
+- **最新的模型列表与更清晰的错误**：可在设置中刷新服务商的模型列表；服务商请求失败时可查看原因与下一步操作。
+- **从 1.3.0 更新**：如果 1.3.0 的更新程序提示有其他进程正在使用安装目录，请完全退出 Open-Science 并手动安装已下载的安装包。
 
-[查看 v1.3.0 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[查看 v1.3.1 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
 
 <a id="share-your-research"></a>
 
@@ -172,6 +172,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 根据文献回答问题 | LitQA2-FullText        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 综合带引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | ASI-Bench              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 复现 ML/NLP 实验 | AstaBench SUPER-Expert | 使用 DeepSeek Flash/Max 在 45 题本地测试中取得 **46.30%** output_match/mean。                                                               |
 | 执行科研工作流   | TB-Science 0.1         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
 | 分析生物医学数据 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
 | 复现已发表的结果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
@@ -182,7 +183,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 
 **评测范围：** 报告涵盖 2026 年 8 月至 11 月、使用所列模型与数据划分开展的本地或内部测试，并未针对当前版本重新运行。参考成绩是历史快照，并非实时排名。不同基准系列的分数不能直接比较，数值差距不代表统计显著性。
 
-评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
+评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。另见 [SUPER-Expert 本地测试报告](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)。
 
 [CORE-Bench-Hard · 复现评测报告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

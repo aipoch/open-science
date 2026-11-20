@@ -63,6 +63,7 @@ export async function reportScheduledOutcome({
   runAttempt = 1,
   headSha,
   conclusion,
+  failureDetails,
   label = DEFAULT_LABEL,
   log = console.log
 }) {
@@ -71,7 +72,9 @@ export async function reportScheduledOutcome({
   }
   const marker = trackingMarker(workflowFile)
   const existing = await findTrackingIssue({ github, repo, label, marker })
-  const runDetails = describeRun({ runUrl, runAttempt, headSha })
+  const runDetails = [describeRun({ runUrl, runAttempt, headSha }), failureDetails]
+    .filter(Boolean)
+    .join('\n')
 
   if (conclusion === 'success') {
     if (!existing) {

@@ -1,4 +1,5 @@
 import type { OrgCaseUploadMetadata } from '../../shared/org-cases'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { withImageTaskSnapshot } from '../image-model/stored-tasks'
@@ -485,7 +486,11 @@ export class SessionPackageOperation {
     downloadSlug?: string,
     exportDestination?: PackageOperationSnapshot['exportDestination']
   ): Promise<T> {
-    if (this.controller) throw new Error('A Session package operation is already in progress.')
+    if (this.controller)
+      throw new ApplicationCommandError(
+        'session-package-busy',
+        'A Session package operation is already in progress.'
+      )
     this.selectedUploadTarget = undefined
     const controller = new AbortController()
     this.controller = controller

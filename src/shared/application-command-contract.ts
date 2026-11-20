@@ -29,6 +29,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'comparison-table-limit',
   'comparison-manual-conflict',
   'session-size-limit',
+  'session-package-busy',
   'session-package-source-unavailable',
   'session-package-invalid-archive',
   'session-revision-conflict',

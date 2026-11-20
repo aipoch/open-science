@@ -20,6 +20,7 @@ import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
@@ -462,7 +463,7 @@ class ProviderAccountsModule {
       ) {
         Object.assign(provider, providerCatalogState(existing))
       }
-      if (!carryKey()) throw new Error('API key is required for an official provider.')
+      carryKey()
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
@@ -511,6 +512,12 @@ class ProviderAccountsModule {
       provider,
       existing
     )
+    if (
+      provider.type === 'official' &&
+      !provider.keyRef &&
+      !providerAllowsAnonymousAccess({ ...provider, model: request.model ?? provider.model })
+    )
+      throw new Error('API key is required for an official provider.')
     return {
       provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
       settings,
@@ -565,7 +572,10 @@ class ProviderAccountsModule {
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
-    const tested = this.resolveProvider(prepared.provider)
+    const tested = this.resolveProvider(
+      prepared.provider,
+      request.type === 'official' ? request.model?.trim() || undefined : undefined
+    )
     const expectedValidationState =
       saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
@@ -574,7 +584,7 @@ class ProviderAccountsModule {
             lastValidationFailure: saved.lastValidationFailure
           }
         : undefined
-    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings)
+    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings, tested)
     if (!validation.ok) return { validation }
     if (validation.applied === false)
       throw new Error(
@@ -907,9 +917,9 @@ class ProviderAccountsModule {
 
   private async validateProviderEdit(
     candidate: StoredProvider,
-    settings: StoredSettings
+    settings: StoredSettings,
+    provider = this.resolveProvider(candidate)
   ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
-    const provider = this.resolveProvider(candidate)
     const saved = settings.providers.find(({ id }) => id === candidate.id)
     // A failure belongs to the saved connection only when the tested input resolves to that exact
     // connection. Candidate credentials and routes must never change the original account's health.

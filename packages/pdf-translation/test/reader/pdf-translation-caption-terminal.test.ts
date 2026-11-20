@@ -211,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-72')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-130')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -275,5 +275,92 @@ it.each(['matching captions', 'different tail', 'different center'] as const)(
     expect(units.flatMap((unit) => unit.items).sort()).toEqual(
       pages.flatMap((p) => p.items.map((_, index) => `${p.page}:${index}`)).sort()
     )
+  }
+)
+
+it.each(['terminal', 'different center', 'intervening prose'] as const)(
+  'joins the short centered figure caption ending only at a native page boundary: %s',
+  (shape) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Caption'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 8,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      hasEOL: false,
+      transform: [8, 0, 0, 8, x, y]
+    })
+    const label = run('Fig. 3:', 320, 627, 24, 'CaptionLabel')
+    const lead = run('Response changes in the steady', 346, 627, 162)
+    const ending = run('sampling range', shape === 'different center' ? 400 : 385, 615, 58)
+    const gap = { ...run('', 0, 0, 0), height: 0, hasEOL: true }
+    const body = run(
+      'The earlier estimates provide a separate physical comparison.',
+      309,
+      310,
+      220,
+      'Body'
+    )
+    const trailing = run('An independent observation follows the caption.', 310, 580, 220, 'Body')
+    const items = [
+      body,
+      gap,
+      label,
+      lead,
+      gap,
+      ending,
+      ...(shape === 'intervening prose' ? [trailing] : [])
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 840, rotation: 0, items }]
+    })
+    const first = units.find((u) => u.items.includes('1:2'))!
+    expect(first.source.endsWith('sampling range')).toBe(shape === 'terminal')
+    expect(first.fragments.length).toBe(shape === 'terminal' ? 2 : 1)
+    expect(units.flatMap((u) => u.items).sort()).toEqual(
+      items.flatMap((i, n) => (i.str ? [`1:${n}`] : [])).sort()
+    )
+  }
+)
+
+it.each(['separate sizes', 'same size'] as const)(
+  'uses native caption size and the paragraph gap to separate a completed caption: %s',
+  (shape) => {
+    const row = (str: string, y: number, width: number, size: number): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName: 'Text',
+      fontVertical: false,
+      hasEOL: true,
+      transform: [size, 0, 0, size, 62, y]
+    })
+    const captionSize = shape === 'same size' ? 10 : 9
+    const items = [
+      row('Figure 2. Overview of the measured response across both', 520, 248, captionSize),
+      row('conditions. Each curve shows a separate trial.', 510, 230, captionSize),
+      row('The reference measurements remained stable during the', 493.3, 248, 10),
+      row('experiment and the procedure was repeated twice to check', 482.3, 248, 10),
+      row('for changes over time.', 471.3, 98, 10)
+    ]
+    const page: PdfLayoutPage = { page: 1, width: 610, height: 790, rotation: 0, items }
+    const { units } = groupPdfTranslationPages({ pages: [page] })
+    expect(units[0].items).toEqual(
+      shape === 'same size' ? ['1:0', '1:1', '1:2', '1:3', '1:4'] : ['1:0', '1:1']
+    )
+    if (shape === 'separate sizes') {
+      expect(units[0].source.endsWith('a separate trial.')).toBe(true)
+      expect(units[1].items).toEqual(['1:2', '1:3', '1:4'])
+      expect(units[0].fragments[0].rect.bottom).toBeLessThan(units[1].fragments[0].rect.y)
+    }
+    expect(units.flatMap((unit) => unit.items)).toEqual(items.map((_, i) => `1:${i}`))
   }
 )

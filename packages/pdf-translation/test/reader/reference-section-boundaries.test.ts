@@ -1042,3 +1042,286 @@ test.each(['complete', 'missing number', 'foreign prose'])(
     )
   }
 )
+
+test.each([false, true])(
+  'keeps a hanging page-count continuation with consecutive references (shifted=%s)',
+  (shifted) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      ...item(str, y, 8, 'Reference', x),
+      width,
+      hasEOL,
+      fontVertical: false
+    })
+    const heading = { ...item('References', 126, 10, 'Title', 272), width: 56 }
+    const tail = row('pages, to appear in Journal of Methods.', shifted ? 162 : 141, 151, 100)
+    const items = [
+      heading,
+      row('1. A. Reader, Measurements in a channel.', 130, 141, 168, false),
+      row('Preprint series archive, 32', 301, 141, 183),
+      tail,
+      row('2. B. Writer, Analysis of data. J. Methods 5 (2022).', 130, 161, 351),
+      row('3. C. Editor, A separate study. J. Examples 6 (2023).', 130, 171, 351)
+    ]
+    const pages = [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 1 })
+    const owner = units.find((unit) => unit.items.includes(`1:${items.indexOf(tail)}`))
+    expect(owner?.source).toBe(tail.str)
+    expect(owner?.sourceOnly === true && owner?.preserve === 'reference').toBe(!shifted)
+  }
+)
+
+test.each([false, true])(
+  'keeps a wrapped ancillary-file locator in consecutive bracketed references (displaced=%s)',
+  (displaced) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      ...item(str, y, 8, 'Reference', x),
+      width,
+      hasEOL,
+      fontVertical: false
+    })
+    const locator = row('file at arXiv:0000.00000v2.', displaced ? 112 : 85.2, 240, 100, false)
+    const items = [
+      { ...item('References', 204, 10, 'Title', 272), width: 56 },
+      row(
+        '[1] Ada Reader and Benjamin Author. Measurements from a remote station.',
+        72,
+        220,
+        286,
+        false
+      ),
+      row('J. Stations, 22, 30–44, 2022.', 361, 220, 96),
+      row(
+        '[2] Casey Writer. Observations from another station [technical report]. Available as an ancillary',
+        72,
+        230,
+        450
+      ),
+      locator,
+      row('', 0, 0, 0),
+      {
+        ...item(
+          'Institute of Applied Observations, 120 Example Avenue, Anytown, Country.',
+          258,
+          8,
+          'Affiliation',
+          84
+        ),
+        width: 400
+      },
+      { ...item('E-mail address: test@example.invalid', 278, 8, 'Affiliation', 84), width: 120 }
+    ]
+    const pages = [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 1 })
+    const owner = units.find((unit) => unit.items.includes(`1:${items.indexOf(locator)}`))
+    expect(owner?.source).toBe(locator.str)
+    expect(owner?.sourceOnly === true && owner?.preserve === 'reference').toBe(!displaced)
+  }
+)
+
+test.each([false, true])(
+  'retains a wrapped journal name on the numbered reference rail (shifted=%s)',
+  (shifted) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      ...item(str, y, 10, fontName, x),
+      width,
+      hasEOL,
+      fontVertical: false
+    })
+    const first = row('Measurement,Volume 12, 18', shifted ? 63 : 55, 376.5, 141)
+    const items = [
+      { ...item('REFERENCES', 317, 12, 'Heading', 265), width: 70, fontVertical: false },
+      row('[1]', 55, 342, 12),
+      row(
+        'P. Writer, “Methods in signal analysis,” Systems Review 7, 20–32 (2021).',
+        73,
+        342,
+        467,
+        'Body',
+        true
+      ),
+      row('[2]', 55, 353.5, 12),
+      row(
+        'R. Editor, “An introduction to wave patterns,” Field Studies 8, 10–18 (2023).',
+        73,
+        353.5,
+        467,
+        'Body',
+        true
+      ),
+      row('[3]', 55, 365, 12),
+      row('L.P.', 76, 365, 20, 'Alternate'),
+      row('Reader,', 105, 365, 35, 'Alternate'),
+      row(
+        'K.T. Other, “A study of sampled signals in simple instruments”,Applied',
+        145,
+        365,
+        395,
+        'Alternate',
+        true
+      ),
+      first,
+      row('-', 196.1, 376.5, 3.3),
+      row('25 (2022)', 199.5, 376.5, 46, 'Body', true),
+      row('[4]', 55, 388, 12),
+      row(
+        'M. Analyst, “Field calibration of instruments,” Signal Reports 18, 61–74 (2024).',
+        73,
+        388,
+        467,
+        'Body',
+        true
+      )
+    ]
+    const pages = [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 1 })
+    const owner = units.find((unit) => unit.items.includes(`1:${items.indexOf(first)}`))
+    expect(owner?.source).toBe('Measurement,Volume 12, 18-25 (2022)')
+    expect(owner?.sourceOnly === true && owner?.preserve === 'reference').toBe(!shifted)
+  }
+)
+
+test.each([true, false])(
+  'retains a complete author-date lane with wrapped initials (%s)',
+  (closed) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Reference',
+      size = 9,
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      ...item(str, 800 - y, size, fontName, x),
+      width,
+      hasEOL,
+      fontVertical: false
+    })
+    const tail = 'Series, 12, doi: 10.0000/example-b'
+    const items = [
+      row(
+        'The final body section describes an independent processing method.',
+        50,
+        650,
+        508,
+        'Body',
+        10
+      ),
+      row('REFERENCES', 272, 606, 68, 'Heading', 10),
+      row('Arden, T., Irvine, P., Pa´', 50, 587, 120, 'Reference', 9, false),
+      row('z, B., et al. 2020,', 167, 587, 103),
+      row('Example Review, 12, 130,', 59.2, 570, 158),
+      row('35, doi: 10.0000/example-a', 59.2, 553, 152),
+      row('Cove, P. 2018, Journal of Methods', 50, 531, 228),
+      row(tail, 59.2, 514, 145),
+      row('Hale, J., Rowan, M., Wells, P., &', 50, 492, 220),
+      row('Vale, R. 2016, Test Reports, 6, 14–19,', 59.2, 475, 195),
+      row(closed ? 'doi: 10.0000/example-c' : 'A free-standing note.', 59.2, 458, 115),
+      row('Stone, J., Vale, G., et al. 2021, Journal of Examples, 5,', 320, 587, 230),
+      row('32, doi: 10.0000/example-d', 329.2, 573, 142),
+      row('Zale, S., Burke, H., & Cora, D. 2006, Review Series, 3,', 320, 559, 228),
+      row('40, doi: 10.0000/example-e', 329.2, 545, 136)
+    ]
+    const pages = [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 1 })
+    const owner = units.find((unit) => unit.items.includes('1:7'))
+    expect(owner?.source).toBe(tail)
+    expect(owner?.sourceOnly === true && owner.preserve === 'reference').toBe(closed)
+  }
+)
+test.each(['complete', 'different chart label', 'missing DOI rail'])(
+  'keeps a deferred full-width figure caption between bibliography pages eligible: %s',
+  (kind) => {
+    const heading = { ...item('REFERENCES', 600, 10, 'Section', 267), width: 66 }
+    const records = (x: number, y: number): PdfLayoutTextItem[] =>
+      ['Author', 'Editor', 'Writer'].flatMap((name, index) => [
+        item(`${name}, A. 2021. Measurement notes.`, y + index * 26, 9, 'Body', x),
+        item(
+          kind === 'missing DOI rail' && x === 320 && y === 451
+            ? 'Journal 28, 193.'
+            : 'Journal 28, 193, doi: 10.9999/sample',
+          y + index * 26 + 13,
+          9,
+          'Body',
+          x + 9
+        )
+      ])
+    const chart = [90, 240, 390].flatMap((x, index) => [
+      item('Control', 353, 10, 'Legend', x),
+      item(
+        index === 2 && kind === 'different chart label' ? 'Derived' : 'Measured',
+        353,
+        10,
+        'Legend',
+        x + 54
+      )
+    ])
+    const caption = [
+      { ...item('Figure 1.', 410, 9, 'Label'), hasEOL: false, width: 40 },
+      {
+        ...item(
+          'The curves illustrate the predicted values across the three observation groups under fixed operating conditions.',
+          410,
+          9,
+          'Body',
+          105
+        ),
+        width: 435
+      },
+      {
+        ...item(
+          'Shaded areas show the uncertainty while the independent measurements are marked with circles for clarity.',
+          421,
+          9,
+          'Body'
+        ),
+        width: 480
+      },
+      item('All quantities are expressed in the same units.', 432, 9, 'Body')
+    ]
+    const pages = [
+      [
+        item('An independent body paragraph provides background and experimental context.', 520),
+        heading,
+        ...records(60, 620),
+        ...records(320, 620)
+      ],
+      [...chart, ...caption, ...records(60, 451), ...records(320, 451)]
+    ].map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: items.map((text) => ({ ...text, fontVertical: false }))
+    }))
+    const result = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const owner = result.units.find((unit) => unit.source.startsWith('Figure 1.'))
+    expect(owner?.items).toEqual(['2:6', '2:7', '2:8', '2:9'])
+    expect(!!owner?.sourceOnly).toBe(kind !== 'complete')
+    const sourceOnly = new Set(
+      result.units.filter((unit) => unit.sourceOnly).flatMap((unit) => unit.items)
+    )
+    expect(pages[1].items.slice(10).every((_, index) => sourceOnly.has(`2:${index + 10}`))).toBe(
+      true
+    )
+  }
+)

@@ -395,8 +395,8 @@ export async function inspectProcessNamesAsync(
 
 // Type-2's pre-fork keepalive pipe survives exec: the payload holds the read end,
 // the daemon the write end. Ignore stdio and pipes with both ends in the same
-// process (Electron creates these too). Ambiguous inherited pipes prove nothing.
-function appImagePipe(pid: number, writeEnd: boolean, image?: string): string | undefined {
+// process (Electron creates these too). Launchers can also leave unrelated inherited pipes.
+function appImagePipes(pid: number, writeEnd: boolean, image?: string): string[] | undefined {
   const root = `/proc/${pid}`
   const reads = new Set<string>()
   const writes = new Set<string>()
@@ -417,15 +417,15 @@ function appImagePipe(pid: number, writeEnd: boolean, image?: string): string | 
     if (!/^pipe:\[\d+\]$/.test(target)) continue
     const flags = /^flags:\s*([0-7]+)$/m.exec(readFileSync(`${root}/fdinfo/${fd}`, 'utf8'))
     if (!flags) return undefined
-    const mode = parseInt(flags[1], 8)
+    // Linux fdinfo includes status/descriptor flags; only O_ACCMODE identifies the pipe end.
+    const mode = parseInt(flags[1], 8) & 3
     if (mode === 0) reads.add(target)
     if (mode === 1) writes.add(target)
   }
   if (writeEnd && (!fuse || !imageOpen)) return undefined
   const ends = writeEnd ? writes : reads
   const peers = writeEnd ? reads : writes
-  const candidates = [...ends].filter((pipe) => !peers.has(pipe))
-  return candidates.length === 1 ? candidates[0] : undefined
+  return [...ends].filter((pipe) => !peers.has(pipe))
 }
 
 export function inspectOwnedLinuxAppImageLauncher(): number[] {
@@ -438,17 +438,20 @@ export function inspectOwnedLinuxAppImageLauncher(): number[] {
     if (readlinkSync(`/proc/${process.ppid}/exe`) === image) return [process.ppid]
     // Mounted Type-2 payloads inherit the mount directory itself at fd 1023.
     if (readlinkSync('/proc/self/fd/1023') !== mount) return []
-    const pipe = appImagePipe(process.pid, false)
-    if (!pipe) return []
+    const pipes = appImagePipes(process.pid, false)
+    if (!pipes?.length) return []
     const owned: number[] = []
     for (const name of readdirSync('/proc')) {
       if (!/^\d+$/.test(name)) continue
       try {
-        if (
-          readlinkSync(`/proc/${name}/exe`) === image &&
-          appImagePipe(Number(name), true, image) === pipe
+        if (readlinkSync(`/proc/${name}/exe`) !== image) continue
+        const matches = (appImagePipes(Number(name), true, image) ?? []).filter((pipe) =>
+          pipes.includes(pipe)
         )
-          owned.push(Number(name))
+        // Same-direction inherited endpoints prove nothing. Require one opposite endpoint
+        // and one daemon; multiple possible keepalive pipes still receive no exemption.
+        if (matches.length > 1) return []
+        if (matches.length === 1) owned.push(Number(name))
       } catch {
         // Exited or inaccessible processes receive no exemption.
       }

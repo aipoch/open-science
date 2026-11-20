@@ -30,7 +30,7 @@ it.skipIf(process.platform !== 'darwin')(
         platform: 'darwin',
         sample: async () => ({
           platform: 'darwin',
-          source: 'controlled-macos-pressure-tracer',
+          source: 'darwin-sysctl-dispatch',
           executionScope: 'darwin:host',
           facts: { pressureLevel, pressureEventSequence }
         })
@@ -170,6 +170,9 @@ it.skipIf(process.platform !== 'darwin')(
       for (const original of originals)
         expect(native.getDarwinProcess(original.pid)?.uniqueId).toBe(original.identity!.uniqueId)
 
+      pressureLevel = 'critical'
+      pressureEventSequence++
+      await policy.getState({ force: true })
       await expect(
         service.executeControl({
           ...rejected,
@@ -180,6 +183,11 @@ it.skipIf(process.platform !== 'darwin')(
         recovery: { execution: 'not-started' }
       })
       expect(existsSync(rejectedSentinel)).toBe(false)
+
+      // Warning still advances idle reclamation without refusing new work.
+      pressureLevel = 'warning'
+      pressureEventSequence++
+      await policy.getState({ force: true })
 
       // The existing export hold protects a real idle tree without renewing its idle age.
       exporting = true
@@ -282,7 +290,7 @@ it.skipIf(process.platform !== 'darwin')(
         JSON.stringify({
           node: process.version,
           arch: process.arch,
-          controlled: 'Date.now, MemoryPolicy clock and darwin host-warning sample',
+          controlled: 'Date.now, MemoryPolicy clock and darwin host pressure samples',
           idleOriginals: originals,
           idleHost,
           activeIdentity,

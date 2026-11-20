@@ -652,6 +652,34 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('can switch to anonymous Kilo without forwarding the previous vendor key', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'official',
+      vendorId: 'deepseek',
+      key: 'previous-vendor-key'
+    })
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const saved = await module.saveValidatedProvider({
+      id: 'gateway',
+      type: 'official',
+      vendorId: 'kilo',
+      requireExisting: true
+    })
+    expect(saved.validation.ok).toBe(true)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://ai-gateway.kilo.ai/api/v1/chat/completions')
+    expect(new Headers(init?.headers).has('authorization')).toBe(false)
+    expect(JSON.parse(String(init?.body)).model).toBe('kilo-auto/free')
+    const [provider] = (await repository.getSettings()).providers
+    expect(provider.keyRef).toBeUndefined()
+    expect(await module.isProviderKeyUsable(provider)).toBe(true)
+  })
+
   it('tests form values with the stored key without changing the active custom provider', async () => {
     await repository.setAgentFramework('opencode')
     await module.upsertProvider({

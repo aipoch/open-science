@@ -397,58 +397,123 @@ describe('session persistence startup', () => {
     useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
   })
 
-  it('reclaims inactive history pages under the existing sixteen-session retention limit', async () => {
-    const histories = Array.from({ length: 17 }, (_, index) =>
-      createPersistedSession({
-        id: `paged-${index}`,
-        number: index + 1,
-        messages: [
-          {
-            id: `message-${index}`,
-            role: 'user',
-            content: `Page ${index}`,
-            status: 'complete',
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ]
+  it.each([
+    'none',
+    'recovery',
+    'elicitation draft',
+    'interaction',
+    'staged upload',
+    'background stream'
+  ] as const)(
+    'reclaims inactive history pages while preserving %s ownership',
+    async (protectedState) => {
+      const histories = Array.from({ length: 18 }, (_, index) =>
+        createPersistedSession({
+          id: `paged-${index}`,
+          number: index + 1,
+          messages: [
+            {
+              id: `message-${index}`,
+              role: 'user',
+              content: `Page ${index}`,
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        })
+      )
+      const loadOne = installHistory(histories)
+      window.api.sessions.loadHistoryPage = vi.fn(async ({ sessionId }) => {
+        const session = histories.find(({ id }) => id === sessionId)!
+        return {
+          projectId: session.projectId,
+          sessionId,
+          revision: 0,
+          session,
+          totalItems: 100,
+          hasMore: true,
+          beforeCursor: 'earlier'
+        }
       })
-    )
-    const loadOne = installHistory(histories)
-    window.api.sessions.loadHistoryPage = vi.fn(async ({ sessionId }) => {
-      const session = histories.find(({ id }) => id === sessionId)!
-      return {
-        projectId: session.projectId,
-        sessionId,
-        revision: 0,
-        session,
-        totalItems: 100,
-        hasMore: true,
-        beforeCursor: 'earlier'
+      await act(async () => root.render(<Probe />))
+      for (const history of histories) {
+        await act(async () => {
+          useSessionStore.getState().selectSession(history.id)
+          await Promise.resolve()
+        })
+        if (history !== histories[0] || protectedState === 'none') continue
+        await act(async () => {
+          if (protectedState === 'background stream') {
+            useSessionStore.setState({
+              streamingMessages: {
+                [history.messages[0].id]: {
+                  sessionId: history.id,
+                  content: 'Pending chunk',
+                  eventIds: ['chunk'],
+                  updatedAt: 2
+                }
+              }
+            })
+            return
+          }
+          useSessionStore.setState((state) => ({
+            sessions: state.sessions.map((session) => {
+              if (session.id !== history.id) return session
+              switch (protectedState) {
+                case 'recovery':
+                  return { ...session, needsStartupRecovery: true }
+                case 'elicitation draft':
+                  return {
+                    ...session,
+                    elicitationEditDrafts: {
+                      draft: { requestId: 'draft', values: {}, activeQuestionIndex: 0 }
+                    }
+                  }
+                case 'interaction':
+                  return {
+                    ...session,
+                    interactionState: { permission: true, elicitation: false, plan: false }
+                  }
+                case 'staged upload':
+                  return {
+                    ...session,
+                    messages: session.messages.map((message) => ({
+                      ...message,
+                      uploads: [
+                        {
+                          id: 'file',
+                          sessionId: '.pending',
+                          name: 'file',
+                          originalName: 'file',
+                          size: 1
+                        }
+                      ]
+                    }))
+                  }
+              }
+            })
+          }))
+        })
       }
-    })
-    await act(async () => root.render(<Probe />))
-    for (const history of histories) {
+      const retained = useSessionStore.getState().sessions.filter((session) => session.historyPage)
+      expect(retained.length).toBeLessThanOrEqual(protectedState === 'none' ? 16 : 17)
+      const evicted = histories.find((history) => !retained.some((row) => row.id === history.id))!
+      if (protectedState === 'none') expect(evicted.id).toBe(histories[0].id)
+      else
+        expect(retained.find(({ id }) => id === histories[0].id)?.messages[0].content).toBe(
+          'Page 0'
+        )
+      expect(loadOne).not.toHaveBeenCalled()
+      expect(saveSession).not.toHaveBeenCalled()
       await act(async () => {
-        useSessionStore.getState().selectSession(history.id)
+        useSessionStore.getState().selectSession(evicted.id)
         await Promise.resolve()
       })
+      expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledTimes(19)
     }
-    expect(
-      useSessionStore.getState().sessions.filter((session) => session.historyPage)
-    ).toHaveLength(16)
-    expect(
-      useSessionStore.getState().sessions.find(({ id }) => id === 'paged-0')?.messages
-    ).toEqual([])
-    expect(loadOne).not.toHaveBeenCalled()
-    expect(saveSession).not.toHaveBeenCalled()
-    await act(async () => {
-      useSessionStore.getState().selectSession('paged-0')
-      await Promise.resolve()
-    })
-    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledTimes(18)
-  })
+  )
 
   it('shows retained terminal storage failures globally and retries only the exact execution', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
@@ -877,11 +942,116 @@ describe('session persistence startup', () => {
     )
   })
 
+  it.each(['metadata', 'conversation'] as const)(
+    'releases idle history after its %s edits reach disk and restores the saved body',
+    async (edit) => {
+      const histories = Array.from({ length: 18 }, (_, i) =>
+        createPersistedSession({ id: `saved-${edit}-${i}`, number: i + 1 })
+      )
+      installHistory(histories)
+      saveSession.mockImplementation(async (session) => {
+        const index = histories.findIndex(({ id }) => id === session.id)
+        const durable: PersistedChatSession = structuredClone(session)
+        if (edit === 'conversation' && durable.conversationGraph) {
+          // Main sets the durable branch timestamp and omits empty artifact lists.
+          durable.conversationGraph.branches = durable.conversationGraph.branches.map((branch) => ({
+            ...branch,
+            updatedAt: branch.updatedAt + 1
+          }))
+          if (!durable.artifacts?.length) delete durable.artifacts
+        }
+        histories[index] = durable
+        return structuredClone(durable)
+      })
+      await act(async () => root.render(<Probe />))
+      for (const { id } of histories) {
+        await act(async () => {
+          useSessionStore.getState().selectSession(id)
+          await Promise.resolve()
+        })
+        await act(async () => {
+          const store = useSessionStore.getState()
+          if (edit === 'metadata') store.togglePinned(id)
+          else {
+            useSessionStore.setState((state) => ({
+              sessions: state.sessions.map((s) =>
+                s.id === id ? { ...s, isPending: false, artifacts: [] } : s
+              )
+            }))
+            store.appendUserMessage({ sessionId: id, content: 'Question' })
+            store.appendAgentMessageChunk({
+              sessionId: id,
+              streamId: `response-${id}`,
+              eventId: `event-${id}`,
+              content: 'Answer'
+            })
+            store.finishRun(id)
+          }
+          await flushSessionPersistence()
+        })
+      }
+      expect(
+        useSessionStore.getState().sessions.filter((s) => s.contentLoaded !== false)
+      ).toHaveLength(16)
+      expect(
+        useSessionStore.getState().sessions.find((s) => s.id === histories[0].id)?.messages
+      ).toEqual([])
+      await act(async () => {
+        useSessionStore.getState().selectSession(histories[0].id)
+        await Promise.resolve()
+      })
+      const restored = useSessionStore.getState().sessions.find((s) => s.id === histories[0].id)!
+      if (edit === 'metadata') expect(restored.pinned).toBe(true)
+      else
+        expect(restored.messages.map((m) => m.content)).toEqual(
+          expect.arrayContaining(['Question', 'Answer'])
+        )
+    }
+  )
+
+  it('reclaims an inactive edited history when its pending save settles', async () => {
+    const histories = Array.from({ length: 17 }, (_, i) =>
+      createPersistedSession({ id: `pending-pin-${i}`, number: i + 1 })
+    )
+    installHistory(histories)
+    let acknowledge!: () => void
+    saveSession.mockImplementationOnce(
+      (submitted) =>
+        new Promise((resolve) => {
+          acknowledge = () => {
+            histories[0] = structuredClone(submitted)
+            resolve(structuredClone(submitted))
+          }
+        })
+    )
+    await act(async () => root.render(<Probe />))
+    for (const history of histories) {
+      await act(async () => {
+        useSessionStore.getState().selectSession(history.id)
+      })
+      if (history === histories[0])
+        await act(async () => {
+          useSessionStore.getState().togglePinned(history.id)
+        })
+    }
+    const first = (): ChatSession =>
+      useSessionStore.getState().sessions.find(({ id }) => id === histories[0].id)!
+    expect(first().contentLoaded).not.toBe(false)
+    // No additional navigation or edit is needed to trim after the last write resolves.
+    await act(async () => {
+      acknowledge()
+      await flushSessionPersistence()
+    })
+    expect(first()).toMatchObject({ contentLoaded: false, pinned: true })
+  })
+
   it.each(
-    (['read-only', 'failed-save', 'pending-save', 'running'] as const).flatMap((mode) => [
-      { mode, bodySize: 64 * 1024, count: 40, retained: 16 },
-      { mode, bodySize: 8 * 1024 * 1024, count: 6, retained: 3 }
-    ])
+    (['read-only', 'failed-save', 'pending-save', 'running', 'pending-replay'] as const).flatMap(
+      (mode) => [
+        { mode, bodySize: 64 * 1024, count: 40, retained: 16 },
+        { mode, bodySize: 8 * 1024 * 1024, count: 6, retained: 3 }
+      ]
+    )
   )(
     'bounds $bodySize-character historical bodies without discarding $mode state',
     async ({ mode, bodySize, count, retained }) => {
@@ -889,6 +1059,8 @@ describe('session persistence startup', () => {
         createPersistedSession({
           id: `history-${index}`,
           number: index + 1,
+          pendingHistoryReplay:
+            index === 0 && mode === 'pending-replay' ? { kind: 'all' } : undefined,
           messages: [
             {
               id: `message-${index}`,
@@ -975,6 +1147,7 @@ describe('session persistence startup', () => {
         expect(first.contentLoaded).not.toBe(false)
         expect(first.messages[0].content).toBe(persisted[0].messages[0].content)
         if (mode === 'failed-save') expect(first.title).toBe('Unsaved title')
+        if (mode === 'pending-replay') expect(first.pendingHistoryReplay).toEqual({ kind: 'all' })
       }
       // Navigating back loads the original body; unloading must neither save empty content nor
       // trigger an immediate reload of every evicted summary through the saver subscription.

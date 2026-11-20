@@ -121,6 +121,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: 'Replay research', exact: true })
     .click()
+  await page.locator(`[data-session-id="${source.id}"] [data-slot="session-open-button"]`).click()
   const replay = page.getByTestId('replay-panel')
   await expect(replay).toHaveCount(0)
   await page
