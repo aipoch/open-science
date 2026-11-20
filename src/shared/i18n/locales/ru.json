@@ -8157,6 +8157,8 @@
     "The cancellation attempt ended. The job is still being tracked.": "Эта попытка отмены завершена. Отслеживание задания продолжается.",
     "Unable to get job status": "Не удалось получить состояние задания",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше.",
+    "Agent tracing": "Трассировка агента",
+    "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data.": "Отправляет трассировки встроенного агента этого проекта в настроенный приёмник. Трассировки могут содержать текст диалога, запросы к модели и данные инструментов.",
     "Advanced agent options": "Дополнительные параметры агента",
     "Optimization prompt": "Промпт оптимизации",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Используется только при оптимизации вопроса в этом проекте. Оставьте поле пустым, чтобы использовать встроенный шаблон по умолчанию.",

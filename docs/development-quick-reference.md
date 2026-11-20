@@ -122,6 +122,45 @@ npm run dev
 The switch is off by default and applies only to the development server. Packaged builds ignore it
 and continue to require the certified, version-matched WSL2 assets.
 
+### Open-Science Agent traces
+
+1. In the repository's gitignored `.env` for development, or the active config root's `.env`
+   for installed desktop and CLI runtimes (usually `~/.open-science/.env`), set the full
+   OTLP/HTTP JSON traces URL. A collector running locally can use this URL.
+
+   ```dotenv
+   OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+   ```
+
+2. Restart the backend after changing the environment settings. Open **Project Settings →
+   Advanced agent options**, enable **Agent tracing**, and save. Each project starts with
+   tracing off. The saved setting applies on the next send in an open session.
+3. Send a message using Open-Science Agent and look for `harness.turn`, `harness.model`, and
+   executed MCP `harness.tool` spans under the `open-science-agent` service.
+
+The following switches default to `1`. Set a switch to `0` in the same configuration source
+as the endpoint to disable it.
+
+| Variable                                         | What it controls                              |
+| ------------------------------------------------ | --------------------------------------------- |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT`        | User prompt and final visible reply excerpts  |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST`    | Model request JSON before the provider bridge |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS` | MCP tool input previews                       |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS`   | MCP tool output previews                      |
+| `OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS`            | Local `.env.otel-status.json` status file     |
+
+For metadata-only traces, set all four `CAPTURE_*` switches to `0`. Model request bodies can
+include instructions, conversation history, tool data, and attachments even when the
+individual excerpt and tool preview switches are off. The status file records the last
+upload outcome or an invalid destination configuration. `http_accepted` means the receiver
+responded with HTTP 2xx.
+
+For Langfuse, use the full `/api/public/otel/v1/traces` URL and set both
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env`. Options for Bearer authentication
+and custom headers are in [the environment example](../.env.example).
+When the endpoint is supplied in the backend's launch environment, set its switches there
+and use `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE` for custom headers. This mode skips `.env`.
+
 ## Coding-agent navigation
 
 Run installation, development, and validation commands from the repository root:

@@ -7682,6 +7682,8 @@
     "The cancellation attempt ended. The job is still being tracked.": "本次取消作業已結束。系統仍在追蹤任務。",
     "Unable to get job status": "無法取得任務狀態",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "排程器沒有此任務的可用結果。遠端程序可能仍在執行。請先檢查排程器和遠端檔案，再決定下一步操作。",
+    "Agent tracing": "智能體追蹤",
+    "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data.": "將此專案的內建智能體追蹤資料傳送至已設定的接收端。追蹤資料可能包含對話內容、模型請求和工具資料。",
     "Advanced agent options": "智能體進階選項",
     "Optimization prompt": "最佳化提示詞",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "僅在最佳化目前專案中的提問時使用。留空則使用內建預設範本。",
