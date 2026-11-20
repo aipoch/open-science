@@ -144,7 +144,11 @@ it.each([false, true])(
       'BT /Body 12 Tf 40 440 Td (Cell growth.) Tj ET\n' +
         'q 60 0 0 30 280 340 cm BI /CS /Palette /W 2 /H 1 /BPC 8 /F /Fl ID\n'
     )
-    const content = Buffer.concat([operators, deflateSync(Uint8Array.of(0, 1)), Buffer.from('\nEI Q')])
+    const content = Buffer.concat([
+      operators,
+      deflateSync(Uint8Array.of(0, 1)),
+      Buffer.from('\nEI Q')
+    ])
     page.node.addContentStream(pdf.context.register(pdf.context.flateStream(content)))
     const data = await pdf.save()
     const rect = { x: 0.0875, y: 0.084, width: 0.825, height: 0.064 }
@@ -152,11 +156,16 @@ it.each([false, true])(
       id: 'indexed-inline-colors',
       data,
       pages: [{ width: 400, height: 500 }],
-      units: [{ source: 'Cell growth.', translation: '细胞生长。', fragments: [{ pageNumber: 1, rect }] }],
+      units: [
+        { source: 'Cell growth.', translation: '细胞生长。', fragments: [{ pageNumber: 1, rect }] }
+      ],
       ...(incremental ? { incremental: { data, pageNumbers: [1] } } : {})
     }
     const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
-    const caller = new TestCallerRegistry().acquire({ leaseId: 'indexed-colors', surface: 'electron' })
+    const caller = new TestCallerRegistry().acquire({
+      leaseId: 'indexed-colors',
+      surface: 'electron'
+    })
     const original = getDocument({ data: data.slice() })
     let written: ReturnType<typeof getDocument> | undefined
     try {
@@ -166,7 +175,13 @@ it.each([false, true])(
       const output = await written.promise
       const items = (await (await output.getPage(1)).getTextContent()).items
       expect(items.map((item) => ('str' in item ? item.str : '')).join('')).toContain('细胞生长。')
-      const proof = await verifyPdfPreservation(await original.promise, output, request.units, [], [1])
+      const proof = await verifyPdfPreservation(
+        await original.promise,
+        output,
+        request.units,
+        [],
+        [1]
+      )
       expect(proof.pages[0].pixels?.changedPixels).toBe(0)
     } finally {
       await original.destroy()

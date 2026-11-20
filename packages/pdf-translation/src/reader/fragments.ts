@@ -34,13 +34,15 @@ export function pdfTranslationLayoutFragments(
       candidate.y + candidate.height > other.y
     // Widening a row can cover a same-unit expression retained on its left.
     // Keep the native regions separate when the union would claim new ink.
-    let otherContent = result.slice(0, -1).some(
-      (earlier) =>
-        earlier.pageNumber === fragment.pageNumber &&
-        intersects(rect, earlier.rect) &&
-        !intersects(a, earlier.rect) &&
-        !intersects(b, earlier.rect)
-    )
+    let otherContent = result
+      .slice(0, -1)
+      .some(
+        (earlier) =>
+          earlier.pageNumber === fragment.pageNumber &&
+          intersects(rect, earlier.rect) &&
+          !intersects(a, earlier.rect) &&
+          !intersects(b, earlier.rect)
+      )
     for (const other of source.units) {
       if (other === unit) continue
       for (const f of other.fragments) {

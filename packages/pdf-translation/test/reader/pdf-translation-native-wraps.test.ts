@@ -3803,29 +3803,39 @@ it.each(['matching sequence', 'skipped number', 'different typeface', 'off cente
       ['CALIBRATION AND MEASUREMENT', 'RANGE'],
       ['LIGHT SOURCES AND', 'DETECTORS']
     ]
-    const items = titles.flatMap(([title, tail], index) => {
-      const marks = ['I.', 'II.', fixture === 'skipped number' ? 'IV.' : 'III.']
-      const y = 130 + 130 * index
-      const fullWidth = index === 2 ? 160 : 206
-      const start = (352 - fullWidth) / 2
-      const markWidth = 7 + 4 * index
-      const font = index === 2 && fixture === 'different typeface' ? 'alternate' : 'heading'
-      return [
-        item(marks[index], start, y, markWidth, 9, font, false),
-        { ...item(' ', start + markWidth, y, 10, 9, font, false), height: 0 },
-        item(title, start + markWidth + 10, y, fullWidth - markWidth - 10, 9, font),
-        item(tail, index === 2 && fixture === 'off center' ? 156 : 149, y + 10.5, 54, 9, font, false),
-        item('', 203, y + 10.5, 0, 9, font),
-        item('A stable reference measures the range of each sensor', 63, y + 37, 236, 10),
-        item(
-          'throughout the experiment with enough power to establish the baseline.',
-          53,
-          y + 48.5,
-          244,
-          10
-        )
-      ]
-    }).map((run) => ({ ...run, fontVertical: false, fontAscent: 0.8, fontDescent: -0.2 }))
+    const items = titles
+      .flatMap(([title, tail], index) => {
+        const marks = ['I.', 'II.', fixture === 'skipped number' ? 'IV.' : 'III.']
+        const y = 130 + 130 * index
+        const fullWidth = index === 2 ? 160 : 206
+        const start = (352 - fullWidth) / 2
+        const markWidth = 7 + 4 * index
+        const font = index === 2 && fixture === 'different typeface' ? 'alternate' : 'heading'
+        return [
+          item(marks[index], start, y, markWidth, 9, font, false),
+          { ...item(' ', start + markWidth, y, 10, 9, font, false), height: 0 },
+          item(title, start + markWidth + 10, y, fullWidth - markWidth - 10, 9, font),
+          item(
+            tail,
+            index === 2 && fixture === 'off center' ? 156 : 149,
+            y + 10.5,
+            54,
+            9,
+            font,
+            false
+          ),
+          item('', 203, y + 10.5, 0, 9, font),
+          item('A stable reference measures the range of each sensor', 63, y + 37, 236, 10),
+          item(
+            'throughout the experiment with enough power to establish the baseline.',
+            53,
+            y + 48.5,
+            244,
+            10
+          )
+        ]
+      })
+      .map((run) => ({ ...run, fontVertical: false, fontAscent: 0.8, fontDescent: -0.2 }))
     const result = extract(items)
     for (const [index, [title, tail]] of titles.entries()) {
       const mark = index * 7

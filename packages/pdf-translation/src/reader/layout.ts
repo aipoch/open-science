@@ -29552,7 +29552,9 @@ function joinNativeCenteredColumnHeadings(units: LayoutUnit[], pages: PdfLayoutP
   }[] = []
   for (let at = 0; at + 2 < units.length; at++) {
     const [head, tail, body] = units.slice(at, at + 3)
-    const strict = /^[IVX]{1,5}\. [A-Z][A-Z -]{19,} (?:IN|OF|ON|FOR|WITH|AND|TO)$/u.test(head.source)
+    const strict = /^[IVX]{1,5}\. [A-Z][A-Z -]{19,} (?:IN|OF|ON|FOR|WITH|AND|TO)$/u.test(
+      head.source
+    )
     if (
       (!strict && !/^I{1,3}\. [A-Z][A-Z -]{12,}$/u.test(head.source)) ||
       !/^[A-Z]{4,}(?: [A-Z]{3,})?$/u.test(tail.source) ||
@@ -32946,8 +32948,12 @@ function joinNativeWrappedInlineExpression(
         page.items.some((item) => !packet.includes(item) && nativeProseRowOverlap(item, domain)) ||
         !(lead.hasEOL || page.items[parts[0].at(-1)! + 1]?.hasEOL === true) ||
         math.length !== 3 ||
-        [opening, operator, variable, subscript].some((item, i) => item.str !== wrappedOperand[i + 1]) ||
-        [number, pairedOperator, pairedVariable].some((item, i) => item?.str !== pairedOperand[i + 1]) ||
+        [opening, operator, variable, subscript].some(
+          (item, i) => item.str !== wrappedOperand[i + 1]
+        ) ||
+        [number, pairedOperator, pairedVariable].some(
+          (item, i) => item?.str !== pairedOperand[i + 1]
+        ) ||
         [opening, operator, variable].some(
           (item, i) =>
             !onRow(item) ||
@@ -34251,10 +34257,7 @@ function joinNativeParagraphTails(
       proof = units[at + 2],
       claim = /^Claim ([1-9]\d{0,2})\.$/u.exec(next.source),
       claimTail =
-        !!claim &&
-        eligible(first) &&
-        joinable(next) &&
-        /, which contradicts$/u.test(first.source),
+        !!claim && eligible(first) && joinable(next) && /, which contradicts$/u.test(first.source),
       noteTail =
         eligible(first) &&
         /^\([a-z]/u.test(first.source) &&
@@ -34551,7 +34554,8 @@ function joinNativeParagraphTails(
         [paragraph, following].every(
           (item) => item.fontName === head.fontName && close(item.height, size)
         ) &&
-        margin > size && margin < size * 2 &&
+        margin > size &&
+        margin < size * 2 &&
         close(following.transform[4], rail) &&
         close(tail.transform[5] - paragraph.transform[5], gap) &&
         close(paragraph.transform[5] - following.transform[5], gap) &&
@@ -37764,7 +37768,9 @@ function nativeStackedFunctionOwners(units: LayoutUnit[], page: PdfLayoutPage): 
         minus.item.str !== '−' ||
         left.owner !== one.owner ||
         upper.owner !== minus.owner ||
-        ![left, open, minus].every(({ owner }) => owner?.sourceOnly && owner.preserve === 'formula') ||
+        ![left, open, minus].every(
+          ({ owner }) => owner?.sourceOnly && owner.preserve === 'formula'
+        ) ||
         !/^\p{Cc}$/u.test(open.item.str) ||
         !/^\p{Cc}+$/u.test(close.item.str.trim()) ||
         !/^[A-Za-z]\p{Script=Greek}$/u.test(upper.item.str) ||
@@ -37772,7 +37778,11 @@ function nativeStackedFunctionOwners(units: LayoutUnit[], page: PdfLayoutPage): 
         !/^[a-z]{1,2}$/u.test(subscript.item.str)
       )
         continue
-      const { height: h, transform: [, , , , x, y], width } = entry.item,
+      const {
+          height: h,
+          transform: [, , , , x, y],
+          width
+        } = entry.item,
         xOf = ({ item }: (typeof entries)[number]): number => item.transform[4],
         yOf = ({ item }: (typeof entries)[number]): number => item.transform[5],
         right = (part: (typeof entries)[number]): number => xOf(part) + part.item.width,
@@ -37798,7 +37808,11 @@ function nativeStackedFunctionOwners(units: LayoutUnit[], page: PdfLayoutPage): 
         within(Math.abs(upper.item.height - lower.item.height), 0, 0.03) &&
         within(Math.abs(xOf(subscript) - right(lower)), 0, 0.03) &&
         within(yOf(lower) - yOf(subscript), 0.06, 0.2) &&
-        within(Math.abs(xOf(upper) + upper.item.width / 2 - (xOf(lower) + right(subscript)) / 2), 0, 0.2) &&
+        within(
+          Math.abs(xOf(upper) + upper.item.width / 2 - (xOf(lower) + right(subscript)) / 2),
+          0,
+          0.2
+        ) &&
         within(xOf(close) - Math.max(right(upper), right(subscript)), 0, 0.3)
       )
         result.add(operator)

@@ -298,7 +298,10 @@ it.each([
   assert.equal(proof.source.endsWith('for H by (3.2).'), joins)
   assert.equal(proof.fragments.length, joins ? 2 : 1)
   assert.equal(units.find((unit) => unit.source === equation)?.preserve, 'formula')
-  assert.equal(units.find((unit) => unit.source === '6. Further estimates')?.kind, 'heading-candidate')
+  assert.equal(
+    units.find((unit) => unit.source === '6. Further estimates')?.kind,
+    'heading-candidate'
+  )
 })
 
 const caption = 'Figure 2. Intensity profile after pulse shaping under the selected conditions.'
