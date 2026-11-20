@@ -44,6 +44,7 @@ import type {
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
+  SettingsSnapshot,
   ValidateProviderRequest,
   UpsertProviderRequest,
   SaveValidatedProviderResult
@@ -139,6 +140,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getSkillMarketplaceBatch'
   | 'stopSkillMarketplaceBatch'
   | 'markOnboardingComplete'
+  | 'addOnboardingKiloProvider'
   | 'createWslSupportHandoff'
   | 'openWslTerminal'
   | 'previewAgentHomeSkill'
@@ -416,6 +418,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'markOnboardingComplete'>
   >('settings:mark-onboarding-complete'),
+  addOnboardingKiloProvider: defineApplicationCommand<
+    'settings:add-onboarding-kilo-provider',
+    readonly [],
+    SettingsSnapshot
+  >('settings:add-onboarding-kilo-provider'),
   previewAgentHomeSkill: defineApplicationCommand<
     'settings:preview-agent-home-skill',
     readonly [request: PreviewAgentHomeSkillRequest],
@@ -654,6 +661,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
   settingsCoreApplicationCommands.getSkillMarketplaceDetail,
   settingsCoreApplicationCommands.markOnboardingComplete,
+  settingsCoreApplicationCommands.addOnboardingKiloProvider,
   settingsCoreApplicationCommands.previewAgentHomeSkill,
   settingsCoreApplicationCommands.previewGitHubSkill,
   settingsCoreApplicationCommands.previewSkillZip,
@@ -855,6 +863,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:mark-onboarding-complete': () =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.markOnboardingComplete()
+        ),
+      'settings:add-onboarding-kilo-provider': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.addOnboardingKiloProvider()
         ),
       'settings:preview-agent-home-skill': ({ args }) =>
         dependencies.service.previewAgentHomeSkill(args[0]),

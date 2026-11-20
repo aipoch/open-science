@@ -2,11 +2,18 @@ import {
   providerCatalogState,
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
+import {
+  isCatalogModelAvailable,
+  KILO_FREE_MODEL_ID,
+  resolveOfficialModelCatalog
+} from '../../shared/provider-model-catalog'
+import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
+import { getOfficialVendor } from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -55,7 +62,7 @@ import {
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { assertProviderCapacity, PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch, reconcileCatalogHealth } from './provider-validation-state'
 import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
 import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
@@ -120,6 +127,21 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
   }
 }
 
+const kiloVendor = getOfficialVendor('kilo')!
+const isKiloProvider = (provider: StoredProvider): boolean =>
+  provider.type === 'official' && provider.vendorId === kiloVendor.id
+
+const createDefaultKiloProvider = (settings: StoredSettings): StoredProvider => {
+  assertProviderCapacity(settings.providers.length, false)
+  return {
+    id: randomUUID(),
+    type: 'official',
+    vendorId: kiloVendor.id,
+    name: kiloVendor.label,
+    configRevision: 1
+  }
+}
+
 const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean =>
   left.type === right.type &&
   left.vendorId === right.vendorId &&
@@ -163,6 +185,72 @@ class SettingsRepository {
   // Reads and sanitizes the settings document, returning empty settings when nothing is stored yet.
   async getSettings(): Promise<StoredSettings> {
     return this.store.read()
+  }
+
+  /** Record desktop initialization and add Kilo to existing profiles while preserving their model selection. */
+  async initializeDesktopKiloDefaults(upgrading: boolean): Promise<boolean> {
+    const current = await this.getSettings()
+    if (current.kiloDefaultInitialized) return false
+    const logCapacitySkip = (providerCount: number): void => {
+      createLogger('settings:repository').warn(
+        'Skipped adding Kilo Gateway on desktop upgrade because the provider limit was reached.',
+        { providerCount, providerLimit: PROVIDER_RESOURCE_LIMITS.providers }
+      )
+    }
+    if (
+      upgrading &&
+      current.providers.length >= PROVIDER_RESOURCE_LIMITS.providers &&
+      !current.providers.some(isKiloProvider)
+    ) {
+      logCapacitySkip(current.providers.length)
+      return false
+    }
+    let added = false
+    await this.mutate(
+      (settings) => {
+        if (settings.kiloDefaultInitialized) return settings
+        if (!upgrading || settings.providers.some(isKiloProvider)) {
+          return { ...settings, kiloDefaultInitialized: true }
+        }
+        if (settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) {
+          logCapacitySkip(settings.providers.length)
+          return settings
+        }
+        const provider = createDefaultKiloProvider(settings)
+        added = true
+        return {
+          ...settings,
+          kiloDefaultInitialized: true,
+          providers: [...settings.providers, provider]
+        }
+      },
+      upgrading ? ['providers', 'kiloDefaultInitialized'] : undefined
+    )
+    return added
+  }
+
+  /** Provision Kilo and select its free route when users skip onboarding. */
+  async addOnboardingKiloProvider(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      const existing = settings.providers.find(isKiloProvider)
+      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers)
+        return settings
+      const provider = existing ?? createDefaultKiloProvider(settings)
+      if (
+        !resolveOfficialModelCatalog({ ...provider, hasKey: false }).some(
+          (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
+        )
+      )
+        return settings
+      return {
+        ...settings,
+        kiloDefaultInitialized: true,
+        providers: existing ? settings.providers : [...settings.providers, provider],
+        activeProviderId: provider.id,
+        activeModel: KILO_FREE_MODEL_ID
+      }
+    })
   }
 
   async selectBootstrapCodex(): Promise<void> {
@@ -1418,54 +1506,59 @@ class SettingsRepository {
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
-  private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
+  private mutate(
+    update: (settings: StoredSettings) => StoredSettings,
+    preserveDocumentExcept?: readonly (keyof StoredSettings)[]
+  ): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
     let previousImageConfiguration: unknown
-    return this.store
-      .mutate((settings) => {
-        previous = structuredClone(settings.providers)
-        previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
-        return update(settings)
-      })
-      .then((settings) => {
-        if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
-          for (const listener of this.imageModelListeners) {
-            try {
-              listener()
-            } catch {
-              createLogger('settings:repository').error('Image model change listener failed')
-            }
+    const capture = (settings: StoredSettings): StoredSettings => {
+      previous = structuredClone(settings.providers)
+      previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
+      return update(settings)
+    }
+    const committed = preserveDocumentExcept
+      ? this.store.mutate(capture, undefined, preserveDocumentExcept)
+      : this.store.mutate(capture)
+    return committed.then((settings) => {
+      if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
+        for (const listener of this.imageModelListeners) {
+          try {
+            listener()
+          } catch {
+            createLogger('settings:repository').error('Image model change listener failed')
           }
         }
-        const before = new Map(previous.map((provider) => [provider.id, provider]))
-        const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
-        const changes = [...new Set([...before.keys(), ...after.keys()])]
-          .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
-          .map((id) => ({ id, current: after.get(id) }))
-        for (const { id, current } of changes) {
-          const prior = before.get(id)
-          if (!current) this.providerValidationHistory.delete(id)
-          // A display edit keeps existing official connections and their recovery watermarks valid.
-          else if (
-            prior?.type === 'official' &&
-            current.configRevision !== prior.configRevision &&
-            sameCatalogTarget(prior, current)
-          ) {
-            this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+      }
+      const before = new Map(previous.map((provider) => [provider.id, provider]))
+      const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
+      const changes = [...new Set([...before.keys(), ...after.keys()])]
+        .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
+        .map((id) => ({ id, current: after.get(id) }))
+      for (const { id, current } of changes) {
+        const prior = before.get(id)
+        if (!current) this.providerValidationHistory.delete(id)
+        // A display edit keeps existing official connections and their recovery watermarks valid.
+        else if (
+          prior?.type === 'official' &&
+          current.configRevision !== prior.configRevision &&
+          sameCatalogTarget(prior, current)
+        ) {
+          this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+        }
+      }
+      if (changes.length) {
+        for (const listener of this.providerListeners) {
+          try {
+            listener(structuredClone(changes))
+          } catch {
+            // The write has committed; observer failure cannot turn it into a failed save.
+            createLogger('settings:repository').error('Provider change listener failed')
           }
         }
-        if (changes.length) {
-          for (const listener of this.providerListeners) {
-            try {
-              listener(structuredClone(changes))
-            } catch {
-              // The write has committed; observer failure cannot turn it into a failed save.
-              createLogger('settings:repository').error('Provider change listener failed')
-            }
-          }
-        }
-        return settings
-      })
+      }
+      return settings
+    })
   }
 }
 

@@ -22,7 +22,10 @@ import {
   resolveCustomModelContextWindow,
   resolveModelContextWindow
 } from '../../shared/provider-model-policy'
-import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import {
+  getCustomProviderBaseUrlError,
+  kiloModelSupportsAnonymousAccess
+} from '../../shared/provider-url-policy'
 import { labModelWireId, readLabModelCapabilities } from '../../shared/lab'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import {
@@ -141,7 +144,9 @@ class ProviderRuntimeProjectionOwner {
         provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
       vendorId: provider.vendorId,
       region: provider.region,
-      models: this.availableModels(provider),
+      models: this.availableModels(
+        needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
+      ),
       modelCatalog: bundled ? undefined : provider.modelCatalog,
       modelCatalogStatus: bundled ? undefined : provider.modelCatalogStatus,
       catalogParameters: provider.catalogParameters,
@@ -310,7 +315,7 @@ class ProviderRuntimeProjectionOwner {
     const { vendorId } = storedProvider
     if (storedProvider.type === 'official' && vendorId) {
       const key = storedProvider.keyRef ? tryDecryptKey(storedProvider.keyRef) : undefined
-      return resolveOfficialModelCatalog(storedProvider)
+      return resolveOfficialModelCatalog({ ...storedProvider, hasKey: Boolean(key) })
         .filter(isCatalogModelAvailable)
         .map((descriptor) => {
           const provider = this.officialProvider(
@@ -404,8 +409,14 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? provider.model ?? this.availableModels(provider)[0]
-      const descriptor = resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
+      const model =
+        modelOverride ??
+        (provider.vendorId === 'kilo' && !key
+          ? this.resolveActiveModel({ ...provider, keyRef: undefined })
+          : (provider.model ?? this.availableModels(provider)[0]))
+      const descriptor = resolveOfficialModelCatalog({ ...provider, hasKey: Boolean(key) }).find(
+        (entry) => entry.id === model
+      )
       return this.officialProvider(provider, provider.vendorId, model, descriptor, key)
     }
 
@@ -455,6 +466,18 @@ class ProviderRuntimeProjectionOwner {
   ): ResolvedProvider {
     const contextWindow = descriptor?.contextWindow
     const routes = descriptor?.routes
+    const modelAllowsAnonymousAccess =
+      vendorId === 'kilo'
+        ? Boolean(
+            descriptor &&
+            isCatalogModelAvailable(descriptor) &&
+            kiloModelSupportsAnonymousAccess(descriptor)
+          )
+        : undefined
+    if (!key && modelAllowsAnonymousAccess === false) {
+      if (model) throw new Error('API key is required for an official provider.')
+      return { type: 'custom', vendorId, apiEndpoints: [], modelAllowsAnonymousAccess }
+    }
     return {
       type: 'custom',
       vendorId: vendorId,
@@ -467,6 +490,7 @@ class ProviderRuntimeProjectionOwner {
       maxInputTokens: descriptor?.maxInputTokens,
       maxOutputTokens: descriptor?.maxOutputTokens,
       model,
+      ...(modelAllowsAnonymousAccess !== undefined && { modelAllowsAnonymousAccess }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
       key,
       apiEndpoints:

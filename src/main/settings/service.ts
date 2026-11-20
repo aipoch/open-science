@@ -1760,6 +1760,10 @@ class SettingsService {
     return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 
+  async addOnboardingKiloProvider(): Promise<void> {
+    await this.repository.addOnboardingKiloProvider()
+  }
+
   // Records that first-run onboarding finished so later launches skip the wizard.
   async markOnboardingComplete(): Promise<SettingsSnapshot> {
     await this.preferences.markOnboardingComplete()

@@ -1036,9 +1036,18 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       shellRuntimeBinding: { kind: 'powershell', version: '5.1' },
       logger: { info, warn: vi.fn(), error: vi.fn() }
     })
+    const terminate = processTree.terminateProcessTree
+    const termination = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockImplementationOnce(async (...args) => {
+        // Clean up the real fixture while withholding proof that the tree was reaped.
+        await terminate(...args)
+        return { reaped: false }
+      })
     try {
       const request = { sessionId: 'session', workspaceCwd: root, command: 'short-lived command' }
       const result = await service.executeShell(request)
+      expect(termination).toHaveBeenCalledOnce()
       expect(result).toMatchObject({
         errorCode: 'shell-cleanup-incomplete',
         recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
@@ -1054,6 +1063,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       })
       await expect(service.shutdownAll()).resolves.toMatchObject({ reaped: false })
     } finally {
+      termination.mockRestore()
       await rm(root, { recursive: true, force: true })
     }
   })

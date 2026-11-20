@@ -87,6 +87,7 @@ const expectedChannels = [
   'settings:stop-skill-marketplace-batch',
   'settings:get-skill-marketplace-detail',
   'settings:mark-onboarding-complete',
+  'settings:add-onboarding-kilo-provider',
   'settings:preview-agent-home-skill',
   'settings:preview-github-skill',
   'settings:preview-skill-zip',

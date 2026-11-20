@@ -317,6 +317,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.useCaseCatalog': 'sessions:use-case-catalog',
   'sessions.useCaseIntroduction': 'sessions:use-case-introduction',
   'settings.addCustomServer': 'settings:add-custom-server',
+  'settings.addOnboardingKiloProvider': 'settings:add-onboarding-kilo-provider',
   'settings.addSkillSource': 'settings:add-skill-source',
   'settings.authenticateCustomServer': 'settings:authenticate-custom-server',
   'settings.authenticateDeviceCredential': 'settings:authenticate-device-credential',

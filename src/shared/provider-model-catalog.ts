@@ -13,9 +13,15 @@ import {
   type CatalogSnapshot
 } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from './provider-model-policy'
+import { kiloModelSupportsAnonymousAccess } from './provider-url-policy'
+
+export const KILO_FREE_MODEL_ID = 'kilo-auto/free'
 
 export type OfficialCatalogSource = {
   vendorId?: OfficialVendorId
+  hasKey?: boolean
+  needsKey?: boolean
+  keyRef?: string
   region?: string
   fetchedModels?: readonly string[]
   // ProviderView already contains the region and legacy discovery policy applied by main.
@@ -62,6 +68,8 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   if (!vendorId) return []
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
+  const keylessKilo =
+    vendorId === 'kilo' && (source.needsKey || !(source.hasKey ?? Boolean(source.keyRef)))
   const curated = usesBundledModelCatalog(vendorId)
   const discovery =
     modelCatalog && !curated ? resolveVendorModelCatalog(vendorId, region) : undefined
@@ -74,6 +82,11 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     : modelCatalog
       ? [...live.keys()]
       : [...(source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))]
+  // Keep Kilo’s free auto-routing model first after a catalog refresh.
+  if (vendorId === 'kilo') {
+    const freeRoute = ids.indexOf(KILO_FREE_MODEL_ID)
+    if (freeRoute > 0) ids.unshift(...ids.splice(freeRoute, 1))
+  }
   if (vendorId === 'deepseek' && modelCatalog) {
     for (const alias of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
       if (!live.has(alias)) ids.push(alias)
@@ -81,6 +94,7 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   }
   return ids
     .filter((id) => !/\[1m\]$/i.test(id))
+    .filter((id) => !keylessKilo || kiloModelSupportsAnonymousAccess(live.get(id) ?? { id }))
     .map((id) => {
       const bundled = vendor.models.find((model) => model.id === id)
       const endpoints = resolveVendorModelApiEndpoints(vendorId, id)

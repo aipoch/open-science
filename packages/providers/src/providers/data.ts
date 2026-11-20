@@ -2032,6 +2032,113 @@ const definitions: readonly OfficialVendor[] = [
         'xai/grok-4.6'
       ]
     }
+  },
+  {
+    id: 'kilo',
+    label: 'Kilo Gateway',
+    baseUrl: 'https://ai-gateway.kilo.ai/api',
+    chatCompletionsBaseUrl: 'https://ai-gateway.kilo.ai/api/v1',
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
+    apiKeyUrl: 'https://app.kilo.ai',
+    modelsListUrl: 'https://ai-gateway.kilo.ai/api/v1/models',
+    modelsList: {
+      auth: { header: 'authorization', prefix: 'Bearer ', required: false },
+      filter: { path: 'supported_parameters', includes: 'tools' },
+      fields: {
+        name: 'name',
+        contextWindow: 'context_length',
+        maxOutputTokens: 'top_provider.max_completion_tokens',
+        supportsImageInput: { path: 'architecture.input_modalities', includes: 'image' }
+      }
+    },
+    supportsAnonymousAccess: true,
+    reasoningEffort: { supported: false },
+    // List the free route first. Anonymous entries in the 2026-11-19 /models response
+    // are free, support tools, and only output text. Image input is allowed.
+    models: [
+      {
+        id: 'kilo-auto/free',
+        contextWindow: 256_000,
+        maxOutputTokens: 32_768,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'baidu/ernie-5.5-flash-preview:free',
+        contextWindow: 1_024_000,
+        maxOutputTokens: 921_600,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'liquid/lfm-3-1.7b:free',
+        contextWindow: 262_144,
+        maxOutputTokens: 8_192,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'particle-ai/particle-1:free',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'nvidia/nemotron-3.5-super-vl:free',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'dots-studio/dots-3-note-preview:free',
+        contextWindow: 512_000,
+        maxOutputTokens: 460_800,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'nvidia/nemotron-3.5-lightning:free',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 65_536,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'cohere/north-mini-code:free',
+        contextWindow: 256_000,
+        maxOutputTokens: 64_000,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 65_536,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+        contextWindow: 256_000,
+        maxOutputTokens: 65_536,
+        supportsAnonymousAccess: true
+      },
+      { id: 'openrouter/free', contextWindow: 200_000, supportsAnonymousAccess: true },
+      {
+        id: 'reflection/beam-free',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        supportsAnonymousAccess: true
+      },
+      {
+        id: 'stealth/glyph-cluster',
+        contextWindow: 256_000,
+        maxOutputTokens: 256_000,
+        supportsAnonymousAccess: true
+      }
+    ],
+    multimodal: {
+      multimodalModels: [
+        'particle-ai/particle-1:free',
+        'nvidia/nemotron-3.5-super-vl:free',
+        'dots-studio/dots-3-note-preview:free',
+        'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+        'openrouter/free'
+      ]
+    }
   }
 ]
 
