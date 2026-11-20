@@ -888,19 +888,18 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   margin-top: 0.65rem;
 }
 .onboarding-connection-summary {
+  @apply bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   margin-top: 1rem;
-  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 0.5rem 0.8rem;
-  color: var(--text-100);
   font-size: 0.75rem;
 }
 .onboarding-connection-summary svg {
   width: 0.9rem;
-  color: var(--primary);
 }
 .onboarding-guide {
   width: 100%;
