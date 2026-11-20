@@ -441,7 +441,9 @@ describe('post-merge Windows validation', () => {
     const install = findStep(job, 'Install Windows package for AppContainer certification')
 
     expect(job['continue-on-error']).toBeUndefined()
-    expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
+    expect(smoke.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}"
+    )
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(20)
     expect(install.run).toContain(
@@ -540,7 +542,9 @@ describe('post-merge Windows validation', () => {
       'run-id': '${{ inputs.artifact_run_id || github.run_id }}',
       'github-token': '${{ github.token }}'
     })
-    expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
+    expect(linux.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'linux' }}"
+    )
     expect(evidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
     expect(uploadEvidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
   })
@@ -767,11 +771,13 @@ describe('post-merge Windows validation', () => {
     expect(smoke.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
     expect(downloadPackage.with?.path).toBe('dist')
-    expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
+    expect(macos.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'mac' }}"
+    )
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(windowsSignature).toMatchObject({
-      if: "${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}",
+      if: "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' && inputs.require_windows_signing }}",
       env: { AZURE_SIGNING_PUBLISHER: '${{ vars.AZURE_SIGNING_PUBLISHER }}' },
       run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist'
     })
@@ -823,12 +829,11 @@ describe('post-merge Windows validation', () => {
       include:
         '${{ fromJSON(inputs.architecture == \'arm64\' && \'[{"arch":"arm64","os":"macos-15"}]\' || inputs.architecture == \'x64\' && \'[{"arch":"x64","os":"macos-15-intel"}]\' || \'[{"arch":"arm64","os":"macos-15"},{"arch":"x64","os":"macos-15-intel"}]\') }}'
     })
-    expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
+    expect(refreshedMacosEvidence.run).toContain('release-certification-evidence.mjs refresh')
+    expect(refreshedMacosEvidence.run).toContain('--artifact-dir mac')
     expect(refreshedMacosEvidence.run).toContain(
-      '--database-migration-certification mac/database-migration-certification.json'
+      '--output "mac/certification-macos-${{ matrix.arch }}.json"'
     )
-    expect(refreshedMacosEvidence.run).toContain('--electron-p0 not-applicable')
-    expect(refreshedMacosEvidence.run).toContain('--visual-regression not-applicable')
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
     expect(notarizeDryRun.with?.certified_build).toBe(false)
     expect(notarize.steps?.indexOf(refreshedMacosEvidence)).toBeGreaterThan(

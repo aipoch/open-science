@@ -204,8 +204,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
+        // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
         'notebook/mcp-server.ts':
-          '27b9903b2fece98497965223cbe231fb066cbea8df0f2cc0723a5ae336dd5165',
+          '0774ab4a833ec59e3d416f3d1d9d414ee0b95afd3858e8dd9a306afe58cc9acc',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
