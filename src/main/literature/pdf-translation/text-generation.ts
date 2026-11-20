@@ -1,3 +1,5 @@
+import { cloudflareGatewayFetch } from '../../settings/cloudflare-gateway-transport'
+import type { CloudflareGateway } from '../../../shared/cloudflare-gateway'
 import { encodeStoredModelProtocol } from '../../../shared/model-protocol-storage'
 import { createHash } from 'node:crypto'
 import { createProvider, ProviderTextGenerationError } from '@aipoch/providers/client'
@@ -13,6 +15,7 @@ import { providerAllowsAnonymousAccess } from '../../../shared/provider-url-poli
 export type ProviderTextGenerationConfiguration = Readonly<{
   type: 'custom' | 'official'
   key?: string
+  cloudflare?: CloudflareGateway
   baseUrl?: string
   chatCompletionsBaseUrl?: string
   apiEndpoints?: readonly ModelProtocol[]
@@ -48,6 +51,7 @@ export function providerTextGenerationTargetKey(target: ProviderTextGenerationTa
     target.provider.apiEndpoints?.map(encodeStoredModelProtocol),
     target.provider.baseUrl,
     target.provider.chatCompletionsBaseUrl,
+    ...(target.provider.cloudflare ? [target.provider.cloudflare.gatewayId] : []),
     ...(target.reasoningEffort && target.reasoningEffort !== 'default'
       ? [target.reasoningEffort, target.provider.vendorId, target.provider.reasoningEffortTransport]
       : [])
@@ -82,7 +86,7 @@ export class ProviderTextGenerationService {
     const model = createProvider({
       id: provider.vendorId ?? 'custom',
       key: provider.key,
-      fetch: this.fetchImpl,
+      fetch: cloudflareGatewayFetch(this.fetchImpl, provider),
       textGeneration: {
         ...provider,
         reasoningEffortTransport: provider.reasoningEffortTransport,

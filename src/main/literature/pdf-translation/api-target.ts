@@ -48,6 +48,7 @@ export async function capturePdfTranslationApiTarget(
     provider: {
       type: direct.type,
       key: direct.key,
+      ...(direct.cloudflare && { cloudflare: direct.cloudflare }),
       baseUrl: direct.baseUrl,
       chatCompletionsBaseUrl: direct.chatCompletionsBaseUrl,
       apiEndpoints: direct.apiEndpoints,

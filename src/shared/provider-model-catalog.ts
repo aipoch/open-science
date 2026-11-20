@@ -1,4 +1,9 @@
 import {
+  cloudflareGatewayBase,
+  cloudflareGatewayProtocol,
+  type CloudflareGateway
+} from './cloudflare-gateway'
+import {
   getOfficialVendor,
   resolveVendorBaseUrl,
   resolveVendorModelCatalog,
@@ -23,6 +28,8 @@ export type OfficialCatalogSource = {
   needsKey?: boolean
   keyRef?: string
   region?: string
+  cloudflare?: CloudflareGateway
+  model?: string
   fetchedModels?: readonly string[]
   // ProviderView already contains the region and legacy discovery policy applied by main.
   models?: readonly string[]
@@ -66,6 +73,16 @@ function resolveSnapshotRoutes(
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
   if (!vendorId) return []
+  if (vendorId === 'cloudflare-ai-gateway') {
+    const { cloudflare, model } = source
+    if (!cloudflare || !model) return []
+    return [
+      {
+        id: model,
+        routes: { [cloudflareGatewayProtocol(cloudflare.mode)]: cloudflareGatewayBase(cloudflare) }
+      }
+    ]
+  }
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
   const keylessKilo =

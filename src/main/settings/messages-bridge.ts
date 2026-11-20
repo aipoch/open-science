@@ -1,3 +1,5 @@
+import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
+import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -49,6 +51,7 @@ export type MessagesBridgeTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
+  cloudflare?: CloudflareGateway
   model: string
   backgroundModel?: string
   useApiKeyHeader?: boolean
@@ -206,7 +209,7 @@ export class MessagesBridge {
     let upstream: Response
     try {
       upstream = await fetchProviderRequest(
-        withProviderConnectionMarker(this.fetchImpl, response),
+        withProviderConnectionMarker(cloudflareGatewayFetch(this.fetchImpl, target), response),
         `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
         {
           method: 'POST',

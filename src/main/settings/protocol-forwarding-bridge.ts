@@ -1,3 +1,5 @@
+import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
+import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -45,6 +47,7 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   wire: keyof typeof WIRE_PATH
   endpoint: string
   key?: string
+  cloudflare?: CloudflareGateway
   model: string
   /** Host-only OAuth resolution. These requests never replay errors or expose upstream diagnostics. */
   resolveConnection?: (
@@ -276,7 +279,10 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    const fetchUpstream = withProviderConnectionMarker(transport, response)
+    const fetchUpstream = withProviderConnectionMarker(
+      cloudflareGatewayFetch(transport, target),
+      response
+    )
     const send = (url: URL, headers: Headers): Promise<Response> =>
       fetchProviderRequest(fetchUpstream, url, {
         method: 'POST',

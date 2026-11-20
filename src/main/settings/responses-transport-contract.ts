@@ -1,3 +1,4 @@
+import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
 import type {
   OfficialVendorId,
   CustomReasoningEffortTransport,
@@ -12,6 +13,7 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
+  cloudflare?: CloudflareGateway
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
   // Codex uses a catalog model for its local metadata; bridge providers may need a different

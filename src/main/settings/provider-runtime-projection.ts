@@ -1,3 +1,4 @@
+import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   catalogModelApiEndpoints,
@@ -144,6 +145,7 @@ class ProviderRuntimeProjectionOwner {
         provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
       vendorId: provider.vendorId,
       region: provider.region,
+      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),
@@ -464,6 +466,10 @@ class ProviderRuntimeProjectionOwner {
     descriptor: CatalogModel | undefined,
     key: string | undefined
   ): ResolvedProvider {
+    if (vendorId === 'cloudflare-ai-gateway') {
+      if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
+      return resolveCloudflareGateway(provider.cloudflare, model, key)
+    }
     const contextWindow = descriptor?.contextWindow
     const routes = descriptor?.routes
     const modelAllowsAnonymousAccess =

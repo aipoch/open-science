@@ -1,3 +1,4 @@
+import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
   providerCatalogState,
@@ -385,13 +386,15 @@ class ProviderAccountsModule {
     }
 
     const carryKey = (): boolean => {
-      if (request.key) {
-        provider.keyRef = encryptKey(request.key)
-        provider.keyMask = maskKey(request.key)
+      const key = provider.cloudflare ? request.key?.trim() : request.key
+      if (key) {
+        provider.keyRef = encryptKey(key)
+        provider.keyMask = maskKey(key)
       } else if (
         existing?.keyRef &&
         existing.type === provider.type &&
-        existing.vendorId === provider.vendorId
+        existing.vendorId === provider.vendorId &&
+        sameCloudflareGateway(existing.cloudflare, provider.cloudflare)
       ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
@@ -446,6 +449,16 @@ class ProviderAccountsModule {
         request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
+      if (vendorId === 'cloudflare-ai-gateway') {
+        const cloudflare = parseCloudflareGateway(
+          request.cloudflare === undefined ? existing?.cloudflare : request.cloudflare
+        )
+        if (!cloudflare) throw new Error('Cloudflare Account ID and Gateway ID are required.')
+        const model = (request.model ?? existing?.model)?.trim()
+        if (!model) throw new Error('Model is required.')
+        provider.cloudflare = cloudflare
+        provider.model = model
+      }
       provider.catalogParameters =
         request.catalogParameters === undefined
           ? vendorId === existing?.vendorId && region === existing.region
@@ -467,7 +480,9 @@ class ProviderAccountsModule {
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
-        provider.region !== existing?.region
+        provider.region !== existing?.region ||
+        !sameCloudflareGateway(provider.cloudflare, existing?.cloudflare) ||
+        (provider.cloudflare !== undefined && provider.model !== existing?.model)
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
@@ -1289,6 +1304,7 @@ class ProviderAccountsModule {
       left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
       left.responsesBaseUrl === right.responsesBaseUrl &&
       left.model === right.model &&
+      sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
     )

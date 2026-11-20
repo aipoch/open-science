@@ -1,3 +1,4 @@
+import { parseCloudflareGateway } from '../../shared/cloudflare-gateway'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
 import {
@@ -221,6 +222,16 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const labServerUrl = asString(value.labServerUrl)
   const labCatalogToken = asString(value.labCatalogToken)
   const model = asString(value.model)
+  if (type === 'official' && vendorId === 'cloudflare-ai-gateway') {
+    const cloudflare = parseCloudflareGateway(value.cloudflare)
+    if (
+      !cloudflare ||
+      !model?.trim() ||
+      characterCount(model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+    )
+      return undefined
+    provider.cloudflare = cloudflare
+  }
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)
     return isPositiveWholeTokenLimit(number) ? number : undefined

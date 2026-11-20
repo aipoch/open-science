@@ -1,3 +1,4 @@
+import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
@@ -108,6 +109,7 @@ export type StoredProvider = {
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]

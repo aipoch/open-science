@@ -1,4 +1,11 @@
 import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  cloudflareGatewayProtocol,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway
+} from '../../../../shared/cloudflare-gateway'
+import {
   codeBuddyAccounts,
   codeBuddySiteForId,
   type CodeBuddyAuthMode,
@@ -67,6 +74,7 @@ export type ProviderFormValue = {
   // URL and the model catalog then come from the registry rather than these free-text fields.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -162,6 +170,9 @@ export const defaultCustomApiEndpoint = (
 // provider kinds.
 export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtocol[] => {
   if (value.type === 'official' && value.vendorId) {
+    if (value.vendorId === 'cloudflare-ai-gateway') {
+      return [cloudflareGatewayProtocol((value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY).mode)]
+    }
     return resolveVendorModelApiEndpoints(
       value.vendorId,
       value.model.trim() || defaultVendorModel(value.vendorId, value.region)
@@ -234,12 +245,16 @@ export type ProviderFormErrorKey =
   | 'Base URL is required.'
   | CustomProviderBaseUrlError
   | 'Model is required.'
+  | 'Enter a valid Cloudflare Account ID.'
+  | 'Enter a valid Gateway ID.'
   | 'API key is required.'
   | 'Context window must be a positive whole number of tokens.'
   | 'Maximum input tokens must be a positive whole number of tokens.'
   | 'Maximum output tokens must be a positive whole number of tokens.'
 
 export type ProviderFormErrors = {
+  accountId?: ProviderFormErrorKey
+  gatewayId?: ProviderFormErrorKey
   baseUrl?: ProviderFormErrorKey
   contextWindow?: ProviderFormErrorKey
   key?: ProviderFormErrorKey
@@ -261,6 +276,14 @@ export const getProviderFormErrors = (
   options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
+  if (value.type === 'official' && value.vendorId === 'cloudflare-ai-gateway') {
+    const cloudflare = value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY
+    if (!validCloudflareAccountId(cloudflare.accountId))
+      errors.accountId = 'Enter a valid Cloudflare Account ID.'
+    if (!validCloudflareGatewayId(cloudflare.gatewayId))
+      errors.gatewayId = 'Enter a valid Gateway ID.'
+    if (!value.model.trim()) errors.model = 'Model is required.'
+  }
 
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
@@ -297,11 +320,16 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 
 // Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
-// framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
-export type ProviderKindGroup = 'codex' | 'claude' | 'subscription' | 'api' | 'other'
+// framework). Cloud providers are shown in their own section.
+export type ProviderKindGroup = 'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'other'
 
 export type ProviderKindGroupLabelKey =
-  'Codex subscription' | 'Claude subscription' | 'Subscription' | 'Official API' | 'Other'
+  | 'Codex subscription'
+  | 'Claude subscription'
+  | 'Subscription'
+  | 'Official API'
+  | 'Cloud providers'
+  | 'Other'
 
 // A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
 // string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
@@ -324,6 +352,7 @@ export const PROVIDER_KIND_GROUPS: {
   { id: 'claude', labelKey: 'Claude subscription' },
   { id: 'subscription', labelKey: 'Subscription' },
   { id: 'api', labelKey: 'Official API' },
+  { id: 'cloud', labelKey: 'Cloud providers' },
   { id: 'other', labelKey: 'Other' }
 ]
 
@@ -375,10 +404,12 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    descriptionKey: vendor.supportsAnonymousAccess
-      ? 'Free models work without an API key.'
-      : 'API key — models provided',
-    group: 'api'
+    descriptionKey: vendor.requiresConnectionConfiguration
+      ? undefined
+      : vendor.supportsAnonymousAccess
+        ? 'Free models work without an API key.'
+        : 'API key — models provided',
+    group: vendor.cloudProvider ? 'cloud' : 'api'
   })),
   {
     key: 'custom',
@@ -400,6 +431,7 @@ export const providerKindPatch = (
     codeBuddyAuthMode: undefined,
     key: '',
     catalogParameters: undefined,
+    cloudflare: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -458,7 +490,8 @@ export const providerKindPatch = (
       type: 'official',
       name: vendor?.label,
       vendorId,
-      region: vendor?.regions?.[0]?.id
+      region: vendor?.regions?.[0]?.id,
+      ...(vendorId === 'cloudflare-ai-gateway' && { cloudflare: DEFAULT_CLOUDFLARE_GATEWAY })
     }
   }
 

@@ -1,3 +1,4 @@
+import { sameCloudflareGateway } from '../../../../shared/cloudflare-gateway'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
@@ -250,6 +251,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
     vendorId: provider.vendorId,
     region: provider.region,
+    cloudflare: provider.cloudflare,
     catalogParameters: provider.catalogParameters
   })
 
@@ -270,6 +272,7 @@ const toUpsertRequest = (
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   vendorId: value.vendorId,
   region: value.region,
+  cloudflare: value.cloudflare,
   catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
@@ -1091,7 +1094,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const credentialSource =
-    editingProvider?.type === formValue.type && editingProvider.vendorId === formValue.vendorId
+    editingProvider?.type === formValue.type &&
+    editingProvider.vendorId === formValue.vendorId &&
+    sameCloudflareGateway(editingProvider.cloudflare, formValue.cloudflare)
       ? editingProvider
       : undefined
   const regionalCredential =
@@ -1158,9 +1163,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const catalogNeedsSave = Boolean(visibleCatalogPreview?.draftToken)
   const providerFormDirty =
     catalogNeedsSave ||
+    !sameCloudflareGateway(providerDraftBaseline.cloudflare, formValue.cloudflare) ||
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&
+        key !== 'cloudflare' &&
         (key === 'catalogParameters'
           ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
           : value !== providerDraftBaseline[key as keyof ProviderFormValue])

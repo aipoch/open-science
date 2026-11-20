@@ -1,3 +1,4 @@
+import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
 import type { ProviderDraft } from '../../shared/settings'
 import {
   isOfficialVendorId,
@@ -15,6 +16,9 @@ import { resolveCustomTokenLimits } from './provider-token-limits'
 
 export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => {
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
+    if (draft.vendorId === 'cloudflare-ai-gateway') {
+      return resolveCloudflareGateway(draft.cloudflare, draft.model, draft.key?.trim())
+    }
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)
     return {
       type: 'custom',

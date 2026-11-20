@@ -1,3 +1,4 @@
+import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   isCatalogModelAvailable,
@@ -28,7 +29,8 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
-  SelectTrigger
+  SelectTrigger,
+  SelectValue
 } from '@/components/ui/select'
 import {
   getOfficialVendor,
@@ -321,6 +323,15 @@ const ProviderForm = ({
   // A loopback custom gateway starts with the local-server presets visible, but the user can still
   // collapse them after that automatic reveal.
   const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
+  const cloudflare =
+    vendor?.id === 'cloudflare-ai-gateway'
+      ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
+      : undefined
+  const keyLabel = cloudflare
+    ? cloudflare.mode === 'rest'
+      ? t('Cloudflare API token')
+      : t('AI Gateway token')
+    : t('API key')
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       value.codexTransport !== 'auto' ||
@@ -361,15 +372,50 @@ const ProviderForm = ({
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
-    isOfficial && value.vendorId ? resolveVendorApiKeyUrl(value.vendorId, value.region) : undefined
+    cloudflare?.mode === 'anthropic'
+      ? 'https://dash.cloudflare.com/?to=/:account/ai/ai-gateway'
+      : isOfficial && value.vendorId
+        ? resolveVendorApiKeyUrl(value.vendorId, value.region)
+        : undefined
   const securityCopyKeys = getApiKeySecurityCopyKeys(encryptionAvailable)
+
+  const modelField = (
+    <div className="space-y-1.5">
+      <label className={fieldLabelClassName} htmlFor="provider-model">
+        {t('Model')}
+        <RequiredMark />
+      </label>
+      <Input
+        id="provider-model"
+        aria-label={t('Model')}
+        aria-required="true"
+        aria-invalid={Boolean(errors.model) || undefined}
+        aria-describedby={errors.model ? 'provider-model-error' : undefined}
+        value={value.model}
+        disabled={disabled}
+        placeholder={
+          cloudflare
+            ? cloudflare.mode === 'rest'
+              ? 'openai/gpt-4.1'
+              : 'claude-sonnet-4-5'
+            : t('e.g. deepseek-v4-flash')
+        }
+        onChange={(event) => onChange({ model: event.target.value })}
+      />
+      {errors.model ? (
+        <p id="provider-model-error" className={fieldErrorClassName} role="alert">
+          {t(errors.model)}
+        </p>
+      ) : null}
+    </div>
+  )
 
   const keyField = (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
-            {t('API key')}
+            {keyLabel}
             {keyOptional ? (
               <span className="ml-0.5 font-normal text-muted-foreground">{t('(optional)')}</span>
             ) : (
@@ -377,7 +423,7 @@ const ProviderForm = ({
             )}
           </label>
           <FieldHelp
-            label={t('API key')}
+            label={keyLabel}
             content={
               <>
                 <span className="block font-medium">{t(securityCopyKeys.title)}</span>
@@ -395,14 +441,14 @@ const ProviderForm = ({
         </div>
         {apiKeyUrl ? (
           <ExternalTextLink href={apiKeyUrl} className="text-xs">
-            {t('Get an API key')}
+            {cloudflare ? t('Get an API token') : t('Get an API key')}
           </ExternalTextLink>
         ) : null}
       </div>
       <div className="relative">
         <Input
           id="provider-key"
-          aria-label={t('API key')}
+          aria-label={keyLabel}
           aria-required={keyRequired || undefined}
           aria-invalid={Boolean(needsKey || errors.key) || undefined}
           aria-describedby={needsKey || errors.key ? 'provider-key-error' : undefined}
@@ -418,7 +464,9 @@ const ProviderForm = ({
                 ? t('Leave blank for a local server')
                 : vendor?.supportsAnonymousAccess
                   ? t('Free models work without an API key.')
-                  : t('Paste API key')
+                  : cloudflare
+                    ? undefined
+                    : t('Paste API key')
           }
           className="pe-9"
           onChange={(event) => {
@@ -864,28 +912,7 @@ const ProviderForm = ({
 
           {keyField}
 
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-model">
-              {t('Model')}
-              <RequiredMark />
-            </label>
-            <Input
-              id="provider-model"
-              aria-label={t('Model')}
-              aria-required="true"
-              aria-invalid={Boolean(errors.model) || undefined}
-              aria-describedby={errors.model ? 'provider-model-error' : undefined}
-              value={value.model}
-              disabled={disabled}
-              placeholder={t('e.g. deepseek-v4-flash')}
-              onChange={(event) => onChange({ model: event.target.value })}
-            />
-            {errors.model ? (
-              <p id="provider-model-error" className={fieldErrorClassName} role="alert">
-                {t(errors.model)}
-              </p>
-            ) : null}
-          </div>
+          {modelField}
 
           <SettingsDisclosure
             expanded={advancedVisible}
@@ -1085,6 +1112,72 @@ const ProviderForm = ({
               />
             </div>
           </SettingsDisclosure>
+        </>
+      ) : cloudflare ? (
+        <>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-cloudflare-mode">
+              {t('Connection mode')}
+            </label>
+            <Select
+              value={cloudflare.mode}
+              onValueChange={(mode) => {
+                if (mode === 'rest' || mode === 'anthropic')
+                  onChange({ cloudflare: { ...cloudflare, mode }, model: '', key: '' })
+              }}
+              disabled={disabled}
+            >
+              <SelectTrigger id="provider-cloudflare-mode" aria-label={t('Connection mode')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="rest">{t('Cloudflare REST API')}</SelectItem>
+                <SelectItem value="anthropic">{t('Anthropic Messages')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {cloudflare.mode === 'rest'
+                ? t('Use a token with Workers AI Read permission.')
+                : t(
+                    'Use an AI Gateway Run token. Configure stored credentials or Unified Billing in Cloudflare.'
+                  )}
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(['accountId', 'gatewayId'] as const).map((field) => {
+              const inputId = `provider-cloudflare-${field}`
+              const error = errors[field]
+              return (
+                <div key={field} className="space-y-1.5">
+                  <label className={fieldLabelClassName} htmlFor={inputId}>
+                    {field === 'accountId' ? t('Account ID') : t('Gateway ID')}
+                    <RequiredMark />
+                  </label>
+                  <Input
+                    id={inputId}
+                    value={cloudflare[field]}
+                    disabled={disabled}
+                    aria-required="true"
+                    aria-invalid={Boolean(error) || undefined}
+                    aria-describedby={error ? `${inputId}-error` : undefined}
+                    onChange={(event) =>
+                      onChange({
+                        cloudflare: { ...cloudflare, [field]: event.target.value },
+                        key: ''
+                      })
+                    }
+                  />
+                  {error ? (
+                    <p id={`${inputId}-error`} className={fieldErrorClassName} role="alert">
+                      {t(error)}
+                    </p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+          {modelField}
+          {keyField}
         </>
       ) : isOfficial ? (
         <>

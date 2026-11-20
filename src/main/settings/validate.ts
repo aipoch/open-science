@@ -1,3 +1,4 @@
+import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
@@ -195,7 +196,7 @@ const buildChatCompletionsValidationRequest = (
       : {
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
-          max_tokens: provider.vendorId === 'requesty' ? 16 : 1,
+          max_tokens: provider.cloudflare ? 64 : provider.vendorId === 'requesty' ? 16 : 1,
           messages: [{ role: 'user', content: 'ping' }],
           stream: false
         }
@@ -254,6 +255,24 @@ const hasValidMessagesResponse = (bodyText: string): boolean => {
       Array.isArray(parsed.content) &&
       typeof parsed.usage?.input_tokens === 'number' &&
       typeof parsed.usage?.output_tokens === 'number'
+    )
+  } catch {
+    return false
+  }
+}
+
+/** 验证 Cloudflare REST 返回了可读的模型回复，而非仅返回 HTTP 成功状态。 */
+const hasValidCloudflareChatResponse = (bodyText: string): boolean => {
+  try {
+    const { choices } = JSON.parse(bodyText) as {
+      choices?: Array<{ message?: { role?: unknown; content?: unknown } }>
+    }
+    if (!Array.isArray(choices)) return false
+    const message = choices[0]?.message
+    return (
+      message?.role === 'assistant' &&
+      typeof message.content === 'string' &&
+      message.content.trim().length > 0
     )
   } catch {
     return false
@@ -614,7 +633,12 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
   const bridge = new ResponsesToChatCompletionsBridge(
-    { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
+    {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      ...(provider.cloudflare && { cloudflare: provider.cloudflare })
+    },
     fetchImpl
   )
   return validateProviderThroughLocalResponsesAdapter(
@@ -703,7 +727,8 @@ const validateCustomProvider = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetchProviderRequest(fetchImpl, request.url, {
+    const fetchUpstream = cloudflareGatewayFetch(fetchImpl, provider)
+    const response = await fetchProviderRequest(fetchUpstream, request.url, {
       method: 'POST',
       headers: request.headers,
       body: request.body,
@@ -737,7 +762,9 @@ const validateCustomProvider = async (
       })
     }
 
-    if (category === 'ok' && request.endpoint === 'messages') {
+    const isMessagesProbe = request.endpoint === 'messages'
+    const isCloudflareChatProbe = provider.cloudflare?.mode === 'rest'
+    if (category === 'ok' && (isMessagesProbe || isCloudflareChatProbe)) {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -752,12 +779,17 @@ const validateCustomProvider = async (
             message: error.message
           })
         }
-        // An unreadable success body cannot prove the Messages contract.
+        // 返回体无法读取时，不能确认模型接口已接通。
       }
-      if (!hasValidMessagesResponse(bodyText)) {
+      const hasExpectedResponse = isMessagesProbe
+        ? hasValidMessagesResponse(bodyText)
+        : hasValidCloudflareChatResponse(bodyText)
+      if (!hasExpectedResponse) {
         return toResult('unknown', {
           status: response.status,
-          message: 'The provider returned success without a valid Anthropic message.'
+          message: isMessagesProbe
+            ? 'The provider returned success without a valid Anthropic message.'
+            : 'The provider returned an unexpected response. Check the API settings before retrying.'
         })
       }
     }

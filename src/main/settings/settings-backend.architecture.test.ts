@@ -729,6 +729,7 @@ describe('Settings backend ownership architecture', () => {
       'apiEndpoints',
       'baseUrl',
       'catalogParameters',
+      'cloudflare',
       'codeBuddyAuthMode',
       'codexAuthMode',
       'codexAutoUseHttps',

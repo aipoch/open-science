@@ -1,3 +1,4 @@
+import { sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   providerCatalogState,
   type ProviderCatalogState
@@ -146,6 +147,8 @@ const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean
   left.type === right.type &&
   left.vendorId === right.vendorId &&
   left.region === right.region &&
+  sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
+  (!left.cloudflare || left.model === right.model) &&
   left.keyRef === right.keyRef &&
   isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
 
@@ -417,9 +420,10 @@ class SettingsRepository {
       return {
         ...settings,
         providers,
-        // A custom provider has one model. Keep its active selection in the same save so
-        // validation and runtime resolution cannot keep using the model from before the edit.
-        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
+        // 单模型连接保存新模型时，同步更新主模型，避免继续验证已替换的模型。
+        ...(configEdit &&
+        (provider.type === 'custom' || provider.cloudflare) &&
+        settings.activeProviderId === provider.id
           ? { activeModel: provider.model }
           : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&

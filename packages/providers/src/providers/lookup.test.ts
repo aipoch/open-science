@@ -101,14 +101,19 @@ describe('provider registry', () => {
     }
   )
 
-  it('defines exactly one of baseUrl or regions per vendor, with a non-empty catalog', () => {
+  it('defines a static endpoint and catalog unless the connection supplies both', () => {
     for (const vendor of OFFICIAL_VENDORS) {
       const hasBaseUrl = Boolean(vendor.baseUrl)
       const hasRegions = (vendor.regions?.length ?? 0) > 0
 
+      expect(vendor.reasoningEffort).toBeDefined()
+      if (vendor.requiresConnectionConfiguration) {
+        expect(hasBaseUrl || hasRegions).toBe(false)
+        expect(vendor.models).toHaveLength(0)
+        continue
+      }
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
-      expect(vendor.reasoningEffort).toBeDefined()
       for (const region of vendor.regions ?? []) {
         if (!region.modelIds) continue
         expect(region.modelIds.length).toBeGreaterThan(0)

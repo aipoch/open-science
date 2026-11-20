@@ -414,6 +414,7 @@ class ProviderTransportOwner {
                     id: route.id,
                     baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
                     key: provider.key,
+                    ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
                     model,
                     useApiKeyHeader:
                       provider.vendorId === 'anthropic' ||
@@ -430,6 +431,7 @@ class ProviderTransportOwner {
                     wire,
                     endpoint: endpoint!,
                     key: provider.key,
+                    ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
                     model
                   }
                 ],
@@ -536,7 +538,10 @@ class ProviderTransportOwner {
         const candidate = planned.target
         const model = candidate.effectiveModel ?? candidate.provider.model
         if (!model) continue
-        const key = candidate.provider.key ? { key: candidate.provider.key } : {}
+        const credentials = {
+          ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+          ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare })
+        }
         const bridge =
           planned.oauth === 'xai'
             ? this.createXaiOAuthProviderBridge(
@@ -561,7 +566,7 @@ class ProviderTransportOwner {
                         ...this.healthObservation(candidate),
                         id: planned.id,
                         baseUrl: planned.endpoint!,
-                        ...key,
+                        ...credentials,
                         model,
                         ...(candidate.provider.vendorId &&
                         usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
@@ -579,7 +584,7 @@ class ProviderTransportOwner {
                         id: planned.id,
                         wire: planned.wire,
                         endpoint: planned.endpoint!,
-                        ...key,
+                        ...credentials,
                         model
                       }
                     ],
@@ -653,6 +658,7 @@ class ProviderTransportOwner {
             ...this.healthObservation(input.activeTarget),
             wire: transport.wire,
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
+            ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
             ...(provider.key ? { key: provider.key } : {}),
             model,
             ...(transport.wire === 'messages' && maxOutputTokens !== undefined
@@ -698,6 +704,7 @@ class ProviderTransportOwner {
                       wire: 'chat-completions',
                       endpoint,
                       ...(provider.key ? { key: provider.key } : {}),
+                      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
                       model,
                       adaptRequest: adaptCodeBuddyChatCompletionsRequest
                     }
@@ -726,7 +733,7 @@ class ProviderTransportOwner {
       selector ??= createCodeBuddySkillSelectorTransport({
         activeTarget: {
           ...input.activeTarget,
-          provider: routedProvider,
+          provider: { ...routedProvider, cloudflare: undefined },
           apiEndpoints: ['chat-completions']
         },
         ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
@@ -872,6 +879,9 @@ class ProviderTransportOwner {
                         endpoint: resolveChatCompletionsUrl(candidate.provider)!,
                         adaptStream: bufferChatCompletionsToolNames,
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        ...(candidate.provider.cloudflare && {
+                          cloudflare: candidate.provider.cloudflare
+                        }),
                         model
                       }
                     ],
@@ -884,6 +894,9 @@ class ProviderTransportOwner {
                         id: targetId,
                         baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        ...(candidate.provider.cloudflare && {
+                          cloudflare: candidate.provider.cloudflare
+                        }),
                         model,
                         ...(candidate.provider.vendorId &&
                         usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
@@ -1201,6 +1214,7 @@ class ProviderTransportOwner {
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
         vendorId: candidate.provider.vendorId,
+        ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare }),
         reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
         model: candidate.effectiveModel ?? candidate.provider.model,
         reasoningEffort: effort,

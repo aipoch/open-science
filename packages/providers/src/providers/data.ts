@@ -2044,6 +2044,16 @@ const definitions: readonly OfficialVendor[] = [
     }
   },
   {
+    id: 'cloudflare-ai-gateway',
+    label: 'Cloudflare AI Gateway',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['chat-completions', 'messages'],
+    apiKeyUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
     id: 'kilo',
     label: 'Kilo Gateway',
     baseUrl: 'https://ai-gateway.kilo.ai/api',
