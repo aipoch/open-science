@@ -10,6 +10,8 @@ import {
   fillRequiredProviderFields,
   readyClaudeState,
   resetOnboardingStores,
+  storageInfo,
+  codexReadyState,
   stubWindowApi
 } from './onboarding-test-utils'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -139,6 +141,82 @@ describe('Onboarding entry flow', () => {
     expect(submit.disabled).toBe(true)
     await clickButton(/Test & continue/)
     expect(useSettingsStore.getState().saveAndActivateProvider).not.toHaveBeenCalled()
+  })
+
+  it('resumes Model and Agent after restarting from the welcome entry with a new data location', async () => {
+    const dataRoot = '/mnt/research/OpenScience'
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/mnt/research')
+    vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue({ kind: 'move', dataRoot })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/Advanced options/)
+    await clickButton(/Browse/i)
+    await clickButton(/^Continue$/)
+    await clickButton(/^Restart$/i)
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      dataRoot,
+      false,
+      undefined
+    )
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue(
+      storageInfo({ dataRoot, isDefault: false })
+    )
+    await renderEntry()
+    expect(
+      container.querySelector('[data-onboarding-entry="advanced"] [aria-current="step"]')
+        ?.textContent
+    ).toContain('Model and Agent')
+    expect(container.querySelector('section[aria-label="Configure model"]')).not.toBeNull()
+  })
+
+  it('honors disabled Skip when Escape is pressed during authorization', async () => {
+    const pending = Promise.withResolvers<never>()
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      saveProvider: vi.fn().mockReturnValue(pending.promise)
+    })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Import existing Codex sign-in$/)
+    const skip = container.querySelector<HTMLButtonElement>('[data-onboarding-action="skip"]')!
+    expect(skip.disabled).toBe(true)
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[role="dialog"]')!, { key: 'Escape' })
+    )
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    await act(async () => pending.reject(new Error('Import failed')))
+    expect(skip.disabled).toBe(false)
+    await act(async () => fireEvent.keyDown(skip, { key: 'Escape' }))
+    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the current default after an invalid quick key and Skip', async () => {
+    const setActiveProvider = vi.fn()
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ validation: { ok: false, category: 'auth', status: 401 } })
+    useSettingsStore.setState({
+      activeProviderId: 'working',
+      saveValidatedProvider,
+      setActiveProvider
+    })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    const key = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => fireEvent.change(key, { target: { value: 'invalid' } }))
+    await act(async () => fireEvent.submit(key.form!))
+    expect(saveValidatedProvider).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/401|auth/i)
+    await clickButton(/Skip for now/)
+    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().activeProviderId).toBe('working')
+    expect(useSettingsStore.getState().saveAndActivateProvider).not.toHaveBeenCalled()
+    expect(setActiveProvider).not.toHaveBeenCalled()
   })
 
   it('keeps the second-stage feedback and navigation inside one scrollable content region', async () => {
