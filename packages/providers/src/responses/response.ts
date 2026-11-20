@@ -110,15 +110,14 @@ export const responseEnvelope = (
   id: string,
   model: string,
   output: JsonObject[],
-  usage?: unknown,
-  status: string = 'completed',
-  error: unknown = null
+  status: 'in_progress' | 'completed' | 'incomplete',
+  usage?: unknown
 ): JsonObject => ({
   id,
   object: 'response',
   created_at: Math.floor(Date.now() / 1000),
   status,
-  error,
+  error: null,
   incomplete_details: null,
   instructions: null,
   max_output_tokens: null,
@@ -224,8 +223,8 @@ export const completionToResponse = (
       responseId,
       completion.model,
       output,
-      chatUsageToResponsesUsage(completion.usage),
-      terminal.status
+      terminal.status,
+      chatUsageToResponsesUsage(completion.usage)
     ),
     ...terminal
   }
