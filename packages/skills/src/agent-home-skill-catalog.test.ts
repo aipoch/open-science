@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentHomeSkillCatalog } from './agent-home-skill-catalog'
 import { UserSkillRepository } from './user-skill-repository'
+import { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import { listSkillPackageFiles, skillReferencesFromPackageFiles } from './skill-files'
 
 const roots: string[] = []
@@ -63,6 +64,35 @@ it('discovers, previews and imports through an independently supplied repository
     (await catalog.importAgentHomeSkills(sources, [{ source: 'agents', slug: 'example' }]))[0]
       .status
   ).toBe('unchanged')
+})
+
+it('reuses imported identities within a selection and recognizes a repeated skill', async () => {
+  const { home, catalog, repo, sources } = await fixture()
+  const refs = Array.from({ length: 8 }, (_, index) => ({
+    source: 'agents' as const,
+    slug: `sample-${index}`
+  }))
+  for (const { slug } of refs) {
+    await mkdir(join(home, slug))
+    await writeFile(
+      join(home, slug, 'SKILL.md'),
+      `---\nname: ${slug}\ndescription: Sample\n---\nBody.\n`
+    )
+  }
+  const reads = vi.spyOn(SkillPackageTransactionOwner.prototype, 'readImportedSource')
+  try {
+    const imported = await catalog.importAgentHomeSkills(sources, [...refs, refs[0]])
+    expect(imported.map(({ status }) => status)).toEqual([
+      ...refs.map(() => 'imported'),
+      'unchanged'
+    ])
+    expect(imported.at(-1)?.id).toBe(imported[0].id)
+    // The repeat verifies its stored manifest. Earlier rows must not be reread for every fresh entry.
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(refs.length + 1)
+    expect(await repo.list()).toHaveLength(refs.length)
+  } finally {
+    reads.mockRestore()
+  }
 })
 
 it('collapses allowed-root aliases while rejecting traversal, external and nested symlinks', async () => {

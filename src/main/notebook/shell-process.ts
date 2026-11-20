@@ -1142,6 +1142,7 @@ const runShellCommand = (
         })
       }
       child.once('error', processError)
+      if (oneShotWsl) child.stdin.once('error', processError)
       const launchGate = gateLaunch ? child.stdio[3] : undefined
       launchGate?.once('error', processError)
       child.once('exit', (code) => {
