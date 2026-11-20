@@ -233,6 +233,44 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).not.toHaveBeenCalled()
   })
 
+  it('does not wait for a permanently pending lease after cancellation', async () => {
+    const openContent = vi.fn(() => new Promise<never>(() => {}))
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: { loadSessionForContinuation: vi.fn() },
+      sources: {
+        resolveVersion: async () => ({
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment',
+          sourceVersionId: 'version',
+          filename: 'pending.pdf',
+          sizeBytes: 42,
+          checksum,
+          path: join(root, 'pending.pdf'),
+          openContent
+        })
+      }
+    })
+    const controller = new AbortController()
+    const pending = reader.classificationEvidence(
+      {
+        attachmentId: 'attachment',
+        attachmentVersionId: 'version',
+        filename: 'pending.pdf',
+        sizeBytes: 42,
+        checksum,
+        query: 'evidence'
+      },
+      controller.signal
+    )
+    const rejected = expect(pending).rejects.toThrow('cancel opening')
+    await vi.waitFor(() => expect(openContent).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel opening'))
+    await rejected
+    await reader.close()
+    expect(extractPdfText).not.toHaveBeenCalled()
+  })
+
   const confirmedSession = (
     proseRegionsByBindingId: Readonly<Record<string, readonly PdfProseRegion[]>>
   ): PersistedChatSession => {

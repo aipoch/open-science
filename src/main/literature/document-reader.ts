@@ -53,6 +53,46 @@ type ReadingReference = SessionPdfBinding & {
   projectId: string
 }
 
+type ContentLease = Awaited<ReturnType<NonNullable<ResolvedSessionPdfVersion['openContent']>>>
+
+const openContentWithCancellation = async (
+  openContent: NonNullable<ResolvedSessionPdfVersion['openContent']>,
+  signal?: AbortSignal
+): Promise<ContentLease> => {
+  if (!signal) return openContent()
+  if (signal.aborted) throw signal.reason
+  return new Promise<ContentLease>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => signal.removeEventListener('abort', abort)
+    const abort = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(signal.reason)
+    }
+    const pending = openContent()
+    signal.addEventListener('abort', abort, { once: true })
+    pending.then(
+      (lease) => {
+        cleanup()
+        if (settled || signal.aborted) {
+          void lease.close().catch(() => undefined)
+          return
+        }
+        settled = true
+        resolve(lease)
+      },
+      (error) => {
+        cleanup()
+        if (settled || signal.aborted) return
+        settled = true
+        reject(error)
+      }
+    )
+    if (signal.aborted) abort()
+  })
+}
+
 class LiteratureDocumentReader {
   private readonly ocrSessions = new Set<ReturnType<typeof createPdfOcrSession>>()
   private closed = false
@@ -275,7 +315,7 @@ class LiteratureDocumentReader {
       : {}
     let extraction
     if (input.openContent) {
-      const lease = await input.openContent()
+      const lease = await openContentWithCancellation(input.openContent, signal)
       try {
         signal?.throwIfAborted()
         extraction = await extractPdfText(
