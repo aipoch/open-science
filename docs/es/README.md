@@ -151,14 +151,14 @@ La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extr
 
 ## ¿Qué puede hacer con AIPOCH Open-Science?
 
-| Tarea                       | Cómo se realiza                                                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Revisar la bibliografía     | Importe referencias de Zotero, filtre artículos con sus criterios y consulte el PDF original para comprobar un hallazgo.                                           |
-| Analizar datos              | Ejecute Python o R en un Notebook y examine las tablas y figuras junto a sus archivos de origen.                                                                   |
-| Rastrear un resultado       | Consulte las entradas, el código y el historial de una versión en la vista de procedencia. Repita la ejecución si dispone de la receta, las entradas y el entorno. |
-| Entregar un resultado       | Comparta un [paquete `.science`](#share-your-research) para que otras personas examinen los pasos y las versiones de archivos usados.                              |
-| Ampliar un flujo de trabajo | Active conectores de datos científicos, elija habilidades integradas o instale más habilidades y especialistas desde sus catálogos.                                |
-| Elegir un modelo            | Conecte un proveedor compatible, una pasarela propia o una suscripción compatible de Claude o Codex. Los protocolos disponibles dependen del motor del agente.     |
+| Tarea                       | Cómo se realiza                                                                                                                                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revisar la bibliografía     | Importe referencias de Zotero, filtre artículos con sus criterios y consulte el PDF original para comprobar un hallazgo. Comparar los resultados de varias referencias y exportar la tabla como CSV. |
+| Analizar datos              | Ejecute Python o R en un Notebook y examine las tablas y figuras junto a sus archivos de origen.                                                                                                     |
+| Rastrear un resultado       | Consulte las entradas, el código y el historial de una versión en la vista de procedencia. Repita la ejecución si dispone de la receta, las entradas y el entorno.                                   |
+| Entregar un resultado       | Comparta un [paquete `.science`](#share-your-research) para que otras personas examinen los pasos y las versiones de archivos usados.                                                                |
+| Ampliar un flujo de trabajo | Active conectores de datos científicos, elija habilidades integradas o instale más habilidades y especialistas desde sus catálogos.                                                                  |
+| Elegir un modelo            | Conecte un proveedor compatible, una pasarela propia o una suscripción compatible de Claude o Codex. Los protocolos disponibles dependen del motor del agente.                                       |
 
 <a id="rendimiento-en-benchmarks"></a>
 

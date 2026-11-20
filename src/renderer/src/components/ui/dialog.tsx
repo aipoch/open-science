@@ -1,4 +1,7 @@
 import * as React from 'react'
+import { X } from 'lucide-react'
+import { Button } from './button'
+import { dialogOverlayClassName } from './dialog-chrome'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 
 import { useChildLayerDismissalGuard } from './use-child-layer-dismissal-guard'
@@ -54,6 +57,51 @@ function Content({
   )
 }
 
+/** Resource and review details share one responsive, right-aligned dialog surface. */
+function DrawerContent({
+  title,
+  closeLabel,
+  closeDisabled,
+  headerActions,
+  children,
+  ...props
+}: Omit<React.ComponentProps<typeof Content>, 'className' | 'title'> & {
+  title: string
+  closeLabel: string
+  headerActions?: React.ReactNode
+  closeDisabled?: boolean
+}): React.JSX.Element {
+  return (
+    <DialogPrimitive.Portal>
+      <Overlay className={dialogOverlayClassName} />
+      <Content
+        aria-describedby={undefined}
+        {...props}
+        className="fixed inset-y-0 right-0 flex w-full data-[state=closed]:pointer-events-none flex-col border-l border-border bg-card text-foreground shadow-dialog outline-none sm:w-[min(46rem,calc(100vw-4rem))] data-[state=open]:animate-in data-[state=open]:slide-in-from-right data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right motion-reduce:animate-none"
+      >
+        <div className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border px-5">
+          <DialogPrimitive.Title className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {title}
+          </DialogPrimitive.Title>
+          {headerActions}
+          <DialogPrimitive.Close asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={closeLabel}
+              title={closeLabel}
+              disabled={closeDisabled}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
+          </DialogPrimitive.Close>
+        </div>
+        {children}
+      </Content>
+    </DialogPrimitive.Portal>
+  )
+}
+
 // Keep Radix's API and behavior, with composition and child-layer protection at every
 // Dialog boundary. Callers still own styles and any stricter dismissal policy.
 const Trigger = DialogPrimitive.Trigger
@@ -62,4 +110,4 @@ const Portal = DialogPrimitive.Portal
 const Title = DialogPrimitive.Title
 const Description = DialogPrimitive.Description
 
-export { Root, Trigger, Close, Portal, Overlay, Title, Description, Content }
+export { DrawerContent, Root, Trigger, Close, Portal, Overlay, Title, Description, Content }

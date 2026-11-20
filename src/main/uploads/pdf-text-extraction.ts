@@ -14,17 +14,61 @@ import type { createPdfOcrSession } from './pdf-ocr'
 let activePdfTextExtractions = 0
 const pendingPdfTextExtractions: Array<() => void> = []
 
-const withPdfTextExtractionSlot = async <Result>(work: () => Promise<Result>): Promise<Result> => {
+const withPdfTextExtractionSlot = async <Result>(
+  work: () => Promise<Result>,
+  signal?: AbortSignal
+): Promise<Result> => {
+  signal?.throwIfAborted()
   if (activePdfTextExtractions >= MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS) {
-    await new Promise<void>((resolve) => pendingPdfTextExtractions.push(resolve))
-  }
-  activePdfTextExtractions += 1
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => signal?.removeEventListener('abort', aborted)
+      const grant = (): void => {
+        cleanup()
+        activePdfTextExtractions += 1
+        resolve()
+      }
+      const aborted = (): void => {
+        const index = pendingPdfTextExtractions.indexOf(grant)
+        if (index >= 0) pendingPdfTextExtractions.splice(index, 1)
+        cleanup()
+        reject(signal?.reason)
+      }
+      pendingPdfTextExtractions.push(grant)
+      signal?.addEventListener('abort', aborted, { once: true })
+      if (signal?.aborted) aborted()
+    })
+  } else activePdfTextExtractions += 1
   try {
+    signal?.throwIfAborted()
     return await work()
   } finally {
     activePdfTextExtractions -= 1
     pendingPdfTextExtractions.shift()?.()
   }
+}
+
+const abortable = <T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return pending
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', aborted)
+    const aborted = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', aborted, { once: true })
+    pending.then(
+      (value) => {
+        cleanup()
+        if (signal.aborted) reject(signal.reason)
+        else resolve(value)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      }
+    )
+    if (signal.aborted) aborted()
+  })
 }
 
 // Extracts selectable text from a PDF so the model receives readable content instead of the raw
@@ -38,8 +82,11 @@ export const extractPdfText = async (
     ocr?: boolean
     createOcrSession?: () => ReturnType<typeof createPdfOcrSession>
     includeLayout?: boolean
+    signal?: AbortSignal
   }> = {}
 ): Promise<PdfTextResult> => {
+  const signal = options.signal
+  signal?.throwIfAborted()
   const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
   const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
   const size = source?.size ?? (await stat(filePath)).size
@@ -49,8 +96,12 @@ export const extractPdfText = async (
   return withPdfTextExtractionSlot(async () => {
     const { readPdfPageText } = await import('./pdf-reading-order')
     const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+    signal?.throwIfAborted()
     const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
-    const fileData = source ? Buffer.from(await source.readBytes()) : await readFile(filePath)
+    const fileData = source
+      ? Buffer.from(await abortable(source.readBytes(), signal))
+      : await readFile(filePath, { signal })
+    signal?.throwIfAborted()
     const maxChars = options.maxChars ?? MAX_PDF_TEXT_CHARS
 
     const loadingTask = pdfjs.getDocument({
@@ -62,14 +113,18 @@ export const extractPdfText = async (
       useSystemFonts: false,
       verbosity: 0
     })
-    const document = await loadingTask.promise
-
-    const createOcrSession = options.createOcrSession
-      ? options.createOcrSession
-      : options.ocr
-        ? (await import('./pdf-ocr')).createPdfOcrSession
-        : undefined
-    const ocr = options.ocr ? createOcrSession!() : undefined
+    let document: Awaited<typeof loadingTask.promise> | undefined
+    let ocr: ReturnType<typeof createPdfOcrSession> | undefined
+    let ocrClosing: Promise<void> | undefined
+    const closeOcr = (): Promise<void> => (ocrClosing ??= ocr?.close() ?? Promise.resolve())
+    let destruction: Promise<void> | undefined
+    const destroy = (): Promise<void> =>
+      (destruction ??= document ? document.destroy() : loadingTask.destroy())
+    const aborted = (): void => {
+      void closeOcr().catch(() => undefined)
+      void destroy().catch(() => undefined)
+    }
+    signal?.addEventListener('abort', aborted, { once: true })
     const coverage = {
       textPages: [] as number[],
       ocrPages: [] as number[],
@@ -78,6 +133,15 @@ export const extractPdfText = async (
       unverifiedPages: [] as number[]
     }
     try {
+      document = await abortable(loadingTask.promise, signal)
+      signal?.throwIfAborted()
+      const createOcrSession = options.createOcrSession
+        ? options.createOcrSession
+        : options.ocr
+          ? (await import('./pdf-ocr')).createPdfOcrSession
+          : undefined
+      signal?.throwIfAborted()
+      ocr = options.ocr ? createOcrSession!() : undefined
       const pageTexts: string[] = []
       const pageStarts: { page: number; offset: number }[] = []
       const uncertainPages = new Set<number>()
@@ -93,25 +157,29 @@ export const extractPdfText = async (
       const firstPage = boundedTargetPage ?? 1
       const lastPage = boundedTargetPage ?? document.numPages
       for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+        signal?.throwIfAborted()
         const marker = `--- Page ${pageNumber} ---\n`
         const remaining = maxChars - totalChars - (pageTexts.length ? 2 : 0)
-        const page = await document.getPage(pageNumber)
+        const page = await abortable(document.getPage(pageNumber), signal)
         let pageText: string
         try {
-          const nativeText = await readPdfPageText(
-            page,
-            (number, layout) => {
-              uncertainPages.add(number)
-              if (!options.includeLayout) return
-              const chars = layout ? JSON.stringify(layout).length : 0
-              if (layout && layoutChars + chars <= maxChars) {
-                pageLayouts.push(layout)
-                layoutChars += chars
-              } else layoutOmittedPages.push(number)
-            },
-            options.includeLayout
+          const nativeText = await abortable(
+            readPdfPageText(
+              page,
+              (number, layout) => {
+                uncertainPages.add(number)
+                if (!options.includeLayout) return
+                const chars = layout ? JSON.stringify(layout).length : 0
+                if (layout && layoutChars + chars <= maxChars) {
+                  pageLayouts.push(layout)
+                  layoutChars += chars
+                } else layoutOmittedPages.push(number)
+              },
+              options.includeLayout
+            ),
+            signal
           )
-          const operators = ocr ? await page.getOperatorList() : undefined
+          const operators = ocr ? await abortable(page.getOperatorList(), signal) : undefined
           const hasRaster = !!operators?.fnArray.some((op) =>
             [
               pdfjs.OPS.paintImageXObject,
@@ -146,11 +214,12 @@ export const extractPdfText = async (
           if (nativeText) coverage.textPages.push(pageNumber)
           if (hasRaster || hasVector) coverage.unverifiedPages.push(pageNumber)
           pageText = nativeText
-          if (canOcr) {
+          if (canOcr && ocr) {
             let recognized = ''
             try {
-              recognized = await ocr.recognize(page)
+              recognized = await abortable(ocr.recognize(page), signal)
             } catch {
+              signal?.throwIfAborted()
               // Preserve native labels; absent body text remains visible and retryable.
             }
             if (recognized) {
@@ -188,6 +257,7 @@ export const extractPdfText = async (
         (number) =>
           `Page ${number}: text layout remains uncertain; native reading order was retained.`
       )
+      signal?.throwIfAborted()
       return {
         text,
         pageCount: document.numPages,
@@ -201,13 +271,14 @@ export const extractPdfText = async (
         coverage: { ...pageCoverage, ...(unverifiedPages.length ? { unverifiedPages } : {}) }
       }
     } finally {
+      signal?.removeEventListener('abort', aborted)
       try {
-        await ocr?.close()
+        await closeOcr()
       } finally {
-        await document.destroy()
+        await destroy()
       }
     }
-  })
+  }, signal)
 }
 
 // Targeted counterpart used by Reviewer content reads. It shares the bounded extraction pool but

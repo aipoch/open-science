@@ -51,12 +51,14 @@ export const LiteratureSelectPageCheckbox = ({
   disabled,
   itemIds,
   label,
+  preserveOtherSelections = false,
   store
 }: Readonly<{
   className?: string
   disabled?: boolean
   itemIds: readonly string[]
   label: string
+  preserveOtherSelections?: boolean
   store: LiteratureSelectionStore
 }>): React.JSX.Element => {
   const selectedCount = useSyncExternalStore(
@@ -78,7 +80,20 @@ export const LiteratureSelectPageCheckbox = ({
       checked={allSelected}
       disabled={disabled}
       onChange={() => {
-        if (store.getSnapshot().allMatchingSelected || allSelected) store.clear()
+        const snapshot = store.getSnapshot()
+        if (preserveOtherSelections) {
+          if (snapshot.allMatchingSelected) {
+            for (const itemId of itemIds)
+              if (isLiteratureItemSelected(snapshot, itemId) === allSelected) store.toggle(itemId)
+          } else {
+            const selectedIds = new Set(snapshot.selectedIds)
+            for (const itemId of itemIds) {
+              if (allSelected) selectedIds.delete(itemId)
+              else selectedIds.add(itemId)
+            }
+            store.replace(selectedIds)
+          }
+        } else if (snapshot.allMatchingSelected || allSelected) store.clear()
         else store.replace(itemIds)
       }}
       aria-label={label}

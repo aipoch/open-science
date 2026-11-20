@@ -53,6 +53,46 @@ type ReadingReference = SessionPdfBinding & {
   projectId: string
 }
 
+type ContentLease = Awaited<ReturnType<NonNullable<ResolvedSessionPdfVersion['openContent']>>>
+
+const openContentWithCancellation = async (
+  openContent: NonNullable<ResolvedSessionPdfVersion['openContent']>,
+  signal?: AbortSignal
+): Promise<ContentLease> => {
+  if (!signal) return openContent()
+  if (signal.aborted) throw signal.reason
+  return new Promise<ContentLease>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => signal.removeEventListener('abort', abort)
+    const abort = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(signal.reason)
+    }
+    const pending = openContent()
+    signal.addEventListener('abort', abort, { once: true })
+    pending.then(
+      (lease) => {
+        cleanup()
+        if (settled || signal.aborted) {
+          void lease.close().catch(() => undefined)
+          return
+        }
+        settled = true
+        resolve(lease)
+      },
+      (error) => {
+        cleanup()
+        if (settled || signal.aborted) return
+        settled = true
+        reject(error)
+      }
+    )
+    if (signal.aborted) abort()
+  })
+}
+
 class LiteratureDocumentReader {
   private readonly ocrSessions = new Set<ReturnType<typeof createPdfOcrSession>>()
   private closed = false
@@ -76,7 +116,7 @@ class LiteratureDocumentReader {
           throw new Error(
             'LINKED_PDF_UNAVAILABLE: The immutable linked PDF Version is unavailable.'
           )
-        return () => this.extract(source, context.ocrRevision, context.ocrLanguages)
+        return (signal) => this.extract(source, context.ocrRevision, context.ocrLanguages, signal)
       },
       log: (message, fields) => log.info(message, fields),
       onIndexError: (error) => log.warn('Literature BM25 search failed', errorLogFields(error))
@@ -84,6 +124,7 @@ class LiteratureDocumentReader {
   }
   async close(): Promise<void> {
     this.closed = true
+    await this.core.close()
     await Promise.all([...this.ocrSessions].map((session) => session.close()))
   }
   private async reference(
@@ -129,8 +170,8 @@ class LiteratureDocumentReader {
         )),
         reading: { order: 'automatic' }
       }),
-      classificationEvidence: async (binding, query) =>
-        this.core.classificationEvidence(await this.reference(binding, projectId), query)
+      classificationEvidence: async (binding, query, signal) =>
+        this.core.classificationEvidence(await this.reference(binding, projectId), query, signal)
     }
   }
   async readCurrent(request: ReadCurrentLiteratureRequest): Promise<unknown> {
@@ -171,7 +212,8 @@ class LiteratureDocumentReader {
   }
 
   async classificationEvidence(
-    request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>
+    request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>,
+    signal?: AbortSignal
   ): Promise<{
     coverage: 'full-text' | 'passages' | 'unavailable'
     passages: { pageStart: number; pageEnd: number; content: string }[]
@@ -192,7 +234,8 @@ class LiteratureDocumentReader {
           checksum: request.checksum,
           linkedAt: 0
         },
-        request.query
+        request.query,
+        signal
       )
     } catch (error) {
       // Screening can persist deterministic evidence gaps; failed reads must remain retryable.
@@ -236,8 +279,10 @@ class LiteratureDocumentReader {
   private async extract(
     input: ResolvedSessionPdfVersion,
     ocrRevision?: string,
-    ocrLanguages?: readonly OcrLanguage[]
+    ocrLanguages?: readonly OcrLanguage[],
+    signal?: AbortSignal
   ): Promise<TextExtraction> {
+    signal?.throwIfAborted()
     if (this.closed) throw new Error('Literature reader is closed.')
     const ocrOptions = this.options.ocrModels
       ? {
@@ -270,8 +315,9 @@ class LiteratureDocumentReader {
       : {}
     let extraction
     if (input.openContent) {
-      const lease = await input.openContent()
+      const lease = await openContentWithCancellation(input.openContent, signal)
       try {
+        signal?.throwIfAborted()
         extraction = await extractPdfText(
           lease.path,
           {
@@ -290,7 +336,13 @@ class LiteratureDocumentReader {
               return bytes
             }
           },
-          { ocr: true, ...ocrOptions, includeLayout: true, maxChars: MAX_EXTRACTED_CACHE_CHARS }
+          {
+            ocr: true,
+            ...ocrOptions,
+            includeLayout: true,
+            maxChars: MAX_EXTRACTED_CACHE_CHARS,
+            signal
+          }
         )
         await lease.verifyUnchanged()
       } finally {
@@ -303,7 +355,8 @@ class LiteratureDocumentReader {
         ocr: true,
         ...ocrOptions,
         includeLayout: true,
-        maxChars: MAX_EXTRACTED_CACHE_CHARS
+        maxChars: MAX_EXTRACTED_CACHE_CHARS,
+        signal
       })
     }
     if (extraction.truncated) {

@@ -8874,13 +8874,12 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('records shared Claude login after an unrelated active model switch', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    const probe = vi.fn(() => {
+      started.resolve()
+      return finish.promise
+    })
     const service = createService(undefined, {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
@@ -8899,9 +8898,14 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await service.setActiveProvider(gateway.id, 'deepseek-v4-pro')
 
     const login = service.loginClaudeShared()
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await Promise.race([
+      started.promise,
+      login.then(() => {
+        throw new Error('Login ended before validation')
+      })
+    ])
     await service.setActiveProvider(gateway.id, 'deepseek-v4-flash')
-    finishProbe?.()
+    finish.resolve()
 
     await expect(login).resolves.toMatchObject({ ok: true, applied: true })
     expect(
@@ -8912,13 +8916,12 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('discards a shared login result after the provider is edited and isolated mode is selected', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    const probe = vi.fn(() => {
+      started.resolve()
+      return finish.promise
+    })
     const service = createService(undefined, {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
@@ -8927,12 +8930,17 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
 
     const login = service.loginClaudeShared()
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+    await Promise.race([
+      started.promise,
+      login.then(() => {
+        throw new Error('Login ended before validation')
+      })
+    ])
 
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-sonnet-4-5' })
     await service.upsertProvider({ type: 'claude-isolated' })
     await service.setActiveProvider(CLAUDE_ISOLATED_PROVIDER_ID)
-    finishProbe?.()
+    finish.resolve()
 
     await expect(login).resolves.toMatchObject({ ok: true, applied: false })
     const settings = await repository.getSettings()

@@ -70,6 +70,13 @@ const dialogPreviewGuardScope = (
   itemId: string | undefined
 ): string | undefined => (itemId ? `dialog:${projectId ?? ''}:${itemId}` : undefined)
 
+const libraryLeaveGuardScope = 'library-comparison'
+
 const previewLeaveGuards = new PreviewLeaveGuardCoordinator()
 
-export { dialogPreviewGuardScope, previewLeaveGuards, workbenchPreviewGuardScope }
+export {
+  dialogPreviewGuardScope,
+  libraryLeaveGuardScope,
+  previewLeaveGuards,
+  workbenchPreviewGuardScope
+}

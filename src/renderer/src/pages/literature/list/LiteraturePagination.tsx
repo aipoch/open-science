@@ -16,6 +16,7 @@ export function LiteraturePagination({
   displayedCount = pageSize,
   countLabel,
   pageSizeLabel,
+  pageCount = Math.max(1, Math.ceil(total / pageSize)),
   disabled = false,
   loading = false,
   onOffsetChange,
@@ -26,6 +27,7 @@ export function LiteraturePagination({
   pageSize: number
   displayedCount?: number
   countLabel: string
+  pageCount?: number
   pageSizeLabel: string
   disabled?: boolean
   loading?: boolean
@@ -34,7 +36,6 @@ export function LiteraturePagination({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const page = Math.floor(offset / pageSize) + 1
-  const pageCount = Math.max(1, Math.ceil(total / pageSize))
   const visible = new Set([1, pageCount, page - 1, page, page + 1])
   if (pageCount <= 7) for (let index = 1; index <= pageCount; index++) visible.add(index)
   if (page <= 4) for (let index = 2; index <= 5; index++) visible.add(index)

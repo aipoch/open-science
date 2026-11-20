@@ -28,7 +28,13 @@ type MigrationQuitOperation = {
 let activeQuitOperation: MigrationQuitOperation | undefined
 let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
+const migrationWriteWaiters = new Set<() => void>()
 const dataRootWriteContext = new AsyncLocalStorage<boolean>()
+
+const releaseMigrationWriteWaiters = (): void => {
+  for (const resolve of migrationWriteWaiters) resolve()
+  migrationWriteWaiters.clear()
+}
 
 type DataRootWriteAvailability = 'available' | 'missing' | 'recovering' | 'accepted-empty'
 type DataRootStartupRecovery = () => Promise<void>
@@ -153,11 +159,27 @@ const assertDataRootWriteAvailable = (): void => {
   }
 }
 
-const waitForDataRootWriteAvailability = (): Promise<void> | undefined => {
+const waitForDataRootWriteAvailability = (signal?: AbortSignal): Promise<void> | undefined => {
   if (dataRootWriteAvailability === 'available' || dataRootWriteAvailability === 'accepted-empty') {
     return undefined
   }
-  return new Promise((resolve) => dataRootAvailabilityWaiters.add(resolve))
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      dataRootAvailabilityWaiters.delete(available)
+      signal?.removeEventListener('abort', aborted)
+    }
+    const available = (): void => {
+      cleanup()
+      resolve()
+    }
+    const aborted = (): void => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    dataRootAvailabilityWaiters.add(available)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
+  })
 }
 
 // Reserves the lifecycle quit guard before the command's first asynchronous validation/preparation
@@ -224,6 +246,7 @@ export const clearMigrationPending = (): void => {
   preparing = false
   pending = false
   copying = false
+  releaseMigrationWriteWaiters()
 }
 
 // Clears all migration/write flags after the quit guard has joined the cancelled command.
@@ -231,6 +254,7 @@ export const endMigration = (): void => {
   preparing = false
   copying = false
   pending = false
+  releaseMigrationWriteWaiters()
 }
 
 // Quit-anyway must cancel and join the command that owns the preparation flag before the lifecycle
@@ -250,12 +274,41 @@ export const isMigrationInProgress = (): boolean => preparing || copying
 // they can't write into the old root during the copy→commit window.
 export const isMigrationPending = (): boolean => pending
 
+// Background owners can park outside their writer lease while a migration drains. Only a
+// cancelled/discarded migration reopens this gate; a staged or committed copy keeps waiting until
+// the owner is disposed for relaunch. Cancellation removes the waiter without admitting new work.
+export const waitForMigrationWriteAvailability = (
+  signal?: AbortSignal
+): Promise<void> | undefined => {
+  signal?.throwIfAborted()
+  if (!pending) return undefined
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      migrationWriteWaiters.delete(available)
+      signal?.removeEventListener('abort', aborted)
+    }
+    const available = (): void => {
+      cleanup()
+      resolve()
+    }
+    const aborted = (): void => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    migrationWriteWaiters.add(available)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
+  })
+}
+
 // Throws the standard user-facing error when a migration is pending. Called at every data-root write
 // entry point (ACP prompt, notebook run/execute, uploads) so no new write can land in the old root
 // during the copy→commit window and be lost on the commit's delete.
+export class DataRootMigrationPendingError extends Error {}
+
 export const assertNoMigrationPending = (): void => {
   if (pending) {
-    throw new Error(
+    throw new DataRootMigrationPendingError(
       'Open-Science is moving your data. Wait for the move to finish before running this.'
     )
   }
@@ -281,14 +334,27 @@ export const acquireDataRootWriter = (): (() => void) => {
   }
 }
 
-export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+// Detached jobs must acquire their own leases rather than inherit a completed caller's lease.
+export const outsideDataRootWriteContext = <Result>(operation: () => Result): Result =>
+  // Mask the caller's lease explicitly: exit() can restore it when a detached writer synchronously
+  // re-enables AsyncLocalStorage on runtimes using the async-hooks implementation.
+  dataRootWriteContext.run(false, operation)
+
+export const withDataRootWrite = async <Result>(
+  write: () => Promise<Result>,
+  signal?: AbortSignal
+): Promise<Result> => {
+  // Cancellation applies only to admission. Once admitted, the caller owns settling its lease,
+  // including nested repository checkpoints that deliberately carry no cancellation signal.
+  signal?.throwIfAborted()
   // Higher-level operations compose lower-level repositories that may independently protect their
   // own write boundary. Treat nested calls in the same async chain as one logical lease: migration
   // already waits for the outer lease, and rejecting the inner call after `pending` rises would abort
   // the very in-flight operation that the drain protocol is designed to let finish.
   if (dataRootWriteContext.getStore()) return write()
-  const availability = waitForDataRootWriteAvailability()
+  const availability = waitForDataRootWriteAvailability(signal)
   if (availability) await availability
+  signal?.throwIfAborted()
   const release = acquireDataRootWriter()
   try {
     return await dataRootWriteContext.run(true, write)

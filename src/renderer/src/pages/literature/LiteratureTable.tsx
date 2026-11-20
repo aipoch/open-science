@@ -32,8 +32,10 @@ export function LiteratureTableScrollArea({
   useEffect(() => {
     const element = viewport.current!
     const update = (): void => {
-      const overflow = String(element.scrollWidth - element.clientWidth - element.scrollLeft > 1)
-      if (element.dataset.overflowRight !== overflow) element.dataset.overflowRight = overflow
+      const left = String(element.scrollLeft > 1)
+      const right = String(element.scrollWidth - element.clientWidth - element.scrollLeft > 1)
+      if (element.dataset.overflowLeft !== left) element.dataset.overflowLeft = left
+      if (element.dataset.overflowRight !== right) element.dataset.overflowRight = right
     }
     update()
     element.addEventListener('scroll', update, { passive: true })

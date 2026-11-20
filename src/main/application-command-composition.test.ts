@@ -261,6 +261,7 @@ describe('application command composition', () => {
       'literature:cancel-related',
       'literature:citation-styles',
       'literature:collect',
+      'literature:comparisons',
       'literature:complete-metadata',
       'literature:export-record',
       'literature:format-document',

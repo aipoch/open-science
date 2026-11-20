@@ -1,3 +1,8 @@
+import {
+  literatureComparisonsContract,
+  type ComparisonRequest,
+  type ComparisonResult
+} from '../../shared/literature-comparison'
 import type { OverviewBatchRequest, OverviewBatch } from '../../shared/literature-overview-batch'
 import type {
   LiteratureOverviewRequest,
@@ -72,6 +77,7 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  comparisons(request: ComparisonRequest): Promise<ComparisonResult>
   overviewBatch(request: OverviewBatchRequest, signal?: AbortSignal): Promise<OverviewBatch | null>
   studySnapshot(
     request: LiteratureOverviewRequest,
@@ -127,6 +133,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  comparisons: defineApplicationCommand<
+    'literature:comparisons',
+    readonly [ComparisonRequest],
+    ComparisonResult
+  >('literature:comparisons', literatureComparisonsContract),
   getCandidateStates: defineApplicationCommand<
     'literature:get-candidate-states',
     readonly [LiteratureCandidateStatesRequest],
@@ -268,6 +279,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.comparisons,
   literatureApplicationCommands.getCandidateStates,
   literatureApplicationCommands.journals,
   literatureApplicationCommands.collect,
@@ -355,6 +367,7 @@ const registerLiteratureApplicationCommands = (
     scope.registerGroup(literatureApplicationCommandGroup, {
       'literature:collect': ({ args, callerLease }) =>
         run(() => owner.collect(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
+      'literature:comparisons': ({ args }) => run(() => owner.comparisons(args[0])),
       'literature:get-candidate-states': ({ args }) => run(() => owner.getCandidateStates(args[0])),
       'literature:journals': ({ args }) => run(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) => run(() => owner.exportRecord(args[0])),

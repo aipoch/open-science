@@ -1,9 +1,15 @@
+import { comparisonStorageMessage } from '../comparison/comparison-display'
+import { ErrorNotice } from '@/components/error-notice'
+import type { ComparisonTableSummary } from '../../../../../shared/literature-comparison'
 import { useLiteratureHost } from '../renderer-host'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import {
   ArrowLeft,
   BookOpenText,
   Copy,
+  Download,
+  Ellipsis,
+  SlidersHorizontal,
   FileCog,
   FolderOpen,
   FolderPlus,
@@ -12,11 +18,19 @@ import {
   LibraryBig,
   PanelLeft,
   Plus,
+  Table2,
   Trash2
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
@@ -50,6 +64,7 @@ type SidebarNavigation = {
 }
 
 export function LiteratureLibrarySidebar({
+  comparisons,
   navigation,
   counts,
   activeProjects,
@@ -58,6 +73,16 @@ export function LiteratureLibrarySidebar({
   returnLabel,
   openCreateCollection
 }: {
+  comparisons?: {
+    tables: ComparisonTableSummary[]
+    selectedId?: string
+    storageIssue?: string
+    storageRestore?: () => void
+    storageRetry?: () => void
+    onCreate: () => void
+    onOpen: (id: string, action?: 'configure' | 'export') => void
+    onDelete: (table: ComparisonTableSummary) => void
+  }
   navigation: SidebarNavigation
   counts: {
     inboxPendingCount?: number
@@ -91,6 +116,14 @@ export function LiteratureLibrarySidebar({
     openJournals,
     openCitationStyles
   } = navigation
+  const activeCollectionId =
+    !comparisons?.selectedId &&
+    !citationStylesOpen &&
+    !journalsOpen &&
+    !duplicatesOpen &&
+    section === 'library'
+      ? collectionId
+      : undefined
   const { inboxPendingCount, libraryCountRevision, projectItemCounts, duplicateCountRef } = counts
   return (
     <LiteratureSidebarState>
@@ -171,15 +204,15 @@ export function LiteratureLibrarySidebar({
                     type="button"
                     className={cn(
                       navButtonClassName,
-                      !citationStylesOpen &&
+                      !comparisons?.selectedId &&
+                        !citationStylesOpen &&
                         !journalsOpen &&
                         !duplicatesOpen &&
                         section === 'inbox' &&
                         'bg-bg-300 font-medium'
                     )}
                     aria-current={
-                      !citationStylesOpen &&
-                      !journalsOpen &&
+                      !comparisons?.selectedId &&
                       !citationStylesOpen &&
                       !journalsOpen &&
                       !duplicatesOpen &&
@@ -214,7 +247,8 @@ export function LiteratureLibrarySidebar({
                     type="button"
                     className={cn(
                       navButtonClassName,
-                      !citationStylesOpen &&
+                      !comparisons?.selectedId &&
+                        !citationStylesOpen &&
                         !journalsOpen &&
                         !duplicatesOpen &&
                         section === 'library' &&
@@ -224,6 +258,7 @@ export function LiteratureLibrarySidebar({
                     )}
                     ref={libraryEntryRef}
                     aria-current={
+                      !comparisons?.selectedId &&
                       !citationStylesOpen &&
                       !journalsOpen &&
                       !duplicatesOpen &&
@@ -249,7 +284,12 @@ export function LiteratureLibrarySidebar({
                     type="button"
                     className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
                     aria-current={
-                      !citationStylesOpen && !journalsOpen && duplicatesOpen ? 'page' : undefined
+                      !comparisons?.selectedId &&
+                      !citationStylesOpen &&
+                      !journalsOpen &&
+                      duplicatesOpen
+                        ? 'page'
+                        : undefined
                     }
                     aria-label={t('Duplicates')}
                     onClick={openDuplicates}
@@ -264,14 +304,19 @@ export function LiteratureLibrarySidebar({
                     type="button"
                     className={cn(
                       navButtonClassName,
-                      !citationStylesOpen &&
+                      !comparisons?.selectedId &&
+                        !citationStylesOpen &&
                         !journalsOpen &&
                         !duplicatesOpen &&
                         section === 'trash' &&
                         'bg-bg-300 font-medium'
                     )}
                     aria-current={
-                      !citationStylesOpen && !journalsOpen && !duplicatesOpen && section === 'trash'
+                      !comparisons?.selectedId &&
+                      !citationStylesOpen &&
+                      !journalsOpen &&
+                      !duplicatesOpen &&
+                      section === 'trash'
                         ? 'page'
                         : undefined
                     }
@@ -317,15 +362,15 @@ export function LiteratureLibrarySidebar({
                         type="button"
                         className={cn(
                           navButtonClassName,
-                          !citationStylesOpen &&
+                          !comparisons?.selectedId &&
+                            !citationStylesOpen &&
                             !journalsOpen &&
                             !duplicatesOpen &&
                             projectId === project.id &&
                             'bg-bg-300 font-medium'
                         )}
                         aria-current={
-                          !citationStylesOpen &&
-                          !journalsOpen &&
+                          !comparisons?.selectedId &&
                           !citationStylesOpen &&
                           !journalsOpen &&
                           !duplicatesOpen &&
@@ -382,7 +427,7 @@ export function LiteratureLibrarySidebar({
                     </LiteratureSidebarHint>
                   }
                   navButtonClassName={navButtonClassName}
-                  selectedId={duplicatesOpen ? undefined : collectionId}
+                  selectedId={activeCollectionId}
                   showAllLabel={t('Show all collections')}
                   showAllText={t('Show all')}
                   showFewerLabel={t('Show fewer collections')}
@@ -397,19 +442,9 @@ export function LiteratureLibrarySidebar({
                         type="button"
                         className={cn(
                           navButtonClassName,
-                          !duplicatesOpen &&
-                            collectionId === collection.id &&
-                            'bg-bg-300 font-medium'
+                          activeCollectionId === collection.id && 'bg-bg-300 font-medium'
                         )}
-                        aria-current={
-                          !citationStylesOpen &&
-                          !journalsOpen &&
-                          !duplicatesOpen &&
-                          section === 'library' &&
-                          collectionId === collection.id
-                            ? 'page'
-                            : undefined
-                        }
+                        aria-current={activeCollectionId === collection.id ? 'page' : undefined}
                         aria-label={collection.name}
                         onClick={() => selectLibrary(collection.id)}
                       >
@@ -437,6 +472,142 @@ export function LiteratureLibrarySidebar({
                     </LiteratureSidebarHint>
                   )}
                 />
+                {comparisons?.storageRetry && !comparisons.selectedId && (
+                  <ErrorNotice
+                    inline
+                    title={comparisonStorageMessage(
+                      comparisons.storageIssue ?? 'comparison-storage-unavailable',
+                      t
+                    )}
+                    secondaryButton={
+                      comparisons.storageRestore && {
+                        label: t('Restore comparison backup'),
+                        onClick: comparisons.storageRestore
+                      }
+                    }
+                    primaryButton={{ label: t('Retry'), onClick: comparisons.storageRetry }}
+                  />
+                )}
+                {comparisons && (
+                  <LiteratureSidebarGroup
+                    collapsed={sidebarCollapsed}
+                    entries={comparisons.tables}
+                    groupId="literature-sidebar-comparisons"
+                    label={t('Comparison tables')}
+                    selectedId={comparisons.selectedId}
+                    navButtonClassName={navButtonClassName}
+                    showAllLabel={t('Show all comparison tables')}
+                    showAllText={t('Show all')}
+                    showFewerLabel={t('Show fewer comparison tables')}
+                    showLessText={t('Show less')}
+                    action={
+                      <LiteratureSidebarHint label={t('New comparison table')} collapsed>
+                        <Button
+                          variant="ghost"
+                          size="icon-lg"
+                          className="text-muted-foreground hover:text-foreground transition-none"
+                          aria-label={t('New comparison table')}
+                          disabled={Boolean(comparisons.storageRetry)}
+                          onClick={comparisons.onCreate}
+                        >
+                          <Plus className="size-4" aria-hidden="true" />
+                        </Button>
+                      </LiteratureSidebarHint>
+                    }
+                    renderEntry={(table) => (
+                      <div
+                        key={table.id}
+                        className="group relative mb-1 flex items-center rounded-lg hover:bg-bg-300 focus-within:bg-bg-300"
+                      >
+                        <LiteratureSidebarHint label={table.name} collapsed={sidebarCollapsed}>
+                          <button
+                            type="button"
+                            className={cn(
+                              navButtonClassName,
+                              'min-w-0 flex-1',
+                              !sidebarCollapsed && 'pr-9',
+                              comparisons.selectedId === table.id && 'bg-bg-300 font-medium'
+                            )}
+                            aria-current={comparisons.selectedId === table.id ? 'page' : undefined}
+                            aria-label={table.name}
+                            onClick={() => comparisons.onOpen(table.id)}
+                          >
+                            <Table2
+                              className="size-4 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            {!sidebarCollapsed && (
+                              <span
+                                title={table.name}
+                                className="min-w-0 flex-1 truncate text-left"
+                              >
+                                {table.name}
+                              </span>
+                            )}
+                          </button>
+                        </LiteratureSidebarHint>
+                        {!sidebarCollapsed && (
+                          <DropdownMenu modal={false}>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="absolute inset-y-0 right-1 my-auto pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 aria-expanded:pointer-events-auto aria-expanded:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
+                                aria-label={t('Actions for {{name}}', { name: table.name })}
+                              >
+                                <Ellipsis className="size-4" aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              side="right"
+                              align="start"
+                              sideOffset={8}
+                              collisionPadding={8}
+                            >
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={
+                                  table.state === 'running' ||
+                                  (table.state === 'paused' && table.running > 0)
+                                }
+                                onSelect={() => comparisons.onOpen(table.id, 'configure')}
+                              >
+                                <SlidersHorizontal aria-hidden="true" className="size-4" />
+                                {t('Table settings')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2"
+                                onSelect={() => comparisons.onOpen(table.id, 'export')}
+                              >
+                                <Download aria-hidden="true" className="size-4" />
+                                {t('Export')}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="gap-2 text-destructive"
+                                disabled={table.state === 'running' || table.inFlight}
+                                title={
+                                  table.state === 'running'
+                                    ? t('Pause extraction before deleting this table.')
+                                    : table.inFlight
+                                      ? t('Saving…')
+                                      : undefined
+                                }
+                                aria-label={t('Delete comparison table: {{name}}', {
+                                  name: table.name
+                                })}
+                                onSelect={() => comparisons.onDelete(table)}
+                              >
+                                <Trash2 aria-hidden="true" className="size-4" />
+                                {t('Delete')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    )}
+                  />
+                )}
               </div>
               <div
                 className={cn(

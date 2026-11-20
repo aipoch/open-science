@@ -8,7 +8,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
-it('updates the fixed column edge only while content remains to the right, without rerendering children', () => {
+it('updates the fixed column edges as content scrolls out of view, without rerendering children', () => {
   let resized!: () => void
   const disconnect = vi.fn()
   vi.stubGlobal(
@@ -42,16 +42,20 @@ it('updates the fixed column edge only while content remains to the right, witho
     scrollWidth: { value: 600, configurable: true }
   })
   resized()
+  expect(viewport.dataset.overflowLeft).toBe('false')
   expect(viewport.dataset.overflowRight).toBe('true')
   viewport.scrollLeft = 300
   fireEvent.scroll(viewport)
+  expect(viewport.dataset.overflowLeft).toBe('true')
   expect(viewport.dataset.overflowRight).toBe('false')
   viewport.scrollLeft = 100
   fireEvent.scroll(viewport)
+  expect(viewport.dataset.overflowLeft).toBe('true')
   expect(viewport.dataset.overflowRight).toBe('true')
   Object.defineProperty(viewport, 'clientWidth', { value: 600 })
   viewport.scrollLeft = 0
   resized()
+  expect(viewport.dataset.overflowLeft).toBe('false')
   expect(viewport.dataset.overflowRight).toBe('false')
   expect(child).toHaveBeenCalledOnce()
   view.unmount()

@@ -114,6 +114,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.cancelRelated': 'literature:cancel-related',
   'literature.citationStyles': 'literature:citation-styles',
   'literature.collect': 'literature:collect',
+  'literature.comparisons': 'literature:comparisons',
   'literature.completeMetadata': 'literature:complete-metadata',
   'literature.exportRecord': 'literature:export-record',
   'literature.formatDocument': 'literature:format-document',
