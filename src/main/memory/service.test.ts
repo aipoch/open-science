@@ -84,6 +84,7 @@ describe('MemoryService', () => {
     await expect(
       service.deleteCategory({
         id: ABOUT_YOU_MEMORY_CATEGORY_ID,
+        expectedEntryIds: withEntry.categories[0]!.entries.map(({ id }) => id),
         expectedRevision: initial.categories[0]!.revision
       })
     ).rejects.toThrow('The About you category cannot be deleted.')
@@ -195,7 +196,24 @@ describe('MemoryService', () => {
       ])
     )
 
-    await reopened.deleteCategory({ id: category!.id, expectedRevision: category!.revision })
+    const expectedEntryIds = snapshot.categories
+      .find(({ id }) => id === category!.id)!
+      .entries.map(({ id }) => id)
+    const request = { id: category!.id, expectedRevision: category!.revision, expectedEntryIds }
+    // A replacement leaves the count and category revision unchanged.
+    await reopened.deleteEntry({ id: expectedEntryIds[0]!, expectedRevision: 1 })
+    const replacement = await reopened.createEntry({
+      categoryId: category!.id,
+      content: 'Use a 60 second exposure.'
+    })
+    await expect(reopened.deleteCategory(request)).rejects.toThrow('Memory category changed')
+    expect(await reopened.snapshot()).toEqual(replacement)
+    await reopened.deleteCategory({
+      ...request,
+      expectedEntryIds: replacement.categories
+        .find(({ id }) => id === category!.id)!
+        .entries.map(({ id }) => id)
+    })
     expect((await reopened.snapshot()).categories).toHaveLength(1)
     expect(await client.memoryEntry.count()).toBe(0)
     await expect(
