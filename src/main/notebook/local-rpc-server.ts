@@ -332,6 +332,11 @@ type NotebookLocalRpcServerOptions = {
   }
   hostFrames?: {
     list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
+    toolHistory?(
+      input: unknown,
+      context: { projectId: string; sessionId: string },
+      turn: NotebookRunProvenanceContext
+    ): Promise<unknown>
     get(
       frameId: unknown,
       options: unknown,
@@ -655,6 +660,7 @@ const WSL_SETUP_RPC_METHODS = new Set([
 ])
 
 const RPC_METHODS = new Set<string>([
+  'sessionToolHistory',
   ...NOTEBOOK_LOCAL_RPC_METHODS,
   ...CONTROL_RPC_METHODS,
   ...ARTIFACT_RPC_METHODS,
@@ -2732,6 +2738,50 @@ class NotebookLocalRpcServer {
         throw new RpcHttpError(400, 'Notebook RPC params must be an object.')
       }
       let params = isRecord(payload.params) ? payload.params : {}
+      if (method === 'sessionToolHistory') {
+        const binding = this.sessionRpcCapabilities.get(bearerToken)
+        const turn = initialTurn?.provenanceContext
+        if (
+          !binding ||
+          binding !== initialSessionBinding ||
+          binding.isControl ||
+          binding.delegatedWorkRole !== 'main' ||
+          binding.allowedMethods ||
+          !executionReady ||
+          !initialSessionId ||
+          !initialTurn ||
+          !turn ||
+          turn.agentFrameId !== turn.rootFrameId ||
+          // A refreshed provider connection may be issued after the turn adopted its durable
+          // root Frame. Only the exact provisional root for this authenticated Session qualifies.
+          (binding.agentFrameId !== turn.rootFrameId &&
+            binding.agentFrameId !== `root-frame-${binding.sessionId}`) ||
+          binding.projectId !== initialTurn.projectId ||
+          this.activeArtifactTurnBindings.get(initialSessionId) !== initialTurn
+        ) {
+          throw new RpcHttpError(403, 'History reads require the current Main Session turn.')
+        }
+        if (!this.hostFrames?.toolHistory) throw new Error('Saved tool history is not configured.')
+        // The MCP transport includes routing hints; only capability-bound values authorize reads.
+        const input = { ...params }
+        delete input.sessionId
+        delete input.projectId
+        delete input.workspaceCwd
+        const result = await this.hostFrames.toolHistory(
+          input,
+          { projectId: initialTurn.projectId, sessionId: initialSessionId },
+          turn
+        )
+        disconnect.signal.throwIfAborted()
+        if (
+          this.sessionRpcCapabilities.get(bearerToken) !== binding ||
+          this.activeArtifactTurnBindings.get(initialSessionId) !== initialTurn
+        ) {
+          throw new RpcHttpError(403, 'The Main Session turn has ended.')
+        }
+        writeJson(response, 200, { result })
+        return
+      }
       if (!executionReady && startsNotebookExecution(method, params)) {
         throw new RpcHttpError(
           409,

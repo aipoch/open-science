@@ -373,6 +373,7 @@ describe('notebook MCP server config', () => {
 
   it('locks the complete Notebook MCP capability inventory', () => {
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).toEqual([
+      'session_tool_history',
       'ask_user_question',
       'notebook_execute',
       'background_run',
@@ -2905,7 +2906,8 @@ describe('notebook control tool results', () => {
       // Directory discovery must return a complete reusable snapshot, never a truncated list.
       if (tool.name === 'list_authorized_directories') expect(tool.resultLimitChars).toBeUndefined()
       else expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
-      if (!tool.name.includes('memor')) expect(tool.mapResult, tool.name).toBeTypeOf('function')
+      if (!tool.name.includes('memor') && tool.name !== 'session_tool_history')
+        expect(tool.mapResult, tool.name).toBeTypeOf('function')
     }
   })
 

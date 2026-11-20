@@ -10,6 +10,8 @@ import { sanitizeExportMarkdown } from '../../shared/conversation-export'
 import { fuzzyScore } from '../../shared/fuzzy-match'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import { isRecord } from '../value-guards'
+import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import { readSessionToolHistory, sessionToolHistorySchema } from './session-tool-history'
 
 type HostFrameReadContext = Readonly<{ projectId: string; sessionId: string }>
 
@@ -383,6 +385,17 @@ class HostFramesService {
     private readonly repository: HostFramesRepository,
     private readonly resolveReferencedSession?: HostFramesReferencedSessionResolver
   ) {}
+
+  async toolHistory(
+    input: unknown,
+    context: HostFrameReadContext,
+    turn: NotebookRunProvenanceContext
+  ): Promise<unknown> {
+    const query = sessionToolHistorySchema.parse(input)
+    const result = await this.repository.readSession(context.projectId, context.sessionId)
+    if (result.status !== 'found') throw new Error('The current saved Session is unavailable.')
+    return readSessionToolHistory(result.session, turn, query)
+  }
 
   async list(options: unknown, context: HostFrameReadContext): Promise<unknown> {
     const normalized = normalizeListOptions(options)
