@@ -8,8 +8,8 @@ for suspected vulnerabilities; do not add undisclosed exploit details here.
 
 ## Review baseline
 
-The entries below were reviewed against source and documentation at [`v1.3.0`](https://github.com/aipoch/open-science/tree/v1.3.0)
-(commit `2debab4aa823`, application version **1.3.0**) on **2026-11-19**. Each entry's scope applies to that
+The entries below were reviewed against source and documentation at [`v1.3.1`](https://github.com/aipoch/open-science/tree/v1.3.1)
+(commit `9861032aa449`, application version **1.3.1**) on **2026-11-19**. Each entry's scope applies to that
 baseline; historical affected ranges and later fixes must be established separately. Independent
 packages retain their own versions. This review does not constitute new runtime testing, a security
 certification, or a claim that every release/platform combination has been exercised.
@@ -17,7 +17,7 @@ certification, or a claim that every release/platform combination has been exerc
 All entries share that review date unless an entry records a newer one. **Documented boundary** means
 the limitation remains relevant at this baseline, not that a fix is scheduled. **Verification gap**
 means the stated assurance has not been established by this review. Release-specific changes belong
-in the [release notes](../release-notes/1.3.0/en.md).
+in the [release notes](../release-notes/1.3.1/en.md).
 
 ## Source risk detection is bounded
 
