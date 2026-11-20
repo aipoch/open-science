@@ -53,18 +53,18 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.3.1 — Novedades
+### 💡 AIPOCH Open-Science v1.3.2 — Novedades
 
 _19 de noviembre de 2026_
 
-- **Búsqueda web y lectura de páginas**: El agente integrado puede buscar en la web y leer páginas públicas; las aprobaciones de búsqueda muestran la consulta en una tarjeta legible y las fuentes citadas permanecen con la conversación.
-- **Grafo de citas**: Explora las referencias de un artículo y los artículos que lo citan como un grafo interactivo; vuelve a centrarlo en cualquier artículo relacionado y filtra por dirección.
-- **MCP sin abrir la aplicación**: Al conectar un agente externo a través de MCP, el servicio de Open-Science se inicia por ti, con opciones de configuración para más de 30 agentes y clientes.
-- **Modelos de Lab y casos de la organización**: Inicia sesión con una cuenta de Lab para usar los modelos de tu organización y buscar, importar o compartir casos de investigación con tu equipo.
-- **Listas de modelos actualizadas y errores más claros**: Actualiza la lista de modelos de un proveedor desde Ajustes y consulta la causa y el siguiente paso cuando falla una solicitud al proveedor.
-- **Actualizar desde 1.3.0**: Si el actualizador de 1.3.0 indica que otro proceso está usando la instalación, cierra por completo Open-Science e instala manualmente el paquete descargado.
+- **Conversaciones largas más ligeras**: Las respuestas transmitidas dejan de acumular entradas ocultas, y los cuerpos de las conversaciones que no está viendo se liberan una vez guardados de forma segura; las sesiones grandes siguen siendo ágiles sin perder su lugar.
+- **Kilo Gateway**: Añada Kilo como proveedor oficial con o sin clave de API; una actualización anónima del catálogo muestra los modelos gratuitos a los que su conexión tiene acceso, y el proceso de incorporación puede omitir el paso del proveedor para decidirlo más tarde.
+- **Catálogos de modelos de imagen**: Actualice la lista de modelos integrada de los servicios oficiales de imagen de OpenAI, MiniMax, Bailian y Volcengine Ark antes de guardar, conservando su modelo activo cuando siga disponible.
+- **Primeros mensajes del agente más fiables**: Las conversaciones nuevas con el Agente predeterminado, Claude Code y Codex ya no fallan antes de su primera solicitud al modelo, y el Agente integrado inicia las sesiones programadas con su mensaje previsto.
+- **La traducción de PDF conserva el diseño**: Los títulos, pies, definiciones y enunciados matemáticos con salto de línea se recuperan en orden de lectura, y las fórmulas, enlaces y gráficos permanecen en su lugar original.
+- **Fallos de descarga más claros**: La pantalla de inicio indica el motivo específico de un fallo de descarga de un caso de uso: un manifiesto que falta, un paquete no disponible, un tiempo de espera agotado, un problema de red, del servidor, de verificación, de disco lleno o de almacenamiento.
 
-[Notas completas v1.3.1](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
+[Notas completas v1.3.2](https://github.com/aipoch/open-science/releases/tag/v1.3.2)
 
 <a id="share-your-research"></a>
 

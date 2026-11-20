@@ -124,6 +124,12 @@ without an account. Reading a public page contacts that page's host, which recei
 URL. With a Lab account, Lab model requests go to the Lab server the user signs in to, and sharing
 an organization case uploads the selected session package to that server.
 
+Adding Kilo Gateway without an API key sends an anonymous catalog refresh to Kilo so the eligible
+free models can be listed; no account identity is included. Image and model requests made through a
+Kilo connection afterwards go to Kilo like any other provider connection. Checking an official
+image service's model catalog (OpenAI, MiniMax, Bailian, or Volcengine Ark) sends that connection's
+credentials to the provider to list its image models; run it only for connections you configured.
+
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
 IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
 remote HTTP configurations remain editable but cannot supply a running model until corrected.
