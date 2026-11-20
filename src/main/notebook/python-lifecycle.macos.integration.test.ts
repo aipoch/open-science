@@ -25,7 +25,7 @@ it.skipIf(process.platform !== 'darwin' || !python)(
     const root = await realpath(await mkdtemp(join(tmpdir(), 'notebook-macos-python-')))
     const native = await import('@aipoch/process-tree-native')
     let now = 0
-    let pressureLevel: MemoryPressureLevel = 'warning'
+    let pressureLevel: MemoryPressureLevel = 'critical'
     let pressureEventSequence = 1
     let sampleFails = false
     let beforeDispatch: (() => void) | undefined
@@ -44,7 +44,7 @@ it.skipIf(process.platform !== 'darwin' || !python)(
           if (sampleFails) throw new Error('Controlled unavailable sample')
           return {
             platform: 'darwin',
-            source: 'controlled-macos-python-tracer',
+            source: 'darwin-sysctl-dispatch',
             executionScope: 'darwin:host',
             facts: { pressureLevel, pressureEventSequence }
           }
@@ -191,7 +191,7 @@ it.skipIf(process.platform !== 'darwin' || !python)(
       expect(host?.uniqueId).toBe(identity!.parentUniqueId)
       observedProcesses.push(identity!, host!)
       const beforeRefusal = await service.state(scope)
-      pressureLevel = 'warning'
+      pressureLevel = 'critical'
       pressureEventSequence++
       await policy.getState({ force: true })
       await expect(
@@ -232,9 +232,9 @@ it.skipIf(process.platform !== 'darwin' || !python)(
         recovery: { execution: 'not-started' }
       })
       expect(rejections.map(({ status, reason }) => ({ status, code: reason.code }))).toEqual([
-        { status: 'pressured', code: 'mac-memory-warning' },
+        { status: 'pressured', code: 'mac-memory-critical' },
         { status: 'unavailable', code: 'sample-failed' },
-        { status: 'pressured', code: 'mac-memory-warning' },
+        { status: 'pressured', code: 'mac-memory-critical' },
         { status: 'unavailable', code: 'sample-expired' }
       ])
       expect(existsSync(sentinel)).toBe(false)
@@ -247,6 +247,10 @@ it.skipIf(process.platform !== 'darwin' || !python)(
       await expect(
         service.execute(withNotebookExecutionIntent({ ...scope, code: forbiddenCode }, finalIntent))
       ).rejects.toMatchObject({ code: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION' })
+      // Warning is advisory: the real Python process may continue with its namespace intact.
+      pressureLevel = 'warning'
+      pressureEventSequence++
+      await policy.getState({ force: true })
       const continuedIntent = service.createExecutionIntent(scope)
       const continued = await service.execute(
         withNotebookExecutionIntent(

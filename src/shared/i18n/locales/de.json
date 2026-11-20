@@ -8275,7 +8275,6 @@
     "Recheck and retry": "Erneut prüfen und versuchen",
     "Manage Notebook resources": "Notebook-Ressourcen verwalten",
     "Memory has recovered. Execution still requires your choice.": "Der Speicher hat sich erholt. Die Ausführung erfordert weiterhin Ihre Entscheidung.",
-    "Notebook resources are active. Manage them in Compute if they are no longer needed.": "Notebook-Ressourcen sind aktiv. Verwalten Sie sie unter Compute, wenn sie nicht mehr benötigt werden.",
     "The latest memory status could not be read. Retry will check it again.": "Der aktuelle Speicherstatus konnte nicht gelesen werden. Ein neuer Versuch prüft ihn erneut.",
     "Memory check details": "Details zur Speicherprüfung",
     "The memory checking component is unavailable. Update or repair the installation before retrying.": "Die Komponente zur Speicherprüfung ist nicht verfügbar. Aktualisieren oder reparieren Sie die Installation vor einem neuen Versuch.",

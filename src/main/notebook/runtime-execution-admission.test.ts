@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService } from './runtime-service'
+import type { MemoryPolicyObservation } from './memory-policy'
 import type { NotebookExecutionRequest } from './execution-contract'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
@@ -40,6 +41,7 @@ afterEach(async () => {
 
 it('forces a fresh check for a prepared user continuation but not for an inherited Agent intent', async () => {
   root = await mkdtemp(join(tmpdir(), 'runtime-user-retry-admission-'))
+  const onMemoryPolicyChanged = vi.fn()
   const submissions: Array<{ signal: AbortSignal; force: boolean }> = []
   const getState = vi.fn(async (request?: { signal?: AbortSignal; force?: boolean }) => {
     if (request?.signal) submissions.push({ signal: request.signal, force: request.force === true })
@@ -50,18 +52,20 @@ it('forces a fresh check for a prepared user continuation but not for an inherit
       executionScope: 'test:host'
     }
   })
+  const currentState = vi.fn<() => MemoryPolicyObservation>(() => ({
+    status: 'healthy',
+    reason: { code: 'healthy' },
+    source: 'test-os',
+    executionScope: 'test:host'
+  }))
   runtime = new NotebookRuntimeService({
     configRoot: root,
     dataRoot: root,
     projectId: 'project',
+    callbacks: { onMemoryPolicyChanged },
     memoryPolicy: {
       getState,
-      currentState: () => ({
-        status: 'healthy',
-        reason: { code: 'healthy' },
-        source: 'test-os',
-        executionScope: 'test:host'
-      })
+      currentState
     }
   })
   const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
@@ -91,6 +95,21 @@ it('forces a fresh check for a prepared user continuation but not for an inherit
       .filter(({ signal }) => signal !== first?.signal && signal !== last?.signal)
       .every(({ force }) => !force)
   ).toBe(true)
+  onMemoryPolicyChanged.mockClear()
+  currentState.mockReturnValue({
+    status: 'pressured',
+    reason: { code: 'mac-memory-warning' },
+    source: 'darwin-sysctl-dispatch',
+    executionScope: 'darwin:host',
+    facts: { pressureLevel: 'warning' }
+  })
+  await runtime.shutdownAll()
+  await vi.waitFor(() =>
+    expect(onMemoryPolicyChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pressured', facts: { pressureLevel: 'warning' } }),
+      false
+    )
+  )
 })
 
 it('recovers a failed sample for one prepared continuation without forcing the next Agent request', async () => {

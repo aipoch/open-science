@@ -8451,7 +8451,6 @@
     "Recheck and retry": "Vérifier et réessayer",
     "Manage Notebook resources": "Gérer les ressources Notebook",
     "Memory has recovered. Execution still requires your choice.": "La mémoire est rétablie. L’exécution attend toujours votre décision.",
-    "Notebook resources are active. Manage them in Compute if they are no longer needed.": "Des ressources Notebook sont actives. Gérez-les dans Compute si vous n’en avez plus besoin.",
     "The latest memory status could not be read. Retry will check it again.": "L’état actuel de la mémoire n’a pas pu être lu. Une nouvelle tentative le vérifiera à nouveau.",
     "Memory check details": "Détails de la vérification de mémoire",
     "The memory checking component is unavailable. Update or repair the installation before retrying.": "Le composant de vérification de mémoire est indisponible. Mettez à jour ou réparez l’installation avant de réessayer.",
