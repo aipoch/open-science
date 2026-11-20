@@ -464,7 +464,7 @@ const waitForInstalledApplicationsToExit = (installDirectory, env) =>
         '  if (!$owners.Count) { exit 0 }',
         '  Start-Sleep -Milliseconds 250',
         '} while ([DateTime]::UtcNow -lt $deadline)',
-        'throw ("Desktop quit left installation processes running: " + ($owners.ProcessId -join ","))'
+        'throw ("Desktop quit left installation processes running: " + (($owners | Select-Object Name, ProcessId, ParentProcessId | ConvertTo-Json -Compress)))'
       ].join('\n')
     ],
     { env: { ...env, OPEN_SCIENCE_SMOKE_INSTALL_DIR: installDirectory } }
@@ -512,10 +512,35 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
     const { current } = await page.evaluate(() => window.api.update.getStatus())
     if (current !== expectedVersion)
       throw new Error(`Shortcut opened ${current}, expected ${expectedVersion}`)
+    // The database can already be ready while the renderer is still hydrating. Quit from the
+    // interactive home screen so its normal persistence and confirmation handlers are mounted.
+    await page
+      .locator('[data-home-scroll]')
+      .waitFor({ state: 'attached', timeout: UPDATE_TIMEOUT_MS })
+    console.log(`Original shortcut opened the home screen on ${current}.`)
+    page.on('console', (message) => {
+      if (message.text().startsWith('Smoke quit confirmation:')) console.log(message.text())
+    })
     await page.evaluate(() => {
+      window.api.window.onCloseConfirmRequest(({ requestId, variant }) => {
+        console.info('Smoke quit confirmation:', variant)
+        if (variant === 'quit')
+          window.api.window.sendCloseConfirmResponse({ requestId, choice: 'quit' })
+      })
       void window.api.databaseStartup.quit()
     })
-    await waitForInstalledApplicationsToExit(installDirectory, env)
+    try {
+      await waitForInstalledApplicationsToExit(installDirectory, env)
+    } catch (error) {
+      const dialogs = await page
+        .locator('[role="alertdialog"], [role="alert"]')
+        .allTextContents()
+        .catch(() => [])
+      throw new Error(
+        `Shortcut version ${current} did not exit. Visible notices: ${JSON.stringify(dialogs)}`,
+        { cause: error }
+      )
+    }
   } finally {
     await browser.close()
   }
