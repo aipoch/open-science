@@ -1282,6 +1282,35 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).not.toContain('Resume session')
   })
 
+  it('shows a denial explanation beneath the collapsed tools of the interrupted turn', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'prompt-1',
+            turnOutcome: { kind: 'cancelled', settledAt: 1710000002000, recovery: 'resume' }
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'save-memory',
+            title: 'Save memory',
+            toolKind: 'other',
+            providerToolName: 'mcp__open_science_notebook__remember_memory',
+            promptMessageId: 'prompt-1',
+            toolDisposition: 'declined'
+          })
+        ]
+      }),
+      { turnOutcomeActions }
+    )
+
+    expect(html).toMatch(
+      /activity-group-save-memory.*data-message-id="permission-denial-prompt-1".*Permission was denied\. The blocked actions were not performed\./
+    )
+  })
+
   it('uses an explicit failed outcome even when its response fragment completed', async () => {
     const html = await renderScroller(
       createSession({

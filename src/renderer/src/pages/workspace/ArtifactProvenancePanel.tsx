@@ -726,6 +726,7 @@ const ProvenanceMessagesTimeline = ({
                     conversationItem.type === 'handoff' ||
                     conversationItem.type === 'subagent-message' ||
                     conversationItem.type === 'session-config-change' ||
+                    conversationItem.type === 'permission-denial' ||
                     conversationItem.type === 'turn-outcome'
                   )
                     return null
