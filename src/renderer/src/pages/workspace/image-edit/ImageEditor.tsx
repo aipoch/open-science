@@ -159,19 +159,28 @@ function ActiveImageEditor({
     [owner.tasks, projectId, sessionId, frameId, branchId]
   )
   const recoveryTask = draft.submission?.recoveryTask
-  const candidateCache = useRef(
-    new Map<string, { item: PreviewFileItem; edit: ImageEditSnapshot; prompt: string }>()
+  const currentCandidates = useMemo(
+    () => imageEditorCandidates(scopedTasks, rootItem),
+    [scopedTasks, rootItem]
   )
-  const candidates = useMemo(() => {
-    const current = imageEditorCandidates(scopedTasks, rootItem)
-    for (const candidate of current) {
+  const [candidateHistory, setCandidateHistory] = useState(() => ({
+    current: currentCandidates,
+    versions: currentCandidates
+  }))
+  let candidates = candidateHistory.versions
+  if (candidateHistory.current !== currentCandidates) {
+    const versions = new Map(
+      candidateHistory.versions.map((candidate) => [candidate.item.selectedVersionId, candidate])
+    )
+    for (const candidate of currentCandidates) {
       const id = candidate.item.selectedVersionId
-      if (id) candidateCache.current.set(id, candidate)
+      if (id) versions.set(id, candidate)
     }
-    return [...candidateCache.current.values()].sort(
+    candidates = [...versions.values()].sort(
       (a, b) => (a.item.versionNumber ?? 0) - (b.item.versionNumber ?? 0)
     )
-  }, [scopedTasks, rootItem])
+    setCandidateHistory({ current: currentCandidates, versions: candidates })
+  }
   const recentCandidates = candidates.slice(-6)
   const [savedVersions, setSavedVersions] = useState<ArtifactVersionDescriptor[]>([])
   const candidateVersionKey = candidates.map(({ item }) => item.selectedVersionId).join(':')
