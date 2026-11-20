@@ -60,6 +60,7 @@ const registrations: Record<
   'web/mcp-server.ts:WEB_SEARCH_TOOL_NAME': 'host_web'
 }
 const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'operations'> = {
+  session_tool_history: 'operations',
   ask_user_question: 'inner_authorization',
   notebook_execute: 'legacy',
   background_run: 'operations',
@@ -204,8 +205,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
+        // Saved history is a read-only operation scoped to the authenticated active Main turn.
         'notebook/mcp-server.ts':
-          '27b9903b2fece98497965223cbe231fb066cbea8df0f2cc0723a5ae336dd5165',
+          '25bc4d292e87f0f0faa8628908822715d9f510c55afe490d86d4cac3f813e3af',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
@@ -225,7 +227,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         ask_user_question: '7c4a9484087130798fec4a767b43804bed689aceceaa250db53ef79d6c09f003',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
-        request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf'
+        request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf',
+        session_tool_history: '1b1b4673e297c1d6768d2b0a1fad0250581c42df31679eed39c239235d7ad201'
       },
       sharedContracts: {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
