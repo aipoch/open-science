@@ -39,7 +39,14 @@ const KEY_RULES = [
 ]
 
 // Non-installer files that legitimately live in the release dir; skipped without a warning.
-const IGNORED = [/\.zip$/, /^SHA256SUMS\.txt$/, /^version\.json$/, /\.ya?ml$/, /\.blockmap$/]
+const IGNORED = [
+  /\.zip$/,
+  /^SHA256SUMS\.txt$/,
+  /^version\.json$/,
+  /\.ya?ml$/,
+  /\.blockmap$/,
+  /\.wex$/
+]
 
 const LOCALIZED_NOTE_LOCALES = ['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'de', 'es']
 const NOTE_LOCALES = new Set(['en', ...LOCALIZED_NOTE_LOCALES])
@@ -141,6 +148,34 @@ export function buildManifest({
       metadataOnly,
       allowLegacyNames
     )
+    for (const file of feed.files) {
+      const delta = file.windowsDelta
+      if (delta === undefined) continue
+      if (
+        filename !== 'latest.yml' ||
+        !file.url.endsWith('-win-x64-setup.exe') ||
+        delta?.format !== 1 ||
+        typeof delta.from !== 'string' ||
+        !/^\d+\.\d+\.\d+$/.test(delta.from) ||
+        ![delta.sha512, delta.sourceSha512].every(
+          (hash) => typeof hash === 'string' && /^[A-Za-z0-9+/]{86}==$/.test(hash)
+        ) ||
+        ![delta.oldViewSize, delta.newViewSize].every(
+          (size) => Number.isSafeInteger(size) && size > 0 && size <= 2 ** 31
+        ) ||
+        !Number.isSafeInteger(delta.size) ||
+        delta.size <= 0 ||
+        delta.size > 64 * 1024 ** 2 ||
+        delta.size >= file.size
+      )
+        throw new Error('Invalid Windows delta metadata')
+      const patch = join(dir, file.url + '.from-' + delta.from + '.wex')
+      if (
+        statSync(patch).size !== delta.size ||
+        (!metadataOnly && artifactHash(patch, 'sha512', 'base64') !== delta.sha512)
+      )
+        throw new Error('Windows delta does not match the advertised artifact')
+    }
     if (filename === 'latest-linux.yml' || filename === 'latest-linux-arm64.yml') {
       const arch = filename === 'latest-linux-arm64.yml' ? 'arm64' : 'x64'
       if (feed.files.some((file) => !keyForFile(file.url)?.startsWith(`linux-${arch}-`))) {

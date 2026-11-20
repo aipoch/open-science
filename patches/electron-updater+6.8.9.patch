@@ -2,7 +2,33 @@ diff --git a/node_modules/electron-updater/out/NsisUpdater.js b/node_modules/ele
 index 6fb70b4..17529a0 100644
 --- a/node_modules/electron-updater/out/NsisUpdater.js
 +++ b/node_modules/electron-updater/out/NsisUpdater.js
-@@ -105,6 +105,13 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+@@ -78,6 +78,25 @@
+             },
+         });
+     }
++    async differentialDownloadInstaller(fileInfo, options, destination, provider, oldName) {
++        if (process.platform === "win32" && process.arch === "x64" && fileInfo.info.windowsDelta != null) {
++            try {
++                const { applyWindowsDelta } = require(path.join(process.resourcesPath, "windows-delta", "apply.cjs"));
++                const used = await applyWindowsDelta({
++                    fileInfo, from: this.app.version, target: options.updateInfoAndProvider.info.version,
++                    oldFile: path.join(this.downloadedUpdateHelper.cacheDir, oldName), destination,
++                    token: options.cancellationToken, fetch: require("electron").net.fetch.bind(require("electron").net),
++                    headers: options.requestHeaders, progress: it => this.emit(types_1.DOWNLOAD_PROGRESS, it), logger: this._logger,
++                });
++                if (options.cancellationToken.cancelled) throw new builder_util_runtime_1.CancellationError();
++                if (used) return false;
++            } catch (error) {
++                if (options.cancellationToken.cancelled) throw new builder_util_runtime_1.CancellationError();
++                this._logger.warn("Cannot apply Windows delta: " + error.message);
++            }
++        }
++        return super.differentialDownloadInstaller(fileInfo, options, destination, provider, oldName);
++    }
+     // $certificateInfo = (Get-AuthenticodeSignature 'xxx\yyy.exe'
+     // | where {$_.Status.Equals([System.Management.Automation.SignatureStatus]::Valid) -and $_.SignerCertificate.Subject.Contains("CN=siemens.com")})
+     // | Out-String ; if ($certificateInfo) { exit 0 } else { exit 1 }
+@@ -105,6 +124,13 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
              return false;
          }
          const args = ["--updated"];

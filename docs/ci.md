@@ -145,6 +145,24 @@ already signed Windows build artifact and the previous stable installer. To exer
 path on a branch, dispatch Windows Upgrade Smoke with `candidate_dry_run=true` for temporary
 signing, or with `signed_run_id` set to a Release run for its existing signed bytes.
 
+Stable Windows x64 installers include `resources/windows-delta/windows-delta.exe`. Packaging
+builds the helper from pinned HDiffPatch, Zstandard and 7-Zip sources using Python 3, CMake and
+the Visual Studio C++ toolchain. Azure signing covers the helper with the other packaged PE files.
+
+After validating a signed upgrade, release owners can set the repository Actions variable
+`WINDOWS_DELTA_ENABLED=true` to publish an optional patch from the previous stable installer.
+Release generates the patch after signing and verifies that applying it reproduces the exact target
+bytes. The mirror validates the patch before promoting the feed. To replay the release transform
+without publishing, point `node build/windows-delta/publish.mjs OLD NEW WORKER HDIFFZ [7Z]` at
+two local release directories containing their installers and original `latest.yml`. Use a copy
+for `NEW` because the transform writes the verified sidecar and updates the feed there.
+
+Clients first acquire the capable updater via the existing blockmap. Subsequent eligible updates
+reuse the cached old installer, reconstruct the new installer in the pending cache and verify its
+SHA-512 and publisher. Cancel stops reconstruction. Missing patches, unsupported pairs or
+insufficient space use the existing download path. Release owners can omit future sidecars by
+clearing the Actions variable.
+
 Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
 default-branch SHA is unchanged. Its manual `core`, `detector` and `update-occupancy` modes are focused no-publish

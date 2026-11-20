@@ -40,6 +40,17 @@ describe('desktop packaging preparation', () => {
     const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
     const dependencies = Object.assign(
       (name: string): unknown => {
+        if (name === 'node:child_process')
+          return {
+            execFileSync(command: string, args: string[]) {
+              expect(command).toBe('python')
+              expect(args).toEqual([
+                join(repoRoot, 'build/windows-delta/build.py'),
+                join(repoRoot, 'out/windows-delta/x64')
+              ])
+              calls.push('build-delta')
+            }
+          }
         if (name === './stage-desktop-runtime.cjs')
           return async () => {
             calls.push('stage')
@@ -65,7 +76,7 @@ describe('desktop packaging preparation', () => {
         arch: require('builder-util').Arch.x64,
         packager: { projectDir: repoRoot }
       })
-      expect(calls).toEqual(['stage'])
+      expect(calls).toEqual(platform === 'win32' ? ['build-delta', 'stage'] : ['stage'])
     }
   )
 
