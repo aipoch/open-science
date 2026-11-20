@@ -33883,7 +33883,9 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
         )
         expect(promptResult).toContain('"status":"completed"')
         expect(execute).toHaveBeenCalledTimes(2)
-        await expect(service.inspectTaskExecution(scope)).resolves.toMatchObject({
+        await expect(
+          service.inspectTaskExecution({ ...scope, promptMessageId: 'continue-task' })
+        ).resolves.toMatchObject({
           continuedFromRefusalId: stopped.refusalId,
           promptMessageId: 'continue-task',
           messageBranchId: 'task-branch'
