@@ -8,9 +8,13 @@ import {
 } from '../../shared/conversation-graph'
 import { sanitizeExportMarkdown } from '../../shared/conversation-export'
 import { fuzzyScore } from '../../shared/fuzzy-match'
-import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
-import { isRecord } from '../value-guards'
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import {
+  materializeSessionConversationGraph,
+  type PersistedArtifact,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import { isRecord } from '../value-guards'
 import { readSessionToolHistory, sessionToolHistorySchema } from './session-tool-history'
 
 type HostFrameReadContext = Readonly<{ projectId: string; sessionId: string }>
@@ -394,7 +398,19 @@ class HostFramesService {
     const query = sessionToolHistorySchema.parse(input)
     const result = await this.repository.readSession(context.projectId, context.sessionId)
     if (result.status !== 'found') throw new Error('The current saved Session is unavailable.')
-    return readSessionToolHistory(result.session, turn, query)
+    const session = result.session
+    const graph = session.conversationGraph
+    // Legacy flat snapshots decode to a linear graph without activities. Recover that projection
+    // in memory only; never assign unscoped flat records to a branched or delegated transcript.
+    const needsLegacyProjection =
+      !!session.activities?.length &&
+      (!graph ||
+        (graph.frames.length === 1 && graph.branches.length === 1 && graph.activities.length === 0))
+    return readSessionToolHistory(
+      needsLegacyProjection ? materializeSessionConversationGraph(session) : session,
+      turn,
+      query
+    )
   }
 
   async list(options: unknown, context: HostFrameReadContext): Promise<unknown> {

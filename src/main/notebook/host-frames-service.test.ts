@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  normalizeSessionFile,
+  SESSION_FILE_VERSION,
   type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
@@ -58,6 +60,55 @@ const renameRootFrame = (target: PersistedChatSession, frameId: string): void =>
 }
 
 describe('HostFramesService', () => {
+  it('reads receipts from a decoded legacy flat Session without changing its stored graph', async () => {
+    const target = session({
+      id: context.sessionId,
+      messages: [message('old-prompt', 'user', 100), message('current-prompt', 'user', 200)],
+      conversationGraph: undefined,
+      activities: [
+        {
+          id: 'old-receipt',
+          kind: 'tool',
+          title: 'Read document',
+          status: 'completed',
+          promptMessageId: 'old-prompt',
+          rawOutput: 'Saved receipt',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 110,
+          updatedAt: 110
+        }
+      ]
+    })
+    const decoded = normalizeSessionFile({ version: SESSION_FILE_VERSION, session: target })!
+    const graph = decoded.conversationGraph!
+    const turn = {
+      rootFrameId: graph.rootFrameId,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: graph.branches[0].id,
+      runtimeSegmentId: graph.runtimeSegments[0].id,
+      promptMessageId: 'current-prompt'
+    }
+    const service = new HostFramesService({
+      readProject: vi.fn(),
+      readSession: vi.fn(async () => ({ status: 'found' as const, session: decoded }))
+    })
+
+    expect(graph.activities).toEqual([])
+    await expect(service.toolHistory({}, context, turn)).resolves.toMatchObject({
+      totals: { activities: 1, withRawOutput: 1, withSavedOutput: 1 }
+    })
+    await expect(
+      service.toolHistory({ activityId: 'old-receipt' }, context, turn)
+    ).resolves.toMatchObject({ output: { text: 'Saved receipt', truncated: false } })
+    expect(graph.activities).toEqual([])
+
+    graph.branches.push({ ...graph.branches[0], id: 'non-active-branch' })
+    await expect(service.toolHistory({ activityId: 'old-receipt' }, context, turn)).rejects.toThrow(
+      'Activity not found'
+    )
+  })
+
   it('lists the current Project root Frame through the stable metadata projection', async () => {
     const readProject = vi.fn(async () => ({ sessions: [session()], isComplete: true }))
     const repository: HostFramesRepository = {
