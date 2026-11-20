@@ -45,7 +45,10 @@ const freezeFixtureBackend = async (application: ElectronApplication): Promise<n
     }
   }
   const backends = processes.filter(
-    (entry) => descendants.has(entry.pid) && entry.command.includes(backendPath)
+    (entry) =>
+      descendants.has(entry.pid) &&
+      entry.command.includes(` ${backendPath} `) &&
+      entry.command.endsWith(' --desktop --serve')
   )
   expect(backends).toHaveLength(1)
   // Freeze persistence before child-first SIGKILL can turn the interrupted checkpoint into
@@ -168,6 +171,13 @@ test.describe('in-flight journal recovery', () => {
     }
 
     const partialReply = partial.messages.find((message) => message.content.startsWith(first))!
+    await page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button')
+      .filter({ has: page.getByText(prompt, { exact: true }) })
+      .click()
+    const resume = page.getByRole('button', { name: 'Resume session', exact: true })
+    await expect(resume).toBeVisible()
     const restored = await readRawOutcomeSession(app, identity)
     expect(restored?.resumeRecovery).toMatchObject({
       kind: 'resume-required',
@@ -176,18 +186,8 @@ test.describe('in-flight journal recovery', () => {
     expect(restored?.messages.find((message) => message.id === partialReply.id)?.content).toBe(
       partialReply.content
     )
-    await page
-      .getByRole('region', { name: 'Recent sessions' })
-      .getByRole('button')
-      .filter({ has: page.getByText(prompt, { exact: true }) })
-      .click()
-    const resume = page.getByRole('button', { name: 'Resume session', exact: true })
-    await expect(resume).toBeVisible()
-    // This control renders only when contentLoaded=false and historyPage exists. Keep the
-    // indexed view intact: the durable read above never hydrates the renderer before Resume.
-    await expect(
-      page.getByRole('button', { name: 'Load full conversation', exact: true })
-    ).toBeVisible()
+    // Recovery opens the authoritative conversation before enabling Resume.
+    await expect(page.getByText(first, { exact: false })).toBeVisible()
     expect(await app.readFakeAgentPrompts()).toEqual(promptsBefore)
 
     const application = nativeApplication(app)

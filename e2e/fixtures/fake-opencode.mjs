@@ -37,6 +37,7 @@ const failResumeAttachmentWhenRequested = async (cwd) => {
   }
   throw acp.RequestError.internalError({}, message)
 }
+const coldRecoverySessions = new Set()
 const planRecoveryScenarios = new Set()
 const PLAN_DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
 const PLAN_RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
@@ -1830,12 +1831,23 @@ if (process.argv.includes('--version')) {
         await waitForSessionCancellation(context.params.sessionId)
         return { stopReason: 'cancelled' }
       }
-      if (prompt.includes('Run delegated cold recovery regression.')) {
-        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
-        const code = resumed
+      const continueChild =
+        coldRecoverySessions.has(context.params.sessionId) &&
+        prompt.includes('Recheck memory and reconsider the blocked Notebook work.')
+      if (continueChild || prompt.includes('Run delegated cold recovery regression.')) {
+        const reportOnly =
+          !continueChild && prompt.includes('Continue the interrupted turn from where it stopped.')
+        if (reportOnly) coldRecoverySessions.add(context.params.sessionId)
+        const code = continueChild
           ? 'const children = await host.children(); const child = children.find(c => c.name === "Cold recovery child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue explicitly after application restart."); return { before: child.status, receipt };'
           : 'return await host.delegate({ task: "Cold recovery held child.", name: "Cold recovery child" }, { wait: false })'
-        const value = controlResultValue(await executeControlCode(context.params.sessionId, code))
+        let text = 'Cold recovery is waiting for a new user instruction.'
+        if (!reportOnly) {
+          const value = controlResultValue(await executeControlCode(context.params.sessionId, code))
+          text = continueChild
+            ? 'Cold recovery resumed: ' + JSON.stringify(value)
+            : 'Cold recovery ready for exit.'
+        }
         await context.client.notify(acp.methods.client.session.update, {
           sessionId: context.params.sessionId,
           update: {
@@ -1843,13 +1855,11 @@ if (process.argv.includes('--version')) {
             messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: {
               type: 'text',
-              text: resumed
-                ? 'Cold recovery resumed: ' + JSON.stringify(value)
-                : 'Cold recovery ready for exit.'
+              text
             }
           }
         })
-        if (!resumed) {
+        if (!reportOnly && !continueChild) {
           await waitForSessionCancellation(context.params.sessionId)
           return { stopReason: 'cancelled' }
         }
