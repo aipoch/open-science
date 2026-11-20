@@ -8600,7 +8600,6 @@
     "Recheck and retry": "Проверить и повторить",
     "Manage Notebook resources": "Управление ресурсами Notebook",
     "Memory has recovered. Execution still requires your choice.": "Память восстановилась. Для выполнения по-прежнему требуется ваше решение.",
-    "Notebook resources are active. Manage them in Compute if they are no longer needed.": "Ресурсы Notebook активны. Управляйте ими в Compute, если они больше не нужны.",
     "The latest memory status could not be read. Retry will check it again.": "Не удалось получить текущее состояние памяти. При повторной попытке оно будет проверено снова.",
     "Memory check details": "Сведения о проверке памяти",
     "The memory checking component is unavailable. Update or repair the installation before retrying.": "Компонент проверки памяти недоступен. Перед повторной попыткой обновите или восстановите установку.",

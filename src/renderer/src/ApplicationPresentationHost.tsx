@@ -30,6 +30,7 @@ import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRe
 import { HomePage } from '@/pages/home/HomePage'
 import { SharingMarketplacePage } from '@/pages/marketplace/SharingMarketplacePage'
 import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
+import { NotebookMemoryPressureNotice } from '@/pages/workspace/NotebookMemoryNoticeBridge'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import {
   WorkspaceMessageQueueProvider,
@@ -483,6 +484,7 @@ const ApplicationPresentationContent = ({
                     onDeleteRecoveryFile={window.api.sessions.deleteRecoveryFile}
                   />
                 ) : null}
+                <NotebookMemoryPressureNotice />
                 <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
                 <NotificationLiveToast />
               </div>

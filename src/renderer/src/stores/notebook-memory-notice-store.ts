@@ -18,11 +18,10 @@ export const useNotebookMemoryNoticeStore = create<{
   rejection?: NotebookMemoryRejectedEvent
   terminal?: CurrentNotebookTerminal
   rejectedTerminalId?: string
-  warning?: NotebookMemoryPolicyChangedEvent
   pressure?: NotebookMemoryPolicyChangedEvent
-  criticalScopes: string[]
+  dismissedPressureScopes: string[]
   dismissedRefusalIds: string[]
-}>(() => ({ criticalScopes: [], dismissedRefusalIds: [] }))
+}>(() => ({ dismissedPressureScopes: [], dismissedRefusalIds: [] }))
 
 export const presentNotebookMemoryRejection = (rejection: NotebookMemoryRejectedEvent): void => {
   const { terminal, dismissedRefusalIds } = useNotebookMemoryNoticeStore.getState()
@@ -30,7 +29,6 @@ export const presentNotebookMemoryRejection = (rejection: NotebookMemoryRejected
   const terminalRejection = rejection.source === 'user' && rejection.inputKind === 'terminal'
   useNotebookMemoryNoticeStore.setState({
     rejection,
-    warning: undefined,
     rejectedTerminalId:
       terminalRejection &&
       terminal?.projectId === rejection.projectId &&
@@ -55,43 +53,41 @@ export const dismissNotebookMemoryRejection = (): void => {
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
     rejectedTerminalId: undefined,
-    warning: undefined,
     dismissedRefusalIds: rejection?.refusalId
       ? [...dismissedRefusalIds.slice(-63), rejection.refusalId]
       : dismissedRefusalIds
   })
 }
 
+export const dismissNotebookMemoryPressure = (): void => {
+  const { pressure, dismissedPressureScopes } = useNotebookMemoryNoticeStore.getState()
+  if (!pressure) return
+  const scope = pressure.memory.executionScope
+  useNotebookMemoryNoticeStore.setState({
+    pressure: undefined,
+    dismissedPressureScopes: dismissedPressureScopes.includes(scope)
+      ? dismissedPressureScopes
+      : [...dismissedPressureScopes.slice(-63), scope]
+  })
+}
+
 export const observeNotebookMemoryPolicy = (event: NotebookMemoryPolicyChangedEvent): void => {
   const state = useNotebookMemoryNoticeStore.getState()
   const scope = event.memory.executionScope
-  const criticalScopes =
+  const dismissedPressureScopes =
     event.memory.status === 'healthy'
-      ? state.criticalScopes.filter((entry) => entry !== scope)
-      : state.criticalScopes
-  const critical =
-    event.hasLiveResources &&
-    event.memory.status === 'pressured' &&
-    event.memory.executionScope === 'darwin:host' &&
-    event.memory.source === 'darwin-sysctl-dispatch' &&
-    event.memory.pressureLevel === 'critical'
-  const showWarning = critical && !criticalScopes.includes(scope)
+      ? state.dismissedPressureScopes.filter((entry) => entry !== scope)
+      : state.dismissedPressureScopes
   useNotebookMemoryNoticeStore.setState({
-    criticalScopes: showWarning ? [...criticalScopes, scope] : criticalScopes,
+    dismissedPressureScopes,
     ...(state.rejection?.memory.executionScope === scope
       ? { rejection: { ...state.rejection, memory: event.memory } }
       : {}),
-    warning: state.rejection
-      ? undefined
-      : showWarning
-        ? event
-        : state.warning?.memory.executionScope === scope
-          ? event.hasLiveResources
-            ? event
-            : undefined
-          : state.warning,
     pressure:
-      event.hasLiveResources && event.memory.status === 'pressured'
+      event.hasLiveResources &&
+      event.memory.status === 'pressured' &&
+      event.memory.pressureLevel !== 'normal' &&
+      !dismissedPressureScopes.includes(scope)
         ? event
         : state.pressure?.memory.executionScope === scope
           ? undefined
