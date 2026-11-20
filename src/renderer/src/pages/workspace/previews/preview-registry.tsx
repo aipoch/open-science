@@ -49,6 +49,7 @@ const NotebookFilePreview = lazy(() =>
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
   item,
+  imageEditPresentation,
   onPinImageSource,
   onImageEditorVersionChange,
   presentation,
@@ -98,6 +99,7 @@ export const renderPreviewFile = ({
       return (
         <ImagePreviewRenderer
           {...props}
+          imageEditPresentation={imageEditPresentation}
           onPinImageSource={onPinImageSource}
           onImageEditorVersionChange={onImageEditorVersionChange}
         />

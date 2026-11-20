@@ -757,7 +757,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       leaveGuardScope,
       workbenchConnected = false,
       retryResolutionEnabled = true,
-      imageEditActivation,
+      imageEditPresentation,
       onItemChange,
       activeAnnotations,
       onAddAnnotation,
@@ -2272,7 +2272,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                     managedWorkflow.isSelectedSourceText ? (
                       renderContent ? (
                         <PreviewFileContent
-                          imageEditActivation={imageEditActivation}
+                          imageEditPresentation={imageEditPresentation}
                           key={previewContentKey}
                           item={contentItem}
                           downloadVersionContext={managedWorkflow.downloadVersionContext}
@@ -2336,7 +2336,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       onReject={() => void pptxDraft.reject()}
                     >
                       <PreviewFileContent
-                        imageEditActivation={imageEditActivation}
+                        imageEditPresentation={imageEditPresentation}
                         key={previewContentKey}
                         item={contentItem}
                         onImageEditorVersionChange={reportImageEditorVersion}

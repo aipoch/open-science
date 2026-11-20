@@ -1,3 +1,4 @@
+import type { PreviewFileRendererProps } from '../previews/preview-types'
 import type { ArtifactVersionDescriptor } from '../../../../../shared/artifact-provenance'
 import { createPreviewFileItemForArtifactVersion } from '../preview-file-item'
 import { ensureSessionContentLoaded } from '@/lib/session-persistence/session-history'
@@ -107,12 +108,16 @@ function ActiveImageEditor({
   draft,
   session,
   rootItem,
+  localComposer,
+  onClose,
   onVersionChange
 }: {
   owner: Owner
   editorKey: string
   draft: ImageEditorDraft
   session: ChatSession
+  localComposer: boolean
+  onClose(): void
   rootItem: PreviewFileItem
   onVersionChange?: (item: PreviewFileItem | undefined) => void
 }): React.JSX.Element {
@@ -123,7 +128,11 @@ function ActiveImageEditor({
   const continueButton = useRef<HTMLButtonElement>(null)
   const compareButton = useRef<HTMLButtonElement>(null)
   const [canvasViewport, setCanvasViewport] = useState<HTMLDivElement | null>(null)
-  const composerTarget = useImageComposerTarget(imageEditorScope(session)!, canvasViewport)
+  const composerTarget = useImageComposerTarget(
+    imageEditorScope(session)!,
+    canvasViewport,
+    localComposer
+  )
   const canvasZoom = useRef<ReactZoomPanPinchRef>(null)
   const regionToReveal = useRef<string | undefined>(undefined)
   const sending = useRef(false)
@@ -369,13 +378,18 @@ function ActiveImageEditor({
     height?: number
   }>()
   const cachedImage = useCachedPreviewImage(displayed)
+  const [measured, setMeasured] = useState<{ url: string; width: number; height: number }>()
   const image =
     cachedImage.status === 'loading' &&
     decodedResult &&
     !decodedResult.failed &&
     decodedResult.versionId === displayed.selectedVersionId
       ? { ...decodedResult, status: 'ready' as const }
-      : cachedImage
+      : cachedImage.status === 'ready' &&
+          (!cachedImage.width || !cachedImage.height) &&
+          measured?.url === cachedImage.url
+        ? { ...cachedImage, width: measured.width, height: measured.height }
+        : cachedImage
   const sourceThumbnail = useCachedPreviewImage(draft.source, true, false, true)
   const task = scopedTasks.find(({ id }) => id === draft.submission?.id) ?? recoveryTask
   const running = task ? imageTaskIsActive(task) : Boolean(draft.submission?.preparing)
@@ -397,8 +411,8 @@ function ActiveImageEditor({
         setDecodedResult({
           url: resultUrl,
           versionId: resultItem?.selectedVersionId,
-          width: resultWidth,
-          height: resultHeight,
+          width: resultWidth ?? image.naturalWidth,
+          height: resultHeight ?? image.naturalHeight,
           failed: false
         }),
       () => current && setDecodedResult({ url: resultUrl, failed: true })
@@ -912,7 +926,7 @@ function ActiveImageEditor({
         <div className="flex items-center gap-2 border-b border-border-300/40 px-3 py-2">
           <Sparkles className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{t('Edit image')}</span>
-          <Button type="button" size="sm" variant="ghost" onClick={() => update({ hidden: true })}>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
             {t('Back to conversation')}
           </Button>
         </div>
@@ -1293,7 +1307,7 @@ function ActiveImageEditor({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={t('Back to image preview')}
-                  onClick={() => update({ hidden: true })}
+                  onClick={onClose}
                 >
                   <ArrowLeft className="size-4" />
                 </Button>
@@ -1437,6 +1451,23 @@ function ActiveImageEditor({
         >
           {image.status === 'loading' ? (
             <PreviewLoadingContent />
+          ) : image.status === 'ready' &&
+            (!image.width || !image.height) &&
+            decodeError !== displayed.selectedVersionId ? (
+            <img
+              key={image.url}
+              src={image.url}
+              alt={displayed.name}
+              className="size-full object-contain"
+              onLoad={({ currentTarget }) =>
+                setMeasured({
+                  url: image.url,
+                  width: currentTarget.naturalWidth,
+                  height: currentTarget.naturalHeight
+                })
+              }
+              onError={() => setDecodeError(displayed.selectedVersionId)}
+            />
           ) : image.status === 'ready' &&
             image.width &&
             image.height &&
@@ -1632,7 +1663,7 @@ export function ImageEditorBoundary({
   item,
   children,
   readOnly,
-  activation = 'click',
+  presentation = 'panel',
   onPinSource,
   onVersionChange
 }: {
@@ -1646,7 +1677,7 @@ export function ImageEditorBoundary({
         editDisabledReason?: string
         onTransformEnd: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
       }) => ReactNode)
-  activation?: 'click' | 'explicit'
+  presentation?: PreviewFileRendererProps['imageEditPresentation']
   readOnly?: boolean
   onPinSource?: () => void
   onVersionChange?: (item: PreviewFileItem | undefined) => void
@@ -1697,11 +1728,13 @@ export function ImageEditorBoundary({
   const { t } = useTranslation()
   const previewItem = draft?.browsing?.item ?? draft?.source ?? item
   const previewZoomKey = `${key}:${previewItem.selectedVersionId}`
+  const inDialog = presentation === 'dialog'
+  const editing = inDialog ? requestedEditKey === key : draft?.panelOpen
   useLayoutEffect(() => {
-    if (draft?.hidden) onVersionChange?.(previewItem)
-  }, [draft?.hidden, previewItem, onVersionChange])
+    if (draft && !editing) onVersionChange?.(previewItem)
+  }, [draft, editing, previewItem, onVersionChange])
   useLayoutEffect(() => () => onVersionChange?.(undefined), [onVersionChange])
-  if (draft && !draft.hidden && allowed && (activation !== 'explicit' || requestedEditKey === key))
+  if (draft && allowed && editing)
     return (
       <ActiveImageEditor
         key={key}
@@ -1710,6 +1743,11 @@ export function ImageEditorBoundary({
         draft={draft}
         session={session}
         rootItem={item}
+        localComposer={presentation !== 'panel'}
+        onClose={() => {
+          if (inDialog) setRequestedEditKey(undefined)
+          else owner.update(key, (current) => current && { ...current, panelOpen: false })
+        }}
         onVersionChange={onVersionChange}
       />
     )
@@ -1735,7 +1773,7 @@ export function ImageEditorBoundary({
             current
               ? {
                   ...current,
-                  hidden: false,
+                  panelOpen: current.panelOpen || !inDialog,
                   composerCollapsed: false,
                   zoom: previewZoom?.key === previewZoomKey ? previewZoom.zoom : current.zoom
                 }
@@ -1745,6 +1783,7 @@ export function ImageEditorBoundary({
                     frameId: frame?.id,
                     branchId: frame?.activeBranchId
                   },
+                  panelOpen: !inDialog,
                   source: { ...item },
                   prompt: '',
                   options: {},
@@ -1795,7 +1834,7 @@ export function ImageEditorBoundary({
             }
           })
         : children}
-      {activation === 'explicit' && onEdit ? (
+      {presentation !== 'panel' && onEdit ? (
         <Button
           type="button"
           variant="outline"

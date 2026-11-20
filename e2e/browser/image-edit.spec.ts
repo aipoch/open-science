@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test'
+import type { ImageTaskStart } from '../../src/shared/image-task'
 
 type Fixture = {
   imageEditFixture: {
     finish(): void
-    requests: Array<{ edit: { source: { sourceVersionId: string } } }>
+    requests: ImageTaskStart[]
   }
 }
 
@@ -261,6 +262,14 @@ test('dark preview exposes a visible edit action and border without image metada
   await action.click()
   await expect(page.getByTestId('image-editor')).toBeVisible()
   await expect(entry).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Image editing canvas' })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Image editing instruction' }).fill('Darken the circle')
+  await page.getByRole('button', { name: 'Send image edit' }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as Fixture).imageEditFixture.requests[0].edit.naturalSize
+    )
+  ).toEqual({ width: 1200, height: 800 })
 })
 
 test('expanded image previews require an explicit edit action and preserve the left draft', async ({
@@ -271,19 +280,24 @@ test('expanded image previews require an explicit edit action and preserve the l
   const chat = page.getByRole('textbox', { name: 'Conversation draft' })
   await chat.fill('Leave this conversation draft alone')
   await page.getByRole('button', { name: 'Open full screen preview' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Image preview' })
+  const dialog = page.getByRole('dialog', { name: 'Preview source.png' })
   await expect(dialog.getByTestId('image-edit-entry')).toHaveCount(0)
   await dialog.locator('[data-image-annotation-surface]').click()
   await expect(dialog.getByTestId('image-editor')).toHaveCount(0)
-  await expect(dialog.getByRole('textbox', { name: 'Annotation note' })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Annotation note' })).toHaveCount(0)
+  await dialog.locator('[data-image-annotation-surface]').click({ modifiers: ['Alt'] })
+  await expect(page.getByRole('textbox', { name: 'Annotation note' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await dialog.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await expect(chat).toHaveValue('Leave this conversation draft alone')
-  await expect(chat).toBeVisible()
   await dialog.getByRole('button', { name: 'Edit image', exact: true }).click()
   const input = dialog.getByRole('textbox', { name: 'Image editing instruction' })
   await input.fill('Preserve this image draft')
   await expect(input).toBeVisible()
-  await dialog.getByRole('button', { name: 'Close preview' }).click()
+  await page.screenshot({ path: 'test-results/image-edit-file-dialog.png' })
+  await dialog.getByRole('button', { name: 'Close preview of source.png' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(chat).toBeVisible()
+  await expect(chat).toHaveValue('Leave this conversation draft alone')
   // Reopening the same shared draft must still start in preview mode.
   await page.getByRole('button', { name: 'Open full screen preview' }).click()
   await expect(dialog.getByTestId('image-editor')).toHaveCount(0)
@@ -293,6 +307,7 @@ test('expanded image previews require an explicit edit action and preserve the l
   await expect(input).toHaveValue('Preserve this image draft')
   await dialog.getByRole('button', { name: 'Back to image preview', exact: true }).click()
   await expect(dialog.getByTestId('image-editor')).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Close preview of source.png' }).click()
   await expect(chat).toHaveValue('Leave this conversation draft alone')
 })
 
@@ -378,4 +393,25 @@ test('Compare remains visible and compares saved versions without image task pro
     'aria-pressed',
     'true'
   )
+})
+
+test('expanding the workbench moves an active composer with its draft', async ({ page }) => {
+  await page.goto('/image-edit.html?conversation&workbench')
+  const left = page.getByTestId('conversation-pane')
+  const instruction = { name: 'Image editing instruction' }
+  await page.getByTestId('image-edit-entry').click()
+  await left.getByRole('textbox', instruction).fill('Keep these instructions')
+  await page.getByRole('button', { name: /Open full screen preview of/i }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
+  await expect(left.getByRole('textbox', instruction)).toHaveCount(0)
+  await page.screenshot({ path: 'test-results/image-edit-expanded-workbench.png' })
+  await page.keyboard.press('Escape')
+  await expect(left.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
+  await left.getByRole('button', { name: 'Back to conversation' }).click()
+  await page.getByRole('button', { name: /Open full screen preview of/i }).click()
+  await dialog.locator('[data-image-annotation-surface]').click()
+  await expect(dialog.getByTestId('image-editor')).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Edit image', exact: true }).click()
+  await expect(dialog.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
 })

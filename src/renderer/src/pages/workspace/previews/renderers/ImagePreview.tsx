@@ -30,7 +30,8 @@ const ZoomableImage = ({
   initialTransform,
   onTransformEnd,
   onEdit,
-  editDisabledReason
+  editDisabledReason,
+  annotationRequiresAlt
 }: {
   url: string
   name: string
@@ -44,6 +45,7 @@ const ZoomableImage = ({
   onAnnotationError?: (error: AnnotationValidationError) => void
   initialTransform?: ImageEditorDraft['zoom']
   onEdit?: () => void
+  annotationRequiresAlt?: boolean
   editDisabledReason?: string
   onTransformEnd?: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
 }): React.JSX.Element => {
@@ -67,6 +69,7 @@ const ZoomableImage = ({
             src={url}
             sourceSize={sourceSize}
             activeAnnotations={activeAnnotations}
+            requireAltToAdd={annotationRequiresAlt}
             onAdd={onAddAnnotation}
             onUpdateNote={onUpdateAnnotationNote}
             onRemove={onRemoveAnnotation}
@@ -107,7 +110,8 @@ export const PreviewImageContent = ({
   initialTransform,
   onTransformEnd,
   onEdit,
-  editDisabledReason
+  editDisabledReason,
+  annotationRequiresAlt
 }: {
   path: string
   name: string
@@ -127,6 +131,7 @@ export const PreviewImageContent = ({
   onAnnotationError?: (error: AnnotationValidationError) => void
   initialTransform?: ImageEditorDraft['zoom']
   onEdit?: () => void
+  annotationRequiresAlt?: boolean
   editDisabledReason?: string
   onTransformEnd?: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
 }): React.JSX.Element => {
@@ -194,6 +199,7 @@ export const PreviewImageContent = ({
         editDisabledReason={editDisabledReason}
         initialTransform={initialTransform}
         onTransformEnd={onTransformEnd}
+        annotationRequiresAlt={annotationRequiresAlt}
         url={state.url}
         name={name}
         onError={() => setFailedRequestKey(requestKey)}
@@ -213,7 +219,7 @@ export const PreviewImageContent = ({
 
 export const ImagePreviewRenderer = ({
   item,
-  imageEditActivation,
+  imageEditPresentation = 'panel',
   readOnly,
   onPinImageSource,
   onImageEditorVersionChange,
@@ -225,14 +231,14 @@ export const ImagePreviewRenderer = ({
 }: PreviewFileRendererProps): React.JSX.Element => (
   <ImageEditorBoundary
     item={item}
-    activation={imageEditActivation}
+    presentation={imageEditPresentation}
     readOnly={readOnly}
     onPinSource={onPinImageSource}
     onVersionChange={onImageEditorVersionChange}
   >
     {({ item: previewItem, initialTransform, onTransformEnd, onEdit, editDisabledReason }) => (
       <PreviewImageContent
-        onEdit={imageEditActivation === 'explicit' ? undefined : onEdit}
+        onEdit={imageEditPresentation === 'panel' ? onEdit : undefined}
         editDisabledReason={editDisabledReason}
         key={previewItem.selectedVersionId}
         initialTransform={initialTransform}
@@ -253,7 +259,8 @@ export const ImagePreviewRenderer = ({
         activeAnnotations={
           previewItem.selectedVersionId === item.selectedVersionId ? activeAnnotations : []
         }
-        onAddAnnotation={imageEditActivation === 'explicit' ? undefined : onAddAnnotation}
+        annotationRequiresAlt={imageEditPresentation !== 'panel'}
+        onAddAnnotation={onAddAnnotation}
         onUpdateAnnotationNote={onUpdateAnnotationNote}
         onRemoveAnnotation={onRemoveAnnotation}
         onAnnotationError={onAnnotationError}

@@ -70,7 +70,8 @@ export function useImageComposerHost(
 
 export function useImageComposerTarget(
   scope: string,
-  viewport: HTMLElement | null
+  viewport: HTMLElement | null,
+  localComposer = false
 ): HTMLDivElement | undefined {
   const bridge = useContext(Context)
   const id = useId()
@@ -80,9 +81,11 @@ export function useImageComposerTarget(
       // DOM ancestry is only available after the viewport mounts.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPlacement(
-        viewport.closest('[role="dialog"], [role="alertdialog"]') ? 'local' : 'conversation'
+        localComposer || viewport.closest('[role="dialog"], [role="alertdialog"]')
+          ? 'local'
+          : 'conversation'
       )
-  }, [viewport])
+  }, [viewport, localComposer])
   const registerEditor = bridge?.registerEditor
   useLayoutEffect(() => {
     if (placement === 'conversation' && registerEditor) return registerEditor({ id, scope })

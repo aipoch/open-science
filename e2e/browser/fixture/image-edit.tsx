@@ -1,11 +1,15 @@
 import type { PreviewFileRendererProps } from '@/pages/workspace/previews/preview-types'
 import '@/assets/main.css'
-import { cloneElement, useState, type ReactElement, type ReactNode } from 'react'
+import { useState } from 'react'
 import { useImageComposerHost } from '@/pages/workspace/image-edit/image-composer-bridge'
 import { imageEditorScope } from '@/pages/workspace/image-edit/image-editor-state'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
-import { ImagePreviewRenderer } from '@/pages/workspace/previews/renderers/ImagePreview'
+import { PreviewFileContent } from '@/pages/workspace/previews/PreviewFileContent'
+import { FilePreviewDialog } from '@/pages/workspace/FilePreviewDialog'
+import { PreviewPanelSurface } from '@/pages/workspace/PreviewPanel'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { ImageEditingProvider } from '@/pages/workspace/image-edit/ImageEditingProvider'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { createLinearConversationGraph } from '../../../src/shared/conversation-graph'
@@ -59,6 +63,7 @@ window.api = {
     }),
     release: async () => undefined
   },
+  reviewer: { onUpdated: () => () => {} },
   settings: { getImageModels: async () => settings },
   artifacts: {
     getLineage: async () => {
@@ -173,12 +178,39 @@ if (new URLSearchParams(location.search).has('paged')) {
   })
 }
 
-export function Layout({ children }: { children: ReactNode }): React.JSX.Element {
+const item: PreviewFileRendererProps['item'] = {
+  id: 'source',
+  type: 'file',
+  format: 'image',
+  source: 'artifact',
+  projectId: 'p',
+  sessionId: 's',
+  artifactId: 'source',
+  managedFileId: 'source',
+  selectedVersionId: 'v1',
+  versionNumber: 1,
+  path: 'artifact-version:p/s/source/v1',
+  name: 'source.png',
+  title: 'source.png',
+  mimeType: 'image/png'
+}
+const workbench = new URLSearchParams(location.search).has('workbench')
+if (workbench) {
+  useNavigationStore.setState({ activeProjectId: 'p' })
+  usePreviewWorkbenchStore.getState().upsertAndActivateItem(item)
+}
+
+export function Layout(): React.JSX.Element {
+  const preview = workbench ? (
+    <PreviewPanelSurface onAddAnnotation={() => undefined} />
+  ) : (
+    <PreviewFileContent item={item} onAddAnnotation={() => undefined} />
+  )
   const session = useSessionStore((state) => state.sessions[0])
   const { active, attachHost } = useImageComposerHost(imageEditorScope(session), true)
   const [draft, setDraft] = useState('Keep my conversation draft')
   const [expanded, setExpanded] = useState(false)
-  if (!new URLSearchParams(location.search).has('conversation')) return <>{children}</>
+  if (!new URLSearchParams(location.search).has('conversation')) return preview
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', height: '100%' }}>
       <section
@@ -203,28 +235,14 @@ export function Layout({ children }: { children: ReactNode }): React.JSX.Element
         {new URLSearchParams(location.search).has('preview') ? (
           <button onClick={() => setExpanded(true)}>Open full screen preview</button>
         ) : null}
-        {children}
+        {preview}
       </section>
       {expanded ? (
-        <div
-          role="dialog"
-          aria-label="Image preview"
-          style={{
-            position: 'fixed',
-            inset: 30,
-            zIndex: 100,
-            background: 'var(--color-bg-000)',
-            display: 'flex',
-            flexDirection: 'column'
-          }}
-        >
-          <button onClick={() => setExpanded(false)}>Close preview</button>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {cloneElement(children as ReactElement<PreviewFileRendererProps>, {
-              imageEditActivation: 'explicit'
-            })}
-          </div>
-        </div>
+        <FilePreviewDialog
+          item={item}
+          onAddAnnotation={() => undefined}
+          onClose={() => setExpanded(false)}
+        />
       ) : null}
     </div>
   )
@@ -232,27 +250,7 @@ export function Layout({ children }: { children: ReactNode }): React.JSX.Element
 createRoot(document.getElementById('root')!).render(
   <main style={{ height: '100vh', width: '100vw' }}>
     <ImageEditingProvider>
-      <Layout>
-        <ImagePreviewRenderer
-          onAddAnnotation={() => undefined}
-          item={{
-            id: 'source',
-            type: 'file',
-            format: 'image',
-            source: 'artifact',
-            projectId: 'p',
-            sessionId: 's',
-            artifactId: 'source',
-            managedFileId: 'source',
-            selectedVersionId: 'v1',
-            versionNumber: 1,
-            path: 'artifact-version:p/s/source/v1',
-            name: 'source.png',
-            title: 'source.png',
-            mimeType: 'image/png'
-          }}
-        />
-      </Layout>
+      <Layout />
     </ImageEditingProvider>
   </main>
 )

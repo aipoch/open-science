@@ -259,6 +259,6 @@ it('opens image previews with explicit editing activation', async () => {
     )
   )
   expect(previewSurfaceSpy).toHaveBeenCalledWith(
-    expect.objectContaining({ imageEditActivation: 'explicit' })
+    expect.objectContaining({ imageEditPresentation: 'dialog' })
   )
 })

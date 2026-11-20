@@ -28,7 +28,7 @@ export function imageLineageRequest(
 
 export type ImageEditorTool = ImageEditRegion['geometry']['kind'] | 'pan'
 export type ImageEditorDraft = {
-  hidden?: boolean
+  panelOpen?: boolean
   composerCollapsed?: boolean
   composerExpanded?: boolean
   browsing?: { item: PreviewFileItem; inputSource?: ImageEditSnapshot['source'] }
