@@ -128,7 +128,7 @@ describe('useSmoothStreamingContent', () => {
   })
 
   it('segments initial content once rather than on every presentation render', async () => {
-    const target = 'initial'.repeat(1_000)
+    const target = '研究👩‍🔬'.repeat(1_000)
     const segment = vi.spyOn(Intl.Segmenter.prototype, 'segment')
     try {
       await renderProbe(target)

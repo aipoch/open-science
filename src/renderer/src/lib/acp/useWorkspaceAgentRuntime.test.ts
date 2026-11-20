@@ -850,6 +850,31 @@ describe('workspace agent runtime event processing', () => {
     }
   })
 
+  it.each([
+    { extra: '', batches: [1, 1] },
+    { extra: '字', batches: [2] }
+  ])(
+    'bypasses pacing only above the Unicode backlog limit ($batches)',
+    async ({ extra, batches }) => {
+      const observed: number[] = []
+      const record = async (size: number): Promise<boolean> => {
+        observed.push(size)
+        return true
+      }
+      const processor = createWorkspaceRuntimeEventProcessor(() => record(1), {
+        applyEventBatch: (events) => record(events.length),
+        presentation: createTimerPresentation()
+      })
+      const text = 'e\u0301'.repeat(16_384)
+      const events = createTextEvents(2).map((event, i) => ({
+        ...event,
+        text: i === 0 ? text : text + extra
+      }))
+      await processor.process(events)
+      expect(observed).toEqual(batches)
+    }
+  )
+
   it('catches up before an ordinary tool boundary within four presentation frames', async () => {
     vi.useFakeTimers()
     try {
