@@ -471,8 +471,10 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 ## Remaining gates
 
 The two pre-release README gates are complete: installation-only research in #66 and independent
-same-Agent migration in #67. [Upstream PR #4519](https://github.com/aipoch/open-science/pull/4519)
-requires the upstream checks and CI owner review of the Windows routing registration before merge.
+same-Agent migration in #67. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+supersedes [#4519](https://github.com/aipoch/open-science/pull/4519) to follow the upstream branch
+naming rule. It requires the upstream checks and CI owner review of the Windows routing
+registration before merge.
 Registry verification ([#68](https://github.com/guch96/open-science/issues/68)) is blocked until an
 official npm release contains Phase 1. Both README paths must then be repeated from that published
 build.
