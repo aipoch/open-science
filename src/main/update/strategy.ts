@@ -144,6 +144,7 @@ export const toAvailableUpdateStatus = ({
 export interface DownloadPreference {
   readonly enabled: boolean
   setEnabled(enabled: boolean): void
+  stageForNextLaunch?(status: UpdateStatus): Promise<void>
 }
 
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:

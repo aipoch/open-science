@@ -10,8 +10,20 @@ const {
   readdirSync,
   rmSync
 } = require('node:fs')
-const { dirname, join, resolve } = require('node:path')
+const { basename, dirname, join, resolve } = require('node:path')
 const { homedir } = require('node:os')
+
+function windowsDesktopInstallRoot(directory) {
+  const versions = dirname(directory)
+  if (
+    process.platform === 'win32' &&
+    /^\d+\.\d+\.\d+$/.test(basename(directory)) &&
+    basename(versions) === '.desktop-updates' &&
+    basename(dirname(versions)) === 'resources'
+  )
+    return dirname(dirname(versions))
+  return directory
+}
 
 function installationRootForEntry(entryPath) {
   // AppImage mount directories change on every launch; coordinate the stable outer image.
@@ -34,7 +46,8 @@ function installationRootForEntry(entryPath) {
   let cursor = dirname(entry)
   while (dirname(cursor) !== cursor) {
     if (cursor.endsWith(join('Contents', 'Resources'))) return dirname(dirname(cursor))
-    if (cursor.endsWith('/resources') || cursor.endsWith('\\resources')) return dirname(cursor)
+    if (cursor.endsWith('/resources') || cursor.endsWith('\\resources'))
+      return windowsDesktopInstallRoot(dirname(cursor))
     cursor = dirname(cursor)
   }
   const backend = dirname(entry)
@@ -203,4 +216,9 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwne
   }
 }
 
-module.exports = { installationRootForEntry, protectInstallationStartup, reapStaleRegistrations }
+module.exports = {
+  installationRootForEntry,
+  windowsDesktopInstallRoot,
+  protectInstallationStartup,
+  reapStaleRegistrations
+}

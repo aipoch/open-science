@@ -31,6 +31,7 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import { type NativeTranslator } from '../locale/main-process-messages'
 import { prepareWindowsUpdateHandoff, type WindowsUpdateHandoff } from './windows-update-handoff'
+import { windowsDesktopShortcutTarget } from './windows-desktop-version'
 import {
   confirmInstaller,
   inspectConfirmedInstaller,
@@ -317,7 +318,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             if (!startupOptions) throw new Error('Update startup configuration is unavailable')
             return prepareWindowsUpdateHandoff(app.getPath('appData'), {
               installerPath,
-              applicationPath: process.execPath,
+              applicationPath: windowsDesktopShortcutTarget(),
               profilePath: app.getPath('userData'),
               targetVersion: this.status.latest ?? '',
               startupOptions
@@ -468,6 +469,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.inspectInstallerFile
       )
       this.setStatus(readyStatus)
+      if (this.downloadPreference?.enabled && this.confirmedInstaller)
+        void this.downloadPreference.stageForNextLaunch?.(readyStatus).catch((error: unknown) =>
+          this.log.warn('Could not prepare the desktop update for next launch', {
+            message: String(error)
+          })
+        )
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return

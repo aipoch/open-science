@@ -8,7 +8,7 @@ import {
   inspectOwnedLinuxAppImageLauncher,
   inspectOwnedLinuxZygoteProcesses
 } from './update/installation-occupancy'
-import type { ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import {
   assertInstallationChannelCertified,
   installationChannelFor,
@@ -71,7 +71,14 @@ import {
   loadWindowsDownloadPreference
 } from './update/windows-background-download'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import { installationRootForEntry } from './update/installation-protection'
+import {
+  inspectInstallationAvailability,
+  installationRootForEntry
+} from './update/installation-protection'
+import {
+  selectWindowsDesktopVersion,
+  windowsDesktopShortcutTarget
+} from './update/windows-desktop-version'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -329,6 +336,40 @@ async function startDesktop(): Promise<void> {
     app.quit()
     return
   }
+  // A second invocation of the same profile has already gone to its running instance.
+  // Resolve a cold launch before opening credentials, the database or a workspace window.
+  if (
+    process.platform === 'win32' &&
+    app.isPackaged &&
+    !initialRecoveryError &&
+    !preservedStartupOptions
+  ) {
+    const target = await selectWindowsDesktopVersion({
+      executable: process.execPath,
+      current: app.getVersion(),
+      mayActivate: async () =>
+        !headless && Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
+      checkOccupancy: () =>
+        inspectInstallationAvailability({
+          installationRoot: installationRootForEntry(initialBackendPaths.entry),
+          allowedProcessIds: allowedInstallationProcessIds
+        })
+    })
+    if (target) {
+      if (headless) {
+        // Headless callers wait on this PID and read the endpoint from its stdout.
+        // Electron's GUI relaunch detaches and would break both contracts.
+        app.releaseSingleInstanceLock()
+        const child = spawn(target, process.argv.slice(1), { stdio: 'inherit', windowsHide: true })
+        child.once('error', () => app.exit(1))
+        child.once('exit', (code) => app.exit(code ?? 1))
+        return
+      }
+      app.relaunch({ execPath: target, args: process.argv.slice(1) })
+      app.exit(0)
+      return
+    }
+  }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
   // Configure the existing sink before credential preflight; full diagnostics start after ready.
@@ -428,7 +469,7 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
-  if (!ensureWindowsProtocolRegistration(app))
+  if (!ensureWindowsProtocolRegistration(app, process.platform, windowsDesktopShortcutTarget()))
     bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
     prefetchSystemBootIdentity().catch((error: unknown) =>

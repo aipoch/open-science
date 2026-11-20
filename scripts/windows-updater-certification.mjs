@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -100,6 +100,7 @@ const parseArguments = (argv) => {
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
     ...(argv.includes('--rollback') ? { rollback: true } : {}),
+    ...(argv.includes('--cold-launch') ? { coldLaunch: true } : {}),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
     ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
     ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
@@ -446,6 +447,58 @@ exit $exitCode
   return { ready, exit }
 }
 
+// Launch the installer-created link itself. Its unchanged target and the version reported by
+// the healthy renderer distinguish activation from a harness that launched the staged exe.
+const probeInstalledShortcut = async (installDirectory, env, expectedVersion) => {
+  const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
+  await rm(portFile, { force: true })
+  await runProcess(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      [
+        "$ErrorActionPreference = 'Stop'",
+        "$shortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Open-Science.lnk'",
+        '$target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath',
+        "if ($target -ne $env:OPEN_SCIENCE_EXPECTED_SHORTCUT) { throw 'Unexpected desktop shortcut' }",
+        "Start-Process -FilePath $shortcut -ArgumentList '--remote-debugging-port=0'"
+      ].join('\n')
+    ],
+    { env: { ...env, OPEN_SCIENCE_EXPECTED_SHORTCUT: join(installDirectory, 'open-science.exe') } }
+  )
+  const browser = await waitFor(
+    'the workspace launched through the shortcut',
+    async () => {
+      const port = (await readFile(portFile, 'utf8')).split('\n')[0]
+      const pages = await (await fetchWithTimeout(`http://127.0.0.1:${port}/json/list`)).json()
+      if (!pages.some((target) => target.type === 'page' && target.url.startsWith('file:'))) return
+      return chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+    },
+    UPDATE_TIMEOUT_MS
+  )
+  try {
+    const page = browser
+      .contexts()
+      .flatMap((context) => context.pages())
+      .find((page) => page.url().startsWith('file:'))
+    await page.waitForFunction(
+      async () => (await window.api?.databaseStartup.getState())?.phase === 'ready'
+    )
+    const { current } = await page.evaluate(() => window.api.update.getStatus())
+    if (current !== expectedVersion)
+      throw new Error(`Shortcut opened ${current}, expected ${expectedVersion}`)
+    const closed = browser.waitForEvent('disconnected', { timeout: 60_000 })
+    await page.evaluate(() => {
+      void window.api.databaseStartup.quit()
+    })
+    await closed
+  } finally {
+    await browser.close()
+  }
+}
+
 const runElectronUpdater = async ({
   executable,
   env,
@@ -453,6 +506,7 @@ const runElectronUpdater = async ({
   expectedInstaller,
   onDownloaded,
   beforeApply,
+  coldLaunch,
   ownedAgentFixture,
   windowsRecovery,
   notebook,
@@ -544,20 +598,36 @@ const runElectronUpdater = async ({
       return status
     }
 
-    const checked = await withTimeout(invoke('check'), 'electron-updater check')
+    const checked = coldLaunch
+      ? await waitFor('scheduled startup offer', async () => {
+          const status = await page.evaluate(() => window.api.update.getStatus())
+          return status.state === 'available' && status.automaticDownloads ? status : undefined
+        })
+      : await withTimeout(invoke('check'), 'electron-updater check')
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
+    }
+    if (coldLaunch) {
+      const session = await page.context().newCDPSession(page)
+      const { windowId } = await session.send('Browser.getWindowForTarget')
+      await session.send('Browser.setWindowBounds', {
+        windowId,
+        bounds: { windowState: 'minimized' }
+      })
+      await session.detach()
     }
     await waitFor(
       'electron-updater differential download',
       async () => {
-        const status = await invoke('download')
+        const status = coldLaunch
+          ? await page.evaluate(() => window.api.update.getStatus())
+          : await invoke('download')
         const classification = classifyUpdaterDownloadStatus(status, expectedVersion)
         if (classification === 'ready') return status
         if (classification === 'pending') return undefined
         throw new Error(`Unexpected updater download result: ${JSON.stringify(status)}`)
       },
-      UPDATE_TIMEOUT_MS
+      coldLaunch ? UPDATE_TIMEOUT_MS + 60_000 : UPDATE_TIMEOUT_MS
     )
     if (
       windowsRecovery &&
@@ -568,6 +638,23 @@ const runElectronUpdater = async ({
       )
     await onDownloaded(ownedEvidence)
     await beforeApply?.({ invoke, page })
+
+    if (coldLaunch) {
+      const prepared = join(
+        win32.dirname(executable),
+        'resources',
+        '.desktop-updates',
+        expectedVersion,
+        'prepared.sha512'
+      )
+      await waitFor('verified side-by-side installation', () => stat(prepared), UPDATE_TIMEOUT_MS)
+      await page.evaluate(() => {
+        void window.api.databaseStartup.quit()
+      })
+      const code = await waitForShutdownExit(exit, child, diagnosticOutput)
+      if (code !== 0) throw new Error(`Normal desktop quit failed (${code})`)
+      return { normalQuit: true }
+    }
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
@@ -883,6 +970,7 @@ const main = async () => {
         basename(currentInstaller)
       ),
       onDownloaded: persistObservation,
+      coldLaunch: options.coldLaunch,
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
       notebook: options.notebook,
@@ -951,8 +1039,31 @@ const main = async () => {
       UPDATE_TIMEOUT_MS
     )
     await terminateDirectoryProcesses(installDirectory)
+    let probeDirectory = installDirectory
+    if (options.coldLaunch) {
+      const { child } = await launchUninstallerLockHolder(
+        installDirectory,
+        env,
+        undefined,
+        undefined,
+        undefined,
+        'Read'
+      )
+      try {
+        await probeInstalledShortcut(installDirectory, env, previousVersion)
+      } finally {
+        await terminateProcessTree(child)
+      }
+      await probeInstalledShortcut(installDirectory, env, currentVersion)
+      successor.nextDeltaBasisSha512 = await verifyCachedInstaller(
+        currentInstaller,
+        cachedInstaller
+      )
+      successor.shortcutVersions = [previousVersion, currentVersion]
+      probeDirectory = join(installDirectory, 'resources', '.desktop-updates', currentVersion)
+    }
     const currentConfigRoot = await launchAndProbe({
-      installDirectory,
+      installDirectory: probeDirectory,
       expectedVersion: currentVersion,
       env,
       legacyConfigRoots: [previousConfigRoot]

@@ -1,4 +1,5 @@
 export function installationRootForEntry(entryPath: string): string
+export function windowsDesktopInstallRoot(directory: string): string
 export function protectInstallationStartup(
   entryPath: string,
   configRoot: string,

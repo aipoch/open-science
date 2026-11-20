@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import type { DownloadPreference } from './strategy'
+import { stageWindowsDesktopVersion } from './windows-desktop-version'
+import { windowsDesktopInstallRoot } from '../../../packages/open-science/installation-startup.cjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -19,6 +21,7 @@ export function windowsDownloadPreference(profile: string): DownloadPreference {
     enabled = (error as NodeJS.ErrnoException).code === 'ENOENT'
   }
   return {
+    stageForNextLaunch: stageWindowsDesktopVersion,
     get enabled() {
       return enabled
     },
@@ -60,7 +63,10 @@ async function runProbe(script: string): Promise<boolean> {
       resolveWindowsPowerShellExecutable(),
       ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'\n" + script],
       {
-        env: { ...process.env, OPEN_SCIENCE_UPDATE_INSTALL_DIR: dirname(process.execPath) },
+        env: {
+          ...process.env,
+          OPEN_SCIENCE_UPDATE_INSTALL_DIR: windowsDesktopInstallRoot(dirname(process.execPath))
+        },
         windowsHide: true,
         timeout: 5_000,
         maxBuffer: 4096
