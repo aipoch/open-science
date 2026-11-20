@@ -435,6 +435,19 @@ Owner and a conflict with a different package operation. The continuation regres
 same prompt identity that `get_session` provides. Module registration retains full Web Service
 coverage and includes the platform-specific Notebook readiness check in Windows routing.
 
+The upstream candidate passed Node and Web type checks, lint, and 1,749 impact registration
+tests. Commit `45e1cc2f3` passed 2,824 CLI, MCP, and service regression tests across 23 suites.
+A focused rerun passed 314 tests across six suites, including the updated command wiring,
+Fork publication fixture, Desktop-only continuation inventory, and Notebook tool review guard.
+The guard review confirmed that the tool text changes do not change schemas, dispatch, or
+authorization. Changes after the preview build below only touch tests and documentation.
+
+The first upstream Windows Core and Ubuntu host checks found the same Desktop Fork test failure:
+the Notebook execution fence does a separate Owner lookup while the source is reserved. The
+test now checks the actual Archive and persistence reservations once each and verifies their
+release. The failure reproduced locally before the change, and the three package lifecycle and
+export suites passed 37 tests afterward (three Windows-only cases skipped on macOS).
+
 A Linux arm64 preview was built from `bde5ca99bcab6509a0f86e387c42bdb4fddcc805`. The npm install
 check passed; the CLI and native archives had SHA-256
 `ef06ee92e0fd3c56c7ff3f0b02ecdc80ccec02fe1616eb422cf91ceb872ba09b` and
@@ -450,9 +463,11 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 ## Remaining gates
 
 The two pre-release README gates are complete: installation-only research in #66 and independent
-same-Agent migration in #67. Registry verification ([#68](https://github.com/guch96/open-science/issues/68))
-is blocked until an official npm release contains Phase 1. Both README paths must then be repeated
-from that published build.
+same-Agent migration in #67. [Upstream PR #4519](https://github.com/aipoch/open-science/pull/4519)
+requires the upstream checks and CI owner review of the Windows routing registration before merge.
+Registry verification ([#68](https://github.com/guch96/open-science/issues/68)) is blocked until an
+official npm release contains Phase 1. Both README paths must then be repeated from that published
+build.
 
 The public npm registry was checked on November 20, 2026. `@aipoch/open-science` had `latest`
 at `1.3.2`; both `1.3.1` and `1.3.2` were downloadable from the registry. Their official release
