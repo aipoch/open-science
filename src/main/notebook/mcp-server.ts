@@ -286,7 +286,7 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 
 const BIND_RUNTIME_DOC = [
   'Bind one enabled runtimeId per language for this session. Disabled/unknown IDs are refused.',
-  'Use bind when no binding exists; otherwise switch. notebook_execute uses it automatically; no per-call runtime.'
+  'Use notebook_execute directly when the installed, enabled app-managed default meets the request. If explicit selection is needed, bind when no binding exists; otherwise switch.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
@@ -548,6 +548,21 @@ const callNotebookRpc = async (
 // one next step chosen by the RPC status so the Agent neither abandons the tool nor loops on it.
 const notebookRpcErrorGuidance = (status: number, error: unknown): string | undefined => {
   const detail = asRecord(error)
+  const code = typeof error === 'string' ? error.split(':', 1)[0] : detail?.code
+  if (
+    typeof error === 'string' &&
+    (error.startsWith('Notebook execution declined:') ||
+      error.startsWith('Notebook runtime selection declined'))
+  ) {
+    return 'Notebook approval was not granted. Do not repeat the action or try another route. Wait for the user to authorize a different action.'
+  }
+  if (
+    code === 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION' ||
+    code === 'NOTEBOOK_MEMORY_PRESSURE' ||
+    code === 'NOTEBOOK_MEMORY_UNAVAILABLE'
+  ) {
+    return 'Notebook work is stopped. Do not retry, change tools, language, environment or Session, or delegate it. After resolving the cause, ask the user to choose Continue Notebook work in Compute in the Open-Science desktop app.'
+  }
   if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
     return undefined
   if (status === 400) return TOOL_ARGUMENT_RECOVERY

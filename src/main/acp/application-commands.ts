@@ -31,7 +31,11 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
-import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
+import {
+  canAccessSessionPlan,
+  canSatisfyHumanApproval,
+  requireDesktopCaller
+} from '../caller-context'
 import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { z } from 'zod'
 import type { AcpHandlerWorkflows } from './handler-workflows'
@@ -421,6 +425,7 @@ const registerAcpCommands = (
             !invocation.callerLease.isCurrent()
           )
             throw new Error('Only a current human caller can continue Notebook execution.')
+          requireDesktopCaller(invocation.callerContext)
         }
         assertCurrent()
         const { projectId, refusalId, ...request } = invocation.args[0]

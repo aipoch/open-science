@@ -199,6 +199,10 @@ describe('OpenScienceClient', () => {
         'updateSessionConfiguration',
         'callRpc',
         'exportSessionPackage',
+        'startAgentPackageExport',
+        'startAgentPackageFork',
+        'startAgentPackageImport',
+        'getPackageOperation',
         'importSessionPackage',
         'getAgentRouting',
         'updateAgentRouting',
@@ -279,6 +283,24 @@ describe('OpenScienceClient', () => {
       'GET',
       'PATCH'
     ])
+  })
+
+  it('checks the returned Session association even if the service ignores the Project query', async () => {
+    const data = { id: 'session/1', projectId: 'project/1' }
+    const fetch = vi.fn().mockImplementation(async () => response(200, { data }))
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch
+    })
+
+    await expect(client.getSession(data.id, { projectId: data.projectId })).resolves.toEqual(data)
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      'http://127.0.0.1:44100/api/v1/sessions/session%2F1?project=project%2F1'
+    )
+    await expect(
+      client.getSessionConfiguration(data.id, { projectId: 'another-project' })
+    ).rejects.toMatchObject({ code: 'session_project_mismatch', status: 409 })
   })
 
   it('starts and waits for a run through the authenticated versioned API', async () => {

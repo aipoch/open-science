@@ -27,6 +27,19 @@ export type TaskAgentRuntime = Readonly<{
   source?: 'managed' | 'external'
 }>
 
+export type TaskReadinessCheck = Readonly<{
+  status: 'ready' | 'blocked' | 'checking' | 'unconfirmed'
+  reason?: string
+}>
+
+export type TaskNotebookReadiness = Readonly<{
+  platform: NodeJS.Platform
+  environment: TaskReadinessCheck & { pythonReady?: boolean; rReady?: boolean }
+  dependencies: TaskReadinessCheck
+  sandbox: TaskReadinessCheck
+  memoryPolicy: TaskReadinessCheck & { source?: string; executionScope?: string }
+}>
+
 export type TaskDoctorReport = Readonly<{
   ready: boolean
   checks: Readonly<{
@@ -36,6 +49,7 @@ export type TaskDoctorReport = Readonly<{
       { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
     >
     skills: Readonly<{ status: 'ready'; enabled: string[] }>
+    notebook?: TaskNotebookReadiness
   }>
   next: ReadonlyArray<
     Readonly<{
@@ -58,6 +72,27 @@ export type TaskSubmission = {
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type TaskRunFailureCode = 'process_restarted'
+
+export type TaskNotebookExecution = {
+  status: 'unconfirmed' | 'preparing' | 'running' | 'completed' | 'failed' | 'waiting_for_user'
+  projectId: string
+  sessionId: string
+  notebookRunId?: string
+  promptMessageId?: string
+  messageBranchId?: string
+  kernelDispatched?: boolean
+  reasonCode?: string
+  refusalId?: string
+  continuedFromRefusalId?: string
+  owner?: 'user'
+  requiresUser?: true
+  retryable?: false
+  next?: {
+    action:
+      'continue_notebook_in_app' | 'review_notebook_code_in_app' | 'review_notebook_runtime_in_app'
+    message: string
+  }
+}
 
 export type TaskRunProgressPhase =
   | 'accepted'
@@ -138,6 +173,8 @@ export type TaskRun = {
   output?: string
   error?: string
   failureCode?: TaskRunFailureCode
+  /** Notebook evidence for this research turn, independent of the outer Run status. */
+  execution?: TaskNotebookExecution
   artifacts: ArtifactFile[]
   attention?: TaskRunAttention
   review?: TaskRunReview
@@ -161,7 +198,17 @@ export type TaskSessionSummary = {
   output?: string
   error?: string
   artifactCount: number
+  readOnly: boolean
+  packageOrigin?: TaskSessionOrigin
+  forkOrigin?: TaskSessionOrigin
+  /** Live Notebook intent, with evidence scoped to its prompt when available. */
+  execution?: TaskNotebookExecution
 }
+
+export type TaskSessionOrigin = Omit<
+  import('./session-package').SessionPackageOrigin,
+  'excludedFiles'
+>
 
 export type TaskProject = Omit<Project, 'agentContext' | 'sessionDefaults'> & {
   hasAgentContext: boolean
@@ -270,6 +317,7 @@ export type TaskApiErrorCode =
   | 'submission_unavailable'
   | 'submission_not_found'
   | 'session_read_only'
+  | 'session_project_mismatch'
   | 'invalid_request'
   | 'project_not_found'
   | 'project_conflict'

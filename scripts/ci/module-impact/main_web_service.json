@@ -19,6 +19,7 @@
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.test.ts",
     "src/main/web-service/task-api.ts",
+    "src/main/web-service/task-notebook-readiness.ts",
     "src/main/web-service/external-access-contract.ts",
     "src/main/web-service/session-payload.integration.test.ts"
   ],

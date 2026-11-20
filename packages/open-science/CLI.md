@@ -217,26 +217,51 @@ if the process subsequently exits; they cannot prove the stopped generation to a
 
 ## Readiness checks
 
-Inspect the running service without changing runtime, provider, credential, onboarding, or Skill
-settings:
+Inspect the running service and default local delivery directory:
 
 ```bash
 open-science doctor --json
 ```
 
-The command prints one JSON object. `ready` requires both the selected Agent runtime and active
-provider to be ready. A check is `missing` when its resource is absent and `not_ready` when it is
-configured but unusable; provider failures may include a stable `reason`, such as
-`credential_invalid`.
+The command prints `{ "result": { "readiness": ..., "checks": ..., "next": ... } }`.
+`readiness.agent: "ready"` requires both the selected Agent runtime and active provider to be
+ready. A check is `missing` when its resource is absent and `not_ready` when it is configured but
+unusable; provider failures may include a stable `reason`, such as `credential_invalid`.
+`readiness.notebook` summarizes the service's default Python environment, system dependencies,
+isolation, and current host memory policy. `checks.notebook` reports each separately and includes
+the service platform, Python/R availability, and the memory source and scope when known. `ready`
+means the reported prerequisites passed. `checking` means an Owner is preparing or checking a
+prerequisite. `blocked` identifies a known problem. `unconfirmed` means some evidence is missing.
+See the [deployment prerequisites](../../docs/standalone-runtime.md#notebook-readiness-for-agents)
+for what each platform can establish. Actual Notebook dispatch and output delivery are separate.
+
+`checks.deliveryDirectory` inspects `<profile>/agent-delivery` on the CLI or MCP host, using the
+profile directory if the default location does not yet exist. It checks directory type and access
+without creating anything or writing a test file. File delivery still has to write and verify the
+actual output.
 
 Codex credential inspection checks supported material in the app-owned `auth.json` without launching
 Codex or validating expiry/revocation remotely; historical provider validation remains a separate gate.
 
-`checks.skills.enabled` contains the sorted IDs of enabled, available Skills; Skills do not block
-overall readiness. `next` contains stable action codes such as
-`runtime_missing` and `provider_not_ready`, with an additive `argv` recovery command for the Codex bootstrap path. A completed inspection
-exits with code `0` even when `ready` is false; connection and command failures keep the existing
-nonzero CLI error codes.
+`doctor` and `get_setup_status` have the same checks. `profile` identifies the running service's
+configuration root. `next` contains setup actions, with an owner, a user action flag and a
+verification step for the same profile. A completed inspection exits with code `0`, including
+when a readiness check is blocked. If the service is
+unreachable, the CLI emits `daemon_unavailable` and the startup command for the selected profile
+on stderr, and exits with code `3`. An HTTP authentication rejection stays an `access_denied`
+error.
+
+The shared `prepare_runtime` capability installs or checks the managed Codex runtime using the
+existing bootstrap service. `open-science runtime install codex --json` invokes the same
+capability. Its installation request waits up to 600,000 ms by default, then successful installs
+are checked again in the same profile. After a timeout, check setup before repeating installation.
+
+Keep the service and MCP on the same profile, for example `open-science mcp --profile
+/absolute/path/to/profile`. When a provider action specifies `requiresUser`, give the user the
+returned executable and argument list; it points to this installation of Open-Science. For
+Codex, the user runs Open-Science's `codex login` subcommand. For other provider setups they open
+Open-Science Settings. An action using `url` prints a private sign-in URL for the user. Do not
+request or collect it or credentials in MCP. Recheck `get_setup_status` after the user's action.
 
 ## First-run setup (Codex)
 
@@ -268,8 +293,8 @@ open-science provider add --type official --vendor openai --model gpt-5.4 \
 Use a model supported by the installed application's OpenAI catalog. Setup probes that exact model
 before saving its protected credential reference and validation record. This initial command creates
 `cli-openai`; repeating it with the same key and currently selected model revalidates that target.
-If Settings changed the active model, Doctor suggests the selected model; revalidation preserves the
-provider default model and active selection. Different existing credentials,
+If Settings changed the active model, revalidation preserves the provider default model and
+active selection. Different existing credentials,
 providers, or framework selections produce `configuration_conflict`, without overwriting them.
 Later account edits remain in Settings. Other runtime/provider bootstrap combinations are not yet
 supported. Existing run-time selection commands are unchanged.
@@ -282,14 +307,9 @@ All writes use existing Settings/runtime/credential owners and formats. No onboa
 flag or database migration is added. OS storage remains the default; Linux file storage still
 requires the existing explicit `start --credential-store file` option on every start.
 
-`doctor` keeps existing readiness/reason fields. If the daemon is absent, the CLI prints a report
-with `checks.daemon.status: "missing"` and `next: [{ code: "daemon_unavailable", argv: ["start",
-"--no-open"] }]`, exiting 3. This includes a stale state file whose loopback connection is refused; HTTP health
-rejections (including authorization failures) remain errors rather than missing-daemon reports.
-When probing both default profiles, a later refused connection does not hide an earlier HTTP or
-configuration error; a healthy later profile can still be selected. A running-daemon report still exits 0 even when readiness is false.
-Append the same development `--profile` argument when executing a suggested argv in an isolated
-profile. Doctor reports readiness, not a live third-party authorization or research-run guarantee.
+Use the same `--profile` for service startup, diagnostics, and manual provider setup when working
+with an isolated profile. Doctor reports current service checks; provider validation and research
+execution are separate operations.
 
 `bootstrap` SDK requests return `{ ok: true, providerId? }` or `{ ok: false, code }`. Codes are
 `invalid_request` (including unknown model/input), `configuration_conflict`, `runtime_unavailable`,
@@ -507,14 +527,17 @@ open-science session status <session-id> --json
 ```
 
 Every CLI submission has a request ID. Supply `--request-id <id>` to retain an identity in a script;
-otherwise the CLI generates one. The local service durably acknowledges the request before slow
-Agent preparation. If the connection fails before a Run ID is returned, the error includes
-`requestId`; query that receipt rather than sending a new request:
+otherwise `open-science run` generates one and saves it before submission in the selected
+profile's `agent-run-requests/<requestId>.json`. The record only locates the request and profile;
+it contains no prompt, credentials, or receipt status. A save failure prevents submission. If a
+process exits before printing its result, inspect that directory to recover the ID and the profile.
+The local service saves the receipt before slow Agent preparation. If the connection fails before
+a Run ID is returned, query the original receipt using the same profile:
 
 ```bash
 open-science run --project <project-id> --prompt-file ./task.md --request-id analysis-001 --wait --json
 open-science run status --request-id analysis-001 --json
-open-science run wait --request-id analysis-001 --timeout-ms 600000 --json
+open-science run wait --request-id analysis-001 --timeout-ms 30000 --json
 open-science run wait <run-id> --json
 ```
 
@@ -616,9 +639,35 @@ open-science run \
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
   does not cancel, hide, or prevent collection/messaging of children admitted earlier.
 
-Ordinary `--wait` retains its terminal-only behavior. Add `--return-on-attention` to return a
-still-running Run when its Plan needs approval. Plan approval is the only structured Run attention
-in this release; permission and delegated-question events do not cause an attention return.
+`--wait` returns a still-running Run when a Plan needs approval, a Notebook environment or cell
+needs review, or Notebook work is stopped pending human continuation. `--return-on-attention` is
+accepted for older scripts and has the same behavior. Other permission and delegated-question
+events do not cause an attention return.
+
+`get_run` and `wait_run` report Notebook `execution` independently from the outer Run. Execution
+describes the latest Python or R Notebook Run attributed to the exact research prompt: `preparing`,
+`running`, `completed`, `failed`, `unconfirmed`, or `waiting_for_user`. A completed outer Run,
+an unverified kernel dispatch, or a successful cell from a previous prompt does not establish
+Notebook success. A missing `kernelDispatched` is unknown. Check output delivery separately.
+If the model reaches its turn or output budget, the Run fails with an explanation and retains
+any partial output. Check the model settings for that Session before trying another research turn.
+
+For `review_notebook_runtime_in_app`, the user responds to **Confirm Notebook kernel and
+environment** in the original Session and branch. A first binding can wait for this decision
+before a Notebook Run has been created. For `review_notebook_code_in_app`, the user reviews
+the pending cell there. Recheck the same research Run after either decision. CLI and MCP
+provide the handoff; the Web or Desktop app presents the decision. Public `permission.requested`
+notices for these reviews identify the Run and reason without carrying decision options,
+interpreter paths, or code risk details.
+
+For `next.action: "continue_notebook_in_app"`, keep the refusal, Session, and branch references.
+Once the cause has been resolved, the user opens that conversation branch in the Open-Science
+desktop app connected to the same service and chooses **Continue Notebook work** in **Compute**.
+Web shows the handoff; only Desktop can continue. Do not retry or switch tools, language,
+environment, or Session to bypass it. After the user acts, `get_session` can observe execution for
+the active or latest prompt in the same Session; `execution.continuedFromRefusalId` associates the
+new prompt with the original refusal. This association lives in the running service. The original
+Run keeps its own outcome, and opening a fresh Session is not recovery.
 
 Inspect and respond to an active Plan with its exact version and revision:
 
@@ -659,64 +708,103 @@ unavailable references fail with `invalid_configuration`.
 
 ## Session package export and import
 
-Export a Session to a `.science` package at an explicit path. The Session must be idle:
+Export an idle Session with the shared Agent capability. Use explicit source IDs and a new
+absolute `.science` path in an existing directory on the same machine:
 
 ```bash
-open-science session export <session-id> --project <id-or-name> --output ~/backups/session.science
+printf '%s\n' '{"projectId":"PROJECT_ID","sessionId":"SESSION_ID","destinationPath":"/absolute/path/result.science"}' \
+  | open-science tools call export_session --json
 ```
 
-`--project` resolves a Project by id or name and selects which Session to export. `--output` must
-be an absolute or relative path ending in `.science`; when it is omitted the command fails instead
-of opening a native save dialog, because the CLI runs without a desktop session. The command
-returns the saved status and written path as JSON with `--json`.
+The MCP `export_session` tool takes the same arguments. The CLI shortcut
+`open-science session export SESSION_ID --project PROJECT_ID_OR_NAME --output PATH --json`
+resolves the Project and path then calls the same capability. `waitMs` (shortcut: `--timeout-ms`)
+defaults to 30,000 and accepts 1–300,000 ms. The wait only limits observation; the service can
+finish the export afterward. Existing files, directories and symbolic links are never replaced.
 
-Both package commands allow up to one hour by default. Use `--timeout-ms <milliseconds>`
-to adjust the request deadline for large packages or slower disks.
+Save the returned `operationId` and `correlationId`. After a timeout, pass either original
+reference to `get_package_operation`; also pass the original scope fields when available:
 
-Import a `.science` package. Import is non-interactive by design and requires an explicit
-confirmation flag:
+```bash
+printf '%s\n' '{"correlationId":"ORIGINAL_CORRELATION_UUID","kind":"export"}' \
+  | open-science tools call get_package_operation --json
+```
+
+The lookup is read-only. It can report pending or verify the package actually delivered at the
+local path, including its size and SHA-256. If the service has restarted, a newer snapshot
+replaced the original, or the file cannot be verified, expect `completionStatus: "unconfirmed"`.
+Keep the original references and check the destination; do not repeat the export automatically.
+Package operations do not offer the durable receipts that research submissions provide.
+If the package contains flagged content, the CLI/MCP export reports `package_sensitive_content`,
+`requiresUser: true` and `completionStatus: "pending"`. Nothing has been published. Open
+Open-Science Desktop on the same machine and profile to find the pending package operation.
+Review the redacted evidence and destination, acknowledge the risk, then confirm in the native
+dialog. The dialog identifies the staged package by its size and SHA-256. It defaults to Cancel.
+The approval is for those exact bytes and that operation, and expires after ten minutes. Local
+Web can show the request, but approval requires Desktop; a browser-only or headless environment
+can cancel the export or remove the flagged content before requesting a new export.
+
+After the user responds, query the original `operationId` or `correlationId`; the export call
+does not need to be repeated. Cancellation or expiration publishes no file. If the staged bytes
+change, Open-Science refuses publication even when the size is unchanged. There is no CLI/MCP
+confirmation or force option.
+
+Import an attached `.science` package with the shared `import_session` capability. Pass the
+absolute `sourcePath` on the local shared filesystem and optionally `targetProjectId` for an
+existing Project or `newProjectName` for a new one. Omit both to create a new Project with
+the name from the package. The MCP tool and `tools call import_session --json` take the same
+arguments:
+
+```bash
+printf '%s\n' '{"sourcePath":"/absolute/path/attached.science","newProjectName":"Restored session"}' \
+  | open-science tools call import_session --json
+```
+
+The CLI shortcut accepts relative paths and an unambiguous Project name. It requires
+`--non-interactive` to acknowledge import without an interactive preview:
 
 ```bash
 open-science session import ~/backups/session.science --new-project "Restored session" --non-interactive
 open-science session import ~/backups/session.science --project <id-or-name> --non-interactive
 ```
 
-`--non-interactive` confirms the import preview on the caller's behalf; without it the command
-fails rather than waiting for an approval that a headless caller can never supply. Choose exactly
-one destination: `--project` imports into an existing Project, `--new-project` creates one with
-the given name, and omitting both uses the package's own Project name in a new Project. A cancelled import exits nonzero with
-`code: "cancelled"`. If the import request times out, JSON output includes
-`completionStatus: "unconfirmed"`. The service can still finish the import. Check the destination
-before retrying, since another import can create a second Session. For a rejected local import,
-include the returned `error.correlationId` (when present) when looking up the service log. The
-package file is read directly from disk, so no upload or drag-and-drop step is involved.
+Import accepts the same `waitMs` range and default as export. The shortcut's `--timeout-ms`
+sets this wait. A completed result returns the actual `session.projectId`, `session.sessionId`
+and `session.readOnly: true` along with a summary of the validated package. Inspect the Session
+with `get_session`. List its published history with `list_artifacts` using the imported Session ID.
+Inspect before asking the user whether to Fork. An imported Session cannot accept a new research
+turn or configuration edits, and its provider credentials and external access must be configured
+separately in the new environment.
 
-Both commands dispatch the same `sessions:export-package`, `sessions:import-package`, and
-`sessions:package-operation` application commands the desktop app uses, over the authenticated
-loopback HTTP channel. They are unavailable to remote Web sessions by design: the channel is
-installed as a rejecting stub for remote callers, and the handler additionally requires a local
-caller, so arbitrary-path file read and write stay confined to loopback callers that hold the
-service token.
+If the result is `unconfirmed`, query `get_package_operation` with the original operation or
+correlation ID and `kind: "import"`. Add the original `sourcePath`, `targetProjectId`, or
+`newProjectName` when available to check the scope. The service may still complete the import;
+do not submit it again automatically. If the original snapshot has been replaced, a newer
+import of the same file cannot confirm the earlier attempt.
+
+Both commands reuse the Package Owner over the authenticated loopback channel. They are
+unavailable to remote Web sessions: arbitrary-path file reads and writes require local access.
 
 ### Fork an existing Session
 
-Import, fork and new-Session creation are separate operations. Import keeps the imported research
-read-only and never executes it. Fork explicitly creates a writable continuation with copied
-history, managed files and a source relationship; it does not overwrite or unlock the imported
-Session. Starting a Run without `--session` creates a new independent Session.
+Show the results of the read-only inspection first and ask the user whether to Fork. Once the
+user agrees, call `fork_session` with the source `projectId` and `sessionId`. Its completed result
+keeps the immediate source IDs at the top level and returns the new writable IDs in `session`.
+The new Session's `forkOrigin` can point further back to the original package. Use the nested
+`session` IDs and a new `requestId` for a separately authorized follow-up. Omitting the Session
+starts an unrelated Session. Query the original `requestId` when recovering earlier work.
 
 ```bash
 open-science session fork <imported-session-id> --project <id-or-name> --json
 open-science run --project <project-id> --session <returned-fork-session-id> --prompt "Continue the analysis" --wait
 ```
 
-Fork reuses the desktop package owner, including admission, recovery and provenance remapping.
-Imported forks replay their copied history with this installation's model defaults; they do not
-restore another machine's provider process, credentials or pending approvals. Local forks preserve
-the existing model-selection policy. `run --session <imported-session-id>` returns `session_read_only`
-with a fork instruction. The `session fork` request uses the same one-hour default timeout as package
-transfers and accepts `--timeout-ms`; after a timeout inspect the operation and Session list before
-forking again. Fork is available only through authenticated local access.
+The CLI shortcut accepts an exact Project name or ID and the same wait range as `fork_session`.
+After an unconfirmed result, query `get_package_operation` by the original `operationId` or
+`correlationId`, using `kind: "fork"` and the source IDs. Do not repeat the Fork automatically.
+Imported Forks use the receiving profile's model defaults. Pending approvals and a current
+Notebook stop on the source must be resolved in Open-Science; a Fork cannot continue the stopped
+intent. Fork is available only through authenticated local access.
 
 ## Agent routing settings
 
@@ -820,7 +908,7 @@ List the artifacts produced for a session and download one by ID:
 
 ```bash
 open-science artifacts list <session-id> --json
-open-science artifacts download <artifact-id> --output ./report.md --json
+open-science artifacts download <download-id> --session <session-id> --output ./report.md --json
 ```
 
 Artifact output paths are resolved relative to the current working directory.
@@ -1033,35 +1121,68 @@ Use the absolute CLI path if the client cannot find the installed command.
 `~/.open-science-project` (development) before `~/.open-science` (production).
 For a source checkout, use `node` as the command and put the absolute path to
 `packages/open-science/cli.mjs` before `mcp` in `args`. When a client initializes the MCP connection, the adapter starts or reuses the
-standalone service with the same persistent lifetime as `start --no-open`. Tool discovery is
-available during startup. The first call waits for the service and uses its selected profile.
+standalone service with the same persistent lifetime as `start --no-open`. Discovery and the local
+guide are available during startup. Business calls wait for startup; `doctor` and the optional
+discovery probe report the current state without waiting for startup.
 Listing projects works before model setup. A later desktop launch can attach to a compatible
 backend. Closing the MCP connection leaves the service running; use `open-science stop` to
 release the persistent hold. `open-science mcp --help` only prints help.
 
-If startup fails, check the selected profile's status and startup log, resolve the failure and
-retry the tool call. CLI 1.3.0 requires a running service before tool calls. Tool names consistently use
-lowercase `snake_case`; argument names retain the SDK's `camelCase`. Tools accept explicit IDs
-rather than resolving project names. Each tool publishes its description, input schema, output
-schema and behavior annotations through `tools/list`.
+If startup fails, check the selected profile's status and startup log. Tool names use lowercase
+`snake_case`; argument names use `camelCase`. Choose explicit resource IDs returned by Open-Science.
+
+### Discover capabilities
+
+Use MCP `list_capabilities` (optional `group` and `checkService`) and `describe_capability` (`name`),
+or their CLI equivalents:
+
+```bash
+open-science tools list --json
+open-science tools list setup --check-service --profile /absolute/path/to/profile --json
+open-science tools describe doctor --json
+open-science tools call get_agent_guide --json
+```
+
+The catalog groups discovery, setup, research, and delivery and reports exposure separately for
+CLI and MCP. `tools call <name> --json` accepts a JSON object on stdin (empty input means `{}`),
+and only calls capabilities with CLI exposure. The equivalent MCP invocation uses the published
+`tools/list` schema. Service support is `unknown` until there is evidence, `unavailable` when
+the selected service cannot be checked, and `not_required` for local discovery. `checkService`
+defaults to `false`; using it probes the existing service without starting it. The doctor check
+recognizes the bootstrap advertisement or confirms the read endpoint on older services.
+
+Read the Markdown resource `openscience://agent/guide` or call `get_agent_guide` if the MCP client
+does not expose resources. The full local workflow requires the external Agent, MCP process, and
+service on the same machine with access to the input and delivery files.
 
 | Tool                           | Purpose                                                  |
 | ------------------------------ | -------------------------------------------------------- |
-| `doctor`                       | Check research readiness                                 |
+| `doctor`                       | Check base Agent readiness                               |
 | `list_runtimes`                | List detected Agent runtimes                             |
 | `list_projects`                | List projects and IDs                                    |
 | `create_project`               | Create a persistent project                              |
 | `update_project`               | Update project metadata and Agent Context                |
+| `get_project_session_defaults` | Read defaults for new Sessions and the Project revision  |
+| `update_project_session_defaults` | Update defaults for new Sessions                       |
 | `list_sessions`                | List sessions, optionally by project                     |
-| `get_session`                  | Read session information/status, not a full transcript   |
+| `get_session`                  | Read Session status and import or Fork provenance        |
 | `get_session_configuration`    | Read session configuration and revision                  |
 | `update_session_configuration` | Update settings with `expectedRevision`                  |
-| `start_run`                    | Submit a prompt and return a run ID                      |
+| `start_run`                    | Submit research under a caller-supplied request ID        |
+| `get_submission`               | Read the original durable receipt                        |
+| `wait_submission`              | Wait until the original receipt leaves `pending`         |
 | `get_run`                      | Read progress, output and attention state                |
+| `wait_run`                     | Wait until a Run finishes or needs attention             |
 | `cancel_run`                   | Explicitly cancel a run without undoing previous effects |
 | `get_plan`                     | Read the plan and its version/revision                   |
 | `respond_plan`                 | Approve/reject a reviewed version or request changes     |
-| `list_artifacts`               | List artifact metadata without downloading files         |
+| `list_artifacts`               | List published Artifact versions and download IDs        |
+| `download_artifact`            | Deliver one listed version to a new local file           |
+| `get_delivery_status`         | Check report and result table delivery for one Run       |
+| `export_session`              | Export one Session to a local `.science` file           |
+| `import_session`              | Import a local `.science` file as a read-only Session     |
+| `fork_session`                | Create a writable copy after the user agrees            |
+| `get_package_operation`      | Check the outcome of a specific package operation        |
 | `search_literature`            | Search or browse Literature library records              |
 | `get_literature_item`          | Read one Literature record                               |
 | `list_citation_styles`         | List citation styles available for formatting            |
@@ -1075,24 +1196,77 @@ schema and behavior annotations through `tools/list`.
 | `set_reading_status`           | Set unread, reading, or read                             |
 | `set_literature_lifecycle`     | Move records to the trash or restore them                |
 
-A typical workflow calls `list_projects`, `start_run` with `{ "projectId": "…", "prompt": "…" }`,
-then polls `get_run` with the returned run ID and calls `list_artifacts` with the session ID.
-Successful calls return `structuredContent: { "result": ... }` plus the same JSON in text
-content. Tool execution failures set `isError: true`; exception bodies and credentials are not
-forwarded. After a timeout or transport failure, inspect current state before repeating a write:
-the original operation may already have succeeded. The adapter never retries mutations itself.
+Generate and retain a `requestId` before calling `start_run` over MCP or `tools call`. Send
+`{ "requestId": "analysis-001", "projectId": "…", "prompt": "…" }`. The result is a durable
+receipt, which can be pending. Read it with `get_submission`, or use `wait_submission` to observe
+it until it leaves `pending`. The pending receipt's `next` names `wait_submission` and the same
+`requestId`. An accepted receipt provides the `runId` for `get_run` or `wait_run`; an interrupted
+or failed receipt does not start another Run. When continuing an existing Session, include its
+`sessionId` and use its current provider, model, reasoning effort, memory, and enabled Compute
+Hosts. Change those via `update_session_configuration` before starting the Run. Both wait tools
+default to `timeoutMs: 10000` and accept up to `30000`. They return the applied budget and the
+receipt or Run. Timeout returns the same budget and reference for the next read. Disconnecting
+or timing out never cancels the study; use `cancel_run` to cancel explicitly.
 
-Runs use the service's configured framework and authorization defaults. `start_run` accepts
-existing session, provider/model, permission, skill, specialist, compute-host, memory, review,
-delegation and plan-first options; it does not change the global framework. A run can require
-human action in Open-Science. Explicit `permissionPrompts: "none"` denies unresolved human
-interactions using the existing capability check; it does not expand permissions and cannot
-be combined with `turnIntent: "plan-first"`. Plan approval/rejection requires the version and
-revision from `get_plan`. Configuration updates require the revision from
-`get_session_configuration`.
+After a lost response or service restart, always query the same `requestId` in the original
+profile. The same effective submission and ID resolve to the same receipt; a changed request
+under that ID fails with `submission_conflict`. A Run interrupted by restart reports
+`failureCode: "process_restarted"`. Use a new ID for a separately authorized research turn.
+Older services without durable submission support reject the operation without writing a Run.
 
-`search_literature` returns at most 20 records per page and `format_references` defaults to
-`en-US`. `get_reference_metadata` and `create_literature_item` contact external registries
+A failed receipt with `error.code: "provider_auth_required"` means the provider rejected
+authentication during Run preparation. Use the private Settings entry point in `error.next` to
+ask the user to restore access in the same profile. Recheck setup after the user's action. The
+original receipt is final and will not replay, even if the user signs in later.
+
+Use the session and Run IDs from `get_run` to list the Artifacts for that research.
+Notebook working files must be published as Artifacts before they can be downloaded. For each
+Artifact, pass its `downloadId` and `sessionId` to `download_artifact`; `artifactId` identifies
+the lineage and `versionId` identifies the immutable version. Files default to
+`<profile>/agent-delivery/<downloadId>/<Artifact name>`. An explicit `outputPath` is an absolute
+local path in an existing directory. The destination filesystem must support hard links. An
+existing file, directory or symbolic link is refused. A download returns the actual path, bytes,
+SHA-256 and verification result. Verification requires the size and checksum of the source version.
+
+For `get_delivery_status`, pass the Run ID and exact requested `reportName` and `tableName`, plus
+`reportPath` or `tablePath` from the download receipts if custom paths were used. Omitted paths
+are checked only in the default delivery directory. Only Artifacts associated with this Run count.
+`missing` and `partial` describe how many requested outputs are available. `available` means both
+outputs exist at the source and at least one local file did not verify at the checked path. No
+background verification is pending. `verified` means both local files match their source versions;
+it does not validate the scientific result.
+
+Successful calls return `structuredContent: { "result": ... }` plus the same JSON in text content.
+Tool failures set `isError: true` and return `{ "error": ... }` with `code`, `message`, `owner`,
+`requiresUser`, `retryable`, `next`, and available recovery references. CLI Agent calls use the
+same result on stdout or the same error with `exitCode` on stderr. An `unconfirmed` completion
+status means the original write may already have taken effect; query the original state before
+deciding whether to repeat it. Error output excludes raw service messages and credentials.
+
+Use the exact `projectId` from `list_projects` or `create_project` before submitting research.
+Use `list_sessions` with that Project ID to choose an existing Session, then pass both IDs to
+`get_session` to verify the association. The resource tools never choose a Project or Session for
+you. To start a new Session, submit research with the Project ID and omit `sessionId`.
+
+For `update_project`, use the Project's latest `updatedAt` as `expectedUpdatedAt`. Use the
+timestamp from `get_project_session_defaults` when updating defaults and the `revision` from
+`get_session_configuration` as `expectedRevision` when updating a Session. Configuration input
+uses flat fields such as `providerId`, `model`, and `reasoningEffort`; pass both
+`enabledComputeHostIds` and `selectedComputeHostIds` when replacing Compute Hosts. Session reads
+report persisted and effective settings; Project defaults only apply when creating a Session.
+Configuration reads and writes accept `projectId` to verify the Session belongs to that Project.
+
+`get_session` reports `readOnly: true` and `packageOrigin` for an imported Session. It can be
+inspected but cannot be configured or resumed. A writable Fork reports `forkOrigin`. A missing
+`readOnly` on an older service does not establish that a Session is writable.
+
+Runs use the service's configured framework and authorization defaults. `start_run` accepts an
+existing Session, flat model fields, skills, a Specialist, Compute Hosts, Memory, and plan-first
+options. It accepts no permission overrides. A Run can require human action in Open-Science.
+Plan approval or rejection requires the version and revision from `get_plan`.
+
+`search_literature` defaults to 20 records per page and accepts a `limit` from 1 to 100.
+`format_references` defaults to `en-US`. `get_reference_metadata` and `create_literature_item` contact external registries
 through the service, so they are marked open-world. `import_literature` takes reference text or
 item objects in the call, not a file path; call it with `mode: "preview"` before `"commit"`. If
 its Project link fails after commit, the error includes `itemIds`; link them with

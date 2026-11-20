@@ -465,7 +465,7 @@ describe('ACP module transport seam', () => {
     completeTurn()
   })
 
-  it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
+  it('keeps Notebook continuation exclusive to the Electron ACP call inventory', () => {
     registerWithFakes()
 
     const invokeChannels = Object.entries(WEB_INVOKE_CHANNELS)
@@ -502,7 +502,11 @@ describe('ACP module transport seam', () => {
       'acp:set-permission-profile',
       'acp:steer-follow-up'
     ])
-    expect(invokeChannels).toEqual([...handlers.keys(), ...runtimeValidatedChannels].sort())
+    expect(invokeChannels).toEqual(
+      [...handlers.keys(), ...runtimeValidatedChannels]
+        .filter((name) => name !== 'acp:continue-notebook-execution')
+        .sort()
+    )
     expect(eventChannels).toEqual([
       'acp:agent-runtime-update',
       'acp:event',

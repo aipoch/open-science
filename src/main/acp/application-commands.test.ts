@@ -305,7 +305,7 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
-  it('accepts a new Notebook execution prompt only from a current human caller', async () => {
+  it('accepts a new Notebook execution prompt only from a current Desktop human caller', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -321,11 +321,19 @@ describe('ACP application commands', () => {
         invocation([request], createTaskCallerContext())
       )
     ).rejects.toThrow('Only a current human caller')
+    for (const web of [
+      createWebCallerContext('local-web'),
+      createWebCallerContext('remote-web', { location: 'remote' })
+    ]) {
+      await expect(
+        router.dispatcher.invoke(acpCommands.continueNotebookExecution, invocation([request], web))
+      ).rejects.toThrow('Open-Science desktop app')
+    }
     expect(dependencies.workflows.sendPrompt).not.toHaveBeenCalled()
     await expect(
       router.dispatcher.invoke(
         acpCommands.continueNotebookExecution,
-        invocation([request], createWebCallerContext('local-web'))
+        invocation([request], createElectronCallerContext(7))
       )
     ).resolves.toEqual(commandResponse)
     expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce()
@@ -344,7 +352,10 @@ describe('ACP application commands', () => {
       })
       const router = createApplicationCommandRouter()
       registerAcpCommands(router.registrar, dependencies)
-      const context = createWebCallerContext('notebook-human')
+      const context =
+        command === 'continueNotebookExecution'
+          ? createElectronCallerContext(7)
+          : createWebCallerContext('notebook-human')
       const leases = new ApplicationCallerLeaseRegistry()
       const caller = leases.acquire(context)
       const pending = router.dispatcher.invoke(acpCommands[command], {

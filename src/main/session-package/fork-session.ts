@@ -8,6 +8,12 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 
+export class ForkPendingApprovalError extends Error {
+  constructor() {
+    super('Wait for pending approvals before forking this Session.')
+  }
+}
+
 export const nextForkTitle = (sourceTitle: string, existingTitles: readonly string[]): string => {
   const titles = new Set(existingTitles)
   for (let index = 2; ; index += 1) {

@@ -174,6 +174,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'acp:continue-notebook-execution',
   'resource-recording:get-state',
   'resource-recording:start',
   'resource-recording:stop',
@@ -289,6 +290,9 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:bootstrap',
   'cli:install',
   'settings:get-preflight',
+  'notebook-env:status',
+  'settings:get-notebook-network-status',
+  'notebook:memory-policy-state',
   'settings:list-skills',
   'settings:list-connectors',
   'settings:get-connector-detail',

@@ -3,9 +3,17 @@ import {
   rebaseTaskTurnOntoLatestSession
 } from '../session-persistence/task-admission'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatMessage,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import type { TaskNotebookExecution } from '../../shared/task-api'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import {
@@ -19,6 +27,9 @@ import {
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type { TaskAgentPort, TaskSessionPort } from '../tasks/task-runner'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { HeadlessTaskApi } from './task-api'
 
 const project = {
@@ -271,6 +282,245 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('does not report successful Notebook execution from a completed Run or a historical cell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-notebook-observation-'))
+    const repository = new NotebookRunRepository(root)
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository
+    })
+    const commands = commandsFrom(async (channel, _caller, args) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [] }
+      if (channel === 'sessions:save-session') return args[0]
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const owner = { projectId: project.id, sessionId: 'session-created' }
+    const lane = createFrameNotebookLane(
+      owner.projectId,
+      owner.sessionId,
+      'root-frame-session-created'
+    )
+    const agent = createAgent({
+      prompt: vi.fn(async ({ promptMessageId }) => {
+        const evidence = {
+          cellId: 'cell-1',
+          source: 'agent' as const,
+          kernelKind: 'python' as const,
+          script: 'print(42)',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+        await repository.loadOrCreate({ ...owner, lane, workspaceCwd: root })
+        await repository.appendRun({
+          ...owner,
+          lane,
+          run: {
+            ...evidence,
+            runId: 'notebook-unrelated',
+            status: 'completed',
+            kernelDispatched: true,
+            startedAt: 3,
+            promptMessageId: 'user-other'
+          }
+        })
+        await repository.appendRun({
+          ...owner,
+          lane,
+          run: {
+            ...evidence,
+            runId: 'notebook-current',
+            status: 'failed',
+            kernelDispatched: false,
+            startedAt: 2,
+            promptMessageId,
+            messageBranchId: 'branch-current'
+          }
+        })
+      })
+    })
+    const api = new HeadlessTaskApi({ commands, agent, notebook })
+    try {
+      const run = await api.startRun({ project: project.id, prompt: 'Compute the result.' })
+      const expected = {
+        status: 'completed',
+        execution: {
+          status: 'failed',
+          notebookRunId: 'notebook-current',
+          kernelDispatched: false,
+          reasonCode: 'notebook_pre_dispatch_failed',
+          messageBranchId: 'branch-current',
+          ...owner
+        }
+      }
+      const finished = await api.waitForRun(run.id)
+      expect(finished.error).toBeUndefined()
+      expect(finished).toMatchObject(expected)
+      await expect(api.getRun(run.id)).resolves.toMatchObject(expected)
+    } finally {
+      await api.dispose()
+      await notebook.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('observes the current Session prompt even when it inherits an earlier Notebook intent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-session-notebook-'))
+    const repository = new NotebookRunRepository(root)
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository
+    })
+    const owner = { projectId: project.id, sessionId: 'session-1' }
+    const prompt = (id: string): PersistedChatMessage => ({
+      id,
+      role: 'user',
+      content: id,
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    let session = materializeSessionConversationGraph({
+      id: owner.sessionId,
+      projectId: owner.projectId,
+      title: 'Notebook research',
+      cwd: root,
+      status: 'idle',
+      messages: [prompt('original')],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const frame = session.conversationGraph.frames[0]!
+    const lane = createFrameNotebookLane(owner.projectId, owner.sessionId, frame.id)
+    const scope = { ...owner, messageBranchId: frame.activeBranchId }
+    const imported = materializeSessionConversationGraph({
+      ...session,
+      id: 'imported-session',
+      conversationGraph: undefined,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: owner.projectId,
+        sourceSessionId: owner.sessionId,
+        importedAt: 1,
+        manifestChecksum: 'checksum',
+        excludedFiles: []
+      }
+    })
+    const appendCompletedRun = (promptMessageId: string): Promise<unknown> =>
+      repository.appendRun({
+        ...owner,
+        lane,
+        run: {
+          runId: `notebook-${promptMessageId}`,
+          cellId: 'cell-1',
+          source: 'agent',
+          kernelKind: 'python',
+          script: 'print(42)',
+          status: 'completed',
+          kernelDispatched: true,
+          startedAt: 1,
+          messageBranchId: scope.messageBranchId,
+          promptMessageId,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+      })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(async (channel) => {
+        if (channel === 'sessions:load-all') return { sessions: [session, imported] }
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }),
+      agent: createAgent(),
+      notebook
+    })
+    const inspect = async (): Promise<TaskNotebookExecution | undefined> =>
+      (await api.getSession(owner.sessionId, owner.projectId)).execution
+    try {
+      await repository.loadOrCreate({ ...owner, lane, workspaceCwd: root })
+      const original = notebook.createExecutionIntent({ ...scope, promptMessageId: 'original' })
+      await appendCompletedRun('original')
+      await expect(inspect()).resolves.toMatchObject({
+        status: 'completed',
+        notebookRunId: 'notebook-original',
+        kernelDispatched: true
+      })
+
+      notebook.rememberExecutionIntent(scope, 'follow-up', original)
+      session = materializeSessionConversationGraph({
+        ...session,
+        status: 'running',
+        activeRun: { promptMessageId: 'follow-up', startedAt: 2 },
+        messages: [...session.messages, prompt('follow-up')]
+      })
+      const unconfirmed = {
+        ...scope,
+        promptMessageId: 'follow-up',
+        status: 'unconfirmed',
+        reasonCode: 'notebook_evidence_unavailable'
+      }
+      await expect(inspect()).resolves.toEqual(unconfirmed)
+      session = { ...session, status: 'idle', activeRun: undefined }
+      await expect(inspect()).resolves.toEqual(unconfirmed)
+
+      const refusalId = original.block('memory-pressure')
+      const waiting = {
+        status: 'waiting_for_user',
+        requiresUser: true,
+        refusalId,
+        next: { action: 'continue_notebook_in_app' }
+      }
+      await expect(inspect()).resolves.toMatchObject({ ...waiting, promptMessageId: 'follow-up' })
+      session = materializeSessionConversationGraph({
+        ...session,
+        messages: [...session.messages, prompt('not-yet-bound')]
+      })
+      await expect(inspect()).resolves.toMatchObject({
+        ...waiting,
+        ...scope,
+        promptMessageId: 'original'
+      })
+      await expect(api.getSession(imported.id)).resolves.toMatchObject({
+        readOnly: true,
+        packageOrigin: { importId: 'import-1' },
+        execution: { status: 'unconfirmed', sessionId: imported.id }
+      })
+
+      notebook.createExecutionIntent({
+        ...scope,
+        promptMessageId: 'continued',
+        continuedFromRefusalId: refusalId
+      })
+      session = materializeSessionConversationGraph({
+        ...session,
+        messages: [...session.messages, prompt('continued')]
+      })
+      await expect(inspect()).resolves.toEqual({
+        ...unconfirmed,
+        promptMessageId: 'continued',
+        continuedFromRefusalId: refusalId
+      })
+      await appendCompletedRun('continued')
+      await expect(inspect()).resolves.toMatchObject({
+        promptMessageId: 'continued',
+        continuedFromRefusalId: refusalId,
+        status: 'completed',
+        notebookRunId: 'notebook-continued',
+        kernelDispatched: true
+      })
+    } finally {
+      await api.dispose()
+      await notebook.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('projects the registered Agent runtimes without exposing executable paths', async () => {
     const settings = {
       ...taskSettings,
@@ -418,6 +668,114 @@ describe('HeadlessTaskApi adapter', () => {
         { code: 'provider_not_ready', argv: ['codex', 'login'] }
       ]
     })
+  })
+
+  it('reports ongoing Notebook provisioning and memory pressure without starting work', async () => {
+    let recovering = false
+    const invoke = vi.fn(async (channel: string) => {
+      switch (channel) {
+        case 'settings:get-preflight':
+          return {
+            agentFrameworkId: 'codex',
+            runtimeReadiness: { status: 'ready' },
+            providerReadiness: { status: 'ready' }
+          }
+        case 'settings:list-skills':
+          return []
+        case 'notebook-env:status':
+          return { pythonReady: false, rReady: false, provisioning: true }
+        case 'settings:get-notebook-network-status':
+          return { kind: 'ready', warnings: [] }
+        case 'notebook:memory-policy-state':
+          return {
+            status: 'pressured',
+            ...(recovering
+              ? { reason: 'mac-memory-recovering', recoveryRemainingMs: 18_000 }
+              : { reason: 'mac-memory-warning' }),
+            source: 'darwin-sysctl-dispatch',
+            executionScope: 'darwin:host',
+            detail: 'internal memory diagnostics'
+          }
+        default:
+          throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    const report = await api.doctor()
+    expect(report).toMatchObject({
+      ready: true,
+      checks: {
+        notebook: {
+          environment: { status: 'checking', reason: 'notebook_environment_preparing' },
+          memoryPolicy: {
+            status: 'blocked',
+            reason: 'notebook_memory_pressure',
+            source: 'darwin-sysctl-dispatch',
+            executionScope: 'darwin:host'
+          }
+        }
+      }
+    })
+    expect(JSON.stringify(report)).not.toContain('internal memory diagnostics')
+    expect(invoke.mock.calls.map(([channel]) => channel)).not.toContain('notebook-env:provision')
+
+    recovering = true
+    await expect(api.doctor()).resolves.toMatchObject({
+      checks: {
+        notebook: {
+          memoryPolicy: { status: 'checking', reason: 'notebook_memory_recovering' }
+        }
+      }
+    })
+  })
+
+  it('returns available readiness evidence when an Owner cannot answer in time', async () => {
+    vi.useFakeTimers()
+    try {
+      const commands = commandsFrom(async (channel) => {
+        switch (channel) {
+          case 'settings:get-preflight':
+            return {
+              agentFrameworkId: 'codex',
+              runtimeReadiness: { status: 'ready' },
+              providerReadiness: { status: 'ready' }
+            }
+          case 'settings:list-skills':
+            return []
+          case 'notebook-env:status':
+            return new Promise(() => undefined)
+          case 'notebook:memory-policy-state':
+            return {
+              status: 'unavailable',
+              diagnostic: 'linux-cgroup-visibility',
+              source: 'linux',
+              executionScope: 'default'
+            }
+          default:
+            throw new Error('Unavailable')
+        }
+      })
+      const api = new HeadlessTaskApi({ commands, agent: createAgent() })
+      const report = api.doctor()
+      await vi.advanceTimersByTimeAsync(6_000)
+      await expect(report).resolves.toMatchObject({
+        ready: true,
+        checks: {
+          notebook: {
+            environment: { status: 'unconfirmed', reason: 'notebook_evidence_unavailable' },
+            memoryPolicy: {
+              status: 'blocked',
+              reason: 'notebook_linux_cgroup_unavailable',
+              source: 'linux',
+              executionScope: 'default'
+            }
+          }
+        }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('routes Project Session defaults through the Task-only persistence command', async () => {

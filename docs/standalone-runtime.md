@@ -68,7 +68,10 @@ Python/R Notebook runtime. For terminal setup and a first task, see the
 npm selects a matching optional platform package for macOS ARM64/x64, glibc Linux ARM64/x64
 or Windows x64. The package includes backend resources and native dependencies; it uses your
 installed Node and does not require Electron. Linux musl and Windows ARM64 are unsupported.
-The [Linux prerequisites](#linux-prerequisites) still apply. Do not omit optional dependencies;
+The [Linux prerequisites](#linux-prerequisites) include the C++ runtime required by the native
+helpers. The npm build is validated on Ubuntu 24.04 on ARM64 and x64; older glibc or libstdc++
+versions can fail to load a helper even when npm successfully selects the platform package.
+Do not omit optional dependencies;
 reinstall with `npm install --global @aipoch/open-science --include=optional` if the matching
 native package is missing. Use the public entry package rather than installing a platform
 package directly; the CLI requires its platform package to have the same version.
@@ -327,6 +330,37 @@ setting before relying on OS-encrypted writes.
 Linux Notebook isolation still requires bubblewrap and permitted unprivileged user namespaces.
 Missing sandbox support is an error; the Node host does not disable protection. Source Linux
 Electron tests also require an unlocked test Secret Service.
+
+### Notebook readiness for agents
+
+Run `open-science doctor --profile /absolute/path/to/profile --json` or call `get_setup_status`
+in that profile's local MCP session. `readiness.agent` covers runtime and provider. The independent
+`readiness.notebook` checks the default Python environment, protection dependencies and host
+memory policy using existing service Owners. You can inspect `checks.notebook.environment.rReady`
+for R. This check starts no Notebook or new execution domain, changes no execution permission,
+and leaves any user stop in effect. The delivery directory check runs in the CLI or MCP process.
+
+| Finding                                               | Who acts and how                                                                                                                                                                                                                                                |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing Python or recovery required                   | The user prepares or follows recovery instructions in Notebook environment Settings.                                                                                                                                                                            |
+| Invalid trust bundle                                  | The deployment operator checks the installation's OpenSSL and public CA prerequisites and the profile's custom PEM bundle. Doctor can diagnose the bundle of a running service; if the native OpenSSL dependency prevents startup, use the service startup log. |
+| Missing bubblewrap                                    | The Linux deployment operator installs the distribution package and makes `bwrap` available on the service PATH.                                                                                                                                                |
+| Linux namespaces unavailable                          | The deployment operator grants the service account the namespaces required by bubblewrap. Doctor runs the same fixed, bounded read-only bubblewrap probe used by Notebook launch and reports this category only when the diagnostic identifies a namespace failure. |
+| Linux private procfs unavailable                      | The deployment operator permits bubblewrap to mount a private `/proc` for the Notebook sandbox. Doctor reports this category only when the probe identifies a procfs mount failure. |
+| Linux isolation unconfirmed                           | The deployment operator verifies required namespaces and a private `/proc` mount under the service account and container policy. Doctor uses `unconfirmed` when bubblewrap output cannot be classified safely; it never relaxes Notebook protection. |
+| Linux procfs or limiting cgroup ancestors unavailable | The deployment operator restores authentic procfs and complete cgroup visibility for the memory reader. This is a host prerequisite, separate from Files permissions.                                                                                           |
+| Memory policy unavailable or under pressure           | The deployment operator uses the reported memory source and scope to diagnose the sampler or available resources.                                                                                                                                               |
+
+After an action, rerun setup status for the same profile. Readiness covers native host
+prerequisites. A Project, selected R or guest runtime, and current execution permissions are
+checked by their Owners at execution time. The Windows Settings protection check can launch
+compatibility probes, so the read-only Agent check leaves Windows isolation unconfirmed.
+
+The shared CLI/MCP contract is exercised with controlled service responses. Existing Owner tests
+cover native macOS readiness signals and Linux procfs/cgroup refusals. Those tests do not qualify
+every Linux host or container, or demonstrate Windows/WSL or remote Notebook execution. A
+container-specific setting from an installed test does not establish a general installation
+requirement. Confirm dispatch separately with the actual workload in the target deployment.
 
 ## Who stops the server
 

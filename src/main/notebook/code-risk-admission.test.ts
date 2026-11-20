@@ -9,12 +9,20 @@ import { createInterface } from 'node:readline'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import type { AcpPermissionRequest, AcpRuntimeState } from '../../shared/acp'
 import type { NotebookRunSummary, ShellRuntimeBinding } from '../../shared/notebook'
 import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import { AcpPermissionBroker } from '../acp/permission-broker'
+import { projectPermissionRequest } from '../acp/runtime-publication-owner'
+import { bindNotebookApprovals } from '../composition/notebook-approvals'
 import { NotebookKernelExecutor } from './kernel-executor'
 import * as powerShellParser from './powershell-search-parser'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
-import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
+import {
+  NotebookRuntimeService,
+  type NotebookExecutionRequest,
+  type NotebookExecutionResult
+} from './runtime-service'
 import * as windowsRuntime from './windows-notebook-runtime'
 
 const roots: string[] = []
@@ -229,6 +237,195 @@ async function productionKernelHarness(language: 'python' | 'r' | 'repl'): Promi
 }
 
 describe('host-owned one-shot execution admission', () => {
+  it.each(['ask', 'auto'] as const)(
+    'reports pre-dispatch Notebook runtime review only for a pending decision in %s',
+    async (profile) => {
+      const { service, request, execute, runtimes } = await harness(1)
+      Object.assign(runtimes[0], { provenance: 'app-managed', condaEnv: 'default-python' })
+      const requested = Promise.withResolvers<AcpPermissionRequest>()
+      const broker = new AcpPermissionBroker((approval) => requested.resolve(approval))
+      bindNotebookApprovals(
+        service,
+        () => ({
+          getState: () => ({ permissionProfiles: {} }) as AcpRuntimeState,
+          requestAppApproval: (input) => broker.requestAppApproval(input),
+          pendingNotebookReviews: (sessionId) => broker.pendingNotebookReviews(sessionId)
+        }),
+        async () => profile
+      )
+      const scope = {
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        promptMessageId: 'study-prompt',
+        messageBranchId: 'study-branch'
+      }
+      const execution = service.execute({
+        ...request,
+        code: 'print(42)',
+        provenanceContext: {
+          promptMessageId: scope.promptMessageId,
+          messageBranchId: scope.messageBranchId,
+          rootFrameId: 'root-frame-session',
+          agentFrameId: 'root-frame-session',
+          runtimeSegmentId: 'segment'
+        }
+      })
+      try {
+        if (profile === 'ask') {
+          const permission = await Promise.race([requested.promise, execution])
+          if (!('requestId' in permission)) throw new Error('Runtime approval was not requested.')
+          expect(execute).not.toHaveBeenCalled()
+          expect(await service.inspectTaskExecution(scope)).toEqual({
+            ...scope,
+            kernelDispatched: false,
+            status: 'waiting_for_user',
+            reasonCode: 'notebook_runtime_review_required',
+            owner: 'user',
+            requiresUser: true,
+            retryable: false,
+            next: { action: 'review_notebook_runtime_in_app', message: expect.any(String) }
+          })
+          await expect(
+            service.inspectTaskExecution({ ...scope, messageBranchId: undefined })
+          ).resolves.toMatchObject({ status: 'waiting_for_user', messageBranchId: 'study-branch' })
+          for (const overrides of [
+            { promptMessageId: 'other-prompt' },
+            { messageBranchId: 'other-branch' },
+            { sessionId: 'other-session' },
+            { projectId: 'other-project' }
+          ]) {
+            expect((await service.inspectTaskExecution({ ...scope, ...overrides })).status).toBe(
+              'unconfirmed'
+            )
+          }
+          await broker.respond({
+            requestId: permission.requestId,
+            optionId: permission.options.find(({ kind }) => kind === 'allow_once')!.optionId
+          })
+        }
+        await execution
+        expect(broker.getPendingRequests()).toEqual([])
+        expect(await service.inspectTaskExecution(scope)).toMatchObject({
+          status: 'completed',
+          kernelDispatched: true
+        })
+      } finally {
+        broker.cancelForSession(scope.sessionId)
+        await execution.catch(() => undefined)
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'reports only the exact pending code review (trimmed=%s)',
+    async (trimmed) => {
+      const { service, request, execute } = await harness(1)
+      const requested = Promise.withResolvers<AcpPermissionRequest>()
+      const broker = new AcpPermissionBroker((approval) =>
+        requested.resolve(projectPermissionRequest(approval))
+      )
+      const dispatched = Promise.withResolvers<void>()
+      const releaseKernel = Promise.withResolvers<void>()
+      const runKernel = execute.getMockImplementation() as (
+        input: NotebookExecutionRequest
+      ) => Promise<NotebookExecutionResult>
+      execute.mockImplementation(async (input: NotebookExecutionRequest) => {
+        dispatched.resolve()
+        await releaseKernel.promise
+        return runKernel(input)
+      })
+      bindNotebookApprovals(service, () => ({
+        getState: () =>
+          ({
+            permissionProfiles: {},
+            pendingPermissions: broker.getPendingRequests().map(projectPermissionRequest)
+          }) as AcpRuntimeState,
+        requestAppApproval: (input) =>
+          broker.requestAppApproval({
+            ...input,
+            ...(trimmed
+              ? { rawInput: { ...(input.rawInput as object), code: 'x'.repeat(1024 * 1024 + 1) } }
+              : {})
+          }),
+        pendingNotebookReviews: (sessionId) => broker.pendingNotebookReviews(sessionId)
+      }))
+      const scope = { projectId: request.projectId, sessionId: request.sessionId }
+      const origin = { promptMessageId: 'study-prompt', messageBranchId: 'study-branch' }
+      const execution = service.execute({
+        ...request,
+        code: 'import os\nos.unlink("private-review-fixture.csv")',
+        provenanceContext: {
+          ...origin,
+          rootFrameId: 'root-frame-session',
+          agentFrameId: 'root-frame-session',
+          runtimeSegmentId: 'segment'
+        }
+      })
+      try {
+        const permission = await requested.promise
+        if (trimmed) {
+          expect(permission.rawInput).toBeUndefined()
+          expect(permission.options.map(({ kind }) => kind)).toEqual(['reject_once'])
+        }
+        const query = { ...scope, promptMessageId: origin.promptMessageId }
+        const observed = await service.inspectTaskExecution(query)
+        expect(observed).toEqual({
+          ...scope,
+          ...origin,
+          notebookRunId: expect.stringMatching(/^notebook-run-/),
+          kernelDispatched: false,
+          status: 'waiting_for_user',
+          reasonCode: 'notebook_code_review_required',
+          owner: 'user',
+          requiresUser: true,
+          retryable: false,
+          next: { action: 'review_notebook_code_in_app', message: expect.any(String) }
+        })
+        for (const unrelated of [
+          { ...scope, ...origin, sessionId: 'other-session' },
+          { ...scope, ...origin, promptMessageId: 'older-prompt' }
+        ]) {
+          expect((await service.inspectTaskExecution(unrelated)).status).not.toBe(
+            'waiting_for_user'
+          )
+        }
+        const wrongBranch = { ...query, messageBranchId: 'other-branch' }
+        const unrelated = await service.inspectTaskExecution(wrongBranch)
+        expect(unrelated.status).toBe('unconfirmed')
+        expect(unrelated.notebookRunId).toBeUndefined()
+        const optionKind = trimmed ? 'reject_once' : 'allow_once'
+        await broker.respond({
+          requestId: permission.requestId,
+          optionId: permission.options.find(({ kind }) => kind === optionKind)!.optionId
+        })
+        if (trimmed) {
+          await expect(execution).rejects.toThrow('one-time approval')
+          expect(await service.inspectTaskExecution(query)).toMatchObject({ status: 'failed' })
+          return
+        }
+        await dispatched.promise
+        void broker.requestAppApproval({
+          sessionId: scope.sessionId,
+          title: 'Review a different Notebook Run',
+          rawInput: { notebookCodeRisk: { runId: 'another-notebook-run' } }
+        })
+        expect((await service.inspectTaskExecution(query)).status).toBe('running')
+        releaseKernel.resolve()
+        await execution
+        expect(await service.inspectTaskExecution(query)).toMatchObject({
+          status: 'completed',
+          notebookRunId: observed.notebookRunId,
+          kernelDispatched: true
+        })
+        expect((await service.inspectTaskExecution(wrongBranch)).status).toBe('unconfirmed')
+      } finally {
+        broker.cancelForSession(scope.sessionId)
+        releaseKernel.resolve()
+        await execution.catch(() => undefined)
+      }
+    }
+  )
+
   it('keeps a production REPL compile failure out of subsequent risk history without calling connectors', async () => {
     const { service, execute, request, executor, overrides } = await productionKernelHarness('repl')
     const calls: string[] = []
@@ -7982,7 +8179,10 @@ print(reader("."))`)
             label: runtimes[0].label,
             interpreterPath: runtimes[0].interpreterPath,
             previousRuntimeId: undefined,
-            previousLabel: undefined
+            previousLabel: undefined,
+            projectId: request.projectId,
+            promptMessageId: 'prompt',
+            messageBranchId: 'branch'
           }
         }
       })
@@ -8007,7 +8207,10 @@ print(reader("."))`)
             label: runtimes[1].label,
             interpreterPath: runtimes[1].interpreterPath,
             previousRuntimeId: runtimes[0].envId,
-            previousLabel: runtimes[0].label
+            previousLabel: runtimes[0].label,
+            projectId: request.projectId,
+            promptMessageId: 'prompt',
+            messageBranchId: 'branch'
           }
         }
       })

@@ -50,8 +50,10 @@ open-science project create "First research" --json
 open-science run --project "First research" --prompt "Draft a research plan for comparing two analysis methods." --wait --jsonl
 ```
 
-Confirm `ready: true` in the doctor output before submitting work. The CLI accepts a Project ID
-or an exact, unambiguous name; SDK calls use IDs. Closing the browser does not stop the service:
+Confirm `result.readiness.agent: "ready"` before submitting work; Notebook readiness is checked
+separately. Use `open-science tools list --json` to discover the installed Agent capabilities.
+The `run` command accepts a Project ID or an exact, unambiguous name; SDK calls use IDs.
+Closing the browser does not stop the service:
 
 ```bash
 open-science status --json

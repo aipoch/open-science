@@ -68,6 +68,33 @@ it('persists admission before slow preparation and deduplicates across retry and
   expect(await readFile(join(path, 'task-submissions.json'), 'utf8')).not.toContain('Research')
 })
 
+it('recovers a sanitized provider sign-in failure on the original request after restart', async () => {
+  const path = await root()
+  const startRun = vi.fn(async () => {
+    throw Object.assign(
+      new Error('Authentication required', { cause: 'private provider detail' }),
+      { name: 'RequestError', code: -32000 }
+    )
+  })
+  const owner = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  await owner.submit('request-1', request)
+  await vi.waitFor(async () => {
+    expect(await owner.get('request-1')).toMatchObject({ status: 'failed' })
+  })
+  await owner.dispose()
+
+  const restarted = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  const recovered = await restarted.submit('request-1', request)
+  expect(recovered).toMatchObject({
+    requestId: 'request-1',
+    status: 'failed',
+    error: { code: 'provider_auth_required' }
+  })
+  expect(recovered.runId).toBeUndefined()
+  expect(JSON.stringify(recovered)).not.toContain('private provider detail')
+  expect(startRun).toHaveBeenCalledOnce()
+})
+
 it.each([true, false])(
   'reconciles a pending receipt after restart (durable Run: %s)',
   async (hasRun) => {

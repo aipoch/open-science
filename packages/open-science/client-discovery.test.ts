@@ -41,34 +41,30 @@ it.each([401, 403, 500])(
         if (url.includes(reverse ? ':44101/' : ':44100/')) return Response.json({}, { status })
         throw refused()
       })
-      const log = vi.fn()
-      await expect(
-        runTaskCommand(parseCliArgs(['doctor', '--json']), {
-          connect: () => connectToOpenScience({ env: {}, fetch }),
-          log
-        })
-      ).rejects.toMatchObject({ status })
+      await expect(connectToOpenScience({ env: {}, fetch })).rejects.toMatchObject({ status })
       expect(fetch).toHaveBeenCalledTimes(2)
-      expect(log).not.toHaveBeenCalled()
     }
   }
 )
 
 it('reports a missing daemon when both candidates refuse connections', async () => {
   const log = vi.fn()
-  const setExitCode = vi.fn()
   const fetch = vi.fn().mockRejectedValue(refused())
-  await runTaskCommand(parseCliArgs(['doctor', '--json']), {
-    connect: () => connectToOpenScience({ env: {}, fetch }),
-    log,
-    setExitCode
+  await expect(
+    runTaskCommand(parseCliArgs(['doctor', '--json']), {
+      connect: () => connectToOpenScience({ env: {}, fetch }),
+      log
+    })
+  ).rejects.toMatchObject({
+    details: {
+      code: 'daemon_unavailable',
+      owner: 'deployment',
+      retryable: false,
+      next: [{ action: 'start_service' }]
+    }
   })
   expect(fetch).toHaveBeenCalledTimes(2)
-  expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
-    ready: false,
-    checks: { daemon: { status: 'missing' } }
-  })
-  expect(setExitCode).toHaveBeenCalledWith(3)
+  expect(log).not.toHaveBeenCalled()
 })
 
 it('still connects to a healthy later candidate after an earlier HTTP rejection', async () => {

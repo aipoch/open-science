@@ -21,7 +21,7 @@ import type {
   FinalizeRunArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import { artifactCreatedAtMs } from '../../shared/artifacts'
+import { artifactCreatedAtMs, MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import {
@@ -88,6 +88,7 @@ import type {
   TaskRunReview,
   TaskRunStatus,
   TaskSessionConfiguration,
+  TaskSessionOrigin,
   TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
@@ -268,7 +269,7 @@ type TaskRunEventAccumulator = {
   assistantEventIds: string[]
   images: PersistedMessageImage[]
   imageBytes: number
-  runtimeCancelled?: boolean
+  runtimeStopReason?: 'cancelled' | 'max_tokens' | 'max_turn_requests'
   terminalStop?: Pick<AcpRuntimeEvent, 'turnUsage' | 'modelCallUsage'>
   runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'failure'>
   activities: Map<string, PendingTaskRunActivity>
@@ -572,6 +573,20 @@ const consumePendingHistoryReplay = (session: PersistedChatSession): PersistedCh
   return accepted
 }
 
+const summarizeSessionOrigin = ({
+  importId,
+  sourceProjectId,
+  sourceSessionId,
+  importedAt,
+  manifestChecksum
+}: TaskSessionOrigin): TaskSessionOrigin => ({
+  importId,
+  sourceProjectId,
+  sourceSessionId,
+  importedAt,
+  manifestChecksum
+})
+
 const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => ({
   id: session.id,
   projectId: session.projectId,
@@ -587,7 +602,12 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
   updatedAt: session.updatedAt,
   output: [...session.messages].reverse().find((message) => message.role === 'agent')?.content,
   error: session.error,
-  artifactCount: session.artifacts?.length ?? 0
+  artifactCount: session.artifacts?.length ?? 0,
+  readOnly: Boolean(session.packageOrigin),
+  ...(session.packageOrigin
+    ? { packageOrigin: summarizeSessionOrigin(session.packageOrigin) }
+    : {}),
+  ...(session.forkOrigin ? { forkOrigin: summarizeSessionOrigin(session.forkOrigin) } : {})
 })
 
 const projectTaskProjection = (project: Project): TaskProject => ({
@@ -934,8 +954,8 @@ class TaskRunner {
     return sessions.filter((session) => session.projectId === resolved.id).map(summarizeSession)
   }
 
-  async getSession(sessionId: string): Promise<TaskSessionSummary> {
-    return summarizeSession(await this.findSession(sessionId))
+  async getSession(sessionId: string, projectId?: string): Promise<TaskSessionSummary> {
+    return summarizeSession(await this.findSession(sessionId, projectId))
   }
 
   async ensureSessionAttached(sessionId: string): Promise<PersistedChatSession> {
@@ -961,9 +981,12 @@ class TaskRunner {
     return session
   }
 
-  async getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
+  async getSessionConfiguration(
+    sessionId: string,
+    projectId?: string
+  ): Promise<TaskSessionConfiguration> {
     const [session, settings, availableComputeHosts] = await Promise.all([
-      this.findSession(sessionId),
+      this.findSession(sessionId, projectId),
       this.dependencies.settings.get(),
       this.dependencies.computePreferences.listAvailable?.() ?? Promise.resolve([])
     ])
@@ -1021,12 +1044,18 @@ class TaskRunner {
       typeof request !== 'object' ||
       !Number.isSafeInteger(request.expectedRevision) ||
       request.expectedRevision < 0 ||
-      !parsed.success ||
-      Object.keys(parsed.data).length === 1
+      !parsed.success
     ) {
       throw new TaskRunnerError('invalid_request', 'Invalid Session configuration update.')
     }
-    const session = await this.findSession(sessionId)
+    const { expectedRevision, projectId, ...patch } = parsed.data
+    if (Object.keys(patch).length === 0) {
+      throw new TaskRunnerError('invalid_request', 'Invalid Session configuration update.')
+    }
+    const session = await this.findSession(sessionId, projectId)
+    if (session.packageOrigin) {
+      throw new TaskRunnerError('session_read_only', 'Imported Session configuration is read-only.')
+    }
     if ((session.revision ?? 0) !== request.expectedRevision) {
       throw new TaskRunnerError(
         'session_revision_conflict',
@@ -1041,7 +1070,6 @@ class TaskRunner {
       throw new TaskRunnerError('session_busy', `Session has active work: ${session.id}`)
     }
     const settings = await this.dependencies.settings.get()
-    const patch = parsed.data
     const agentConfiguration = patch.agentConfiguration
       ? validateTaskAgentConfiguration(
           mergeAgentConfigurationPatch(
@@ -1077,10 +1105,7 @@ class TaskRunner {
       updatedAt: Math.max(session.updatedAt + 1, this.dependencies.now())
     }
     try {
-      const persisted = await this.dependencies.sessions.updateConfiguration(
-        next,
-        request.expectedRevision
-      )
+      const persisted = await this.dependencies.sessions.updateConfiguration(next, expectedRevision)
       this.dependencies.computePreferences.project?.(persisted)
     } catch (error) {
       if (isSessionConfigurationBusyError(error)) {
@@ -1176,8 +1201,40 @@ class TaskRunner {
     }
   }
 
-  async listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
-    return [...((await this.findSession(sessionId)).artifacts ?? [])]
+  async listArtifacts(
+    sessionId: string
+  ): Promise<Array<PersistedArtifact & { artifactRunId?: string; producerRunId?: string }>> {
+    const session = await this.findSession(sessionId)
+    const artifacts = session.artifacts ?? []
+    const versionIds = artifacts
+      .filter(({ kind }) => kind === 'managed-file')
+      .map(({ versionId, id }) => versionId ?? id)
+    const descriptors = new Map<string, ArtifactVersionDescriptor>()
+    for (let i = 0; i < versionIds.length; i += MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS) {
+      const batch = await this.dependencies.artifacts.resolveVersionDescriptors({
+        projectId: session.projectId,
+        appSessionId: session.id,
+        versionIds: versionIds.slice(i, i + MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS)
+      })
+      for (const descriptor of batch) descriptors.set(descriptor.versionId, descriptor)
+    }
+    return artifacts.map((artifact) => {
+      const version = descriptors.get(artifact.versionId ?? artifact.id)
+      return version
+        ? {
+            ...artifact,
+            artifactId: version.artifactId,
+            versionId: version.versionId,
+            versionNumber: version.versionNumber,
+            artifactRunId: version.runId,
+            producerRunId: version.producerRunId,
+            name: version.name,
+            mimeType: version.mimeType,
+            size: version.size,
+            sha256: version.checksum
+          }
+        : artifact
+    })
   }
 
   async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
@@ -1335,6 +1392,12 @@ class TaskRunner {
     if (request.sessionId && !existing) {
       throw new TaskRunnerError('session_not_found', `Session not found: ${request.sessionId}`)
     }
+    if (existing && existing.projectId !== project.id) {
+      throw new TaskRunnerError(
+        'session_project_mismatch',
+        `Session ${existing.id} does not belong to project ${project.id}.`
+      )
+    }
     if (existing?.packageOrigin) {
       throw new TaskRunnerError(
         'session_read_only',
@@ -1343,12 +1406,6 @@ class TaskRunner {
     }
     if (existing?.archivedAt !== undefined) {
       throw new TaskRunnerError('session_archived', archiveAvailabilityMessage('session-archived'))
-    }
-    if (existing && existing.projectId !== project.id) {
-      throw new TaskRunnerError(
-        'invalid_request',
-        `Session ${existing.id} does not belong to project ${project.id}.`
-      )
     }
     if (
       existing &&
@@ -1592,6 +1649,10 @@ class TaskRunner {
       snapshot.completedAt = undefined
     }
     return snapshot
+  }
+
+  getRunPromptMessageId(runId: string): string | undefined {
+    return this.runs.get(runId)?.promptMessageId || undefined
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {
@@ -2139,7 +2200,19 @@ class TaskRunner {
     promptError: unknown,
     cancellationAtPromptFailure: MutableTaskRun['cancellation']
   ): Promise<void> {
-    const runtimeCancelled = run.eventAccumulator?.runtimeCancelled === true
+    const stopReason = run.eventAccumulator?.runtimeStopReason
+    const runtimeCancelled = stopReason === 'cancelled'
+    if (promptError === undefined) {
+      if (stopReason === 'max_tokens') {
+        promptError = new Error(
+          'The model reached its output token limit before completing this Run.'
+        )
+      } else if (stopReason === 'max_turn_requests') {
+        promptError = new Error(
+          'The model reached its turn limit before completing this Run. Check the model and context window for this Session.'
+        )
+      }
+    }
     const acceptedSession =
       promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 
@@ -2535,14 +2608,16 @@ class TaskRunner {
         continue
       }
       if (run.eventAccumulator) {
-        // Only the current prompt's terminal fact can cancel this Run. Unscoped compatibility
+        // Only the current prompt's terminal fact can stop this Run. Unscoped compatibility
         // events may still contribute output/usage, but cannot decide its terminal status.
         if (
           event.kind === 'stop' &&
-          event.text === 'cancelled' &&
-          event.promptMessageId === run.promptMessageId
+          event.promptMessageId === run.promptMessageId &&
+          (event.text === 'cancelled' ||
+            event.text === 'max_tokens' ||
+            event.text === 'max_turn_requests')
         ) {
-          run.eventAccumulator.runtimeCancelled = true
+          run.eventAccumulator.runtimeStopReason = event.text
         }
         accumulateTaskRunEvent(run.eventAccumulator, event)
       }
@@ -2952,11 +3027,17 @@ class TaskRunner {
     }
   }
 
-  private async findSession(sessionId: string): Promise<PersistedChatSession> {
+  async findSession(sessionId: string, projectId?: string): Promise<PersistedChatSession> {
     const session = (await this.dependencies.sessions.list()).find(
       (candidate) => candidate.id === sessionId
     )
     if (!session) throw new TaskRunnerError('session_not_found', `Session not found: ${sessionId}`)
+    if (projectId !== undefined && session.projectId !== projectId) {
+      throw new TaskRunnerError(
+        'session_project_mismatch',
+        'Session does not belong to this Project.'
+      )
+    }
     return session
   }
 }

@@ -470,7 +470,8 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
   if (
     error.code === 'session-details-conflict' ||
     error.code === 'session-revision-conflict' ||
-    error.code === 'session-package-busy'
+    error.code === 'session-package-busy' ||
+    error.code === 'session-package-operation-conflict'
   )
     return 409
   return 500
@@ -614,7 +615,12 @@ const readJsonBody = async (
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'submission_unavailable') return 503
-  if (error.code === 'submission_conflict' || error.code === 'session_read_only') return 409
+  if (
+    error.code === 'submission_conflict' ||
+    error.code === 'session_read_only' ||
+    error.code === 'session_project_mismatch'
+  )
+    return 409
   if (error.code === 'invalid_request') return 400
   if (error.code === 'invalid_configuration') return 400
   if (
@@ -1292,7 +1298,7 @@ const handleTaskApiRequest = async (
       const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        reply(200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        reply(200, { data: await tasks.getRun(decodeURIComponent(runMatch[1])) })
         return true
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
@@ -1340,7 +1346,10 @@ const handleTaskApiRequest = async (
       if (sessionConfigMatch && request.method === 'GET' && tasks.getSessionConfiguration) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         reply(200, {
-          data: await tasks.getSessionConfiguration(decodeURIComponent(sessionConfigMatch[1]))
+          data: await tasks.getSessionConfiguration(
+            decodeURIComponent(sessionConfigMatch[1]),
+            url.searchParams.get('project') ?? undefined
+          )
         })
         return true
       }
@@ -1363,7 +1372,12 @@ const handleTaskApiRequest = async (
       const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (sessionMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        reply(200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
+        reply(200, {
+          data: await tasks.getSession(
+            decodeURIComponent(sessionMatch[1]),
+            url.searchParams.get('project') ?? undefined
+          )
+        })
         return true
       }
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
@@ -1618,14 +1632,27 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .update('\0')
             .update(clientPrincipalId)
             .digest('hex'),
-          taskCapabilities: options.tasks
-            ? [
-                'permission-prompts-none',
-                ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
-                  ? ['durable-submissions']
-                  : [])
-              ]
-            : [],
+          taskCapabilities: [
+            ...(options.tasks
+              ? [
+                  'permission-prompts-none',
+                  'task-artifacts',
+                  ...(options.tasks.doctor ? ['doctor'] : []),
+                  ...(!externalAuthorization && options.tasks.bootstrap
+                    ? ['runtime-bootstrap']
+                    : []),
+                  ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
+                    ? ['durable-submissions']
+                    : [])
+                ]
+              : []),
+            ...(auth.ok && rpcChannels.includes('sessions:package-operation')
+              ? ['agent-package-operations', 'agent-package-fork']
+              : []),
+            ...(auth.localBearer && rpcChannels.includes('sessions:package-operation')
+              ? ['agent-package-import']
+              : [])
+          ],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
@@ -1789,7 +1816,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         const callerContext = createWebCallerContext(clientId, {
           authorities:
-            auth.localBearer && channel === 'sessions:import-package'
+            auth.localBearer &&
+            (channel === 'sessions:import-package' || channel === 'sessions:package-operation')
               ? ['import-local-package-path']
               : [],
           ...(externalAuthorization

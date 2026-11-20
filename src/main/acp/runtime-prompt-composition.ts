@@ -488,7 +488,10 @@ const composeAcpRuntimePromptOwners = (
           // another executable context after rejection.
           if (current?.refusalId && !operation.refusalId) intent = current
           else {
-            intent = notebook.createExecutionIntent(scope)
+            intent = notebook.createExecutionIntent({
+              ...scope,
+              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
+            })
             intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
           }
         } else if (!intent) {

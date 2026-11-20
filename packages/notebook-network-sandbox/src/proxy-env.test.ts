@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 
 import { proxyEnvironment } from '../runtime/src/platform/proxy-environment.js'
-import { checkLinuxTools } from '../runtime/src/platform/linux-isolation.js'
+import { checkLinuxTools, probeLinuxIsolation } from '../runtime/src/platform/linux-isolation.js'
 
 describe('Notebook network proxy environment', () => {
   const credentials = { username: 'command id', password: 'random/secret' }
@@ -45,4 +48,27 @@ describe('Notebook network proxy environment', () => {
   it('does not require an external TCP-to-Unix bridge', () => {
     expect(checkLinuxTools().errors.join('\n')).not.toContain('socat')
   })
+})
+
+it.runIf(process.platform !== 'win32')('distinguishes Linux isolation failures through the sandbox executable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'open-science-isolation-check-'))
+  vi.stubEnv('PATH', directory)
+  try {
+    for (const [diagnostic, expected] of [
+      ['', 'ready'],
+      ['bwrap: Creating new namespace failed: Operation not permitted', 'namespaces-unavailable'],
+      ["bwrap: Can't mount proc on /newroot/proc: Operation not permitted", 'procfs-unavailable'],
+      ['bwrap: unrecognized host failure', 'unconfirmed']
+    ]) {
+      await writeFile(
+        join(directory, 'bwrap'),
+        `#!/bin/sh\n[ "$*" = '--die-with-parent --new-session --unshare-all --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true' ] || exit 2\n${diagnostic ? `printf '%s\\n' "${diagnostic}" >&2\nexit 1` : 'exit 0'}\n`,
+        { mode: 0o700 }
+      )
+      await expect(probeLinuxIsolation()).resolves.toBe(expected)
+    }
+  } finally {
+    vi.unstubAllEnvs()
+    await rm(directory, { recursive: true, force: true })
+  }
 })

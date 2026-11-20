@@ -33838,6 +33838,16 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
         expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
         expect(execute).toHaveBeenCalledOnce()
         await expect(
+          service.inspectTaskExecution({ ...scope, promptMessageId: 'accepted-task-root' })
+        ).resolves.toMatchObject({
+          status: 'waiting_for_user',
+          reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
+          refusalId: stopped.refusalId,
+          messageBranchId: 'task-branch',
+          retryable: false,
+          requiresUser: true
+        })
+        await expect(
           runtime.sendPrompt(
             withNotebookUserOperation(
               {
@@ -33873,6 +33883,11 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
         )
         expect(promptResult).toContain('"status":"completed"')
         expect(execute).toHaveBeenCalledTimes(2)
+        await expect(service.inspectTaskExecution(scope)).resolves.toMatchObject({
+          continuedFromRefusalId: stopped.refusalId,
+          promptMessageId: 'continue-task',
+          messageBranchId: 'task-branch'
+        })
         await task.prompt(acceptedTask)
         expect(service.currentExecutionIntent(scope)).toBe(stopped)
         expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')

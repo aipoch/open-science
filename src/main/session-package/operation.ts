@@ -18,6 +18,7 @@ import {
   packageImportPercent
 } from '../../shared/session-package'
 import type {
+  AgentPackageOperationReference,
   BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot,
@@ -330,6 +331,9 @@ export class SessionPackageOperation {
   respond(request: PackageOperationRequest): PackageOperationSnapshot | null {
     if (request.action === 'snapshot') return this.snapshot
     if (
+      request.action === 'agent-export' ||
+      request.action === 'agent-import' ||
+      request.action === 'agent-fork' ||
       [
         'reveal',
         'retry-cleanup',
@@ -431,6 +435,38 @@ export class SessionPackageOperation {
     this.publish()
   }
 
+  requestSensitiveExportReview(
+    review: NonNullable<PackageOperationSnapshot['sensitiveExportReview']>,
+    evidence: SensitiveContentEvidence[]
+  ): void {
+    if (!this.current || !this.controller) throw new Error('No active export operation.')
+    this.current = {
+      ...this.current,
+      state: 'awaiting-selection',
+      progress: { phase: 'confirming' },
+      sensitiveExportReview: review,
+      sensitiveContent: evidence.slice(0, 20),
+      presentationRevision: (this.current.presentationRevision ?? 0) + 1
+    }
+    this.publish()
+  }
+
+  finishSensitiveExportReview(): void {
+    if (!this.current?.sensitiveExportReview || !this.controller) return
+    this.current = {
+      ...this.current,
+      sensitiveExportReview: undefined,
+      sensitiveContent: undefined,
+      ...(this.current.state === 'awaiting-selection' ? { state: 'running' as const } : {})
+    }
+    this.publish()
+  }
+
+  setAgentFailure(failure: NonNullable<PackageOperationSnapshot['agent']>['failure']): void {
+    if (this.current?.agent)
+      this.current = { ...this.current, agent: { ...this.current.agent, failure } }
+  }
+
   async retryCleanup(
     work: (signal: AbortSignal) => Promise<void>
   ): Promise<PackageOperationSnapshot | null> {
@@ -484,7 +520,8 @@ export class SessionPackageOperation {
     importTarget?: PackageOperationSnapshot['importTarget'],
     requiresRecovery?: () => boolean,
     downloadSlug?: string,
-    exportDestination?: PackageOperationSnapshot['exportDestination']
+    exportDestination?: PackageOperationSnapshot['exportDestination'],
+    agent?: AgentPackageOperationReference
   ): Promise<T> {
     if (this.controller)
       throw new ApplicationCommandError(
@@ -499,6 +536,7 @@ export class SessionPackageOperation {
       kind,
       session,
       ...(exportDestination ? { exportDestination } : {}),
+      ...(agent ? { agent } : {}),
       importTarget,
       state: 'running',
       ...(downloadSlug ? { useCaseDownload: { slug: downloadSlug, completedBytes: 0 } } : {}),

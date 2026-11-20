@@ -8,6 +8,7 @@ import {
   writeDurableJsonFile
 } from '@aipoch/durable-files'
 import type { StartTaskRunRequest, TaskRun, TaskSubmission } from '../../shared/task-api'
+import { isAgentAuthenticationFailure } from '../acp/prompt-error'
 import type { TaskRunJournalEntry } from './task-run-journal'
 import { TaskRunnerError } from './task-runner'
 
@@ -204,10 +205,15 @@ export class TaskSubmissions {
           entry.error =
             failure instanceof TaskRunnerError
               ? { code: failure.code, message: failure.message }
-              : {
-                  code: 'preparation_failed',
-                  message: 'Run preparation failed. Inspect the service diagnostics.'
-                }
+              : isAgentAuthenticationFailure(failure)
+                ? {
+                    code: 'provider_auth_required',
+                    message: 'The model provider requires authentication in Open-Science.'
+                  }
+                : {
+                    code: 'preparation_failed',
+                    message: 'Run preparation failed. Inspect the service diagnostics.'
+                  }
         }
         await this.persist()
       })

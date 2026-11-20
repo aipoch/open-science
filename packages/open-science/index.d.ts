@@ -229,6 +229,17 @@ export type ProviderReadinessReason =
   | 'incompatible'
   | 'server-error'
   | 'unknown'
+export type NotebookReadinessCheck = {
+  status: 'ready' | 'blocked' | 'checking' | 'unconfirmed'
+  reason?: string
+}
+export type NotebookReadiness = {
+  platform: string
+  environment: NotebookReadinessCheck & { pythonReady?: boolean; rReady?: boolean }
+  dependencies: NotebookReadinessCheck
+  sandbox: NotebookReadinessCheck
+  memoryPolicy: NotebookReadinessCheck & { source?: string; executionScope?: string }
+}
 export type DoctorReport = {
   ready: boolean
   checks: {
@@ -237,6 +248,7 @@ export type DoctorReport = {
     provider:
       { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
     skills: { status: 'ready'; enabled: string[] }
+    notebook?: NotebookReadiness
   }
   next: Array<{
     code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
@@ -303,6 +315,26 @@ export type Submission = {
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunFailureCode = 'process_restarted'
+export type NotebookExecution = {
+  status: 'unconfirmed' | 'preparing' | 'running' | 'completed' | 'failed' | 'waiting_for_user'
+  projectId: string
+  sessionId: string
+  notebookRunId?: string
+  promptMessageId?: string
+  messageBranchId?: string
+  kernelDispatched?: boolean
+  reasonCode?: string
+  refusalId?: string
+  continuedFromRefusalId?: string
+  owner?: 'user'
+  requiresUser?: true
+  retryable?: false
+  next?: {
+    action:
+      'continue_notebook_in_app' | 'review_notebook_code_in_app' | 'review_notebook_runtime_in_app'
+    message: string
+  }
+}
 export type RunProgressPhase =
   | 'accepted'
   | 'session-ready'
@@ -418,6 +450,8 @@ export type Run = {
   output?: string
   error?: string
   failureCode?: RunFailureCode
+  /** Notebook evidence scoped to this research turn, independent of the outer Run status. */
+  execution?: NotebookExecution
   artifacts: Artifact[]
   attention?: RunAttention
   review?: {
@@ -433,6 +467,63 @@ export type Run = {
 
 export type SessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
+
+export type PackageOperation = {
+  id: string
+  kind: 'export' | 'import' | 'fork'
+  state: 'running' | 'awaiting-selection' | 'cancelling' | 'succeeded' | 'cancelled' | 'failed'
+  session?: { projectId: string; sessionId: string }
+  importTarget?: { projectId?: string; projectName?: string }
+  sensitiveExportReview?: {
+    expiresAt: number
+    destination?: string
+    fileDigest: { sizeBytes: number; checksum: string }
+  }
+  agent?: {
+    correlationId: string
+    destinationPath?: string
+    sourcePath?: string
+    failure?:
+      | 'destination-conflict'
+      | 'requires-user'
+      | 'content-changed'
+      | 'invalid-archive'
+      | 'source-unavailable'
+      | 'requires-update'
+      | 'import-unconfirmed'
+      | 'fork-waiting-approval'
+      | 'fork-notebook-refused'
+  }
+  result?: {
+    filePath?: string
+    fileDigest?: { sizeBytes: number; checksum: string }
+    imported?: { projectId: string; sessionId: string }
+    packageSummary?: {
+      title: string
+      projectName: string
+      branchCount: number
+      messageCount: number
+      fileCount: number
+      totalBytes: number
+      omissionCount: number
+      externalOmissionCount: number
+    }
+    recovery?: {
+      projectId: string
+      sessionId: string
+      operationId: string
+      outcome: 'committed' | 'unconfirmed'
+    }
+  }
+}
+
+export type SessionOrigin = {
+  importId: string
+  sourceProjectId: string
+  sourceSessionId: string
+  importedAt: number
+  manifestChecksum: string
+}
 
 export type Session = {
   id: string
@@ -450,6 +541,12 @@ export type Session = {
   output?: string
   error?: string
   artifactCount: number
+  /** Absent on services that do not publish this status. */
+  readOnly?: boolean
+  packageOrigin?: SessionOrigin
+  forkOrigin?: SessionOrigin
+  /** Live Notebook intent, with evidence scoped to its prompt when available. */
+  execution?: NotebookExecution
 }
 
 export type SessionConfiguration = {
@@ -495,6 +592,11 @@ export type AgentRouting = {
 
 export type Artifact = {
   id: string
+  artifactId?: string
+  versionId?: string
+  versionNumber?: number
+  artifactRunId?: string
+  producerRunId?: string
   kind: 'workspace-file' | 'external-file' | 'managed-file'
   path: string
   name?: string
@@ -553,6 +655,8 @@ export class OpenScienceApiError extends Error {
 }
 
 export class OpenScienceClient {
+  /** Configuration root of a service selected by connectToOpenScience. */
+  readonly configRoot?: string
   constructor(options: {
     baseUrl: string
     token: string
@@ -639,15 +743,16 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): ReturnType<OpenScienceClient['getProjectSessionDefaults']>
   listSessions(projectId?: string, options?: RequestOptions): Promise<Session[]>
-  getSession(sessionId: string, options?: RequestOptions): Promise<Session>
+  getSession(sessionId: string, options?: RequestOptions & { projectId?: string }): Promise<Session>
   getSessionConfiguration(
     sessionId: string,
-    options?: RequestOptions
+    options?: RequestOptions & { projectId?: string }
   ): Promise<SessionConfiguration>
   updateSessionConfiguration(
     sessionId: string,
     request: {
       expectedRevision: number
+      projectId?: string
       agentConfiguration?: {
         providerId?: string
         model?: string | null
@@ -683,12 +788,48 @@ export class OpenScienceClient {
     sessionId: string,
     options?: RequestOptions
   ): Promise<{ projectId: string; sessionId: string } | null>
+  startAgentPackageFork(
+    projectId: string,
+    sessionId: string,
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  exportSessionPackage(
+    projectId: string,
+    sessionId: string,
+    destinationPath: string,
+    options?: RequestOptions
+  ): Promise<{ saved: boolean; filePath?: string }>
+  startAgentPackageExport(
+    projectId: string,
+    sessionId: string,
+    destinationPath: string,
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  getPackageOperation(options?: RequestOptions): Promise<PackageOperation | null>
+  startAgentPackageImport(
+    sourcePath: string,
+    target: { projectId?: string; projectName?: string },
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  importSessionPackage(
+    target: { projectId?: string; projectName?: string },
+    sourcePath: string,
+    options: { nonInteractive: true },
+    rpcOptions?: RequestOptions
+  ): Promise<{ projectId: string; sessionId: string } | null>
   submitRun(
     requestId: string,
     request: Parameters<OpenScienceClient['startRun']>[0],
     options?: RequestOptions
   ): Promise<Submission>
   getSubmission(requestId: string, options?: RequestOptions): Promise<Submission>
+  waitForSubmission(
+    requestId: string,
+    options: RequestOptions & { pollIntervalMs?: number; returnReceipt: true }
+  ): Promise<Submission>
   waitForSubmission(
     requestId: string,
     options?: RequestOptions & { pollIntervalMs?: number }

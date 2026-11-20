@@ -409,6 +409,7 @@ type ElectronApp = {
   createTestDirectory: (name: string) => Promise<string>
   holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  observeSensitiveExportDialog: () => Promise<JSHandle<Electron.MessageBoxOptions[]>>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitBrowserImport: (url: string) => Promise<void>
@@ -1501,6 +1502,21 @@ class ElectronAppHarness implements ElectronApp {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
     }, archive)
     return archive
+  }
+
+  async observeSensitiveExportDialog(): Promise<JSHandle<Electron.MessageBoxOptions[]>> {
+    return this.runningApplication.evaluateHandle(({ dialog }) => {
+      const seen: Electron.MessageBoxOptions[] = []
+      const original = dialog.showMessageBox
+      dialog.showMessageBox = ((...args: unknown[]) => {
+        const options = args.at(-1) as Electron.MessageBoxOptions
+        if (!options.detail?.includes('SHA-256:')) return Reflect.apply(original, dialog, args)
+        seen.push({ ...options, signal: undefined })
+        dialog.showMessageBox = original
+        return Promise.resolve({ response: 1, checkboxChecked: false })
+      }) as typeof dialog.showMessageBox
+      return seen
+    })
   }
 
   async enableFakeRemoteIt(): Promise<Page> {

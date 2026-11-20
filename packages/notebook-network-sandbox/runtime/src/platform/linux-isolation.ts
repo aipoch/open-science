@@ -1,4 +1,5 @@
 import { createServer, connect, type Server, type Socket } from 'node:net'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -42,6 +43,31 @@ const checkLinuxTools = (): DependencyCheck => {
     )
   }
   return { warnings: [], errors }
+}
+
+const namespaceArgs = ['--die-with-parent', '--new-session', '--unshare-all', '--cap-drop', 'ALL']
+type LinuxIsolationProbe = 'ready' | 'namespaces-unavailable' | 'procfs-unavailable' | 'unconfirmed'
+
+function probeLinuxIsolation(): Promise<LinuxIsolationProbe> {
+  const bwrap = findExecutable('bwrap')
+  if (!bwrap) return Promise.resolve('unconfirmed')
+  return new Promise((resolve) => {
+    execFile(
+      bwrap,
+      [...namespaceArgs, '--ro-bind', '/', '/', '--proc', '/proc', '--dev', '/dev', '--', '/bin/true'],
+      { env: { LANG: 'C', LC_ALL: 'C' }, timeout: 1500, killSignal: 'SIGKILL', maxBuffer: 8192 },
+      (error, _stdout, stderr) => {
+        if (!error) return resolve('ready')
+        if (error.killed || error.signal || typeof error.code !== 'number') return resolve('unconfirmed')
+        const diagnostic = stderr.trim()
+        if (/^bwrap: (?:Can't mount proc on |Failed to mount procfs)/.test(diagnostic))
+          return resolve('procfs-unavailable')
+        if (/^bwrap: (?:No permissions to create(?: a)? new namespace|Creating new namespace failed|Failed to (?:create|unshare) .*namespace)/.test(diagnostic))
+          return resolve('namespaces-unavailable')
+        resolve('unconfirmed')
+      }
+    )
+  })
 }
 
 class UnixGatewayBridge {
@@ -166,11 +192,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
       ? []
       : ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
   const argumentsList = [
-    '--die-with-parent',
-    '--new-session',
-    '--unshare-all',
-    '--cap-drop',
-    'ALL',
+    ...namespaceArgs,
     // bubblewrap passes inherited descriptors through to the sandbox command. The descriptor count
     // is consumed by the gateway bridge below so its nested child inherits the same fd range.
     layout.restrictFolders === false ? '--bind' : '--ro-bind',
@@ -306,5 +328,5 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   }
 }
 
-export { checkLinuxTools, linuxLaunch }
+export { checkLinuxTools, linuxLaunch, probeLinuxIsolation }
 export type { DependencyCheck, LinuxLaunch, LinuxLaunchRequest }

@@ -1,6 +1,9 @@
 import { expect } from '@playwright/test'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { createHash } from 'node:crypto'
 import { stat, writeFile, readFile, readdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from './fixtures/electron-app'
 import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
 import { createProjectViaUi } from './fixtures/project'
@@ -187,6 +190,101 @@ test('shows redacted sensitive-content evidence after a failed export', async ({
     body: await page.screenshot({ path: testInfo.outputPath('sensitive-content-evidence.png') }),
     contentType: 'image/png'
   })
+})
+
+test('reviews a pending MCP export in Desktop and publishes the exact candidate', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await createProjectViaUi(page, 'Sensitive export fixture')
+  const projectId = await page.evaluate(
+    async () =>
+      (await window.api.projects.list()).find(
+        (project) => project.name === 'Sensitive export fixture'
+      )!.id
+  )
+  const sessionId = 'mcp-sensitive-export'
+  const workspace = await app.restartWithSessionFixture({
+    id: sessionId,
+    projectId,
+    title: 'Sensitive export fixture',
+    cwd: '',
+    status: 'idle',
+    messages: [
+      {
+        id: 'fixture-message',
+        role: 'user',
+        content: 'Authorization: Bearer synthetic-private-value',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const nativeDialogs = await app.observeSensitiveExportDialog()
+  const destinationPath = testInfo.outputPath('reviewed.science')
+  // The fixture puts the profile beside its native-save destination.
+  const profile = join(dirname(await app.configureSessionPackageDialogs()), 'storage')
+  const client = new Client({ name: 'sensitive-export-e2e', version: '1' })
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve('packages/open-science/cli.mjs'), 'mcp', '--profile', profile],
+      stderr: 'pipe'
+    })
+  )
+  try {
+    const attempt = await client.callTool({
+      name: 'export_session',
+      arguments: { projectId, sessionId, destinationPath }
+    })
+    const { error } = attempt.structuredContent as { error: { operationId: string } }
+    expect(attempt.isError).toBe(true)
+    expect(error).toMatchObject({
+      code: 'package_sensitive_content',
+      completionStatus: 'pending',
+      requiresUser: true
+    })
+    await expect(stat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    const operation = workspace.getByRole('dialog', { name: 'Export Session package', exact: true })
+    await expect(operation.getByText(destinationPath, { exact: true })).toBeVisible()
+    await operation.getByText('Sensitive-content evidence', { exact: true }).click()
+    await expect(operation.locator('pre')).toContainText('[redacted]')
+    await expect(operation.locator('pre')).not.toContainText('synthetic-private-value')
+    const publish = operation.getByRole('button', { name: 'Export anyway', exact: true })
+    await expect(publish).toBeDisabled()
+    await operation.getByRole('checkbox').check()
+    await publish.click()
+    await expect
+      .poll(async () => {
+        const response = await client.callTool({
+          name: 'get_package_operation',
+          arguments: { operationId: error.operationId }
+        })
+        return (response.structuredContent as { result?: unknown } | undefined)?.result
+      })
+      .toMatchObject({
+        operationId: error.operationId,
+        completionStatus: 'completed',
+        delivery: { status: 'verified', file: { path: destinationPath } }
+      })
+    const sha256 = createHash('sha256')
+      .update(await readFile(destinationPath))
+      .digest('hex')
+    expect(await nativeDialogs.jsonValue()).toEqual([
+      expect.objectContaining({
+        cancelId: 0,
+        defaultId: 0,
+        detail: expect.stringContaining(sha256)
+      })
+    ])
+  } finally {
+    await client.close()
+    await nativeDialogs.dispose()
+  }
 })
 
 test('presents waiting, measurable work and cleanup through native progress events', async ({

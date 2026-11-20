@@ -84,6 +84,7 @@ import {
   analyzeNotebookSourceOffMainThread
 } from './source-analysis-worker'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { PendingNotebookReview } from '../../shared/acp-permission-contract'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   AbortNotebookCodeCellRequest,
@@ -506,6 +507,7 @@ const projectNotebookMemoryPolicyState = (
   status: state.status,
   reason: state.reason.code,
   detail: state.reason.detail,
+  ...(state.reason.diagnostic ? { diagnostic: state.reason.diagnostic } : {}),
   source: state.source,
   executionScope: state.executionScope,
   checkedAt: Date.now(),
@@ -770,11 +772,17 @@ class NotebookRuntimeService {
     })
   }
   private executionApproval: NotebookExecutionApproval | undefined
+  private pendingNotebookReviews:
+    ((sessionId: string) => readonly PendingNotebookReview[]) | undefined
   private runtimeBindingApproval: NotebookRuntimeBindingApproval | undefined
   private readonly runtimeBindingPermissionPolicies = new WeakMap<AbortSignal, 'none'>()
 
-  setExecutionApproval(approve: NotebookExecutionApproval): void {
+  setExecutionApproval(
+    approve: NotebookExecutionApproval,
+    pendingNotebookReviews?: (sessionId: string) => readonly PendingNotebookReview[]
+  ): void {
     this.executionApproval = approve
+    this.pendingNotebookReviews = pendingNotebookReviews
   }
 
   setRuntimeBindingApproval(approve: NotebookRuntimeBindingApproval): void {
@@ -829,8 +837,15 @@ class NotebookRuntimeService {
     binding: NotebookSessionRuntimeBinding,
     operation: 'bind' | 'switch',
     signal?: AbortSignal,
-    requireHostDecision = false,
-    permissionPrompts?: 'none'
+    {
+      requireHostDecision = false,
+      permissionPrompts,
+      provenanceContext
+    }: {
+      requireHostDecision?: boolean
+      permissionPrompts?: 'none'
+      provenanceContext?: NotebookSessionRequest['provenanceContext']
+    } = {}
   ): Promise<void> {
     signal?.throwIfAborted()
     const target = await this.runtimeBindingOwner.resolveBindingTarget(language, binding.runtimeId)
@@ -898,7 +913,14 @@ class NotebookRuntimeService {
           label: binding.label,
           interpreterPath: binding.interpreterPath,
           previousRuntimeId: current?.runtimeId,
-          previousLabel: current?.label
+          previousLabel: current?.label,
+          ...(provenanceContext
+            ? {
+                projectId: session.projectId,
+                promptMessageId: provenanceContext.promptMessageId,
+                messageBranchId: provenanceContext.messageBranchId
+              }
+            : {})
         }
       },
       signal,
@@ -955,6 +977,7 @@ class NotebookRuntimeService {
   private async prepareRuntimeSelection(
     session: RuntimeSession,
     language: NotebookLanguage,
+    request: RunNotebookCellRequest,
     signal?: AbortSignal
   ): Promise<void> {
     if (
@@ -995,15 +1018,12 @@ class NotebookRuntimeService {
           language,
           selected.runtimeId,
           (binding) =>
-            this.reviewRuntimeBinding(
-              session,
-              language,
-              binding,
-              'bind',
-              signal,
-              false,
-              signal ? this.runtimeBindingPermissionPolicies.get(signal) : undefined
-            ),
+            this.reviewRuntimeBinding(session, language, binding, 'bind', signal, {
+              permissionPrompts: signal
+                ? this.runtimeBindingPermissionPolicies.get(signal)
+                : undefined,
+              provenanceContext: request.provenanceContext
+            }),
           () => signal?.throwIfAborted()
         )
         if ('error' in result) throw new Error(result.error)
@@ -1566,6 +1586,147 @@ class NotebookRuntimeService {
     return this.resourceReleases.project(request.projectId)
   }
 
+  async inspectTaskExecution(
+    request: NotebookExecutionIntentScope & { includeSessionRefusal?: true }
+  ): Promise<import('../../shared/task-api').TaskNotebookExecution> {
+    const { projectId, sessionId, promptMessageId } = request
+    const scope = { projectId, sessionId }
+    const current = this.executionIntents.current(scope)
+    const intent =
+      promptMessageId === current?.scope.promptMessageId
+        ? current
+        : promptMessageId
+          ? this.executionIntents.resolve(scope, promptMessageId)
+          : undefined
+    // The Session can still be blocked while its latest prompt is not bound to the refusal.
+    const observedIntent = request.includeSessionRefusal && current?.refusalId ? current : intent
+    const observedPromptId =
+      observedIntent === intent ? promptMessageId : observedIntent?.scope.promptMessageId
+    const origin = {
+      ...scope,
+      ...(observedPromptId ? { promptMessageId: observedPromptId } : {}),
+      ...(observedIntent?.scope.messageBranchId
+        ? { messageBranchId: observedIntent.scope.messageBranchId }
+        : {}),
+      ...(observedIntent?.scope.continuedFromRefusalId
+        ? { continuedFromRefusalId: observedIntent.scope.continuedFromRefusalId }
+        : {})
+    }
+    if (observedIntent?.refusalId && observedIntent === current) {
+      return {
+        ...origin,
+        status: 'waiting_for_user',
+        reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
+        refusalId: observedIntent.refusalId,
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'continue_notebook_in_app',
+          message:
+            'Resolve the cause, then have the user open the affected Session and branch in the Open-Science desktop app connected to this service. In Compute, choose Continue Notebook work. Recheck the same Session afterward.'
+        }
+      }
+    }
+    const runs = promptMessageId
+      ? (await this.repository.readSessionRuns(projectId, sessionId)).filter(
+          (run) =>
+            run.source === 'agent' &&
+            run.promptMessageId === promptMessageId &&
+            (request.messageBranchId === undefined ||
+              run.messageBranchId === request.messageBranchId)
+        )
+      : []
+    const branch = request.messageBranchId ?? intent?.scope.messageBranchId
+    const pendingReviews = promptMessageId ? this.pendingNotebookReviews?.(sessionId) : undefined
+    const runtimeReview = pendingReviews?.find(
+      (review) =>
+        review.kind === 'runtime' &&
+        review.projectId === projectId &&
+        review.promptMessageId === promptMessageId &&
+        (branch === undefined || review.messageBranchId === branch)
+    )
+    if (runtimeReview?.kind === 'runtime') {
+      return {
+        ...origin,
+        messageBranchId: runtimeReview.messageBranchId,
+        kernelDispatched: false,
+        status: 'waiting_for_user',
+        reasonCode: 'notebook_runtime_review_required',
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'review_notebook_runtime_in_app',
+          message:
+            'Ask the user to open the original Session and branch in Open-Science on the same profile and respond to Confirm Notebook kernel and environment. Recheck this Run after the user responds.'
+        }
+      }
+    }
+    const activeRuns = runs.filter(
+      (run) =>
+        (run.status === 'queued' || run.status === 'running') &&
+        (!branch || run.messageBranchId === branch)
+    )
+    const awaitingReview = activeRuns.findLast((run) =>
+      pendingReviews?.some((review) => review.kind === 'code' && review.runId === run.runId)
+    )
+    if (awaitingReview) {
+      return {
+        ...origin,
+        ...(awaitingReview.messageBranchId
+          ? { messageBranchId: awaitingReview.messageBranchId }
+          : {}),
+        notebookRunId: awaitingReview.runId,
+        kernelDispatched: false,
+        status: 'waiting_for_user',
+        reasonCode: 'notebook_code_review_required',
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'review_notebook_code_in_app',
+          message:
+            'Ask the user to open the original Session and branch in Open-Science on the same profile and decide the pending Notebook code review. Recheck this Run after the user responds.'
+        }
+      }
+    }
+    const lastRun = runs.findLast((run) => run.kernelKind === 'python' || run.kernelKind === 'r')
+    if (!lastRun) {
+      return {
+        ...origin,
+        status: 'unconfirmed',
+        reasonCode: intent?.refusalId ? 'notebook_intent_stopped' : 'notebook_evidence_unavailable'
+      }
+    }
+    const status = lastRun.status
+    const evidence = {
+      ...origin,
+      ...(lastRun.messageBranchId ? { messageBranchId: lastRun.messageBranchId } : {}),
+      notebookRunId: lastRun.runId,
+      ...(lastRun.kernelDispatched === undefined
+        ? {}
+        : { kernelDispatched: lastRun.kernelDispatched })
+    }
+    if (status === 'queued') return { ...evidence, status: 'preparing' }
+    if (status === 'running') return { ...evidence, status }
+    if (status === 'completed') {
+      return lastRun.kernelDispatched === true
+        ? { ...evidence, status }
+        : { ...evidence, status: 'unconfirmed', reasonCode: 'notebook_dispatch_unconfirmed' }
+    }
+    return {
+      ...evidence,
+      status: 'failed',
+      reasonCode:
+        status !== 'failed'
+          ? `notebook_${status}`
+          : lastRun.kernelDispatched === false
+            ? 'notebook_pre_dispatch_failed'
+            : 'notebook_execution_failed'
+    }
+  }
+
   async releaseSessionResources(
     request: ReleaseNotebookSessionResourcesRequest,
     assertCurrent: () => void
@@ -1851,8 +2012,11 @@ class NotebookRuntimeService {
                     binding,
                     operation,
                     signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
-                    requireHostDecision,
-                    readTrustedNotebookBindingPermissionPrompts(request)
+                    {
+                      requireHostDecision,
+                      permissionPrompts: readTrustedNotebookBindingPermissionPrompts(request),
+                      provenanceContext: request.provenanceContext
+                    }
                   )
                 }
                 if (operation === 'bind') {

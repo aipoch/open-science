@@ -8,6 +8,7 @@ export type NotebookExecutionIntentScope = Readonly<{
   sessionId: string
   messageBranchId?: string
   promptMessageId?: string
+  continuedFromRefusalId?: string
 }>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
   Readonly<{ refusalId: string }>

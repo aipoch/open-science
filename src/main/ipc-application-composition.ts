@@ -182,6 +182,10 @@ export type ApplicationRuntimeInterfaces = {
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
   taskAgent: TaskAgentPort
+  taskNotebook: Pick<
+    import('./notebook/runtime-service').NotebookRuntimeService,
+    'inspectTaskExecution'
+  >
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
@@ -1064,6 +1068,7 @@ export const createApplicationModules = async (
       )
     },
     taskAgent: agentWorkflows.taskAgent,
+    taskNotebook: notebookRuntime.notebookService,
     taskControls: {
       specialists: {
         resolve: (reference) =>

@@ -59,7 +59,7 @@ import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
-import { canMutateSessionDelegationPolicy } from './caller-context'
+import { canMutateSessionDelegationPolicy, hasCallerAuthority } from './caller-context'
 import { preserveSessionSizeLimitCode } from './session-persistence/application-command-errors'
 
 import {
@@ -1434,6 +1434,15 @@ const registerDataContentApplicationCommands = (
           invocation,
           dataContentApplicationCommands.sessionPackageOperation.name
         )
+        if (
+          invocation.args[0].action === 'agent-import' &&
+          !hasCallerAuthority(invocation.callerContext, 'import-local-package-path')
+        ) {
+          throw new ApplicationCommandError(
+            'command-unavailable',
+            'Importing an explicit path requires the authenticated local Agent interface.'
+          )
+        }
         return dependencies.electron.sessionPackageOperation(invocation)
       },
       'sessions:filter-pdf-context-candidates': ({ args }) =>

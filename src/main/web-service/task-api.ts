@@ -19,8 +19,7 @@ import type {
   UpdateProjectSessionDefaultsRequest,
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
-import type { PersistedArtifact } from '../../shared/session-message-contract'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { latestOutcomePrompt, type PersistedChatSession } from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type {
   AddCustomServerRequest,
@@ -54,8 +53,10 @@ import type {
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { TaskSubmissions } from '../tasks/task-submissions'
@@ -68,12 +69,15 @@ import {
   type TaskComputePreferencePort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
+import { readTaskNotebookReadiness } from './task-notebook-readiness'
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
+const log = createLogger('web-service:task-api')
 
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
+  notebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
   controls?: TaskControlPorts
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -329,10 +333,11 @@ class HeadlessTaskApi {
   }
 
   async doctor(): Promise<TaskDoctorReport> {
-    const [preflight, skills, bootstrap] = await Promise.all([
+    const [preflight, skills, bootstrap, notebook] = await Promise.all([
       this.invoke('settings:get-preflight') as Promise<ReadinessPreflight>,
       this.invoke('settings:list-skills') as Promise<SkillView[]>,
-      this.invoke('settings:bootstrap', { action: 'status' }) as Promise<BootstrapResult>
+      this.invoke('settings:bootstrap', { action: 'status' }) as Promise<BootstrapResult>,
+      readTaskNotebookReadiness((channel, ...args) => this.invoke(channel, ...args))
     ])
     const { runtimeReadiness, providerReadiness } = preflight
     const next: TaskDoctorReport['next'][number][] = []
@@ -357,6 +362,7 @@ class HeadlessTaskApi {
           framework: preflight.agentFrameworkId
         },
         provider: providerReadiness,
+        ...(notebook ? { notebook } : {}),
         skills: {
           status: 'ready',
           enabled: skills
@@ -381,12 +387,21 @@ class HeadlessTaskApi {
     return this.runner.listSessions(projectId)
   }
 
-  getSession(sessionId: string): Promise<TaskSessionSummary> {
-    return this.runner.getSession(sessionId)
+  async getSession(sessionId: string, projectId?: string): Promise<TaskSessionSummary> {
+    const session = await this.runner.findSession(sessionId, projectId)
+    return this.withNotebookExecution(summarizeSession(session), {
+      projectId: session.projectId,
+      sessionId,
+      promptMessageId: session.activeRun?.promptMessageId ?? latestOutcomePrompt(session)?.id,
+      includeSessionRefusal: true
+    })
   }
 
-  getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
-    return this.runner.getSessionConfiguration(sessionId)
+  getSessionConfiguration(
+    sessionId: string,
+    projectId?: string
+  ): Promise<TaskSessionConfiguration> {
+    return this.runner.getSessionConfiguration(sessionId, projectId)
   }
 
   updateSessionConfiguration(
@@ -570,12 +585,48 @@ class HeadlessTaskApi {
     return this.runner.startRun(request)
   }
 
-  getRun(runId: string): TaskRun {
-    return this.runner.getRun(runId)
+  async getRun(runId: string): Promise<TaskRun> {
+    return this.withRunExecution(this.runner.getRun(runId))
   }
 
-  waitForRun(runId: string): Promise<TaskRun> {
-    return this.runner.waitForRun(runId)
+  async waitForRun(runId: string): Promise<TaskRun> {
+    return this.withRunExecution(await this.runner.waitForRun(runId))
+  }
+
+  private withRunExecution(run: TaskRun): Promise<TaskRun> | TaskRun {
+    const promptMessageId = this.runner.getRunPromptMessageId(run.id)
+    if (!promptMessageId) return run
+    return this.withNotebookExecution(run, {
+      projectId: run.projectId,
+      sessionId: run.sessionId,
+      promptMessageId
+    })
+  }
+
+  private async withNotebookExecution<T extends TaskRun | TaskSessionSummary>(
+    value: T,
+    scope: Parameters<NotebookRuntimeService['inspectTaskExecution']>[0]
+  ): Promise<T> {
+    if (!this.ports.notebook) return value
+    try {
+      return { ...value, execution: await this.ports.notebook.inspectTaskExecution(scope) }
+    } catch {
+      const { projectId, sessionId, promptMessageId } = scope
+      log.debug('Could not read Notebook execution evidence', {
+        projectId,
+        sessionId,
+        promptMessageId
+      })
+      return {
+        ...value,
+        execution: {
+          projectId,
+          sessionId,
+          status: 'unconfirmed',
+          reasonCode: 'notebook_evidence_unavailable'
+        }
+      }
+    }
   }
 
   cancelRun(runId: string): Promise<TaskRun> {
@@ -593,7 +644,7 @@ class HeadlessTaskApi {
     return this.runner.resolveActiveRun(sessionId, promptMessageId)
   }
 
-  listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
+  listArtifacts(sessionId: string): ReturnType<TaskRunner['listArtifacts']> {
     return this.runner.listArtifacts(sessionId)
   }
 

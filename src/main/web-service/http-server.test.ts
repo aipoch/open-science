@@ -1008,6 +1008,7 @@ describe('startWebHttpServer', () => {
       ['session-details-conflict', 409],
       ['session-revision-conflict', 409],
       ['session-package-busy', 409],
+      ['session-package-operation-conflict', 409],
       ['csl-undefined-macro', 400]
     ] as const) {
       directInvoke.mockRejectedValueOnce(
@@ -1314,7 +1315,7 @@ describe('startWebHttpServer', () => {
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcCapabilities: WEB_RPC_CAPABILITIES,
       rpcChannels: ['projects:list'],
-      taskCapabilities: ['permission-prompts-none']
+      taskCapabilities: ['permission-prompts-none', 'task-artifacts']
     })
 
     const compressedStatic = await fetch(`${base}/app.js`, {
@@ -3409,6 +3410,54 @@ describe('startWebHttpServer', () => {
     expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
+  it('keeps Notebook continuation out of Web RPC for every local credential kind', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    const channel = 'acp:continue-notebook-execution'
+    const invoke = vi.fn(async () => ({ accepted: true }))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot,
+      rpc: { channels: () => [channel], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      applicationCommands: {
+        localWeb: { commandNames: () => [channel], invoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const url = `http://127.0.0.1:${server.port}`
+    const call = (headers: Record<string, string>, suffix = ''): Promise<Response> =>
+      fetch(`${url}/rpc/${encodeURIComponent(channel)}${suffix}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          args: [{ projectId: 'p1', sessionId: 's1', refusalId: 'r1', text: 'Continue.' }]
+        })
+      })
+    for (const response of [
+      await call({ cookie: 'open_science_web_token=local-token', origin: url }),
+      await call({ authorization: 'Bearer local-token' }),
+      await call({}, '?token=local-token')
+    ]) {
+      expect(response.status).toBe(404)
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: { code: 'method_not_found' }
+      })
+    }
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('pins the remote Web Notebook capability matrix', () => {
     const channelsFor = (prefix: string): string[] =>
       Object.entries(WEB_INVOKE_CHANNELS)
@@ -3492,7 +3541,8 @@ describe('startWebHttpServer', () => {
       .filter(([path]) => path.startsWith('acp.'))
       .map(([, channel]) => channel)
       .sort()
-    expect(acpChannels).toHaveLength(21)
+    expect(acpChannels).toHaveLength(20)
+    expect(acpChannels).not.toContain('acp:continue-notebook-execution')
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',
@@ -4524,22 +4574,27 @@ describe('startWebHttpServer', () => {
     expect(await sessions.json()).toEqual({ data: [{ id: 'session/1', title: 'Review' }] })
     expect(tasks.listSessions).toHaveBeenCalledWith('project-1')
 
-    const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
-    expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
-    expect(tasks.getSession).toHaveBeenCalledWith('session/1')
-
-    const sessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
+    const session = await fetch(`${base}/api/v1/sessions/session%2F1?project=project%2F1`, {
       headers
     })
+    expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
+    expect(tasks.getSession).toHaveBeenCalledWith('session/1', 'project/1')
+
+    const sessionConfiguration = await fetch(
+      `${base}/api/v1/sessions/session%2F1/config?project=project%2F1`,
+      { headers }
+    )
     expect(await sessionConfiguration.json()).toMatchObject({ data: { revision: 3 } })
+    expect(tasks.getSessionConfiguration).toHaveBeenCalledWith('session/1', 'project/1')
     const updatedSessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
       method: 'PATCH',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 3, memoryEnabled: false })
+      body: JSON.stringify({ expectedRevision: 3, projectId: 'project/1', memoryEnabled: false })
     })
     expect(await updatedSessionConfiguration.json()).toMatchObject({ data: { revision: 4 } })
     expect(tasks.updateSessionConfiguration).toHaveBeenCalledWith('session/1', {
       expectedRevision: 3,
+      projectId: 'project/1',
       memoryEnabled: false
     })
 
@@ -5569,7 +5624,7 @@ it('recovers a lost submission response through the real SDK and CLI without sta
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
-      getRun: () => run,
+      getRun: async () => run,
       cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn()
@@ -5610,9 +5665,16 @@ it('recovers a lost submission response through the real SDK and CLI without sta
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
-    expect(
-      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
-    ).toMatchObject({ status: 'pending' })
+    const identical = { project: 'project', prompt: 'Research' }
+    const [first, duplicate] = await Promise.all([
+      client.submitRun('request-receipt', identical),
+      client.submitRun('request-receipt', { prompt: 'Research', project: 'project' })
+    ])
+    expect(first).toMatchObject({ requestId: 'request-receipt', status: 'pending' })
+    expect(duplicate).toEqual(first)
+    await expect(
+      client.submitRun('request-receipt', { ...identical, prompt: 'Changed study' })
+    ).rejects.toMatchObject({ code: 'submission_conflict', requestId: 'request-receipt' })
     expect(startRun).toHaveBeenCalledOnce()
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()

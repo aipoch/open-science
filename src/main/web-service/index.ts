@@ -7,6 +7,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandComposition } from '../application-command-composition-contract'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
+import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot } from '../storage-root'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { FileTaskRunJournal, type TaskRunJournal } from '../tasks/task-run-journal'
@@ -81,6 +82,7 @@ const createWebServiceController = (
     applicationEvents,
     permissionApprovalPresence,
     taskAgent,
+    taskNotebook,
     taskControls,
     computePreferences,
     detectActiveSessions
@@ -92,6 +94,7 @@ const createWebServiceController = (
     applicationEvents: ApplicationEventSource
     permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
+    taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
     taskControls?: TaskControlPorts
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -121,6 +124,7 @@ const createWebServiceController = (
     {
       commands: applicationCommands.task,
       agent: taskAgent,
+      notebook: taskNotebook,
       controls: taskControls,
       computePreferences,
       detectActiveSessions
