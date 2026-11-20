@@ -205,9 +205,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
-        // Saved history is a read-only operation scoped to the authenticated active Main turn.
+        // Saved history is bounded and read-only, scoped to the authenticated active Main turn.
+        // Results preserve paging and label saved output sources; the request schema and Auto authority are unchanged.
         'notebook/mcp-server.ts':
-          '25bc4d292e87f0f0faa8628908822715d9f510c55afe490d86d4cac3f813e3af',
+          '3e7abe0b8cc8a1186a066e7db84d4f34c84c53896ee5076f3eefcd34e053e4a5',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

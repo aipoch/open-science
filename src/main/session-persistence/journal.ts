@@ -89,6 +89,7 @@ export type SessionJournalHistoryRead = {
   assertUnchanged(): Promise<void>
 }
 type State = SessionJournalRead & { fingerprint: string; validBytes: number }
+type JournalReadBudget = { maxBytes: number; signal?: AbortSignal }
 type Prepared = {
   path: string
   previous: State
@@ -141,7 +142,7 @@ export class SessionJournalStore {
   private readonly cache = new Map<string, State>()
   private readonly reads = new WeakMap<SessionJournalRead, { path: string; state: State }>()
   private readonly prepared = new WeakMap<SessionJournalPreparedWrite, Prepared>()
-  private readonly lanes = new Map<string, Promise<unknown>>()
+  private readonly lanes = new Map<string, Set<() => void>>()
   private readonly dependencies: SessionJournalDependencies
   private readonly maxCacheBytes: number
   private readonly maxCacheEntries: number
@@ -171,15 +172,21 @@ export class SessionJournalStore {
     if (previous) this.cacheBytes -= journalValueByteLength(previous.document)
     this.cache.delete(key)
   }
-  async read(path: string): Promise<SessionJournalRead | undefined> {
+  async read(path: string, budget?: JournalReadBudget): Promise<SessionJournalRead | undefined> {
     const key = logicalPath(path)
-    return this.lane(key, async () => {
-      const state = await this.readState(key)
-      if (!state) return undefined
-      const result = this.result(state)
-      this.reads.set(result, { path: key, state })
-      return result
-    })
+    return this.lane(
+      key,
+      async () => {
+        budget?.signal?.throwIfAborted()
+        const state = await this.readState(key, undefined, budget)
+        budget?.signal?.throwIfAborted()
+        if (!state) return undefined
+        const result = this.result(state)
+        this.reads.set(result, { path: key, state })
+        return result
+      },
+      budget?.signal
+    )
   }
   authorityFingerprint(read: SessionJournalRead): string {
     const source = this.reads.get(read)
@@ -423,13 +430,25 @@ export class SessionJournalStore {
     this.assertSize(document)
     return document
   }
-  private async readState(path: string, preparedState?: State): Promise<State | undefined> {
+  private async readState(
+    path: string,
+    preparedState?: State,
+    budget?: JournalReadBudget
+  ): Promise<State | undefined> {
     await this.assertDirectory(path)
     const fingerprint = await this.fingerprint(path)
     // A prepared save already holds its source even when it exceeds the shared cache budget.
     if (preparedState?.fingerprint === fingerprint) return preparedState
     const cached = this.cache.get(path)
-    if (cached && cached.fingerprint === fingerprint) return cached
+    if (cached && cached.fingerprint === fingerprint) {
+      if (
+        budget &&
+        (cached.storageBytes > budget.maxBytes ||
+          journalValueByteLength(cached.document) > budget.maxBytes)
+      )
+        throw new SessionJournalSizeError(budget.maxBytes)
+      return cached
+    }
     this.invalidate(path)
     if (fingerprint === 'missing') {
       if ((await this.inspectOwned(path)).paths.length)
@@ -438,10 +457,14 @@ export class SessionJournalStore {
     }
     let state: State
     if (fingerprint.startsWith('journal:')) {
-      const read = await this.readLog(sessionJournalPath(path))
+      const read = await this.readLog(sessionJournalPath(path), undefined, budget)
       state = { ...read, format: 'journal', fingerprint }
     } else {
-      const contents = await this.boundedRead(path, this.options.maxBytes)
+      const contents = await this.boundedRead(
+        path,
+        Math.min(this.options.maxBytes, budget?.maxBytes ?? Infinity)
+      )
+      budget?.signal?.throwIfAborted()
       const document = this.decodeLegacy(contents)
       state = {
         document,
@@ -459,16 +482,33 @@ export class SessionJournalStore {
   }
   private async readLog(
     path: string,
-    observer?: HistoryObserver
+    observer?: HistoryObserver,
+    budget?: JournalReadBudget
   ): Promise<Pick<State, 'document' | 'revision' | 'storageBytes' | 'validBytes'>> {
     const expectedBytes = (await this.fileStat(path))?.size
-    const limit = this.options.maxReplayBytes
-    if (limit !== undefined && expectedBytes !== undefined && expectedBytes > limit)
+    const limit = Math.min(this.options.maxReplayBytes ?? Infinity, budget?.maxBytes ?? Infinity)
+    if (expectedBytes !== undefined && expectedBytes > limit)
       throw new SessionJournalSizeError(limit)
     let document: JournalValue | undefined
     let validBytes = 0
     let storageBytes = 0
-    for await (const line of this.lines(path)) {
+    const logicalLimit = Math.min(this.options.maxBytes, budget?.maxBytes ?? Infinity)
+    let replayWork = 0
+    const checkProjection = (value: JournalValue): void => {
+      if (journalValueByteLength(value) > logicalLimit)
+        throw new SessionJournalSizeError(logicalLimit)
+    }
+    // Disk bytes already cover new values. Charge repeated work on existing values separately.
+    const replay = budget && {
+      checkProjection,
+      signal: budget.signal,
+      chargeReplayWork(units: number): void {
+        replayWork += units
+        if (replayWork > 32 * budget.maxBytes) throw new SessionJournalSizeError(budget.maxBytes)
+      }
+    }
+    for await (const line of this.lines(path, limit, budget?.signal)) {
+      budget?.signal?.throwIfAborted()
       storageBytes += line.bytes
       if (!line.complete) {
         if (observer) return fail('Session history contains an incomplete record.')
@@ -490,7 +530,7 @@ export class SessionJournalStore {
         if (object(document) && typeof document.version === 'number' && document.version > 2)
           throw new SessionJournalVersionError()
         revisionOf(document)
-        this.assertSize(document)
+        checkProjection(document)
         observer?.visit(document)
       } else {
         if (
@@ -501,7 +541,7 @@ export class SessionJournalStore {
           return fail('Session journal record has invalid schema or revision.')
         const records = validateSessionRecords(value.records, { parsed: true })
         observer?.visit(records as unknown as JournalValue)
-        document = this.applyRecords(document, records, observer?.visit)
+        document = this.applyRecords(document, records, observer?.visit, replay)
         if (revisionOf(document) !== value.revision)
           return fail('Session journal revision does not match its update.')
       }
@@ -526,16 +566,18 @@ export class SessionJournalStore {
     }
   }
   private async *lines(
-    path: string
+    path: string,
+    limit: number,
+    signal?: AbortSignal
   ): AsyncGenerator<{ text: string; bytes: number; complete: boolean }> {
     await this.fileStat(path)
     let readBytes = 0
     let parts: Buffer[] = []
     let length = 0
     for await (const buffer of this.dependencies.readChunks?.(path) ?? this.chunks(path)) {
+      signal?.throwIfAborted()
       readBytes += buffer.length
-      if (this.options.maxReplayBytes !== undefined && readBytes > this.options.maxReplayBytes)
-        throw new SessionJournalSizeError(this.options.maxReplayBytes)
+      if (readBytes > limit) throw new SessionJournalSizeError(limit)
       let start = 0
       for (let index = buffer.indexOf(10, start); index !== -1; index = buffer.indexOf(10, start)) {
         const part = buffer.subarray(start, index + 1)
@@ -562,14 +604,21 @@ export class SessionJournalStore {
   private applyRecords(
     document: JournalValue,
     records: readonly SessionBusinessRecord[],
-    visitJoinedText?: (value: JournalValue) => void
+    visitJoinedText?: (value: JournalValue) => void,
+    replay?: {
+      chargeReplayWork(units: number): void
+      checkProjection(value: JournalValue): void
+      signal?: AbortSignal
+    }
   ): JournalValue {
-    const result = records.reduce(
-      (current, record) => applySessionRecord(current, record, visitJoinedText),
-      document
-    )
-    this.assertSize(result)
-    return result
+    let current = document
+    for (const record of records) {
+      replay?.signal?.throwIfAborted()
+      current = applySessionRecord(current, record, visitJoinedText, replay?.chargeReplayWork)
+      replay?.checkProjection(current)
+    }
+    if (!replay) this.assertSize(current)
+    return current
   }
   private assertNextRevision(document: JournalValue, previous: number): void {
     if (revisionOf(document) !== previous + 1)
@@ -602,16 +651,49 @@ export class SessionJournalStore {
     while (this.cacheBytes > this.maxCacheBytes || this.cache.size > this.maxCacheEntries)
       this.invalidate(this.cache.keys().next().value!)
   }
-  private lane<Result>(path: string, action: () => Promise<Result>): Promise<Result> {
-    const prior = this.lanes.get(path) ?? Promise.resolve()
-    const next = prior.then(action, action)
-    this.lanes.set(path, next)
-    void next
-      .finally(() => {
-        if (this.lanes.get(path) === next) this.lanes.delete(path)
-      })
-      .catch(() => undefined)
-    return next
+  private lane<Result>(
+    path: string,
+    action: () => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result> {
+    if (signal?.aborted) return Promise.reject(signal.reason)
+    // Keep only waiters in the set; aborting a waiter must neither retain it nor advance the lane.
+    const existing = this.lanes.get(path)
+    const waiting = existing ?? new Set<() => void>()
+    const { promise, resolve, reject } = Promise.withResolvers<Result>()
+    const advance = (): void => {
+      const next = waiting.values().next().value
+      if (next) {
+        waiting.delete(next)
+        next()
+      } else this.lanes.delete(path)
+    }
+    const start = (): void => {
+      signal?.removeEventListener('abort', cancel)
+      void Promise.resolve()
+        .then(action)
+        .then(
+          (result) => {
+            advance()
+            resolve(result)
+          },
+          (error: unknown) => {
+            advance()
+            reject(error)
+          }
+        )
+    }
+    const cancel = (): void => {
+      if (waiting.delete(start)) reject(signal?.reason)
+    }
+    if (existing) {
+      waiting.add(start)
+      signal?.addEventListener('abort', cancel, { once: true })
+    } else {
+      this.lanes.set(path, waiting)
+      start()
+    }
+    return promise
   }
   private async assertDirectory(path: string): Promise<void> {
     try {

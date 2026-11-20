@@ -3,6 +3,7 @@ import { classifyFailure } from '../../../../shared/failure/classify'
 import type { ClassifiedFailure, FailureFacts } from '../../../../shared/failure/contract'
 import type { TurnOutcome } from '../../../../shared/session-turn-outcome-contract'
 import { noticePriority, type ComposerNotice } from '@/components/notices/composer-notice-catalog'
+import { presentTurnOutcomeFailure } from './turn-outcome-failure'
 
 export type ComposerOperationFailure = Readonly<{
   id: string
@@ -52,26 +53,14 @@ export const useComposerNotices = (input: {
       occurredAt: turn.outcome.settledAt,
       promptMessageId: turn.promptMessageId,
       recovery: turn.outcome.recovery,
-      failure: {
-        ...(turn.outcome.failure ?? { category: 'internal' }),
-        diagnostics: {
-          ...turn.outcome.failure?.diagnostics,
-          raw: turn.outcome.failure?.diagnostics.raw ?? turn.outcome.error
-        }
-      }
+      failure: presentTurnOutcomeFailure(turn.outcome)
     })
   if (legacy)
     notices.push({
       id: `${prefix}:legacy:${legacy.error}`,
       source: 'turn',
       occurredAt: legacy.updatedAt ?? 0,
-      failure: {
-        ...(legacy.failure ?? { category: 'internal' }),
-        diagnostics: {
-          ...legacy.failure?.diagnostics,
-          raw: legacy.failure?.diagnostics.raw ?? legacy.error
-        }
-      }
+      failure: presentTurnOutcomeFailure(legacy)
     })
   for (const operation of input.operations) {
     if (!operation.message) continue

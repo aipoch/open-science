@@ -142,6 +142,44 @@ describe('session persistence repository (per-session files)', () => {
     expect(JSON.stringify(snapshot.metrics)).not.toContain('Summarize this file')
   })
 
+  it('does not promote or clean up a legacy temporary during a bounded history read', async () => {
+    const root = await createStorageRoot()
+    await seedLegacySession(root, createSession())
+    const primary = join(root, 'sessions', 'project-a', 'session-1.json')
+    const temp = `${primary}.1700000000000-1.tmp`
+    const original = await readFile(primary)
+    const repository = new SessionRepository(root)
+    const read = (): ReturnType<SessionRepository['loadSessionRecoverySnapshot']> =>
+      repository.loadSessionRecoverySnapshot('project-a', 'session-1', { maxBytes: 1_000_000 })
+
+    await writeFile(temp, original)
+    await expect(read()).resolves.toEqual({ status: 'repair-required' })
+    await expect(readFile(primary)).resolves.toEqual(original)
+    await expect(readFile(temp)).resolves.toEqual(original)
+    await rm(primary)
+    await expect(read()).resolves.toEqual({ status: 'repair-required' })
+    await expect(lstat(primary)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(temp)).resolves.toEqual(original)
+  })
+
+  it.each(['legacy', 'journal'] as const)(
+    'enforces a query-specific byte limit on cold and warm %s history reads',
+    async (storage) => {
+      const root = await createStorageRoot()
+      if (storage === 'legacy') await seedLegacySession(root, createSession())
+      else await new SessionRepository(root).saveSession(createSession())
+      const repository = new SessionRepository(root)
+      const read = (
+        maxBytes: number
+      ): ReturnType<SessionRepository['loadSessionRecoverySnapshot']> =>
+        repository.loadSessionRecoverySnapshot('project-a', 'session-1', { maxBytes })
+
+      await expect(read(1)).resolves.toEqual({ status: 'budget-exceeded' })
+      await expect(read(1_000_000)).resolves.toMatchObject({ status: 'found' })
+      await expect(read(1)).resolves.toEqual({ status: 'budget-exceeded' })
+    }
+  )
+
   it('fences unscoped durable-reader repair while a current catalog cleanup commits', async () => {
     const root = await createStorageRoot()
     const directory = join(root, 'sessions', 'project-a')

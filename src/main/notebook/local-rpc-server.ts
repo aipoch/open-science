@@ -335,7 +335,8 @@ type NotebookLocalRpcServerOptions = {
     toolHistory?(
       input: unknown,
       context: { projectId: string; sessionId: string },
-      turn: NotebookRunProvenanceContext
+      turn: NotebookRunProvenanceContext,
+      signal: AbortSignal
     ): Promise<unknown>
     get(
       frameId: unknown,
@@ -514,6 +515,7 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
 }
 
 type BoundArtifactTurn = ActiveArtifactTurnBinding & {
+  historyReadLifetime: AbortController
   pendingRequests: Set<Promise<void>>
   stopFailure?: NotebookExecutionStopError
   // Keep every failure identity: a newer epoch must not hide an older unresolved process.
@@ -2072,6 +2074,7 @@ class NotebookLocalRpcServer {
   // with provenance at turn activation, independently of whether the prompt carried attachments.
   setArtifactTurnBinding(sessionId: string, binding: ActiveArtifactTurnBinding): void {
     const previous = this.activeArtifactTurnBindings.get(sessionId)
+    previous?.historyReadLifetime.abort(new RpcHttpError(403, 'The Main Session turn has ended.'))
     if (
       previous &&
       (previous.ownerExecutionId !== binding.ownerExecutionId ||
@@ -2083,7 +2086,11 @@ class NotebookLocalRpcServer {
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
-    const boundTurn: BoundArtifactTurn = { ...binding, pendingRequests: new Set() }
+    const boundTurn: BoundArtifactTurn = {
+      ...binding,
+      pendingRequests: new Set(),
+      historyReadLifetime: new AbortController()
+    }
     let ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     if (!ownedTurns) {
       ownedTurns = new Map()
@@ -2133,6 +2140,7 @@ class NotebookLocalRpcServer {
     const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     const binding = ownedTurns?.get(ownerExecutionId)
     if (!binding) return
+    binding.historyReadLifetime.abort(new RpcHttpError(403, 'The Main Session turn has ended.'))
     // Request ownership outlives the HTTP server reference, including during server shutdown.
     const draining = [...binding.pendingRequests]
     // Replacement already cancelled the old producers. Never revoke the new turn's authority
@@ -2770,7 +2778,8 @@ class NotebookLocalRpcServer {
         const result = await this.hostFrames.toolHistory(
           input,
           { projectId: initialTurn.projectId, sessionId: initialSessionId },
-          turn
+          turn,
+          AbortSignal.any([disconnect.signal, initialTurn.historyReadLifetime.signal])
         )
         disconnect.signal.throwIfAborted()
         if (

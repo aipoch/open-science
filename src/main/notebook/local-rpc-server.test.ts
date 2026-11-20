@@ -136,9 +136,10 @@ describe('notebook local RPC server', () => {
     })
     const entered = createDeferred()
     const release = createDeferred()
-    const toolHistory = vi.fn(async () => {
+    const toolHistory = vi.fn(async (_input, _scope, _turn, signal: AbortSignal) => {
       entered.resolve()
       await release.promise
+      signal.throwIfAborted()
       return { resultFromHistory: 'saved' }
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -186,9 +187,11 @@ describe('notebook local RPC server', () => {
       expect(toolHistory).toHaveBeenCalledWith(
         { limit: 1 },
         { projectId: 'project', sessionId: 'copy' },
-        turn.provenanceContext
+        turn.provenanceContext,
+        expect.any(AbortSignal)
       )
       await server.clearArtifactTurnBinding('copy', turn.ownerExecutionId)
+      expect(toolHistory.mock.calls[0][3].aborted).toBe(true)
       release.resolve()
       expect((await response).status).toBe(403)
       server.setArtifactTurnBinding('copy', { ...turn, ownerExecutionId: 'turn-2' })
