@@ -631,7 +631,10 @@ const runElectronUpdater = async ({
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     if (coldLaunch) {
-      await runProcess(
+      // CI can start the desktop without a foreground HWND. The product admission rule is
+      // lack of focus. Use the actual tray action only when a foreground window needs hiding.
+      phase = 'background-download'
+      const connection = await runProcess(
         'powershell.exe',
         [
           '-NoProfile',
@@ -639,16 +642,22 @@ const runElectronUpdater = async ({
           '-Command',
           [
             "$ErrorActionPreference = 'Stop'",
-            'Add-Type -Name Window -Namespace Smoke -MemberDefinition \'[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr window, int command); [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);\'',
-            '$handle = (Get-Process -Id $env:OPEN_SCIENCE_SMOKE_DESKTOP_PID).MainWindowHandle',
-            "if ($handle -eq [IntPtr]::Zero) { throw 'Desktop window missing' }",
-            '$null = [Smoke.Window]::ShowWindowAsync($handle, 6)',
-            'for ($i = 0; $i -lt 100; $i++) { if ([Smoke.Window]::IsIconic($handle)) { exit 0 }; Start-Sleep -Milliseconds 100 }',
-            "throw 'Desktop did not minimize'"
+            '$profileInfo = [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType=WindowsRuntime]::GetInternetConnectionProfile()',
+            "if (!$profileInfo) { throw 'Runner has no Internet connection profile' }",
+            '$cost = $profileInfo.GetConnectionCost()',
+            '$cost | Select-Object NetworkCostType, Roaming, OverDataLimit, ApproachingDataLimit, BackgroundDataUsageRestricted | ConvertTo-Json -Compress'
           ].join('\n')
         ],
-        { env: { ...env, OPEN_SCIENCE_SMOKE_DESKTOP_PID: String(child.pid) } }
+        { env }
       )
+      console.log('Windows connection cost at download admission:', connection.stdout.trim())
+      if (await page.evaluate(() => document.hasFocus())) {
+        await page.evaluate(async () => {
+          await window.api.settings.setClosePreference({ preference: 'minimize' })
+          await window.api.window.close()
+        })
+        await page.waitForFunction(() => !document.hasFocus())
+      }
     }
     await waitFor(
       'electron-updater differential download',
@@ -674,6 +683,7 @@ const runElectronUpdater = async ({
     await beforeApply?.({ invoke, page })
 
     if (coldLaunch) {
+      phase = 'background-extraction'
       const prepared = join(win32.dirname(expectedInstaller), 'open-science-prepared', 'ready.json')
       await waitFor(
         'verified background extraction',
