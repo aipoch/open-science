@@ -14,7 +14,6 @@ import {
   resolveExternalRLibrary,
   externalRInstallScript
 } from './external-r-library'
-import { condaActivatedPath } from './runtime-paths'
 import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
 
@@ -66,7 +65,7 @@ import {
 } from './runtime-paths'
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-import { buildManagedRuntimeProcessEnvironment } from './process-environment'
+import { buildManagedRuntimeProcessEnvironment, rProcessEnvironment } from './process-environment'
 import { withPipInstallEvidence } from './pip-install-evidence'
 
 const terminatedPackageProcessErrors = new WeakSet<object>()
@@ -1461,20 +1460,7 @@ export async function installPackages(
     if (req.language === 'r') {
       // Rscript loads native dependencies before it can emit diagnostics. Mirror conda activation
       // so managed R installers can find the environment's DLLs on Windows.
-      const inheritedPath =
-        platform === 'win32'
-          ? Object.entries(spawnEnv)
-              .filter(([key]) => key.toUpperCase() === 'PATH')
-              .map(([, value]) => value)
-              .filter((value): value is string => Boolean(value))
-              .join(';')
-          : (spawnEnv.PATH ?? '')
-      if (platform === 'win32') {
-        for (const key of Object.keys(spawnEnv)) {
-          if (key.toUpperCase() === 'PATH') delete spawnEnv[key]
-        }
-      }
-      spawnEnv.PATH = condaActivatedPath(prefix, inheritedPath, platform)
+      spawnEnv = rProcessEnvironment(spawnEnv, prefix, platform)
     }
   }
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
@@ -1743,9 +1729,8 @@ export async function installPackages(
         }
       }
       deps.signal?.throwIfAborted()
+      spawnEnv = rProcessEnvironment(spawnEnv, deps.interpreter.condaPrefix)
       spawnEnv.R_LIBS_USER = library
-      if (deps.interpreter.condaPrefix)
-        spawnEnv.PATH = condaActivatedPath(deps.interpreter.condaPrefix, spawnEnv.PATH)
       const result = await run(command, [
         ...args,
         '--slave',

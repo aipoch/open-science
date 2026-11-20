@@ -215,7 +215,7 @@ describe('defaultDiscoveryDeps Windows conda probes', () => {
         args: readonly string[],
         options: { env?: NodeJS.ProcessEnv }
       ): Promise<{ stdout: string; stderr: string }> => {
-        expect(options.env).toBe(env)
+        expect(options.env).toEqual(env)
         return args.includes('--version')
           ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
           : { stdout: 'TRUE', stderr: '' }

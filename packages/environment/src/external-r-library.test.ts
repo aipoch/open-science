@@ -7,10 +7,14 @@ import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-
 
 import * as externalRLibrary from './external-r-library'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
+})
 
 describe('external R package installation', () => {
   it('probes the selected R with bounded execution and canonicalizes duplicate candidates', async () => {
+    vi.stubEnv('LC_CTYPE', 'C.UTF-8')
     const directory = await mkdtemp(join(tmpdir(), 'r-library-probe-'))
     try {
       const execute = vi.fn().mockResolvedValue({
@@ -26,6 +30,9 @@ describe('external R package installation', () => {
         expect.objectContaining({ timeout: 15000, windowsHide: true })
       )
       expect(execute.mock.calls[0][1][2]).not.toMatch(/[\r\n]/)
+      expect(execute.mock.calls[0][2].env.LC_CTYPE).toBe(
+        process.platform === 'win32' ? undefined : 'C.UTF-8'
+      )
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -85,6 +92,7 @@ describe('external R package installation', () => {
   it.each([0, 1])(
     'uses the bound R and exact library and derives restart advice from exit code %s',
     async (code) => {
+      vi.stubEnv('LC_CTYPE', 'C.UTF-8')
       const directory = await mkdtemp(join(tmpdir(), 'external-r-library-'))
       try {
         const library = await realpath(directory)
@@ -106,10 +114,13 @@ describe('external R package installation', () => {
         )
         expect(probe).toHaveBeenCalledWith('/external/Rscript')
         expect(spawn).toHaveBeenCalledTimes(1)
-        expect(
-          (spawn.mock.calls[0] as unknown as [string, string[], NodeJS.ProcessEnv])[2].R_LIBS_USER
-        ).toBe(library)
-        const [command, args] = spawn.mock.calls[0] as unknown as [string, string[]]
+        const [command, args, env] = spawn.mock.calls[0] as unknown as [
+          string,
+          string[],
+          NodeJS.ProcessEnv
+        ]
+        expect(env.R_LIBS_USER).toBe(library)
+        expect(env.LC_CTYPE).toBe(process.platform === 'win32' ? undefined : 'C.UTF-8')
         expect(command).toBe('/external/Rscript')
         expect(args).not.toContain('-m')
         expect(args.at(-1)).toContain(JSON.stringify(library))

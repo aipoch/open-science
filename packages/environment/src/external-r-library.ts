@@ -4,7 +4,7 @@ import { isAbsolute } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { rscriptFor, windowsCondaPrefixForR } from './environment-discovery'
-import { condaActivatedPath } from './runtime-paths'
+import { rProcessEnvironment } from './process-environment'
 
 // Windows Rscript reads only the first line of an -e argument.
 const localRExpression = (statements: string[]): string => `local({ ${statements.join('; ')} })`
@@ -33,9 +33,7 @@ export const discoverExternalRLibraries = async (
   const { stdout } = await execute(command, ['--slave', '-e', externalRLibraryProbeScript], {
     timeout: 15_000,
     windowsHide: true,
-    ...(prefix
-      ? { env: { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH) } }
-      : {})
+    env: rProcessEnvironment(process.env, prefix)
   })
   const line = String(stdout)
     .split(/\r?\n/)
