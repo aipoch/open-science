@@ -874,7 +874,7 @@ const VisibleArtifactPreview = ({
         if (
           canceled ||
           (error instanceof Error &&
-            error.message.endsWith('ApplicationCommandError: The local service is stopping.'))
+            String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )
           return
         if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
