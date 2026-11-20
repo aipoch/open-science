@@ -8324,14 +8324,21 @@ describe('native mixed bullet literals', () => {
   })
 })
 
-it.each([false, true])(
-  'verifies a caret mass power against native raised ink (flat=%s)',
-  async (flat) => {
+it.each(['raised', 'flat', 'shared exponent'])(
+  'verifies a caret mass power against native raised ink (%s)',
+  async (shape) => {
     const f = fixture()
+    const flat = shape === 'flat'
+    const sharedExponent = shape === 'shared exponent'
     const expression = 'M⋆ = 6 × 10¹²M⊙'
-    const originals = ['The sample mass is M⋆ = 6 × ', '10', '12', 'M⊙.']
-    const originalText = 'The sample mass is ' + expression + '.'
-    const translation = '测得 M⋆ = 6 × 10^12M⊙。'
+    const originals = [
+      'The sample mass is M⋆ = 6 × ',
+      '10',
+      '12',
+      ...(sharedExponent ? ['M⊙ and ', 'A', '12', '.'] : ['M⊙.'])
+    ]
+    const originalText = 'The sample mass is ' + expression + (sharedExponent ? ' and A¹².' : '.')
+    const translation = '测得 M⋆ = 6 × 10^12M⊙' + (sharedExponent ? ' 和 A¹²。' : '。')
     const run = (
       str: string,
       x: number,
@@ -8366,7 +8373,8 @@ it.each([false, true])(
         run(originals[0], 60, 130),
         run('10', 190, 10),
         run('12', 200, 7, 704, 7),
-        run('M⊙.', 208, 18)
+        run(originals[3], 208, sharedExponent ? 44 : 18),
+        ...(sharedExponent ? [run('A', 252, 6), run('12', 258, 7, 704, 7), run('.', 265, 2)] : [])
       ]
     })
     f.targetPage.getTextContent.mockResolvedValue({
@@ -8374,7 +8382,8 @@ it.each([false, true])(
         run('测得 M⋆ = 6 × ', 60, 80),
         run('10', 140, 10),
         run('12', 150, 7, flat ? 700 : 704, flat ? 10 : 7),
-        run('M⊙。', 158, 18)
+        run(sharedExponent ? 'M⊙ 和 ' : 'M⊙。', 158, sharedExponent ? 34 : 18),
+        ...(sharedExponent ? [run('A', 192, 6), run('12', 198, 7, 704, 7), run('。', 205, 4)] : [])
       ]
     })
     const results = {

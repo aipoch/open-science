@@ -94,6 +94,7 @@ const textKey = (text: string): string => text.normalize('NFC').replace(/\s/gu, 
 
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type TextItem = Extract<TextContent['items'][number], { str: string }>
+type VerifiedPower = { power: string; exponent: string }
 
 // Unicode powers may retain the publisher's digit glyph and raised geometry.
 // Admit that spelling only when both PDFs prove the same adjacent base/exponent.
@@ -101,7 +102,7 @@ function verifiedPowerText(
   original: TextContent,
   target: TextContent,
   labels: Set<string>
-): Map<number, string> {
+): Map<number, VerifiedPower> {
   const pairs = (
     content: TextContent
   ): {
@@ -153,7 +154,7 @@ function verifiedPowerText(
     })
   const before = pairs(original),
     after = pairs(target),
-    result = new Map<number, string>()
+    result = new Map<number, VerifiedPower>()
   for (const label of labels) {
     const sources = before.filter((p) => p.label === label),
       targets = after.filter((p) => p.label === label)
@@ -172,7 +173,8 @@ function verifiedPowerText(
       )
     )
       continue
-    for (const p of targets) result.set(p.index, label.match(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u)![0])
+    const exponent = label.match(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u)![0]
+    for (const p of targets) result.set(p.index, { power: label, exponent })
   }
   return result
 }
@@ -4373,7 +4375,7 @@ export function usePdfTranslationDocument(
                 !translation.includes(nativePower)
               ) {
                 powers.add(nativePower)
-                powersByCaret.set(exponent, caret)
+                powersByCaret.set(nativePower, caret)
               }
             }
             const authorLabels = [
@@ -4435,7 +4437,7 @@ export function usePdfTranslationDocument(
                 }
               }
             }
-            for (const [index, label] of verifiedPowerText(
+            for (const [index, { power, exponent }] of verifiedPowerText(
               {
                 ...originalText,
                 items: originalText.items.filter((_, index) => sourceIndices.has(index))
@@ -4445,7 +4447,7 @@ export function usePdfTranslationDocument(
             )) {
               const targetIndex = targetIndices[index]
               nativeLabels.set(targetIndex, {
-                label: powersByCaret.get(label) ?? label,
+                label: powersByCaret.get(power) ?? exponent,
                 indices: [targetIndex]
               })
             }
