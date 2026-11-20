@@ -73,10 +73,8 @@ test.beforeAll(async () => {
   await build({
     configFile,
     logLevel: 'warn',
-    build: {
-      outDir,
-      rollupOptions: { input: [resolve('e2e/browser/fixture/literature-recovery.html')] }
-    }
+    mode: 'citation-graph',
+    build: { outDir }
   })
   server = await preview({
     configFile,

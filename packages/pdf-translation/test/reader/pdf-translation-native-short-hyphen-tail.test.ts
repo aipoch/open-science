@@ -117,3 +117,101 @@ for (const [name, mutate] of cases)
       false
     )
   })
+
+type EquationRun = [
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  face?: 'math' | 'symbol' | 'italic' | 'script' | 'mark',
+  end?: boolean
+]
+const equation = ([str, x, y, width, face, end = false]: EquationRun): PdfLayoutTextItem => {
+  const h = face === 'script' ? 7 : 10
+  const metrics = {
+    math: [0, -0.207],
+    symbol: [0, 0],
+    italic: [0.668, -0.206],
+    script: [0.668, -0.206],
+    mark: [0.056, -0.438]
+  }
+  const [fontAscent, fontDescent] = face ? metrics[face] : [0.675, -0.218]
+  return {
+    ...word(str, x, y, width, end, face ?? 'body'),
+    height: h,
+    transform: [h, 0, 0, h, x, y],
+    fontAscent,
+    fontDescent
+  }
+}
+
+const displayRows: EquationRun[] = [
+  ['t', 180.41, 306.503, 2.77, 'italic'],
+  [') in the previous sample', 208.781, 306.503, 83.184, undefined, true],
+  ['window, the comparison gives precisely', 36.85, 295.544, 138.361, undefined, true],
+  [')', 166.178, 275.4, 3.318],
+  ['\x03', 169.493, 282.234, 3.317, 'mark'],
+  ['+', 55.976, 259.347, 6.336, 'symbol'],
+  [
+    'When the spacing is small relative to the scale of sensor calibra-',
+    36.382,
+    239.82,
+    257.251,
+    undefined,
+    true
+  ],
+  ['tion,', 36.85, 228.861, 17.992],
+  ['∇', 36.85, 208.175, 6.615, 'math'],
+  ['Ψ', 43.465, 208.175, 7.283, 'symbol'],
+  ['(', 56.282, 208.175, 3.318],
+  ['+', 66.185, 208.175, 6.336, 'symbol'],
+  [',', 79.774, 208.175, 2.491, 'math'],
+  [')', 86.877, 208.175, 3.318],
+  ['− ∇', 92.406, 208.175, 15.163, 'math'],
+  ['Ψ', 107.569, 208.175, 7.283, 'symbol'],
+  ['(', 120.39, 208.175, 3.318],
+  ['t', 132.236, 208.175, 2.77, 'italic'],
+  ['=', 141.262, 208.175, 6.336, 'symbol']
+]
+const conditionalRows: EquationRun[] = [
+  ['The result is stable. If', 302.998, 717.041, 110.165],
+  ['μ', 416.592, 717.041, 5.33, 'math'],
+  ['i', 421.922, 715.547, 1.939, 'script'],
+  ['> ω', 428.86, 717.041, 17.724, 'math'],
+  ['2', 446.582, 720.658, 3.487, 'script'],
+  ['Λ', 446.582, 713.761, 5.035, 'symbol'],
+  [', the signal in that orienta-', 452.116, 717.041, 107.97, undefined, true],
+  ['tion remains stable. If', 303.307, 704.482, 84.587],
+  ['μ', 390.852, 704.482, 5.33, 'math'],
+  ['i', 396.182, 702.988, 1.939, 'script'],
+  ['< ω', 402.26, 704.482, 16.857, 'math'],
+  ['2', 419.122, 708.099, 3.487, 'script'],
+  ['Λ', 419.122, 701.202, 5.035, 'symbol'],
+  [
+    'Every orientation yields the same response in the independent trial.',
+    303.307,
+    682.565,
+    255.113,
+    undefined,
+    true
+  ]
+]
+
+it.each([
+  ['display', displayRows, 'sensor calibration,'],
+  ['conditional', conditionalRows, 'that orientation remains']
+] as const)('repairs a native word across an equation row: %s', (kind, rows, joined) => {
+  const items = rows.map(equation),
+    input = { pageCount: 1, pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }] },
+    head = items.findIndex((item) => /(?:calibra|orienta)-$/u.test(item.str)),
+    keys = [`1:${head}`, `1:${head + 1}`]
+  const owner = groupPdfTranslationPages(input).units.find((u) => u.items.includes(keys[0]))
+  expect(owner?.source).toContain(joined)
+  expect(owner?.items).toEqual(keys)
+  expect(owner?.fragments).toHaveLength(2)
+  if (kind === 'conditional') items[head + 4].str = '> ω'
+  else items[head + 1].transform[5] -= 4
+  expect(
+    groupPdfTranslationPages(input).units.some((u) => keys.every((key) => u.items.includes(key)))
+  ).toBe(false)
+})

@@ -1,4 +1,5 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { deflateSync } from 'node:zlib'
+import { PDFDocument, PDFHexString, PDFName, StandardFonts, rgb } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
 import { PdfTranslationWriter } from '../src/writer.js'
@@ -126,3 +127,66 @@ it('requires explicit preservation mode for unmatched-source fallback', () => {
   expect(writer.valid(input)).toBe(false)
   expect(writer.valid({ ...input, preserveUnsupported: true })).toBe(true)
 })
+
+it.each([false, true])(
+  'preserves a named indexed inline palette when rewriting text (incremental=%s)',
+  async (incremental) => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    const page = pdf.addPage([400, 500])
+    const palette = pdf.context.obj(['Indexed', 'DeviceRGB', 1, PDFHexString.of('FF0000000080')])
+    const colors = pdf.context.obj({ Palette: pdf.context.register(palette) })
+    page.node.set(
+      PDFName.of('Resources'),
+      pdf.context.obj({ Font: { Body: font.ref }, ColorSpace: pdf.context.register(colors) })
+    )
+    const operators = Buffer.from(
+      'BT /Body 12 Tf 40 440 Td (Cell growth.) Tj ET\n' +
+        'q 60 0 0 30 280 340 cm BI /CS /Palette /W 2 /H 1 /BPC 8 /F /Fl ID\n'
+    )
+    const content = Buffer.concat([
+      operators,
+      deflateSync(Uint8Array.of(0, 1)),
+      Buffer.from('\nEI Q')
+    ])
+    page.node.addContentStream(pdf.context.register(pdf.context.flateStream(content)))
+    const data = await pdf.save()
+    const rect = { x: 0.0875, y: 0.084, width: 0.825, height: 0.064 }
+    const request: PdfTranslationPdfRequest = {
+      id: 'indexed-inline-colors',
+      data,
+      pages: [{ width: 400, height: 500 }],
+      units: [
+        { source: 'Cell growth.', translation: '细胞生长。', fragments: [{ pageNumber: 1, rect }] }
+      ],
+      ...(incremental ? { incremental: { data, pageNumbers: [1] } } : {})
+    }
+    const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    const caller = new TestCallerRegistry().acquire({
+      leaseId: 'indexed-colors',
+      surface: 'electron'
+    })
+    const original = getDocument({ data: data.slice() })
+    let written: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await writer.generateDetailed(request, caller.lease)
+      expect(result?.layoutFailures).toEqual([])
+      written = getDocument({ data: result!.data.slice() })
+      const output = await written.promise
+      const items = (await (await output.getPage(1)).getTextContent()).items
+      expect(items.map((item) => ('str' in item ? item.str : '')).join('')).toContain('细胞生长。')
+      const proof = await verifyPdfPreservation(
+        await original.promise,
+        output,
+        request.units,
+        [],
+        [1]
+      )
+      expect(proof.pages[0].pixels?.changedPixels).toBe(0)
+    } finally {
+      await original.destroy()
+      await written?.destroy()
+      caller.release()
+    }
+  }
+)

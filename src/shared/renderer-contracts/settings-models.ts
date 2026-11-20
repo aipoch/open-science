@@ -1,5 +1,7 @@
 import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
 import type {
+  ImageModelCatalogRequest,
+  ImageModelCatalogResult,
   ImageModelTestRequest,
   ImageModelTestResult,
   ImageModelSettingsMutation,
@@ -241,6 +243,9 @@ export const settingsImageModelsContracts = {
   'settings.testImageModel': callable<
     (request: ImageModelTestRequest) => Promise<ImageModelTestResult>
   >()('settings', ['settings:test-image-model', LOCAL]),
+  'settings.refreshImageModelCatalog': callable<
+    (request: ImageModelCatalogRequest) => Promise<ImageModelCatalogResult>
+  >()('settings', ['settings:refresh-image-model-catalog', LOCAL]),
   'settings.getImageModels': callable<() => Promise<ImageModelSettingsSnapshot>>()('settings', [
     'settings:get-image-models',
     LOCAL

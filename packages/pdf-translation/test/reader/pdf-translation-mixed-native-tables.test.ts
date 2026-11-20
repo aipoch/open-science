@@ -95,3 +95,60 @@ it.each([
     )
   ).toBe(false)
 })
+
+it.each([false, true])('uses serial cell boundaries in a wide prose table (%s)', (shifted) => {
+  const columns = [48, 125, 220, 315, 420]
+  const run = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'normal',
+    font = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height: font,
+    fontName,
+    fontVertical: false,
+    hasEOL,
+    dir: 'ltr',
+    transform: [font, 0, 0, font, x, 800 - y]
+  })
+  const labels = ['Method', 'Source', 'Output', 'Purpose', 'Limitation']
+  const items = [
+    run('TABLE III', 277, 55, 46, 'normal', 10, true),
+    run('THREE APPROACHES TO FIELD SAMPLING', 104, 65, 392, 'normal', 10, true),
+    run('ALL RECORDS FOLLOW THE SAME FORMAT.', 165, 75, 270, 'normal', 10, true),
+    ...labels.map((text, col) => run(text, columns[col], 100, 48, 'bold', 10, col === 4)),
+    ...[114, 140, 166].flatMap((y, row) => [
+      run(`Method ${String.fromCharCode(65 + row)}`, 48, y, 54),
+      run('Survey form', 125, y, 62),
+      run('Sample map', 220, y, 60),
+      run('Record changes', 315, y, 73),
+      run(`Supports review ${String.fromCharCode(65 + row)}`, 420, y, 100, 'normal', 10, true),
+      ...(row === 0
+        ? [run('during winter', shifted ? 429 : 420, y + 11.25, 63, 'normal', 10, true)]
+        : [])
+    ]),
+    run(
+      'The comparison was repeated after the revised procedure.',
+      48,
+      205,
+      247,
+      'normal',
+      12.5,
+      true
+    )
+  ]
+  const { units, pages } = extract(items)
+  const complete = units.find((unit) => unit.source === 'Supports review A during winter')
+  const block = pages[0].blocks.find((part) => part.source === 'Supports review A during winter')
+  expect(!!complete && block?.tableCell === true).toBe(!shifted)
+  if (!shifted) {
+    expect(complete?.items).toHaveLength(2)
+    expect(units.filter((unit) => unit.source === 'Record changes')).toHaveLength(3)
+    expect(units.filter((unit) => unit.source === 'Purpose')).toHaveLength(1)
+  }
+})

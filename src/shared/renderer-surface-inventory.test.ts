@@ -356,6 +356,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-xai-oauth',
     'open-wsl-terminal',
     'probe-wsl-setup',
+    'refresh-image-model-catalog',
     'remove-custom-server',
     'remove-device-credential',
     'remove-github-token',
