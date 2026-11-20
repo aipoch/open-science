@@ -41,7 +41,9 @@ export const useComposerNotices = (input: {
       occurredAt: turn?.outcome.settledAt ?? 0,
       blocksSend: true,
       failure:
-        turn?.outcome.kind === 'interrupted' && turn.outcome.failure?.diagnostics.protocol
+        turn?.outcome.kind === 'interrupted' &&
+        (turn.outcome.failure?.diagnostics.protocol ||
+          turn.outcome.failure?.reason === 'service/response-interrupted')
           ? turn.outcome.failure
           : classifyFailure({ origin: 'session', text: recovery.error })
     })

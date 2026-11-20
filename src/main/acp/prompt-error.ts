@@ -26,6 +26,8 @@ export type PromptErrorContext = {
 type UpstreamDetail = { text: string; type?: string; status?: number }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 300
+const LEGACY_STREAM_INTERRUPTED_CODE = '400008'
+const LEGACY_STREAM_INTERRUPTED_MESSAGE = '供应商流式响应为空或未完整结束'
 
 const isProviderErrorKind = (error: unknown): boolean => {
   try {
@@ -161,6 +163,23 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
     }
   } catch {
     return undefined
+  }
+}
+
+// Require the complete legacy gateway envelope and both fields, not a substring match.
+const isLegacyStreamInterruption = (message: string): boolean => {
+  if (message.length > 1024) return false
+  const body = /^\s*Internal error:\s*(\{[\s\S]*\})\s*$/.exec(message)?.[1]
+  if (!body) return false
+  try {
+    const payload = JSON.parse(body) as { code?: unknown; message?: unknown }
+    return (
+      (payload.code === 400008 || payload.code === LEGACY_STREAM_INTERRUPTED_CODE) &&
+      payload.message === LEGACY_STREAM_INTERRUPTED_MESSAGE &&
+      !('error' in payload)
+    )
+  } catch {
+    return false
   }
 }
 
@@ -356,13 +375,14 @@ export const collectPromptFailureFacts = (
   }
   const text = rawErrorMessage(error)
   const upstream = extractUpstreamDetail(text)
-  const explicitStatus = [
+  const reportedStatuses = [
     data.statusCode,
     data.status,
     detail.httpStatusCode,
     top.status,
     top.statusCode
-  ].find(
+  ]
+  const explicitStatus = reportedStatuses.find(
     (value): value is number =>
       typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
   )
@@ -388,11 +408,47 @@ export const collectPromptFailureFacts = (
   const providerService = top.code === -32603 && data.service === 'provider'
   const taggedProvider =
     providerService || isApiError(error) || isProviderErrorKind(error) || codexProvider
-  // Only consult known adapter wrappers when the wire metadata leaves ownership unspecified.
+  const authenticationFailure = isAgentAuthenticationFailure(error)
+  const reportedProvider = typeof data.provider === 'string' ? data.provider : undefined
+  const correlation = {
+    ...(context.model ? { model: context.model } : {}),
+    ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {})
+  }
+  const internalRequest =
+    error instanceof Error && error.name === 'RequestError' && top.code === -32603
+  // An adapter may tag a provider API failure as session/APIError. Other session failures,
+  // OAuth/Codex envelopes and conflicting HTTP statuses must keep their existing recovery path.
+  if (
+    internalRequest &&
+    !authenticationFailure &&
+    data.error == null &&
+    data.codexErrorInfo == null &&
+    (data.service == null ||
+      providerService ||
+      (data.service === 'session' && isApiError(error))) &&
+    (data.errorName == null || isApiError(error)) &&
+    (data.errorKind == null || data.errorKind === 'unknown' || isProviderErrorKind(error)) &&
+    // 200 can carry a failed stream; the legacy gateway can also return a 400 envelope.
+    (transportStatus === undefined || transportStatus === 200 || transportStatus === 400) &&
+    reportedStatuses.every((status) => status == null || status === transportStatus) &&
+    isLegacyStreamInterruption(text)
+  ) {
+    const provider = context.providerName || reportedProvider
+    return {
+      origin: 'provider',
+      code: -32603,
+      providerCode: LEGACY_STREAM_INTERRUPTED_CODE,
+      phase: 'stream',
+      ...(transportStatus === undefined ? {} : { status: transportStatus }),
+      responseMessage: LEGACY_STREAM_INTERRUPTED_MESSAGE,
+      ...(provider ? { provider } : {}),
+      ...correlation,
+      text: redactSensitiveText(text)
+    }
+  }
+  // Other adapter wrappers only fill in missing ownership metadata.
   const untaggedRequest =
-    error instanceof Error &&
-    error.name === 'RequestError' &&
-    top.code === -32603 &&
+    internalRequest &&
     !data.service &&
     !data.errorName &&
     !codexKind &&
@@ -402,7 +458,6 @@ export const collectPromptFailureFacts = (
     (apiWrapper ||
       isClaudeProviderApiError(error) ||
       (upstream?.type && NOT_FOUND_PATTERN.test(upstream.type)))
-  const authenticationFailure = isAgentAuthenticationFailure(error)
   const origin = isOpenCodeSessionServiceFailure(error)
     ? 'session'
     : taggedProvider || providerWrapper || authenticationFailure
@@ -443,17 +498,14 @@ export const collectPromptFailureFacts = (
                   : undefined) ??
                 codexKind ??
                 (origin === 'provider' ? undefined : top.code))
-  const provider =
-    (responseMessage && context.providerName) ||
-    (typeof data.provider === 'string' ? data.provider : undefined)
+  const provider = (responseMessage && context.providerName) || reportedProvider
   return {
     origin,
     ...(responseMessage ? { responseMessage } : {}),
     ...(status === undefined ? {} : { status }),
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
     ...(provider ? { provider } : {}),
-    ...(context.model ? { model: context.model } : {}),
-    ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
+    ...correlation,
     text: responseMessage ? redactSensitiveText(text) : text
   }
 }

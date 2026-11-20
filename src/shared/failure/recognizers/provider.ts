@@ -17,6 +17,7 @@ export const recognizeProvider: Recognizer = ({
   origin,
   status,
   code,
+  providerCode,
   adapterCode,
   protocol,
   phase,
@@ -89,6 +90,10 @@ export const recognizeProvider: Recognizer = ({
       : { category: 'service', reason: 'service/rate-limited', diagnostics: {} }
   if (status !== undefined && status >= 500 && status <= 599)
     return { category: 'service', reason: 'service/unavailable', diagnostics: {} }
+
+  // The ACP boundary validated the legacy stream-error envelope before setting these facts.
+  if (providerCode === '400008' && phase === 'stream')
+    return { category: 'service', reason: 'service/response-interrupted', diagnostics: {} }
 
   if (AUTH.test(structuredCode))
     return { category: 'configuration', reason: 'configuration/auth-failed', diagnostics: {} }

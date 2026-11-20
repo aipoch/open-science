@@ -1713,6 +1713,8 @@ if (process.argv.includes('--version')) {
   let nextMessageId = 1
   let nextSessionId = 1
   let nextToolCallId = 1
+  const forkVerificationCodes = new Map()
+  const forkStreamSeededSessions = new Set()
 
   const makeToolCallId = (kind) => `e2e-${kind}-${fixtureInstanceId}${nextToolCallId++}`
 
@@ -1775,6 +1777,64 @@ if (process.argv.includes('--version')) {
             ? rawPrompt.slice(controlStart)
             : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      const verificationCode = /Remember the verification code ([A-Z]+-\d+)\./.exec(rawPrompt)?.[1]
+      const asksForCode = rawPrompt.includes('What verification code did I ask you to remember?')
+      if (verificationCode || asksForCode) {
+        const sessionId = context.params.sessionId
+        if (verificationCode) forkVerificationCodes.set(sessionId, verificationCode)
+        const code = forkVerificationCodes.get(sessionId)
+        // A fresh provider Session only knows the code if the first prompt replays its history.
+        if (!code) throw acp.RequestError.internalError(undefined, 'Verification history missing.')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: asksForCode
+                ? `The verification code is ${code}.`
+                : 'Verification code recorded.'
+            }
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+      const forkStreamHistory = 'Record the evidence marker FORK-STREAM-EVIDENCE.'
+      const forkStreamQuestion = 'Explain the evidence marker from this conversation.'
+      if (rawPrompt.includes(forkStreamHistory) || rawPrompt.includes(forkStreamQuestion)) {
+        const sessionId = context.params.sessionId
+        const continuing = rawPrompt.includes(
+          'Continue the interrupted turn from where it stopped.'
+        )
+        const hasHistory = rawPrompt.includes(forkStreamHistory)
+        const hasQuestion = rawPrompt.includes(forkStreamQuestion)
+        if (hasQuestion && hasHistory && !continuing) {
+          throw acp.RequestError.internalError(
+            undefined,
+            '{"message":"供应商流式响应为空或未完整结束","code":400008}'
+          )
+        }
+        if (hasHistory && !hasQuestion) forkStreamSeededSessions.add(sessionId)
+        if (hasQuestion && !hasHistory && !forkStreamSeededSessions.has(sessionId)) {
+          throw acp.RequestError.internalError(undefined, 'The evidence marker is missing.')
+        }
+        const text =
+          continuing && hasHistory && hasQuestion
+            ? 'Resumed with FORK-STREAM-EVIDENCE.'
+            : !continuing && hasQuestion && !hasHistory
+              ? 'Source continued with FORK-STREAM-EVIDENCE.'
+              : 'Recorded FORK-STREAM-EVIDENCE.'
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text }
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
       // Keep real imported history in the request, but route this opt-in performance turn before
       // any historical text can match another fixture. This branch never executes a tool.
       if (rawPrompt.includes(OFFICIAL_SCIENCE_UI_STREAM_PROMPT)) {

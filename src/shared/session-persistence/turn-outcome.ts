@@ -51,6 +51,11 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
     } else {
       for (const key of ['code', 'requestId', 'raw', 'adapterCode', 'phase'] as const)
         if (typeof source[key] === 'string') diagnostics[key] = source[key]
+      if (
+        typeof source.providerCode === 'string' &&
+        /^[A-Za-z0-9_.:-]{1,64}$/.test(source.providerCode)
+      )
+        diagnostics.providerCode = source.providerCode
     }
     return {
       category,

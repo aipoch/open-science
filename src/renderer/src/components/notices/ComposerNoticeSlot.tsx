@@ -96,15 +96,20 @@ const ComposerFailureNoticeSlot = ({
       : undefined) ?? notices[0]
   if (!current) return null
   const presentation = noticePresentation(current.failure)
-  const providerMessage = current.failure.diagnostics.protocol
-    ? undefined
-    : current.failure.responseMessage
+  const interruptedModelTurn =
+    current.source === 'session' &&
+    (current.failure.reason === 'service/response-interrupted' ||
+      current.failure.diagnostics.protocol)
+  const providerMessage =
+    current.failure.diagnostics.protocol || interruptedModelTurn
+      ? undefined
+      : current.failure.responseMessage
   const title =
     current.summary?.title ??
     (providerMessage ? t('Model provider error') : t(presentation.titleKey))
   const description = current.summary
     ? (current.summary.description ?? '')
-    : current.source === 'session' && current.failure.diagnostics.protocol
+    : interruptedModelTurn
       ? t('This turn was interrupted. Resume to continue.')
       : providerMessage
         ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
@@ -310,7 +315,12 @@ const ComposerFailureNoticeSlot = ({
                       <TruncatedText
                         text={
                           notice.summary?.title ??
-                          (notice.failure.responseMessage && !notice.failure.diagnostics.protocol
+                          (notice.failure.responseMessage &&
+                          !notice.failure.diagnostics.protocol &&
+                          !(
+                            notice.source === 'session' &&
+                            notice.failure.reason === 'service/response-interrupted'
+                          )
                             ? t('Model provider error')
                             : t(item.titleKey))
                         }

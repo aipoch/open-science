@@ -10051,50 +10051,59 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.dataset.noticeCategory).toBe('session')
   })
 
-  it('preserves provider interruption details while resuming the existing session', async () => {
-    const resume = vi.fn().mockResolvedValue(undefined)
-    const revise = vi.fn()
-    const failure = {
-      category: 'service' as const,
-      reason: 'service/response-interrupted' as const,
-      diagnostics: {
-        protocol: 'chat-completions' as const,
-        phase: 'stream',
-        requestId: 'cut-stream'
+  it.each([
+    { protocol: 'chat-completions' as const, phase: 'stream', requestId: 'cut-stream' },
+    { code: '-32603', providerCode: '400008', phase: 'stream' }
+  ])(
+    'preserves provider interruption details while resuming the existing session: %j',
+    async (diagnostics) => {
+      const resume = vi.fn().mockResolvedValue(undefined)
+      const revise = vi.fn()
+      const failure = {
+        category: 'service' as const,
+        reason: 'service/response-interrupted' as const,
+        responseMessage: diagnostics.providerCode ? '供应商流式响应为空或未完整结束' : undefined,
+        diagnostics
       }
-    }
-    renderPanel({
-      view: {
-        activeSession: {
-          ...errorSession,
-          status: 'idle',
-          failure,
-          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
-          messages: [
-            {
-              ...planOriginMessages()[0],
-              turnOutcome: {
-                kind: 'interrupted',
-                settledAt: 2,
-                cause: 'connection-lost',
-                recovery: 'resume',
-                failure
+      renderPanel({
+        view: {
+          activeSession: {
+            ...errorSession,
+            status: 'idle',
+            failure,
+            resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+            messages: [
+              {
+                ...planOriginMessages()[0],
+                turnOutcome: {
+                  kind: 'interrupted',
+                  settledAt: 2,
+                  cause: 'connection-lost',
+                  recovery: 'resume',
+                  failure
+                }
               }
-            }
-          ]
-        }
-      },
-      conversation: { actions: { resume, revise } }
-    })
-    expect(slot()?.textContent).toContain('The model response was interrupted')
-    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
-    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
-    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
-    expect(action('retry')).toBeNull()
-    await act(async () => action('resume')?.click())
-    expect(resume).toHaveBeenCalledOnce()
-    expect(revise).not.toHaveBeenCalled()
-  })
+            ]
+          }
+        },
+        conversation: { actions: { resume, revise } }
+      })
+      expect(slot()?.textContent).toContain('The model response was interrupted')
+      expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+      const detail = slot()?.querySelector('pre')?.textContent
+      if (diagnostics.providerCode) {
+        expect(detail).toContain('code: -32603')
+        expect(detail).toContain('providerCode: 400008')
+      } else {
+        expect(detail).toContain('cut-stream')
+      }
+      expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+      expect(action('retry')).toBeNull()
+      await act(async () => action('resume')?.click())
+      expect(resume).toHaveBeenCalledOnce()
+      expect(revise).not.toHaveBeenCalled()
+    }
+  )
 
   it.each([false, true])(
     'keeps full operation diagnostics, copy retry and optional export (%s)',
