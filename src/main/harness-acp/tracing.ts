@@ -1,56 +1,31 @@
 import { randomBytes } from 'node:crypto'
-import { constants, open } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
-import { parseEnv } from 'node:util'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
+import { HARNESS_USER_TEXT_RANGE } from './config'
 import {
-  HARNESS_OTLP_CAPTURE_API_REQUEST,
-  HARNESS_OTLP_CAPTURE_CONTENT,
-  HARNESS_OTLP_DIAGNOSTICS,
-  HARNESS_OTLP_TRACES_API_KEY,
-  HARNESS_OTLP_TRACES_ENDPOINT,
-  HARNESS_OTLP_TRACES_HEADERS,
-  HARNESS_OTLP_TRACES_HEADERS_FILE
-} from './config'
+  MAX_REQUEST_BYTES,
+  SERVICE_NAME,
+  startTraceExport,
+  type CaptureOptions,
+  type ModelRequestCapture,
+  type SpanContent,
+  type TraceAttributes
+} from './trace-export'
 
-const MAX_QUEUED_SPANS = 256
-const MAX_EXPORT_BATCH_SPANS = 32
-const MAX_API_REQUEST_BYTES = 1_048_576
-const MAX_QUEUED_API_REQUEST_BYTES = 4 * MAX_API_REQUEST_BYTES
 const MAX_TOOL_NAMES = 64
-const EXPORT_TIMEOUT_MS = 2_000
-const MAX_HEADERS_FILE_BYTES = 8_192
-const MAX_ENV_FILE_BYTES = 65_536
-const MAX_PREVIEW_TEXT = 4_096
-const SERVICE_NAME = 'open-science-agent'
-const LANGFUSE_TRACE_PATH = '/api/public/otel/v1/traces'
+const MAX_EXCERPT_LENGTH = 4_096
+const MAX_TOOL_PREVIEW_BYTES = 16 * 1024
 const timeOriginNanos = BigInt(Math.round(performance.timeOrigin * 1_000)) * 1_000n
 const unixNanos = (): string =>
   (timeOriginNanos + BigInt(Math.round(performance.now() * 1_000_000))).toString()
 
-const observationTypes = {
-  'harness.turn': 'agent',
-  'harness.model': 'generation',
-  'harness.tool': 'tool'
-} as const
-
 type StartedSpan = {
-  name: keyof typeof observationTypes
+  name: 'harness.turn' | 'harness.model' | 'harness.tool'
   traceId: string
   spanId: string
   parentSpanId?: string
   startTimeUnixNano: string
   kind: 1 | 3 // OTLP INTERNAL or CLIENT
 }
-type AttributeValue = { stringValue: string } | { intValue: string }
-type FinishedSpan = StartedSpan & {
-  endTimeUnixNano: string
-  flags: 1 // Sampled
-  status?: { code: 2 } // ERROR
-  attributes: { key: string; value: AttributeValue }[]
-}
-type QueuedSpan = { span: FinishedSpan; apiRequestBytes: number }
-
 function startSpan(
   name: StartedSpan['name'],
   kind: StartedSpan['kind'],
@@ -70,54 +45,88 @@ function startSpan(
   }
 }
 
-type Attributes = Record<string, string | number | undefined>
-
-function encodeAttributes(attributes: Attributes): FinishedSpan['attributes'] {
-  const encoded: FinishedSpan['attributes'] = []
-  for (const [key, value] of Object.entries(attributes)) {
-    if (typeof value === 'string')
-      encoded.push({ key, value: { stringValue: value.slice(0, 256) } })
-    else if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
-      encoded.push({ key, value: { intValue: String(value) } })
-  }
-  return encoded
-}
-
-type ApiRequestCapture =
-  | { status: 'captured'; body: string; bytes: number }
-  | { status: 'size_limit' | 'queue_limit'; bytes: number }
-  | { status: 'not_sent' | 'unsupported_body'; bytes?: undefined }
-
-type Preview = { input: object; output: object; apiRequest?: ApiRequestCapture }
-type TextBlock = { type: string; text?: string }
-type TextPreview = { text: string; truncated?: true }
-
-function previewText(blocks: readonly TextBlock[]): TextPreview | undefined {
-  let text = ''
-  for (const block of blocks) {
-    if (block.type !== 'text' || !block.text) continue
-    if (text) text += '\n'
-    const remaining = MAX_PREVIEW_TEXT - text.length
-    if (block.text.length > remaining) {
-      // Keep the prefix valid Unicode when it ends inside a surrogate pair.
-      const prefix = (text + block.text.slice(0, Math.max(0, remaining))).slice(0, MAX_PREVIEW_TEXT)
-      return { text: prefix.replace(/[\uD800-\uDBFF]$/, ''), truncated: true }
-    }
-    text += block.text
-  }
-  return text ? { text } : undefined
-}
-
 type SpanRecorder = (
   span: StartedSpan | undefined,
   outcome: string,
-  attributes: Attributes,
-  preview: Preview
+  attributes: TraceAttributes,
+  content?: SpanContent
 ) => void
+
+type TextBlock = { type: string; text?: string; _meta?: Record<string, unknown> | null }
+type Excerpt = { text: string; truncated: boolean }
+
+function userPromptExcerpt(prompt: readonly TextBlock[]): Excerpt | undefined {
+  const first = prompt[0]
+  if (first?.type !== 'text' || !first.text) return undefined
+  const range = first._meta?.[HARNESS_USER_TEXT_RANGE]
+  if (!Array.isArray(range) || range.length !== 2) return undefined
+  const [start, end] = range
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end <= start ||
+    end > first.text.length
+  )
+    return undefined
+  const limit = Math.min(end, start + MAX_EXCERPT_LENGTH)
+  return {
+    text: first.text.slice(start, limit).replace(/[\uD800-\uDBFF]$/, ''),
+    truncated: limit < end
+  }
+}
+
+function excerpt(blocks: readonly TextBlock[]): Excerpt | undefined {
+  let text = ''
+  for (const block of blocks) {
+    if (block.type !== 'text' || !block.text) continue
+    const remaining = MAX_EXCERPT_LENGTH - text.length
+    if (block.text.length + (text ? 1 : 0) > remaining) {
+      const prefix = text + (text && remaining ? '\n' : '')
+      return {
+        text: (prefix + block.text.slice(0, MAX_EXCERPT_LENGTH - prefix.length)).replace(
+          /[\uD800-\uDBFF]$/,
+          ''
+        ),
+        truncated: true
+      }
+    }
+    text += text ? '\n' + block.text : block.text
+  }
+  return text ? { text, truncated: false } : undefined
+}
+
+function formatToolPreview(
+  summary: { [key: string]: string | number | undefined },
+  detail?: { field: 'arguments' | 'result'; value: unknown }
+): string {
+  if (!detail) return JSON.stringify(summary)
+  const omissionField = `${detail.field}Omitted`
+  const sizeLimit = Symbol()
+  let remaining = MAX_TOOL_PREVIEW_BYTES
+  try {
+    const preview = JSON.stringify(
+      { ...summary, [detail.field]: detail.value },
+      function (this: unknown, key: string, value: unknown): unknown {
+        if (value === undefined) return value
+        // Check a lower bound before JSON builds escaped strings for large media blocks.
+        remaining -= Array.isArray(this) ? 0 : key.length
+        remaining -= typeof value === 'string' ? value.length + 2 : 1
+        if (remaining < 0) throw sizeLimit
+        return value
+      }
+    )
+    if (Buffer.byteLength(preview) <= MAX_TOOL_PREVIEW_BYTES) return preview
+  } catch (error) {
+    if (error !== sizeLimit)
+      return JSON.stringify({ ...summary, [omissionField]: 'encoding_error' })
+  }
+  return JSON.stringify({ ...summary, [omissionField]: 'size_limit' })
+}
 
 export type HarnessSessionTracing = {
   startTurn(
-    prompt?: readonly TextBlock[]
+    prompt: readonly TextBlock[]
   ): ((outcome: string, requestCount?: number) => void) | undefined
   markCompaction(requestId: string): void
   captureModelRequest(body: RequestInit['body']): void
@@ -127,39 +136,60 @@ export type HarnessSessionTracing = {
 
 type Turn = {
   span: StartedSpan
-  prompt?: TextPreview
-  response?: TextPreview
+  captureExcerpts: boolean
+  captureModelRequests: boolean
+  captureToolArguments: boolean
+  captureToolResults: boolean
+  response?: Excerpt
   modelRequests: number
   compactionRequests: number
   toolExecutions: number
   compactionRequestId?: string
 }
 
+type SessionMetadata = {
+  model: string
+  protocol: string
+  contextWindow: number
+  inputBudget: number
+}
+
 function traceSession(
   record: SpanRecorder,
   sessionId: string,
-  modelName: string,
-  protocol: string,
-  enabled: () => boolean,
-  captureContent: () => boolean,
-  captureApiRequest: () => boolean
+  metadata: SessionMetadata,
+  captureOptions: () => CaptureOptions | undefined
 ): HarnessSessionTracing {
   let active: Turn | undefined
-  // The harness serializes requests within each session, including compaction. Different
-  // sessions own different wrappers and transports.
-  let modelRequest: { capture: ApiRequestCapture } | undefined
-  const sessionAttributes = { 'langfuse.session.id': sessionId }
+  // Each session serializes model dispatch, including automatic compaction.
+  let modelRequest: ModelRequestCapture | undefined
+  const sessionAttributes = { 'session.id': sessionId, 'harness.session.id': sessionId }
+  const modelAttributes = {
+    'harness.model.protocol': metadata.protocol,
+    'harness.context.window_tokens': metadata.contextWindow,
+    'harness.context.input_budget_tokens': metadata.inputBudget
+  }
   return {
-    startTurn(prompt = []) {
-      if (!enabled()) return undefined
+    startTurn(prompt) {
+      const capture = captureOptions()
+      if (!capture) return undefined
       const span = startSpan('harness.turn', 1)
       if (!span) return undefined
       const turn: Turn = {
         span,
-        prompt: captureContent() ? previewText(prompt) : undefined,
+        captureExcerpts: capture.excerpts,
+        captureModelRequests: capture.modelRequests,
+        captureToolArguments: capture.toolArguments,
+        captureToolResults: capture.toolResults,
         modelRequests: 0,
         compactionRequests: 0,
         toolExecutions: 0
+      }
+      let input: Excerpt | undefined
+      try {
+        if (capture.excerpts) input = userPromptExcerpt(prompt)
+      } catch {
+        // An unreadable diagnostic value cannot stop a turn.
       }
       active = turn
       return (outcome, requestCount) => {
@@ -169,25 +199,17 @@ function traceSession(
           outcome,
           {
             ...sessionAttributes,
-            'harness.session.id': sessionId,
-            'harness.model.protocol': protocol,
-            'harness.request.count': requestCount
+            ...modelAttributes,
+            'gen_ai.operation.name': 'invoke_agent',
+            'gen_ai.agent.name': SERVICE_NAME,
+            'harness.prompt.block_count': prompt.length,
+            'harness.prompt.excerpt_truncated': input?.truncated,
+            'harness.reply.excerpt_truncated': turn.response?.truncated,
+            'harness.request.count': requestCount ?? turn.modelRequests,
+            'harness.compaction.request_count': turn.compactionRequests,
+            'harness.tool.execution_count': turn.toolExecutions
           },
-          {
-            input: {
-              model: modelName.slice(0, 256),
-              protocol,
-              promptBlocks: prompt.length,
-              prompt: turn.prompt
-            },
-            output: {
-              stopReason: outcome,
-              modelRequests: requestCount ?? turn.modelRequests,
-              compactionRequests: turn.compactionRequests,
-              toolExecutions: turn.toolExecutions,
-              response: turn.response
-            }
-          }
+          { input: input?.text, output: turn.response?.text }
         )
       }
     },
@@ -195,16 +217,20 @@ function traceSession(
       if (active) active.compactionRequestId = requestId
     },
     captureModelRequest(body) {
-      if (!modelRequest) return
-      if (typeof body !== 'string') {
-        modelRequest.capture = { status: 'unsupported_body' }
-        return
+      if (!modelRequest || !captureOptions()) return
+      try {
+        if (typeof body !== 'string') modelRequest = { status: 'unsupported_body' }
+        else if (body.length > MAX_REQUEST_BYTES) modelRequest = { status: 'size_limit' }
+        else {
+          const bytes = Buffer.byteLength(body)
+          modelRequest =
+            bytes <= MAX_REQUEST_BYTES
+              ? { status: 'captured', body, bytes }
+              : { status: 'size_limit', bytes }
+        }
+      } catch {
+        modelRequest = { status: 'unsupported_body' }
       }
-      const bytes = Buffer.byteLength(body)
-      modelRequest.capture =
-        bytes <= MAX_API_REQUEST_BYTES
-          ? { status: 'captured', body, bytes }
-          : { status: 'size_limit', bytes }
     },
     wrapModel(model) {
       return {
@@ -215,18 +241,15 @@ function traceSession(
           const stream = async function* (): AsyncGenerator<ModelEvent> {
             const span = startSpan('harness.model', 3, turn.span)
             const compaction = turn.compactionRequestId === request.requestId
-            const purpose = compaction ? 'compaction' : 'turn'
-            const apiRequest: { capture: ApiRequestCapture } | undefined = captureApiRequest()
-              ? { capture: { status: 'not_sent' } }
-              : undefined
-            modelRequest = apiRequest
+            modelRequest = turn.captureModelRequests ? { status: 'not_sent' } : undefined
             turn.modelRequests++
             if (compaction) turn.compactionRequests++
             let reason: string | undefined
             let usage: ModelUsage | undefined
-            let response: TextPreview | undefined
             let toolCalls: number | undefined
             let requestedTools: string[] | undefined
+            let unknownToolCalls: number | undefined
+            let response: Excerpt | undefined
             let completed = false
             try {
               for await (const event of model.stream(request, signal)) {
@@ -234,17 +257,32 @@ function traceSession(
                   reason = event.reason
                   usage = event.usage
                   toolCalls = event.calls?.length ?? 0
-                  requestedTools = event.calls
-                    ?.slice(0, MAX_TOOL_NAMES)
-                    .map((call) => call.name.slice(0, 64))
-                  if (!compaction && captureContent()) response = previewText(event.content)
+                  try {
+                    if (
+                      turn.captureExcerpts &&
+                      !compaction &&
+                      event.reason !== 'tools' &&
+                      captureOptions()
+                    )
+                      response = excerpt(event.content)
+                    if (event.calls?.length) {
+                      const offeredNames = new Set(request.tools.map((tool) => tool.name))
+                      // Only record names in the tool catalog. Model-generated names can carry content.
+                      const knownCalls = event.calls.filter((call) => offeredNames.has(call.name))
+                      unknownToolCalls = toolCalls - knownCalls.length
+                      requestedTools = knownCalls.slice(0, MAX_TOOL_NAMES).map((call) => call.name)
+                    }
+                  } catch {
+                    // Always deliver the model event, even when its trace attributes cannot be read.
+                  }
                 }
                 yield event
               }
               completed = true
             } finally {
-              modelRequest = undefined
               const outcome = signal.aborted ? 'cancelled' : (completed && reason) || 'error'
+              const capturedRequest = modelRequest
+              modelRequest = undefined
               if (!compaction && (outcome === 'complete' || outcome === 'length'))
                 turn.response = response
               record(
@@ -252,41 +290,28 @@ function traceSession(
                 outcome,
                 {
                   ...sessionAttributes,
-                  'harness.request.id': request.requestId,
-                  'harness.request.purpose': purpose,
-                  'gen_ai.request.model': modelName,
+                  ...modelAttributes,
+                  'gen_ai.operation.name': 'chat',
+                  'gen_ai.request.model': metadata.model,
+                  'gen_ai.request.max_tokens': request.useProviderOutputDefault
+                    ? undefined
+                    : request.maxOutputTokens,
                   'gen_ai.usage.input_tokens': usage?.inputTokens,
                   'gen_ai.usage.output_tokens': usage?.outputTokens,
                   'gen_ai.usage.cache_read.input_tokens': usage?.cacheReadTokens,
-                  'gen_ai.usage.cache_creation.input_tokens': usage?.cacheWriteTokens
+                  'gen_ai.usage.cache_creation.input_tokens': usage?.cacheWriteTokens,
+                  'harness.request.id': request.requestId,
+                  'harness.request.purpose': compaction ? 'compaction' : 'turn',
+                  'harness.context.message_count': request.messages.length,
+                  'harness.tool.offered_count': request.tools.length,
+                  'harness.tool.offered_names': request.tools
+                    .slice(0, MAX_TOOL_NAMES)
+                    .map((tool) => tool.name),
+                  'harness.tool.requested_count': toolCalls,
+                  'harness.tool.requested_names': requestedTools,
+                  'harness.tool.unknown_requested_count': unknownToolCalls
                 },
-                {
-                  apiRequest: apiRequest?.capture,
-                  input: {
-                    purpose,
-                    messages: request.messages.length,
-                    availableTools: request.tools.length,
-                    offeredTools: request.tools
-                      .slice(0, MAX_TOOL_NAMES)
-                      .map((tool) => tool.name.slice(0, 64)),
-                    maxOutputTokens: request.useProviderOutputDefault
-                      ? undefined
-                      : request.maxOutputTokens,
-                    turnPrompt: compaction ? undefined : turn.prompt
-                  },
-                  output: {
-                    outcome,
-                    toolCalls,
-                    requestedTools,
-                    usage: usage && {
-                      inputTokens: usage.inputTokens,
-                      outputTokens: usage.outputTokens,
-                      cacheReadTokens: usage.cacheReadTokens,
-                      cacheWriteTokens: usage.cacheWriteTokens
-                    },
-                    response
-                  }
-                }
+                { modelRequest: capturedRequest }
               )
             }
           }
@@ -302,24 +327,57 @@ function traceSession(
           if (!turn) return tool.execute(args, context)
           const span = startSpan('harness.tool', 1, turn.span)
           turn.toolExecutions++
+          let input: string | undefined
+          try {
+            const argumentCount =
+              args && typeof args === 'object' && !Array.isArray(args)
+                ? Object.keys(args).length
+                : undefined
+            input = formatToolPreview(
+              { tool: tool.name.slice(0, 256), argumentCount },
+              span && turn.captureToolArguments && captureOptions()
+                ? { field: 'arguments', value: args }
+                : undefined
+            )
+          } catch {
+            // A diagnostic snapshot must not prevent execution.
+          }
           let result: Awaited<ReturnType<AgentTool['execute']>> | undefined
           try {
             result = await tool.execute(args, context)
             return result
           } finally {
-            let outcome = 'error'
-            if (context.signal.aborted) outcome = 'cancelled'
-            else if (result && typeof result === 'object') {
-              if ('waiting' in result) outcome = 'waiting'
-              else if (!result.isError) outcome = 'complete'
+            try {
+              let outcome = 'error'
+              if (context.signal.aborted) outcome = 'cancelled'
+              else if (result && typeof result === 'object') {
+                if ('waiting' in result) outcome = 'waiting'
+                else if (!result.isError) outcome = 'complete'
+              }
+              const resultBlockCount =
+                result && 'content' in result ? result.content.length : undefined
+              record(
+                span,
+                outcome,
+                {
+                  ...sessionAttributes,
+                  'gen_ai.operation.name': 'execute_tool',
+                  'gen_ai.tool.name': tool.name,
+                  'harness.tool.invocation.id': context.invocationId
+                },
+                {
+                  input,
+                  output: formatToolPreview(
+                    { outcome, resultBlockCount },
+                    span && turn.captureToolResults && result !== undefined && captureOptions()
+                      ? { field: 'result', value: result }
+                      : undefined
+                  )
+                }
+              )
+            } catch {
+              // Trace previews must not change the tool's result or error.
             }
-            const toolName = tool.name.slice(0, 256)
-            record(
-              span,
-              outcome,
-              { ...sessionAttributes, 'gen_ai.tool.name': toolName },
-              { input: { tool: toolName }, output: { outcome } }
-            )
           }
         }
       }
@@ -328,278 +386,29 @@ function traceSession(
 }
 
 export type HarnessTracing = {
-  session(sessionId: string, model: string, protocol: string): HarnessSessionTracing
+  ready: Promise<boolean>
+  session(sessionId: string, metadata: SessionMetadata): HarnessSessionTracing
   dispose(): void
 }
 
-async function readTraceFile(path: string, maxBytes: number): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))
-  try {
-    const stat = await file.stat()
-    if (!stat.isFile() || stat.size > maxBytes) throw new Error('Invalid OTLP configuration file')
-    const buffer = Buffer.alloc(stat.size)
-    for (let offset = 0; offset < buffer.length;) {
-      const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset)
-      if (!bytesRead) throw new Error('Incomplete OTLP configuration file')
-      offset += bytesRead
-    }
-    return buffer.toString('utf8')
-  } finally {
-    await file.close()
-  }
-}
-
-async function loadExportConfig(
-  endpoint: string | undefined,
-  headersFile: string | undefined,
-  env: NodeJS.Dict<string>
-): Promise<{ url: URL; headers: Headers } | undefined> {
-  const target = endpoint ?? env[HARNESS_OTLP_TRACES_ENDPOINT]
-  const path = headersFile ?? env[HARNESS_OTLP_TRACES_HEADERS_FILE]
-  if (!target?.trim() || (path && !isAbsolute(path))) return undefined
-  const url = new URL(target)
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
-    return undefined
-  const headers = new Headers()
-  const rawHeaders = path
-    ? await readTraceFile(path, MAX_HEADERS_FILE_BYTES)
-    : env[HARNESS_OTLP_TRACES_HEADERS]
-  const apiKey = env[HARNESS_OTLP_TRACES_API_KEY]?.trim()
-  if (rawHeaders !== undefined) {
-    const values: unknown = JSON.parse(rawHeaders)
-    if (!values || typeof values !== 'object' || Array.isArray(values))
-      throw new Error('Expected an OTLP headers object')
-    for (const [name, value] of Object.entries(values)) {
-      if (typeof value !== 'string') throw new Error('Expected an OTLP header string')
-      headers.set(name, value)
-    }
-  } else if (apiKey) {
-    headers.set('authorization', `Bearer ${apiKey}`)
-  } else if (url.pathname === LANGFUSE_TRACE_PATH) {
-    const publicKey = env.LANGFUSE_PUBLIC_KEY?.trim()
-    const secretKey = env.LANGFUSE_SECRET_KEY?.trim()
-    if (publicKey || secretKey) {
-      if (!publicKey || !secretKey || publicKey.includes(':')) return undefined
-      const credentials = Buffer.from(`${publicKey}:${secretKey}`, 'utf8').toString('base64')
-      headers.set('authorization', `Basic ${credentials}`)
-      headers.set('x-langfuse-ingestion-version', '4')
-    }
-  }
-  headers.set('content-type', 'application/json')
-  return { url, headers }
-}
-
-type UploadStatus =
-  | { outcome: 'http_accepted' | 'http_rejected'; httpStatus: number }
-  | { outcome: 'invalid_configuration' | 'timeout' | 'transport_error' }
-
-async function writeUploadStatus(path: string, status: UploadStatus): Promise<void> {
-  try {
-    const file = await open(
-      path,
-      constants.O_WRONLY |
-        constants.O_CREAT |
-        (constants.O_NOFOLLOW ?? 0) |
-        (constants.O_NONBLOCK ?? 0),
-      0o600
-    )
-    try {
-      if (!(await file.stat()).isFile()) return
-      // A fixed-width record keeps concurrent helpers from truncating each other's status.
-      const contents =
-        JSON.stringify({ at: new Date().toISOString(), ...status }).padEnd(127) + '\n'
-      await file.writeFile(contents)
-      await file.truncate(Buffer.byteLength(contents))
-    } finally {
-      await file.close()
-    }
-  } catch {
-    // The status file is best effort and never participates in the Agent protocol.
-  }
-}
-
-/** Best-effort OTLP/HTTP JSON, owned by the ACP helper. */
 export function createHarnessTracing(
   endpoint: string | undefined,
   headersFile?: string,
   envFile?: string
 ): HarnessTracing | undefined {
   if (endpoint === undefined && !envFile) return undefined
-  const lifetime = new AbortController()
-  let queued: QueuedSpan[] = []
-  let queuedApiRequestBytes = 0
-  let exporting = false
-  let scheduled: NodeJS.Immediate | undefined
-  let disabled = false
-  let captureContent = false
-  let captureApiRequest = false
-  const destination = (async () => {
-    // Explicit launch settings are one destination. File credentials stay with the file URL.
-    const env =
-      endpoint === undefined && envFile
-        ? parseEnv(await readTraceFile(envFile, MAX_ENV_FILE_BYTES))
-        : {}
-    const statusFile =
-      envFile && env[HARNESS_OTLP_DIAGNOSTICS] === '1' ? `${envFile}.otel-status.json` : undefined
-    captureContent = env[HARNESS_OTLP_CAPTURE_CONTENT] === '1'
-    captureApiRequest = env[HARNESS_OTLP_CAPTURE_API_REQUEST] === '1'
-    const config = await loadExportConfig(endpoint, headersFile, env).catch(() => undefined)
-    if (!config) {
-      if (statusFile && !lifetime.signal.aborted)
-        await writeUploadStatus(statusFile, { outcome: 'invalid_configuration' })
-      return undefined
-    }
-    return { ...config, statusFile }
-  })()
-    .catch(() => undefined)
-    .then((config) => {
-      if (!config) {
-        disabled = true
-        queued = []
-        queuedApiRequestBytes = 0
-      }
-      return config
-    })
-
-  function scheduleExport(): void {
-    if (scheduled || exporting || !queued.length || lifetime.signal.aborted) return
-    scheduled = setImmediate(() => {
-      scheduled = undefined
-      void send().catch(() => undefined)
-    }).unref()
-  }
-
-  async function send(): Promise<void> {
-    let count = 0
-    let batchApiRequestBytes = 0
-    for (const item of queued) {
-      if (
-        count === MAX_EXPORT_BATCH_SPANS ||
-        batchApiRequestBytes + item.apiRequestBytes > MAX_API_REQUEST_BYTES
-      )
-        break
-      count++
-      batchApiRequestBytes += item.apiRequestBytes
-    }
-    const spans = queued.splice(0, count).map((item) => item.span)
-    queuedApiRequestBytes -= batchApiRequestBytes
-    exporting = true
-    let statusFile: string | undefined
-    let timeout: AbortSignal | undefined
+  const exporter = startTraceExport(endpoint, headersFile, envFile)
+  const record: SpanRecorder = (span, outcome, attributes, content) => {
+    if (!span) return
     try {
-      const config = await destination
-      if (!config || lifetime.signal.aborted) return
-      const { url, headers } = config
-      statusFile = config.statusFile
-      timeout = AbortSignal.timeout(EXPORT_TIMEOUT_MS)
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          resourceSpans: [
-            {
-              resource: { attributes: encodeAttributes({ 'service.name': SERVICE_NAME }) },
-              scopeSpans: [{ scope: { name: SERVICE_NAME }, spans }]
-            }
-          ]
-        }),
-        redirect: 'error',
-        signal: AbortSignal.any([lifetime.signal, timeout])
-      })
-      await response.body?.cancel().catch(() => undefined)
-      if (statusFile && !lifetime.signal.aborted)
-        await writeUploadStatus(statusFile, {
-          outcome: response.ok ? 'http_accepted' : 'http_rejected',
-          httpStatus: response.status
-        })
-    } catch {
-      if (statusFile && !lifetime.signal.aborted)
-        await writeUploadStatus(statusFile, {
-          outcome: timeout?.aborted ? 'timeout' : 'transport_error'
-        })
-      // A failed batch is dropped without retrying or propagating telemetry errors.
-    } finally {
-      exporting = false
-      scheduleExport()
-    }
-  }
-
-  const record: SpanRecorder = (span, outcome, attributes, preview) => {
-    if (!span || disabled || lifetime.signal.aborted || queued.length >= MAX_QUEUED_SPANS) return
-    try {
-      let apiRequest = preview.apiRequest
-      if (
-        apiRequest?.status === 'captured' &&
-        queuedApiRequestBytes + apiRequest.bytes > MAX_QUEUED_API_REQUEST_BYTES
-      )
-        apiRequest = { status: 'queue_limit', bytes: apiRequest.bytes }
-      const apiRequestBytes = apiRequest?.status === 'captured' ? apiRequest.bytes : 0
-      const input =
-        apiRequest?.status === 'captured'
-          ? apiRequest.body
-          : JSON.stringify({
-              ...preview.input,
-              ...(apiRequest
-                ? {
-                    apiRequest: {
-                      status: apiRequest.status,
-                      bytes: apiRequest.bytes,
-                      limitBytes:
-                        apiRequest.status === 'size_limit'
-                          ? MAX_API_REQUEST_BYTES
-                          : apiRequest.status === 'queue_limit'
-                            ? MAX_QUEUED_API_REQUEST_BYTES
-                            : undefined
-                    }
-                  }
-                : {})
-            })
-      queued.push({
-        apiRequestBytes,
-        span: {
-          ...span,
-          flags: 1,
-          endTimeUnixNano: unixNanos(),
-          ...(outcome === 'error' ? { status: { code: 2 } } : {}),
-          attributes: [
-            ...encodeAttributes({
-              ...attributes,
-              'harness.outcome': outcome,
-              'harness.request.body_capture': apiRequest?.status,
-              'harness.request.body_bytes': apiRequest?.bytes,
-              'langfuse.observation.type': observationTypes[span.name]
-            }),
-            { key: 'langfuse.observation.input', value: { stringValue: input } },
-            {
-              key: 'langfuse.observation.output',
-              value: { stringValue: JSON.stringify(preview.output) }
-            }
-          ]
-        }
-      })
-      queuedApiRequestBytes += apiRequestBytes
-      scheduleExport()
+      exporter.enqueue({ ...span, endTimeUnixNano: unixNanos(), outcome, attributes, content })
     } catch {
       // Recording spans must not change Agent behavior.
     }
   }
-
   return {
-    session: (id, model, protocol) =>
-      traceSession(
-        record,
-        id,
-        model,
-        protocol,
-        () => !disabled,
-        () => captureContent,
-        () => captureApiRequest
-      ),
-    dispose() {
-      lifetime.abort()
-      queued = []
-      queuedApiRequestBytes = 0
-      if (scheduled) clearImmediate(scheduled)
-    }
+    ready: exporter.ready,
+    session: (id, metadata) => traceSession(record, id, metadata, () => exporter.capture),
+    dispose: exporter.dispose
   }
 }

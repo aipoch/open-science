@@ -11676,6 +11676,7 @@
         "src/main/harness-acp/mcp.ts",
         "src/main/harness-acp/entry.ts",
         "src/main/harness-acp/tracing.ts",
+        "src/main/harness-acp/trace-export.ts",
         "src/main/harness-acp/tool-receipts.ts",
         "src/main/harness-acp/storage-cleanup.ts"
       ],
@@ -11703,6 +11704,7 @@
         "node:fs/promises",
         "node:path",
         "node:stream",
+        "node:timers/promises",
         "node:util"
       ]
     }
