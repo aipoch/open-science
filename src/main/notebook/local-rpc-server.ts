@@ -1653,7 +1653,7 @@ class NotebookLocalRpcServer {
       intent = new NotebookExecutionIntent({ projectId, sessionId: resolvedSessionId })
       intent.block('originating-execution-context-unavailable')
     }
-    const binding: NotebookRpcSessionBinding = {
+    let binding: NotebookRpcSessionBinding = {
       sessionId: resolvedSessionId,
       projectId,
       agentFrameId: resolvedAgentFrameId,
@@ -1667,12 +1667,50 @@ class NotebookLocalRpcServer {
         endpoint: connection.endpoint,
         socketPath: connection.socketPath,
         token,
+        prepareInitialExecution: (executionIntent) => {
+          if (this.sessionRpcCapabilities.get(token) !== binding)
+            throw new Error('Notebook execution capability was superseded.')
+          const currentSessionId = this.sessionAliases.get(binding.sessionId) ?? binding.sessionId
+          if (
+            executionIntent.scope.projectId !== binding.projectId ||
+            executionIntent.scope.sessionId !== currentSessionId
+          )
+            throw new Error('Notebook execution intent does not belong to this Session.')
+          // Replace the binding rather than mutating its intent: requests admitted before this
+          // preparation must never acquire the new user's authority after awaiting their body.
+          const prepared = { ...binding, executionIntent, executionReady: false }
+          binding = prepared
+          this.sessionRpcCapabilities.set(token, prepared)
+          let finalized = false
+          return {
+            commit: () => {
+              if (finalized || this.sessionRpcCapabilities.get(token) !== prepared)
+                throw new Error('Notebook execution preparation was superseded.')
+              this.service.bindExecutionIntent?.(
+                { projectId: executionIntent.scope.projectId, sessionId: currentSessionId },
+                executionIntent
+              )
+              prepared.executionReady = true
+              finalized = true
+            },
+            release: () => {
+              if (finalized) return
+              finalized = true
+              executionIntent.abandonUserExecution()
+              // Keep the installed connection dormant so a cancelled first send can be retried.
+              // A stale release cannot modify a successor's binding.
+              if (this.sessionRpcCapabilities.get(token) === prepared)
+                prepared.executionReady = false
+            }
+          }
+        },
         deferExecution: () => {
-          binding.executionReady = false
+          const deferred = binding
+          deferred.executionReady = false
           return () => {
-            if (this.sessionRpcCapabilities.get(token) !== binding)
+            if (this.sessionRpcCapabilities.get(token) !== deferred)
               throw new Error('Notebook execution capability was superseded.')
-            binding.executionReady = true
+            deferred.executionReady = true
           }
         },
         release: () => {
@@ -1802,6 +1840,28 @@ class NotebookLocalRpcServer {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token,
+      prepareInitialExecution: (nextIntent: NotebookExecutionIntent) => {
+        const assertCurrent = (): void => {
+          if (delegatedNotebook.revoked || this.sessionRpcCapabilities.get(token) !== binding)
+            throw new Error('Delegated Notebook execution authority expired.')
+          // The Attempt already owns this inherited grant. First dispatch cannot mint or replace
+          // the root user's authority; later delivered turns rotate their concrete credentials.
+          if (nextIntent !== binding.executionIntent)
+            throw new Error('Delegated Notebook execution intent does not belong to this Attempt.')
+        }
+        assertCurrent()
+        let finalized = false
+        return {
+          commit: () => {
+            if (finalized) throw new Error('Delegated Notebook preparation is already finalized.')
+            assertCurrent()
+            finalized = true
+          },
+          release: () => {
+            finalized = true
+          }
+        }
+      },
       refreshExecutionIntent: async (
         nextIntent: NotebookExecutionIntent
       ): Promise<NotebookRpcConnection> => {
@@ -2748,6 +2808,11 @@ class NotebookLocalRpcServer {
       } else {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
+          if (sessionBinding !== initialSessionBinding)
+            throw new RpcHttpError(
+              409,
+              'Notebook execution authority changed before request admission.'
+            )
           authenticatedSessionBinding = sessionBinding
           // Capture the authenticated turn before any awaited input resolution. A cancelled or
           // replaced turn cannot regain execution authority from a newer binding at dispatch.

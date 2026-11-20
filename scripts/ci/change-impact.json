@@ -580,6 +580,7 @@
         "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
+        "e2e/default-agent-conversation.spec.ts",
         "e2e/harness-provider-errors.spec.ts",
         "e2e/harness-provider-error-matrix.spec.ts",
         "e2e/fixtures/provider-error-cases.ts",

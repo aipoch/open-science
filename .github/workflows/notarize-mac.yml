@@ -316,15 +316,10 @@ jobs:
           inputs.from_run &&
           inputs.certified_build
         run: >-
-          node scripts/ci/release-certification-evidence.mjs write
+          node scripts/ci/release-certification-evidence.mjs refresh
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
-          --electron-p0 not-applicable
-          --visual-regression not-applicable
-          --package-smoke passed
-          --database-migration-certification mac/database-migration-certification.json
-          --authenticode not-applicable
 
       - name: Preserve final database certification name
         if: >-

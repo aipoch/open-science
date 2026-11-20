@@ -150,6 +150,7 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  commitNotebookDispatch?: (appSessionId: string) => void
   prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
   observeNotebookExecutionLoop?: (input: {
     appSessionId: string
@@ -840,6 +841,7 @@ class AcpPromptTurnWorkflow {
           onDispatched: () => {
             providerDispatched = true
             notebookProviderDispatched = true
+            env.commitNotebookDispatch?.(sessionId)
             notebookExecutionIntent(request)?.commitUserExecution()
           },
           captureStop: (response) => {

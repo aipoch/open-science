@@ -6,6 +6,7 @@ import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/t
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
+import type { NotebookExecutionIntent } from './execution-intent'
 
 import {
   MAX_AGENT_USER_CHOICE_OPTIONS,
@@ -78,6 +79,8 @@ type NotebookRpcConnection = LocalRpcTransport & {
   release?: () => void
   // Main-only preparation fence. The returned owner callback activates only this concrete token.
   deferExecution?: () => () => void
+  // Main-only activation of the connection already installed by session/new or resume.
+  prepareInitialExecution?: (intent: NotebookExecutionIntent) => { commit(): void; release(): void }
 }
 
 type NotebookMcpEnvironment = NotebookRpcConnection &

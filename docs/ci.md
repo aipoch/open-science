@@ -322,6 +322,32 @@ queue uses short Mac core plus focused native checks for sensitive changes. Full
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.
 
+## Default Agent conversation release certification
+
+Every normal Release and publishable Nightly runs eleven mandatory default-Agent conversation
+journeys inside Package Smoke, against each downloaded native candidate: macOS arm64/x64,
+Windows x64, and Linux x64/arm64. The real packaged UI, backend, built-in Agent and Notebook
+permission boundary run with a deterministic localhost model fixture. First/second turns and
+provider failure recovery cover Chat Completions, Responses and Messages; shared lifecycle cases
+cover approval, denial/cancel, user questions, plan approval, normal restart and crash recovery
+without repeated tool effects. Other frameworks retain their existing validation; this gate does
+not certify all live vendors, subscriptions or models.
+
+The gate requires exactly the eleven selected cases, one worker and zero retries. Missing,
+skipped, failed, cancelled, interrupted or retried execution cannot generate certification.
+Platform evidence binds the passing inventory and report digest to the package source, platform
+and certifying workflow attempt. Release aggregation and both Nightly publication paths reject
+missing conversation evidence, including older otherwise-successful source runs. Existing updater,
+database, signing and other publication requirements remain mandatory.
+
+For a nonpublishing focused dry-run, dispatch Package Smoke with `conversation_only=true`,
+`install_only=false`, `artifact_run_id=<same-repository build run>`, and a native platform or `all`.
+Release exposes the same path using `package_smoke_run_id` plus `conversation_only=true`.
+This reuses the production installer preparation, test runner and report verifier, skips unrelated
+smoke scenarios, and emits diagnostic artifacts only. It cannot certify different-source packages
+for publication. Reuse immutable packages after diagnosis; do not enable Playwright retries to
+turn a failed case into passing release evidence.
+
 ## Focused macOS release diagnostics
 
 Use **Notarize macOS (dry-run)** (`notarize-dryrun.yml`) to diagnose the release path without

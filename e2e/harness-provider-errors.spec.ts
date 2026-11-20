@@ -7,7 +7,7 @@ import { createProject, openProjectSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 
 for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
-  test(`built-in harness shows actionable ${protocol} provider errors across restart`, async ({
+  test(`built-in harness shows actionable ${protocol} provider errors across restart @default-agent-release`, async ({
     app
   }, testInfo) => {
     test.setTimeout(180_000)

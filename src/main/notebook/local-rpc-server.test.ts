@@ -125,6 +125,65 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('activates the installed connection only for its current first-send owner', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project'
+    })
+    const execute = vi.spyOn(service, 'executeControl').mockImplementation(async () => {
+      throw new Error('admitted')
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    try {
+      const connection = await server.issueSessionConnection('session', 'project', 'root')
+      const prepare = connection.prepareInitialExecution!
+      const intent = (): NotebookExecutionIntent => {
+        const value = service.createExecutionIntent({ projectId: 'project', sessionId: 'session' })
+        value.prepareUserExecution()
+        return value
+      }
+      const dispatch = (): Promise<Response> =>
+        fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'executeControl',
+              params: { sessionId: 'session', workspaceCwd: root, code: 'return 1' }
+            })
+          },
+          'initial Notebook authority'
+        )
+      await dispatch()
+      expect(execute).not.toHaveBeenCalled()
+      expect(() =>
+        prepare(new NotebookExecutionIntent({ projectId: 'other', sessionId: 'session' }))
+      ).toThrow('does not belong')
+      const cancelled = prepare(intent())
+      expect((await dispatch()).status).toBe(409)
+      cancelled.release()
+      const current = prepare(intent())
+      expect(() => cancelled.commit()).toThrow('superseded')
+      current.commit()
+      cancelled.release()
+      expect((await dispatch()).status).toBe(500)
+      expect(execute).toHaveBeenCalledTimes(1)
+      await server.issueSessionConnection('session', 'project', 'root')
+      expect(() => prepare(intent())).toThrow('superseded')
+      expect((await dispatch()).status).toBe(401)
+    } finally {
+      await server.close()
+      await service.dispose()
+    }
+  })
+
   it('retries failed delegated lane cleanup without restoring its revoked capability', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
@@ -230,7 +289,8 @@ describe('notebook local RPC server', () => {
 
   it.each(
     (['execute', 'runCell', 'executeControl', 'executeShell', 'restart'] as const).flatMap(
-      (method) => (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
+      (method) =>
+        (['ended', 'replaced', 'activated', 'active'] as const).map((turn) => ({ method, turn }))
     )
   )('scopes a slow $method body to its $turn turn', async ({ method, turn }) => {
     const root = await createStorageRoot()
@@ -304,6 +364,16 @@ describe('notebook local RPC server', () => {
     try {
       request.write(payload.slice(0, -1))
       await accepted
+      if (turn === 'activated') {
+        const activation = connection.prepareInitialExecution?.(
+          service.createExecutionIntent({
+            projectId: 'default-project',
+            sessionId: 'session-1'
+          })
+        )
+        expect(activation).toBeDefined()
+        activation!.commit()
+      }
       if (turn === 'ended') await server.clearArtifactTurnBinding('session-1', 'turn-1')
       if (turn === 'replaced') {
         server.setArtifactTurnBinding('session-1', { ...binding, ownerExecutionId: 'turn-2' })
