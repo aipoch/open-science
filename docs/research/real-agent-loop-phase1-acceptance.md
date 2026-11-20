@@ -448,6 +448,14 @@ test now checks the actual Archive and persistence reservations once each and ve
 release. The failure reproduced locally before the change, and the three package lifecycle and
 export suites passed 37 tests afterward (three Windows-only cases skipped on macOS).
 
+The full macOS run started before these test fixes and reported 143,412 passing tests. All six
+integration failures passed on the focused reruns above. The other 64 failures and two
+unhandled errors reproduced on upstream `32253a047`: the build test used an aliased temporary
+path, and the two Python suites picked up the system Python 3.9 shim. The three suites passed
+160 tests on the candidate with a canonical `TMPDIR` and test-only interpreter overrides
+(`OPEN_SCIENCE_TEST_PY_ENV` and `PYTHON`) pointing to the existing Python 3.12.16. These are
+separate runs; the first full run was not green.
+
 A Linux arm64 preview was built from `bde5ca99bcab6509a0f86e387c42bdb4fddcc805`. The npm install
 check passed; the CLI and native archives had SHA-256
 `ef06ee92e0fd3c56c7ff3f0b02ecdc80ccec02fe1616eb422cf91ceb872ba09b` and
