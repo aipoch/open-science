@@ -119,6 +119,8 @@ const ConfirmDialog = ({
   description,
   confirmLabel,
   cancelLabel,
+  confirmDisabled,
+  error,
   onConfirm
 }: {
   open: boolean
@@ -127,7 +129,9 @@ const ConfirmDialog = ({
   description: string
   confirmLabel: string
   cancelLabel: string
-  onConfirm(): void
+  confirmDisabled?: boolean
+  error?: string
+  onConfirm(event: React.MouseEvent<HTMLButtonElement>): void
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -160,6 +164,7 @@ const ConfirmDialog = ({
             <AlertDialog.Description className={dialogDescriptionClassName}>
               {description}
             </AlertDialog.Description>
+            {error && <MemoryErrorBanner message={error} />}
           </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
@@ -168,7 +173,12 @@ const ConfirmDialog = ({
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
-              <Button type="button" className={confirmButtonClassName} onClick={onConfirm}>
+              <Button
+                type="button"
+                className={confirmButtonClassName}
+                onClick={onConfirm}
+                disabled={confirmDisabled}
+              >
                 {confirmLabel}
               </Button>
             </AlertDialog.Action>
@@ -569,6 +579,8 @@ const MemoryList = ({
   const [addingTarget, setAddingTarget] = useState<string>()
   const [confirmClear, setConfirmClear] = useState(false)
   const [pendingDeleteCategory, setPendingDeleteCategory] = useState<CustomMemoryCategoryView>()
+  const [deletingCategory, setDeletingCategory] = useState(false)
+  const [deleteConflict, setDeleteConflict] = useState(false)
   const dialogDeleteCategory = useRetainedDialogValue(pendingDeleteCategory)
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<MemoryEntryView>()
   const hasEntries =
@@ -794,7 +806,10 @@ const MemoryList = ({
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive data-[highlighted]:text-destructive"
-                            onSelect={() => setPendingDeleteCategory(selectedCategory)}
+                            onSelect={() => {
+                              setDeleteConflict(false)
+                              setPendingDeleteCategory(selectedCategory)
+                            }}
                           >
                             <Trash2 className="mr-2 size-4" aria-hidden="true" />
                             {t('Delete category')}
@@ -871,7 +886,7 @@ const MemoryList = ({
         <ConfirmDialog
           open={Boolean(pendingDeleteCategory)}
           onOpenChange={(open) => {
-            if (!open) setPendingDeleteCategory(undefined)
+            if (!open && !deletingCategory) setPendingDeleteCategory(undefined)
           }}
           title={t('Delete category?')}
           description={t(
@@ -882,12 +897,38 @@ const MemoryList = ({
           )}
           confirmLabel={t('Delete category')}
           cancelLabel={t('Cancel')}
-          onConfirm={() => {
-            if (!pendingDeleteCategory) return
-            void deleteCategory({
-              id: pendingDeleteCategory.id,
-              expectedRevision: pendingDeleteCategory.revision
-            }).catch(() => undefined)
+          confirmDisabled={deletingCategory}
+          error={deleteConflict ? t('Memory category changed. Refresh and try again.') : undefined}
+          onConfirm={async (event) => {
+            event.preventDefault()
+            if (!pendingDeleteCategory || deletingCategory) return
+            const confirmed = pendingDeleteCategory
+            setDeletingCategory(true)
+            try {
+              await deleteCategory({
+                id: confirmed.id,
+                expectedRevision: confirmed.revision,
+                expectedEntryIds: confirmed.entries.map(({ id }) => id)
+              })
+              setPendingDeleteCategory(undefined)
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                error.message.includes('Memory category changed. Refresh and try again.')
+              ) {
+                await useMemoryStore.getState().load()
+                const state = useMemoryStore.getState()
+                const latest = state.categories.find(({ id }) => id === confirmed.id)
+                setPendingDeleteCategory(
+                  state.status === 'ready' && latest && !isAboutYou(latest) ? latest : undefined
+                )
+                setDeleteConflict(true)
+              } else {
+                setPendingDeleteCategory(undefined)
+              }
+            } finally {
+              setDeletingCategory(false)
+            }
           }}
         />
       </div>
