@@ -29,6 +29,9 @@ it('keeps the original launch until a complete version can be selected and reuse
   }
   expect(await selectWindowsDesktopVersion(options)).toBeUndefined()
   expect(options.checkOccupancy).not.toHaveBeenCalled()
+  const incomplete = join(versions, '1.2.0')
+  await mkdir(incomplete)
+  await writeFile(join(incomplete, 'prepared.sha512'), 'unusable')
   await mkdir(join(candidate, 'resources'), { recursive: true })
   await writeFile(join(candidate, exe), 'desktop')
   await writeFile(join(candidate, 'resources', 'app.asar'), 'app')

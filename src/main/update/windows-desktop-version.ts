@@ -162,6 +162,11 @@ export async function selectWindowsDesktopVersion(options: {
   const root = windowsDesktopInstallRoot(dirname(executable))
   const versions = versionDirectory(root)
   if (!existsSync(versions)) return
+  if (
+    (await fs.realpath(versions)).toLowerCase() !==
+    versionDirectory(await fs.realpath(root)).toLowerCase()
+  )
+    return undefined
   const activeFile = join(versions, 'active.json')
   const readActive = async (): Promise<string | undefined> => {
     if (!existsSync(activeFile)) return undefined
@@ -178,12 +183,13 @@ export async function selectWindowsDesktopVersion(options: {
     )
     .map((entry) => entry.name)
     .sort((a, b) => (isNewer(a, b) ? -1 : 1))
-  const next = candidates[0]
-  if (
-    next &&
-    existsSync(join(versions, next, 'prepared.sha512')) &&
-    (await options.mayActivate())
-  ) {
+  const next = candidates.find(
+    (version) =>
+      existsSync(join(versions, version, 'prepared.sha512')) &&
+      existsSync(join(versions, version, basename(executable))) &&
+      existsSync(join(versions, version, 'resources', 'app.asar'))
+  )
+  if (next && (await options.mayActivate())) {
     try {
       await options.checkOccupancy()
       active = await readActive()

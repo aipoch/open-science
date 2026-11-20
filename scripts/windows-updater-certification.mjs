@@ -447,6 +447,28 @@ exit $exitCode
   return { ready, exit }
 }
 
+const waitForInstalledApplicationsToExit = (installDirectory, env) =>
+  runProcess(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      [
+        "$ErrorActionPreference = 'Stop'",
+        "$prefix = $env:OPEN_SCIENCE_SMOKE_INSTALL_DIR + '\\'",
+        '$deadline = [DateTime]::UtcNow.AddSeconds(60)',
+        'do {',
+        '  $owners = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })',
+        '  if (!$owners.Count) { exit 0 }',
+        '  Start-Sleep -Milliseconds 250',
+        '} while ([DateTime]::UtcNow -lt $deadline)',
+        'throw ("Desktop quit left installation processes running: " + ($owners.ProcessId -join ","))'
+      ].join('\n')
+    ],
+    { env: { ...env, OPEN_SCIENCE_SMOKE_INSTALL_DIR: installDirectory } }
+  )
+
 // Launch the installer-created link itself. Its unchanged target and the version reported by
 // the healthy renderer distinguish activation from a harness that launched the staged exe.
 const probeInstalledShortcut = async (installDirectory, env, expectedVersion) => {
@@ -494,6 +516,7 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
       void window.api.databaseStartup.quit()
     })
     await closed
+    await waitForInstalledApplicationsToExit(installDirectory, env)
   } finally {
     await browser.close()
   }
@@ -1038,7 +1061,8 @@ const main = async () => {
       },
       UPDATE_TIMEOUT_MS
     )
-    await terminateDirectoryProcesses(installDirectory)
+    if (options.coldLaunch) await waitForInstalledApplicationsToExit(installDirectory, env)
+    else await terminateDirectoryProcesses(installDirectory)
     let probeDirectory = installDirectory
     if (options.coldLaunch) {
       const { child } = await launchUninstallerLockHolder(
