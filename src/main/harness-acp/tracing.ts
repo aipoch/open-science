@@ -394,10 +394,11 @@ export type HarnessTracing = {
 export function createHarnessTracing(
   endpoint: string | undefined,
   headersFile?: string,
-  envFile?: string
+  envFile?: string,
+  launchSwitches?: NodeJS.Dict<string>
 ): HarnessTracing | undefined {
   if (endpoint === undefined && !envFile) return undefined
-  const exporter = startTraceExport(endpoint, headersFile, envFile)
+  const exporter = startTraceExport(endpoint, headersFile, envFile, launchSwitches)
   const record: SpanRecorder = (span, outcome, attributes, content) => {
     if (!span) return
     try {

@@ -768,6 +768,7 @@ class AcpPromptTurnWorkflow {
           cwd,
           frameworkId,
           signal: interaction.signal,
+          cancellationCheckpoint: () => this.checkpoint(interaction),
           ...(frameworkId === 'open-science-agent' && resolveProjectTracing
             ? {
                 authorizeHarnessTracing: async (): Promise<boolean> => {

@@ -37,6 +37,7 @@ type ProviderPromptExecutionInput = Readonly<{
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   authorizeHarnessTracing?: () => Promise<boolean>
   signal?: AbortSignal
+  cancellationCheckpoint?: () => Promise<'active' | 'cancelled'>
   captureStop: (response: PromptResponse) => boolean
   onDispatchAttempt?: () => void
   onDispatched?: () => void
@@ -302,7 +303,10 @@ class AcpProviderPromptExecutor {
       let content = input.content
       if (input.frameworkId === 'open-science-agent') {
         content = await authorizeHarnessPrompt(content, input.authorizeHarnessTracing, input.signal)
-        if (input.signal?.aborted || !input.isCurrent()) {
+        // Stop aborts the lookup before ACP confirms whether it cancelled the prompt.
+        const cancelled =
+          input.signal?.aborted && (await input.cancellationCheckpoint?.()) !== 'active'
+        if (cancelled || !input.isCurrent()) {
           await cancelProbe()
           return Object.freeze({ kind: 'not-dispatched' })
         }
