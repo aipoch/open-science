@@ -29,6 +29,7 @@ import {
   HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_TOOL_LESS,
+  HARNESS_TRACE_ENABLED,
   HARNESS_OWNER,
   harnessOwnerSchema,
   harnessConfigSchema,
@@ -543,7 +544,14 @@ export function createHarnessAcpAgent(
         }
       }
       const target = config
-      const sessionTracing = tracing?.session(id, target.model, target.protocol)
+      const sessionTracing = owner
+        ? tracing?.session(id, {
+            model: target.model,
+            protocol: target.protocol,
+            contextWindow: target.contextWindow,
+            inputBudget
+          })
+        : undefined
       const createModel =
         target.protocol === 'responses'
           ? createResponsesModel
@@ -795,7 +803,10 @@ export function createHarnessAcpAgent(
           entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
-          const finishTrace = entry.tracing?.startTurn(context.params.prompt)
+          const finishTrace =
+            context.params.prompt[0]?._meta?.[HARNESS_TRACE_ENABLED] === true
+              ? entry.tracing?.startTurn(context.params.prompt)
+              : undefined
           let traceOutcome: acp.StopReason | 'error' = 'error'
           let traceRequestCount: number | undefined
           try {

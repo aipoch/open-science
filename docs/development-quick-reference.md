@@ -124,68 +124,61 @@ and continue to require the certified, version-matched WSL2 assets.
 
 ### Open-Science Agent traces
 
-Add `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to the repository's gitignored `.env` file, then run
-`npm run dev` or `npm run dev:web` as usual. Installed desktop and CLI runtimes read `.env` from the
-active config root, which defaults to `~/.open-science`. Restart the backend after changing
-configuration. A missing or invalid endpoint leaves tracing off.
+Agent tracing is off by default per project. Configure
+`OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` with the full OTLP/HTTP JSON traces URL. In an existing
+project, open **Project Settings → Advanced agent options**, turn on **Agent tracing**, and save.
+The open session uses the saved setting on its next send. No project name, folder path, or ID is
+needed in the configuration.
+During development the helper reads the repository's gitignored `.env`. Installed desktop and CLI
+runtimes use `.env` in the active config root, usually `~/.open-science`. Restart the backend after
+changing the destination or content capture configuration. The helper loads configuration in the
+background and starts creating spans for enabled projects once it has a valid destination. Turns
+started during configuration loading can complete without traces.
 
-In Langfuse, open the target project's settings and copy its public and secret API keys. The key
-pair selects the project. The Agent builds Basic Auth and sets the v4 ingestion header for
-`/api/public/otel/v1/traces`. This example uses the EU region. Replace the host with your region
-or self-hosted instance. [Langfuse OpenTelemetry documentation](https://langfuse.com/integrations/native/opentelemetry)
+For Langfuse, set the full `/api/public/otel/v1/traces` URL and the project's
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in that same `.env`. The exporter builds the
+Basic authorization and ingestion version headers from these values. Both keys are required
+when either is configured.
 
-```dotenv
-OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
-LANGFUSE_PUBLIC_KEY=pk-lf-your-public-key
-LANGFUSE_SECRET_KEY=sk-lf-your-secret-key
-```
+Set optional HTTP headers with the JSON object `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS` or the
+absolute path `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE` to a JSON file. Either takes precedence
+over `OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY` for Bearer authentication, which takes precedence over
+the Langfuse keys. A headers file takes precedence over inline headers. An explicit
+launch-environment endpoint uses its own launch headers file and skips `.env`. An invalid
+destination or headers file leaves tracing disabled.
 
-For a collector that uses Bearer authentication, set `OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY` to
-its API key. The Agent reads these settings without adding them to the process environment.
-For custom headers such as `X-API-Key`, use the JSON object
-`OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS` or set `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE`
-to an absolute path to a JSON file. The headers file takes precedence over inline headers,
-and either takes precedence over API keys. An unreadable or invalid file disables trace uploads.
-An endpoint explicitly set in the launch environment overrides the `.env` configuration and
-uses a headers file only if its path is also set in that environment.
+Look for `harness.turn` with `harness.model` and executed MCP `harness.tool` child spans under the
+`open-science-agent` service. Spans contain operational metadata such as model, context budget,
+token usage, compaction and tool counts, duration, and outcome. They omit prompt and response text,
+system instructions, full requests, tools' schemas and data, and attachments by default.
+Tool spans include Input and Output summaries with the tool name, top-level argument count,
+execution outcome, and result block count when available.
 
-Send a turn with the Open-Science Agent and look for a `harness.turn` span with a
-`harness.model` child under the `open-science-agent` service in the collector. A turn that
-executes an MCP tool also emits a `harness.tool` span. Langfuse groups spans by Agent session.
-The observation previews show model and protocol, stop reason, request and tool counts, and
-reported token usage. The default previews contain operational metadata only.
+Set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=1` to include the arguments passed to each
+executed tool in its Input preview. Set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=1` to include
+the tool result as seen by the harness in its Output preview. These switches are independent
+and default to off. Values included in previews are sent to the configured receiver. A preview
+over 16 KiB contains only the summary and the omission reason.
 
-To evaluate prompts against model replies, add `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=1` to
-`.env` and restart the backend. New traces include bounded excerpts of the current prompt's
-plain text and completed visible replies. Each excerpt is limited to 4,096 UTF-16 code units and
-marked when truncated. Prompt attachments and links, stored history, system instructions, reasoning
-events, compaction text, tool arguments and results, and provider credentials stay outside the
-capture. Enable this setting for conversations whose text you intend to send to your collector.
+Set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=1` in the same `.env` to include excerpts of the
+host-identified user text and the final visible model reply in the turn span's
+`input.value` and `output.value` attributes. Each excerpt is limited to 4,096 UTF-16 code units.
+Truncated excerpts are marked on the span. The prompt excerpt requires a verified source range,
+which excludes host-added instructions, replay history, recalled memory, and attachment previews.
+Reply excerpts exclude reasoning and context compaction summaries.
 
-To inspect the model API parameters, set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=1` in
-`.env` and restart the backend. In a new trace, select a `harness.model` child and open its Input.
-It shows the complete JSON request the Agent's Chat Completions, Responses, or Messages adapter
-sent to the local provider bridge. This is the request before any bridge-side rewrites. It includes
-the model, instructions and conversation context, tool schemas, and the parameters that the
-adapter actually sent. HTTP headers and authentication are outside the capture. The request body
-can contain sensitive conversation and tool data, including attachments.
+Set `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=1` independently to include the exact JSON
+the model adapter sends to the local provider bridge in the model span's `input.value`.
+Capture occurs before bridge rewrites. The body can contain instructions, conversation history,
+tool schemas and results, attachments, and local paths included in model context. HTTP headers
+are outside the capture. Requests over 1 MiB or the queue's byte budget are omitted whole, with
+an omission reason in `harness.request.body_capture`. Both switches send the selected content
+to the configured receiver and default to off.
 
-In the default preview, `offeredTools` lists the first 64 tool names from the model's catalog and
-`requestedTools` lists names returned by the model. A `harness.tool` child records the outcome of an
-executed MCP tool. Full model bodies use a 1 MiB per-request limit and a bounded queue. If omitted,
-the model span retains its summary and shows the omission reason instead of a truncated JSON body.
-[Harness tracing research](agent-harness-tracing-research.md)
-
-Uploads run asynchronously with a bounded in-memory queue and a two-second timeout.
-Failed uploads are dropped without retries. Keep the Agent process open until the collector
-receives the spans, since closing the helper cancels pending uploads.
-
-To inspect uploads from the terminal, add `OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1` to `.env`,
-restart the backend, and send a turn. Run `cat .env.otel-status.json` from the directory containing
-`.env`. The Agent overwrites one record with the last reported outcome and its timestamp. It
-includes the HTTP status when available. `http_accepted` means the collector returned HTTP 2xx.
-Confirm the trace appears in the target project's Tracing view. With diagnostics disabled, the
-Agent emits no upload status or logs.
+Uploads use a bounded in-memory queue and a two-second timeout. Failed batches are dropped.
+Closing the helper cancels pending uploads. To check delivery, opt into
+`OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1` in `.env` and check the last reported outcome in
+`.env.otel-status.json`. An `http_accepted` result records the receiver's HTTP 2xx response.
 
 ## Coding-agent navigation
 

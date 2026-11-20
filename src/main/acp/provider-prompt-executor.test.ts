@@ -138,6 +138,58 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it('reads tracing permission after preflight so a saved opt-out applies to the pending prompt', async () => {
+    const fixture = setup([stop({ stopReason: 'end_turn' })])
+    const preflight = deferred<'active'>()
+    const entered = deferred<void>()
+    let enabled = true
+    const execution = fixture.executor.execute({
+      ...fixture.input,
+      frameworkId: 'open-science-agent',
+      beforeDispatch: () => {
+        entered.resolve()
+        return preflight.promise
+      },
+      authorizeHarnessTracing: async () => enabled
+    })
+    await entered.promise
+    enabled = false
+    preflight.resolve('active')
+
+    await expect(execution).resolves.toMatchObject({ kind: 'stopped' })
+    expect(fixture.session.prompt).toHaveBeenCalledWith('prompt')
+  })
+
+  it.each(['deadline', 'abort'])('handles a stalled tracing lookup on %s', async (ending) => {
+    const fixture = setup([stop({ stopReason: 'end_turn' })])
+    const controller = new AbortController()
+    const entered = deferred<void>()
+    const never = deferred<boolean>()
+    const onDispatchAttempt = vi.fn()
+    const execution = fixture.executor.execute({
+      ...fixture.input,
+      frameworkId: 'open-science-agent',
+      signal: controller.signal,
+      authorizeHarnessTracing: () => {
+        entered.resolve()
+        return never.promise
+      },
+      onDispatchAttempt
+    })
+    await entered.promise
+    if (ending === 'abort') controller.abort()
+
+    if (ending === 'abort') {
+      await expect(execution).resolves.toEqual({ kind: 'not-dispatched' })
+      expect(onDispatchAttempt).not.toHaveBeenCalled()
+      expect(fixture.session.prompt).not.toHaveBeenCalled()
+    } else {
+      await expect(execution).resolves.toMatchObject({ kind: 'stopped' })
+      expect(onDispatchAttempt).toHaveBeenCalledOnce()
+      expect(fixture.session.prompt).toHaveBeenCalledWith('prompt')
+    }
+  })
+
   it.each([false, true])(
     'preserves CodeBuddy upstream errors and ordinary refusals (userStopped=%s)',
     async (userStopped) => {
