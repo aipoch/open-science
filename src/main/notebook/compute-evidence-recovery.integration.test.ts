@@ -345,9 +345,10 @@ describe('Compute evidence Project batch recovery with the real worker', () => {
       await writeFile(
         preload,
         `const fs = require('node:fs');
+const { basename } = require('node:path');
 const original = fs.rmSync;
 fs.rmSync = function (path, options) {
-  if (String(path) === 'receipt-job-orphan.json') {
+  if (basename(String(path)) === 'receipt-job-orphan.json') {
     if (${JSON.stringify(exitPoint)} === 'after') original.call(this, path, options);
     fs.writeFileSync(${JSON.stringify(marker)}, 'interrupted receipt removal');
     process.exit(91);
