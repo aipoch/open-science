@@ -37,7 +37,7 @@ const payloadOf = (activity: PersistedToolActivity): { field: string; value: unk
 }
 
 const payloadText = (value: unknown): string =>
-  typeof value === 'string' ? value : JSON.stringify(value)
+  typeof value === 'string' ? value : (JSON.stringify(value) ?? 'null')
 
 const summary = (
   activity: PersistedToolActivity
