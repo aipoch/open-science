@@ -3570,6 +3570,89 @@ describe('LiteratureLibraryPage', () => {
     return screen.getByRole('menu')
   }
 
+  it.each(['Table settings', 'Export'])(
+    'retains the same-table sidebar %s through a pending and failed review save without allowing cross-table navigation',
+    async (action) => {
+      vi.stubGlobal('matchMedia', (query: string) => ({ media: query, matches: true }))
+      const table: ComparisonTable = {
+        id: 'queued-comparison',
+        name: 'Queued comparison',
+        language: 'en',
+        sourcePolicy: 'abstract',
+        revision: 1,
+        fields: [{ id: 'field', name: 'Population', rule: 'Report N', version: 1 }],
+        members: [
+          {
+            itemId: libraryItem.id,
+            title: libraryItem.item.title,
+            abstract: '42 adults',
+            sourceKey: 'source'
+          }
+        ],
+        itemIds: [libraryItem.id],
+        cells: [
+          {
+            id: 'cell',
+            itemId: libraryItem.id,
+            fieldId: 'field',
+            status: 'succeeded',
+            history: [
+              {
+                id: 'attempt',
+                fieldVersion: 1,
+                sourceKey: 'source',
+                at: '2026-11-06',
+                status: 'succeeded',
+                value: '42 adults',
+                coverage: 'abstract',
+                evidence: []
+              }
+            ]
+          }
+        ],
+        state: 'completed',
+        remainingCellIds: []
+      }
+      const other = { ...table, id: 'other-comparison', name: 'Other comparison' }
+      const pending = Promise.withResolvers<never>()
+      let firstSave = true
+      vi.mocked(window.api.literature.comparisons).mockImplementation(async (request) => {
+        if (request.action === 'read-cell') return { tables: [], cell: table.cells[0] }
+        if (request.action === 'edit-cell' && firstSave) return pending.promise
+        return { tables: [table, other] }
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('button', { name: table.name }))
+      fireEvent.click(await screen.findByRole('button', { name: /42 adults/ }))
+      const review = screen.getByRole('complementary', { name: 'Review cell' })
+      fireEvent.click(within(review).getByRole('button', { name: 'Revise' }))
+      fireEvent.change(within(review).getByRole('textbox', { name: 'Manual value' }), {
+        target: { value: 'Retain my review' }
+      })
+      await waitFor(() =>
+        expect(window.api.literature.comparisons).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'edit-cell' })
+        )
+      )
+      fireEvent.click(screen.getByRole('button', { name: other.name }))
+      expect(screen.getByRole('heading', { name: table.name })).toBeTruthy()
+      fireEvent.click(within(comparisonMenu(table.name)).getByRole('menuitem', { name: action }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await act(async () => pending.reject(new Error('offline')))
+      expect(await within(review).findByRole('button', { name: 'Retry' })).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeNull()
+      firstSave = false
+      fireEvent.click(within(review).getByRole('button', { name: 'Retry' }))
+      const title = action === 'Export' ? 'Export comparison results' : action
+      expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      // A new explicit request for the same action remains independently usable.
+      fireEvent.click(within(comparisonMenu(table.name)).getByRole('menuitem', { name: action }))
+      expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
+    }
+  )
+
   it.each([false, true])(
     'deletes a comparison only after confirmation and refreshes navigation (selected: %s)',
     async (selected) => {

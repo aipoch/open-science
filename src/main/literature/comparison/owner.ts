@@ -27,7 +27,8 @@ import {
   withDataRootWrite,
   runDataRootStartupRecovery,
   outsideDataRootWriteContext,
-  isMigrationPending
+  DataRootMigrationPendingError,
+  waitForMigrationWriteAvailability
 } from '../../storage/migration-state'
 import {
   ComparisonGlobalError,
@@ -917,51 +918,64 @@ export class LiteratureComparisons {
     }
   }
   private kick(): void {
-    if (
-      this.worker ||
-      this.closed ||
-      isMigrationPending() ||
-      !this.tables.some((t) => t.state === 'running')
-    )
-      return
+    if (this.worker || this.closed || !this.tables.some((t) => t.state === 'running')) return
     outsideDataRootWriteContext(() => {
       this.worker = this.work()
-        .catch(async (error) => {
-          if (this.closed || this.lifetime.signal.aborted) return
-          this.options.onError?.(error)
-          await this.queue(async () => {
-            if (this.closed || this.lifetime.signal.aborted) return
-            for (const table of this.tables)
-              if (
-                table.state === 'running' ||
-                (table.state === 'paused' && table.cells.some((cell) => cell.status === 'running'))
-              ) {
-                table.state = 'paused'
-                table.issue =
-                  error instanceof ApplicationCommandError &&
-                  error.code === 'comparison-storage-limit'
-                    ? error.code
-                    : 'checkpoint-failed'
-                table.revision++
-                for (const cell of table.cells)
-                  if (cell.status === 'running') cell.status = 'pending'
-              }
-            try {
-              await this.save(this.lifetime.signal)
-            } catch (saveError) {
-              if (!this.lifetime.signal.aborted) this.options.onError?.(saveError)
-            }
-          })
-        })
+        .catch((error) => this.checkpointWorkerFailure(error))
         .finally(() => {
           this.worker = undefined
           this.kick()
         })
     })
   }
-  private async work(): Promise<void> {
-    while (!this.closed && !isMigrationPending()) {
+  private async checkpointWorkerFailure(error: unknown): Promise<void> {
+    if (this.closed || this.lifetime.signal.aborted) return
+    this.options.onError?.(error)
+    await this.queue(async () => {
+      if (this.closed || this.lifetime.signal.aborted) return
+      for (const table of this.tables)
+        if (
+          table.state === 'running' ||
+          (table.state === 'paused' && table.cells.some((cell) => cell.status === 'running'))
+        ) {
+          table.state = 'paused'
+          table.issue =
+            error instanceof ApplicationCommandError && error.code === 'comparison-storage-limit'
+              ? error.code
+              : 'checkpoint-failed'
+          table.revision++
+          for (const cell of table.cells) if (cell.status === 'running') cell.status = 'pending'
+        }
+    })
+    while (!this.closed) {
+      let admitted = false
       try {
+        // A failed cell has already released its lease. Keep the in-memory task paused, but
+        // acquire a fresh lease before saving it: migration may already be copying. Wait outside
+        // the serial queue so handoff/disposal can still proceed while the gate stays closed.
+        const migration = waitForMigrationWriteAvailability(this.lifetime.signal)
+        if (migration) await migration
+        await withDataRootWrite(() => {
+          admitted = true
+          return this.queue(async () => {
+            if (!this.closed) await this.save(this.lifetime.signal)
+          })
+        }, this.lifetime.signal)
+        return
+      } catch (saveError) {
+        if (!admitted && saveError instanceof DataRootMigrationPendingError) continue
+        if (!this.lifetime.signal.aborted) this.options.onError?.(saveError)
+        return
+      }
+    }
+  }
+  private async work(): Promise<void> {
+    while (!this.closed) {
+      try {
+        // Park without a writer lease so migration can drain. Resume on cancellation/discard
+        // even when no client is reading this table; disposal cancels the parked admission.
+        const migration = waitForMigrationWriteAvailability(this.lifetime.signal)
+        if (migration) await migration
         const configuredConcurrency =
           this.options.comparisonConcurrency ?? MAX_COMPARISON_CONCURRENCY
         const concurrency = Math.min(
@@ -971,12 +985,19 @@ export class LiteratureComparisons {
             Number.isFinite(configuredConcurrency) ? Math.trunc(configuredConcurrency) : 1
           )
         )
-        const batch = Array.from({ length: concurrency }, () =>
-          withDataRootWrite(() => {
+        const batch = Array.from({ length: concurrency }, () => {
+          let admitted = false
+          return withDataRootWrite(() => {
+            admitted = true
             if (this.closed || this.lifetime.signal.aborted) return Promise.resolve(true)
             return this.workCell()
-          }, this.lifetime.signal)
-        )
+          }, this.lifetime.signal).catch((error) => {
+            // Only a rejected admission can retry automatically. An admitted checkpoint failure
+            // must pause the task even if migration closed the gate while that cell was running.
+            if (!admitted && error instanceof DataRootMigrationPendingError) return false
+            throw error
+          })
+        })
         // Drain every admitted cell before entering the shared failure handler. A rejected
         // checkpoint must not leave sibling extractions running outside the worker's lifecycle.
         const settled = await Promise.allSettled(batch)
@@ -994,8 +1015,7 @@ export class LiteratureComparisons {
         // actually processed a cell.
         if (results.every(Boolean)) return
       } catch (error) {
-        // A migration can close admission between the loop check and lease acquisition.
-        if (this.closed || this.lifetime.signal.aborted || isMigrationPending()) return
+        if (this.closed || this.lifetime.signal.aborted) return
         throw error
       }
     }

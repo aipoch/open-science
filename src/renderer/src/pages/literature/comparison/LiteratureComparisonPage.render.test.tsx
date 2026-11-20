@@ -119,6 +119,154 @@ function page(
   return command
 }
 describe('comparison workflow', () => {
+  it.each(['configure', 'export'] as const)(
+    'defers a requested %s until a pending command settles, then opens it only once',
+    async (action) => {
+      const table = { ...fixture(), state: 'running' as const }
+      const pending = Promise.withResolvers<ComparisonResult>()
+      const props = {
+        command: vi.fn(() => pending.promise),
+        onChooseReferences: vi.fn(),
+        onOpenItem: vi.fn(),
+        onOpenDiscovery: vi.fn(),
+        onOpenComparison: vi.fn()
+      }
+      const view = render(<LiteratureComparisonPage table={table} {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Pause after current batch' }))
+      // A task update can arrive before the pause command's refresh completes.
+      const paused = { ...table, state: 'paused' as const }
+      const requestedAction = { tableId: table.id, action }
+      view.rerender(
+        <LiteratureComparisonPage table={paused} requestedAction={requestedAction} {...props} />
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await act(async () => pending.resolve({ tables: [paused] }))
+      const title = action === 'configure' ? 'Table settings' : 'Export comparison results'
+      expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      view.rerender(
+        <LiteratureComparisonPage
+          table={{ ...paused, revision: 2 }}
+          requestedAction={requestedAction}
+          {...props}
+        />
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(props.command).toHaveBeenCalledExactlyOnceWith({ action: 'pause', tableId: table.id })
+    }
+  )
+
+  it.each(['configure', 'export'] as const)(
+    'does not apply a requested %s to another table or after switching away during a command',
+    async (action) => {
+      const table = { ...fixture(), state: 'running' as const }
+      const other = { ...fixture(), id: 'other-table', name: 'Other table' }
+      const pending = Promise.withResolvers<ComparisonResult>()
+      const props = {
+        command: vi.fn(() => pending.promise),
+        onChooseReferences: vi.fn(),
+        onOpenItem: vi.fn(),
+        onOpenDiscovery: vi.fn(),
+        onOpenComparison: vi.fn()
+      }
+      const requestedAction = { tableId: table.id, action }
+      const view = render(
+        <LiteratureComparisonPage
+          key="other"
+          table={other}
+          requestedAction={requestedAction}
+          {...props}
+        />
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+      view.rerender(<LiteratureComparisonPage key="table" table={table} {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Pause after current batch' }))
+      view.rerender(
+        <LiteratureComparisonPage
+          key="table"
+          table={table}
+          requestedAction={requestedAction}
+          {...props}
+        />
+      )
+      view.rerender(<LiteratureComparisonPage key="other" table={other} {...props} />)
+      await act(async () => pending.resolve({ tables: [table] }))
+      expect(screen.getByRole('heading', { name: other.name })).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeNull()
+    }
+  )
+
+  it('defers requested settings during extraction but allows requested export while extraction runs', () => {
+    const table = { ...fixture(), state: 'running' as const }
+    const props = {
+      command: vi.fn(),
+      onChooseReferences: vi.fn(),
+      onOpenItem: vi.fn(),
+      onOpenDiscovery: vi.fn(),
+      onOpenComparison: vi.fn()
+    }
+    const requestedAction = { tableId: table.id, action: 'configure' as const }
+    const view = render(
+      <LiteratureComparisonPage table={table} requestedAction={requestedAction} {...props} />
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    view.rerender(
+      <LiteratureComparisonPage
+        table={{ ...table, state: 'completed' }}
+        requestedAction={requestedAction}
+        {...props}
+      />
+    )
+    expect(screen.getByRole('dialog', { name: 'Table settings' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    view.rerender(
+      <LiteratureComparisonPage
+        table={table}
+        requestedAction={{ tableId: table.id, action: 'export' }}
+        {...props}
+      />
+    )
+    expect(screen.getByRole('dialog', { name: 'Export comparison results' })).toBeTruthy()
+    expect(props.command).not.toHaveBeenCalled()
+  })
+
+  it.each(['configure', 'export'] as const)(
+    'retains a requested %s while a field draft is unsaved',
+    (action) => {
+      const table = fixture()
+      const props = {
+        command: vi.fn(),
+        onChooseReferences: vi.fn(),
+        onOpenItem: vi.fn(),
+        onOpenDiscovery: vi.fn(),
+        onOpenComparison: vi.fn()
+      }
+      const view = render(<LiteratureComparisonPage table={table} {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit field' }))
+      const input = screen.getByRole('textbox', { name: 'Extraction requirements' })
+      fireEvent.change(input, { target: { value: 'Preserve this field draft' } })
+      view.rerender(
+        <LiteratureComparisonPage
+          table={table}
+          requestedAction={{ tableId: table.id, action }}
+          {...props}
+        />
+      )
+      expect(
+        screen.queryByRole('dialog', {
+          name: action === 'configure' ? 'Table settings' : 'Export comparison results'
+        })
+      ).toBeNull()
+      expect((input as HTMLTextAreaElement).value).toBe('Preserve this field draft')
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(
+        screen.getByRole('dialog', {
+          name: action === 'configure' ? 'Table settings' : 'Export comparison results'
+        })
+      ).toBeTruthy()
+    }
+  )
+
   it.each(['configuration', 'failed review'])(
     'preserves the new table %s draft when the previous table command finishes',
     async (editor) => {

@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 vi.mock('../../storage/migration-state', () => ({
-  isMigrationPending: () => false,
+  DataRootMigrationPendingError: class extends Error {},
+  waitForMigrationWriteAvailability: () => undefined,
   outsideDataRootWriteContext: (operation: () => unknown) => operation(),
   withDataRootWrite: (operation: () => unknown) => operation(),
   runDataRootStartupRecovery: (operation: () => unknown) => operation()

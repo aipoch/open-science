@@ -435,14 +435,23 @@ export function LiteratureComparisonPage({
     }
     return ids
   }, [query, matrixCells, membersById, fieldsById])
-  if (table && requestedAction && requestedAction !== handledAction) {
+  if (
+    table &&
+    requestedAction &&
+    requestedAction.tableId === table.id &&
+    requestedAction !== handledAction &&
+    !busy &&
+    !reviewStatus.pending &&
+    !reviewStatus.failed &&
+    !fieldPending &&
+    !fieldFailed &&
+    (requestedAction.action === 'export' || !taskActive)
+  ) {
     setHandledAction(requestedAction)
-    if (!busy && !reviewStatus.pending && !reviewStatus.failed) {
-      if (requestedAction.action === 'configure' && !taskActive) configure()
-      if (requestedAction.action === 'export') {
-        setEditing(false)
-        openExport()
-      }
+    if (requestedAction.action === 'configure') configure()
+    else {
+      setEditing(false)
+      openExport()
     }
   }
   const issue = error || loadIssue || table?.issue || ''

@@ -12,7 +12,11 @@ import {
 } from '../../../shared/literature-comparison'
 import {
   beginMigration,
+  beginMigrationPreparation,
+  cancelMigrationForQuit,
+  clearMigrationPending,
   endMigration,
+  endMigrationCopy,
   initializeDataRootWriteAvailability,
   reconcileDataRootWriteAvailability,
   waitForDataRootWriters,
@@ -166,61 +170,65 @@ it('rejects an older configuration snapshot without replacing saved rules and ac
   })
 })
 
-it('drains the whole admitted cell and blocks later cells even when run inherits an RPC write lease', async () => {
-  const path = await location()
-  const blocked = deferred()
-  const extract = vi.fn(async () => {
-    await blocked.promise
-    return { status: 'succeeded' as const, sourceKey: 'source', value: 'result', evidence: [] }
-  })
-  const owner = new LiteratureComparisons({
-    path: () => path,
-    comparisonConcurrency: 1,
-    extractor: {
-      member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
-    },
-    capture: async () => ({ extract })
-  })
-  owners.push(owner)
-  await owner.start()
-  const table = (
-    await owner.run({
-      action: 'create',
-      name: 'Drain',
-      language: 'en',
-      sourcePolicy: 'abstract',
-      fields: [{ id: 'f', name: 'F', rule: 'extract' }],
-      itemIds: ['a', 'b']
+it.each([clearMigrationPending, endMigration])(
+  'drains admitted cells and resumes without requests when %s reopens migration writes',
+  async (reopen) => {
+    const path = await location()
+    const blocked = deferred()
+    const extract = vi.fn(async () => {
+      await blocked.promise
+      return { status: 'succeeded' as const, sourceKey: 'source', value: 'result', evidence: [] }
     })
-  ).tables[0]
-  await withDataRootWrite(() => owner.run({ action: 'run', tableId: table.id }))
-  await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(1))
-  beginMigration()
-  let drained = false
-  const drain = waitForDataRootWriters().then(() => {
-    drained = true
-  })
-  await Promise.resolve()
-  expect(drained).toBe(false)
-  blocked.resolve()
-  await drain
-  const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
-  expect(saved.cells[0]).toMatchObject({ status: 'succeeded', history: [{ value: 'result' }] })
-  expect(saved.cells[1]).toMatchObject({ status: 'pending', history: [] })
-  const bytes = await readFile(path, 'utf8')
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  expect(extract).toHaveBeenCalledTimes(1)
-  expect(await readFile(path, 'utf8')).toBe(bytes)
-  endMigration()
-  // A normal request re-admits remaining work after the cancelled migration.
-  await withDataRootWrite(() => owner.run({ action: 'read', tableId: table.id }))
-  await vi.waitFor(async () =>
-    expect((await owner.run({ action: 'read', tableId: table.id })).tables[0].state).toBe(
-      'completed'
-    )
-  )
-  expect(extract).toHaveBeenCalledTimes(2)
-})
+    const owner = new LiteratureComparisons({
+      path: () => path,
+      comparisonConcurrency: 1,
+      extractor: {
+        member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
+      },
+      capture: async () => ({ extract })
+    })
+    owners.push(owner)
+    await owner.start()
+    const table = (
+      await owner.run({
+        action: 'create',
+        name: 'Drain',
+        language: 'en',
+        sourcePolicy: 'abstract',
+        fields: [{ id: 'f', name: 'F', rule: 'extract' }],
+        itemIds: ['a', 'b']
+      })
+    ).tables[0]
+    await withDataRootWrite(() => owner.run({ action: 'run', tableId: table.id }))
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(1))
+    beginMigration()
+    let drained = false
+    const drain = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    blocked.resolve()
+    await drain
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.cells[0]).toMatchObject({ status: 'succeeded', history: [{ value: 'result' }] })
+    expect(saved.cells[1]).toMatchObject({ status: 'pending', history: [] })
+    const bytes = await readFile(path, 'utf8')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(extract).toHaveBeenCalledTimes(1)
+    expect(await readFile(path, 'utf8')).toBe(bytes)
+    reopen()
+    // Observe durable output only: no renderer request may be needed to wake the worker.
+    await vi.waitFor(async () => {
+      const completed = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+      expect(completed.state).toBe('completed')
+      expect(completed.remainingCellIds).toEqual([])
+      expect(completed.cells.map((cell) => cell.history.length)).toEqual([1, 1])
+      expect(completed.cells[0]).toEqual(saved.cells[0])
+    })
+    expect(extract).toHaveBeenCalledTimes(2)
+  }
+)
 
 type Extract = Awaited<
   ReturnType<ConstructorParameters<typeof LiteratureComparisons>[0]['capture']>
@@ -232,6 +240,7 @@ async function disposalFixture(): Promise<{
   path: string
   blocked: ReturnType<typeof deferred>
   extract: Mock<Extract>
+  onError: Mock<(error: unknown) => void>
 }> {
   const path = await location()
   const blocked = deferred()
@@ -239,13 +248,15 @@ async function disposalFixture(): Promise<{
     await blocked.promise
     return { status: 'succeeded' as const, sourceKey: 'source', value: 'result', evidence: [] }
   })
+  const onError = vi.fn<(error: unknown) => void>()
   const owner = new LiteratureComparisons({
     path: () => path,
     comparisonConcurrency: 1,
     extractor: {
       member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
     },
-    capture: async () => ({ extract })
+    capture: async () => ({ extract }),
+    onError
   })
   owners.push(owner)
   await owner.start()
@@ -259,8 +270,123 @@ async function disposalFixture(): Promise<{
       itemIds: ['a', 'b']
     })
   ).tables[0]
-  return { owner, table, path, blocked, extract }
+  return { owner, table, path, blocked, extract, onError }
 }
+
+it('preserves admitted checkpoint failures during migration and persists pause only after writes reopen', async () => {
+  const { owner, table, path, blocked, extract, onError } = await disposalFixture()
+  await owner.run({ action: 'run', tableId: table.id })
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledOnce())
+  const before = await readFile(path, 'utf8')
+  const failure = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+  vi.mocked(writeDurableJsonFile).mockRejectedValueOnce(failure)
+  beginMigration()
+  blocked.resolve()
+  await waitForDataRootWriters()
+  await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure))
+  const writes = vi.mocked(writeDurableJsonFile).mock.calls.length
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(await readFile(path, 'utf8')).toBe(before)
+  expect(vi.mocked(writeDurableJsonFile).mock.calls.length).toBe(writes)
+  clearMigrationPending()
+  await vi.waitFor(async () => {
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved).toMatchObject({ state: 'paused', issue: 'checkpoint-failed' })
+    expect(saved.cells.every((cell) => cell.status === 'pending' && !cell.history.length)).toBe(
+      true
+    )
+  })
+  expect(extract).toHaveBeenCalledOnce()
+  expect(onError).toHaveBeenCalledOnce()
+  await owner.run({ action: 'resume', tableId: table.id })
+  await vi.waitFor(async () => {
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.state).toBe('completed')
+    expect(saved.cells.map((cell) => cell.history.length)).toEqual([1, 1])
+  })
+  expect(extract).toHaveBeenCalledTimes(3)
+})
+
+it('retries migration admission rejected after waiting for a missing data root', async () => {
+  const { owner, table, path, blocked, extract, onError } = await disposalFixture()
+  await owner.run({ action: 'run', tableId: table.id })
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledOnce())
+  await reconcileDataRootWriteAvailability(true)
+  blocked.resolve()
+  await waitForDataRootWriters()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  beginMigration()
+  await reconcileDataRootWriteAvailability(false)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(extract).toHaveBeenCalledOnce()
+  expect(onError).not.toHaveBeenCalled()
+  clearMigrationPending()
+  await vi.waitFor(async () => {
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.state).toBe('completed')
+    expect(saved.cells.map((cell) => cell.history.length)).toEqual([1, 1])
+  })
+  expect(extract).toHaveBeenCalledTimes(2)
+  expect(onError).not.toHaveBeenCalled()
+})
+
+it('disposes a failed checkpoint waiting for migration without holding the owner queue', async () => {
+  const { owner, table, path, blocked, extract, onError } = await disposalFixture()
+  await owner.run({ action: 'run', tableId: table.id })
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledOnce())
+  const bytes = await readFile(path, 'utf8')
+  vi.mocked(writeDurableJsonFile).mockRejectedValueOnce(new Error('disk full'))
+  beginMigration()
+  blocked.resolve()
+  await waitForDataRootWriters()
+  await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+  // The pause is already queued even though its checkpoint needs migration to reopen writes.
+  const queued = owner as unknown as { queue<T>(operation: () => Promise<T>): Promise<T> }
+  let passed = false
+  await queued.queue(async () => {
+    passed = true
+  })
+  expect(passed).toBe(true)
+  let disposed = false
+  const closing = owner.dispose().then(() => {
+    disposed = true
+  })
+  await vi.waitFor(() => expect(disposed).toBe(true), { timeout: 500 })
+  await closing
+  clearMigrationPending()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(extract).toHaveBeenCalledOnce()
+  expect(await readFile(path, 'utf8')).toBe(bytes)
+})
+
+it.each(['pause', 'dispose', 'committed'] as const)(
+  'does not restart migration-blocked work after %s',
+  async (action) => {
+    const { owner, table, path, blocked, extract } = await disposalFixture()
+    await owner.run({ action: 'run', tableId: table.id })
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(1))
+    if (action === 'pause') await owner.run({ action: 'pause', tableId: table.id })
+    const preparation = action === 'committed' ? beginMigrationPreparation() : undefined
+    beginMigration()
+    blocked.resolve()
+    await waitForDataRootWriters()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const bytes = await readFile(path, 'utf8')
+    if (action === 'dispose') await owner.dispose()
+    if (preparation) {
+      preparation.markCommitted()
+      const cancelling = cancelMigrationForQuit()
+      preparation.finish()
+      endMigrationCopy()
+      await cancelling
+    } else {
+      clearMigrationPending()
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(extract).toHaveBeenCalledTimes(1)
+    expect(await readFile(path, 'utf8')).toBe(bytes)
+  }
+)
 
 it.each([false, true])(
   'disposes unavailable admission without new work (availability race: %s)',

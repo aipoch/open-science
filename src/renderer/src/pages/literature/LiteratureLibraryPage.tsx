@@ -935,7 +935,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const selectionBlocked = smartTableBlocked || readingStatusPending
 
   const openComparison = (id: string, action?: 'configure' | 'export'): void => {
-    if (!canLeaveComparison()) return
+    // Same-table actions can wait for its draft/save guard without navigating away.
+    if (!(action && id === comparisonId) && !canLeaveComparison()) return
     setComparisonAction(action ? { tableId: id, action } : undefined)
     setComparisonId(id)
     setCitationStylesOpen(false)

@@ -28,7 +28,13 @@ type MigrationQuitOperation = {
 let activeQuitOperation: MigrationQuitOperation | undefined
 let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
+const migrationWriteWaiters = new Set<() => void>()
 const dataRootWriteContext = new AsyncLocalStorage<boolean>()
+
+const releaseMigrationWriteWaiters = (): void => {
+  for (const resolve of migrationWriteWaiters) resolve()
+  migrationWriteWaiters.clear()
+}
 
 type DataRootWriteAvailability = 'available' | 'missing' | 'recovering' | 'accepted-empty'
 type DataRootStartupRecovery = () => Promise<void>
@@ -240,6 +246,7 @@ export const clearMigrationPending = (): void => {
   preparing = false
   pending = false
   copying = false
+  releaseMigrationWriteWaiters()
 }
 
 // Clears all migration/write flags after the quit guard has joined the cancelled command.
@@ -247,6 +254,7 @@ export const endMigration = (): void => {
   preparing = false
   copying = false
   pending = false
+  releaseMigrationWriteWaiters()
 }
 
 // Quit-anyway must cancel and join the command that owns the preparation flag before the lifecycle
@@ -266,12 +274,41 @@ export const isMigrationInProgress = (): boolean => preparing || copying
 // they can't write into the old root during the copy→commit window.
 export const isMigrationPending = (): boolean => pending
 
+// Background owners can park outside their writer lease while a migration drains. Only a
+// cancelled/discarded migration reopens this gate; a staged or committed copy keeps waiting until
+// the owner is disposed for relaunch. Cancellation removes the waiter without admitting new work.
+export const waitForMigrationWriteAvailability = (
+  signal?: AbortSignal
+): Promise<void> | undefined => {
+  signal?.throwIfAborted()
+  if (!pending) return undefined
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      migrationWriteWaiters.delete(available)
+      signal?.removeEventListener('abort', aborted)
+    }
+    const available = (): void => {
+      cleanup()
+      resolve()
+    }
+    const aborted = (): void => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    migrationWriteWaiters.add(available)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
+  })
+}
+
 // Throws the standard user-facing error when a migration is pending. Called at every data-root write
 // entry point (ACP prompt, notebook run/execute, uploads) so no new write can land in the old root
 // during the copy→commit window and be lost on the commit's delete.
+export class DataRootMigrationPendingError extends Error {}
+
 export const assertNoMigrationPending = (): void => {
   if (pending) {
-    throw new Error(
+    throw new DataRootMigrationPendingError(
       'Open-Science is moving your data. Wait for the move to finish before running this.'
     )
   }

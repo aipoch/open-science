@@ -21,6 +21,7 @@ const {
   reconcileDataRootWriteAvailability,
   runDataRootStartupRecovery,
   waitForDataRootWriters,
+  waitForMigrationWriteAvailability,
   withDataRootWrite,
   outsideDataRootWriteContext
 } = await import('./migration-state')
@@ -51,6 +52,42 @@ afterEach(() => {
 })
 
 describe('migration-state', () => {
+  it.each([clearMigrationPending, endMigration])(
+    'releases migration admission only when %s reopens writes',
+    async (reopen) => {
+      expect(waitForMigrationWriteAvailability()).toBeUndefined()
+      beginMigration()
+      const controller = new AbortController()
+      const remove = vi.spyOn(controller.signal, 'removeEventListener')
+      const resumed = vi.fn()
+      const waiting = waitForMigrationWriteAvailability(controller.signal)!.then(resumed)
+      endMigrationCopy()
+      await Promise.resolve()
+      expect(resumed).not.toHaveBeenCalled()
+      reopen()
+      await waiting
+      expect(resumed).toHaveBeenCalledOnce()
+      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+      reopen()
+      expect(resumed).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('cancels migration admission and removes the abort listener', async () => {
+    beginMigration()
+    const controller = new AbortController()
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    const resumed = vi.fn()
+    const waiting = waitForMigrationWriteAvailability(controller.signal)!.then(resumed)
+    const rejected = expect(waiting).rejects.toThrow('disposed')
+    controller.abort(new Error('disposed'))
+    await rejected
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+    clearMigrationPending()
+    expect(resumed).not.toHaveBeenCalled()
+    expect(() => waitForMigrationWriteAvailability(controller.signal)).toThrow('disposed')
+  })
+
   it('defers startup recovery and ordinary writes while the configured data root is missing', async () => {
     initializeDataRootWriteAvailability(true)
     const events: string[] = []
