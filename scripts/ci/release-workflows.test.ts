@@ -460,7 +460,8 @@ describe('release and scheduled workflow topology', () => {
       'package-smoke',
       'notarize-mac',
       'cli-artifacts',
-      'linux-cli-packages'
+      'linux-cli-packages',
+      'windows-upgrade'
     ])
     expect(release.jobs['cli-artifacts'].needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(release.jobs['publish-npm']).toBeUndefined()
@@ -878,6 +879,13 @@ describe('release and scheduled workflow topology', () => {
 
     expect(dispatch.types).toEqual(['windows-upgrade-smoke'])
     expect(smokeWorkflow.on).toHaveProperty('workflow_dispatch')
+    expect(smokeWorkflow.on).toHaveProperty('schedule')
+    expect(smokeWorkflow.jobs.report.needs).toBe('candidate-upgrade')
+    expect(smokeWorkflow.jobs.report.if).toContain("github.event_name == 'schedule'")
+    expect(workflow('release.yml').jobs['windows-upgrade']).toMatchObject({
+      uses: './.github/workflows/daily-windows-upgrade.yml',
+      with: { signed_run_id: "${{ format('{0}', github.run_id) }}" }
+    })
     expect(smokeWorkflow.concurrency?.['cancel-in-progress']).toBe(false)
     expect(smoke['continue-on-error']).toBeUndefined()
     const checkout = step(smoke, 'Checkout smoke harness')
@@ -956,6 +964,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'runtime-resource-soak.yml',
       'source-regression.yml',
       'windows-full-test.yml',
+      'daily-windows-upgrade.yml',
       'windows-upgrade-smoke.yml'
     ]) {
       for (const job of Object.values(workflow(name).jobs)) {

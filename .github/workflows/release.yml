@@ -186,11 +186,18 @@ jobs:
       contents: read
       actions: read
 
+  windows-upgrade:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/daily-windows-upgrade.yml
+    with:
+      signed_run_id: ${{ format('{0}', github.run_id) }}
+
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, package-smoke, notarize-mac, cli-artifacts, linux-cli-packages]
+    needs: [build, package-smoke, notarize-mac, cli-artifacts, linux-cli-packages, windows-upgrade]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15

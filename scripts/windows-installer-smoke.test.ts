@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -43,6 +43,7 @@ import {
   terminateProcessTree,
   uninstallAndVerify,
   waitForShutdownExit,
+  watchRollbackLog,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 } from './windows-installer-smoke.mjs'
@@ -674,6 +675,39 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     expect(parsePackagedAppEndpoint(legacyOutput)).toEqual(legacyService)
     await expect(authenticatePackagedAppEndpoint(legacyOutput)).resolves.toEqual(legacyService)
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
+  })
+
+  it('reads only a matching rollback record written after launch, including after log rotation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rollback-log-'))
+    const log = join(root, 'logs', 'main.log')
+    const record = {
+      scope: 'main',
+      msg: 'database startup blocked',
+      data: { appVersion: '1.2.2', code: 'database_newer_than_app' }
+    }
+    try {
+      await mkdir(join(root, 'logs'))
+      await writeFile(log, JSON.stringify(record) + '\n')
+      const readBlock = await watchRollbackLog(root, '1.2.2')
+      await appendFile(
+        log,
+        JSON.stringify({ ...record, data: { ...record.data, appVersion: '1.3.0' } }) + '\n'
+      )
+      expect(await readBlock()).toBeUndefined()
+      await rename(log, log + '.old')
+      await writeFile(
+        log,
+        JSON.stringify({
+          ...record,
+          data: { ...record.data, code: 'database_runtime_unavailable' }
+        }) + '\n'
+      )
+      expect(await readBlock()).toBeUndefined()
+      await appendFile(log, JSON.stringify(record) + '\n')
+      expect(await readBlock()).toEqual(record)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('accepts a blocked database downgrade regardless of process exit status', () => {

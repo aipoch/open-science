@@ -132,6 +132,19 @@ the unregistered reader may need a complete service shutdown and manual package 
 that first upgrade. Use Package Smoke's `artifact_run_id` dispatch to replay a candidate without
 rebuilding or publishing; diagnostic replays never emit release certification.
 
+Windows Upgrade Smoke also runs daily at 19:23 UTC. It rebuilds the latest stable source
+and the candidate with a runner-local test certificate, applies a differential update, then
+reinstalls the original version on the same profile. When the migration ledger grows, the old
+version must report `database_newer_than_app` on that launch. Otherwise it must reopen the
+preserved profile. Changes to the updater or installer since the last successful scheduled run
+also exercise a second update from the candidate. Scheduled failures share a tracking issue
+until a scheduled certification succeeds.
+
+Before publishing a stable release, Release runs the same upgrade and rollback against the
+already signed Windows build artifact and the previous stable installer. To exercise either
+path on a branch, dispatch Windows Upgrade Smoke with `candidate_dry_run=true` for temporary
+signing, or with `signed_run_id` set to a Release run for its existing signed bytes.
+
 Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
 default-branch SHA is unchanged. Its manual `core`, `detector` and `update-occupancy` modes are focused no-publish
