@@ -33,6 +33,7 @@ import { MarkdownSelectionToolbar } from './MarkdownSelectionToolbar'
 import { MarkdownBlockElement } from './MarkdownBlockElement'
 import { MarkdownAgentPrompt, type MarkdownAgentRequest } from './MarkdownAgentPrompt'
 import type { MarkdownDocumentSelection } from './markdown-selection'
+import { getMarkdownListItemAtCaret, indentMarkdownListItem } from './markdown-list-transforms'
 
 export type MarkdownEditorSurfaceProps = Readonly<{
   source: string
@@ -87,6 +88,25 @@ const MarkdownEditorCanvas = memo(
               contentEditable={!disabled}
               className="min-h-full pl-16 pr-6 py-6 outline-none [&_h1]:mb-4 [&_h1]:text-3xl [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_ul]:list-disc [&_ol]:list-decimal [&_p]:my-2"
               spellCheck
+              onKeyDownCapture={(event) => {
+                if (
+                  disabled ||
+                  event.key !== 'Tab' ||
+                  event.altKey ||
+                  event.ctrlKey ||
+                  event.metaKey ||
+                  event.nativeEvent.isComposing ||
+                  !(event.target instanceof HTMLElement) ||
+                  event.target.closest('[contenteditable="false"]')
+                )
+                  return
+                const path = getMarkdownListItemAtCaret(editor)
+                if (!path) return
+                // Own list indentation before Plate's default Tab navigation moves the caret.
+                event.preventDefault()
+                event.stopPropagation()
+                indentMarkdownListItem(editor, path, event.shiftKey)
+              }}
               onBlur={onFlush}
             />
           </Plate>

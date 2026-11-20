@@ -1,6 +1,6 @@
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { PreviewFileSurface } from '@/pages/workspace/PreviewFileSurface'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createManagedPreviewTestTransport } from '@/pages/workspace/previews/managed-preview-test-support'
@@ -8,7 +8,7 @@ import type { ManagedFileVersionSaveTextEditRequest } from '../../../src/shared/
 import type { Annotation } from '../../../src/shared/annotation-contract'
 import type { DocumentConversationRequest } from '@/pages/workspace/previews/preview-types'
 
-initI18n('en')
+const locale = new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
 const text = new URLSearchParams(location.search).has('footnotes')
   ? '# Scroll preview\n\n' +
     'A paragraph before the end.\n\n'.repeat(100) +
@@ -85,31 +85,34 @@ window.api = {
 } as unknown as typeof window.api
 window.fetch = transport.fetch
 usePreviewWorkbenchStore.getState().activateProject('project')
-createRoot(document.getElementById('root')!).render(
-  <main style={{ height: '100vh' }}>
-    <PreviewFileSurface
-      item={{
-        id: 'upload:file',
-        managedFileId: 'file',
-        selectedVersionId: 'v1',
-        projectId: 'project',
-        sessionId: 'standalone-uploads',
-        type: 'file',
-        title: 'README.md',
-        name: 'README.md',
-        path: 'upload-version:project/standalone-uploads/v1',
-        format: 'markdown',
-        source: 'upload'
-      }}
-      onClose={() => {}}
-      onSendDocumentRequest={async (request) => {
-        requests.push(request)
-        return true
-      }}
-      onAddAnnotation={(annotation) => {
-        annotations.push(annotation)
-        return undefined
-      }}
-    />
-  </main>
-)
+void Promise.resolve(prepareI18nLocale(locale)).then(() => {
+  initI18n(locale)
+  createRoot(document.getElementById('root')!).render(
+    <main style={{ height: '100vh' }}>
+      <PreviewFileSurface
+        item={{
+          id: 'upload:file',
+          managedFileId: 'file',
+          selectedVersionId: 'v1',
+          projectId: 'project',
+          sessionId: 'standalone-uploads',
+          type: 'file',
+          title: 'README.md',
+          name: 'README.md',
+          path: 'upload-version:project/standalone-uploads/v1',
+          format: 'markdown',
+          source: 'upload'
+        }}
+        onClose={() => {}}
+        onSendDocumentRequest={async (request) => {
+          requests.push(request)
+          return true
+        }}
+        onAddAnnotation={(annotation) => {
+          annotations.push(annotation)
+          return undefined
+        }}
+      />
+    </main>
+  )
+})

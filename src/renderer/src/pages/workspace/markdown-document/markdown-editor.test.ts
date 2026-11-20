@@ -124,6 +124,171 @@ describe('Markdown live keyboard input', () => {
     }
   )
 
+  it.each(['- [ ]', '- [x]', '- [X]', '+ [ ]', '* [x]', '1. [ ]'])(
+    'creates a task by typing %s, continues unchecked and exits on an empty Enter',
+    (marker) => {
+      const editor = createEditor()
+      type(editor, `${marker} Task`)
+      const checked = /\[[xX]\]/u.test(marker)
+      const ordered = marker.startsWith('1')
+      expect(editor.children[0]).toMatchObject({
+        type: ordered ? 'ol' : 'ul',
+        children: [
+          { type: 'li', checked, children: [{ type: 'lic', children: [{ text: 'Task' }] }] }
+        ]
+      })
+      type(editor, '\nNext\n\nParagraph')
+      expectMarkdown(
+        editor,
+        ordered
+          ? '1. [ ] Task\n2. [ ] Next\n\nParagraph\n'
+          : `- [${checked ? 'x' : ' '}] Task\n- [ ] Next\n\nParagraph\n`
+      )
+    }
+  )
+
+  it.each(['[ ]', '[x]', '[X]'])(
+    'leaves %s literal until the Markdown separator is typed',
+    (marker) => {
+      const editor = createEditor()
+      type(editor, `- ${marker}`)
+      expect(editor.children[0].children[0]).not.toHaveProperty('checked')
+      expect(editor.api.string([0, 0, 0])).toBe(marker)
+    }
+  )
+
+  it.each(['[ ]　', '[　] ', '[　]　'])(
+    'accepts full-width spaces in the task marker or separator: %s',
+    (marker) => {
+      const editor = createEditor()
+      type(editor, `- ${marker}Task`)
+      expect(serializeMarkdownDocument(editor.children)).toBe('- [ ] Task\n')
+    }
+  )
+
+  it('converts only the current list item with one undo step, keeping its subtree and caret', () => {
+    const editor = createEditor('- Before\n- Target\n  - Child\n- After\n')
+    editor.tf.select({ path: [0, 1, 0, 0], offset: 0 })
+    type(editor, '[x]')
+    const before = editor.children
+    const selectionBefore = editor.selection
+    type(editor, ' ')
+    expectMarkdown(editor, '- Before\n- [x] Target\n  - Child\n- After\n')
+    expect(editor.selection?.anchor).toEqual({ path: [0, 1, 0, 0], offset: 0 })
+    const converted = editor.children
+    editor.tf.undo()
+    expect(editor.children).toEqual(before)
+    expect(editor.selection).toEqual(selectionBefore)
+    editor.tf.redo()
+    expect(editor.children).toEqual(converted)
+    type(editor, 'New ')
+    expectMarkdown(editor, '- Before\n- [x] New Target\n  - Child\n- After\n')
+  })
+
+  it('recognizes task markers in nested list items', () => {
+    const editor = createEditor('- Parent\n  - Child\n')
+    editor.tf.select({ path: [0, 0, 1, 0, 0, 0], offset: 0 })
+    type(editor, '[ ] ')
+    expectMarkdown(editor, '- Parent\n  - [ ] Child\n')
+  })
+
+  it.each(['[] Task', '[y] Task', 'prefix [ ] Task', '\\[ ] Task'])(
+    'keeps non-task markers literal within a list: %s',
+    (content) => {
+      const editor = createEditor()
+      type(editor, `- ${content}`)
+      expect(editor.api.node([0, 0])?.[0]).not.toHaveProperty('checked')
+      expect(editor.api.string([0, 0, 0])).toBe(content)
+    }
+  )
+
+  it('keeps markers literal in prose, code and a second list-item paragraph', () => {
+    const prose = createEditor()
+    type(prose, '[ ] Task')
+    expect(prose.children[0]).toMatchObject({ type: 'p', children: [{ text: '[ ] Task' }] })
+    const code = createEditor('```\n\n```\n')
+    type(code, '- [x] Task')
+    expect(code.api.string([0, 0])).toBe('- [x] Task')
+    const item = createEditor('- First\n\n  Second\n')
+    item.tf.select({ path: [0, 0, 1, 0], offset: 0 })
+    type(item, '[x] ')
+    expect(item.api.node([0, 0])?.[0]).not.toHaveProperty('checked')
+    expect(item.api.string([0, 0, 1])).toBe('[x] Second')
+  })
+
+  it.each(['1.', '2.', '7)', '123.'])(
+    'joins an adjacent ordered list when typing %s and keeps numbering, caret and undo',
+    (marker) => {
+      const editor = createEditor('3. First\n4. Second\n\nNext\n\nAfter\n')
+      editor.tf.select({ path: [1, 0], offset: 0 })
+      type(editor, marker)
+      const before = editor.children
+      const selectionBefore = editor.selection
+      type(editor, ' ')
+      expect(editor.children).toHaveLength(2)
+      expect(editor.children[0]).toMatchObject({ type: 'ol', start: 3 })
+      expect(editor.children[0].children).toHaveLength(3)
+      expectMarkdown(editor, '3. First\n4. Second\n5. Next\n\nAfter\n')
+      expect(editor.selection?.anchor).toEqual({ path: [0, 2, 0, 0], offset: 0 })
+      const joined = editor.children
+      editor.tf.undo()
+      expect(editor.children).toEqual(before)
+      expect(editor.selection).toEqual(selectionBefore)
+      editor.tf.redo()
+      expect(editor.children).toEqual(joined)
+      type(editor, 'Typed ')
+      expectMarkdown(editor, '3. First\n4. Second\n5. Typed Next\n\nAfter\n')
+    }
+  )
+
+  it('rejoins the preceding list after exiting it with two Enter presses', () => {
+    const editor = createEditor('1. First\n')
+    type(editor, '\n\n2. Second')
+    expect(editor.children).toHaveLength(1)
+    expectMarkdown(editor, '1. First\n2. Second\n')
+  })
+
+  it.each(['0.', '3.', '42)'])(
+    'preserves the starting number of a standalone %s list',
+    (marker) => {
+      const editor = createEditor()
+      type(editor, `${marker} Item`)
+      const start = Number.parseInt(marker, 10)
+      expect(editor.children[0]).toMatchObject({ type: 'ol', start })
+      expect(serializeMarkdownDocument(editor.children)).toBe(`${start}. Item\n`)
+      expectMarkdown(editor, `${start}. Item\n`)
+    }
+  )
+
+  it('does not join across intervening prose or merge an ordered item into an unordered list', () => {
+    for (const source of ['1. First\n\nGap\n\nNext\n', '- First\n\nNext\n']) {
+      const editor = createEditor(source)
+      const path = [editor.children.length - 1, 0]
+      editor.tf.select({ path, offset: 0 })
+      const preceding = editor.children.slice(0, -1)
+      type(editor, '2. ')
+      expect(editor.children.slice(0, -1)).toEqual(preceding)
+      expect(editor.children.at(-1)).toMatchObject({ type: 'ol', start: 2 })
+    }
+  })
+
+  it('joins an ordered list within the same quote without changing outside blocks', () => {
+    const editor = createEditor('Before\n\n> 3. First\n>\n> Next\n\nAfter\n')
+    editor.tf.select({ path: [1, 1, 0], offset: 0 })
+    type(editor, '4. ')
+    expectMarkdown(editor, 'Before\n\n> 3. First\n> 4. Next\n\nAfter\n')
+    expect(editor.children[1].children).toHaveLength(1)
+  })
+
+  it.each(['1234567890. text', '1.5 text', '-1. text', 'prefix 2. text'])(
+    'does not interpret non-list syntax as an ordered list: %s',
+    (source) => {
+      const editor = createEditor()
+      type(editor, source)
+      expect(editor.children[0]).toMatchObject({ type: 'p', children: [{ text: source }] })
+    }
+  )
+
   it('wraps a quote in the same paragraph structure as the codec', () => {
     const editor = createEditor()
     type(editor, '> quoted')

@@ -3,6 +3,8 @@ import {
   createMarkInputRule,
   createSlatePlugin,
   defineInputRule,
+  PathApi,
+  type TElement,
   type NodeComponents,
   type SelectionInputRuleContext,
   type Value
@@ -57,7 +59,7 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
     ...markRules,
     createBlockStartInputRule({
       trigger: ' ',
-      match: /^(#{1,6}|>|[-+*]|1[.)])$/u,
+      match: /^(#{1,6}|>|[-+*]|\d{1,9}[.)])$/u,
       enabled: (context) => isProse(context) && context.getBlockEntry()?.[0].type === 'p',
       apply: ({ editor, getBlockEntry }, { range, text }) => {
         const entry = getBlockEntry()
@@ -71,18 +73,60 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
             } else if (text === '>') {
               editor.tf.wrapNodes({ type: 'blockquote', children: [] }, { at: path })
             } else {
+              const ordered = /^\d/u.test(text)
+              const previousPath = PathApi.previous(path)
+              const previous = previousPath && editor.api.node<TElement>(previousPath)?.[0]
               editor.tf.setNodes({ type: 'lic' }, { at: path })
               editor.tf.wrapNodes({ type: 'li', children: [] }, { at: path })
-              editor.tf.wrapNodes(
-                { type: text.startsWith('1') ? 'ol' : 'ul', children: [] },
-                { at: path }
-              )
+              if (ordered && previousPath && previous?.type === 'ol') {
+                // Joining the existing container lets its start and item order own
+                // numbering, regardless of the marker typed on the next line.
+                editor.tf.moveNodes({ at: path, to: [...previousPath, previous.children.length] })
+              } else {
+                const start = ordered ? Number.parseInt(text, 10) : undefined
+                editor.tf.wrapNodes(
+                  {
+                    type: ordered ? 'ol' : 'ul',
+                    ...(start !== undefined && start !== 1 ? { start } : {}),
+                    children: []
+                  },
+                  { at: path }
+                )
+              }
             }
           })
         })
         return true
       }
     }),
+    // Consume the separator as the trigger so it does not become task text.
+    // Also accept a full-width space typed as the separator or inside an unchecked marker.
+    ...[' ', '　'].map((trigger) =>
+      createBlockStartInputRule({
+        trigger,
+        match: /^\[([ xX　])\]$/u,
+        resolveMatch: ({ match }) => ({ checked: match[1].toLowerCase() === 'x' }),
+        enabled: (context) => {
+          const entry = context.getBlockEntry()
+          // The preceding "- " (or another list marker) already created a list.
+          // Only its first paragraph can define the item's checkbox state.
+          return isProse(context) && entry?.[0].type === 'lic' && entry[1].at(-1) === 0
+        },
+        apply: ({ editor, getBlockEntry }, { range, checked }) => {
+          const entry = getBlockEntry()
+          if (!entry) return false
+          const itemPath = PathApi.parent(entry[1])
+          if (editor.api.node(itemPath)?.[0].type !== 'li') return false
+          editor.tf.withNewBatch(() =>
+            editor.tf.withoutNormalizing(() => {
+              editor.tf.delete({ at: range })
+              editor.tf.setNodes({ checked }, { at: itemPath })
+            })
+          )
+          return true
+        }
+      })
+    ),
     defineInputRule({
       target: 'insertBreak',
       resolve: ({ editor, getBlockEntry, getBlockStartRange, getBlockStartText, isCollapsed }) => {
@@ -117,7 +161,10 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
               insertBreak()
               editor.tf.setNodes({ type: 'p', placeholderKind: undefined })
             } else if (kind === 'list') {
+              const itemPath = PathApi.parent(path)
+              const isTask = typeof editor.api.node(itemPath)?.[0].checked === 'boolean'
               editor.tf.splitNodes({ match: (node) => node.type === 'li', always: true })
+              if (isTask) editor.tf.setNodes({ checked: false }, { at: PathApi.next(itemPath) })
             } else if (kind === 'exitList') {
               // Lift the empty item out of its list, then unwrap its item container.
               const itemPath = path.slice(0, -1)

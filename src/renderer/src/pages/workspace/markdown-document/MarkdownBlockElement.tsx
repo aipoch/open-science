@@ -54,7 +54,9 @@ import {
   duplicateMarkdownBlock,
   insertMarkdownBlock,
   isSafeRemoteImageUrl,
+  markdownBlockSiblingCount,
   moveMarkdownBlockTo,
+  moveMarkdownBlockRelative,
   turnMarkdownBlockInto,
   type DropdownDefinition,
   type MarkdownInsertKind
@@ -74,6 +76,9 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
   const [actionsOpen, setActionsOpen] = useState(false)
   const [dateOpen, setDateOpen] = useState(false)
   const [date, setDate] = useState('')
+  const path = editor.api.findPath(element) ?? []
+  const siblingIndex = path.at(-1) ?? -1
+  const siblingCount = markdownBlockSiblingCount(editor, path)
   const choiceGroups = useMemo(
     () =>
       [
@@ -105,10 +110,9 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
     <div
       contentEditable={false}
       className={cn(
-        'absolute -left-14 top-0.5 z-10 transition-opacity',
-        menuOpen || actionsOpen || dateOpen || dragging
-          ? 'opacity-100'
-          : 'opacity-0 group-hover/block:opacity-100 group-focus-within/block:opacity-100'
+        'markdown-block-controls absolute top-0.5 z-10 transition-opacity',
+        element.type === 'li' ? '-left-20' : '-left-12',
+        menuOpen || actionsOpen || dateOpen || dragging ? 'opacity-100' : 'opacity-0'
       )}
     >
       <div className="flex">
@@ -126,7 +130,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                   variant="ghost"
                   size="icon-xs"
                   aria-label={t('Insert block')}
-                  className="cursor-pointer focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
+                  className="size-5 cursor-pointer focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
                 >
                   <Plus aria-hidden="true" />
                 </Button>
@@ -148,7 +152,8 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                 editor.tf.focus()
                 const path = insertedPath.current
                 insertedPath.current = undefined
-                if (path) editor.tf.select({ path: [...path, 0], offset: 0 })
+                const start = path && editor.api.start(path)
+                if (start) editor.tf.select(start)
               }
             }}
           >
@@ -195,7 +200,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                   variant="ghost"
                   size="icon-xs"
                   aria-label={t('Drag block')}
-                  className="cursor-grab active:cursor-grabbing focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
+                  className="size-5 cursor-grab active:cursor-grabbing focus-visible:outline-none! focus-visible:ring-0! focus-visible:shadow-none! data-[state=open]:bg-muted"
                   draggable
                   onPointerDownCapture={(event) => {
                     // Keep Radix from opening on press without cancelling native HTML dragging.
@@ -256,21 +261,20 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
             </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              disabled={!((editor.api.findPath(element)?.[0] ?? 0) > 0)}
+              disabled={siblingIndex <= 0}
               onSelect={() => {
                 const path = editor.api.findPath(element)
-                if (path && path[0] > 0) moveMarkdownBlockTo(editor, path, path[0] - 1)
+                if (path) moveMarkdownBlockTo(editor, path, path[path.length - 1] - 1)
               }}
             >
               <ArrowUp className="mr-2 size-4" aria-hidden="true" />
               {t('Move Up')}
             </DropdownMenuItem>
             <DropdownMenuItem
-              disabled={!((editor.api.findPath(element)?.[0] ?? -1) < editor.children.length - 1)}
+              disabled={siblingIndex < 0 || siblingIndex >= siblingCount - 1}
               onSelect={() => {
                 const path = editor.api.findPath(element)
-                if (path && path[0] < editor.children.length - 1)
-                  moveMarkdownBlockTo(editor, path, path[0] + 1)
+                if (path) moveMarkdownBlockTo(editor, path, path[path.length - 1] + 1)
               }}
             >
               <ArrowDown className="mr-2 size-4" aria-hidden="true" />
@@ -498,12 +502,21 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     RangeApi.isCollapsed(selection) &&
     path.every((segment, index) => selection.anchor.path[index] === segment)
   )
-  const root = path.length === 1
   const type = element.type
-  const placeholderKind =
-    'placeholderKind' in element && typeof element.placeholderKind === 'string'
-      ? (element.placeholderKind as MarkdownInsertKind)
-      : undefined
+  const block = type === 'li' || (path.length === 1 && type !== 'ul' && type !== 'ol')
+  const listItem = type === 'lic' ? editor.api.node<TElement>(path.slice(0, -1))?.[0] : undefined
+  // List placeholders belong to the text block, not ul/ol or li: its origin is
+  // the caret position, already inset from the marker at every nesting depth.
+  const placeholderKind: MarkdownInsertKind | undefined =
+    listItem?.type === 'li'
+      ? typeof listItem.checked === 'boolean'
+        ? 'checklist'
+        : editor.api.node(path.slice(0, -2))?.[0].type === 'ol'
+          ? 'numbered'
+          : 'bullet'
+      : 'placeholderKind' in element && typeof element.placeholderKind === 'string'
+        ? (element.placeholderKind as MarkdownInsertKind)
+        : undefined
   const placeholderLabels: Partial<Record<MarkdownInsertKind, string>> = {
     h1: t('Heading 1'),
     h2: t('Heading 2'),
@@ -520,7 +533,7 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     dropdown: t('Dropdown')
   }
   const placeholderText =
-    caretInElement && !NodeApi.string(element)
+    caretInElement && !['ul', 'ol', 'li'].includes(type) && !NodeApi.string(element)
       ? placeholderKind
         ? placeholderLabels[placeholderKind]
         : type === 'p'
@@ -546,6 +559,7 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       <>
         <input
           type="checkbox"
+          className="absolute -left-6 top-[0.5lh] size-3.5 -translate-y-1/2 cursor-pointer accent-primary disabled:cursor-default"
           contentEditable={false}
           checked={element.checked}
           disabled={readOnly}
@@ -570,12 +584,67 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       </>
     )
   }
+  const blockClassName = cn(
+    'relative min-h-7 [&:hover:not(:has([data-markdown-block]:hover))>.markdown-block-controls]:opacity-100 [&:focus-within:not(:has([data-markdown-block]:focus-within))>.markdown-block-controls]:opacity-100',
+    dropPosition &&
+      'after:pointer-events-none after:absolute after:inset-x-0 after:z-20 after:h-0.5 after:rounded-full after:bg-primary',
+    dropPosition === 'before' && 'after:top-0',
+    dropPosition === 'after' && 'after:bottom-0'
+  )
+  const blockAttributes = {
+    'data-markdown-block': true,
+    'data-drop-position': dropPosition,
+    onDragOver: (event: React.DragEvent<HTMLElement>) => {
+      const drag = drags.get(editor)
+      if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'move'
+      if (drag.element === element) {
+        drag.clearDropTarget?.()
+        return
+      }
+      if (drag.clearDropTarget !== clearDropTarget) {
+        drag.clearDropTarget?.()
+        drag.clearDropTarget = clearDropTarget
+      }
+      const bounds = event.currentTarget.getBoundingClientRect()
+      setDropPosition(event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after')
+    },
+    onDragLeave: (event: React.DragEvent<HTMLElement>) => {
+      if (
+        !(event.relatedTarget instanceof Node) ||
+        !event.currentTarget.contains(event.relatedTarget)
+      )
+        clearDropTarget()
+    },
+    onDrop: (event: React.DragEvent<HTMLElement>) => {
+      const drag = drags.get(editor)
+      if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
+      event.preventDefault()
+      event.stopPropagation()
+      drag.clearDropTarget?.()
+      drags.delete(editor)
+      const from = editor.api.findPath(drag.element)
+      const target = editor.api.findPath(element)
+      if (!from || !target) return
+      const bounds = event.currentTarget.getBoundingClientRect()
+      moveMarkdownBlockRelative(
+        editor,
+        from,
+        target,
+        event.clientY >= bounds.top + bounds.height / 2
+      )
+    }
+  }
   const rendered = (
     <PlateElement
       {...props}
       as={tag}
       attributes={{
         ...props.attributes,
+        ...(type === 'li' ? blockAttributes : {}),
+        ...(type === 'ol' && typeof element.start === 'number' ? { start: element.start } : {}),
         'data-markdown-placeholder': placeholderText,
         ...(type === 'a'
           ? {
@@ -585,6 +654,8 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
           : {})
       }}
       className={cn(
+        type === 'li' && blockClassName,
+        type === 'li' && typeof element.checked === 'boolean' && 'list-none',
         placeholderText &&
           'relative before:absolute before:left-0 before:top-0 before:pointer-events-none before:whitespace-nowrap before:text-muted-foreground before:content-[attr(data-markdown-placeholder)]',
         type === 'a' && 'text-primary underline decoration-dotted underline-offset-2',
@@ -597,60 +668,12 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       )}
     >
       {content}
+      {type === 'li' && !readOnly ? <BlockControls element={element} /> : null}
     </PlateElement>
   )
-  if (!root) return rendered
+  if (!block || type === 'li') return rendered
   return (
-    <div
-      className={cn(
-        'group/block relative min-h-7',
-        dropPosition &&
-          'after:pointer-events-none after:absolute after:inset-x-0 after:z-20 after:h-0.5 after:rounded-full after:bg-primary',
-        dropPosition === 'before' && 'after:top-0',
-        dropPosition === 'after' && 'after:bottom-0'
-      )}
-      data-markdown-block
-      data-drop-position={dropPosition}
-      onDragOver={(event) => {
-        const drag = drags.get(editor)
-        if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
-        event.preventDefault()
-        event.stopPropagation()
-        event.dataTransfer.dropEffect = 'move'
-        if (drag.element === element) {
-          drag.clearDropTarget?.()
-          return
-        }
-        if (drag.clearDropTarget !== clearDropTarget) {
-          drag.clearDropTarget?.()
-          drag.clearDropTarget = clearDropTarget
-        }
-        const bounds = event.currentTarget.getBoundingClientRect()
-        setDropPosition(event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after')
-      }}
-      onDragLeave={(event) => {
-        if (
-          !(event.relatedTarget instanceof Node) ||
-          !event.currentTarget.contains(event.relatedTarget)
-        )
-          clearDropTarget()
-      }}
-      onDrop={(event) => {
-        const drag = drags.get(editor)
-        if (readOnly || !drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return
-        event.preventDefault()
-        event.stopPropagation()
-        drag.clearDropTarget?.()
-        drags.delete(editor)
-        const from = editor.api.findPath(drag.element)
-        const target = editor.api.findPath(element)
-        if (!from || !target || drag.element === element) return
-        const bounds = event.currentTarget.getBoundingClientRect()
-        const boundary = target[0] + (event.clientY < bounds.top + bounds.height / 2 ? 0 : 1)
-        // Removing a source above the insertion boundary shifts that boundary up by one.
-        moveMarkdownBlockTo(editor, from, boundary - (from[0] < boundary ? 1 : 0))
-      }}
-    >
+    <div className={blockClassName} {...blockAttributes}>
       {rendered}
       {!readOnly ? <BlockControls element={element} /> : null}
     </div>

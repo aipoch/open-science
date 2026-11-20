@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import type { ManagedFileVersionSaveTextEditRequest } from '../../src/shared/managed-file-versions'
 import type { Annotation } from '../../src/shared/annotation-contract'
 import type { DocumentConversationRequest } from '../../src/renderer/src/pages/workspace/previews/preview-types'
@@ -311,6 +311,351 @@ test('block handle still opens its menu by click and keyboard', async ({ page })
   await expect(page.getByRole('menuitem', { name: 'Duplicate', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(handle).toBeFocused()
+})
+
+for (const marker of ['1.', '3.', '9)']) {
+  test(`ordered Markdown ${marker} on the next line joins the preceding list with continuous numbering`, async ({
+    page
+  }, testInfo) => {
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto('/preview-edit-recovery.html?success')
+    const editor = page.getByTestId('markdown-plate-editor')
+    await editor.click()
+    await editor.press('ControlOrMeta+End')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('3. First')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Second')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    const list = editor.locator('ol')
+    await expect(list).toHaveCount(1)
+    await expect(list).toHaveAttribute('start', '3')
+    await expect(list.locator('li')).toHaveCount(2)
+    await page.keyboard.type(`${marker} `)
+    await expect(list).toHaveCount(1)
+    await expect(list.locator('li')).toHaveCount(3)
+    await expect(editor.locator('p')).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(list.locator('li')).toHaveCount(2)
+    await expect(editor.locator('p')).toHaveText(marker)
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(list.locator('li')).toHaveCount(3)
+    await page.keyboard.type('Third')
+    await expect(list.locator('[data-slate-string]')).toHaveText(['First', 'Second', 'Third'])
+    await expect(list).toHaveCSS('list-style-type', 'decimal')
+    await editor.screenshot({ path: testInfo.outputPath('continued-ordered-list.png') })
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await expect
+      .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
+      .toBe('# Current\n\n3. First\n4. Second\n5. Third\n')
+    expect(errors).toEqual([])
+  })
+}
+
+test('empty list placeholders align with the text instead of the bullet at every depth', async ({
+  page
+}, testInfo) => {
+  await page.goto('/preview-edit-recovery.html?success&locale=zh-Hans')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('h1').hover()
+  await editor.getByRole('button', { name: '插入块', exact: true }).click()
+  await page.getByRole('menuitem', { name: '无序列表', exact: true }).click()
+  const placeholder = editor.locator('[data-markdown-placeholder]')
+  const expectTextAlignment = async (name: string): Promise<void> => {
+    await expect(placeholder).toHaveCount(1)
+    await expect(placeholder).toHaveAttribute('data-markdown-placeholder', '无序列表')
+    await editor.screenshot({ path: testInfo.outputPath(`${name}.png`) })
+    const positions = await placeholder.evaluate((element) => {
+      const caret = window.getSelection()!.getRangeAt(0).getBoundingClientRect()
+      const before = getComputedStyle(element, '::before')
+      return {
+        placeholder: element.getBoundingClientRect().left + parseFloat(before.left),
+        caret: caret.left
+      }
+    })
+    expect(Math.abs(positions.placeholder - positions.caret)).toBeLessThanOrEqual(1)
+    await expect(placeholder).toHaveClass(/slate-lic/u)
+  }
+  await expectTextAlignment('empty-top-level-list')
+  await page.keyboard.type('Parent')
+  await expect(placeholder).toHaveCount(0)
+  await page.keyboard.press('Enter')
+  await expectTextAlignment('empty-sibling-item')
+  await page.keyboard.press('Tab')
+  await expect(editor.locator('ul ul > li')).toHaveCount(1)
+  await expectTextAlignment('empty-nested-item')
+  await page.keyboard.type('Child')
+  await expect(placeholder).toHaveCount(0)
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Tab')
+  await expect(editor.locator('ul ul ul > li')).toHaveCount(1)
+  await expectTextAlignment('empty-third-level-item')
+  await page.keyboard.press('Shift+Tab')
+  await expectTextAlignment('outdented-empty-item')
+  await page.keyboard.type('Sibling')
+  await expect(placeholder).toHaveCount(0)
+})
+
+test('list items independently insert, indent, outdent and move with native input', async ({
+  page
+}, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('h1').hover()
+  await editor.getByRole('button', { name: 'Insert block', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Bulleted list', exact: true }).click()
+  await expect(editor).toBeFocused()
+  await page.keyboard.type('First')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Second')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Third')
+  const topItems = editor.locator(':scope > ul > li')
+  await expect(topItems).toHaveCount(3)
+  await expect(editor.locator('li[data-markdown-block]')).toHaveCount(3)
+
+  await page.keyboard.press('Tab')
+  await expect(editor.locator('ul ul li [data-slate-string]')).toHaveText('Third')
+  await expect(editor).toBeFocused()
+  await page.keyboard.type(' child')
+  await page.keyboard.press('Shift+Tab')
+  await expect(topItems).toHaveCount(3)
+  await expect(topItems.nth(2).locator('[data-slate-string]')).toHaveText('Third child')
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(editor.locator('ul ul li [data-slate-string]')).toHaveText('Third child')
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect(topItems).toHaveCount(3)
+
+  await topItems.nth(1).hover()
+  await topItems.nth(1).getByRole('button', { name: 'Insert block', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Bulleted list', exact: true }).click()
+  await expect(editor).toBeFocused()
+  await page.keyboard.type('Added')
+  await expect(
+    topItems.locator(':scope > [data-slate-node="element"] [data-slate-string]')
+  ).toHaveText(['First', 'Second', 'Added', 'Third child'])
+  await topItems.nth(2).hover()
+  await topItems.nth(2).getByRole('button', { name: 'Drag block', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Move Up', exact: true }).click()
+  await expect(topItems.nth(1).locator('[data-slate-string]')).toHaveText('Added')
+  await topItems.nth(1).hover()
+  await topItems
+    .nth(1)
+    .getByRole('button', { name: 'Drag block', exact: true })
+    .dragTo(topItems.nth(3), {
+      targetPosition: { x: 100, y: 25 }
+    })
+  await expect(topItems.locator('[data-slate-string]')).toHaveText([
+    'First',
+    'Second',
+    'Third child',
+    'Added'
+  ])
+  await expect(page.getByRole('menu')).toBeHidden()
+  await editor.focus()
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(topItems.locator('[data-slate-string]')).toHaveText([
+    'First',
+    'Added',
+    'Second',
+    'Third child'
+  ])
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect(topItems.locator('[data-slate-string]')).toHaveText([
+    'First',
+    'Second',
+    'Third child',
+    'Added'
+  ])
+  await topItems.nth(1).hover()
+  await expect(topItems.nth(1).locator(':scope > .markdown-block-controls')).toHaveCSS(
+    'opacity',
+    '1'
+  )
+  await page.screenshot({ path: testInfo.outputPath('independent-list-items.png') })
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
+    .toBe('# Current\n\n- First\n- Second\n- Third child\n- Added\n')
+  expect(errors).toEqual([])
+})
+
+test('nested list item controls target only that item and preserve its subtree', async ({
+  page
+}, testInfo) => {
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.click()
+  await editor.press('ControlOrMeta+End')
+  await editor.press('Enter')
+  await page.keyboard.type('- Parent')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Child')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Sibling')
+  const child = editor.locator('ul ul > li').first()
+  await child.locator('[data-slate-string]').hover()
+  await expect(child.locator(':scope > .markdown-block-controls')).toHaveCSS('opacity', '1')
+  await expect(editor.locator(':scope > ul > li > .markdown-block-controls')).toHaveCSS(
+    'opacity',
+    '0'
+  )
+  await child.getByRole('button', { name: 'Drag block', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Move Up', exact: true })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  await page.getByRole('menuitem', { name: 'Move Down', exact: true }).click()
+  await expect(editor.locator('ul ul [data-slate-string]')).toHaveText(['Sibling', 'Child'])
+  await editor.locator('ul ul [data-slate-string]').last().click()
+  await page.keyboard.press('Shift+Tab')
+  await expect(editor.locator(':scope > ul > li')).toHaveCount(2)
+  await expect(editor.locator('ul ul [data-slate-string]')).toHaveText('Sibling')
+  await child.locator('[data-slate-string]').hover()
+  await expect(child.locator(':scope > .markdown-block-controls')).toHaveCSS('opacity', '1')
+  await page.screenshot({ path: testInfo.outputPath('nested-list-items.png') })
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
+    .toBe('# Current\n\n- Parent\n  - Sibling\n- Child\n')
+})
+
+for (const marker of ['[ ]', '[x]', '[X]']) {
+  test(`typing task Markdown ${marker} creates a checkbox and continues with an unchecked item`, async ({
+    page
+  }, testInfo) => {
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto('/preview-edit-recovery.html?success')
+    const editor = page.getByTestId('markdown-plate-editor')
+    await editor.click()
+    await editor.press('ControlOrMeta+End')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type(`- ${marker}`)
+    await expect(editor.getByRole('checkbox')).toHaveCount(0)
+    await page.keyboard.press('Space')
+    const checkboxes = editor.getByRole('checkbox')
+    await expect(checkboxes).toHaveCount(1)
+    const checked = marker !== '[ ]'
+    await expect(checkboxes.first()).toBeChecked({ checked })
+    await expect(editor).toBeFocused()
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(checkboxes).toHaveCount(0)
+    await expect(editor.locator('li > .slate-lic')).toHaveText(marker)
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(checkboxes).toHaveCount(1)
+    await expect(checkboxes.first()).toBeChecked({ checked })
+    await page.keyboard.type('First task')
+    await page.keyboard.press('Enter')
+    await expect(checkboxes).toHaveCount(2)
+    await expect(checkboxes.last()).not.toBeChecked()
+    await page.keyboard.type('Second task')
+    await page.keyboard.press('Tab')
+    await expect(editor.locator('ul ul').getByRole('checkbox')).toHaveCount(1)
+    await expect(editor.locator('ul ul').getByRole('checkbox')).not.toBeChecked()
+    await page.keyboard.press('Shift+Tab')
+    await expect(editor.locator('ul ul')).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('After tasks')
+    await expect(checkboxes).toHaveCount(2)
+    await expect(editor.locator('p')).toHaveText('After tasks')
+    await editor.screenshot({ path: testInfo.outputPath('typed-checklist.png') })
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await expect
+      .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
+      .toBe(
+        `# Current\n\n- [${checked ? 'x' : ' '}] First task\n- [ ] Second task\n\nAfter tasks\n`
+      )
+    expect(errors).toEqual([])
+  })
+}
+
+test('checklist markers replace bullets and align with empty, wrapped and nested text', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 600, height: 700 })
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('h1').hover()
+  await editor.getByRole('button', { name: 'Insert block', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Checklist', exact: true }).click()
+  const task = editor.locator(':scope > ul > li').first()
+  const expectTaskAlignment = async (item: Locator): Promise<void> => {
+    await expect(item).toHaveCSS('list-style-type', 'none')
+    const geometry = await item.evaluate((element) => {
+      const checkbox = element
+        .querySelector(':scope > input[type="checkbox"]')!
+        .getBoundingClientRect()
+      const text = element.querySelector(':scope > .slate-lic')!
+      const bounds = text.getBoundingClientRect()
+      const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight)
+      return {
+        checkboxWidth: checkbox.width,
+        checkboxHeight: checkbox.height,
+        checkboxRight: checkbox.right,
+        checkboxCenter: checkbox.top + checkbox.height / 2,
+        textLeft: bounds.left,
+        lineCenter: bounds.top + lineHeight / 2
+      }
+    })
+    expect(geometry.checkboxWidth).toBe(14)
+    expect(geometry.checkboxHeight).toBe(14)
+    expect(geometry.checkboxRight).toBeLessThan(geometry.textLeft)
+    expect(Math.abs(geometry.checkboxCenter - geometry.lineCenter)).toBeLessThanOrEqual(0.5)
+  }
+  await expect(editor.locator('[data-markdown-placeholder]')).toHaveAttribute(
+    'data-markdown-placeholder',
+    'Checklist'
+  )
+  await editor.screenshot({ path: testInfo.outputPath('empty-checklist.png') })
+  await expectTaskAlignment(task)
+  const longText =
+    'A long task description that wraps onto multiple lines while its checkbox remains aligned with the first line of text.'
+  await page.keyboard.type(longText)
+  await expect(task.locator(':scope > .slate-lic')).toHaveText(longText)
+  expect(
+    await task
+      .locator(':scope > .slate-lic')
+      .evaluate(
+        (element) =>
+          element.getBoundingClientRect().height /
+          Number.parseFloat(getComputedStyle(element).lineHeight)
+      )
+  ).toBeGreaterThan(1)
+  await expectTaskAlignment(task)
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Tab')
+  const child = task.locator('ul > li').first()
+  await expectTaskAlignment(child)
+  await page.keyboard.type('Nested task')
+  await child.getByRole('checkbox', { name: 'Incomplete task', exact: true }).check()
+  await expect(child.getByRole('checkbox')).toBeChecked()
+  await expectTaskAlignment(child)
+  await child.hover()
+  await child.getByRole('button', { name: 'Insert block', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Bulleted list', exact: true }).click()
+  await expect(editor).toBeFocused()
+  await page.keyboard.type('Ordinary item')
+  const ordinary = task.locator('ul > li').last()
+  await expect(ordinary.locator(':scope > .slate-lic')).toHaveText('Ordinary item')
+  await expect(ordinary).toHaveCSS('list-style-type', 'disc')
+  await expect(ordinary.getByRole('checkbox')).toHaveCount(0)
+  await editor.screenshot({ path: testInfo.outputPath('wrapped-nested-checklist.png') })
+  await page.evaluate(() => document.documentElement.classList.add('dark'))
+  await expectTaskAlignment(task)
+  await expectTaskAlignment(child)
+  await editor.screenshot({ path: testInfo.outputPath('dark-checklist.png') })
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.saves[0]?.content))
+    .toBe(`# Current\n\n- [ ] ${longText}\n  - [x] Nested task\n  - Ordinary item\n`)
 })
 
 test('checklist and dropdown choices survive Markdown serialization', async ({ page }) => {

@@ -16,7 +16,7 @@ const deserializeList = (
   options: DeserializeMdOptions
 ): TElement => ({
   type: node.ordered ? 'ol' : 'ul',
-  ...(node.start && node.start !== 1 ? { start: node.start } : {}),
+  ...(typeof node.start === 'number' && node.start !== 1 ? { start: node.start } : {}),
   children: node.children.map((item) => ({
     type: 'li',
     ...(typeof item.checked === 'boolean' ? { checked: item.checked } : {}),

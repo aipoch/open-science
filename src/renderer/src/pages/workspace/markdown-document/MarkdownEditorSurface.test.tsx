@@ -98,6 +98,39 @@ describe('MarkdownEditorSurface', () => {
     await waitFor(() => expect(heading.getAttribute('data-markdown-placeholder')).toBeNull())
   })
 
+  it.each([
+    ['bullet', 'Bulleted list'],
+    ['numbered', 'Numbered list'],
+    ['checklist', 'Checklist']
+  ] as const)(
+    'renders the %s placeholder only on the empty list text block',
+    async (kind, label) => {
+      render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
+      const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+      const surface = screen.getByTestId('markdown-plate-editor')
+      await act(async () => insertMarkdownBlock(editor, [0], kind))
+      const placeholder = surface.querySelector('[data-markdown-placeholder]')
+      expect(surface.querySelectorAll('[data-markdown-placeholder]')).toHaveLength(1)
+      expect(placeholder?.classList.contains('slate-lic')).toBe(true)
+      expect(placeholder?.getAttribute('data-markdown-placeholder')).toBe(label)
+      expect(
+        surface.querySelector(
+          'ul[data-markdown-placeholder], ol[data-markdown-placeholder], li[data-markdown-placeholder]'
+        )
+      ).toBeNull()
+      await act(async () => editor.tf.insertText('Item'))
+      expect(surface.querySelector('[data-markdown-placeholder]')).toBeNull()
+      await act(async () => editor.tf.insertBreak())
+      expect(
+        surface
+          .querySelector('[data-markdown-placeholder]')
+          ?.getAttribute('data-markdown-placeholder')
+      ).toBe(label)
+      await act(async () => editor.tf.select({ path: [0, 0], offset: 0 }))
+      expect(surface.querySelector('[data-markdown-placeholder]')).toBeNull()
+    }
+  )
+
   it('uses the generic placeholder after an inserted heading becomes a paragraph', async () => {
     render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
     const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
@@ -197,6 +230,44 @@ describe('MarkdownEditorSurface', () => {
     fireEvent.click(handle, { detail: 1 })
     expect(screen.queryByRole('menu')).toBeNull()
     bounds.mockRestore()
+  })
+
+  it('renders controls on every list item, with valid list markup and per-item moves', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownEditorSurface source={'- First\n- Second\n- Third\n'} onChange={onChange} />)
+    const surface = screen.getByTestId('markdown-plate-editor')
+    const items = within(surface).getAllByRole('listitem')
+    expect(surface.querySelectorAll('[data-markdown-block]')).toHaveLength(3)
+    for (const item of items) {
+      expect(item.parentElement?.tagName).toBe('UL')
+      expect(within(item).getByRole('button', { name: 'Insert block' })).toBeTruthy()
+      expect(within(item).getByRole('button', { name: 'Drag block' })).toBeTruthy()
+    }
+    fireEvent.click(within(items[1]).getByRole('button', { name: 'Drag block' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Move Up' }))
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('- Second\n- First\n- Third\n'))
+  })
+
+  it('handles Tab and Shift+Tab in list prose, but not in readonly editors', async () => {
+    const onChange = vi.fn()
+    const view = render(
+      <MarkdownEditorSurface source={'- First\n- Second\n'} onChange={onChange} />
+    )
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    const surface = screen.getByTestId('markdown-plate-editor')
+    await act(async () => editor.tf.select({ path: [0, 1, 0, 0], offset: 3 }))
+    expect(fireEvent.keyDown(surface, { key: 'Tab' })).toBe(false)
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('- First\n  - Second\n'))
+    expect(surface.querySelectorAll('ul ul li')).toHaveLength(1)
+    expect(fireEvent.keyDown(surface, { key: 'Tab', shiftKey: true })).toBe(false)
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('- First\n- Second\n'))
+    view.rerender(
+      <MarkdownEditorSurface source={'- First\n- Second\n'} disabled onChange={onChange} />
+    )
+    const before = editor.children
+    fireEvent.keyDown(surface, { key: 'Tab' })
+    expect(editor.children).toBe(before)
+    expect(within(surface).queryByRole('button')).toBeNull()
   })
 
   it('groups insert options with decorative icons and preserves block insertion', async () => {

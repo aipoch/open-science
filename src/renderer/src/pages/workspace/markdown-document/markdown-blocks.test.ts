@@ -10,6 +10,7 @@ import {
   encodeDropdownDefinition,
   insertMarkdownBlock,
   moveMarkdownBlockTo,
+  moveMarkdownBlockRelative,
   turnMarkdownBlockInto
 } from './markdown-blocks'
 
@@ -25,6 +26,97 @@ describe('Markdown block editing', () => {
     expect(moveMarkdownBlockTo(editor, [-1], 0)).toBe(false)
     expect(moveMarkdownBlockTo(editor, [0, 0], 1)).toBe(false)
   })
+
+  it('adds, moves, duplicates and deletes independent list items with their children', () => {
+    const editor = createMarkdownEditor(
+      parseMarkdownDocument('- First\n- Second\n  - Child\n- Third\n').value
+    )
+    const original = editor.children
+    expect(moveMarkdownBlockTo(editor, [0, 1], 0)).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe(
+      '- Second\n  - Child\n- First\n- Third\n'
+    )
+    editor.tf.undo()
+    expect(editor.children).toEqual(original)
+    const added = insertMarkdownBlock(editor, [0, 1], 'bullet')
+    expect(added).toEqual([0, 2])
+    editor.tf.insertText('Added')
+    expect(serializeMarkdownDocument(editor.children)).toBe(
+      '- First\n- Second\n  - Child\n- Added\n- Third\n'
+    )
+    expect(duplicateMarkdownBlock(editor, [0, 1])).toEqual([0, 2])
+    expect(editor.api.string([0, 2])).toBe('SecondChild')
+    expect(deleteMarkdownBlock(editor, [0, 2])).toBe(true)
+    expect(deleteMarkdownBlock(editor, [0, 2])).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe(serializeMarkdownDocument(original))
+  })
+
+  it('inserts another block between list items instead of after the whole list', () => {
+    const editor = createMarkdownEditor(parseMarkdownDocument('- First\n- Last\n').value)
+    expect(insertMarkdownBlock(editor, [0, 0], 'h2')).toEqual([1])
+    editor.tf.insertText('Between')
+    expect(serializeMarkdownDocument(editor.children)).toBe('- First\n\n## Between\n\n- Last\n')
+  })
+
+  it('converts just one item and preserves its nested list', () => {
+    const editor = createMarkdownEditor(
+      parseMarkdownDocument('- First\n- Second\n  - Child\n- Last\n').value
+    )
+    expect(turnMarkdownBlockInto(editor, [0, 1], 'checklist')).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe(
+      '- First\n- [ ] Second\n  - Child\n- Last\n'
+    )
+    expect(turnMarkdownBlockInto(editor, [0, 1], 'h2')).toBe(true)
+    expect(editor.children.map((node) => node.type)).toEqual(['ul', 'h2', 'ul', 'ul'])
+    expect(editor.api.string([1])).toBe('Second')
+    expect(editor.api.string([2])).toBe('Child')
+    expect(editor.api.string([3])).toBe('Last')
+  })
+
+  it('moves items across lists and removes an emptied source list', () => {
+    const editor = createMarkdownEditor(
+      parseMarkdownDocument('- First\n  - Child\n\nBetween\n\n- Last\n').value
+    )
+    const original = editor.children
+    expect(moveMarkdownBlockRelative(editor, [0, 0, 1, 0], [2, 0], true)).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe(
+      '- First\n\nBetween\n\n- Last\n- Child\n'
+    )
+    editor.tf.undo()
+    expect(editor.children).toEqual(original)
+    expect(moveMarkdownBlockRelative(editor, [0, 0], [0, 0, 1, 0], true)).toBe(false)
+    expect(deleteMarkdownBlock(editor, [0, 0, 1, 0])).toBe(true)
+    expect(editor.api.node([0, 0, 1])).toBeUndefined()
+  })
+
+  it.each([true, false])('moves a paragraph into a list boundary (after=%s)', (after) => {
+    const editor = createMarkdownEditor(
+      parseMarkdownDocument('Paragraph\n\n- First\n- Last\n').value
+    )
+    const original = editor.children
+    expect(moveMarkdownBlockRelative(editor, [0], [1, 0], after)).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe(
+      after ? '- First\n\nParagraph\n\n- Last\n' : 'Paragraph\n\n- First\n- Last\n'
+    )
+    editor.tf.undo()
+    expect(editor.children).toEqual(original)
+  })
+
+  it.each([true, false])(
+    'moves an item outside its list while retaining the list marker (after=%s)',
+    (after) => {
+      const editor = createMarkdownEditor(
+        parseMarkdownDocument('- First\n- Last\n\nParagraph\n').value
+      )
+      const original = editor.children
+      expect(moveMarkdownBlockRelative(editor, [0, 1], [1], after)).toBe(true)
+      expect(serializeMarkdownDocument(editor.children)).toBe(
+        after ? '- First\n\nParagraph\n\n- Last\n' : '- First\n\n* Last\n\nParagraph\n'
+      )
+      editor.tf.undo()
+      expect(editor.children).toEqual(original)
+    }
+  )
 
   it('inserts a heading after its selected block without changing surrounding text', () => {
     const editor = createMarkdownEditor(parseMarkdownDocument('Before\n\nAfter\n').value)

@@ -1,5 +1,19 @@
-import { NodeApi, type Descendant, type Path, type TElement } from 'platejs'
+import { NodeApi, PathApi, type Descendant, type Path, type TElement } from 'platejs'
 import type { PlateEditor } from 'platejs/react'
+import {
+  isMarkdownList,
+  isMarkdownListItem,
+  removeEmptyMarkdownList
+} from './markdown-list-transforms'
+
+const isEditableBlock = (editor: PlateEditor, path: Path): boolean =>
+  path.length > 0 &&
+  path.every((index) => Number.isInteger(index) && index >= 0) &&
+  !!editor.api.node(path) &&
+  (path.length === 1 || isMarkdownListItem(editor, path))
+
+export const markdownBlockSiblingCount = (editor: PlateEditor, path: Path): number =>
+  editor.api.node<TElement>(path.slice(0, -1))?.[0].children.length ?? 0
 
 export const DROPDOWN_LANGUAGE = 'openscience-dropdown'
 
@@ -171,7 +185,7 @@ export const createMarkdownBlock = (
   }
 }
 
-/** Insert after a block's top-level ancestor and select the new block. */
+/** Insert after the selected block or list item and select its first editable text. */
 export const insertMarkdownBlock = (
   editor: PlateEditor,
   selectedPath: Path | undefined,
@@ -185,21 +199,49 @@ export const insertMarkdownBlock = (
     ...createMarkdownBlock(kind, options),
     placeholderKind: kind
   }
+  if (selectedPath && isMarkdownListItem(editor, selectedPath)) {
+    let insertedPath = PathApi.next(selectedPath)
+    const list = editor.api.node(PathApi.parent(selectedPath))![0]
+    editor.tf.withNewBatch(() =>
+      editor.tf.withoutNormalizing(() => {
+        if (isMarkdownList(node) && node.type === list.type) {
+          editor.tf.insertNodes(
+            { ...node.children[0], placeholderKind: kind },
+            { at: insertedPath, select: true }
+          )
+        } else {
+          // Split the containing list so a different block really sits after this item,
+          // rather than after the entire list or illegally inside a ul/ol.
+          editor.tf.insertNodes(listItem(''), { at: insertedPath })
+          const ref = editor.api.pathRef(insertedPath)
+          editor.tf.liftNodes({ at: insertedPath })
+          insertedPath = ref.unref()!
+          editor.tf.replaceNodes(node, { at: insertedPath, select: true })
+        }
+      })
+    )
+    return insertedPath
+  }
   editor.tf.withNewBatch(() => editor.tf.insertNodes(node, { at, select: true }))
   return at
 }
 
 export const duplicateMarkdownBlock = (editor: PlateEditor, path: Path): Path | undefined => {
-  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return undefined
-  const node = structuredClone(editor.children[path[0]])
-  const next = [path[0] + 1]
+  if (!isEditableBlock(editor, path)) return undefined
+  const node = structuredClone(editor.api.node(path)![0])
+  const next = PathApi.next(path)
   editor.tf.withNewBatch(() => editor.tf.insertNodes(node, { at: next, select: true }))
   return next
 }
 
 export const deleteMarkdownBlock = (editor: PlateEditor, path: Path): boolean => {
-  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return false
-  editor.tf.withNewBatch(() => editor.tf.removeNodes({ at: path }))
+  if (!isEditableBlock(editor, path)) return false
+  editor.tf.withNewBatch(() =>
+    editor.tf.withoutNormalizing(() => {
+      editor.tf.removeNodes({ at: path })
+      removeEmptyMarkdownList(editor, PathApi.parent(path))
+    })
+  )
   return true
 }
 
@@ -208,9 +250,10 @@ export const turnMarkdownBlockInto = (
   path: Path,
   kind: MarkdownInsertKind
 ): boolean => {
-  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return false
-  const current = editor.children[path[0]]
-  const value = NodeApi.string(current)
+  if (!isEditableBlock(editor, path)) return false
+  const current = editor.api.node<TElement>(path)![0]
+  const item = isMarkdownListItem(editor, path)
+  const value = NodeApi.string(item ? current.children[0] : current)
   const node = createMarkdownBlock(kind, {
     code: value,
     date: value || undefined,
@@ -223,7 +266,30 @@ export const turnMarkdownBlockInto = (
     const definition = encodeDropdownDefinition({ options: [selected], selected })
     node.children = [{ type: 'code_line', children: [text(definition)] }]
   }
-  editor.tf.withNewBatch(() => editor.tf.replaceNodes(node, { at: path, select: true }))
+  editor.tf.withNewBatch(() =>
+    editor.tf.withoutNormalizing(() => {
+      if (!item) {
+        editor.tf.replaceNodes(node, { at: path, select: true })
+        return
+      }
+      const trailing = current.children.slice(1)
+      if (isMarkdownList(node)) {
+        const replacement = node.children[0] as TElement
+        replacement.children.push(...trailing)
+        const parent = editor.api.node(PathApi.parent(path))![0]
+        if (node.type === parent.type) {
+          editor.tf.replaceNodes(replacement, { at: path, select: true })
+          return
+        }
+      }
+      const ref = editor.api.pathRef(path)
+      editor.tf.liftNodes({ at: path })
+      editor.tf.replaceNodes(isMarkdownList(node) ? node : [node, ...trailing], {
+        at: ref.unref()!,
+        select: true
+      })
+    })
+  )
   return true
 }
 
@@ -281,18 +347,65 @@ export const moveMarkdownBlockTo = (
   targetIndex: number
 ): boolean => {
   if (
-    fromPath.length !== 1 ||
-    !Number.isInteger(fromPath[0]) ||
-    fromPath[0] < 0 ||
-    fromPath[0] >= editor.children.length ||
+    !isEditableBlock(editor, fromPath) ||
     !Number.isInteger(targetIndex) ||
     targetIndex < 0 ||
-    targetIndex >= editor.children.length
+    targetIndex >= markdownBlockSiblingCount(editor, fromPath)
   )
     return false
-  if (targetIndex === fromPath[0]) return false
+  if (targetIndex === fromPath[fromPath.length - 1]) return false
   editor.tf.withNewBatch(() => {
-    editor.tf.moveNodes({ at: fromPath, to: [targetIndex] })
+    editor.tf.moveNodes({ at: fromPath, to: [...PathApi.parent(fromPath), targetIndex] })
   })
+  return true
+}
+
+/** Drop at an actual block boundary, not the list's top-level ancestor. */
+export const moveMarkdownBlockRelative = (
+  editor: PlateEditor,
+  from: Path,
+  target: Path,
+  after: boolean
+): boolean => {
+  if (
+    !isEditableBlock(editor, from) ||
+    !isEditableBlock(editor, target) ||
+    PathApi.equals(from, target) ||
+    PathApi.isAncestor(from, target) ||
+    PathApi.isAncestor(target, from)
+  )
+    return false
+  const sameParent = PathApi.equals(PathApi.parent(from), PathApi.parent(target))
+  if (sameParent) {
+    const boundary = target[target.length - 1] + (after ? 1 : 0)
+    return moveMarkdownBlockTo(editor, from, boundary - (from[from.length - 1] < boundary ? 1 : 0))
+  }
+  const fromItem = isMarkdownListItem(editor, from)
+  const targetItem = isMarkdownListItem(editor, target)
+  editor.tf.withNewBatch(() =>
+    editor.tf.withoutNormalizing(() => {
+      const parentRef = editor.api.pathRef(PathApi.parent(from))
+      const sourceRef = editor.api.pathRef(from)
+      const sourceList = editor.api.node<TElement>(PathApi.parent(from))![0]
+      const boundary = after ? PathApi.next(target) : target
+      if (!fromItem && targetItem) {
+        // Make a block boundary between the target list items, never a paragraph
+        // directly inside ul/ol. Path refs track both the split and the move.
+        editor.tf.insertNodes(listItem(''), { at: boundary })
+        const boundaryRef = editor.api.pathRef(boundary)
+        editor.tf.liftNodes({ at: boundary })
+        editor.tf.moveNodes({ at: sourceRef.current!, to: boundaryRef.current! })
+        editor.tf.removeNodes({ at: boundaryRef.unref()! })
+      } else {
+        editor.tf.moveNodes({ at: from, to: boundary })
+        if (fromItem && !targetItem) {
+          editor.tf.wrapNodes({ type: sourceList.type, children: [] }, { at: sourceRef.current! })
+        }
+      }
+      sourceRef.unref()
+      const parent = parentRef.unref()
+      if (parent) removeEmptyMarkdownList(editor, parent)
+    })
+  )
   return true
 }
