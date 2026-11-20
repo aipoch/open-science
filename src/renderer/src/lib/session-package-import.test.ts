@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { importSessionPackage } from './session-package-import'
 import { sessionPackageImportAvailable } from './session-package-capabilities'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../../../shared/application-command-contract'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
 import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
@@ -263,14 +267,34 @@ it.each(['native', 'local'] as const)(
   }
 )
 
-it('records a specific failure message when a use-case import is blocked before creating an operation', async () => {
-  const importPackage = vi.fn(async () => {
-    throw new Error('A Session package operation is already in progress.')
-  })
-  stubWebApi(importPackage)
-  await importSessionPackage(undefined, { useCase: 'research-example' })
-  expect(usePackageOperationStore.getState().useCaseFailure).toBe('research-example')
-  expect(usePackageOperationStore.getState().useCaseFailureMessage).toBe(
-    'Another package operation is already in progress. Wait for it to finish, then try again.'
-  )
-})
+it.each(['native', 'local'] as const)(
+  'records a busy use-case failure alongside a competing %s import',
+  async (surface) => {
+    if (surface === 'local') enableWeb('local')
+    const operation: PackageOperationSnapshot = {
+      id: 'other-import',
+      kind: 'import',
+      state: 'running',
+      progress: { phase: 'copying' }
+    }
+    const error = new ApplicationCommandError(
+      'session-package-busy',
+      'A Session package operation is already in progress.'
+    )
+    const packageOperation = vi.fn(async () => operation)
+    const importPackage = vi.fn(async () => {
+      usePackageOperationStore.getState().receive(operation)
+      throw surface === 'native' ? toApplicationCommandErrorEnvelope(error) : error
+    })
+    vi.stubGlobal('api', { sessions: { importPackage, packageOperation } })
+
+    await importSessionPackage(undefined, { useCase: 'research-example' })
+    expect(usePackageOperationStore.getState()).toMatchObject({
+      operation,
+      useCaseFailure: 'research-example',
+      useCaseFailureMessage:
+        'Another package operation is already in progress. Wait for it to finish, then try again.'
+    })
+    expect(packageOperation).not.toHaveBeenCalled()
+  }
+)

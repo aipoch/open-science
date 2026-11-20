@@ -96,7 +96,7 @@ const hasNetworkSignal = (chain: unknown[]): boolean =>
     )
   })
 
-const classifyManifestFetchError = (error: unknown): unknown => {
+const classifyManifestFetchError = (error: unknown): UseCaseDownloadError | undefined => {
   const chain = errorChain(error)
   if (hasTimeoutSignal(chain)) {
     return new UseCaseDownloadError('timeout', 'Example catalog request timed out.', {
@@ -113,7 +113,7 @@ const classifyManifestFetchError = (error: unknown): unknown => {
       cause: error
     })
   }
-  return error
+  return undefined
 }
 
 const classifyDownloadError = (error: unknown): unknown => {
@@ -125,6 +125,7 @@ const classifyDownloadError = (error: unknown): unknown => {
         (entry instanceof Error &&
           (entry.name === 'DownloadChecksumError' ||
             entry.name === 'DownloadResponseIntegrityError')) ||
+        errorMessage(entry) === 'short read' ||
         /exceeds expected size|invalid Content-(?:Range|Length)|Content-Range length|validator does not match|left the trusted origin/i.test(
           errorMessage(entry)
         )
@@ -149,7 +150,7 @@ const classifyDownloadError = (error: unknown): unknown => {
   ) {
     return new UseCaseDownloadError('server', 'Example server returned an error.', { cause: error })
   }
-  if (message === 'short read' || error instanceof DownloadSourceError || hasNetworkSignal(chain)) {
+  if (error instanceof DownloadSourceError || hasNetworkSignal(chain)) {
     return new UseCaseDownloadError('network', 'Network error while downloading example.', {
       cause: error
     })
@@ -178,15 +179,16 @@ export const downloadUseCase = async (
   signal: AbortSignal,
   progress: (bytes: number, total: number) => void
 ): Promise<{ path: string; release: () => Promise<void> }> => {
+  const manifestSignal = AbortSignal.any([signal, AbortSignal.timeout(15000)])
   let manifest: Response
   try {
     manifest = await fetch(USE_CASE_MANIFEST_URL, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+      signal: manifestSignal,
       redirect: 'error'
     })
   } catch (error) {
     if (signal.aborted) throw error
-    throw classifyManifestFetchError(error)
+    throw classifyManifestFetchError(manifestSignal.reason ?? error) ?? error
   }
   if (!manifest.ok) {
     await manifest.body?.cancel().catch(() => undefined)
@@ -194,8 +196,13 @@ export const downloadUseCase = async (
   }
   let item: UseCase | undefined
   try {
-    item = parseUseCases(await manifest.json()).find((entry) => entry.slug === slug)
+    const data: unknown = await manifest.json().catch((error: unknown) => {
+      if (signal.aborted || error instanceof SyntaxError) throw error
+      throw classifyManifestFetchError(manifestSignal.reason ?? error) ?? error
+    })
+    item = parseUseCases(data).find((entry) => entry.slug === slug)
   } catch (error) {
+    if (signal.aborted || error instanceof UseCaseDownloadError) throw error
     throw new UseCaseDownloadError('manifest', 'Could not load use cases.', { cause: error })
   }
   if (!item) throw new UseCaseDownloadError('unavailable', 'Use case is unavailable.')

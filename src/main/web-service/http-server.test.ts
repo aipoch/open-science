@@ -1007,6 +1007,7 @@ describe('startWebHttpServer', () => {
       ['command-unavailable', 404],
       ['session-details-conflict', 409],
       ['session-revision-conflict', 409],
+      ['session-package-busy', 409],
       ['csl-undefined-macro', 400]
     ] as const) {
       directInvoke.mockRejectedValueOnce(

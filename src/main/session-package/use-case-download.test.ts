@@ -1,6 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import { readFile, access } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import * as storageUsage from '../storage/usage'
 import { downloadUseCase, UseCaseDownloadError } from './use-case-download'
 
@@ -45,6 +48,50 @@ it('streams a verified archive to a native path and releases it after use', asyn
   await expect(access(source.path)).rejects.toThrow()
 })
 
+it('classifies a truncated archive as a verification failure', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(Response.json([entry]))
+      .mockResolvedValueOnce(new Response(bytes.subarray(0, -1)))
+  )
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'verification' })
+})
+
+it.each(['close', 'keep-alive'])(
+  'classifies a truncated HTTP response with Connection: %s as a verification failure',
+  async (connection) => {
+    const server = createServer((_request, response) => {
+      const socket = response.socket
+      response.writeHead(200, { 'Content-Length': bytes.length, Connection: connection })
+      const partial = bytes.subarray(0, -1)
+      if (connection === 'close') response.end(partial)
+      else response.write(partial, () => socket?.end())
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    try {
+      const { port } = server.address() as AddressInfo
+      const fetchHttp = globalThis.fetch
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn<typeof fetch>()
+          .mockResolvedValueOnce(Response.json([entry]))
+          .mockImplementationOnce((_url, options) => fetchHttp(`http://127.0.0.1:${port}`, options))
+      )
+      await expect(
+        downloadUseCase('research', new AbortController().signal, () => {})
+      ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'verification' })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }
+)
+
 it('cancels a failed manifest response before opening an archive', async () => {
   const cancel = vi.fn()
   const fetcher = vi.fn(async () => new Response(new ReadableStream({ cancel }), { status: 503 }))
@@ -54,6 +101,37 @@ it('cancels a failed manifest response before opening an archive', async () => {
   )
   expect(fetcher).toHaveBeenCalledOnce()
   expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('reports a timeout if the catalog body stalls after the headers arrive', async () => {
+  const deadline = new AbortController()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal)
+  const body = new ReadableStream(
+    {
+      pull(controller) {
+        deadline.abort(new DOMException('The operation timed out.', 'TimeoutError'))
+        controller.error(new DOMException('The operation was aborted.', 'AbortError'))
+      }
+    },
+    { highWaterMark: 0 }
+  )
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(body))
+  vi.stubGlobal('fetch', fetcher)
+  try {
+    await expect(
+      downloadUseCase('research', new AbortController().signal, () => {})
+    ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'timeout' })
+    expect(fetcher).toHaveBeenCalledOnce()
+  } finally {
+    timeout.mockRestore()
+  }
+})
+
+it('keeps malformed JSON classified as a catalog failure', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('redirect')))
+  await expect(
+    downloadUseCase('research', new AbortController().signal, () => {})
+  ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'manifest' })
 })
 
 it.each(['checksum', 'size', 'unknown', 'http'])(

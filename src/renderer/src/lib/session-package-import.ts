@@ -4,6 +4,7 @@ import { packageOperationActive, usePackageOperationStore } from '@/stores/packa
 import { useProjectStore } from '@/stores/project-store'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { stageUploadFile } from '@/lib/upload-transfer'
+import { parseApplicationCommandError } from '../../../shared/application-command-contract'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 
 let importing = false
@@ -73,6 +74,16 @@ export const importSessionPackage = async (
       : window.api.sessions.importPackage(target))
     if (result) await useProjectStore.getState().loadProjects()
   } catch (caught) {
+    const commandError = parseApplicationCommandError(caught)
+    if (file && 'useCase' in file && commandError?.code === 'session-package-busy') {
+      usePackageOperationStore.setState({
+        useCaseFailure: file.useCase,
+        useCaseFailureMessage: i18n.t(
+          'Another package operation is already in progress. Wait for it to finish, then try again.'
+        )
+      })
+      return
+    }
     // IPC rejection may reach the renderer before the terminal progress event. Read the
     // existing owner snapshot so a fast preflight failure still has the normal retry surface.
     const observed = usePackageOperationStore.getState().operation
@@ -90,22 +101,14 @@ export const importSessionPackage = async (
       return
     }
     if (file && 'useCase' in file) {
-      const detail = caught instanceof Error ? caught.message : String(caught)
-      const useCaseFailureMessage =
-        detail === 'A Session package operation is already in progress.'
-          ? i18n.t(
-              'Another package operation is already in progress. Wait for it to finish, then try again.'
-            )
-          : undefined
-      usePackageOperationStore.setState({
-        useCaseFailure: file.useCase,
-        useCaseFailureMessage
-      })
+      usePackageOperationStore.setState({ useCaseFailure: file.useCase })
       return
     }
     usePackageOperationStore
       .getState()
-      .setImportError(caught instanceof Error ? caught.message : String(caught))
+      .setImportError(
+        commandError?.message ?? (caught instanceof Error ? caught.message : String(caught))
+      )
   } finally {
     importing = false
   }
