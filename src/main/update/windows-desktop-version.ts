@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { basename, dirname, join } from 'node:path'
 import { installationFs } from './installation-filesystem'
@@ -61,14 +62,11 @@ $p = Start-Process -FilePath $file -ArgumentList '--open-science-stage' -WindowS
 if ($p.ExitCode -ne 0) { throw "Extraction failed ($($p.ExitCode))" }
 `
 
-function verifiedCommand(body: string, reportHandoffFailure = false): string[] {
-  let script = verify + '\ntry {\n' + body + '\n} finally { $lock.Dispose() }'
-  if (reportHandoffFailure) {
-    script =
-      'try {\n' +
-      script +
-      "\n} catch { [Console]::Out.WriteLine('declined line {0}: {1}', $_.InvocationInfo.ScriptLineNumber, $_.Exception.GetType().Name); exit 1 }"
-  }
+function verifiedScript(body: string): string {
+  return verify + '\ntry {\n' + body + '\n} finally { $lock.Dispose() }'
+}
+
+function powershellArguments(script: string): string[] {
   return [
     '-NoProfile',
     '-NonInteractive',
@@ -109,7 +107,7 @@ export async function stageWindowsDesktopVersion(status: UpdateStatus): Promise<
   }
   const stage = await fs.mkdtemp(join(pending, 'prepare-'))
   try {
-    await exec(resolveWindowsPowerShellExecutable(), verifiedCommand(extract), {
+    await exec(resolveWindowsPowerShellExecutable(), powershellArguments(verifiedScript(extract)), {
       windowsHide: true,
       env: { ...installerEnv(pending, receipt), OPEN_SCIENCE_UPDATE_STAGING: stage }
     })
@@ -160,8 +158,7 @@ $parent = [Diagnostics.Process]::GetProcessById([int]$env:OPEN_SCIENCE_UPDATE_PA
 $null = $parent.Handle
 $stage = Join-Path ([IO.Path]::GetDirectoryName($file)) 'open-science-prepared'
 [IO.File]::Move((Join-Path $stage 'ready.json'), (Join-Path $stage 'installing.json'))
-[Console]::Out.WriteLine('accepted')
-[Console]::Out.Flush()
+[IO.File]::WriteAllText($env:OPEN_SCIENCE_UPDATE_ACK, '')
 if (!$parent.WaitForExit(30000)) { throw 'Desktop did not exit' }
 try {
   $env:OPEN_SCIENCE_USE_STAGED_UPDATE = '1'
@@ -175,50 +172,69 @@ try {
 }
 `
 
-function launchInstaller(pending: string, receipt: Prepared): Promise<boolean> {
-  return new Promise((resolve) => {
-    // CommandLineToArgvW quoting. No user arguments are evaluated as PowerShell source.
-    const args = process.argv
-      .slice(1)
-      .map((arg) => '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"')
-      .join(' ')
-    const worker = spawn(resolveWindowsPowerShellExecutable(), verifiedCommand(install, true), {
-      // A shortcut normally starts in the installation directory. A detached supervisor must
-      // release that directory before NSIS cleans it, then restore it for the successor.
-      cwd: pending,
+export function startWindowsUpdateSupervisor(
+  script: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<boolean> {
+  const root = env.SystemRoot || env.WINDIR
+  if (!root) throw new Error('Windows system directory unavailable')
+  // PowerShell 5.1 can exit 0 without evaluating a command when started directly with
+  // DETACHED_PROCESS. Detach the command processor and let it host the hidden PowerShell.
+  // Only the fixed switches and base64-encoded script enter cmd. All launch data stays in env.
+  const command =
+    '""%OPEN_SCIENCE_UPDATE_POWERSHELL%" ' + powershellArguments(script).join(' ') + '"'
+  const ack = join(cwd, preparedName, 'accepted-' + randomUUID())
+  const worker = spawn(
+    join(root, 'System32', 'cmd.exe'),
+    ['/d', '/q', '/v:off', '/s', '/c', command],
+    {
+      cwd,
       detached: true,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsVerbatimArguments: true,
+      stdio: 'ignore',
       env: {
-        ...installerEnv(pending, receipt),
-        OPEN_SCIENCE_UPDATE_PARENT: String(process.pid),
-        OPEN_SCIENCE_UPDATE_LAUNCH_CWD: process.cwd(),
-        OPEN_SCIENCE_UPDATE_ARGUMENTS: args
+        ...env,
+        OPEN_SCIENCE_UPDATE_ACK: ack,
+        OPEN_SCIENCE_UPDATE_POWERSHELL: resolveWindowsPowerShellExecutable(env)
       }
-    })
-    let output = ''
-    worker.stdout.setEncoding('utf8').on('data', (chunk: string) => {
-      output += chunk
-      if (output.trim() === 'accepted') {
-        worker.stdout.destroy()
+    }
+  )
+  return new Promise((resolve, reject) => {
+    // A detached console does not reliably forward stdout. Only the claimant for this
+    // launch writes this marker, after it has opened the parent and claimed the receipt.
+    const timer = setInterval(() => {
+      if (existsSync(ack)) {
+        clearInterval(timer)
         worker.unref()
         resolve(true)
       }
-    })
+    }, 50)
     worker.once('error', (error) => {
-      log.warn('Could not start installer supervisor', {
-        code: (error as NodeJS.ErrnoException).code
-      })
-      resolve(false)
+      clearInterval(timer)
+      reject(error)
     })
     worker.once('exit', (code) => {
-      if (output.trim() !== 'accepted')
-        log.warn('Installer supervisor declined the handoff', {
-          code,
-          detail: output.trim().slice(0, 120)
-        })
-      resolve(false)
+      clearInterval(timer)
+      const accepted = existsSync(ack)
+      if (!accepted) log.warn('Installer supervisor declined the handoff', { code })
+      resolve(accepted)
     })
+  })
+}
+
+function launchInstaller(pending: string, receipt: Prepared): Promise<boolean> {
+  // CommandLineToArgvW quoting. No user arguments are evaluated as shell source.
+  const args = process.argv
+    .slice(1)
+    .map((arg) => '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"')
+    .join(' ')
+  return startWindowsUpdateSupervisor(verifiedScript(install), pending, {
+    ...installerEnv(pending, receipt),
+    OPEN_SCIENCE_UPDATE_PARENT: String(process.pid),
+    OPEN_SCIENCE_UPDATE_LAUNCH_CWD: process.cwd(),
+    OPEN_SCIENCE_UPDATE_ARGUMENTS: args
   })
 }
 

@@ -1,9 +1,30 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { readPreparedWindowsUpdate } from './windows-desktop-version'
+import { readPreparedWindowsUpdate, startWindowsUpdateSupervisor } from './windows-desktop-version'
+
+it.runIf(process.platform === 'win32')(
+  'executes the hidden supervisor and passes launch data literally',
+  async () => {
+    const value = '"a & b" %PATH% !bang!'
+    const pending = await mkdtemp(join(tmpdir(), 'update-worker-'))
+    try {
+      await mkdir(join(pending, 'open-science-prepared'))
+      const result = join(pending, 'result')
+      const accepted = await startWindowsUpdateSupervisor(
+        "[IO.File]::WriteAllText($env:PROBE_RESULT, $env:OPEN_SCIENCE_UPDATE_ARGUMENTS)\n[IO.File]::WriteAllText($env:OPEN_SCIENCE_UPDATE_ACK, '')",
+        pending,
+        { ...process.env, PROBE_RESULT: result, OPEN_SCIENCE_UPDATE_ARGUMENTS: value }
+      )
+      expect(accepted).toBe(true)
+      expect(await readFile(result, 'utf8')).toBe(value)
+    } finally {
+      await rm(pending, { recursive: true, force: true, maxRetries: 5 })
+    }
+  }
+)
 
 it('only offers a complete receipt for this installation and the matching SDK download', async () => {
   const pending = await mkdtemp(join(tmpdir(), 'prepared-desktop-'))
