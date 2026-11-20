@@ -146,12 +146,10 @@ describe('Onboarding entry flow', () => {
     await finishWelcomeAnimation()
     await clickButton(/^Next$/)
 
-    const content = container.querySelector('.onboarding-quick-content')
-    expect(content).not.toBeNull()
-    expect(content?.querySelector('.onboarding-quick-footer')).not.toBeNull()
-    expect(content?.querySelector('[data-onboarding-action="advanced"]')).not.toBeNull()
-    expect(
-      content?.querySelector('.onboarding-quick-scroll .onboarding-provider-track')
-    ).not.toBeNull()
+    const cards = container.querySelector('.onboarding-provider-viewport')
+    const feedback = container.querySelector('.onboarding-quick-feedback')
+    expect(cards?.nextElementSibling).toBe(feedback)
+    expect(feedback?.querySelector('[data-onboarding-action="advanced"]')).not.toBeNull()
+    expect(feedback?.querySelector('[data-onboarding-action="skip"]')).not.toBeNull()
   })
 })

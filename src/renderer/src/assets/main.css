@@ -451,23 +451,30 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 
 .onboarding-quick-connect {
-  --connect-inset: 2.5rem;
-  height: min(760px, calc(100svh - 1.5rem));
+  height: min(840px, calc(100svh - 1.5rem));
 }
-.onboarding-quick-content {
+.onboarding-quick-feedback {
   display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
-}
-.onboarding-quick-scroll {
-  flex: 1;
-  min-height: 0;
-  margin-inline: calc(-1 * var(--connect-inset));
-  padding-inline: var(--connect-inset);
-  padding-bottom: 0.25rem;
+  gap: 0.5rem;
+  padding: 0.25rem;
   overflow-y: auto;
   overscroll-behavior-y: contain;
+}
+.onboarding-quick-feedback > * {
+  flex-shrink: 0;
+}
+.onboarding-quick-feedback [data-notice-level='warning'] {
+  --warning-ink: var(--color-status-warning-foreground);
+  border: 1px solid color-mix(in oklab, var(--warning-ink) 28%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--warning-ink) 8%, var(--card));
+  padding: 0.5rem 0.75rem;
+}
+.dark .onboarding-quick-feedback [data-notice-level='warning'] {
+  --warning-ink: var(--color-status-warning-dark-foreground);
 }
 .onboarding-quick-footer {
   flex: none;
@@ -1134,9 +1141,6 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     width: 8rem;
     height: 4.5rem;
   }
-  .onboarding-quick-connect {
-    --connect-inset: 1.15rem;
-  }
   .onboarding-provider-viewport {
     margin-left: -1.15rem;
     margin-right: -1.15rem;
@@ -1160,13 +1164,20 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 }
 
-.onboarding-provider-skip-error {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--destructive);
-  font-size: 0.75rem;
-  line-height: 1.35;
-  text-align: right;
+@media (max-height: 740px) {
+  .onboarding-provider-viewport {
+    margin-top: 1.25rem;
+  }
+  .onboarding-provider-card {
+    min-height: min(24rem, 54svh);
+  }
+  .onboarding-provider-card-body {
+    padding-block: 0.85rem;
+  }
+  .onboarding-provider-card-actions {
+    padding-block: 0.75rem;
+    min-height: 7rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

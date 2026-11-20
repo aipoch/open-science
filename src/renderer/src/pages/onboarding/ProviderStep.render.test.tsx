@@ -298,7 +298,7 @@ describe('ProviderStep', () => {
     expect(onAdvance).not.toHaveBeenCalled()
   })
 
-  it('keeps install failures on the card and retries without advancing a cancelled installation', async () => {
+  it('shows install failures below the cards and retries without advancing a cancelled installation', async () => {
     const pending = Promise.withResolvers<{ installId: string; ok: boolean }>()
     const login = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
     const install = vi
@@ -321,7 +321,9 @@ describe('ProviderStep', () => {
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-anthropic')!
     await clickButton(/Continue with Anthropic/)
-    expect(card.querySelector('[role="alert"]')?.textContent).toContain('Download interrupted')
+    expect(
+      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
+    ).toContain('Download interrupted')
     expect(login).not.toHaveBeenCalled()
     await clickButton(/Continue with Anthropic/)
     expect(card.querySelector('progress')?.hasAttribute('value')).toBe(false)
@@ -400,7 +402,9 @@ describe('ProviderStep', () => {
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-openai')!
     await clickButton(/^Sign in with Open-Science$/)
-    expect(card.querySelector('[role="alert"]')?.textContent).toContain('Download interrupted')
+    expect(
+      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
+    ).toContain('Download interrupted')
     await clickButton(/^Retry$/)
     await act(async () => {
       const states = useSettingsStore.getState().installStates
@@ -473,7 +477,7 @@ describe('ProviderStep', () => {
     expect(details.querySelector('pre')?.textContent).toBe(rawError)
     expect(warning.querySelector('svg')).not.toBeNull()
     expect(loginIsolatedCodex).not.toHaveBeenCalled()
-    expect(warning.closest('.onboarding-quick-scroll')).not.toBeNull()
+    expect(warning.closest('.onboarding-quick-feedback')).not.toBeNull()
     await act(async () =>
       warning.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click()
     )

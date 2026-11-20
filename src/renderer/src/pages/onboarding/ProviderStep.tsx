@@ -834,6 +834,9 @@ const ProviderStep = ({
   }
 
   if (variant === 'quick') {
+    const installCard = installError
+      ? QUICK_PROVIDER_CARDS.find((card) => card.id === quickCardId)
+      : undefined
     return (
       <section className="onboarding-quick-connect" data-onboarding-entry="connect">
         <header className="onboarding-quick-header">
@@ -853,254 +856,243 @@ const ProviderStep = ({
           </div>
         </header>
 
-        <div className="onboarding-quick-content">
-          <div className="onboarding-quick-scroll">
-            <div className="onboarding-provider-viewport">
-              <div className="onboarding-provider-track">
-                {QUICK_PROVIDER_CARDS.map((card) => {
-                  const isKeyMode = quickCardId === card.id && quickMode === 'key'
-                  const isAuthorizing =
-                    isSaving &&
-                    quickCardId === card.id &&
-                    !isKeyMode &&
-                    Boolean(card.subscriptionKind)
-                  const subscriptionAvailable = Boolean(card.subscriptionKind)
-                  const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
+        <div className="onboarding-provider-viewport">
+          <div className="onboarding-provider-track">
+            {QUICK_PROVIDER_CARDS.map((card) => {
+              const isKeyMode = quickCardId === card.id && quickMode === 'key'
+              const isAuthorizing =
+                isSaving && quickCardId === card.id && !isKeyMode && Boolean(card.subscriptionKind)
+              const subscriptionAvailable = Boolean(card.subscriptionKind)
+              const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
 
-                  return (
-                    <article
-                      key={card.id}
-                      className={cn(
-                        'onboarding-provider-card',
-                        `onboarding-provider-card-${card.id}`,
-                        isKeyMode && 'is-key-mode',
-                        (isAuthorizing || (quickCardId === card.id && installError)) &&
-                          'is-authorizing'
-                      )}
-                      style={{ '--provider-accent': card.accent } as React.CSSProperties}
-                      onPointerEnter={(event) => {
-                        if (event.pointerType === 'mouse') setHoveredQuickCardId(card.id)
-                      }}
-                      onPointerLeave={(event) => {
-                        if (event.pointerType === 'mouse') setHoveredQuickCardId(undefined)
-                      }}
-                    >
-                      <div className="onboarding-provider-card-surface">
-                        <ProviderSilkBackground
-                          color={card.accent}
-                          active={hoveredQuickCardId === card.id}
-                        />
-                        <div className="onboarding-provider-card-body">
-                          <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
-                          <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
-                          <p>{t(card.description)}</p>
-                        </div>
-                        <div className="onboarding-provider-card-actions">
-                          {showKeyForm ? (
-                            <form
-                              onSubmit={(event) => {
-                                event.preventDefault()
-                                handleQuickKeySubmit(card)
-                              }}
-                              className="onboarding-provider-key-form"
-                            >
-                              <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
-                              <div className="onboarding-provider-key-row">
-                                <input
-                                  id={`onboarding-key-${card.id}`}
-                                  type="password"
-                                  value={quickKeys[card.id] ?? ''}
-                                  disabled={isSaving}
-                                  onChange={(event) =>
-                                    handleQuickKeyChange(card, event.target.value)
-                                  }
-                                  placeholder={t('Enter your API key')}
-                                  autoComplete="off"
-                                  required
-                                />
-                                <Button
-                                  type="submit"
-                                  size="icon"
-                                  aria-label={t('Test connection and connect')}
-                                  title={t('Test connection and connect')}
-                                  disabled={isSaving}
-                                >
-                                  {isSaving && quickCardId === card.id ? (
-                                    <LoaderCircle
-                                      className="animate-spin motion-reduce:animate-none"
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <Zap aria-hidden="true" />
-                                  )}
-                                </Button>
-                              </div>
-                              {quickCardId === card.id && showProviderErrors && formErrors.key ? (
-                                <p className="text-xs text-destructive">{t(formErrors.key)}</p>
-                              ) : null}
-                              {subscriptionAvailable ? (
-                                <button
-                                  type="button"
-                                  className="onboarding-provider-card-link"
-                                  onClick={() => {
-                                    setQuickMode(undefined)
-                                    setQuickCardId(undefined)
-                                  }}
-                                >
-                                  {t('Use an account instead')}
-                                </button>
-                              ) : null}
-                            </form>
-                          ) : (
-                            <>
-                              {quickCardId === card.id && installError && (
-                                <ErrorNotice
-                                  level="warning"
-                                  role="alert"
-                                  description={installError}
-                                  primaryButton={
-                                    card.id === 'openai'
-                                      ? {
-                                          label: t('Retry'),
-                                          onClick: () =>
-                                            void chooseQuickProvider(card, 'codex-isolated')
-                                        }
-                                      : undefined
-                                  }
-                                  secondaryButton={{
-                                    label: t('Dismiss'),
-                                    onClick: () => {
-                                      setInstallError(undefined)
-                                      setValidationMessage(undefined)
-                                    }
-                                  }}
-                                />
-                              )}
-                              {isAuthorizing && installing && (
-                                <div className="onboarding-install-progress">
-                                  <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs tabular-nums">
-                                    <span>{installProgress?.label ?? t('Installing…')}</span>
-                                    {installProgress?.fraction != null && (
-                                      <span aria-hidden="true" className="font-medium">
-                                        {Math.min(
-                                          1,
-                                          Math.max(0, installProgress.fraction)
-                                        ).toLocaleString(i18n?.language, { style: 'percent' })}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <progress
-                                    aria-label={installProgress?.label ?? t('Installing…')}
-                                    max={1}
-                                    value={installProgress?.fraction}
-                                  />
-                                </div>
-                              )}
-                              {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
-                              {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
-                                <div
-                                  role="group"
-                                  aria-label={t('Codex authentication')}
-                                  className="grid grid-cols-2 gap-1.5"
-                                >
-                                  {(['codex-shared', 'codex-isolated'] as const).map((mode) => (
-                                    <Button
-                                      key={mode}
-                                      type="button"
-                                      size="sm"
-                                      disabled={isSaving}
-                                      className="h-auto min-w-0 py-1.5 text-xs whitespace-normal"
-                                      onClick={() => void chooseQuickProvider(card, mode)}
-                                    >
-                                      {mode === 'codex-shared'
-                                        ? t('Import existing Codex sign-in')
-                                        : t('Sign in with Open-Science')}
-                                    </Button>
-                                  ))}
-                                </div>
-                              ) : subscriptionAvailable ? (
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    type="button"
-                                    onClick={
-                                      isAuthorizing
-                                        ? undefined
-                                        : () => void chooseQuickProvider(card, 'account')
-                                    }
-                                    disabled={isSaving}
-                                    aria-busy={isAuthorizing}
-                                    className="min-w-0 flex-1"
-                                  >
-                                    {isAuthorizing
-                                      ? installing
-                                        ? t('Installing…')
-                                        : authStage === 'detect'
-                                          ? t('Detecting…')
-                                          : t('Signing in…')
-                                      : t('Continue with {{provider}}', { provider: card.title })}
-                                  </Button>
-                                  {isAuthorizing && (
-                                    <Button
-                                      type="button"
-                                      variant="secondary"
-                                      aria-label={t('Cancel sign-in')}
-                                      onClick={() => void cancelQuickAuthorization()}
-                                    >
-                                      <X
-                                        aria-hidden="true"
-                                        className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                                      />
-                                      {t('Cancel')}
-                                    </Button>
-                                  )}
-                                </div>
-                              ) : null}
-                              <button
-                                type="button"
-                                className="onboarding-provider-card-link"
-                                onClick={() => void chooseQuickProvider(card, 'key')}
-                                disabled={isSaving}
-                              >
-                                {t('Have an API key?')}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
-            </div>
-
-            {validationMessage &&
-              !installError &&
-              (validationOk ? (
-                <p className="mt-3 text-xs text-primary" role="status">
-                  {validationMessage}
-                </p>
-              ) : (
-                <ErrorNotice
-                  level="warning"
-                  role="alert"
-                  description={validationMessage}
-                  errorCode={typeof feedback === 'object' ? feedback.details : undefined}
-                  diagnosticsLabel={t('Error details')}
-                  inline
-                  className="mt-3"
-                  dismissButton={{
-                    label: t('Dismiss'),
-                    onClick: () => setValidationMessage(undefined)
+              return (
+                <article
+                  key={card.id}
+                  className={cn(
+                    'onboarding-provider-card',
+                    `onboarding-provider-card-${card.id}`,
+                    isKeyMode && 'is-key-mode',
+                    (isAuthorizing || (quickCardId === card.id && installError)) && 'is-authorizing'
+                  )}
+                  style={{ '--provider-accent': card.accent } as React.CSSProperties}
+                  onPointerEnter={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(card.id)
                   }}
-                />
-              ))}
-
-            {skipError ? (
-              <p className="onboarding-provider-skip-error" role="alert">
-                {skipError}
-              </p>
-            ) : null}
+                  onPointerLeave={(event) => {
+                    if (event.pointerType === 'mouse') setHoveredQuickCardId(undefined)
+                  }}
+                >
+                  <div className="onboarding-provider-card-surface">
+                    <ProviderSilkBackground
+                      color={card.accent}
+                      active={hoveredQuickCardId === card.id}
+                    />
+                    <div className="onboarding-provider-card-body">
+                      <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
+                      <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
+                      <p>{t(card.description)}</p>
+                    </div>
+                    <div className="onboarding-provider-card-actions">
+                      {showKeyForm ? (
+                        <form
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            handleQuickKeySubmit(card)
+                          }}
+                          className="onboarding-provider-key-form"
+                        >
+                          <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
+                          <div className="onboarding-provider-key-row">
+                            <input
+                              id={`onboarding-key-${card.id}`}
+                              type="password"
+                              value={quickKeys[card.id] ?? ''}
+                              disabled={isSaving}
+                              onChange={(event) => handleQuickKeyChange(card, event.target.value)}
+                              placeholder={t('Enter your API key')}
+                              autoComplete="off"
+                              required
+                            />
+                            <Button
+                              type="submit"
+                              size="icon"
+                              aria-label={t('Test connection and connect')}
+                              title={t('Test connection and connect')}
+                              disabled={isSaving}
+                            >
+                              {isSaving && quickCardId === card.id ? (
+                                <LoaderCircle
+                                  className="animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Zap aria-hidden="true" />
+                              )}
+                            </Button>
+                          </div>
+                          {quickCardId === card.id && showProviderErrors && formErrors.key ? (
+                            <p className="text-xs text-destructive">{t(formErrors.key)}</p>
+                          ) : null}
+                          {subscriptionAvailable ? (
+                            <button
+                              type="button"
+                              className="onboarding-provider-card-link"
+                              onClick={() => {
+                                setQuickMode(undefined)
+                                setQuickCardId(undefined)
+                              }}
+                            >
+                              {t('Use an account instead')}
+                            </button>
+                          ) : null}
+                        </form>
+                      ) : (
+                        <>
+                          {isAuthorizing && installing && (
+                            <div className="onboarding-install-progress">
+                              <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs tabular-nums">
+                                <span>{installProgress?.label ?? t('Installing…')}</span>
+                                {installProgress?.fraction != null && (
+                                  <span aria-hidden="true" className="font-medium">
+                                    {Math.min(
+                                      1,
+                                      Math.max(0, installProgress.fraction)
+                                    ).toLocaleString(i18n?.language, { style: 'percent' })}
+                                  </span>
+                                )}
+                              </div>
+                              <progress
+                                aria-label={installProgress?.label ?? t('Installing…')}
+                                max={1}
+                                value={installProgress?.fraction}
+                              />
+                            </div>
+                          )}
+                          {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
+                          {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
+                            <div
+                              role="group"
+                              aria-label={t('Codex authentication')}
+                              className="grid grid-cols-2 gap-1.5"
+                            >
+                              {(['codex-shared', 'codex-isolated'] as const).map((mode) => (
+                                <Button
+                                  key={mode}
+                                  type="button"
+                                  size="sm"
+                                  disabled={isSaving}
+                                  className="h-auto min-w-0 py-1.5 text-xs whitespace-normal"
+                                  onClick={() => void chooseQuickProvider(card, mode)}
+                                >
+                                  {mode === 'codex-shared'
+                                    ? t('Import existing Codex sign-in')
+                                    : t('Sign in with Open-Science')}
+                                </Button>
+                              ))}
+                            </div>
+                          ) : subscriptionAvailable ? (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                onClick={
+                                  isAuthorizing
+                                    ? undefined
+                                    : () => void chooseQuickProvider(card, 'account')
+                                }
+                                disabled={isSaving}
+                                aria-busy={isAuthorizing}
+                                className="min-w-0 flex-1"
+                              >
+                                {isAuthorizing
+                                  ? installing
+                                    ? t('Installing…')
+                                    : authStage === 'detect'
+                                      ? t('Detecting…')
+                                      : t('Signing in…')
+                                  : t('Continue with {{provider}}', { provider: card.title })}
+                              </Button>
+                              {isAuthorizing && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  aria-label={t('Cancel sign-in')}
+                                  onClick={() => void cancelQuickAuthorization()}
+                                >
+                                  <X
+                                    aria-hidden="true"
+                                    className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                                  />
+                                  {t('Cancel')}
+                                </Button>
+                              )}
+                            </div>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="onboarding-provider-card-link"
+                            onClick={() => void chooseQuickProvider(card, 'key')}
+                            disabled={isSaving}
+                          >
+                            {t('Have an API key?')}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              )
+            })}
           </div>
+        </div>
+
+        <div className="onboarding-quick-feedback">
+          {installError && installCard && (
+            <ErrorNotice
+              inline
+              level="warning"
+              role="alert"
+              description={installError}
+              primaryButton={
+                installCard.id === 'openai'
+                  ? {
+                      label: t('Retry'),
+                      onClick: () => void chooseQuickProvider(installCard, 'codex-isolated')
+                    }
+                  : undefined
+              }
+              dismissButton={{
+                label: t('Dismiss'),
+                onClick: () => {
+                  setInstallError(undefined)
+                  setValidationMessage(undefined)
+                }
+              }}
+            />
+          )}
+          {validationMessage &&
+            !installError &&
+            (validationOk ? (
+              <p className="mt-3 text-xs text-primary" role="status">
+                {validationMessage}
+              </p>
+            ) : (
+              <ErrorNotice
+                level="warning"
+                role="alert"
+                description={validationMessage}
+                errorCode={typeof feedback === 'object' ? feedback.details : undefined}
+                diagnosticsLabel={t('Error details')}
+                inline
+                dismissButton={{
+                  label: t('Dismiss'),
+                  onClick: () => setValidationMessage(undefined)
+                }}
+              />
+            ))}
+
+          {skipError ? (
+            <ErrorNotice inline level="warning" role="alert" description={skipError} />
+          ) : null}
           <footer className="onboarding-quick-footer">
             <Button type="button" variant="ghost" onClick={onBack} disabled={isSaving}>
               {t('Back', { context: 'step' })}
