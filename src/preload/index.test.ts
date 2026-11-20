@@ -821,6 +821,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.previewGitHubSkill',
       'settings.previewSkillZip',
       'settings.probeWslSetup',
+      'settings.refreshImageModelCatalog',
       'settings.refreshProviderModels',
       'settings.removeCustomServer',
       'settings.removeDeviceCredential',

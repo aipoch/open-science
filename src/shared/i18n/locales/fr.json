@@ -8644,6 +8644,7 @@
     "The vendor returned an invalid or empty model catalog.": "Le fournisseur a renvoyé un catalogue de modèles non valide ou vide.",
     "Workspace ID": "Identifiant de l’espace de travail",
     "Last updated: {{time}}": "Dernière mise à jour : {{time}}",
+    "Current default omitted from the catalog": "Le modèle par défaut actuel ne figure pas dans le catalogue",
     "Save to apply the refreshed model list.": "Enregistrez les modifications pour appliquer la liste de modèles actualisée.",
     "Model list saved. The latest settings could not be loaded.": "Liste des modèles enregistrée. Impossible de charger les derniers paramètres.",
     "Model refresh failed. The previous list is kept.": "Impossible d’actualiser la liste des modèles. La liste précédente est conservée.",

@@ -1,4 +1,6 @@
 import type {
+  ImageModelCatalogRequest,
+  ImageModelCatalogResult,
   ImageModelTestRequest,
   ImageModelTestResult,
   ImageModelSettingsMutation,
@@ -277,6 +279,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: ImageModelTestRequest],
     ImageModelTestResult
   >('settings:test-image-model'),
+  refreshImageModelCatalog: defineApplicationCommand<
+    'settings:refresh-image-model-catalog',
+    readonly [request: ImageModelCatalogRequest],
+    ImageModelCatalogResult
+  >('settings:refresh-image-model-catalog'),
   getImageModels: defineApplicationCommand<
     'settings:get-image-models',
     readonly [],
@@ -625,6 +632,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getClassification,
   settingsCoreApplicationCommands.testImageModel,
+  settingsCoreApplicationCommands.refreshImageModelCatalog,
   settingsCoreApplicationCommands.getImageModels,
   settingsCoreApplicationCommands.updateImageModels,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
@@ -766,6 +774,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:test-image-model': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:test-image-model')
         return dependencies.service.imageModels.test(args[0])
+      },
+      'settings:refresh-image-model-catalog': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:refresh-image-model-catalog')
+        return dependencies.service.imageModels.refreshCatalog(args[0])
       },
       'settings:get-image-models': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-image-models')

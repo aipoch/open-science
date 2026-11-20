@@ -589,6 +589,9 @@ const registerSettingsIpcHandlers = ({
     workflows.connectors.setNcbiCredentials(request)
   )
   ipcMainHandle('settings:test-image-model', (_event, request) => service.imageModels.test(request))
+  ipcMainHandle('settings:refresh-image-model-catalog', (_event, request) =>
+    service.imageModels.refreshCatalog(request)
+  )
   ipcMainHandle('settings:get-image-models', () => service.imageModels.snapshot())
   ipcMainHandle('settings:update-image-models', (_event, request) =>
     service.imageModels.mutate(request)

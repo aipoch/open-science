@@ -1155,7 +1155,10 @@ class SettingsService {
     return this.scenarioModels.vision.admit()
   }
 
-  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve' | 'test'> {
+  get imageModels(): Pick<
+    ScenarioModelOwner['image'],
+    'snapshot' | 'mutate' | 'resolve' | 'test' | 'refreshCatalog'
+  > {
     return this.scenarioModels.image
   }
 
