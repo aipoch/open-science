@@ -233,6 +233,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 | Answer a question from the literature | LitQA2-FullText, Test                     | **70/75** correct answers (93.33% accuracy).                                            |
 | Write a cited answer                  | ScholarQA-CS2, 100 validation questions   | **0.9289/1** composite quality score. Official test references use different questions. |
 | Carry out a workflow                  | ASI-Bench, local runs with the same model | **59.46** on B4 (Codex 55.45) and **56.11** on B2 (Codex 56.09).                        |
+| Reproduce ML/NLP experiments          | AstaBench SUPER-Expert test, 45 tasks     | **46.30%** output_match/mean in a local run with DeepSeek Flash/Max.                    |
 | Execute scientific workflows          | TB-Science 0.1 (70 tasks)                 | **69.05%** (145/210 local runs; GPT-6 Astra/max); no official rank or public run logs.  |
 | Reproduce published results           | CORE-Bench-Hard                           | **36/37** tasks correct (97.30%, including retests).                                    |
 | Analyze biomedical data               | BiomniBench-DA, Public 50                 | **79.05** mean judge score (81.04 and 77.06, weighted equally).                         |
@@ -243,7 +244,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 
 These local runs used different metrics, models, and task sets from August to November 2026. The scores describe those runs. They were not rerun for this release.
 
-[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)
+[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result) · [SUPER-Expert local result](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)
 
 </details>
 
