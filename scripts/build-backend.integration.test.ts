@@ -80,6 +80,8 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
         'utf8'
       )
     ).toContain((await readFile(join(packageRoot, 'LICENSE'), 'utf8')).trim())
+    // Stage only the build output, as the installed backend has no TypeScript source tree.
+    await cp(desktopOut, join(root, 'installed/resources/backend/out/backend'), { recursive: true })
     await put(
       'compare.cjs',
       `
@@ -94,8 +96,10 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
         return next(name, context);
       } });
       assert.throws(() => require('i18next'), /External translation dependency/);
-      const bundled = require('./out/desktop-backend-build/index.cjs');
-      assert.match(bundled.diagnosticStack(), /node-entry[.]ts:4:[0-9]+/);
+      const bundled = require('./installed/resources/backend/out/backend/index.cjs');
+      const mappedSource = path.join(__dirname, 'installed/resources/backend/src/main/node-entry.ts');
+      assert.equal(fs.existsSync(mappedSource), false);
+      assert.ok(bundled.diagnosticStack().includes(mappedSource + ':4:'));
       let comparisons = 0;
       for (const locale of ['en','de','es','fr','ja','ko','ru','zh-Hans','zh-Hant']) {
         const catalog = locale === 'en' ? { common: {}, native: {} } : JSON.parse(fs.readFileSync(path.join(__dirname, 'out/desktop-backend-build/native-locales', locale + '.json')));
