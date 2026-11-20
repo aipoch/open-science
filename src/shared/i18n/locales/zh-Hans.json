@@ -44,7 +44,8 @@
     "Close window": "关闭窗口",
     "Review potentially destructive code": "检查可能具有破坏性的代码",
     "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。",
+    "Could not download this example. Try again.": "无法下载此案例，请重试。"
   },
   "native": {
     "Use {{name}} as a live illustration?": "将 {{name}} 用作动态演示？",
@@ -217,7 +218,17 @@
     "Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.": "无法连接到 Lab。请检查网络连接及“设置”中的 Lab 服务器地址后重试。",
     "Lab returned an unexpected response while uploading the organization case.": "上传机构案例时，Lab 返回了异常响应。",
     "The upload was cancelled because your Lab session changed. Sign in and try again.": "由于 Lab 会话已变更，上传已取消。请重新登录后重试。",
-    "Could not upload the Session package to Lab. Check your connection and try again.": "无法将会话包上传到 Lab。请检查网络连接后重试。"
+    "Could not upload the Session package to Lab. Check your connection and try again.": "无法将会话包上传到 Lab。请检查网络连接后重试。",
+    "Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.": "磁盘空间不足，无法下载此案例（需要 {{required}}，当前可用 {{available}}）。请至少释放 {{shortfall}} 空间后重试。",
+    "Could not load the example catalog. Check your connection and try again.": "无法加载案例目录，请检查网络连接后重试。",
+    "This example is currently unavailable. Refresh the list and try again.": "该案例当前不可用，请刷新列表后重试。",
+    "The example download timed out. Check your connection and try again.": "下载此案例超时，请检查网络连接后重试。",
+    "Network error while downloading this example. Check your connection or proxy, then try again.": "下载此案例时发生网络错误，请检查网络连接或代理设置后重试。",
+    "The example server returned an error. Try again shortly.": "案例服务器返回错误，请稍后重试。",
+    "The downloaded example failed verification. Try again shortly.": "下载的案例文件校验未通过，请稍后重试。",
+    "Not enough disk space to download this example. Free up space and try again.": "磁盘空间不足，无法下载此案例。请清理空间后重试。",
+    "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "无法将下载的案例保存到临时目录，请检查文件夹权限后重试。",
+    "Wait for the application handoff to finish before transferring research.": "请等待应用交接完成后再传输研究内容。"
   },
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（预留 {{min}}–{{max}} 分钟）",
@@ -7625,7 +7636,6 @@
     "Verifying download…": "正在校验下载文件…",
     "Example download progress": "案例下载进度",
     "Could not cancel download. Try again.": "无法取消下载，请重试。",
-    "Could not download this example. Try again.": "无法下载此案例，请重试。",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "不同的 Zotero 集合将因名称相同而合并。请在 Zotero 中重命名后重新预览。",
     "Edit import metadata": "编辑导入元数据",
     "Edits apply to this import only. Zotero will not be changed.": "修改仅适用于本次导入，不会更改 Zotero。",
@@ -8752,6 +8762,7 @@
     "Past month": "过去一个月",
     "Past year": "过去一年",
     "Limit to these sites": "仅限这些网站",
-    "Up to {{count}} results_other": "最多 {{count}} 条结果"
+    "Up to {{count}} results_other": "最多 {{count}} 条结果",
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "已有其他包操作正在进行中，请等待其完成后重试。"
   }
 }

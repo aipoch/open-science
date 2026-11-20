@@ -44,7 +44,8 @@
     "Close window": "ウィンドウを閉じる",
     "Review potentially destructive code": "破壊的な操作を含む可能性があるコードを確認",
     "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "終了すると未完了のタスクは中断されます。保存済みの会話とファイルは保持されます。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "終了すると未完了のタスクは中断されます。保存済みの会話とファイルは保持されます。",
+    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。"
   },
   "native": {
     "Use {{name}} as a live illustration?": "{{name}} を動く図として使用しますか？",
@@ -217,7 +218,17 @@
     "Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.": "Lab に接続できませんでした。ネットワーク接続と設定内の Lab サーバーアドレスを確認して再試行してください。",
     "Lab returned an unexpected response while uploading the organization case.": "組織ケースのアップロード中に Lab から予期しない応答が返されました。",
     "The upload was cancelled because your Lab session changed. Sign in and try again.": "Lab セッションが変更されたためアップロードをキャンセルしました。サインインして再試行してください。",
-    "Could not upload the Session package to Lab. Check your connection and try again.": "セッションパッケージを Lab にアップロードできませんでした。接続を確認して再試行してください。"
+    "Could not upload the Session package to Lab. Check your connection and try again.": "セッションパッケージを Lab にアップロードできませんでした。接続を確認して再試行してください。",
+    "Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.": "この事例をダウンロードするためのディスク容量が不足しています（必要: {{required}}、空き容量: {{available}}）。少なくとも {{shortfall}} の空き容量を確保してから、もう一度お試しください。",
+    "Could not load the example catalog. Check your connection and try again.": "事例カタログを読み込めませんでした。接続を確認してもう一度お試しください。",
+    "This example is currently unavailable. Refresh the list and try again.": "この事例は現在利用できません。一覧を更新してもう一度お試しください。",
+    "The example download timed out. Check your connection and try again.": "事例のダウンロードがタイムアウトしました。接続を確認してもう一度お試しください。",
+    "Network error while downloading this example. Check your connection or proxy, then try again.": "この事例のダウンロード中にネットワークエラーが発生しました。接続またはプロキシ設定を確認してもう一度お試しください。",
+    "The example server returned an error. Try again shortly.": "事例サーバーからエラーが返されました。しばらくしてからもう一度お試しください。",
+    "The downloaded example failed verification. Try again shortly.": "ダウンロードした事例ファイルの検証に失敗しました。しばらくしてからもう一度お試しください。",
+    "Not enough disk space to download this example. Free up space and try again.": "この事例をダウンロードするためのディスク容量が不足しています。空き容量を確保してからもう一度お試しください。",
+    "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "ダウンロードした事例を一時ストレージに保存できませんでした。フォルダーの権限を確認してもう一度お試しください。",
+    "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
@@ -7625,7 +7636,6 @@
     "Verifying download…": "ダウンロードを検証中…",
     "Example download progress": "事例のダウンロード進捗",
     "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
-    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "異なるZoteroコレクションが同じ名前にまとめられてしまいます。Zoteroで名前を変更してから、再度プレビューしてください。",
     "Edit import metadata": "インポート用メタデータを編集",
     "Edits apply to this import only. Zotero will not be changed.": "編集内容は今回のインポートにのみ適用されます。Zoteroは変更されません。",
@@ -8752,6 +8762,7 @@
     "Past month": "過去1か月",
     "Past year": "過去1年",
     "Limit to these sites": "対象サイト",
-    "Up to {{count}} results_other": "最大{{count}}件の結果"
+    "Up to {{count}} results_other": "最大{{count}}件の結果",
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "別のパッケージ操作がすでに進行中です。完了するまで待ってからもう一度お試しください。"
   }
 }

@@ -44,7 +44,8 @@
     "Close window": "창 닫기",
     "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
     "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "종료하면 완료되지 않은 작업이 중단됩니다. 저장된 대화와 파일은 유지됩니다."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "종료하면 완료되지 않은 작업이 중단됩니다. 저장된 대화와 파일은 유지됩니다.",
+    "Could not download this example. Try again.": "이 사례를 다운로드하지 못했습니다. 다시 시도해 주세요."
   },
   "native": {
     "Use {{name}} as a live illustration?": "{{name}}을(를) 움직이는 그림으로 사용할까요?",
@@ -217,7 +218,17 @@
     "Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.": "Lab에 연결할 수 없습니다. 네트워크 연결과 설정의 Lab 서버 주소를 확인한 후 다시 시도하세요.",
     "Lab returned an unexpected response while uploading the organization case.": "조직 케이스를 업로드하는 동안 Lab에서 예기치 않은 응답이 반환되었습니다.",
     "The upload was cancelled because your Lab session changed. Sign in and try again.": "Lab 세션이 변경되어 업로드가 취소되었습니다. 로그인한 후 다시 시도하세요.",
-    "Could not upload the Session package to Lab. Check your connection and try again.": "세션 패키지를 Lab에 업로드할 수 없습니다. 연결을 확인한 후 다시 시도하세요."
+    "Could not upload the Session package to Lab. Check your connection and try again.": "세션 패키지를 Lab에 업로드할 수 없습니다. 연결을 확인한 후 다시 시도하세요.",
+    "Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.": "이 사례를 다운로드할 디스크 공간이 부족합니다({{required}} 필요, {{available}} 사용 가능). 최소 {{shortfall}}의 공간을 확보한 후 다시 시도해 주세요.",
+    "Could not load the example catalog. Check your connection and try again.": "사례 카탈로그를 불러오지 못했습니다. 연결 상태를 확인한 후 다시 시도해 주세요.",
+    "This example is currently unavailable. Refresh the list and try again.": "이 사례는 현재 사용할 수 없습니다. 목록을 새로 고친 후 다시 시도해 주세요.",
+    "The example download timed out. Check your connection and try again.": "사례 다운로드 시간이 초과되었습니다. 연결 상태를 확인한 후 다시 시도해 주세요.",
+    "Network error while downloading this example. Check your connection or proxy, then try again.": "이 사례를 다운로드하는 중 네트워크 오류가 발생했습니다. 연결 또는 프록시 설정을 확인한 후 다시 시도해 주세요.",
+    "The example server returned an error. Try again shortly.": "사례 서버에서 오류가 반환되었습니다. 잠시 후 다시 시도해 주세요.",
+    "The downloaded example failed verification. Try again shortly.": "다운로드한 사례 파일의 검증에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+    "Not enough disk space to download this example. Free up space and try again.": "이 사례를 다운로드할 디스크 공간이 부족합니다. 공간을 확보한 후 다시 시도해 주세요.",
+    "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "다운로드한 사례를 임시 저장소에 저장하지 못했습니다. 폴더 권한을 확인한 후 다시 시도해 주세요.",
+    "Wait for the application handoff to finish before transferring research.": "연구 데이터를 전송하기 전에 애플리케이션 인계가 완료될 때까지 기다려 주세요."
   },
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (예상 소요 시간: {{min}}–{{max}}분)",
@@ -7623,7 +7634,6 @@
     "Verifying download…": "다운로드 검증 중…",
     "Example download progress": "사례 다운로드 진행률",
     "Could not cancel download. Try again.": "다운로드를 취소하지 못했습니다. 다시 시도해 주세요.",
-    "Could not download this example. Try again.": "이 사례를 다운로드하지 못했습니다. 다시 시도해 주세요.",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "서로 다른 Zotero 컬렉션이 같은 이름으로 합쳐집니다. Zotero에서 이름을 바꾼 뒤 다시 미리보기를 실행하세요.",
     "Edit import metadata": "가져올 메타데이터 편집",
     "Edits apply to this import only. Zotero will not be changed.": "수정 내용은 이번 가져오기에만 적용되며 Zotero는 변경되지 않습니다.",
@@ -8750,6 +8760,7 @@
     "Past month": "지난 1개월",
     "Past year": "지난 1년",
     "Limit to these sites": "다음 사이트로 제한",
-    "Up to {{count}} results_other": "최대 {{count}}개 결과"
+    "Up to {{count}} results_other": "최대 {{count}}개 결과",
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "다른 패키지 작업이 이미 진행 중입니다. 작업이 완료된 후 다시 시도해 주세요."
   }
 }
