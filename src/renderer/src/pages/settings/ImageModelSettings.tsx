@@ -456,6 +456,9 @@ const ImageServiceEditor = ({
     name: name.trim() || vendor?.label || t('Custom HTTP service'),
     models: officialModels ?? models
   }
+  const testModel = catalog
+    ? draft.models.find((model) => catalog.modelIds.includes(model.wireModelId))
+    : undefined
   const updateModel = (index: number, patch: Partial<ImageServiceModel>): void =>
     setModels((models) => models.map((model, i) => (i === index ? { ...model, ...patch } : model)))
   const resetCatalog = (): void => {
@@ -745,6 +748,9 @@ const ImageServiceEditor = ({
                   className="max-w-full truncate rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
                 >
                   {model.label ?? model.wireModelId}
+                  {catalog && !catalog.modelIds.includes(model.wireModelId) && (
+                    <> · {t('Current default omitted from the catalog')}</>
+                  )}
                 </span>
               ))}
             </div>
@@ -864,8 +870,13 @@ const ImageServiceEditor = ({
         )}
       </fieldset>
       <ImageServiceTest
-        request={{ kind: 'save', ...draft, apiKey: draftKey }}
-        disabled={busy || refreshing || Boolean(invalid)}
+        request={{
+          kind: 'save',
+          ...draft,
+          models: testModel ? [testModel] : draft.models,
+          apiKey: draftKey
+        }}
+        disabled={busy || refreshing || Boolean(invalid) || (!!catalog && !testModel)}
       />
       <SettingsFormFooter>
         <div className="flex items-center gap-2">

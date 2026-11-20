@@ -61,6 +61,20 @@ it('selects the first model on creation and persists the binding with independen
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
 })
 
+it('keeps the service when changing a bound custom connection to official on the same endpoint', async () => {
+  const openai = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === 'openai')!
+  const custom = { ...service, baseUrl: openai.regions[0].baseUrl }
+  const saved = await owner.mutate({ kind: 'save', ...custom, apiKey: 'saved-image-key' })
+  expect(saved.imageModel).toEqual(binding)
+
+  const official = { ...custom, vendorId: openai.id, models: openai.models }
+  const converted = await owner.mutate({ kind: 'save', ...official })
+  const restarted = new ImageModelOwner(new SettingsRepository(directory))
+  expect(converted.services).toMatchObject([{ ...official, configured: true }])
+  expect(converted.imageModel).toBeUndefined()
+  expect(await restarted.snapshot()).toEqual(converted)
+})
+
 it('removes duplicate services and orphaned bindings before the repository writes settings', async () => {
   const committed = await repository.mutateImageModels(() => ({
     imageServices: [service, service],
@@ -185,7 +199,7 @@ it('refreshes the linked Bailian image catalog and preserves the active model on
     })
   ).resolves.toEqual({ ok: false, code: 'missing-key' })
   expect(netFetchWithManualRedirect).toHaveBeenCalledOnce()
-  const updated = await owner.mutate({ ...official, models: [visible] })
+  const updated = await owner.mutate({ ...official, vendorId: 'bailian', models: [visible] })
   expect(updated.imageModel).toEqual(saved.imageModel)
   expect(updated.services[0].models).toEqual([visible, active])
 })

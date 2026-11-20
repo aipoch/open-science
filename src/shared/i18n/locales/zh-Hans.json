@@ -8295,6 +8295,7 @@
     "The vendor returned an invalid or empty model catalog.": "服务商返回了无效或空的模型目录。",
     "Workspace ID": "工作区 ID",
     "Last updated: {{time}}": "上次更新：{{time}}",
+    "Current default omitted from the catalog": "目录未返回当前默认模型",
     "Save to apply the refreshed model list.": "保存后应用刷新的模型列表。",
     "Model list saved. The latest settings could not be loaded.": "模型列表已保存，无法加载最新设置。",
     "Model refresh failed. The previous list is kept.": "模型刷新失败，已保留上次列表。",

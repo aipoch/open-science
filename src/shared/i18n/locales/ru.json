@@ -8791,6 +8791,7 @@
     "The vendor returned an invalid or empty model catalog.": "Поставщик вернул недействительный или пустой каталог моделей.",
     "Workspace ID": "Workspace ID",
     "Last updated: {{time}}": "Последнее обновление: {{time}}",
+    "Current default omitted from the catalog": "Текущая модель по умолчанию отсутствует в каталоге",
     "Save to apply the refreshed model list.": "Сохраните настройки, чтобы применить обновлённый список моделей.",
     "Model list saved. The latest settings could not be loaded.": "Список моделей сохранён. Не удалось загрузить актуальные настройки.",
     "Model refresh failed. The previous list is kept.": "Не удалось обновить список моделей. Предыдущий список сохранён.",

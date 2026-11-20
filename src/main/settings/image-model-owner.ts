@@ -253,13 +253,17 @@ export class ImageModelOwner {
           previous.adapter === service.adapter &&
           previous.providerId === service.providerId &&
           previous.baseUrl === service.baseUrl &&
-          (!previous.vendorId || previous.vendorId === service.vendorId) &&
+          (previous.vendorId === service.vendorId ||
+            (previous.vendorId === undefined && previous.providerId !== undefined)) &&
           imageModel?.serviceId === service.id
         ) {
           const bound = previous.models.find((model) => model.id === imageModel?.modelId)
           if (bound && !service.models.some((model) => model.id === bound.id)) {
             if (service.models.length >= 16) throw new Error('Too many image models.')
-            service.models = [...service.models, bound]
+            const models = [...service.models, bound]
+            if (!imageModelMutationSchema.safeParse({ ...update, models }).success)
+              throw new Error('Invalid image model settings.')
+            service.models = models
           }
         }
         services = previous

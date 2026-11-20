@@ -8464,6 +8464,7 @@
     "The vendor returned an invalid or empty model catalog.": "Der Anbieter hat einen ungültigen oder leeren Modellkatalog zurückgegeben.",
     "Workspace ID": "Arbeitsbereichs-ID",
     "Last updated: {{time}}": "Zuletzt aktualisiert: {{time}}",
+    "Current default omitted from the catalog": "Aktuelles Standardmodell fehlt im Katalog",
     "Save to apply the refreshed model list.": "Speichern Sie die Änderungen, um die aktualisierte Modellliste zu übernehmen.",
     "Model list saved. The latest settings could not be loaded.": "Modellliste gespeichert. Die aktuellen Einstellungen konnten nicht geladen werden.",
     "Model refresh failed. The previous list is kept.": "Die Modellliste konnte nicht aktualisiert werden. Die bisherige Liste bleibt erhalten.",
