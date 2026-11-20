@@ -510,8 +510,19 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
       async () => (await window.api?.databaseStartup.getState())?.phase === 'ready'
     )
     const { current } = await page.evaluate(() => window.api.update.getStatus())
-    if (current !== expectedVersion)
-      throw new Error(`Shortcut opened ${current}, expected ${expectedVersion}`)
+    if (current !== expectedVersion) {
+      const log = await readFile(
+        join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs', 'main.log'),
+        'utf8'
+      ).catch(() => '')
+      const decisions = log
+        .split('\n')
+        .filter((line) => line.includes('"windows-prepared-update"'))
+        .slice(-8)
+      throw new Error(
+        `Shortcut opened ${current}, expected ${expectedVersion}. Handoff decisions: ${decisions.join('\n')}`
+      )
+    }
     // The database can already be ready while the renderer is still hydrating. Quit from the
     // interactive home screen so its normal persistence and confirmation handlers are mounted.
     await page

@@ -333,6 +333,8 @@ async function startDesktop(): Promise<void> {
     app.quit()
     return
   }
+  // The existing profile log also records why a cold-launch installer handoff was declined.
+  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (
     process.platform === 'win32' &&
     app.isPackaged &&
@@ -354,8 +356,6 @@ async function startDesktop(): Promise<void> {
   }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
-  // Configure the existing sink before credential preflight; full diagnostics start after ready.
-  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (!initialRecoveryError) {
     const bootstrapLease = acquireCredentialBootstrapLease({
       home: app.getPath('home'),

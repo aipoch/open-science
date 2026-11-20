@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -21,6 +21,12 @@ it('only offers a complete receipt for this installation and the matching SDK do
     expect(await read()).toBeUndefined()
     await writeFile(info, JSON.stringify({ fileName: 'setup.exe', sha512 }))
     expect(await read()).toEqual(receipt)
+    await writeFile(executable, '')
+    const canonical = { ...receipt, executable: await realpath(executable) }
+    await writeFile(join(pending, 'open-science-prepared', 'ready.json'), JSON.stringify(canonical))
+    expect(await readPreparedWindowsUpdate(pending, pending + '/./desktop.exe', '1.1.0')).toEqual(
+      canonical
+    )
     expect(await read('1.2.0')).toBeUndefined()
     expect(
       await readPreparedWindowsUpdate(pending, join(pending, 'other.exe'), '1.1.0')
