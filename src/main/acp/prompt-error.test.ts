@@ -16,6 +16,122 @@ const agentError = (
   code = -32603
 ): Error => Object.assign(new Error(message), { code, data, name: 'RequestError' })
 
+describe('legacy model stream interruption', () => {
+  const message = '供应商流式响应为空或未完整结束'
+  const body = JSON.stringify({ message, code: 400008 })
+
+  it('classifies the incident ACP envelope as an interrupted response and retains both codes', () => {
+    const error = RequestError.internalError(undefined, body)
+    expect(classifyFailure(collectPromptFailureFacts(error, { model: 'example-model' }))).toEqual({
+      category: 'service',
+      reason: 'service/response-interrupted',
+      responseMessage: message,
+      diagnostics: {
+        code: '-32603',
+        providerCode: '400008',
+        phase: 'stream',
+        model: 'example-model',
+        raw: error.message
+      }
+    })
+  })
+
+  it('keeps correlation metadata from the incident envelope', () => {
+    const error = RequestError.internalError(
+      { provider: 'example-provider', requestId: 'request-example' },
+      body
+    )
+    expect(classifyFailure(collectPromptFailureFacts(error)).diagnostics).toMatchObject({
+      provider: 'example-provider',
+      requestId: 'request-example',
+      code: '-32603',
+      providerCode: '400008'
+    })
+  })
+
+  it.each([
+    { service: 'provider' },
+    { errorName: 'APIError' },
+    { errorKind: 'provider-error' },
+    { service: 'session', errorName: 'APIError', statusCode: 400 },
+    { service: 'provider', status: 400 },
+    { statusCode: 200 }
+  ])('recognizes compatible ACP metadata: %j', (metadata) => {
+    const error = RequestError.internalError(
+      { ...metadata, provider: 'example-provider', requestId: 'request-example' },
+      body
+    )
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.reason).toBe('service/response-interrupted')
+    expect(failure.diagnostics).toMatchObject({
+      code: '-32603',
+      providerCode: '400008',
+      phase: 'stream',
+      provider: 'example-provider',
+      requestId: 'request-example'
+    })
+    expect(failure.diagnostics.status).toBe(metadata.statusCode ?? metadata.status)
+  })
+
+  it.each([
+    { error: 'invalid_client' },
+    { errorKind: 'invalid_client', service: 'provider' },
+    { service: 'session', errorKind: 'provider-error' },
+    { service: 'mcp', errorName: 'APIError' },
+    { errorName: 'ContextOverflowError', service: 'session' },
+    { codexErrorInfo: 'unauthorized' },
+    { codexErrorInfo: {}, service: 'provider' },
+    { statusCode: 200, status: 400, service: 'provider' },
+    { statusCode: 400, status: 200, service: 'provider' },
+    { statusCode: 400, status: 401, errorName: 'APIError' },
+    ...[401, 403, 404, 413, 429, 500].map((status) => ({ service: 'provider', status }))
+  ])('does not attach legacy recovery to conflicting metadata: %j', (metadata) => {
+    const failure = classifyFailure(
+      collectPromptFailureFacts(RequestError.internalError(metadata, body))
+    )
+    expect(failure.reason).not.toBe('service/response-interrupted')
+    expect(failure.diagnostics.providerCode).toBeUndefined()
+  })
+
+  it.each([
+    [
+      'array-valued provider code',
+      RequestError.internalError(undefined, JSON.stringify({ message, code: [400008] })),
+      'internal'
+    ],
+    [
+      'uncorroborated code',
+      RequestError.internalError(undefined, '{"message":"Busy","code":400008}'),
+      'internal'
+    ],
+    [
+      'uncorroborated message',
+      RequestError.internalError(undefined, JSON.stringify({ message, code: 400009 })),
+      'internal'
+    ],
+    ['non-ACP error', new Error(`Internal error: ${body}`), 'internal'],
+    ['missing ACP session', RequestError.internalError({ service: 'session' }, body), 'session'],
+    [
+      'provider authentication',
+      RequestError.internalError({ errorName: 'APIError', statusCode: 401 }, body),
+      'configuration'
+    ],
+    [
+      'workspace routing authentication',
+      RequestError.internalError(
+        { details: 'workspace routing discovery unauthorized (401)' },
+        body
+      ),
+      'configuration'
+    ]
+  ])('does not override other recovery paths: %s', (_label, error, category) => {
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.category).toBe(category)
+    expect(failure.reason).not.toBe('service/response-interrupted')
+    expect(failure.diagnostics.providerCode).toBeUndefined()
+  })
+})
+
 describe('describePromptError', () => {
   it('rewords a provider JSON resource_not_found into an actionable message with the model name', () => {
     const error = agentError(

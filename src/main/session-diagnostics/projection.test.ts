@@ -481,6 +481,7 @@ it('retains classified failure evidence in session and turn diagnostics with red
     diagnostics: {
       status: 503,
       code: 'overloaded',
+      providerCode: '400008',
       provider: 'Example',
       model: 'example-model',
       requestId: 'request-example',
@@ -496,7 +497,12 @@ it('retains classified failure evidence in session and turn diagnostics with red
     session: {
       failure: {
         category: 'service',
-        diagnostics: { status: 503, provider: 'Example', requestId: 'request-example' }
+        diagnostics: {
+          status: 503,
+          providerCode: '400008',
+          provider: 'Example',
+          requestId: 'request-example'
+        }
       },
       messages: [{ turnOutcome: { failure: { category: 'service' } } }]
     }

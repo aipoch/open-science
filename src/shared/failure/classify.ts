@@ -40,6 +40,9 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
       ...(facts.code === undefined || (facts.protocol && !readProviderErrorCode(facts.code))
         ? {}
         : { code: String(facts.code) }),
+      ...(!facts.protocol && facts.providerCode !== undefined
+        ? { providerCode: facts.providerCode }
+        : {}),
       ...(facts.adapterCode === undefined ? {} : { adapterCode: facts.adapterCode }),
       ...(facts.protocol === undefined ? {} : { protocol: facts.protocol }),
       ...(facts.phase === undefined ? {} : { phase: facts.phase }),

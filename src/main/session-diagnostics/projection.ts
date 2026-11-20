@@ -146,7 +146,7 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
       evidence.status <= 599
     )
       diagnostics.status = evidence.status
-    for (const key of ['code', 'provider', 'model', 'requestId', 'raw'])
+    for (const key of ['code', 'providerCode', 'provider', 'model', 'requestId', 'raw'])
       if (typeof evidence[key] === 'string')
         diagnostics[key] = diagnosticText(evidence[key], options, key === 'raw' ? 4000 : 200)
     result.failure = {

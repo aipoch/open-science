@@ -30,6 +30,7 @@ export type FailureFacts = Readonly<{
   protocol?: 'chat-completions' | 'responses' | 'messages'
   status?: number
   code?: string | number
+  providerCode?: string
   adapterCode?: string
   phase?: string
   provider?: string

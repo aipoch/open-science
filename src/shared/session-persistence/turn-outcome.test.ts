@@ -74,6 +74,17 @@ const outcomes: TurnOutcome[] = [
     cause: 'connection-lost',
     recovery: 'resume',
     failure: { category: 'session', diagnostics: {} }
+  },
+  {
+    kind: 'interrupted',
+    settledAt: 2,
+    cause: 'connection-lost',
+    recovery: 'resume',
+    failure: {
+      category: 'service',
+      reason: 'service/response-interrupted',
+      diagnostics: { code: '-32603', providerCode: '400008', phase: 'stream' }
+    }
   }
 ]
 
