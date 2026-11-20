@@ -177,6 +177,7 @@ export type ApplicationRuntimeInterfaces = {
     'configureDesktop' | 'syncViewState' | 'handleAppFocus' | 'handleWindowCreated' | 'refreshBadge'
   >
   settingsService: WindowSettingsCapabilities
+  initializeDesktopKiloDefaults: (upgrading: boolean) => Promise<void>
   commitClosePreference: (
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
@@ -1052,6 +1053,11 @@ export const createApplicationModules = async (
     taskNotifications: notifications.taskNotifications,
     notificationInbox: storageStartup.notificationInbox,
     settingsService: settingsBootstrap.settingsService,
+    initializeDesktopKiloDefaults: async (upgrading) => {
+      const added =
+        await settingsBootstrap.settingsRepository.initializeDesktopKiloDefaults(upgrading)
+      if (added) await settingsBootstrap.settingsSnapshotCommits.projectAfter(Promise.resolve())
+    },
     commitClosePreference: async (preference) => {
       await settingsBootstrap.settingsSnapshotCommits.currentSnapshotAfter(
         settingsBootstrap.settingsService.setClosePreference(preference)

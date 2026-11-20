@@ -471,11 +471,42 @@ export async function getPdfTranslationTextContent(
     return result
   }
   if (onUnownedUnicodeGlyph) onUnownedUnicodeGlyph(await hasUnownedUnicodeGlyph(page, content))
-  const fonts = new Set(
-    content.items.flatMap((item) =>
-      'str' in item && (/^[37]$/u.test(item.str) || item.str === '\u0002') ? [item.fontName] : []
+  // The legacy CMSY slot '6' paints a zero-advance slash over a separate equality.
+  // Keep both owners and repair the mark only with its exact native partner.
+  const pairedSlashes = new Map<number, string>()
+  for (const [index, mark] of content.items.entries()) {
+    if (!('str' in mark) || mark.str !== '6' || mark.width !== 0 || mark.hasEOL) continue
+    const gap = content.items[index + 1]
+    const base =
+      gap && 'str' in gap && gap.str === ' ' && gap.height === 0 && !gap.hasEOL
+        ? content.items[index + 2]
+        : gap
+    if (
+      base &&
+      'str' in base &&
+      base.str === '=' &&
+      mark.dir === 'ltr' &&
+      base.dir === 'ltr' &&
+      mark.height > 0 &&
+      mark.height === base.height &&
+      mark.transform[0] > 0 &&
+      mark.transform[1] === 0 &&
+      mark.transform[2] === 0 &&
+      mark.transform[3] > 0 &&
+      mark.transform.every((value, i) => value === base.transform[i]) &&
+      Math.abs(base.width / mark.transform[0] - 0.777) < 0.005
     )
-  )
+      pairedSlashes.set(index, base.fontName)
+  }
+  const fonts = new Set([
+    ...pairedSlashes.values(),
+    ...content.items.flatMap((item, index) =>
+      'str' in item &&
+      (/^[37]$/u.test(item.str) || item.str === '\u0002' || pairedSlashes.has(index))
+        ? [item.fontName]
+        : []
+    )
+  ])
   if (!fonts.size || !page.commonObjs) return finish(content)
   if ([...fonts].some((font) => !page.commonObjs.has(font))) await page.getOperatorList()
   const dingbats = new Set(
@@ -487,8 +518,17 @@ export async function getPdfTranslationTextContent(
   )
   return finish({
     ...content,
-    items: content.items.map((item) => {
+    items: content.items.map((item, index) => {
       if (!('str' in item)) return item
+      const base = pairedSlashes.get(index)
+      if (
+        base &&
+        page.commonObjs.has(base) &&
+        page.commonObjs.has(item.fontName) &&
+        /^(?:[A-Z]{6}\+)?CMSY10$/u.test(page.commonObjs.get(item.fontName)?.name ?? '') &&
+        /^(?:[A-Z]{6}\+)?CMR10$/u.test(page.commonObjs.get(base)?.name ?? '')
+      )
+        return { ...item, str: '\u0338' }
       if (dingbats.has(item.fontName) && /^[37]$/u.test(item.str))
         return { ...item, str: item.str === '3' ? '✓' : '✗' }
       if (

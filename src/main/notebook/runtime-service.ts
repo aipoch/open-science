@@ -623,7 +623,14 @@ class NotebookRuntimeService {
     if (this.memoryPolicyActive === active || this.memoryPolicyDisposed) return
     this.memoryPolicyActive = active
     void this.getMemoryPolicy()
-      .then((policy) => policy.setActive?.(this.memoryPolicyActive && !this.memoryPolicyDisposed))
+      .then((policy) => {
+        if (this.memoryPolicyDisposed) return
+        policy.setActive?.(this.memoryPolicyActive)
+        // Stopping polling must also clear resource-dependent notices. Do not
+        // misrepresent resource release as recovery of system memory pressure.
+        if (!this.memoryPolicyActive)
+          this.options.callbacks?.onMemoryPolicyChanged?.(policy.currentState(), false)
+      })
       .catch((error) =>
         this.runtimeLogger.error(
           'Notebook memory policy could not observe resources',

@@ -14,7 +14,7 @@ import {
   isCodexSubscriptionProviderId,
   resolveCodexSubscriptionType
 } from '../../shared/settings-runtime'
-import { customProviderRequiresKey } from '../../shared/provider-url-policy'
+import { providerAllowsAnonymousAccess } from '../../shared/provider-url-policy'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   clearAppOwnedCodexAuthentication,
@@ -704,12 +704,8 @@ class ProviderAuthLifecycleOwner {
       return this.getClaudeSharedAuthStatus()
     }
 
-    // A loopback custom gateway (local model server) serves without a key, so an absent key stays
-    // usable and preflight does not block the spawn on a credential it will never have.
-    if (provider.type === 'custom' && !provider.keyRef) {
-      return !customProviderRequiresKey(provider.baseUrl)
-    }
-    return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
+    if (!provider.keyRef) return providerAllowsAnonymousAccess(provider)
+    return tryDecryptKey(provider.keyRef) !== undefined
   }
 
   private invalidateClaudeSharedAuthStatus(): void {

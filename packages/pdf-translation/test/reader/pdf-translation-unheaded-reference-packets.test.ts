@@ -11,6 +11,7 @@ import {
   endText,
   setFontAndSize,
   setTextMatrix,
+  setFillingColor,
   showText,
   rgb
 } from 'pdf-lib'
@@ -20,7 +21,178 @@ import { expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
-import type { PdfLayoutTextItem } from '../../src/reader/layout.js'
+import { groupPdfTranslationPages, type PdfLayoutTextItem } from '../../src/reader/layout.js'
+
+it.each([false, true])(
+  'retains compact references across the last two columns (numbering gap=%s)',
+  (gap) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 9,
+      fontName = 'Reference',
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      str,
+      dir: 'ltr',
+      width,
+      height,
+      hasEOL,
+      fontName,
+      transform: [height, 0, 0, height, x, y],
+      fontAscent: 0.75,
+      fontDescent: -0.25,
+      fontVertical: false
+    })
+    const records = (start: number, x: number, y: number): PdfLayoutTextItem[] =>
+      Array.from({ length: 6 }, (_, n) => {
+        const baseline = y - n * 10.5
+        const number = start + n + (gap && start > 1 && n >= 3 ? 1 : 0)
+        return [
+          item(`[${number}] A. Reader and T. Writer,`, x, baseline, 104, 9, 'Reference', false),
+          item('Journal of Examples', x + 108, baseline, 75, 9, 'Journal', false),
+          item('14', x + 187, baseline, 10, 9, 'Volume', false),
+          item('(2021) 26.', x + 200, baseline, 42)
+        ]
+      }).flat()
+    const items = [
+      item('1', 557, 756, 5, 10, 'Body'),
+      item('Data availability', 139, 385, 76, 9, 'Title'),
+      item(
+        'The material associated with these experiments is included in',
+        64,
+        359,
+        235,
+        10,
+        'Body'
+      ),
+      item(
+        'the project archive alongside our checks and source notes and is',
+        54,
+        347,
+        245,
+        10,
+        'Body'
+      ),
+      item('openly available [2].', 54, 335, 92, 10, 'Body'),
+      ...records(1, 58.6, 280),
+      ...records(7, 317, 730),
+      item('3', 319, 76, 4, 6, 'Note'),
+      item('Please see ROR ID: https://ror.org/anonymous', 326, 73, 170, 8, 'Footer')
+    ]
+    const pages = [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 1 })
+    const refs = units.filter((unit) => unit.source.includes('Journal of Examples'))
+    expect(refs).toHaveLength(12)
+    expect(refs.filter((unit) => unit.sourceOnly && unit.preserve === 'reference')).toHaveLength(
+      gap ? 0 : 12
+    )
+    expect(
+      units.find((unit) => unit.source.includes('openly available'))?.sourceOnly
+    ).toBeUndefined()
+    expect(
+      units.find((unit) => unit.source.includes('Please see ROR ID'))?.sourceOnly
+    ).toBeUndefined()
+  }
+)
+
+it.each([false, true])(
+  'retains a full-width bibliography after run-in acknowledgments (numbering gap=%s)',
+  (gap) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      fontName: string,
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      fontName,
+      hasEOL,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontAscent: 0.74,
+      fontDescent: -0.24,
+      fontVertical: false
+    })
+    const entries = (start: number, y: number): PdfLayoutTextItem[] =>
+      Array.from({ length: 6 }, (_, offset) => {
+        const n = start + offset,
+          top = y - offset * 21
+        return [
+          row(
+            `[${gap && n === 11 ? 15 : n}] A. Writer, Simple methods for monitoring a collection of signals,`,
+            n < 10 ? 58.6 : 54,
+            top,
+            300,
+            9,
+            'Reference'
+          ),
+          row('Examples in Measurement', 72.3, top - 10.5, 120, 9, 'Reference', false),
+          row('12', 195, top - 10.5, 12, 9, 'Volume', false),
+          row(', 37 (2021).', 208, top - 10.5, 64, 9, 'Reference')
+        ]
+      }).flat()
+    const pages = [
+      [
+        row('1', 556, 291, 5, 10, 'Body'),
+        row('Acknowledgments.', 64, 275, 91, 10, 'Italic', false),
+        row(
+          'We thank the readers of the draft for suggesting refinements',
+          159,
+          275,
+          365,
+          10,
+          'Body'
+        ),
+        row(
+          'to the interpretation. The project was supported by independent research.',
+          54,
+          263.5,
+          480,
+          10,
+          'Body'
+        ),
+        row(
+          'All observations were reviewed by the authors before drawing conclusions.',
+          54,
+          252,
+          483,
+          10,
+          'Body'
+        ),
+        row(
+          'Each test was evaluated using the data described in the study.',
+          54,
+          240.5,
+          479,
+          10,
+          'Body'
+        ),
+        row('We take responsibility for the final manuscript.', 54, 229, 224, 10, 'Body'),
+        ...entries(1, 166)
+      ],
+      [row('2', 556, 291, 5, 10, 'Body'), ...entries(7, 275)]
+    ].map((items, index) => ({ page: index + 1, width: 600, height: 300, rotation: 0, items }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const bibliography = units.filter((unit) =>
+      /A\. Writer|Examples in Measurement/u.test(unit.source)
+    )
+    expect(bibliography).toHaveLength(24)
+    expect(
+      bibliography.filter((unit) => unit.sourceOnly && unit.preserve === 'reference')
+    ).toHaveLength(gap ? 0 : 24)
+    expect(
+      units.find((unit) => unit.source.startsWith('Acknowledgments.'))?.sourceOnly
+    ).toBeUndefined()
+  }
+)
 
 function fixture(fault = ''): PDFDocumentProxy {
   const text = (str: string, x: number, y: number, width: number): PdfLayoutTextItem => ({
@@ -486,7 +658,10 @@ const ownedReferenceApi = await import('../../src/reader/unheaded-reference-pack
 const referenceRoleApi = await import('../../src/reader/native-reference-evidence.js')
 const referenceLayoutApi = await import('../../src/reader/layout.js')
 
-async function generatedOwnedReferenceDocument(fault = ''): Promise<PDFDocumentProxy> {
+async function generatedOwnedReferenceDocument(
+  fault = '',
+  embedded = false
+): Promise<PDFDocumentProxy> {
   const require = createRequire(import.meta.url),
     assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/',
     pdf = await PDFDocument.create()
@@ -503,6 +678,10 @@ async function generatedOwnedReferenceDocument(fault = ''): Promise<PDFDocumentP
       })
     },
     start = (page: number, number: number, text: string, x: number, top: number): void => {
+      if (embedded) {
+        line(page, `[${number}] ${text}`, x, top)
+        return
+      }
       pages[page - 1].drawText(`[${number}]`, { font: bold, size: 9, x, y: 800 - top })
       line(page, text, x + 20, top)
     }
@@ -530,15 +709,35 @@ async function generatedOwnedReferenceDocument(fault = ''): Promise<PDFDocumentP
   pages[1].drawText('12 (2022).', { font: bold, size: 9, x: 315, y: 800 - 114 })
   start(2, 4, 'D. Author,', 56, 750)
   line(2, 'A report across columns, Journal 13 (2023).', 356, 60)
-  start(2, 5, 'E. Writer, Independent terminal observations,', 336, 100)
-  line(
-    2,
-    fault === 'missing-terminal'
-      ? 'Journal of Examples 14 (2024)'
-      : 'Journal of Examples 14 (2024).',
-    356,
-    114
-  )
+  if (embedded) {
+    const page = pages[1],
+      marker = '[5] ',
+      text = 'E. Writer, Independent observations, Journal 14 (2024).'
+    page.pushOperators(
+      pushGraphicsState(),
+      beginText(),
+      setFontAndSize(page.node.newFontDictionary(regular.name, regular.ref), 9),
+      setTextMatrix(1, 0, 0, 1, 336, 700),
+      showText(regular.encodeText(marker)),
+      setFillingColor(rgb(0, 0, 0)),
+      ...(fault === 'matrix-reset'
+        ? [setTextMatrix(1, 0, 0, 1, 336 + regular.widthOfTextAtSize(marker, 9), 700)]
+        : []),
+      showText(regular.encodeText(text)),
+      endText(),
+      popGraphicsState()
+    )
+  } else {
+    start(2, 5, 'E. Writer, Independent terminal observations,', 336, 100)
+    line(
+      2,
+      fault === 'missing-terminal'
+        ? 'Journal of Examples 14 (2024)'
+        : 'Journal of Examples 14 (2024).',
+      356,
+      114
+    )
+  }
   if (fault === 'foreign-overlap') line(2, 'An independent note.', 230, 65)
   line(3, 'Appendix A', 56, 60, true)
   line(3, 'This independent appendix paragraph remains eligible for ordinary translation.', 56, 90)
@@ -553,7 +752,10 @@ async function generatedOwnedReferenceDocument(fault = ''): Promise<PDFDocumentP
   return loading.promise
 }
 
-async function generatedOwnedReferenceProof(fault = ''): Promise<{
+async function generatedOwnedReferenceProof(
+  fault = '',
+  embedded = false
+): Promise<{
   document: PDFDocumentProxy
   pages: import('../../src/reader/layout.js').PdfLayoutPage[]
   native: Awaited<ReturnType<PDFDocumentProxy['getPage']>>[]
@@ -564,7 +766,7 @@ async function generatedOwnedReferenceProof(fault = ''): Promise<{
   proof: object | undefined
   unreliable: Set<string>
 }> {
-  const document = await generatedOwnedReferenceDocument(fault),
+  const document = await generatedOwnedReferenceDocument(fault, embedded),
     pages: import('../../src/reader/layout.js').PdfLayoutPage[] = [],
     native: Awaited<ReturnType<PDFDocumentProxy['getPage']>>[] = [],
     unreliable = new Set<string>(),
@@ -656,6 +858,29 @@ it('binds complete native crosspage and crosscolumn reference owners without cha
     await f.document.destroy()
   }
 })
+
+it.each(['same text advance', 'matrix-reset', 'missing-eof'])(
+  'recognizes bibliography markers printed with authors only with a closed native row: %s',
+  async (mode) => {
+    const f = await generatedOwnedReferenceProof(mode, true)
+    try {
+      const selected = f.units.filter((unit) =>
+        ownedReferenceApi.hasNativeOwnedReferenceRole(f.proof, unit)
+      )
+      const tail = await f.native[1].getTextContent()
+      expect(tail.items.findLast((item) => 'str' in item && item.str.trim())).toMatchObject({
+        str: '[5] E. Writer, Independent observations, Journal 14 (2024).',
+        hasEOL: false
+      })
+      expect(selected.some((unit) => unit.source.startsWith('[5]'))).toBe(
+        mode === 'same text advance'
+      )
+      expect(selected.some((unit) => unit.source.startsWith('This complete ordinary'))).toBe(false)
+    } finally {
+      await f.document.destroy()
+    }
+  }
+)
 
 it.each([
   'missing-terminal',
@@ -936,5 +1161,410 @@ it.each(['complete', 'number-gap', 'ordinary-tail'] as const)(
     } finally {
       await loading.destroy()
     }
+  }
+)
+
+it.each(['contact footer', 'unmarked address'])(
+  'recognizes a complete final bibliography after a marked address: %s',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const [first, last] = [pdf.addPage([600, 800]), pdf.addPage([600, 800])]
+    const line = (page: typeof first, text: string, x: number, y: number, size = 9): void =>
+      page.drawText(text, { font, size, x, y })
+
+    line(first, 'The final paragraph describes the observations.', 320, 670, 11)
+    line(first, shape === 'contact footer' ? '*' : 'x', 328, 634, 6)
+    line(first, 'author@example.org', 339, 630)
+    line(first, '[1] A. Writer, An independent study,', 320, 619)
+    line(first, 'Journal of Examples 11 (2020).', 339, 608)
+    line(first, '[2] B. Van Dalen, Another independent study,', 320, 597)
+    line(first, 'Journal of Examples 12 (2021).', 339, 586)
+    line(first, '[3] C. Writer, A separate measurement,', 320, 575)
+    line(first, 'Journal of Examples 13 (2022).', 339, 564)
+    line(last, '[4] D. Writer, An independent replication,', 50, 730)
+    line(last, 'Journal of Examples 14 (2023).', 69, 719)
+    line(last, '[5] E. Writer, The last study,', 320, 730)
+    line(last, 'Journal of Examples 15 (2024).', 339, 719)
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const result = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const units = result.source.units
+      const bibliography = units.filter((unit) => /\[\d\]|Journal of Examples/u.test(unit.source))
+      expect(bibliography).toHaveLength(10)
+      expect(bibliography.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+        shape === 'contact footer' ? 10 : 0
+      )
+      expect(
+        units
+          .filter((unit) => /The final paragraph|author@example.org/u.test(unit.source))
+          .every((unit) => !unit.sourceOnly && !unit.preserve)
+      ).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['continuous', 'number gap'])(
+  'recognizes a closed pair of reference columns below prose: %s',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const page = pdf.addPage([600, 800])
+    const line = (text: string, x: number, y: number, size = 9): void =>
+      page.drawText(text, { font, size, x, y })
+
+    line('The final paragraph reports the measured changes.', 50, 280, 10)
+    line('The other paragraph explains the reported values.', 315, 280, 10)
+    for (const [column, x] of [50, 315].entries()) {
+      for (let row = 0; row < 3; row++) {
+        const number = column * 3 + row + 1
+        const marker = shape === 'number gap' && number === 4 ? 8 : number
+        const y = 210 - row * 21
+        line(`[${marker}] A. Writer, Field Records ${number},`, x, y)
+        line(
+          number === 2 ? 'Press (2004) ISBN 1234567890.' : 'Volume 12, 23, 2006.',
+          x + 14,
+          y - 10.5
+        )
+      }
+    }
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const records = source.units.filter((unit) =>
+        /Field Records|ISBN|Volume 12/u.test(unit.source)
+      )
+      expect(records.flatMap((unit) => unit.fragments.flatMap((f) => f.items))).toHaveLength(12)
+      expect(records.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+        shape === 'continuous' ? records.length : 0
+      )
+      const prose = source.units
+        .filter((unit) => !unit.sourceOnly)
+        .map((unit) => unit.source)
+        .join(' ')
+      expect(prose).toContain('The final paragraph reports')
+      expect(prose).toContain('The other paragraph explains')
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['column wrap', 'low continuation', 'single right lane', 'unmarked right lane'])(
+  'keeps reference records with a proven terminal flow after an author address: %s',
+  async (placement) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const page = pdf.addPage([600, 800])
+    const line = (text: string, x: number, y: number, size = 9): void =>
+      page.drawText(text, { font, size, x, y })
+    const rightLane = placement.endsWith('right lane'),
+      rail = rightLane ? 320 : 50
+    line('The final paragraph describes the observations.', rail, 330, 11)
+    line(placement === 'unmarked right lane' ? 'x' : '*', rail + 8, 220, 6)
+    line('Electronic address: author@example.org', rail + 17, 216)
+    line('[1] A. Writer, A study of regular shapes,', rail, 205)
+    const top = rightLane ? 194.5 : placement === 'column wrap' ? 730 : 645
+    line(rightLane ? '(Field Press, 2006), 2nd ed.' : 'Field Records 12 (2006).', 334, top)
+    let y = top - (rightLane ? 10.5 : 21)
+    for (let number = 2; number <= 5; number++) {
+      if (rightLane && number === 2) {
+        line('[2] B. Writer et al., math-xy/0099999.', 320, y)
+        y -= 10.5
+      } else {
+        line(`[${number}] C. Writer, Observations of related shapes,`, 320, y)
+        line('Field Records 13 (2007).', 334, y - 10.5)
+        y -= 21
+      }
+    }
+
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const references = source.units.filter((unit) => unit.preserve === 'reference')
+      expect(references.flatMap((unit) => unit.fragments.flatMap((f) => f.items))).toHaveLength(
+        placement === 'column wrap' ? 10 : placement === 'single right lane' ? 9 : 0
+      )
+      const address = source.units.find((unit) => /author@example.org/u.test(unit.source))
+      expect(address).toBeDefined()
+      expect(address?.preserve).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['acknowledgment', 'ordinary preamble', 'unclosed record'])(
+  'requires an acknowledgment and closed records for a high terminal bibliography: %s',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const first = pdf.addPage([600, 800])
+    first.drawText('Independent prose precedes the final page.', {
+      font,
+      size: 11,
+      x: 45,
+      y: 720
+    })
+    const final = pdf.addPage([600, 800])
+    const line = (source: string, x: number, y: number, size = 9): void => {
+      final.drawText(source, { font, size, x, y })
+    }
+    line('2', 560, 762, 10)
+    line('The institute provided essential equipment.', 45, 732, 10)
+    line(
+      shape === 'ordinary preamble'
+        ? 'This sentence describes an ordinary sequence.'
+        : 'This work was supported by an academic grant.',
+      320,
+      732,
+      10
+    )
+    const authors = [
+      'Writer, A.',
+      'B. de Winter',
+      'C.-D. Writer',
+      'D. Author',
+      'Editor, E.',
+      'F. Author'
+    ]
+    for (const [index, author] of authors.entries()) {
+      const x = index < 3 ? 50 : 320,
+        y = 676 - (index % 3) * 22
+      line(`[${index + 1}] ${author}, An independent study,`, x - (index % 3 === 1 ? 0.01 : 0), y)
+      line(
+        shape === 'unclosed record' && index === 5
+          ? 'Journal of Examples 16 (2025), continued'
+          : `Journal of Examples ${index + 11} (202${index}).`,
+        x + 18,
+        y - 11
+      )
+    }
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const result = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const units = result.source.units
+      expect(result.coverage.excludedItemCount).toBe(0)
+      const references = units.filter((unit) => unit.preserve === 'reference')
+      expect(references.flatMap((unit) => unit.fragments.flatMap((f) => f.items))).toHaveLength(
+        shape === 'acknowledgment' ? 12 : 0
+      )
+      expect(references.every((unit) => unit.sourceOnly)).toBe(true)
+      expect(
+        units.some((unit) => unit.source.includes('essential equipment') && !unit.sourceOnly)
+      ).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['closed', 'ordinary previous heading', 'incomplete last record'])(
+  'protects a separate terminal bibliography only with complete page evidence: %s',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const previous = pdf.addPage([600, 800]),
+      final = pdf.addPage([600, 800])
+    const print = (page: typeof final, text: string, x: number, y: number, size = 9): void =>
+      page.drawText(text, { font, size, x, y })
+    print(
+      previous,
+      shape === 'ordinary previous heading' ? 'Discussion' : 'Acknowledgments',
+      70,
+      140
+    )
+    print(previous, 'The institute provided essential equipment.', 54, 117, 10)
+    print(final, '2', 549, 766, 10)
+    for (let n = 0; n < 8; n++) {
+      const x = n < 4 ? 57 : 322,
+        y = 706 - (n % 4) * 22,
+        author = n ? 'Olivia Reader' : 'O. Reader'
+      print(final, `[${n + 1}] ${author}, A complete independent study,`, x, y)
+      print(
+        final,
+        shape === 'incomplete last record' && n === 7
+          ? 'Journal of Examples, continued'
+          : `Journal of Examples ${n + 21}, ${n + 30} (2019).`,
+        x + 18,
+        y - 11
+      )
+    }
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const result = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const units = result.source.units
+      const referenceItems = units
+        .filter((unit) => unit.sourceOnly && unit.preserve === 'reference')
+        .flatMap((unit) => unit.fragments.flatMap((fragment) => fragment.items))
+      expect(referenceItems).toHaveLength(shape === 'closed' ? 16 : 0)
+      expect(
+        units.some((unit) => unit.source.includes('essential equipment') && !unit.sourceOnly)
+      ).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['closed', 'different heading', 'skipped ordinal'])(
+  'keeps terminal bracketed records after acknowledgments across pages: %s',
+  (shape) => {
+    const line = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 9,
+      fontName = 'reference'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: true
+    })
+    const entries = (numbers: number[], x: number, y: number): PdfLayoutTextItem[] =>
+      numbers.flatMap((number, i) => [
+        line(
+          `[${shape === 'skipped ordinal' && number === 8 ? 80 : number}] A. Reader, A study of alternating test procedures,`,
+          x,
+          y - 22 * i,
+          219
+        ),
+        line(
+          number === 1
+            ? 'Example Journal 12.'
+            : 'Journal of Examples 12, 77 (2025), arXiv:0000.00000.',
+          x + 18,
+          y - 22 * i - 11,
+          199,
+          9,
+          number === 1 ? 'volume' : 'reference'
+        )
+      ])
+    const body = (str: string, x: number, y: number, width: number): PdfLayoutTextItem =>
+      line(str, x, y, width, 10, 'body')
+    const pages = [
+      Array.from({ length: 28 }, (_, index) =>
+        body(
+          'The field report places the measurements in their original context.',
+          index < 14 ? 54 : 317,
+          730 - 12 * (index % 14),
+          220
+        )
+      ),
+      [
+        body('2', 557, 756, 5),
+        line(
+          shape === 'different heading' ? 'SUPPLEMENTARY NOTES' : 'ACKNOWLEDGMENTS',
+          385,
+          631,
+          106,
+          9,
+          'heading'
+        ),
+        body('We thank the colleagues who supplied measurements and helped plan', 327, 604, 231),
+        body(
+          'the field visits and the subsequent review of the experimental material.',
+          317,
+          592,
+          241
+        ),
+        body(
+          'Their comments and recordings improved the interpretation of the data.',
+          317,
+          580,
+          202
+        ),
+        ...entries([1, 2, 3], 54, 535),
+        ...entries([4, 5, 6], 317, 134)
+      ],
+      [body('3', 557, 756, 5), ...entries([7, 8, 9], 54, 730), ...entries([10, 11, 12], 317, 701)]
+    ].map((items, index) => ({ page: index + 1, width: 612, height: 792, rotation: 0, items }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const refs = units.filter((unit) =>
+      /^(?:\[\d+\] A\. Reader|(?:Example Journal|Journal of Examples) )/u.test(unit.source)
+    )
+    expect(refs).toHaveLength(24)
+    expect(refs.filter((unit) => unit.sourceOnly)).toHaveLength(shape === 'closed' ? 24 : 0)
+    expect(units.find((unit) => unit.source.startsWith('We thank'))?.sourceOnly).toBeUndefined()
   }
 )

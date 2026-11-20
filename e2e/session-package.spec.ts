@@ -645,16 +645,30 @@ test('receives a package from cold launch arguments and a subsequent file-open e
   await expect(dialog.getByText('Package operation cancelled', { exact: true })).toBeVisible()
 })
 
+// Start discovery on an isolated port on the first launch and retain it across restarts.
+const importTest = test.extend<{ discoveryPort: number }>({
+  discoveryPort: [
+    // Playwright requires a destructured fixture argument.
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, providePort) => {
+      const port = await findBrowserImportPort()
+      const previous = process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+      process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = String(port)
+      try {
+        await providePort(port)
+      } finally {
+        if (previous === undefined) delete process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+        else process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = previous
+      }
+    },
+    { auto: true }
+  ]
+})
+
 for (const launch of ['cold', 'warm'] as const) {
-  test(`imports a browser-held package over real browser HTTP after ${launch} protocol delivery`, async ({
-    app,
-    browser
-  }, testInfo) => {
+  const title = `imports a browser-held package over real browser HTTP after ${launch} protocol delivery`
+  importTest(title, async ({ app, browser, discoveryPort }, testInfo) => {
     await app.completeOnboarding()
-    const discoveryPort = await findBrowserImportPort()
-    const previousDiscoveryPort = process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
-    process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = String(discoveryPort)
-    await app.restart()
     const inspection = await app.createTestDirectory('browser-import-inspection')
     const storage = join(dirname(inspection), 'storage')
     const context = await browser.newContext()
@@ -667,7 +681,9 @@ for (const launch of ['cold', 'warm'] as const) {
     website.on('request', (request) => network.push(request.url()))
     // HTTPS public-origin page, without disabling CORS or browser web security. OS protocol
     // dispatch is delivered through Electron's real argv/open-url boundaries in this source test.
-    await context.grantPermissions(['local-network-access'], { origin: 'https://research.example' })
+    await context.grantPermissions(['local-network-access'], {
+      origin: 'https://research.example'
+    })
     await website.route('https://research.example/**', async (route) => {
       const path = new URL(route.request().url()).pathname
       if (path === '/browser-import.mjs')
@@ -779,9 +795,6 @@ for (const launch of ['cold', 'warm'] as const) {
         ).toBeVisible()
       }
     } finally {
-      if (previousDiscoveryPort === undefined)
-        delete process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
-      else process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = previousDiscoveryPort
       await context.close()
     }
   })

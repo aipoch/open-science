@@ -71,7 +71,7 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           found.push(at)
       return found
     },
-    nativeParts = (start, end, count) => {
+    nativeParts = (start, end, count, raisedDigits = false) => {
       const parts = markers
         .filter((part) => part.sourceOffset < end && part.sourceOffset + part.label.length > start)
         .sort((a, b) => a.sourceOffset - b.sourceOffset)
@@ -81,7 +81,18 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
             Number.isInteger(part.sourceOffset) &&
             part.sourceOffset >= start &&
             part.sourceOffset + part.label.length <= end &&
-            source.slice(part.sourceOffset, part.sourceOffset + part.label.length) === part.label &&
+            (() => {
+              const spelling = source.slice(
+                part.sourceOffset,
+                part.sourceOffset + part.label.length
+              )
+              return (
+                spelling === part.label ||
+                (raisedDigits &&
+                  /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u.test(spelling) &&
+                  spelling.normalize('NFKC') === part.label)
+              )
+            })() &&
             Number.isFinite(part.scale) &&
             Number.isFinite(part.rise) &&
             part.sourceIndices.length === 1 &&
@@ -117,6 +128,137 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       if (ordinal < 0 || from.length !== to.length) return
       pushNativeGroup(start, end, parts, baseline, to[ordinal])
     }
+  // A logarithm may share its text object with prose. Move the complete native
+  // base and scripted ratio together while regenerating the prose and “log”.
+  const logarithmicMassRatio = /\blog((\d{1,2})M⋆\/M⊙)[.。]$/gu
+  for (const match of source.matchAll(logarithmicMassRatio)) {
+    const start = match.index + 3,
+      end = start + match[1].length,
+      parts = nativeParts(start, end, 5)
+    if (!parts) continue
+    const [logBase, numerator, star, slashMass, sun] = parts,
+      h = numerator.bounds[3] - numerator.bounds[1],
+      roman = /^(?:[A-Z]{6}\+)?CMR\d{1,2}$/u,
+      italic = /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u,
+      symbol = /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u,
+      operators = markers.filter(
+        (part) => part.sourceOffset + part.label.length === start && part.label.endsWith('log')
+      ),
+      [preceding] = operators
+    if (
+      operators.length !== 1 ||
+      !body(preceding) ||
+      !roman.test(preceding.fontName) ||
+      ![preceding, ...parts].every(
+        (part) =>
+          Number.isFinite(part.baseline) &&
+          Math.abs(part.baseline - numerator.baseline - part.rise) < 0.01
+      ) ||
+      logBase.sourceIndices[0] !== preceding.sourceIndices[0] + 1 ||
+      logBase.label !== match[2] ||
+      !roman.test(logBase.fontName) ||
+      !italic.test(numerator.fontName) ||
+      !italic.test(star.fontName) ||
+      slashMass.fontName !== numerator.fontName ||
+      !symbol.test(sun.fontName) ||
+      [numerator.label, star.label, slashMass.label, sun.label].join('|') !== 'M|⋆|/M|⊙' ||
+      !body(numerator) ||
+      !body(slashMass) ||
+      ![logBase, star, sun].every((part) => small(part)) ||
+      !sameStyle(star, sun) ||
+      star.rise > -h * 0.08 ||
+      star.rise < -h * 0.35 ||
+      logBase.rise > star.rise - h * 0.05 ||
+      logBase.rise < -h * 0.5 ||
+      parts.some((part, index) => {
+        const previous = index ? parts[index - 1] : preceding,
+          gap = part.bounds[0] - previous.bounds[2]
+        return gap < -h * 0.12 || gap > h * 0.26
+      })
+    )
+      continue
+    const [target] = translation.matchAll(logarithmicMassRatio)
+    if (target?.[1] !== match[1]) continue
+    groups.push({
+      sourceOffset: start,
+      targetOffset: target.index + 3,
+      label: match[1],
+      sourceIndices: parts.flatMap((part) => part.sourceIndices),
+      baselineIndex: numerator.sourceIndices[0],
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    })
+  }
+  // Keep both lowered mass markers and the raised power as one native expression.
+  const massAssignment =
+    /(?<![\p{L}\p{N}])M⋆ = (\d{1,3}) × 10([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2})M⊙(?![\p{L}\p{N}])/gu
+  for (const match of source.matchAll(massAssignment)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 8, true)
+    if (!parts) continue
+    const [mass, star, coefficient, times, decimal, power, unit, sun] = parts,
+      h = mass.bounds[3] - mass.bounds[1],
+      roman = /^(?:[A-Z]{6}\+)?CMR\d{1,2}$/u,
+      italic = /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u,
+      symbol = /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u
+    if (
+      ![mass, coefficient, times, decimal, unit].every(body) ||
+      ![star, power, sun].every(small) ||
+      !sameStyle(star, sun) ||
+      Math.abs(power.scale - star.scale) > 0.01 ||
+      !italic.test(mass.fontName) ||
+      !italic.test(star.fontName) ||
+      unit.fontName !== mass.fontName ||
+      !roman.test(coefficient.fontName) ||
+      decimal.fontName !== coefficient.fontName ||
+      !roman.test(power.fontName) ||
+      !symbol.test(times.fontName) ||
+      !symbol.test(sun.fontName) ||
+      [
+        mass.label,
+        star.label,
+        coefficient.label,
+        times.label,
+        decimal.label,
+        unit.label,
+        sun.label
+      ].join('|') !== ['M', '⋆', '= ' + match[1], '×', '10', 'M', '⊙'].join('|') ||
+      power.label !== match[2].normalize('NFKC') ||
+      star.rise < -h * 0.35 ||
+      star.rise > -h * 0.1 ||
+      power.rise < h * 0.3 ||
+      power.rise > h * 0.65 ||
+      parts.some((part, index) => {
+        if (
+          !Number.isFinite(part.baseline) ||
+          Math.abs(part.baseline - mass.baseline - part.rise) > 0.01
+        )
+          return true
+        if (index === 0) return false
+        const gap = part.bounds[0] - parts[index - 1].bounds[2]
+        return gap < -h * 0.09 || gap > h * ([1, 5, 7].includes(index) ? 0.24 : 0.8)
+      })
+    )
+      continue
+    const written = match[0].replace(match[2], '^' + power.label),
+      originalOffsets = occurrences(source, match[0]),
+      exactTargets = occurrences(translation, match[0]),
+      caretTargets = occurrences(translation, written)
+    if (originalOffsets.length !== 1 || exactTargets.length + caretTargets.length !== 1) continue
+    const label = exactTargets.length ? match[0] : written
+    groups.push({
+      sourceOffset: start,
+      targetOffset: exactTargets[0] ?? caretTargets[0],
+      label,
+      sourceLabel: match[0],
+      sourceIndices: parts.flatMap((part) => part.sourceIndices),
+      baselineIndex: mass.sourceIndices[0],
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    })
+  }
+
   // Extraction flattens a blackboard capital and its raised dimensions.
   // Move the entire native group only for unchanged set relations and dimensions.
   const dimensions =

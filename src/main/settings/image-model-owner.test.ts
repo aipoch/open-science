@@ -9,6 +9,7 @@ import {
 } from '../../shared/image-model-settings'
 import { ImageModelOwner } from './image-model-owner'
 import { SettingsRepository, sanitizeSettings } from './repository'
+import { netFetchWithManualRedirect } from '../network-fetch'
 
 vi.mock('./crypto', async (original) => ({
   ...(await original<typeof import('./crypto')>()),
@@ -16,6 +17,7 @@ vi.mock('./crypto', async (original) => ({
   tryDecryptKey: (ref?: string) =>
     ref?.startsWith('enc:') ? Buffer.from(ref.slice(4), 'base64').toString() : undefined
 }))
+vi.mock('../network-fetch', () => ({ netFetchWithManualRedirect: vi.fn() }))
 
 let directory: string
 let repository: SettingsRepository
@@ -57,6 +59,20 @@ it('selects the first model on creation and persists the binding with independen
   await owner.mutate({ kind: 'bind', binding: { ...binding, modelId: 'other' } })
   await owner.mutate({ kind: 'remove', id: service.id })
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
+})
+
+it('keeps the service when changing a bound custom connection to official on the same endpoint', async () => {
+  const openai = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === 'openai')!
+  const custom = { ...service, baseUrl: openai.regions[0].baseUrl }
+  const saved = await owner.mutate({ kind: 'save', ...custom, apiKey: 'saved-image-key' })
+  expect(saved.imageModel).toEqual(binding)
+
+  const official = { ...custom, vendorId: openai.id, models: openai.models }
+  const converted = await owner.mutate({ kind: 'save', ...official })
+  const restarted = new ImageModelOwner(new SettingsRepository(directory))
+  expect(converted.services).toMatchObject([{ ...official, configured: true }])
+  expect(converted.imageModel).toBeUndefined()
+  expect(await restarted.snapshot()).toEqual(converted)
 })
 
 it('removes duplicate services and orphaned bindings before the repository writes settings', async () => {
@@ -128,6 +144,64 @@ it('stores encrypted custom credentials, masks snapshots, and requires a new key
   expect((await repository.getSettings()).imageServices?.[0].baseUrl).toBe(remote.baseUrl)
   await owner.mutate({ kind: 'save', ...service })
   expect((await repository.getSettings()).imageServices?.[0].keyRef).toBeUndefined()
+})
+
+it('refreshes the linked Bailian image catalog and preserves the active model on save', async () => {
+  const key = 'synthetic-bailian-key'
+  await repository.upsertProvider({
+    id: 'bailian-account',
+    type: 'official',
+    vendorId: 'bailian',
+    region: 'china',
+    name: 'Bailian',
+    keyRef: `enc:${Buffer.from(key).toString('base64')}`,
+    catalogParameters: { workspaceId: 'image-workspace' }
+  })
+  const [account] = (await owner.snapshot()).availableProviders
+  const target = { id: service.id, adapter: account.adapter, providerId: account.id }
+  const official = { kind: 'save' as const, ...target, name: 'Images', models: account.models }
+  const saved = await owner.mutate(official)
+  const [active, visible] = account.models
+  vi.mocked(netFetchWithManualRedirect)
+    .mockReset()
+    .mockResolvedValueOnce(
+      Response.json({
+        success: true,
+        output: {
+          total: 3,
+          models: [
+            { model: active.wireModelId, inference_metadata: { response_modality: ['Text'] } },
+            { model: visible.wireModelId, inference_metadata: { response_modality: ['Image'] } },
+            { model: 'unknown-image', inference_metadata: { response_modality: ['Image'] } }
+          ]
+        }
+      })
+    )
+  await expect(owner.refreshCatalog(target)).resolves.toEqual({
+    ok: true,
+    modelIds: [visible.wireModelId],
+    fetchedAt: expect.any(Number)
+  })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledExactlyOnceWith(
+    'https://image-workspace.cn-beijing.maas.aliyuncs.com/api/v1/models?page_size=20&page_no=1',
+    expect.objectContaining({
+      method: 'GET',
+      redirect: 'manual',
+      headers: expect.objectContaining({ authorization: `Bearer ${key}` })
+    })
+  )
+  expect(await owner.snapshot()).toEqual(saved)
+  await expect(
+    owner.refreshCatalog({
+      ...target,
+      vendorId: 'bailian',
+      baseUrl: 'https://test.us-east-1.maas.aliyuncs.com/compatible-mode/v1'
+    })
+  ).resolves.toEqual({ ok: false, code: 'missing-key' })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledOnce()
+  const updated = await owner.mutate({ ...official, vendorId: 'bailian', models: [visible] })
+  expect(updated.imageModel).toEqual(saved.imageModel)
+  expect(updated.services[0].models).toEqual([visible, active])
 })
 
 it('links official credentials without copying them and cascades account deletion even with preserve handling', async () => {

@@ -119,6 +119,16 @@ export const createNotebookExecutionAdmission = (options: {
   let policy: NotebookMemoryPolicyPort | undefined
   const assertMemory = (state: MemoryPolicyObservation): void => {
     if (state.status === 'healthy') return
+    // Pressure observations also drive idle reclamation. A fresh macOS warning or
+    // normal recovery sample is advisory for new work; critical pressure still blocks.
+    if (
+      state.status === 'pressured' &&
+      state.source === 'darwin-sysctl-dispatch' &&
+      state.executionScope === 'darwin:host' &&
+      ((state.facts?.pressureLevel === 'warning' && state.reason.code === 'mac-memory-warning') ||
+        (state.facts?.pressureLevel === 'normal' && state.reason.code === 'mac-memory-recovering'))
+    )
+      return
     options.onRejected?.(state)
     throw new NotebookExecutionAdmissionError(
       state.status === 'pressured' ? 'NOTEBOOK_MEMORY_PRESSURE' : 'NOTEBOOK_MEMORY_UNAVAILABLE',

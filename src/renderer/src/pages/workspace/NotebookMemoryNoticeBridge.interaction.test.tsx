@@ -13,7 +13,11 @@ import {
   PROJECT_COMPUTE_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
+import { BottomNoticeStack } from '@/components/ActionToast'
+import {
+  NotebookMemoryNoticeBridge,
+  NotebookMemoryPressureNotice
+} from './NotebookMemoryNoticeBridge'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -22,15 +26,16 @@ let container: HTMLDivElement
 let changed: (event: NotebookMemoryPolicyChangedEvent) => void
 let rejected: (event: NotebookMemoryRejectedEvent) => void
 const execute = vi.fn()
+const unsubscribeMemoryPolicy = vi.fn()
 
 beforeEach(() => {
   execute.mockReset()
+  unsubscribeMemoryPolicy.mockReset()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
-    warning: undefined,
     terminal: undefined,
     dismissedRefusalIds: [],
-    criticalScopes: [],
+    dismissedPressureScopes: [],
     pressure: undefined
   })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -42,7 +47,7 @@ beforeEach(() => {
       }),
       onMemoryPolicyChanged: vi.fn((listener) => {
         changed = listener
-        return vi.fn()
+        return unsubscribeMemoryPolicy
       }),
       execute
     }
@@ -134,7 +139,12 @@ it('keeps a failed explicit continuation visible and dismisses only after a succ
 it('updates recovery without running and opens the existing Compute preview on Manage', async () => {
   const continueExecution = vi.fn()
   await act(async () =>
-    root.render(<NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />)
+    root.render(
+      <>
+        <NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />
+        <NotebookMemoryPressureNotice />
+      </>
+    )
   )
   await act(async () =>
     rejected({
@@ -177,42 +187,66 @@ it('updates recovery without running and opens the existing Compute preview on M
   expect(execute).not.toHaveBeenCalled()
 })
 
-it('warns once for a live macOS critical episode and never describes it as an unstarted request', async () => {
-  await act(async () => root.render(<NotebookMemoryNoticeBridge projectId="project" />))
-  const critical: NotebookMemoryPolicyChangedEvent = {
-    hasLiveResources: true,
-    memory: {
-      status: 'pressured',
-      reason: 'macos-critical',
-      source: 'darwin-sysctl-dispatch',
-      executionScope: 'darwin:host',
-      checkedAt: 1,
-      pressureLevel: 'critical'
+it.each(['warning', 'critical'] as const)(
+  'dismisses background %s pressure outside the workspace without repeated notices',
+  async (pressureLevel) => {
+    vi.useFakeTimers()
+    try {
+      await act(async () =>
+        root.render(
+          <BottomNoticeStack>
+            <NotebookMemoryPressureNotice />
+          </BottomNoticeStack>
+        )
+      )
+      expect(window.api.notebook.onMemoryPolicyChanged).toHaveBeenCalledOnce()
+      const pressure: NotebookMemoryPolicyChangedEvent = {
+        hasLiveResources: true,
+        memory: {
+          status: 'pressured',
+          reason: `mac-memory-${pressureLevel}`,
+          source: 'darwin-sysctl-dispatch',
+          executionScope: 'darwin:host',
+          checkedAt: 1,
+          pressureLevel
+        }
+      }
+      await act(async () => changed({ ...pressure, hasLiveResources: false }))
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () => changed(pressure))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.getByRole('status').closest('[data-bottom-notice-stack]')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+      if (pressureLevel === 'warning') {
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })))
+      } else {
+        await act(async () => vi.advanceTimersByTime(3000))
+        await act(async () =>
+          changed({ ...pressure, memory: { ...pressure.memory, checkedAt: 2 } })
+        )
+        await act(async () => vi.advanceTimersByTime(3000))
+      }
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () => changed(pressure))
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () =>
+        changed({
+          ...pressure,
+          memory: { ...pressure.memory, status: 'healthy', pressureLevel: 'normal' }
+        })
+      )
+      await act(async () => changed(pressure))
+      expect(screen.getByRole('status')).toBeTruthy()
+      await act(async () => changed({ ...pressure, hasLiveResources: false }))
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(execute).not.toHaveBeenCalled()
+      await act(async () => root.render(null))
+      expect(unsubscribeMemoryPolicy).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
     }
   }
-  await act(async () => changed({ ...critical, hasLiveResources: false }))
-  expect(screen.queryByRole('dialog')).toBeNull()
-  await act(async () => changed(critical))
-  expect(screen.getByRole('dialog', { name: 'System memory is under pressure' })).toBeTruthy()
-  expect(
-    screen.queryByText(
-      'This code did not run. Choose whether to retry or manage Notebook resources.'
-    )
-  ).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Recheck and retry' })).toBeNull()
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
-  await act(async () => changed(critical))
-  expect(screen.queryByRole('dialog')).toBeNull()
-  await act(async () =>
-    changed({
-      ...critical,
-      memory: { ...critical.memory, status: 'healthy', pressureLevel: 'normal' }
-    })
-  )
-  await act(async () => changed(critical))
-  expect(screen.getByRole('dialog')).toBeTruthy()
-  expect(execute).not.toHaveBeenCalled()
-})
+)
 
 it('refreshes visible policy with one request in flight and stops polling after dismissal', async () => {
   let finish!: (value: NotebookMemoryPolicyChangedEvent['memory']) => void

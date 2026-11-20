@@ -14,5 +14,6 @@ export function resolveInlineFractions(
   label: string
   numerator: number
   denominator: number[]
+  enclosure?: [FractionItem, FractionItem]
   bounds: [number, number, number, number]
 }>

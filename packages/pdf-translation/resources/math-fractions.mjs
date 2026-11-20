@@ -161,5 +161,56 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
       ]
     })
   }
+  if (!items.some((item) => item.text.trim() === '⌈')) return result
+
+  // A scripted numerator can be proved without confusing its exponent
+  // with the denominator. Leave non-enclosed and ambiguous tiers untouched.
+  const native = items.filter((item) => item.text.trim()).sort((a, b) => a.i - b.i)
+  const relativeBaseline = (item) => item.baseline - bodyBaseline
+  const within = (value, low, high) => value > bodyFont * low && value < bodyFont * high
+  for (let index = 0; index + 4 < native.length; index++) {
+    const [open, base, power, bottom, close] = native.slice(index, index + 5)
+    if (
+      open.text.trim() !== '⌈' ||
+      close.text.trim() !== '⌉' ||
+      !/^[A-Za-z]$/u.test(base.text.trim().normalize('NFKC')) ||
+      !/^\d$/u.test(power.text.trim()) ||
+      !/^\d$/u.test(bottom.text.trim()) ||
+      [open, base, power, bottom, close].some((item) => used.has(item.i)) ||
+      [open, close].some(
+        (item) =>
+          Math.abs(relativeBaseline(item)) >= bodyFont * 0.04 ||
+          Math.abs(item.fontSize - bodyFont) >= bodyFont * 0.04
+      ) ||
+      !within(base.fontSize, 0.67, 0.79) ||
+      !within(power.fontSize, 0.49, 0.61) ||
+      Math.abs(bottom.fontSize - base.fontSize) >= bodyFont * 0.04 ||
+      !within(relativeBaseline(base), 0.3, 0.48) ||
+      !within(relativeBaseline(power) - relativeBaseline(base), 0.2, 0.32) ||
+      !within(-relativeBaseline(bottom), 0.27, 0.43) ||
+      !within(base.bounds[0] - open.bounds[2], -0.05, 0.23) ||
+      !within(power.bounds[0] - base.bounds[2], -0.05, 0.16) ||
+      !within(close.bounds[0] - power.bounds[2], -0.05, 0.24) ||
+      Math.abs((bottom.bounds[0] + bottom.bounds[2] - base.bounds[0] - power.bounds[2]) / 2) >=
+        bodyFont * 0.13
+    )
+      continue
+    const indices = [open.i, base.i, power.i, bottom.i, close.i]
+    for (const item of indices) used.add(item)
+    result.push({
+      indices,
+      label:
+        '⌈ ' +
+        base.text.trim() +
+        '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(power.text.trim())] +
+        '/' +
+        bottom.text.trim() +
+        ' ⌉',
+      numerator: base.i,
+      denominator: [bottom.i],
+      bounds: [base.bounds[0], bottom.bounds[1], power.bounds[2], power.bounds[3]],
+      enclosure: [open, close]
+    })
+  }
   return result
 }

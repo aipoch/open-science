@@ -1,6 +1,6 @@
 import { ApplicationCommandError } from './application-command-contract'
 import { LAB_PROVIDER_ID } from './lab'
-import { customProviderRequiresKey, isOfficialOpenAiResponsesBase } from './provider-url-policy'
+import { providerAllowsAnonymousAccess, isOfficialOpenAiResponsesBase } from './provider-url-policy'
 export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
 export { LAB_PROVIDER_ID }
 import type { AgentFrameworkId, AgentModelRoute } from './agent-framework-id'
@@ -184,14 +184,13 @@ export const canUseClaudeProviderTransport = (provider: {
   apiEndpoints?: readonly ModelProtocol[]
   key?: string
   baseUrl?: string
+  vendorId?: OfficialVendorId
+  model?: string
+  modelAllowsAnonymousAccess?: boolean
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('messages') &&
-  // A custom gateway needs credentials unless it is a loopback local model server, which serves the
-  // Anthropic route without one; the transport adapters already treat the key as optional.
-  (provider.type !== 'custom' ||
-    Boolean(provider.key) ||
-    !customProviderRequiresKey(provider.baseUrl))
+  (provider.type !== 'custom' || Boolean(provider.key) || providerAllowsAnonymousAccess(provider))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's

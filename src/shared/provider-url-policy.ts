@@ -1,3 +1,9 @@
+import {
+  getOfficialVendor,
+  type CatalogModel,
+  type CatalogSnapshot,
+  type OfficialVendorId
+} from '@aipoch/providers'
 import { isSensitiveUrlQueryKey } from '@aipoch/diagnostics'
 import {
   PROVIDER_TRANSPORT_ERROR,
@@ -11,6 +17,42 @@ import {
 // servers serve without one.
 export const customProviderRequiresKey = (baseUrl: string | undefined): boolean =>
   !isLoopbackProviderBaseUrl((baseUrl ?? '').trim())
+
+// For snapshots without eligibility metadata, use the verified bundled eligibility for that ID.
+export const kiloModelSupportsAnonymousAccess = (
+  model: Pick<CatalogModel, 'id' | 'supportsAnonymousAccess'>
+): boolean =>
+  model.supportsAnonymousAccess ??
+  getOfficialVendor('kilo')?.models.find(({ id }) => id === model.id)?.supportsAnonymousAccess ??
+  false
+
+/** Determine whether a saved provider or runtime connection allows anonymous requests. */
+export function providerAllowsAnonymousAccess(provider: {
+  type: string
+  vendorId?: OfficialVendorId
+  baseUrl?: string
+  model?: string
+  modelCatalog?: CatalogSnapshot
+  modelAllowsAnonymousAccess?: boolean
+}): boolean {
+  if (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl)) return true
+  const vendor = provider.vendorId && getOfficialVendor(provider.vendorId)
+  // The main process can represent a built-in provider as custom. Its runtime URL
+  // still has to match the registered URL.
+  if (
+    vendor?.supportsAnonymousAccess !== true ||
+    (provider.type !== 'official' &&
+      !(provider.type === 'custom' && provider.baseUrl === vendor.baseUrl))
+  )
+    return false
+  if (vendor.id !== 'kilo') return true
+  if (provider.modelAllowsAnonymousAccess !== undefined) return provider.modelAllowsAnonymousAccess
+  const selected = provider.model?.trim()
+  const models = provider.modelCatalog?.models ?? vendor.models
+  return models.some(
+    (model) => (!selected || model.id === selected) && kiloModelSupportsAnonymousAccess(model)
+  )
+}
 
 export type CustomProviderBaseUrlError =
   | typeof PROVIDER_TRANSPORT_ERROR

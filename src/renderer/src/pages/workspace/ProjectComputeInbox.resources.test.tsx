@@ -83,7 +83,7 @@ describe('Compute Notebook resource controls', () => {
     useNotebookMemoryNoticeStore.setState({
       rejection: undefined,
       dismissedRefusalIds: [],
-      criticalScopes: []
+      dismissedPressureScopes: []
     })
     view = { groups: [group()], pendingDecisions: [], releases: [] }
     getProjectResources.mockImplementation(async () => view)

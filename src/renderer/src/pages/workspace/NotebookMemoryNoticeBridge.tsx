@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -13,6 +14,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import {
   dismissNotebookMemoryRejection,
+  dismissNotebookMemoryPressure,
   observeNotebookMemoryPolicy,
   presentNotebookMemoryRejection,
   useNotebookMemoryNoticeStore
@@ -33,8 +35,7 @@ export const NotebookMemoryNoticeBridge = ({
   onContinue?: (event: NotebookMemoryRejectedEvent) => void | Promise<void>
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { rejection, terminal, rejectedTerminalId, warning, pressure } =
-    useNotebookMemoryNoticeStore()
+  const { rejection, terminal, rejectedTerminalId } = useNotebookMemoryNoticeStore()
   const reproductionRejection = rejection?.source === 'reproduction'
   const terminalRejection = rejection?.source === 'user' && rejection.inputKind === 'terminal'
   const retryTerminal =
@@ -42,9 +43,8 @@ export const NotebookMemoryNoticeBridge = ({
       ? terminal.retry
       : undefined
   useEffect(() => window.api.notebook?.onMemoryRejected?.(presentNotebookMemoryRejection), [])
-  useEffect(() => window.api.notebook?.onMemoryPolicyChanged?.(observeNotebookMemoryPolicy), [])
 
-  const memory = rejection?.memory ?? warning?.memory
+  const memory = rejection?.memory
   const polling = useRef(false)
   const retrying = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -53,9 +53,7 @@ export const NotebookMemoryNoticeBridge = ({
   const noticeScope = memory?.executionScope
   const noticeOwner = rejection
     ? `request:${rejection.refusalId ?? `${rejection.projectId}:${rejection.sessionId}:${rejection.inputKind}`}`
-    : warning
-      ? 'critical'
-      : undefined
+    : undefined
   useEffect(() => {
     const read = window.api.notebook?.getMemoryPolicyState
     if (!noticeScope || !noticeOwner || !read) return
@@ -75,16 +73,15 @@ export const NotebookMemoryNoticeBridge = ({
         useNotebookMemoryNoticeStore.setState({
           ...(next.status === 'healthy'
             ? {
-                criticalScopes: state.criticalScopes.filter((scope) => scope !== noticeScope),
+                dismissedPressureScopes: state.dismissedPressureScopes.filter(
+                  (scope) => scope !== noticeScope
+                ),
                 pressure:
                   state.pressure?.memory.executionScope === noticeScope ? undefined : state.pressure
               }
             : {}),
           ...(state.rejection?.memory.executionScope === noticeScope
             ? { rejection: { ...state.rejection, memory: next } }
-            : {}),
-          ...(state.warning?.memory.executionScope === noticeScope
-            ? { warning: { ...state.warning, memory: next } }
             : {})
         })
       } catch {
@@ -150,24 +147,8 @@ export const NotebookMemoryNoticeBridge = ({
   }
   return (
     <>
-      {pressure && !rejection && !warning ? (
-        <ErrorNotice
-          inline
-          role="status"
-          tone="amber"
-          title={t('System memory is under pressure')}
-          description={t(
-            'Notebook resources are active. Manage them in Compute if they are no longer needed.'
-          )}
-          primaryButton={{
-            label: t('Manage Notebook resources'),
-            onClick: manage,
-            disabled: manageDisabled
-          }}
-        />
-      ) : null}
       <Dialog.Root
-        open={Boolean(rejection || warning)}
+        open={Boolean(rejection)}
         onOpenChange={(open) => {
           if (!open) dismissNotebookMemoryRejection()
         }}
@@ -194,15 +175,9 @@ export const NotebookMemoryNoticeBridge = ({
               <ErrorNotice
                 inline
                 tone="amber"
-                description={
-                  rejection
-                    ? t(
-                        'This code did not run. Choose whether to retry or manage Notebook resources.'
-                      )
-                    : t(
-                        'Notebook resources are active. Manage them in Compute if they are no longer needed.'
-                      )
-                }
+                description={t(
+                  'This code did not run. Choose whether to retry or manage Notebook resources.'
+                )}
                 errorCode={memory ? JSON.stringify(memory, null, 2) : undefined}
                 diagnosticsLabel={t('Memory check details')}
               />
@@ -273,5 +248,28 @@ export const NotebookMemoryNoticeBridge = ({
         </Dialog.Portal>
       </Dialog.Root>
     </>
+  )
+}
+
+// Render in the shared bottom stack, never in the workspace's height-constrained grid.
+export const NotebookMemoryPressureNotice = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  useEffect(() => window.api.notebook?.onMemoryPolicyChanged?.(observeNotebookMemoryPolicy), [])
+  const pressure = useNotebookMemoryNoticeStore((state) => state.pressure)
+  const rejection = useNotebookMemoryNoticeStore((state) => state.rejection)
+  if (!pressure || rejection) return null
+  return (
+    <div data-bottom-notice className="pointer-events-auto">
+      <ActionToast
+        key={pressure.memory.executionScope}
+        title={t('System memory is under pressure')}
+        level="warning"
+        dismissLabel={t('Close')}
+        onDismiss={dismissNotebookMemoryPressure}
+        autoDismissMs={6000}
+        className="static inset-auto mx-0 w-full max-w-none"
+        testId="notebook-memory-pressure-toast"
+      />
+    </div>
   )
 }

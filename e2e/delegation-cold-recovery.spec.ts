@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
+import type { DelegatedWorkAttemptRecord } from '../src/shared/delegated-work-contract'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -61,6 +62,24 @@ test('continues a child after force quit without rewriting persisted state', asy
     .getByRole('button', { name: PROMPT })
     .click()
   await page.getByRole('button', { name: 'Resume session', exact: true }).click()
+  await expect(
+    page.getByText('Cold recovery is waiting for a new user instruction.', { exact: false })
+  ).toBeVisible()
+  const readAttempts = (): Promise<readonly DelegatedWorkAttemptRecord[] | undefined> =>
+    page.evaluate(
+      async (id) =>
+        (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)?.runtimeContext
+          ?.delegatedWork?.records[0].attempts,
+      interrupted.id
+    )
+  expect((await readAttempts())?.map(({ id }) => id)).toEqual([originalAttempt])
+  await page.getByRole('button', { name: 'Compute', exact: true }).click()
+  await page.getByRole('button', { name: 'Continue Notebook work', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: 'Sessions' })
+    .getByRole('button', { name: new RegExp(PROMPT) })
+    .first()
+    .click()
   const result = page.getByText('Cold recovery resumed:', { exact: false })
   await expect(result).toBeVisible({ timeout: 90_000 })
   await expect(result).toContainText('continued')
@@ -75,12 +94,7 @@ test('continues a child after force quit without rewriting persisted state', asy
       }
     })
     .toBe(false)
-  const attempts = await page.evaluate(
-    async (id) =>
-      (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)?.runtimeContext
-        ?.delegatedWork?.records[0].attempts,
-    interrupted.id
-  )
+  const attempts = await readAttempts()
   expect(attempts).toHaveLength(2)
   expect(attempts![0]).toMatchObject({ id: originalAttempt, status: 'cancelled' })
   expect(attempts![1].id).not.toBe(originalAttempt)
