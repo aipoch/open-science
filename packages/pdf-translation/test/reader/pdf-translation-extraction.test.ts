@@ -1674,3 +1674,220 @@ it('keeps short wrapped prose in separate physical rows outside its protected fo
   expect(coverage.excludedItemCount).toBe(0)
   expect(coverage.includedItemCount).toBe(7)
 })
+
+it.each([true, false])(
+  'separates labelled correspondence from the adjacent abstract (%s)',
+  async (matches) => {
+    const item = (
+      s: string,
+      x: number,
+      y: number,
+      width: number,
+      size: number,
+      fontName = 'body',
+      hasEOL = true
+    ) => ({
+      ...text(s, x, y),
+      transform: [size, 0, 0, size, x, 800 - y],
+      width,
+      height: size,
+      fontName,
+      hasEOL
+    })
+    const address =
+        'Department of Earth Sciences at Northern Valley College and Research Center, United States.',
+      caption = matches ? '*Corresponding author:' : '*Conference liaison:',
+      email = 'author@example.org',
+      prose = [
+        'Observers examined survey coverage along the northern line',
+        'under the available observing conditions. The first set',
+        'provided three examples along the central boundary.'
+      ]
+    const contents = [
+      item('A Study of Seasonal Survey Coverage', 50, 144, 480, 22, 'display'),
+      item('JORDAN EXAMPLE *', 50, 184, 208, 12, 'byline'),
+      item('1', 50, 207.5, 3, 6, 'front', false),
+      item(address, 54, 210, 349, 8.5, 'front'),
+      item(caption, 50, 230.8, 90, 8.5, 'front', false),
+      item(email, 143, 230.8, 87, 8.5, 'front'),
+      ...prose.map((value, i) => item(value, 50, 245.9 + i * 11.1, i === 2 ? 218 : 242, 9.45)),
+      item('The separate right column begins with its own brief text.', 311, 245.9, 240, 9.45),
+      item('This remains a separate source paragraph in either case.', 311, 257, 242, 9.45)
+    ]
+    const fixture = setup(contents)
+    fixture.page.getTextContent.mockResolvedValue({
+      items: contents,
+      styles: Object.fromEntries(
+        ['display', 'byline', 'front', 'body'].map((font) => [
+          font,
+          { vertical: false, ascent: 0.8, descent: -0.2 }
+        ])
+      )
+    })
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    const sub = source.units.find((unit) => unit.source.includes(prose[0]))
+    expect(sub?.source).toContain(prose[2])
+    expect(sub?.source.includes(email)).toBe(!matches)
+    expect(coverage.includedItemCount).toBe(contents.length)
+    const other = source.units.find((unit) => unit.source.startsWith('The separate right column'))!
+    expect(other.fragments.flatMap(({ items }) => items.map(({ index }) => index))).toEqual([9, 10])
+    expect(other.fragments.every(({ rect }) => rect.x === 311 / 600)).toBe(true)
+    if (matches) {
+      expect(sub?.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([
+        [6],
+        [7],
+        [8]
+      ])
+      expect(
+        source.units.find((unit) => unit.source === `${caption} ${email}`)?.fragments[0]?.items
+      ).toHaveLength(2)
+      expect(source.units.some((unit) => unit.source === `1 ${address}`)).toBe(true)
+    }
+  }
+)
+
+it('anchors the end of a protected relation to its original row', async () => {
+  const row = (str: string, x: number, width: number, fontName = 'body', y = 278, height = 11) => ({
+    ...text(str, x, y),
+    transform: [height, 0, 0, height, x, 800 - y],
+    width,
+    height,
+    fontName,
+    hasEOL: false
+  })
+  const closing =
+      '= 2) and later Rivera [6] obtained a general upper bound on the measured offsets',
+    items = [
+      row('f', 72.003, 5.335, 'math'),
+      row('(', 78.603, 4.233),
+      row('|', 82.803, 3.022, 'symbol'),
+      row('H', 85.803, 9.065, 'math'),
+      row('|', 95.763, 3.022, 'symbol'),
+      row(') is not explicit in [3], but', 98.763, 127.113),
+      row(') =', 250.683, 16.396),
+      row('4', 299.763, 4.232, 'script', 274, 8),
+      row(') follows from a separate calculation. Par', 304.563, 194.695),
+      { ...row('ker [4]', 493.804, 60.622), hasEOL: true },
+      row('(for', 72.003, 17.225, 'body', 291.56),
+      row('k', 92.883, 5.673, 'math', 291.56),
+      row(closing, 101.883, 452.455, 'body', 291.56),
+      { ...row('', 0, 0, 'body', 800, 0), hasEOL: true }
+    ]
+  const fixture = setup(items)
+  const style = { vertical: false, ascent: 0.75, descent: -0.25 }
+  fixture.page.getTextContent.mockResolvedValue({
+    items,
+    styles: {
+      body: style,
+      math: style,
+      symbol: { ...style, ascent: 0.772 },
+      script: { ...style, ascent: 0.675 }
+    }
+  })
+  const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+  const [opening, body, prefix, tail] = source.units
+  expect(opening.preserve).toBe('formula')
+  expect(prefix).toMatchObject({ source: '(for k', sourceOnly: true, preserve: 'formula' })
+  expect(body.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([
+    [5, 6, 7, 8, 9]
+  ])
+  expect(tail.source).toBe(closing)
+  expect(tail.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([[12]])
+  expect(coverage.includedItemCount).toBe(13)
+})
+
+it.each(['paired', 'nonzero advance', 'different position', 'different font'])(
+  'decodes a legacy slash only over its native equality (%s)',
+  async (shape) => {
+    const slash = {
+      ...text('6', 80),
+      width: shape === 'nonzero advance' ? 5 : 0,
+      fontName: 'mark',
+      hasEOL: false
+    }
+    const equal = { ...text('=', shape === 'different position' ? 85 : 80), width: 7.77 }
+    const items = [slash, { ...text(' ', 80), height: 0, hasEOL: false }, equal]
+    const page = {
+      getTextContent: vi.fn().mockResolvedValue({ items }),
+      commonObjs: {
+        has: () => true,
+        get: (name: string) => ({
+          name: name === 'mark' && shape !== 'different font' ? 'ABCDEF+CMSY10' : 'CMR10'
+        })
+      }
+    }
+    const actual = await getPdfTranslationTextContent(page as unknown as PDFPageProxy)
+    expect(actual.items[0]).toEqual({ ...slash, str: shape === 'paired' ? '\u0338' : '6' })
+    expect(actual.items[2]).toBe(equal)
+  }
+)
+
+it.each([true, false])(
+  'retains a fragmented negative condition around a native fraction (%s)',
+  async (negative) => {
+    const row = (
+      str: string,
+      x: number,
+      width: number,
+      fontName = 'body',
+      y = 300,
+      height = 10,
+      hasEOL = false
+    ) => ({
+      ...text(str, x, y),
+      transform: [height, 0, 0, height, x, 800 - y],
+      width,
+      height,
+      fontName,
+      hasEOL
+    })
+    const items = [
+      row('op', 458.16, 11.88, 'operator'),
+      row('(', 470.04, 3.87),
+      row('A', 473.88, 7.83, 'math'),
+      row('). This', 481.68, 31.04, 'body', 300, 10, true),
+      row(
+        negative
+          ? 'limit does not remain valid if we change the constant'
+          : 'limit continues to apply if we change the constant',
+        99.24,
+        235.345,
+        'body',
+        312
+      ),
+      row('3', 340.92, 3.97, 'number', 308.2, 7),
+      row('q', 338.76, 4.23, 'lowered', 315.5, 7),
+      row('2', 343.08, 3.39, 'script', 313.4, 5),
+      row('−', 350.16, 7.74, 'symbol', 312),
+      row('5', 363.12, 3.97, 'number', 308.2, 7),
+      row('q', 360.96, 4.23, 'lowered', 315.5, 7),
+      row('3', 365.28, 3.39, 'script', 313.4, 5),
+      row('by any number larger than', 373.56, 122.53, 'body', 312),
+      row('6', 502.68, 3.97, 'number', 308.2, 7),
+      row('q', 500.52, 4.23, 'lowered', 315.5, 7),
+      row('4', 504.84, 3.39, 'script', 313.4, 5),
+      row('.', 510, 2.76, 'body', 312, 10, true)
+    ]
+    const style = { vertical: false, ascent: 0.75, descent: -0.25 }
+    const fixture = setup(items)
+    fixture.page.getTextContent.mockResolvedValue({
+      items,
+      styles: {
+        body: style,
+        math: style,
+        symbol: style,
+        operator: { ...style, ascent: 0.716, descent: -0.022 },
+        number: { ...style, ascent: 0.664, descent: -0.02 },
+        lowered: { ...style, ascent: 0.694, descent: -0.01 },
+        script: { ...style, ascent: 0.666, descent: -0.022 }
+      }
+    })
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    expect(
+      source.units
+        .filter((unit) => unit.preserve === 'literal')
+        .map((unit) => unit.fragments[0].items[0].index)
+    ).toEqual(negative ? [3, 4, 12] : [])
+    expect(coverage.includedItemCount).toBe(items.length)
+  }
+)

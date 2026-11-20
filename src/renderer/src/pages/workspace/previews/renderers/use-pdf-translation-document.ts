@@ -550,8 +550,8 @@ async function verifiedFractionText(
   const used = new Set<number>()
   for (const fraction of fractions) {
     const members = fraction.indices.map((index) => before.find((item) => item.index === index)!)
-    const numerator = members[0],
-      denominator = members.slice(1)
+    const numerator = members.find((item) => item.index === fraction.numerator)!,
+      denominator = members.filter((item) => fraction.denominator.includes(item.index))
     const rule = originalBars.filter(
       ({ rect, width }) =>
         width > 0 &&
@@ -820,6 +820,25 @@ async function verifiedSplitNativeRun(
         ))
   let repeatedSymbol = false,
     pieces = collect(false)
+  // A retained text run can expose its final advance as an adjacent space item.
+  if (pieces.length === 1) {
+    const [lead] = pieces,
+      space = target.items[lead.index + 1]
+    if (
+      space &&
+      'str' in space &&
+      space.str === ' ' &&
+      before.str === lead.item.str + space.str &&
+      space.fontName === lead.item.fontName &&
+      space.height === 0 &&
+      space.width > 0 &&
+      Math.abs(space.transform[4] - lead.item.transform[4] - lead.item.width) < 0.001 &&
+      space.transform.every(
+        (value, index) => index === 4 || Math.abs(value - before.transform[index]) < 0.001
+      )
+    )
+      pieces.push({ item: space, index: lead.index + 1 })
+  }
   if (!closed(pieces, false)) {
     // Untouched diagram symbols may split with overlapping advances and native baseline offsets.
     repeatedSymbol = /^([^\p{L}\p{N}\s])\1{1,7}$/u.test(before.str)
@@ -4265,7 +4284,7 @@ export function usePdfTranslationDocument(
           if (
             units.some(
               (unit) =>
-                /[A-Za-z\p{Script=Greek}\d]\//u.test(unit.source) &&
+                /[A-Za-z\p{Script=Greek}\d⁰¹²³⁴⁵⁶⁷⁸⁹]\//u.test(unit.source) &&
                 unit.fragments.some((fragment) => fragment.pageNumber === number)
             )
           ) {
@@ -4340,6 +4359,23 @@ export function usePdfTranslationDocument(
                 .map(([label]) => label)
                 .filter((label) => unit.source.normalize('NFKC').includes(label.normalize('NFKC')))
             )
+            const powersByCaret = new Map<string, string>()
+            const translation = runSnapshot.units[unitIndex].translation
+            for (const [spelling, exponent] of unit.source.matchAll(
+              /(?<![\p{L}\p{N}])M⋆ = \d{1,3} × 10([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2})M⊙(?![\p{L}\p{N}])/gu
+            )) {
+              const nativePower = '10' + exponent,
+                caret = '^' + exponent.normalize('NFKC'),
+                equivalent = spelling.replace(exponent, caret)
+              if (
+                unit.source.split(nativePower).length === 2 &&
+                translation.split(equivalent).length === 2 &&
+                !translation.includes(nativePower)
+              ) {
+                powers.add(nativePower)
+                powersByCaret.set(exponent, caret)
+              }
+            }
             const authorLabels = [
               ...unit.source.matchAll(/\b(?:MM|MD|PhD|MSc|BSc)(\d{1,2}[*†‡]?)/gu)
             ].map((match) => match[1])
@@ -4408,7 +4444,10 @@ export function usePdfTranslationDocument(
               powers
             )) {
               const targetIndex = targetIndices[index]
-              nativeLabels.set(targetIndex, { label, indices: [targetIndex] })
+              nativeLabels.set(targetIndex, {
+                label: powersByCaret.get(label) ?? label,
+                indices: [targetIndex]
+              })
             }
           }
           for (const [index, unit] of units.entries()) {
@@ -4502,7 +4541,9 @@ export function usePdfTranslationDocument(
           const foreignMatches = new Map<number, number[]>(),
             preservedUnownedGroups = new Map<number, number[]>()
           const retainedForeignItems = (
-            fragment: PdfTranslationRenderUnit['fragments'][number]
+            fragment: PdfTranslationRenderUnit['fragments'][number],
+            unitIndex: number,
+            fragmentIndex: number
           ): Set<number> => {
             const excluded = new Set<number>()
             if (!sourceOnlyItems.size || !fragment.items.length || !originalText) return excluded
@@ -4544,8 +4585,16 @@ export function usePdfTranslationDocument(
                 )
               }
               const matches = foreignMatches.get(item.index)!
-              if (matches.length !== 1)
-                throw validationError('Retained neighboring PDF glyph changed')
+              if (matches.length !== 1) {
+                // This fragment covers the protected glyph. Retry just its active owner
+                // before restoring the page, then verify the same glyph again.
+                retryOverlappingOwner = !unchanged(unitIndex)
+                throw validationError(
+                  'Retained neighboring PDF glyph changed',
+                  retryOverlappingOwner ? unitIndex : undefined,
+                  fragmentIndex
+                )
+              }
               excluded.add(matches[0])
             }
             return excluded
@@ -5218,7 +5267,7 @@ export function usePdfTranslationDocument(
               targetItems ??= projectedTarget()
               if (sourceOnlyItems.size)
                 originalText ??= await getPdfTranslationTextContent(sourcePage)
-              const foreign = retainedForeignItems(fragment)
+              const foreign = retainedForeignItems(fragment, i, f)
               regionText[i][f] = readRegion(rect, targetItems, target, `${i}:${f}`, foreign)
               rawRegionText[i][f] =
                 nativeLabels.size || foreign.size

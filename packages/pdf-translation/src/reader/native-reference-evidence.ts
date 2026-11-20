@@ -51,16 +51,35 @@ export async function bindNativeReferenceRolePage(
     ) {
       const show = operators.fnArray.lastIndexOf(OPS.showText),
         fontAt = operators.fnArray.findLastIndex((op, i) => i < show && op === OPS.setFont),
-        literal = (operators.argsArray[show]?.[0] ?? [])
-          .filter((g: unknown) => !!g && typeof g === 'object')
-          .map((g: { unicode?: string }) => g.unicode ?? '\uFFFD')
-          .join(''),
-        compact = (s: string): string => normalizeUnicode(s).normalize('NFD').replace(/\s/gu, '')
+        literal = (at: number): string =>
+          (operators.argsArray[at]?.[0] ?? [])
+            .filter((g: unknown) => !!g && typeof g === 'object')
+            .map((g: { unicode?: string }) => g.unicode ?? '\uFFFD')
+            .join(''),
+        compact = (s: string): string => normalizeUnicode(s).normalize('NFD').replace(/\s/gu, ''),
+        spelling = compact(last.str)
+      // The number and citation may paint through separate color operations.
+      // Color alone leaves the native font, text matrix and advance continuous.
+      let firstShow = show,
+        value = literal(show)
+      if (!compact(value).endsWith(spelling)) {
+        let previous = show - 1
+        while (
+          previous >= show - 8 &&
+          (operators.fnArray[previous] === OPS.setFillRGBColor ||
+            operators.fnArray[previous] === OPS.setStrokeRGBColor)
+        )
+          previous--
+        if (previous > fontAt && operators.fnArray[previous] === OPS.showText) {
+          firstShow = previous
+          value = literal(previous) + value
+        }
+      }
       endTextAtEOF =
         show >= 0 &&
         fontAt >= 0 &&
         operators.argsArray[fontAt]?.[0] === last.fontName &&
-        compact(literal).endsWith(compact(last.str)) &&
+        compact(value).endsWith(spelling) &&
         operators.fnArray.slice(show + 1).includes(OPS.endText) &&
         !operators.fnArray
           .slice(show + 1)
@@ -77,16 +96,10 @@ export async function bindNativeReferenceRolePage(
           args = operators.argsArray,
           getOperators = page.getOperatorList,
           showArgs = args[show],
+          firstArgs = args[firstShow],
           fontArgs = args[fontAt],
           count = fn.length,
-          tail = JSON.stringify([
-            fn[fontAt],
-            fontArgs,
-            fn[show],
-            showArgs,
-            fn.slice(show + 1),
-            args.slice(show + 1)
-          ])
+          tail = JSON.stringify([fn[fontAt], fontArgs, fn.slice(firstShow), args.slice(firstShow)])
         eofCurrent = () =>
           page.getOperatorList === getOperators &&
           operators.fnArray === fn &&
@@ -94,16 +107,11 @@ export async function bindNativeReferenceRolePage(
           fn.length === count &&
           args.length === count &&
           args[show] === showArgs &&
+          args[firstShow] === firstArgs &&
           args[fontAt] === fontArgs &&
           operators.lastChunk === true &&
-          JSON.stringify([
-            fn[fontAt],
-            args[fontAt],
-            fn[show],
-            args[show],
-            fn.slice(show + 1),
-            args.slice(show + 1)
-          ]) === tail
+          JSON.stringify([fn[fontAt], args[fontAt], fn.slice(firstShow), args.slice(firstShow)]) ===
+            tail
       }
     }
   } catch {

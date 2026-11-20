@@ -178,3 +178,58 @@ it.each(['unprotected-gradient', 'unprotected-sum', 'ordinary-prose', 'exterior-
     expect([...f.read()]).toEqual([])
   }
 )
+
+it.each(['plain', 'numbered', 'misaligned'])(
+  'protects the complete operators of a native minimum display (%s)',
+  (shape) => {
+    const shift = shape === 'misaligned' ? -4 : 0
+    const items = [
+      { ...item('Take the minimum in', 95, 624), hasEOL: true },
+      ...(shape === 'numbered' ? [item('(2.3)', 95, 605)] : []),
+      item('min', 250, 605),
+      item('k', 248.3 + shift, 598, 7),
+      item('∈', 251.8 + shift, 598, 7),
+      item('S', 255.3 + shift, 598, 7),
+      item('\\', 258.8 + shift, 598, 7),
+      item('R', 262.3 + shift, 598, 7),
+      item('\u0000', 266.2, 613),
+      item('f', 271, 605),
+      item('(', 276, 605),
+      item('a', 281, 605),
+      item(') +', 286, 605),
+      item('g', 301, 605),
+      item('\u0001', 307, 613),
+      item('is attained under these conditions.', 95, 583)
+    ]
+    const source = (group: Item[]): string => group.map(({ str }) => str).join(' ')
+    const units = items.reduce<Unit[]>((result, i, index) => {
+      const group =
+        i.str === 'min'
+          ? [i, items[index + 3]]
+          : i.str === 'k'
+            ? [i, items[index + 1], items[index + 3], items[index + 4]]
+            : ['∈', 'S', '\\', 'R'].includes(i.str)
+              ? []
+              : [i]
+      if (!group.length) return result
+      const protectedInk = ['\u0000', '\u0001'].includes(i.str) || /^\(|^[fga]$|^\) \+$/.test(i.str)
+      result.push({
+        id: 'native-' + index,
+        source: source(group),
+        ...(protectedInk ? ({ sourceOnly: true, preserve: 'formula' } as const) : {}),
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.1, y: 0.1, width: 0.1, height: 0.02 },
+            items: group.map((part) => ({ index: items.indexOf(part), text: part.str }))
+          }
+        ]
+      })
+      return result
+    }, [])
+    const selected = literalMathCandidates(units, { items, lang: null, styles: {} }, 1)
+    expect(units.filter(({ id }) => selected.has(id)).map(({ source }) => source)).toEqual(
+      shape === 'misaligned' ? [] : ['min S', 'k ∈ \\ R']
+    )
+  }
+)

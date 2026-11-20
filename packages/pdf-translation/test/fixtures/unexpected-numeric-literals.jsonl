@@ -15,3 +15,7 @@
 {"name": "kernel-label-does-not-supply-an-extra-count", "source": "conv1x1", "translation": "1×1卷积，使用1组", "rejected": true}
 {"name": "containing-identifier-is-not-a-complete-kernel", "source": "Layerconv1x1", "translation": "1×1卷积", "rejected": true}
 {"name": "kernel-like-stride-is-not-a-spatial-dimension", "source": "conv1s1", "translation": "1×1卷积", "rejected": true}
+{"name":"a software identifier does not license a detached number","source":"The image tool ViewLab4 selects a region and checks the result.","translation":"图像工具 ViewLab4 会选择一个区域并检查结果。4","rejected":true}
+{"name":"a software identifier can remain within the translated sentence","source":"The image tool ViewLab4 selects a region and checks the result.","translation":"图像工具 ViewLab4 会选择一个区域并检查结果。","rejected":false}
+{"name":"an explicit physical quantity is preserved alongside a software identifier","source":"The ViewLab4 tool selects a region with width 4 mm.","translation":"ViewLab4 工具会选择一个宽度为 4 mm 的区域。","rejected":false}
+{"name":"a numeric subscript remains within a mathematical identifier","source":"The variable C2 denotes a second series.","translation":"变量 C2 表示第 2 个序列。","rejected":false}
