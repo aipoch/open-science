@@ -526,3 +526,191 @@ test.each(['complete', 'two mirrors', 'body touches imprint'])(
     )
   }
 )
+
+test.each(['complete', 'different cover', 'short run', 'occupied gutter'])(
+  'preserves three facing margin rows backed by the cover title and byline: %s',
+  (shape) => {
+    const title = 'CALIBRATION OF SEVERAL INDEPENDENT INSTRUMENTS'
+    const byline = 'CEDAR LANE AND RIVER NORTH'
+    const body = (y: number): PdfLayoutTextItem =>
+      native(
+        'The independent measurement includes a comparison against the previous reference.',
+        70,
+        y,
+        442,
+        10,
+        'Body'
+      )
+    const page = (n: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page: n,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    })
+    const pages = [
+      page(1, [
+        native(
+          shape === 'different cover' ? 'ANOTHER COVER TITLE' : title,
+          120,
+          112,
+          360,
+          10,
+          'Title'
+        ),
+        native(byline, 210, 141, 180, 8, 'Byline'),
+        body(190)
+      ]),
+      ...[2, 3, 4].slice(0, shape === 'short run' ? 2 : 3).map((n) => {
+        const even = n % 2 === 0
+        const header = even ? native(byline, 222, 54, 156, 7) : native(title, 179, 54, 242, 7)
+        const folio = native(String(n), even ? 70 : 526, 54, 4, 7)
+        return page(n, [
+          ...(even ? [folio, header] : [header, folio]),
+          body(shape === 'occupied gutter' && n === 3 ? 65 : 82)
+        ])
+      })
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    for (const p of pages) {
+      const header = units.find(({ items }) => items.includes(p.page + ':' + (p.page % 2 ? 0 : 1)))
+      expect(Boolean(header?.sourceOnly)).toBe(shape === 'complete' && p.page > 1)
+      expect(units.find(({ items }) => items.includes(p.page + ':2'))?.sourceOnly).toBeUndefined()
+    }
+  }
+)
+
+test.each(['matching cover', 'different title', 'different byline'])(
+  'preserves inset facing margins only when both labels match the cover: %s',
+  (shape) => {
+    const page = (n: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page: n,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    })
+    const cover = page(1, [
+      native('Experiments on the transfer of', 132, 150, 304, 14, 'Cover'),
+      native('Heat: A short report', 132, 168, 175, 14, 'Cover'),
+      native('Amelia M. Green', 132, 202, 75, 10, 'Author')
+    ])
+    const pages = [
+      cover,
+      ...[2, 3, 4].map((n) => {
+        const even = n % 2 === 0
+        const folio = native(String(n), even ? 132 : 463, 90, 5, 9)
+        const title = native(
+          shape === 'different title'
+            ? 'Experiments on the transfer of light'
+            : 'Experiments on the transfer of heat',
+          236,
+          90,
+          200,
+          9
+        )
+        const author = native(
+          shape === 'different byline' ? 'A. M. Gray et al.' : 'A. M. Green et al.',
+          164,
+          90,
+          78,
+          9
+        )
+        const body = native(
+          'The experiment records temperature over several measurement periods.',
+          132,
+          115,
+          330,
+          10,
+          'Body'
+        )
+        return page(n, even ? [folio, author, body] : [title, folio, body])
+      })
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    for (const p of pages.slice(1)) {
+      const headers = units.filter((unit) =>
+        unit.items.some((key) => key === `${p.page}:0` || key === `${p.page}:1`)
+      )
+      expect(
+        headers.some(
+          (unit) => unit.items.includes(`${p.page}:${p.page % 2 ? 0 : 1}`) && unit.sourceOnly
+        )
+      ).toBe(shape === 'matching cover')
+      expect(units.find(({ items }) => items.includes(`${p.page}:2`))?.sourceOnly).toBeUndefined()
+    }
+    expect(units.find(({ items }) => items.includes('1:0'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each([0, 3])(
+  'does not start bibliography at a last-page running label (folio shift %s)',
+  (shift) => {
+    const page = (number: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page: number,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    })
+    const text = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      face = 'Body'
+    ): PdfLayoutTextItem => native(str, x, y, width, 11, face)
+    const open = (item: PdfLayoutTextItem): PdfLayoutTextItem => ({ ...item, hasEOL: false })
+    const units = groupPdfTranslationPages({
+      pages: [
+        page(1, [
+          native('AN ESTIMATE FOR FINITE REGIONS', 150, 90, 300, 14, 'Title'),
+          text('MARA STONE', 262, 115, 76),
+          text('We prove a bound for the distance between two nearby regions.', 57, 152, 470)
+        ]),
+        page(2, [
+          open(native('2', 57, 43, 4)),
+          native('MARA STONE', 262, 43, 76),
+          text('The estimate follows from a comparison of the two adjacent sides.', 57, 67, 430)
+        ]),
+        page(3, [
+          open(native('REFERENCES', 271, 43, 58)),
+          native('3', 539 + shift, 43, 4),
+          text('R', 315, 168, 8, 'Symbol'),
+          text('Figure 2. Boundaries for the two adjacent finite regions.', 150, 259, 300),
+          text('3. Additional distance estimates', 188, 286, 224, 'Section'),
+          text(
+            'We next prove a uniform distance bound for the finite regions in this construction.',
+            68,
+            310,
+            480
+          ),
+          text(
+            'The estimate applies whenever both boundary curves can be closely approximated.',
+            57,
+            324,
+            460
+          ),
+          text('References', 268, 515, 64, 'Section'),
+          ...['A. Grey.', 'J. Green.', 'D. Brown.'].flatMap((author, index) => [
+            open(text(`[${index + 1}]`, 57, 535 + 14 * index, 11)),
+            text(
+              `${author} Notes on finite regions. Journal of Geometry (2008).`,
+              78,
+              535 + 14 * index,
+              450
+            )
+          ])
+        ])
+      ]
+    }).units
+    for (const prefix of ['Figure 2.', '3. Additional distance', 'We next prove']) {
+      const owner = units.find(({ source }) => source.startsWith(prefix))
+      expect(owner).toBeDefined()
+      expect(owner?.sourceOnly).toBe(shift ? true : undefined)
+      expect(owner?.preserve).toBe(shift ? 'reference' : undefined)
+    }
+    for (const source of ['REFERENCES', 'R', 'References'])
+      expect(units.find((owner) => owner.source === source)?.sourceOnly).toBe(true)
+  }
+)

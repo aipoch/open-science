@@ -226,7 +226,21 @@ export function pdfTranslationAddsNumericLiterals(source: string, translation: s
     }
     if (occurrences(translation, true) > occurrences(source)) return true
   }
-  const sourceNumbers = source.normalize('NFKC').match(/\d+/gu) ?? []
+  const normalizedSource = source.normalize('NFKC')
+  const normalized = translation.normalize('NFKC')
+  const sourceNumbers = normalizedSource.match(/\d+/gu) ?? []
+  // A retained product identifier does not authorize an extra number after the sentence.
+  const detachedTail = /[。！？]\s*(\d+)\s*$/u.exec(normalized)?.[1]
+  if (
+    detachedTail &&
+    sourceNumbers.length === 1 &&
+    sourceNumbers[0] === detachedTail &&
+    /[A-Za-z][.!?]\s*$/u.test(normalizedSource)
+  ) {
+    const identifiers = /(?<![A-Za-z\d])[A-Za-z]{3,}\d+(?![A-Za-z\d])/gu
+    const identifier = normalizedSource.match(identifiers)?.[0]
+    if (identifier && normalized.match(identifiers)?.includes(identifier)) return true
+  }
   // A complete convolution-kernel label encodes two ordered dimensions, not
   // a stride identifier supplying a multiplier. Require both exact operands
   // and no additional target number before accepting its spelled-out form.
@@ -247,15 +261,14 @@ export function pdfTranslationAddsNumericLiterals(source: string, translation: s
     source.length <= 80 &&
     sourceNumbers.length > 0 &&
     !sameKernel &&
-    !/(?<![A-Za-z\d])\d/u.test(source.normalize('NFKC')) &&
+    !/(?<![A-Za-z\d])\d/u.test(normalizedSource) &&
     !/\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|single|both|pair|couple|once|twice|each|per)\b/iu.test(
       source
     ) &&
-    /^\s*\d+(?:[.,]\d+)?\s*×/u.test(translation.normalize('NFKC'))
+    /^\s*\d+(?:[.,]\d+)?\s*×/u.test(normalized)
   )
     return true
   if (sourceNumbers.length > 0) return false
-  const normalized = translation.normalize('NFKC')
   return /\p{Script=Han}/u.test(normalized) && /\d/u.test(normalized)
 }
 
@@ -373,7 +386,7 @@ function ordinaryAcademicHeading(source: string): string | undefined {
     .trim()
     .replace(/\s+/gu, ' ')
     .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
-  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study|related work|computation details|target simulations|(?:\d{1,3}\.?\s+)?limitations? and (?:outlook|future work))$/iu.test(
+  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|funding information|ethical considerations|ablation study|related work|computation details|target simulations|(?:\d{1,3}\.?\s+)?limitations? and (?:outlook|future work))$/iu.test(
     heading
   )
     ? heading
@@ -431,6 +444,7 @@ function isOrdinaryScientificLabel(source: string): boolean {
     )
   )
     return true
+  if (/^(?:planet[- ]star )?mass ratio$/iu.test(source)) return true
   // A metric acronym does not make its summary statistic a proper name.
   if (
     /^(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*,\s*)?(?:[Mm]ean|[Mm]edian)\s*\((?:SD|SE|IQR)\)(?:,\s*(?:mm|cm|mL|kg\/m2|y|°|◦))?$/u.test(
@@ -844,6 +858,13 @@ export function normalizePdfTranslationText(source: string, translation: string)
   // the bundled output font. Strip them before checkpoint reconciliation so the
   // saved text matches the PDF writer's normalized output.
   result = result.replace(/\p{Cf}/gu, '')
+  // A detached ring in a resolution measurement is the legacy spelling of Å.
+  // Use the existing quantity only, so a changed value remains detectable.
+  const resolution = /\bresolution of (\d+\.\d+) ˚A\.$/u.exec(source)?.[1]
+  if (resolution)
+    result = result.replace(/(\d+\.\d+)([ \t]+)˚A(?!\p{L})/gu, (literal, value, spacing) =>
+      value === resolution ? value + spacing + 'Å' : literal
+    )
   // A model can wrap an unchanged formula in Markdown emphasis. Restore only
   // an exact source match; literal stars and changed expressions stay intact.
   const emphasis = result.trim().match(/^\*\*([\s\S]+)\*\*$/u)
