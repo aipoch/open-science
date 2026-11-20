@@ -159,10 +159,19 @@ function ActiveImageEditor({
     [owner.tasks, projectId, sessionId, frameId, branchId]
   )
   const recoveryTask = draft.submission?.recoveryTask
-  const candidates = useMemo(
-    () => imageEditorCandidates(scopedTasks, rootItem),
-    [scopedTasks, rootItem]
+  const candidateCache = useRef(
+    new Map<string, { item: PreviewFileItem; edit: ImageEditSnapshot; prompt: string }>()
   )
+  const candidates = useMemo(() => {
+    const current = imageEditorCandidates(scopedTasks, rootItem)
+    for (const candidate of current) {
+      const id = candidate.item.selectedVersionId
+      if (id) candidateCache.current.set(id, candidate)
+    }
+    return [...candidateCache.current.values()].sort(
+      (a, b) => (a.item.versionNumber ?? 0) - (b.item.versionNumber ?? 0)
+    )
+  }, [scopedTasks, rootItem])
   const recentCandidates = candidates.slice(-6)
   const [savedVersions, setSavedVersions] = useState<ArtifactVersionDescriptor[]>([])
   const candidateVersionKey = candidates.map(({ item }) => item.selectedVersionId).join(':')
