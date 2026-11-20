@@ -195,13 +195,21 @@ export async function applyPreparedWindowsUpdate(options: {
     const pending = await pendingDirectory()
     if (!pending) return false
     const stage = join(pending, preparedName)
-    if (existsSync(join(stage, 'installing.json'))) {
-      const previous: Prepared = JSON.parse(
-        await fs.readFile(join(stage, 'installing.json'), 'utf8')
-      )
-      if (previous.executable === process.execPath && previous.version === options.current)
+    // A user can choose the regular "Restart to update" before the next cold launch. That
+    // install leaves an unclaimed ready receipt. Reclaim its prepared files on startup too.
+    for (const marker of ['installing.json', 'ready.json']) {
+      const file = join(stage, marker)
+      if (!existsSync(file)) continue
+      const previous: Prepared = JSON.parse(await fs.readFile(file, 'utf8'))
+      if (
+        previous.executable === process.execPath &&
+        stable.test(previous.version) &&
+        !isNewer(previous.version, options.current)
+      ) {
         await fs.rm(stage, { recursive: true, force: true })
-      return false
+        return false
+      }
+      if (marker === 'installing.json') return false
     }
     const receipt = await readPreparedWindowsUpdate(pending, process.execPath, options.current)
     if (!receipt || !(await options.enabled())) return false

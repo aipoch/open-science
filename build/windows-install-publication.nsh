@@ -172,6 +172,7 @@ FunctionEnd
   # not a work budget, so do not kill a valid large extraction merely because it is quiet.
   !ifdef APP_64
     ${If} ${IsNativeAMD64}
+      !ifdef isUpdated
       ${If} ${isUpdated}
       ${AndIf} $installMode == "CurrentUser"
         ReadEnvStr $R0 OPEN_SCIENCE_USE_STAGED_UPDATE
@@ -183,6 +184,7 @@ FunctionEnd
           DetailPrint "Using embedded archive after prepared payload check: $publicationOutput"
         ${EndIf}
       ${EndIf}
+      !endif
       StrCpy $publicationSource "powershell-extractor"
       # Parallel partitioned extraction. The helper owns the 7za processes and reports their
       # failures; only its exit 0 permits publication.
