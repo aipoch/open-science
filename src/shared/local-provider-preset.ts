@@ -1,4 +1,4 @@
-const localProviderPresetIds = ['llamacpp'] as const
+const localProviderPresetIds = ['llamacpp', 'lmstudio'] as const
 
 export type LocalProviderPresetId = (typeof localProviderPresetIds)[number]
 
