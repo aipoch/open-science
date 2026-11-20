@@ -68,6 +68,8 @@ afterEach(async () => {
 })
 
 const previewAvailable = (): boolean => true
+const readyWslCommandReader =
+  'process.stdout.write("\\0open-science-wsl-ready\\0"); process.stdin.once("data", () => { process.stdout.write("finished"); process.stdin.destroy() })'
 const fixtureProbe = {
   executionScope: 'wsl:fixture',
   proofPath: '/unused',
@@ -1172,7 +1174,7 @@ describe('notebook shell process behavior', () => {
       wrap: vi.fn(async (invocation) => ({
         memoryProbe: fixtureProbe,
         executable: process.execPath,
-        args: ['-e', 'process.stdout.write("\\0open-science-wsl-ready\\0finished")'],
+        args: ['-e', readyWslCommandReader],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
         confirmProcessState: async () => 'started-and-reaped' as const,
@@ -1214,6 +1216,63 @@ describe('notebook shell process behavior', () => {
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }
+  })
+
+  it('settles a WSL launcher that closes its command pipe after signalling readiness', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const beginExecution = vi.fn(() => () => undefined)
+    const result = await runShellCommand({
+      executionAdmission: fixtureAdmission(),
+      command: 'printf finished',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      platform: 'win32',
+      runtimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'profile-1',
+        distro: 'fixture-distro',
+        user: 'fixture-user'
+      },
+      previewAvailable,
+      timeoutMs: 1_000,
+      terminateTree: async (child) => {
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+        child.kill()
+        await exited
+        return { reaped: true }
+      },
+      processSandbox: {
+        wrap: async (invocation) => ({
+          executable: process.execPath,
+          args: [
+            '-e',
+            'require("node:fs").closeSync(0); process.stdout.write("\\0open-science-wsl-ready\\0"); setInterval(() => {}, 60000)'
+          ],
+          env: invocation.env,
+          memoryProbe: fixtureProbe,
+          beginExecution,
+          annotateStderr: (stderr) => stderr,
+          confirmProcessState: async () => 'started-and-reaped',
+          cleanup
+        })
+      }
+    })
+    expect(beginExecution).toHaveBeenCalledOnce()
+    expect(result.exitCode).toBeNull()
+    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe/i)
+    expect(result.stderr).not.toContain('Shell command timed out')
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith('spawn-failed', {
+      processesTerminated: true,
+      processState: 'started-and-reaped'
+    })
   })
 
   it('opens one raw WSL network epoch only after both memory gates and closes it at finish', async () => {
@@ -1274,10 +1333,7 @@ describe('notebook shell process behavior', () => {
       processSandbox: {
         wrap: async (invocation) => ({
           executable: process.execPath,
-          args: [
-            '-e',
-            'process.stdout.write("\\0open-science-wsl-ready\\0"); process.stdin.once("data", () => { process.stdout.write("finished"); process.stdin.destroy() })'
-          ],
+          args: ['-e', readyWslCommandReader],
           env: invocation.env,
           memoryProbe: fixtureProbe,
           beginExecution,
@@ -1353,7 +1409,7 @@ describe('notebook shell process behavior', () => {
             wrap: async () => ({
               memoryProbe: fixtureProbe,
               executable: process.execPath,
-              args: ['-e', 'process.stdout.write("\\0open-science-wsl-ready\\0finished")'],
+              args: ['-e', readyWslCommandReader],
               env: process.env,
               annotateStderr: (stderr) => stderr,
               cleanup
