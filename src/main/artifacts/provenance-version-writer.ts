@@ -447,15 +447,19 @@ class ArtifactProvenanceVersionWriter {
             throw new Error('Artifact origin Session is being deleted and cannot accept a Version.')
           }
 
-          let lineage = await transaction.artifactLineage.findUnique({
-            where: {
-              projectId_sessionId_normalizedFilename: {
-                projectId,
-                sessionId: appSessionId,
-                normalizedFilename
-              }
-            }
-          })
+          let lineage = request.lineageId
+            ? await transaction.artifactLineage.findFirst({
+                where: { id: request.lineageId, projectId, sessionId: appSessionId }
+              })
+            : await transaction.artifactLineage.findUnique({
+                where: {
+                  projectId_sessionId_normalizedFilename: {
+                    projectId,
+                    sessionId: appSessionId,
+                    normalizedFilename
+                  }
+                }
+              })
           if (!lineage) {
             lineage = await transaction.artifactLineage.create({
               data: {

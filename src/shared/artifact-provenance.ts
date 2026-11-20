@@ -63,6 +63,8 @@ export type CreateArtifactVersionRequest = {
   runtimeSegmentId: string | null
   promptMessageId: string | null
   imageTaskId?: string
+  /** Existing artifact lineage to append to when an operation edits a saved artifact version. */
+  lineageId?: string
   agentName?: string
   notebookSessionId?: string
   producerRunId?: string
