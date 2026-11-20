@@ -352,7 +352,9 @@ const OnboardingWizard = ({
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        if (entryPhase !== 'advanced') void skipEntry()
+        if (entryPhase === 'connect') {
+          dialog.querySelector<HTMLButtonElement>('[data-onboarding-action="skip"]')?.click()
+        } else if (entryPhase !== 'advanced') void skipEntry()
         return
       }
       if (event.key !== 'Tab') return
@@ -388,11 +390,11 @@ const OnboardingWizard = ({
       setDataRootInfo(info)
       setDataRootError(undefined)
       // A non-default root is the durable resume signal after Location persisted the selected drive
-      // and relaunched. No separate onboarding-step field is needed: continue at Agent, after the two
-      // steps the user already completed before the restart.
+      // and relaunched. Restore both the entry dialog and the first unfinished step.
       if (!didResolveStorageResume.current) {
         didResolveStorageResume.current = true
         if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
+          if (showWelcome) setEntryPhase('advanced')
           setStep(showWelcome ? 'provider' : 'agent')
         }
       }
@@ -554,7 +556,12 @@ const OnboardingWizard = ({
           )}
         >
           {entryPhase === 'welcome' ? (
-            <OnboardingWelcome onNext={() => setEntryPhase('connect')} />
+            <OnboardingWelcome
+              onNext={() => {
+                suppressStorageResume()
+                setEntryPhase('connect')
+              }}
+            />
           ) : entryPhase === 'connect' ? (
             <ProviderStep
               variant="quick"

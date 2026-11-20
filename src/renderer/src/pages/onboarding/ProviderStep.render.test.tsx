@@ -163,10 +163,10 @@ describe('ProviderStep', () => {
 
   it('keeps quick-connect API keys separate and submits the selected vendor', async () => {
     readyClaudeEnvironment()
-    const saveAndActivateProvider = vi
+    const saveValidatedProvider = vi
       .fn()
       .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
-    useSettingsStore.setState({ saveAndActivateProvider })
+    useSettingsStore.setState({ saveValidatedProvider, setActiveProvider: vi.fn() })
     await renderStep({ variant: 'quick' })
     const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')
     const minimax = container.querySelector<HTMLInputElement>('#onboarding-key-minimax')
@@ -179,22 +179,46 @@ describe('ProviderStep', () => {
     expect(deepseek!.value).toBe('test-deepseek-key')
     expect(minimax!.value).toBe('test-minimax-key')
     await act(async () => fireEvent.submit(deepseek!.closest('form')!))
-    expect(saveAndActivateProvider).toHaveBeenCalledWith(
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'official', vendorId: 'deepseek', key: 'test-deepseek-key' })
+    )
+  })
+
+  it('replaces a failed installation with the next card’s key validation error', async () => {
+    const install = vi.fn().mockResolvedValue({ ok: false, error: 'Installation interrupted' })
+    useSettingsStore.setState({
+      installClaude: install,
+      detectClaude: vi.fn().mockResolvedValue({ found: false }),
+      saveValidatedProvider: vi
+        .fn()
+        .mockResolvedValue({ validation: { ok: false, category: 'auth', status: 401 } })
+    })
+    await renderStep({ variant: 'quick' })
+    await clickButton(/Continue with Anthropic/)
+    const message = () =>
+      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
+    expect(message()).toContain('Installation interrupted')
+    const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => fireEvent.change(input, { target: { value: 'rejected' } }))
+    await act(async () => fireEvent.submit(input.form!))
+    expect(message()).toMatch(/auth|401/i)
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.onboarding-quick-feedback')?.textContent).not.toContain(
+      'Installation interrupted'
     )
   })
 
   it('shows a loading indicator while testing a quick-connect API key', async () => {
     readyClaudeEnvironment()
     let resolveSave: ((value: ValidateProviderResult) => void) | undefined
-    const saveAndActivateProvider = vi.fn(
+    const saveValidatedProvider = vi.fn(
       () =>
         new Promise<{ providerId: string; validation: ValidateProviderResult }>((resolve) => {
           resolveSave = () =>
             resolve({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
         })
     )
-    useSettingsStore.setState({ saveAndActivateProvider })
+    useSettingsStore.setState({ saveValidatedProvider, setActiveProvider: vi.fn() })
     await renderStep({ variant: 'quick' })
 
     const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
@@ -468,6 +492,9 @@ describe('ProviderStep', () => {
     expect(signInButton?.textContent).toBe('Sign in with Open-Science')
     expect(card.textContent).not.toContain('Continue with OpenAI')
     await act(async () => importButton.click())
+    expect(saveProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-shared', reimportCodexAuthentication: true })
+    )
     const warning = container.querySelector('[data-notice-level="warning"]')!
     const summary = warning.querySelector('[role="alert"]')!
     expect(summary.textContent).toContain('No Codex sign-in file was found')
@@ -1275,6 +1302,45 @@ describe('ProviderStep', () => {
           expect(onAdvance).not.toHaveBeenCalled()
         }
       })
+    }
+  )
+
+  it.each(['access_denied', 'expired_token'])(
+    'closes a failed xAI device session and obtains a fresh code after %s',
+    async (failure) => {
+      const first = Promise.withResolvers<XaiOAuthLoginResult>()
+      const second = Promise.withResolvers<XaiOAuthLoginResult>()
+      const session = {
+        verificationUri: 'https://auth.x.ai/activate',
+        intervalSeconds: 1,
+        expiresAt: Date.now() + 300000
+      }
+      const begin = vi
+        .fn()
+        .mockResolvedValueOnce({ ...session, userCode: 'FIRST-CODE' })
+        .mockResolvedValueOnce({ ...session, userCode: 'SECOND-CODE' })
+      const onAdvance = vi.fn()
+      useSettingsStore.setState({
+        ...codexReadyState(),
+        persistProvider: vi.fn().mockResolvedValue('xai'),
+        setActiveProvider: vi.fn(),
+        beginXaiOAuthLogin: begin,
+        waitXaiOAuthLogin: vi
+          .fn()
+          .mockReturnValueOnce(first.promise)
+          .mockReturnValueOnce(second.promise)
+      })
+      await renderStep({ variant: 'quick', onAdvance })
+      await clickButton(/Continue with xAI/)
+      expect(document.body.textContent).toContain('FIRST-CODE')
+      await act(async () => first.reject(new Error(failure)))
+      expect(document.body.textContent).not.toContain('FIRST-CODE')
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(failure)
+      expect(onAdvance).not.toHaveBeenCalled()
+      await clickButton(/Continue with xAI/)
+      expect(document.body.textContent).toContain('SECOND-CODE')
+      await act(async () => second.resolve({ validation: { ok: true, category: 'ok' } }))
+      expect(onAdvance).toHaveBeenCalledWith('account')
     }
   )
 

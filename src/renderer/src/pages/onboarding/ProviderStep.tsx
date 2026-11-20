@@ -211,7 +211,10 @@ const ProviderStep = ({
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
   const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth'>()
-  const [installError, setInstallError] = useState<string>()
+  const [installError, setInstallError] = useState<{
+    cardId: 'openai' | 'anthropic'
+    message: string
+  }>()
   const [quickCardId, setQuickCardId] = useState<string>()
   const progress = useSettingsStore(
     (state) =>
@@ -535,11 +538,13 @@ const ProviderStep = ({
           setXaiSession(session)
           ;({ validation } = await waitXaiOAuthLogin())
         } finally {
-          if (!signal?.aborted) xaiLoginPendingRef.current = false
+          if (!signal?.aborted) {
+            xaiLoginPendingRef.current = false
+            setXaiSession(undefined)
+          }
         }
         signal?.throwIfAborted()
         if (xaiLoginCancelledRef.current) return
-        setXaiSession(undefined)
         if (validation.applied === false) {
           setValidationOk(false)
           setValidationMessage(t('The provider changed during testing. Try again.'))
@@ -556,10 +561,13 @@ const ProviderStep = ({
       }
 
       const request = toUpsertRequest(providerValue, savedProviderId)
-      // Shared Codex checks the local profile; defer activation until the attempt is still current.
-      const { providerId, validation } = signal
-        ? await currentSettings.saveProvider(request)
-        : await saveAndActivateProvider(request)
+      const quickKey = variant === 'quick' && value.type === 'official'
+      const explicitImport = variant === 'quick' && value.type === 'codex-shared'
+      const { providerId, validation } = quickKey
+        ? await currentSettings.saveValidatedProvider(request)
+        : explicitImport
+          ? await currentSettings.saveProvider({ ...request, reimportCodexAuthentication: true })
+          : await saveAndActivateProvider(request)
       signal?.throwIfAborted()
       // Persistence survives Back even though this page's permission to navigate does not.
       if (providerId) onProviderSaved?.(providerId)
@@ -582,7 +590,7 @@ const ProviderStep = ({
       )
 
       if (validation.ok) {
-        if (signal && providerId)
+        if ((quickKey || explicitImport) && providerId)
           await setActiveProvider(providerId, providerValue.model || undefined)
         signal?.throwIfAborted()
         advanceIfMounted(value.type === 'codex-shared' ? 'account' : 'api-key')
@@ -610,6 +618,7 @@ const ProviderStep = ({
   }
 
   const prepareQuickRuntime = async (
+    cardId: 'openai' | 'anthropic',
     signal: AbortSignal,
     prepare: (id: string) => Promise<ClaudeInstallResult>,
     cancel: (id: string) => Promise<void>,
@@ -624,7 +633,11 @@ const ProviderStep = ({
       signal.throwIfAborted()
       if (!result.ok) throw new Error(result.error || failureMessage)
     } catch (error) {
-      if (!signal.aborted) setInstallError(error instanceof Error ? error.message : failureMessage)
+      if (!signal.aborted)
+        setInstallError({
+          cardId,
+          message: error instanceof Error ? error.message : failureMessage
+        })
       throw error
     } finally {
       if (pendingInstall.current?.id === id) pendingInstall.current = undefined
@@ -645,6 +658,7 @@ const ProviderStep = ({
       installed = true
       setAuthStage('install')
       await prepareQuickRuntime(
+        'anthropic',
         signal,
         (id) => settings.installClaude('managed', undefined, id),
         cancelSharedClaudeLogin,
@@ -734,6 +748,7 @@ const ProviderStep = ({
       if (mode === 'codex-isolated') {
         setAuthStage('detect')
         await prepareQuickRuntime(
+          'openai',
           attempt.signal,
           (id) => settings.installCodex('managed', id),
           cancelCodexLogin,
@@ -810,6 +825,10 @@ const ProviderStep = ({
   }
 
   const handleQuickKeyChange = (card: QuickProviderCard, key: string): void => {
+    if (installError) {
+      setInstallError(undefined)
+      setValidationMessage(undefined)
+    }
     setQuickKeys((current) => ({ ...current, [card.id]: key }))
     setQuickCardId(card.id)
     setQuickMode('key')
@@ -823,6 +842,7 @@ const ProviderStep = ({
 
   const handleQuickKeySubmit = (card: QuickProviderCard): void => {
     if (isSaving) return
+    setInstallError(undefined)
     setQuickCardId(card.id)
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
@@ -835,7 +855,7 @@ const ProviderStep = ({
 
   if (variant === 'quick') {
     const installCard = installError
-      ? QUICK_PROVIDER_CARDS.find((card) => card.id === quickCardId)
+      ? QUICK_PROVIDER_CARDS.find((card) => card.id === installError.cardId)
       : undefined
     return (
       <section className="onboarding-quick-connect" data-onboarding-entry="connect">
@@ -872,7 +892,7 @@ const ProviderStep = ({
                     'onboarding-provider-card',
                     `onboarding-provider-card-${card.id}`,
                     isKeyMode && 'is-key-mode',
-                    (isAuthorizing || (quickCardId === card.id && installError)) && 'is-authorizing'
+                    (isAuthorizing || installError?.cardId === card.id) && 'is-authorizing'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
                   onPointerEnter={(event) => {
@@ -1051,7 +1071,7 @@ const ProviderStep = ({
               inline
               level="warning"
               role="alert"
-              description={installError}
+              description={installError.message}
               primaryButton={
                 installCard.id === 'openai'
                   ? {
