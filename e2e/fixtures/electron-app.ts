@@ -2366,9 +2366,13 @@ class ElectronAppHarness implements ElectronApp {
 }
 
 const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
-  // Packaged Windows windows need a presented surface for screenshots and native clipboard focus.
+  // Conversation certification captures real UI evidence; hidden Linux windows can stop painting.
+  // Packaged Windows also needs presentation for native clipboard focus.
   windowMode: [
-    process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'normal' : 'hidden',
+    process.env.OPEN_SCIENCE_DEFAULT_AGENT_CERT === '1' ||
+    (process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+      ? 'normal'
+      : 'hidden',
     { option: true }
   ],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.

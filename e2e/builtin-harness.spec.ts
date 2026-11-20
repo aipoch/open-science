@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { expect, type Locator } from '@playwright/test'
 import { test } from './fixtures/electron-app'
-import { createProject, openProjectSession } from './certification/helpers'
+import { createProject, openProjectSession, openRecentSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
@@ -668,12 +668,7 @@ test('built-in harness asks the user and receives the selected answer @default-a
       timeout: 30000
     })
     host.page = await app.restart()
-    await host.page
-      .getByRole('button', {
-        name: 'Open session Ask which dataset to use., waiting for your answer',
-        exact: true
-      })
-      .click()
+    await openRecentSession(host.page, 'Ask which dataset to use.')
     await expect(host.page.getByText('Dataset Alpha', { exact: true }).first()).toBeVisible()
     await host.page.getByText('Dataset Alpha', { exact: true }).first().click()
     await expect(host.page.getByText('HARNESS_ANSWER_RECEIVED', { exact: true })).toHaveCount(0)
