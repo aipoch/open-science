@@ -3,7 +3,6 @@ import { readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
-import { windowsDesktopInstallRoot } from '../../../packages/open-science/installation-startup.cjs'
 import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   listWindowsProcesses,
@@ -606,8 +605,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     !executable ||
     !database ||
     !options.instanceId ||
-    canonical(windowsDesktopInstallRoot(dirname(executable))) !==
-      canonical(options.installationRoot)
+    canonical(dirname(executable)) !== canonical(options.installationRoot)
   )
     return []
   // Parse with Windows' own argv rules: quoted profile paths and annotation values must not be

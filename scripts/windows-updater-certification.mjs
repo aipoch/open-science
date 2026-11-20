@@ -631,13 +631,24 @@ const runElectronUpdater = async ({
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     if (coldLaunch) {
-      const session = await page.context().newCDPSession(page)
-      const { windowId } = await session.send('Browser.getWindowForTarget')
-      await session.send('Browser.setWindowBounds', {
-        windowId,
-        bounds: { windowState: 'minimized' }
-      })
-      await session.detach()
+      await runProcess(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          [
+            "$ErrorActionPreference = 'Stop'",
+            'Add-Type -Name Window -Namespace Smoke -MemberDefinition \'[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr window, int command); [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);\'',
+            '$handle = (Get-Process -Id $env:OPEN_SCIENCE_SMOKE_DESKTOP_PID).MainWindowHandle',
+            "if ($handle -eq [IntPtr]::Zero) { throw 'Desktop window missing' }",
+            '$null = [Smoke.Window]::ShowWindowAsync($handle, 6)',
+            'for ($i = 0; $i -lt 100; $i++) { if ([Smoke.Window]::IsIconic($handle)) { exit 0 }; Start-Sleep -Milliseconds 100 }',
+            "throw 'Desktop did not minimize'"
+          ].join('\n')
+        ],
+        { env: { ...env, OPEN_SCIENCE_SMOKE_DESKTOP_PID: String(child.pid) } }
+      )
     }
     await waitFor(
       'electron-updater differential download',
@@ -663,14 +674,17 @@ const runElectronUpdater = async ({
     await beforeApply?.({ invoke, page })
 
     if (coldLaunch) {
-      const prepared = join(
-        win32.dirname(executable),
-        'resources',
-        '.desktop-updates',
-        expectedVersion,
-        'prepared.sha512'
+      const prepared = join(win32.dirname(expectedInstaller), 'open-science-prepared', 'ready.json')
+      await waitFor(
+        'verified background extraction',
+        async () => {
+          const receipt = JSON.parse(await readFile(prepared, 'utf8'))
+          return (
+            receipt.version === expectedVersion && receipt.fileName === basename(expectedInstaller)
+          )
+        },
+        UPDATE_TIMEOUT_MS
       )
-      await waitFor('verified side-by-side installation', () => stat(prepared), UPDATE_TIMEOUT_MS)
       await page.evaluate(() => {
         void window.api.databaseStartup.quit()
       })
@@ -1063,7 +1077,6 @@ const main = async () => {
     )
     if (options.coldLaunch) await waitForInstalledApplicationsToExit(installDirectory, env)
     else await terminateDirectoryProcesses(installDirectory)
-    let probeDirectory = installDirectory
     if (options.coldLaunch) {
       const { child } = await launchUninstallerLockHolder(
         installDirectory,
@@ -1084,10 +1097,20 @@ const main = async () => {
         cachedInstaller
       )
       successor.shortcutVersions = [previousVersion, currentVersion]
-      probeDirectory = join(installDirectory, 'resources', '.desktop-updates', currentVersion)
+      const stage = join(updaterCache, 'pending', 'open-science-prepared')
+      if (
+        await stat(stage).then(
+          () => true,
+          (error) => {
+            if (error.code === 'ENOENT') return false
+            throw error
+          }
+        )
+      )
+        throw new Error('The new desktop did not reclaim its prepared payload.')
     }
     const currentConfigRoot = await launchAndProbe({
-      installDirectory: probeDirectory,
+      installDirectory,
       expectedVersion: currentVersion,
       env,
       legacyConfigRoots: [previousConfigRoot]

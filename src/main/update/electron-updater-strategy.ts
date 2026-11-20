@@ -31,7 +31,6 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import { type NativeTranslator } from '../locale/main-process-messages'
 import { prepareWindowsUpdateHandoff, type WindowsUpdateHandoff } from './windows-update-handoff'
-import { windowsDesktopShortcutTarget } from './windows-desktop-version'
 import {
   confirmInstaller,
   inspectConfirmedInstaller,
@@ -228,8 +227,8 @@ const extractArtifactSize = (
 
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
 // on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
-// stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
-// downloads/installs without a user action.
+// stamped applyKind:'restart'. The desktop policy schedules eligible background downloads.
+// Keep the SDK's automatic download and install-on-quit disabled so it cannot bypass that policy.
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
@@ -318,7 +317,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             if (!startupOptions) throw new Error('Update startup configuration is unavailable')
             return prepareWindowsUpdateHandoff(app.getPath('appData'), {
               installerPath,
-              applicationPath: windowsDesktopShortcutTarget(),
+              applicationPath: process.execPath,
               profilePath: app.getPath('userData'),
               targetVersion: this.status.latest ?? '',
               startupOptions

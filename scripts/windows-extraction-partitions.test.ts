@@ -152,6 +152,32 @@ describe('Windows extraction partition generation', () => {
 })
 
 describe.skipIf(process.platform !== 'win32')('real Windows partition extraction', () => {
+  it('publishes only manifest bytes from the prepared tree or requests embedded extraction', () => {
+    const f = payload()
+    const source = join(f.root, 'input')
+    const copy = (target: string): ReturnType<typeof spawnSync> => {
+      mkdirSync(target)
+      return spawnSync(
+        helper,
+        ['copy-prepared', '--source', source, '--target', target, '--lists', f.lists],
+        {
+          windowsHide: true,
+          encoding: 'utf16le'
+        }
+      )
+    }
+    const good = copy(f.output)
+    if (good.status !== 0) {
+      // Elevated setup must ignore user-writable staging and use its own signed archive.
+      expect(String(good.stderr)).toContain('Elevated installers use the embedded archive')
+      return
+    }
+    expect(readFileSync(join(f.output, 'app.exe'), 'utf8')).toBe('shell')
+    writeFileSync(join(source, 'app.exe'), 'wrong')
+    const rejected = copy(join(f.root, 'retry'))
+    expect(rejected.status).not.toBe(0)
+    expect(String(rejected.stderr)).toContain('checksum mismatch')
+  })
   it('handles a file-only archive with an empty second partition', () => {
     const root = fixture(),
       input = join(root, 'input'),
