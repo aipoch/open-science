@@ -26,6 +26,7 @@
     "src/main/agent-framework/registry.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.ts",
+    "src/main/agent-framework/reviewer-mcp-transport.ts",
     "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
     "src/main/agent-framework/types.ts",
     "src/main/agent-framework/harness.ts",
@@ -41,6 +42,7 @@
     "src/main/agent-framework/opencode.ts",
     "src/main/agent-framework/pi-runtime.ts",
     "src/main/agent-framework/pi.ts",
+    "src/main/agent-framework/reviewer-mcp-transport.ts",
     "src/main/agent-framework/types.ts",
     "src/main/agent-framework/harness.ts",
     "src/main/harness-acp/config.ts"
@@ -147,6 +149,7 @@
       "src/main/acp/shutdown-guard.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
+      "src/main/harness-acp/agent.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
       "src/main/agents/agents-repl.privileged.integration.test.ts",

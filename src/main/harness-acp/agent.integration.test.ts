@@ -10,10 +10,10 @@ import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/ses
 import * as acp from '@agentclientprotocol/sdk'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AddressInfo } from 'node:net'
+import { createConnection, type AddressInfo } from 'node:net'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -27,6 +27,10 @@ import {
   HARNESS_TOOL_LESS
 } from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
+import { ReviewerSessionOwner } from '../acp/reviewer-session-owner'
+import { harnessFramework } from '../agent-framework/harness'
+import { ReviewerMcpServer } from '../reviewer/mcp-server'
+import { readReviewerMcpStdioProxyConfig } from '../agent-framework/reviewer-mcp-transport'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -767,6 +771,274 @@ it('reports an absent Fork checkpoint as missing while preserving corrupt or par
   await writeFile(join(f.directory, `${created.sessionId}.json`), binding)
   await expect(request(created.sessionId)).resolves.toEqual(expect.any(Object))
   expect(model.requests).toHaveLength(0)
+})
+
+function fixtureReviewerOwner(): ReviewerSessionOwner {
+  return new ReviewerSessionOwner({
+    addStartupBlocker: vi.fn(),
+    assertCurrentConnection: vi.fn(),
+    clearPermissionCorrelations: vi.fn(),
+    currentSessionSetup: () => ({
+      framework: harnessFramework,
+      sessionOptions: undefined,
+      supportsSessionClose: true
+    }),
+    currentStartupGeneration: () => 0,
+    isPrimarySessionIdClaimed: () => false,
+    onActiveSessionReleased: vi.fn(),
+    registerBridgeSession: vi.fn(),
+    removeStartupBlocker: vi.fn(),
+    unregisterBridgeSession: () => undefined
+  })
+}
+
+it.each([
+  { transport: 'pipe', denySubmit: false },
+  { transport: 'tcp', denySubmit: false },
+  { transport: 'pipe', denySubmit: true }
+] as const)(
+  'runs a Built-in Agent Reviewer session over $transport (deny submission: $denySubmit)',
+  async ({ transport, denySubmit }) => {
+    const block = {
+      id: 'message:review-target',
+      kind: 'message' as const,
+      sourceId: 'review-target',
+      blockIndex: 0,
+      contentHash: 'review-target-hash'
+    }
+    const submit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(
+      { turnMessageId: block.sourceId, blocks: [block], artifactVersionIds: [] },
+      submit,
+      {
+        readTurn: () => [{ ...block, role: 'agent', content: 'The audited result is 42.' }],
+        queryExecutionLog: () => [],
+        readArtifact: vi.fn(),
+        fileRole: vi.fn()
+      },
+      'initial',
+      [],
+      { command: 'unused-reviewer-proxy', entryPath: 'unused-entry', transport }
+    )
+    await server.start()
+    cleanup.push(() => server.stop())
+
+    const checks = [{ status: 'pass', claim: 'The result is 42.', evidence: 'The audited turn.' }]
+    let step = 0
+    const model = await modelServer((body, response) => {
+      step++
+      const tools = body.tools!.map(({ function: { name } }) => name)
+      if (step === 1) {
+        finish(
+          response,
+          '',
+          tools.find((name) => name.endsWith('__read_turn'))!,
+          {}
+        )
+      } else if (step === 2 || (step === 3 && !denySubmit)) {
+        const scopedChecks =
+          step === 2 && !denySubmit
+            ? [{ ...checks[0], locator: { blockRef: { blockIndex: 1 }, contentHash: 'other' } }]
+            : checks
+        finish(
+          response,
+          '',
+          tools.find((name) => name.endsWith('__submit_findings'))!,
+          {
+            checks: scopedChecks
+          }
+        )
+      } else {
+        finish(response, 'Review complete')
+      }
+    })
+    const f = await fixture(model.endpoint, undefined, async () => !denySubmit || step === 1)
+    const owner = fixtureReviewerOwner()
+    const { session, cwd } = await owner.create(
+      { cwd: f.directory, mcpServers: [server.toAcpMcpServerConfig()] },
+      { ensureConnected: async () => f.connection }
+    )
+    try {
+      expect((await session.prompt([{ type: 'text', text: 'Review this turn' }])).stopReason).toBe(
+        'end_turn'
+      )
+      expect(model.requests[1].messages.at(-1)?.content).toContain('The audited result is 42.')
+      expect(model.requests[2].messages.at(-1)?.content).toContain(
+        denySubmit ? 'Permission denied' : 'is not in the turn scope'
+      )
+      expect(f.approvals.map(({ toolCall }) => toolCall.title)).toEqual([
+        expect.stringMatching(/__read_turn$/),
+        expect.stringMatching(/__submit_findings$/),
+        ...(denySubmit ? [] : [expect.stringMatching(/__submit_findings$/)])
+      ])
+      expect(submit.mock.calls.map(([submitted]) => submitted)).toEqual(
+        denySubmit ? [] : [[expect.objectContaining(checks[0])]]
+      )
+      expect(await readdir(f.directory)).toEqual([])
+    } finally {
+      await owner.dispose(session).providerClosed
+    }
+    expect(owner.snapshot()).toEqual([])
+    await expect(readdir(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(f.directory)).toEqual([])
+    await expect(prompt(f.connection, session.sessionId)).rejects.toMatchObject({
+      data: { details: 'Built-in Agent session is unavailable' }
+    })
+  }
+)
+
+it('cleans up Reviewer pipe startup failures before and after provider session creation', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  const server = new ReviewerMcpServer(
+    { turnMessageId: 'review-target', blocks: [], artifactVersionIds: [] },
+    vi.fn(),
+    undefined,
+    'initial',
+    [],
+    { command: 'unused-proxy', entryPath: 'unused-entry', transport: 'pipe' }
+  )
+  const { token } = await server.start()
+  const config = server.toAcpMcpServerConfig()
+  if ('type' in config) throw new Error('Expected Reviewer pipe config')
+  const credentials = readReviewerMcpStdioProxyConfig(config)!
+  const owner = fixtureReviewerOwner()
+  try {
+    const invalid = {
+      ...config,
+      env: config.env.map((entry) =>
+        entry.value === token ? { ...entry, value: 'invalid-token' } : entry
+      )
+    }
+    await expect(
+      owner.create(
+        { cwd: f.directory, mcpServers: [invalid] },
+        { ensureConnected: async () => f.connection }
+      )
+    ).rejects.toMatchObject({
+      code: -32603,
+      data: { details: expect.stringContaining('Unauthorized') }
+    })
+    expect(owner.snapshot()).toEqual([])
+    expect(await readdir(f.directory)).toEqual([])
+    expect(f.approvals).toEqual([])
+    expect(model.requests).toEqual([])
+
+    let createdSession: acp.ActiveSession | undefined
+    await expect(
+      owner.create(
+        { cwd: f.directory, mcpServers: [config] },
+        {
+          ensureConnected: async () => f.connection,
+          configureModel: async (_connection, session) => {
+            createdSession = session
+            throw new Error('Reviewer model setup failed')
+          }
+        }
+      )
+    ).rejects.toThrow('Reviewer model setup failed')
+    expect(owner.snapshot()).toEqual([])
+    expect(await readdir(f.directory)).toEqual([])
+    await expect(prompt(f.connection, createdSession!.sessionId)).rejects.toMatchObject({
+      data: { details: 'Built-in Agent session is unavailable' }
+    })
+
+    const { session } = await owner.create(
+      { cwd: f.directory, mcpServers: [config] },
+      { ensureConnected: async () => f.connection }
+    )
+    await owner.dispose(session).providerClosed
+  } finally {
+    await server.stop()
+  }
+  const connection = createConnection(credentials.socketPath)
+  try {
+    await expect(once(connection, 'connect')).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    connection.destroy()
+  }
+})
+
+it('cancels an in-flight Reviewer evidence read over the pipe', async () => {
+  const { promise: readStarted, resolve: captureSignal } = Promise.withResolvers<AbortSignal>()
+  const readArtifact = vi.fn<
+    NonNullable<ConstructorParameters<typeof ReviewerMcpServer>[2]>['readArtifact']
+  >(async (_id, _options, signal) => {
+    captureSignal(signal!)
+    await new Promise<void>((resolve) =>
+      signal!.addEventListener('abort', () => resolve(), { once: true })
+    )
+    throw signal!.reason
+  })
+  const submit = vi.fn()
+  const server = new ReviewerMcpServer(
+    { turnMessageId: 'review-target', blocks: [], artifactVersionIds: ['admitted'] },
+    submit,
+    {
+      readTurn: () => [],
+      queryExecutionLog: () => [],
+      fileRole: () => 'work_product',
+      readArtifact
+    },
+    'initial',
+    [],
+    { command: 'unused-proxy', entryPath: 'unused-entry', transport: 'pipe' }
+  )
+  await server.start()
+  cleanup.push(() => server.stop())
+  const model = await modelServer((body, response) => {
+    finish(
+      response,
+      '',
+      body.tools!.find(({ function: { name } }) => name.endsWith('__read_artifact'))!.function.name,
+      {
+        id: 'admitted',
+        view: 'trace'
+      }
+    )
+  })
+  const f = await fixture(model.endpoint)
+  const owner = fixtureReviewerOwner()
+  const { session } = await owner.create(
+    { cwd: f.directory, mcpServers: [server.toAcpMcpServerConfig()] },
+    { ensureConnected: async () => f.connection }
+  )
+  try {
+    const running = session.prompt([{ type: 'text', text: 'Read the artifact' }])
+    void running.catch(() => undefined)
+    await vi.waitFor(() => expect(readArtifact).toHaveBeenCalledOnce())
+    const signal = await readStarted
+    await f.connection.agent.notify(acp.methods.agent.session.cancel, {
+      sessionId: session.sessionId
+    })
+    await expect(running).resolves.toMatchObject({ stopReason: 'cancelled' })
+    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    expect(submit).not.toHaveBeenCalled()
+  } finally {
+    await owner.dispose(session).providerClosed
+  }
+})
+
+it('rejects stdio commands at the Built-in Agent ACP boundary', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  await expect(
+    f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [
+        {
+          name: 'open-science-reviewer',
+          command: process.execPath,
+          args: ['unused-entry', '--open-science-reviewer-mcp-proxy'],
+          env: []
+        }
+      ]
+    })
+  ).rejects.toMatchObject({
+    code: -32603,
+    data: { details: 'Built-in Agent requires host-provided HTTP MCP servers' }
+  })
+  expect(await readdir(f.directory)).toEqual([])
 })
 
 it.each([false, true])(

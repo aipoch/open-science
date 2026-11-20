@@ -436,7 +436,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.clearCorrelationsForSession(sessionId),
     currentSessionSetup: () => ({
       framework: base.backendGeneration.current.framework,
-      sessionOptions: base.backendGeneration.current.session.options
+      sessionOptions: base.backendGeneration.current.session.options,
+      supportsSessionClose: base.connectionResources.capabilities.close
     }),
     currentStartupGeneration: () => sessionRegistry.startupGeneration,
     isPrimarySessionIdClaimed: (sessionId) => sessionRegistry.isIdentityClaimed(sessionId),
