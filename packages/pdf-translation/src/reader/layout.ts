@@ -27956,6 +27956,11 @@ function joinNativePrepositionBelowWideFigure(
   }
 }
 
+function isNativeSoftwareName(name: string): boolean {
+  const separator = name.indexOf('_', 1)
+  return separator !== -1 && separator < name.length - 1 && /^\w+$/u.test(name)
+}
+
 // A separate reference type can dominate the inferred body font. Two
 // independently printed closing section headings can still prove the same
 // paragraph on the last row of one page and the first row of the next.
@@ -27969,9 +27974,11 @@ function joinNativeSoftwareTitleTail(
   const page = pages[0]
   if (page?.page !== 1 || page.rotation) return
   for (let at = 0; at + 2 < units.length; at++) {
-    const [head, tail, byline] = units.slice(at, at + 3)
+    const [head, tail, byline] = units.slice(at, at + 3),
+      title = /^([^:]+): A [a-z]/u.exec(head.source)
     if (
-      !/^\w+(?:_\w+)+: A [a-z]/u.test(head.source) ||
+      !title ||
+      !isNativeSoftwareName(title[1]) ||
       !head.risks.includes('possible-continuation') ||
       terminal(head.source) ||
       tail.kind !== 'heading-candidate' ||
@@ -28655,7 +28662,7 @@ function retainNativeCitationFooters(units: LayoutUnit[], pages: PdfLayoutPage[]
       close = (a: number, b: number): boolean => Math.abs(a - b) < h * 0.05
     if (
       !/^\p{Lu}[\p{L} .-]+ & \p{Lu}[\p{L} .-]+, \((?:19|20)\d{2}\)\.$/u.test(byline.str) ||
-      !/^\w+(?:_\w+)+$/u.test(name.str) ||
+      !isNativeSoftwareName(name.str) ||
       !/^: A [a-z]/u.test(separator.str) ||
       !/^[A-Z][A-Z0-9]{1,10}$/u.test(abbreviation.str) ||
       !/^-based [A-Z].+\b(?:the|for|with)$/u.test(text.str) ||
@@ -35291,6 +35298,13 @@ function joinNativeNumericalAperture(units: LayoutUnit[], pages: PdfLayoutPage[]
   }
 }
 
+function hasNativeMeasurementSentenceWrap(text: string): boolean {
+  if (!text.startsWith('; ') || /[\r\n\u2028\u2029]/u.test(text)) return false
+  const wrap = / [a-z]{3,}-$/u.exec(text)
+  // Leave at least one character on each side of the sentence boundary.
+  return wrap !== null && /\)\. [A-Z][a-z]+, /u.test(text.slice(3, wrap.index - 1))
+}
+
 // These short owners are classified separately from prose. Rejoin only an exact
 // native word wrap with distinct, independently owned paint regions.
 function joinNativeBodyBoundaryWords(
@@ -35523,7 +35537,7 @@ function joinNativeBodyBoundaryWords(
       startsWithMeasurement =
         n === 2 &&
         /^\d+(?:\.\d+)? [A-Z]$/u.test(measurementLead.str) &&
-        /^; .+\)\. [A-Z][a-z]+, .+ [a-z]{3,}-$/u.test(last.str) &&
+        hasNativeMeasurementSentenceWrap(last.str) &&
         measurementLead.fontName === last.fontName &&
         !measurementLead.hasEOL &&
         lead.hasEOL &&
