@@ -1,3 +1,4 @@
+import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
 import {
   manualProviderDefinition,
   sameManualProviderCredentialScope
@@ -355,6 +356,9 @@ const ProviderForm = ({
       Boolean(value.maxOutputTokens.trim())
   )
   const [localModelOpen, setLocalModelOpen] = useState(loopbackCustomGateway)
+  const selectedLocalPreset = value.localPresetId
+    ? LOCAL_MODEL_PRESETS.find(({ id }) => id === value.localPresetId)
+    : undefined
   const selectedKey = selectedKindKey(value)
   // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
   // only while already revealed, so an externally replaced provider record starts masked.
@@ -391,6 +395,14 @@ const ProviderForm = ({
         ? resolveVendorApiKeyUrl(value.vendorId, value.region)
         : undefined
   const securityCopyKeys = getApiKeySecurityCopyKeys(encryptionAvailable)
+
+  const changeCustomBaseUrl = (baseUrl: string): void => {
+    if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) setLocalModelOpen(true)
+    onChange({
+      baseUrl,
+      ...(!sameLocalProviderCredentialScope(value, { ...value, baseUrl }) && { key: '' })
+    })
+  }
 
   const modelField = (
     <div className="space-y-1.5">
@@ -795,44 +807,50 @@ const ProviderForm = ({
         </>
       ) : isCustom ? (
         <>
-          <SettingsDisclosure
-            expanded={localModelOpen}
-            label={t('Local model server')}
-            onToggle={() => setLocalModelOpen((open) => !open)}
-            contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
-            contentId="provider-local-model-server"
-          >
-            <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
-              {LOCAL_MODEL_PRESETS.map((preset) => {
-                const active = value.baseUrl.trim() === preset.baseUrl
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    aria-pressed={active}
-                    disabled={disabled}
-                    onClick={() => {
-                      setLocalModelOpen(true)
-                      onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
-                    }}
-                    className={cn(
-                      'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
-                      active
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-transparent text-foreground hover:bg-muted/60'
-                    )}
-                  >
-                    {preset.label}
-                  </button>
-                )
-              })}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t(
-                'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
-              )}
-            </p>
-          </SettingsDisclosure>
+          {selectedLocalPreset ? null : (
+            <SettingsDisclosure
+              expanded={localModelOpen}
+              label={t('Local model server')}
+              onToggle={() => setLocalModelOpen((open) => !open)}
+              contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
+              contentId="provider-local-model-server"
+            >
+              <div
+                className="flex flex-wrap gap-2"
+                role="group"
+                aria-label={t('Local model server')}
+              >
+                {LOCAL_MODEL_PRESETS.map((preset) => {
+                  const active = value.baseUrl.trim() === preset.baseUrl
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={active}
+                      disabled={disabled}
+                      onClick={() => {
+                        setLocalModelOpen(true)
+                        onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
+                      }}
+                      className={cn(
+                        'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
+                        active
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-transparent text-foreground hover:bg-muted/60'
+                      )}
+                    >
+                      {preset.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
+                )}
+              </p>
+            </SettingsDisclosure>
+          )}
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
@@ -860,14 +878,24 @@ const ProviderForm = ({
               value={value.baseUrl}
               disabled={disabled}
               placeholder={t('https://gateway.example')}
-              onChange={(event) => {
-                const baseUrl = event.target.value
-                if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) {
-                  setLocalModelOpen(true)
-                }
-                onChange({ baseUrl })
-              }}
+              onChange={(event) => changeCustomBaseUrl(event.target.value)}
             />
+            {selectedLocalPreset?.endpointCandidates && (
+              <div className="flex flex-wrap gap-2">
+                {selectedLocalPreset.endpointCandidates.map((baseUrl) => (
+                  <button
+                    key={baseUrl}
+                    type="button"
+                    aria-pressed={value.baseUrl === baseUrl}
+                    className="rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-muted"
+                    disabled={disabled}
+                    onClick={() => changeCustomBaseUrl(baseUrl)}
+                  >
+                    {baseUrl}
+                  </button>
+                ))}
+              </div>
+            )}
             {errors.baseUrl ? (
               <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
                 {t(errors.baseUrl)}

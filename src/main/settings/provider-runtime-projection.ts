@@ -149,6 +149,7 @@ class ProviderRuntimeProjectionOwner {
       region: provider.region,
       ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
       ...(provider.manualConnection && { manualConnection: provider.manualConnection }),
+      ...(provider.localPresetId && { localPresetId: provider.localPresetId }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),

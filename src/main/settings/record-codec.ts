@@ -2,6 +2,7 @@ import {
   manualProviderDefinition,
   resolveManualProviderConnection
 } from '../../shared/manual-provider'
+import { isLocalProviderPresetId } from '../../shared/local-provider-preset'
 import { parseCloudflareGateway } from '../../shared/cloudflare-gateway'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
@@ -375,6 +376,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
     provider.model = model
   if (type === 'custom') {
+    if (isLocalProviderPresetId(value.localPresetId)) provider.localPresetId = value.localPresetId
     if (contextWindow !== undefined) provider.contextWindow = contextWindow
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens

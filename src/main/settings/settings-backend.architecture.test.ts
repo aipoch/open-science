@@ -747,6 +747,7 @@ describe('Settings backend ownership architecture', () => {
       'lastValidatedAt',
       'lastValidatedTarget',
       'lastValidationFailure',
+      'localPresetId',
       'manualConnection',
       'maxInputTokens',
       'maxOutputTokens',

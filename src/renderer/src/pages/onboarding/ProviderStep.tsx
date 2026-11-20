@@ -52,6 +52,7 @@ const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderR
   region: value.region,
   cloudflare: value.cloudflare,
   manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,

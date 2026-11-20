@@ -1,3 +1,4 @@
+import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
 import {
   sameManualProviderConnection,
   sameManualProviderCredentialScope
@@ -257,6 +258,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     region: provider.region,
     cloudflare: provider.cloudflare,
     manualConnection: provider.manualConnection,
+    localPresetId: provider.localPresetId,
     catalogParameters: provider.catalogParameters
   })
 
@@ -279,6 +281,7 @@ const toUpsertRequest = (
   region: value.region,
   cloudflare: value.cloudflare,
   manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
@@ -1107,7 +1110,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       formValue.vendorId,
       editingProvider.manualConnection,
       formValue.manualConnection
-    )
+    ) &&
+    sameLocalProviderCredentialScope(editingProvider, formValue)
       ? editingProvider
       : undefined
   const regionalCredential =

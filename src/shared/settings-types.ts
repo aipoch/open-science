@@ -1,3 +1,4 @@
+import type { LocalProviderPresetId } from './local-provider-preset'
 import type { ManualProviderConnection } from './manual-provider'
 import type { CloudflareGateway } from './cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
@@ -170,6 +171,7 @@ export type ProviderView = {
   region?: string
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
   // or the single configured model for custom. Derived from the registry in main.
   models: string[]
@@ -512,6 +514,7 @@ export type ProviderDraft = {
   region?: string
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId | null
   key?: string
 }
 

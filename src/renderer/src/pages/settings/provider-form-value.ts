@@ -1,4 +1,8 @@
 import {
+  isLocalProviderPresetId,
+  type LocalProviderPresetId
+} from '../../../../shared/local-provider-preset'
+import {
   manualProviderDefinition,
   resolveManualProviderConnection,
   type ManualProviderConnection
@@ -81,6 +85,7 @@ export type ProviderFormValue = {
   region?: string
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -120,12 +125,18 @@ export type LocalModelPreset = Readonly<{
   id: string
   label: string
   baseUrl: string
+  endpointCandidates?: readonly string[]
 }>
 
 export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
   { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234' },
-  { id: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080' },
+  {
+    id: 'llamacpp',
+    label: 'llama.cpp',
+    baseUrl: 'http://localhost:8080',
+    endpointCandidates: ['http://127.0.0.1:9931', 'http://127.0.0.1:8080']
+  },
   { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
 ]
 
@@ -339,7 +350,7 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
 // framework). Cloud providers are shown in their own section.
 export type ProviderKindGroup =
-  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'third-party' | 'other'
+  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'third-party' | 'local' | 'other'
 
 export type ProviderKindGroupLabelKey =
   | 'Codex subscription'
@@ -348,6 +359,7 @@ export type ProviderKindGroupLabelKey =
   | 'Official API'
   | 'Cloud providers'
   | 'Third-party platforms'
+  | 'Local'
   | 'Other'
 
 // A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
@@ -373,6 +385,7 @@ export const PROVIDER_KIND_GROUPS: {
   { id: 'api', labelKey: 'Official API' },
   { id: 'cloud', labelKey: 'Cloud providers' },
   { id: 'third-party', labelKey: 'Third-party platforms' },
+  { id: 'local', labelKey: 'Local' },
   { id: 'other', labelKey: 'Other' }
 ]
 
@@ -431,6 +444,9 @@ export const PROVIDER_KINDS: ProviderKind[] = [
         : 'API key — models provided',
     group: vendor.cloudProvider ? 'cloud' : vendor.thirdPartyPlatform ? 'third-party' : 'api'
   })),
+  ...LOCAL_MODEL_PRESETS.filter(({ id }) => isLocalProviderPresetId(id)).map(
+    ({ id, label }): ProviderKind => ({ key: `local:${id}`, label, group: 'local' })
+  ),
   {
     key: 'custom',
     labelKey: 'Custom Gateway',
@@ -453,6 +469,7 @@ export const providerKindPatch = (
     catalogParameters: undefined,
     cloudflare: undefined,
     manualConnection: undefined,
+    localPresetId: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -502,6 +519,21 @@ export const providerKindPatch = (
     }
   }
 
+  if (key.startsWith('local:')) {
+    const id = key.slice('local:'.length)
+    const preset = LOCAL_MODEL_PRESETS.find((item) => item.id === id)
+    if (preset && isLocalProviderPresetId(id)) {
+      return {
+        ...reset,
+        type: 'custom',
+        localPresetId: id,
+        name: preset.label,
+        baseUrl: preset.endpointCandidates?.[0] ?? preset.baseUrl,
+        apiEndpoint: 'chat-completions'
+      }
+    }
+  }
+
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
@@ -530,7 +562,7 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'codebuddy-subscription' && value.codeBuddySite)
     return codeBuddyAccounts[value.codeBuddySite].id
   if (value.type === 'custom') {
-    return 'custom'
+    return value.localPresetId ? `local:${value.localPresetId}` : 'custom'
   }
   if (value.type === 'claude-shared' || value.type === 'claude-isolated') {
     return 'claude-subscription'

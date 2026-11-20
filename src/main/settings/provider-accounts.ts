@@ -1,4 +1,8 @@
 import {
+  isLocalProviderPresetId,
+  sameLocalProviderCredentialScope
+} from '../../shared/local-provider-preset'
+import {
   manualProviderDefinition,
   resolveManualProviderConnection,
   sameManualProviderConnection,
@@ -406,7 +410,8 @@ class ProviderAccountsModule {
           provider.vendorId,
           existing.manualConnection,
           provider.manualConnection
-        )
+        ) &&
+        sameLocalProviderCredentialScope(existing, provider)
       ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
@@ -517,11 +522,14 @@ class ProviderAccountsModule {
       const baseUrlError = getCustomProviderBaseUrlError(baseUrl)
       if (baseUrlError) throw new Error(baseUrlError)
       if (!model) throw new Error('Model is required for a custom provider.')
-      // Local loopback gateways serve without a key; a remote gateway still requires one.
+      const localPresetId =
+        request.localPresetId === undefined ? existing?.localPresetId : request.localPresetId
+      if (isLocalProviderPresetId(localPresetId)) provider.localPresetId = localPresetId
+      provider.baseUrl = baseUrl
+      // 本机服务可匿名访问，远程目标需要凭据。
       if (!carryKey() && customProviderRequiresKey(baseUrl)) {
         throw new Error('API key is required for a custom provider.')
       }
-      provider.baseUrl = baseUrl
       provider.model = model
       Object.assign(provider, tokenLimits)
       provider.supportsImageInput =
