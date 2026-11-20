@@ -427,6 +427,26 @@ dialog; it verifies that the app defaults to Cancel and publishes the exact revi
 - Scope: actual packaged service and local files, with an archive fixture and separate profiles.
   No real model call to Open-Science, Notebook dispatch, fresh machine, or registry release.
 
+## Upstream integration check
+
+The Phase 1 branch was integrated against upstream `main` at `32253a047`. The integration
+retains upstream's example-download error handling and returns HTTP 409 for both a busy package
+Owner and a conflict with a different package operation. The continuation regression queries the
+same prompt identity that `get_session` provides. Module registration retains full Web Service
+coverage and includes the platform-specific Notebook readiness check in Windows routing.
+
+A Linux arm64 preview was built from `bde5ca99bcab6509a0f86e387c42bdb4fddcc805`. The npm install
+check passed; the CLI and native archives had SHA-256
+`ef06ee92e0fd3c56c7ff3f0b02ecdc80ccec02fe1616eb422cf91ceb872ba09b` and
+`642f61479c71624e6b1590ed2df38a01879110473f3cdfd76202e804574ef7f1`. On a new profile in the
+Debian container, an MCP SDK client used the installed executable to import the verified source
+archive and inspect the read-only Session. It downloaded the historical CSV (37 bytes, source
+SHA-256 unchanged), created a writable Fork, and exported a verified 193,595-byte archive
+(`ae0def0cf8a5182643d9330b9fc0938c1d5828ddfdaef730396d1e68c57c3ffe`). The client queried the
+original import, Fork, and export operations. This was an installed-package regression with
+existing research, with no new model or Notebook execution. The preview reports `1.3.2` from
+the upstream base; it is a different build from the published npm `1.3.2`.
+
 ## Remaining gates
 
 The two pre-release README gates are complete: installation-only research in #66 and independent
