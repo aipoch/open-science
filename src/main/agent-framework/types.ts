@@ -297,10 +297,11 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
   // certification ticket passes every shared journey and closes native delegation bypasses.
   readonly supportsDelegatedWork: boolean
 
-  // Whether the framework accepts stdio MCP servers via ACP session mcpServers. opencode advertises
-  // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
-  // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
+  // Whether the framework can launch stdio MCP servers supplied via ACP session mcpServers.
   readonly acceptsStdioMcp: boolean
+
+  // Whether its ACP HTTP MCP client understands the private Reviewer socket extension.
+  readonly acceptsReviewerMcpSocket?: true
 
   // Whether a reasoning-effort change can be applied LIVE to open sessions via the ACP thought_level
   // configOption, without a respawn. True where the adapter advertises that option (verified live:

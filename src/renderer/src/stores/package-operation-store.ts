@@ -10,6 +10,7 @@ export const usePackageOperationStore = create<{
   browserReceipt?: BrowserPackageTransfer
   errorKind?: 'fork'
   useCaseFailure?: string
+  useCaseFailureMessage?: string
   useCaseSlug?: string
   importError?: string
   setImportError: (error: string | undefined) => void

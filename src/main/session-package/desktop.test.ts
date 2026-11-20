@@ -1,5 +1,6 @@
 import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
@@ -3121,6 +3122,73 @@ it('maps organization upload errors and cleans up staged archives on failure or 
     expect(desktop.operations.snapshot?.state).toBe('cancelled')
     await expect(stat(stagedArchivePath)).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it('reports specific failure reasons on use-case download failures', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const payload = Buffer.from('catalog archive')
+  const manifestEntry = {
+    name: 'catalog',
+    title: 'Catalog',
+    cover: { file_name: 'cover.png' },
+    case: {
+      file_name: 'Catalog.science',
+      bytes: payload.length,
+      sha256: createHash('sha256').update(payload).digest('hex')
+    }
+  }
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json([manifestEntry]))
+    .mockResolvedValueOnce(new Response(Buffer.alloc(payload.length)))
+    .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'))
+    .mockRejectedValueOnce(new Error('unexpected internal failure'))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => undefined
+  })
+  try {
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'failed verification'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'The downloaded example failed verification. Try again shortly.'
+    })
+
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'timed out'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'The example download timed out. Check your connection and try again.'
+    })
+
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'Could not download this example. Try again.'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'Could not download this example. Try again.'
+    })
+  } finally {
+    vi.unstubAllGlobals()
     await desktop.close()
     await service.close()
   }

@@ -169,6 +169,7 @@ export const createElectronRendererContractAdapter = (
         (publicPath === 'settings.getSettings' ||
           publicPath === 'sessions.rename' ||
           publicPath === 'sessions.setPinned' ||
+          (publicPath === 'sessions.importPackage' && error.code === 'session-package-busy') ||
           (publicPath.startsWith('schedules.') && error.code.startsWith('schedule-')) ||
           (publicPath === 'literature.citationStyles' && error.code.startsWith('csl-')))
       ) {

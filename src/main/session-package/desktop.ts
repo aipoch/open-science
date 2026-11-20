@@ -1,4 +1,4 @@
-import { downloadUseCase } from './use-case-download'
+import { downloadUseCase, UseCaseDownloadError } from './use-case-download'
 import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
@@ -729,7 +729,19 @@ export class SessionPackageDesktop {
         undefined,
         { cause: error }
       )
-    if (error instanceof PackageCapacityError)
+    if (error instanceof PackageCapacityError) {
+      if (snapshot?.useCaseDownload)
+        throw new Error(
+          translate(
+            'Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.',
+            {
+              required: formatPackageBytes(error.requiredBytes),
+              available: formatPackageBytes(error.freeBytes),
+              shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
+            }
+          ),
+          { cause: error }
+        )
       throw new Error(
         translate(
           'Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.',
@@ -740,6 +752,61 @@ export class SessionPackageDesktop {
             shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
           }
         ),
+        { cause: error }
+      )
+    }
+    if (error instanceof UseCaseDownloadError) {
+      switch (error.reason) {
+        case 'manifest':
+          throw new Error(
+            translate('Could not load the example catalog. Check your connection and try again.'),
+            { cause: error }
+          )
+        case 'unavailable':
+          throw new Error(
+            translate('This example is currently unavailable. Refresh the list and try again.'),
+            { cause: error }
+          )
+        case 'timeout':
+          throw new Error(
+            translate('The example download timed out. Check your connection and try again.'),
+            { cause: error }
+          )
+        case 'network':
+          throw new Error(
+            translate(
+              'Network error while downloading this example. Check your connection or proxy, then try again.'
+            ),
+            { cause: error }
+          )
+        case 'server':
+          throw new Error(translate('The example server returned an error. Try again shortly.'), {
+            cause: error
+          })
+        case 'verification':
+          throw new Error(
+            translate('The downloaded example failed verification. Try again shortly.'),
+            { cause: error }
+          )
+        case 'disk-full':
+          throw new Error(
+            translate(
+              'Not enough disk space to download this example. Free up space and try again.'
+            ),
+            { cause: error }
+          )
+        case 'storage':
+          throw new Error(
+            translate(
+              'Could not save the downloaded example to temporary storage. Check folder permissions and try again.'
+            ),
+            { cause: error }
+          )
+      }
+    }
+    if (detail === 'Wait for the application handoff to finish before transferring research.')
+      throw new Error(
+        translate('Wait for the application handoff to finish before transferring research.'),
         { cause: error }
       )
     if (detail.startsWith('An excluded file also exists'))
@@ -780,6 +847,10 @@ export class SessionPackageDesktop {
         translate('Wait for all research activity to finish, then try exporting again.'),
         { cause: error }
       )
+    if (snapshot?.useCaseDownload)
+      throw new Error(translate('Could not download this example. Try again.', { ns: 'common' }), {
+        cause: error
+      })
     throw new Error(
       translate(
         'Could not complete the Session package operation. Check the package and available disk space, then try again.'
@@ -1131,7 +1202,11 @@ export class SessionPackageDesktop {
           operationSignal = signal
           // Catalog downloads share the operation lock, progress, cancellation and retry ownership.
           if (useCase) {
-            this.options.assertCanStart?.()
+            try {
+              this.options.assertCanStart?.()
+            } catch (error) {
+              this.failOperation(error)
+            }
             const requestId = randomUUID()
             this.pendingUseCase = { requestId, source: { useCase }, callerId, originClientId }
             this.operations.setImportSource(requestId, `${useCase}.science`, target)

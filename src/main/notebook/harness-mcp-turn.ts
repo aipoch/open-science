@@ -62,7 +62,8 @@ export async function openNotebookHarnessTurn(input: {
   const bound = structuredClone({
     ...input.environment,
     release: undefined,
-    deferExecution: undefined
+    deferExecution: undefined,
+    prepareInitialExecution: undefined
   })
   const scope = authority.getArtifactTurnScope(bound.sessionId)
   if (

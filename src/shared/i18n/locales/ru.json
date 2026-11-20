@@ -44,7 +44,8 @@
     "Close window": "Закрыть окно",
     "Review potentially destructive code": "Проверить потенциально разрушительный код",
     "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.",
+    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку."
   },
   "native": {
     "Use {{name}} as a live illustration?": "Использовать {{name}} как анимированную иллюстрацию?",
@@ -220,7 +221,17 @@
     "Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.": "Не удалось подключиться к Lab. Проверьте сетевое подключение и адрес сервера Lab в настройках и повторите попытку.",
     "Lab returned an unexpected response while uploading the organization case.": "Lab вернул неожиданный ответ при загрузке кейса организации.",
     "The upload was cancelled because your Lab session changed. Sign in and try again.": "Загрузка отменена, так как сеанс Lab изменился. Войдите снова и повторите попытку.",
-    "Could not upload the Session package to Lab. Check your connection and try again.": "Не удалось загрузить пакет сеанса в Lab. Проверьте подключение и повторите попытку."
+    "Could not upload the Session package to Lab. Check your connection and try again.": "Не удалось загрузить пакет сеанса в Lab. Проверьте подключение и повторите попытку.",
+    "Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.": "Недостаточно места на диске для загрузки этого примера (требуется {{required}}, доступно {{available}}). Освободите не менее {{shortfall}} и повторите попытку.",
+    "Could not load the example catalog. Check your connection and try again.": "Не удалось загрузить каталог примеров. Проверьте подключение и повторите попытку.",
+    "This example is currently unavailable. Refresh the list and try again.": "Этот пример сейчас недоступен. Обновите список и повторите попытку.",
+    "The example download timed out. Check your connection and try again.": "Время ожидания загрузки примера истекло. Проверьте подключение и повторите попытку.",
+    "Network error while downloading this example. Check your connection or proxy, then try again.": "Ошибка сети при загрузке этого примера. Проверьте подключение или настройки прокси и повторите попытку.",
+    "The example server returned an error. Try again shortly.": "Сервер примеров вернул ошибку. Повторите попытку позже.",
+    "The downloaded example failed verification. Try again shortly.": "Загруженный пример не прошёл проверку. Повторите попытку позже.",
+    "Not enough disk space to download this example. Free up space and try again.": "Недостаточно места на диске для загрузки этого примера. Освободите место и повторите попытку.",
+    "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "Не удалось сохранить загруженный пример во временное хранилище. Проверьте права доступа к папке и повторите попытку.",
+    "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (закладывайте {{min}}–{{max}} мин)",
@@ -8100,7 +8111,6 @@
     "Verifying download…": "Проверка загрузки…",
     "Example download progress": "Ход загрузки примера",
     "Could not cancel download. Try again.": "Не удалось отменить загрузку. Повторите попытку.",
-    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку.",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "Разные коллекции Zotero будут объединены под одним названием. Переименуйте их в Zotero и повторите предпросмотр.",
     "Edit import metadata": "Изменить метаданные импорта",
     "Edits apply to this import only. Zotero will not be changed.": "Изменения применяются только к этому импорту. Zotero не изменится.",
@@ -9260,6 +9270,7 @@
     "Up to {{count}} results_one": "Не более {{count}} результата",
     "Up to {{count}} results_few": "Не более {{count}} результатов",
     "Up to {{count}} results_many": "Не более {{count}} результатов",
-    "Up to {{count}} results_other": "Не более {{count}} результата"
+    "Up to {{count}} results_other": "Не более {{count}} результата",
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "Уже выполняется другая операция с пакетом. Дождитесь её завершения и повторите попытку."
   }
 }

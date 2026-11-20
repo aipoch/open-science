@@ -44,7 +44,8 @@
     "Close window": "Fermer la fenêtre",
     "Review potentially destructive code": "Examiner le code potentiellement destructeur",
     "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés.",
+    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez."
   },
   "native": {
     "Use {{name}} as a live illustration?": "Utiliser {{name}} comme illustration animée ?",
@@ -219,7 +220,17 @@
     "Could not connect to Lab. Check your network connection and Lab server address in Settings, then try again.": "Impossible de se connecter à Lab. Vérifiez votre connexion réseau et l’adresse du serveur Lab dans les paramètres, puis réessayez.",
     "Lab returned an unexpected response while uploading the organization case.": "Lab a renvoyé une réponse inattendue lors du téléversement du cas de l'organisation.",
     "The upload was cancelled because your Lab session changed. Sign in and try again.": "Le téléversement a été annulé car votre session Lab a changé. Connectez-vous et réessayez.",
-    "Could not upload the Session package to Lab. Check your connection and try again.": "Impossible de téléverser le paquet de session vers Lab. Vérifiez votre connexion et réessayez."
+    "Could not upload the Session package to Lab. Check your connection and try again.": "Impossible de téléverser le paquet de session vers Lab. Vérifiez votre connexion et réessayez.",
+    "Not enough disk space to download this example ({{required}} needed, {{available}} available). Free up at least {{shortfall}}, then try again.": "Espace disque insuffisant pour télécharger cet exemple ({{required}} requis, {{available}} disponibles). Libérez au moins {{shortfall}}, puis réessayez.",
+    "Could not load the example catalog. Check your connection and try again.": "Impossible de charger le catalogue d’exemples. Vérifiez votre connexion et réessayez.",
+    "This example is currently unavailable. Refresh the list and try again.": "Cet exemple est actuellement indisponible. Actualisez la liste et réessayez.",
+    "The example download timed out. Check your connection and try again.": "Le téléchargement de l’exemple a expiré. Vérifiez votre connexion et réessayez.",
+    "Network error while downloading this example. Check your connection or proxy, then try again.": "Erreur réseau lors du téléchargement de cet exemple. Vérifiez votre connexion ou votre proxy, puis réessayez.",
+    "The example server returned an error. Try again shortly.": "Le serveur d’exemples a renvoyé une erreur. Réessayez dans un instant.",
+    "The downloaded example failed verification. Try again shortly.": "La vérification de l’exemple téléchargé a échoué. Réessayez dans un instant.",
+    "Not enough disk space to download this example. Free up space and try again.": "Espace disque insuffisant pour télécharger cet exemple. Libérez de l’espace et réessayez.",
+    "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "Impossible d’enregistrer l’exemple téléchargé dans le stockage temporaire. Vérifiez les autorisations du dossier et réessayez.",
+    "Wait for the application handoff to finish before transferring research.": "Attendez la fin du transfert de l’application avant de transférer des travaux de recherche."
   },
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prévoir {{min}}–{{max}} min)",
@@ -7957,7 +7968,6 @@
     "Verifying download…": "Vérification du téléchargement…",
     "Example download progress": "Progression du téléchargement de l’exemple",
     "Could not cancel download. Try again.": "Impossible d’annuler le téléchargement. Réessayez.",
-    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez.",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "Des collections Zotero différentes seraient fusionnées sous un même nom. Renommez-les dans Zotero, puis relancez l’aperçu.",
     "Edit import metadata": "Modifier les métadonnées d’importation",
     "Edits apply to this import only. Zotero will not be changed.": "Les modifications s’appliquent uniquement à cet import. Zotero ne sera pas modifié.",
@@ -9106,6 +9116,7 @@
     "Limit to these sites": "Limiter à ces sites",
     "Up to {{count}} results_one": "Jusqu’à {{count}} résultat",
     "Up to {{count}} results_many": "Jusqu’à {{count}} résultats",
-    "Up to {{count}} results_other": "Jusqu’à {{count}} résultats"
+    "Up to {{count}} results_other": "Jusqu’à {{count}} résultats",
+    "Another package operation is already in progress. Wait for it to finish, then try again.": "Une autre opération sur un paquet est déjà en cours. Attendez qu’elle se termine, puis réessayez."
   }
 }

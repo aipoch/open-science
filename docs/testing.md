@@ -52,6 +52,17 @@ their normal meaning; the selection is neither truncated nor expanded to the ful
 removes the temporary file after the command exits, including test or spawn failures. Forced parent
 termination can leave a file in the OS temporary directory; it contains test arguments only.
 
+### Packaged default Agent conversations
+
+The release suite selects eleven journeys using `@default-agent-release` from
+`e2e/default-agent-conversation.spec.ts`, `e2e/builtin-harness.spec.ts`, and
+`e2e/harness-provider-errors.spec.ts`. `scripts/ci/run-default-agent-conversation.mjs` requires a
+packaged executable and executes the production selection without retries. The exact inventory
+and first-attempt report validator live in `scripts/ci/default-agent-conversation.mjs`.
+See [the CI dry-run entry](ci.md#default-agent-conversation-release-certification) for all five
+native packages. Run the focused verifier, release workflow and certification evidence tests
+when changing selection or failure propagation. A source-only run does not certify installed bytes.
+
 ### Built-in Web tool controls
 
 The `web_tools` module covers anonymous Exa, public fetch, invocation receipts,

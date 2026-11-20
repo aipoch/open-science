@@ -12,7 +12,7 @@ export {
 } from './tool-input-contract'
 // In-process MCP server that exposes scope-bounded evidence reads and `submit_findings` to the
 // reviewer ACP session. It is the reviewer's only approved capability. Streamable HTTP remains the
-// protocol; Windows carries it over a named pipe through the stdio proxy instead of loopback TCP.
+// protocol. A Windows named pipe is used directly or through the stdio proxy, depending on the agent.
 // The server is created per review run and shut down after the reviewer session disposes.
 //
 // v2 (issue 12): submit_findings now accepts a single `checks[]` array with status pass|warn|fail.
@@ -390,7 +390,7 @@ export class ReviewerMcpServer {
     }
   }
 
-  // Returns the native HTTP config, or the Windows stdio proxy config for a named pipe.
+  // Describes the listener to the Reviewer session owner, which adapts it to the selected backend.
   toAcpMcpServerConfig(): McpServer {
     if (!this._endpoint) throw new Error('ReviewerMcpServer not started')
 

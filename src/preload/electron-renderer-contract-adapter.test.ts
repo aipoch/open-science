@@ -214,6 +214,22 @@ describe('electron renderer contract adapter', () => {
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
   })
 
+  it('preserves package import contention across the Electron context bridge', async () => {
+    const error = toApplicationCommandErrorEnvelope(
+      new ApplicationCommandError(
+        'session-package-busy',
+        'A Session package operation is already in progress.'
+      )
+    )
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: false, error })
+    const adapter = createElectronRendererContractAdapter(port)
+
+    await expect(
+      adapter.invoke('sessions.importPackage', {}, { useCase: 'research' })
+    ).rejects.toEqual(error)
+  })
+
   it('rejects lifecycle-managed contracts from generic send and subscribe paths', () => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)
