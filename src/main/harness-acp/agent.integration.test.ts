@@ -595,7 +595,10 @@ it('exports correlated OTLP metadata and completes ACP turns when the receiver f
     [
       `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
       `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='{"Authorization":"Bearer ${credentials}","X-Diagnostics-Team":"test-team"}'`,
-      'OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=0',
       ''
     ].join('\n'),
     { mode: 0o600 }
@@ -772,10 +775,18 @@ it('exports correlated OTLP metadata and completes ACP turns when the receiver f
 it.each([
   { excerpts: true, bodies: false, toolArguments: true, toolResults: false, oversized: false },
   { excerpts: false, bodies: true, toolArguments: false, toolResults: true, oversized: false },
-  { excerpts: true, bodies: true, toolArguments: true, toolResults: true, oversized: true }
+  { excerpts: true, bodies: true, toolArguments: true, toolResults: true, oversized: true },
+  {
+    excerpts: true,
+    bodies: true,
+    toolArguments: true,
+    toolResults: true,
+    oversized: false,
+    useDefaults: true
+  }
 ])(
-  'captures optional trace data independently ($excerpts, $bodies, $toolArguments, $toolResults, oversized $oversized)',
-  async ({ excerpts, bodies, toolArguments, toolResults, oversized }) => {
+  'captures trace data independently ($excerpts, $bodies, $toolArguments, $toolResults, oversized $oversized, defaults $useDefaults)',
+  async ({ excerpts, bodies, toolArguments, toolResults, oversized, useDefaults }) => {
     const directory = await mkdtemp(join(tmpdir(), 'harness-otel-content-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))
     const endpoint = 'https://otel.example/v1/traces'
@@ -784,10 +795,14 @@ it.each([
       envFile,
       [
         `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
-        `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=${Number(excerpts)}`,
-        `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=${Number(bodies)}`,
-        `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=${Number(toolArguments)}`,
-        `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=${Number(toolResults)}`
+        ...(useDefaults
+          ? []
+          : [
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=${Number(excerpts)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=${Number(bodies)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=${Number(toolArguments)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=${Number(toolResults)}`
+            ])
       ].join('\n')
     )
     const tracing = createHarnessTracing(undefined, undefined, envFile)!
@@ -1043,13 +1058,26 @@ it('keeps launch settings and file capture settings with their own trace destina
     [
       'OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://file.example/v1/traces',
       'OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY=file-credential',
-      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=1'
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=0',
+      'OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=0'
     ].join('\n')
   )
   const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}'))
   cleanup.push(async () => send.mockRestore())
-  for (const endpoint of [undefined, 'https://launch.example/v1/traces']) {
-    const tracing = createHarnessTracing(endpoint, launchHeadersFile, envFile)!
+  const launchEndpoint = 'https://launch.example/v1/traces'
+  for (const { endpoint, launchSwitches, capturesContent } of [
+    { endpoint: undefined, capturesContent: false },
+    {
+      endpoint: launchEndpoint,
+      launchSwitches: {
+        OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT: '0',
+        OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS: '0'
+      },
+      capturesContent: false
+    },
+    { endpoint: launchEndpoint, capturesContent: true }
+  ]) {
+    const tracing = createHarnessTracing(endpoint, launchHeadersFile, envFile, launchSwitches)!
     cleanup.push(async () => tracing.dispose())
     const session = tracing.session('session', {
       model: 'test',
@@ -1070,12 +1098,22 @@ it('keeps launch settings and file capture settings with their own trace destina
     expect(new Headers(init?.headers).get('authorization')).toBe(
       endpoint ? 'Bearer launch-credential' : 'Bearer file-credential'
     )
-    expect(String(init?.body).includes('opted-in-excerpt')).toBe(endpoint === undefined)
+    expect(String(init?.body).includes('opted-in-excerpt')).toBe(capturesContent)
     send.mockClear()
     session.startTurn([{ type: 'text', text: 'unmarked text' }])!('end_turn')
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
     expect(String(send.mock.calls[0][1]?.body)).not.toContain('unmarked text')
     send.mockClear()
+    const statusFile = `${envFile}.otel-status.json`
+    if (capturesContent) {
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
+          outcome: 'http_accepted'
+        })
+      })
+    } else {
+      await expect(readFile(statusFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   }
 })
 
@@ -1096,12 +1134,21 @@ it('leaves tracing uninitialized without an explicit, valid Agent OTLP destinati
   )
 
   expect(createHarnessTracing(undefined)).toBeUndefined()
-  for (const [endpoint, headers] of [
-    [undefined, undefined],
-    ['file:///trace.json', undefined],
-    ['http://127.0.0.1:4318/v1/traces', join(directory, 'missing-headers.json')]
+  const statusFile = `${envFile}.otel-status.json`
+  for (const { endpoint, headers, launchSwitches, writesStatus } of [
+    { endpoint: undefined, writesStatus: false },
+    {
+      endpoint: 'file:///trace.json',
+      launchSwitches: { OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS: '0' },
+      writesStatus: false
+    },
+    {
+      endpoint: 'http://127.0.0.1:4318/v1/traces',
+      headers: join(directory, 'missing-headers.json'),
+      writesStatus: true
+    }
   ]) {
-    const tracing = createHarnessTracing(endpoint, headers, envFile)!
+    const tracing = createHarnessTracing(endpoint, headers, envFile, launchSwitches)!
     cleanup.push(async () => tracing.dispose())
     expect(await tracing.ready).toBe(false)
     expect(
@@ -1114,8 +1161,16 @@ it('leaves tracing uninitialized without an explicit, valid Agent OTLP destinati
         })
         .startTurn([{ type: 'text', text: 'untraced' }])
     ).toBeUndefined()
+    if (writesStatus) {
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
+          outcome: 'invalid_configuration'
+        })
+      })
+    } else {
+      await expect(readFile(statusFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   }
-  await expect(readFile(`${envFile}.otel-status.json`)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {

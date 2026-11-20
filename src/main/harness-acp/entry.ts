@@ -15,7 +15,8 @@ export async function runHarnessAcp(argv: readonly string[]): Promise<void> {
   const tracing = createHarnessTracing(
     process.env[HARNESS_OTLP_TRACES_ENDPOINT],
     process.env[HARNESS_OTLP_TRACES_HEADERS_FILE],
-    process.env[HARNESS_OTLP_ENV_FILE]
+    process.env[HARNESS_OTLP_ENV_FILE],
+    process.env
   )
   const owner = createHarnessAcpAgent(argv[index + 1], tracing)
   const connection = owner.app.connect(

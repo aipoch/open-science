@@ -7681,7 +7681,7 @@
     "Unable to get job status": "작업 상태를 가져올 수 없음",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "스케줄러에 이 작업의 사용 가능한 결과가 없습니다. 원격 프로세스가 계속 실행 중일 수 있습니다. 다음 작업을 결정하기 전에 스케줄러와 원격 파일을 확인하세요.",
     "Agent tracing": "에이전트 추적",
-    "Send traces from this project's built-in agent to the configured receiver.": "이 프로젝트의 내장 에이전트 추적 데이터를 구성된 대상으로 보냅니다.",
+    "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data.": "이 프로젝트의 내장 에이전트 추적 데이터를 구성된 대상으로 보냅니다. 추적 데이터에는 대화 내용, 모델 요청, 도구 데이터가 포함될 수 있습니다.",
     "Advanced agent options": "에이전트 고급 옵션",
     "Optimization prompt": "최적화 프롬프트",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "이 프로젝트의 질문을 최적화할 때만 사용합니다. 비워 두면 기본 제공 기본 템플릿을 사용합니다.",

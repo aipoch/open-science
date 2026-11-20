@@ -21,6 +21,7 @@ import {
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
   HARNESS_OTLP_ENV_FILE,
+  HARNESS_OTLP_SWITCHES,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS_FILE,
   HARNESS_TOOL_LESS,
@@ -75,6 +76,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         [HARNESS_OTLP_ENV_FILE]: traceEnvFile(input.executablePath),
         [HARNESS_OTLP_TRACES_ENDPOINT]: process.env[HARNESS_OTLP_TRACES_ENDPOINT],
         [HARNESS_OTLP_TRACES_HEADERS_FILE]: process.env[HARNESS_OTLP_TRACES_HEADERS_FILE],
+        ...Object.fromEntries(HARNESS_OTLP_SWITCHES.map((name) => [name, process.env[name]])),
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
       }
     })

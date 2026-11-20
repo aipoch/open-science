@@ -8,6 +8,7 @@ import {
   HARNESS_OTLP_CAPTURE_TOOL_ARGUMENTS,
   HARNESS_OTLP_CAPTURE_TOOL_RESULTS,
   HARNESS_OTLP_DIAGNOSTICS,
+  HARNESS_OTLP_SWITCHES,
   HARNESS_OTLP_TRACES_API_KEY,
   HARNESS_OTLP_TRACES_ENDPOINT,
   HARNESS_OTLP_TRACES_HEADERS,
@@ -176,6 +177,7 @@ async function loadTraceDestination(
   endpoint: string | undefined,
   headersFile: string | undefined,
   envFile: string | undefined,
+  launchSwitches: NodeJS.Dict<string>,
   signal: AbortSignal
 ): Promise<TraceDestination | undefined> {
   // Explicit launch settings are one destination. File credentials stay with the file URL.
@@ -187,8 +189,11 @@ async function loadTraceDestination(
       : {}
   const target = (endpoint ?? env[HARNESS_OTLP_TRACES_ENDPOINT])?.trim()
   if (signal.aborted || !target) return undefined
+  const switches = endpoint === undefined ? env : launchSwitches
+  const enabled = (name: (typeof HARNESS_OTLP_SWITCHES)[number]): boolean =>
+    (switches[name] ?? '1') === '1'
   const statusFile =
-    envFile && env[HARNESS_OTLP_DIAGNOSTICS] === '1' ? `${envFile}.otel-status.json` : undefined
+    envFile && enabled(HARNESS_OTLP_DIAGNOSTICS) ? `${envFile}.otel-status.json` : undefined
   const destination = await loadExportConfig(
     target,
     endpoint === undefined ? undefined : headersFile,
@@ -203,10 +208,10 @@ async function loadTraceDestination(
     ...destination,
     statusFile,
     capture: {
-      excerpts: env[HARNESS_OTLP_CAPTURE_CONTENT] === '1',
-      modelRequests: env[HARNESS_OTLP_CAPTURE_API_REQUEST] === '1',
-      toolArguments: env[HARNESS_OTLP_CAPTURE_TOOL_ARGUMENTS] === '1',
-      toolResults: env[HARNESS_OTLP_CAPTURE_TOOL_RESULTS] === '1'
+      excerpts: enabled(HARNESS_OTLP_CAPTURE_CONTENT),
+      modelRequests: enabled(HARNESS_OTLP_CAPTURE_API_REQUEST),
+      toolArguments: enabled(HARNESS_OTLP_CAPTURE_TOOL_ARGUMENTS),
+      toolResults: enabled(HARNESS_OTLP_CAPTURE_TOOL_RESULTS)
     }
   }
 }
@@ -254,14 +259,15 @@ type TraceExporter = {
 export function startTraceExport(
   endpoint: string | undefined,
   headersFile: string | undefined,
-  envFile: string | undefined
+  envFile: string | undefined,
+  launchSwitches: NodeJS.Dict<string> = {}
 ): TraceExporter {
   const lifetime = new AbortController()
   const configRead = new AbortController()
   const configSignal = AbortSignal.any([lifetime.signal, configRead.signal])
   let destination: TraceDestination | undefined
   const ready = Promise.race([
-    loadTraceDestination(endpoint, headersFile, envFile, configSignal),
+    loadTraceDestination(endpoint, headersFile, envFile, launchSwitches, configSignal),
     wait(CONFIG_TIMEOUT_MS, undefined, { ref: false, signal: configSignal })
   ])
     .catch(() => undefined)

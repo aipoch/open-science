@@ -254,7 +254,7 @@ const ProjectFormDialog = ({
                         </label>
                         <p id="project-agent-tracing-help" className={dialogFormHelpClassName}>
                           {t(
-                            "Send traces from this project's built-in agent to the configured receiver."
+                            "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data."
                           )}
                         </p>
                       </div>
