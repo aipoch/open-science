@@ -1,3 +1,4 @@
+import type { ManualProviderConnection } from './manual-provider'
 import type { CloudflareGateway } from './cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from './codebuddy-subscription'
@@ -168,6 +169,7 @@ export type ProviderView = {
   vendorId?: OfficialVendorId
   region?: string
   cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
   // or the single configured model for custom. Derived from the registry in main.
   models: string[]
@@ -509,6 +511,7 @@ export type ProviderDraft = {
   vendorId?: OfficialVendorId
   region?: string
   cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
   key?: string
 }
 

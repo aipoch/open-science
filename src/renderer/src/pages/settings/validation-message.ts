@@ -40,6 +40,8 @@ const localizeProviderResourceMessage = (message: string, t: TFunction): string 
   if (message.includes('Provider configuration changed. Your draft has not been saved.'))
     return t('Provider configuration changed. Your draft has not been saved.')
   switch (message) {
+    case 'Enter a valid provider endpoint.':
+      return t('Enter a valid provider endpoint.')
     case 'Cloudflare Account ID and Gateway ID are required.':
       return t('Cloudflare Account ID and Gateway ID are required.')
     case 'The provider returned an unexpected response. Check the API settings before retrying.':

@@ -220,6 +220,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "无法将会话包上传到 Lab。请检查网络连接后重试。"
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "请输入有效的服务商端点。",
     "Account ID": "账户 ID",
     "Gateway ID": "网关 ID",
     "Cloudflare REST API": "Cloudflare REST API",

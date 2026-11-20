@@ -1,3 +1,5 @@
+import { manualProviderDefinition } from '../../shared/manual-provider'
+import { resolveManualProviderTarget } from './manual-provider-target'
 import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
 import type { ProviderDraft } from '../../shared/settings'
 import {
@@ -18,6 +20,14 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
     if (draft.vendorId === 'cloudflare-ai-gateway') {
       return resolveCloudflareGateway(draft.cloudflare, draft.model, draft.key?.trim())
+    }
+    if (manualProviderDefinition(draft.vendorId)) {
+      return resolveManualProviderTarget(
+        draft.vendorId,
+        draft.manualConnection,
+        draft.model,
+        draft.key
+      )
     }
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)
     return {

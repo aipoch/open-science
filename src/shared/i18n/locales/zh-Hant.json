@@ -220,6 +220,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "無法將工作階段套件上傳至 Lab。請檢查網路連線並重試。"
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "請輸入有效的服務商端點。",
     "Account ID": "帳戶 ID",
     "Gateway ID": "閘道 ID",
     "Cloudflare REST API": "Cloudflare REST API",

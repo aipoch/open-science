@@ -1,3 +1,7 @@
+import {
+  sameManualProviderConnection,
+  sameManualProviderCredentialScope
+} from '../../../../shared/manual-provider'
 import { sameCloudflareGateway } from '../../../../shared/cloudflare-gateway'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
@@ -252,6 +256,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     vendorId: provider.vendorId,
     region: provider.region,
     cloudflare: provider.cloudflare,
+    manualConnection: provider.manualConnection,
     catalogParameters: provider.catalogParameters
   })
 
@@ -273,6 +278,7 @@ const toUpsertRequest = (
   vendorId: value.vendorId,
   region: value.region,
   cloudflare: value.cloudflare,
+  manualConnection: value.manualConnection,
   catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
@@ -1096,7 +1102,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const credentialSource =
     editingProvider?.type === formValue.type &&
     editingProvider.vendorId === formValue.vendorId &&
-    sameCloudflareGateway(editingProvider.cloudflare, formValue.cloudflare)
+    sameCloudflareGateway(editingProvider.cloudflare, formValue.cloudflare) &&
+    sameManualProviderCredentialScope(editingProvider.manualConnection, formValue.manualConnection)
       ? editingProvider
       : undefined
   const regionalCredential =
@@ -1164,10 +1171,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerFormDirty =
     catalogNeedsSave ||
     !sameCloudflareGateway(providerDraftBaseline.cloudflare, formValue.cloudflare) ||
+    !sameManualProviderConnection(
+      providerDraftBaseline.manualConnection,
+      formValue.manualConnection
+    ) ||
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&
         key !== 'cloudflare' &&
+        key !== 'manualConnection' &&
         (key === 'catalogParameters'
           ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
           : value !== providerDraftBaseline[key as keyof ProviderFormValue])

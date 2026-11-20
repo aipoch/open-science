@@ -1,3 +1,4 @@
+import { sameManualProviderConnection } from '../../shared/manual-provider'
 import { sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   providerCatalogState,
@@ -148,7 +149,8 @@ const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean
   left.vendorId === right.vendorId &&
   left.region === right.region &&
   sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
-  (!left.cloudflare || left.model === right.model) &&
+  sameManualProviderConnection(left.manualConnection, right.manualConnection) &&
+  ((!left.cloudflare && !left.manualConnection) || left.model === right.model) &&
   left.keyRef === right.keyRef &&
   isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
 
@@ -422,7 +424,7 @@ class SettingsRepository {
         providers,
         // 单模型连接保存新模型时，同步更新主模型，避免继续验证已替换的模型。
         ...(configEdit &&
-        (provider.type === 'custom' || provider.cloudflare) &&
+        (provider.type === 'custom' || provider.cloudflare || provider.manualConnection) &&
         settings.activeProviderId === provider.id
           ? { activeModel: provider.model }
           : {}),

@@ -1,3 +1,9 @@
+import {
+  manualProviderDefinition,
+  resolveManualProviderConnection,
+  sameManualProviderConnection,
+  sameManualProviderCredentialScope
+} from '../../shared/manual-provider'
 import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
@@ -386,7 +392,8 @@ class ProviderAccountsModule {
     }
 
     const carryKey = (): boolean => {
-      const key = provider.cloudflare ? request.key?.trim() : request.key
+      const key =
+        provider.cloudflare || provider.manualConnection ? request.key?.trim() : request.key
       if (key) {
         provider.keyRef = encryptKey(key)
         provider.keyMask = maskKey(key)
@@ -394,7 +401,8 @@ class ProviderAccountsModule {
         existing?.keyRef &&
         existing.type === provider.type &&
         existing.vendorId === provider.vendorId &&
-        sameCloudflareGateway(existing.cloudflare, provider.cloudflare)
+        sameCloudflareGateway(existing.cloudflare, provider.cloudflare) &&
+        sameManualProviderCredentialScope(existing.manualConnection, provider.manualConnection)
       ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
@@ -458,6 +466,18 @@ class ProviderAccountsModule {
         if (!model) throw new Error('Model is required.')
         provider.cloudflare = cloudflare
         provider.model = model
+      } else if (manualProviderDefinition(vendorId)) {
+        const resolved = resolveManualProviderConnection(
+          vendorId,
+          request.manualConnection === undefined
+            ? existing?.manualConnection
+            : request.manualConnection
+        )
+        if (!resolved) throw new Error('Enter a valid provider endpoint.')
+        const model = (request.model ?? existing?.model)?.trim()
+        if (!model) throw new Error('Model is required.')
+        provider.manualConnection = resolved.connection
+        provider.model = model
       }
       provider.catalogParameters =
         request.catalogParameters === undefined
@@ -482,7 +502,9 @@ class ProviderAccountsModule {
         provider.vendorId !== existing?.vendorId ||
         provider.region !== existing?.region ||
         !sameCloudflareGateway(provider.cloudflare, existing?.cloudflare) ||
-        (provider.cloudflare !== undefined && provider.model !== existing?.model)
+        !sameManualProviderConnection(provider.manualConnection, existing?.manualConnection) ||
+        ((provider.cloudflare !== undefined || provider.manualConnection !== undefined) &&
+          provider.model !== existing?.model)
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
@@ -1297,6 +1319,7 @@ class ProviderAccountsModule {
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&
+      left.vendorId === right.vendorId &&
       left.codeBuddyAuthMode === right.codeBuddyAuthMode &&
       left.codexAuthMode === right.codexAuthMode &&
       left.codexTransport === right.codexTransport &&

@@ -220,6 +220,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "セッションパッケージを Lab にアップロードできませんでした。接続を確認して再試行してください。"
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "有効なプロバイダーエンドポイントを入力してください。",
     "Account ID": "アカウント ID",
     "Gateway ID": "ゲートウェイ ID",
     "Cloudflare REST API": "Cloudflare REST API",

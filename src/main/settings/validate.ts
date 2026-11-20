@@ -196,7 +196,12 @@ const buildChatCompletionsValidationRequest = (
       : {
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
-          max_tokens: provider.cloudflare ? 64 : provider.vendorId === 'requesty' ? 16 : 1,
+          max_tokens:
+            provider.cloudflare || provider.vendorId === 'aws-bedrock'
+              ? 64
+              : provider.vendorId === 'requesty'
+                ? 16
+                : 1,
           messages: [{ role: 'user', content: 'ping' }],
           stream: false
         }
@@ -261,8 +266,8 @@ const hasValidMessagesResponse = (bodyText: string): boolean => {
   }
 }
 
-/** 验证 Cloudflare REST 返回了可读的模型回复，而非仅返回 HTTP 成功状态。 */
-const hasValidCloudflareChatResponse = (bodyText: string): boolean => {
+/** 验证响应包含一条可读的聊天回复。 */
+const hasValidChatResponse = (bodyText: string): boolean => {
   try {
     const { choices } = JSON.parse(bodyText) as {
       choices?: Array<{ message?: { role?: unknown; content?: unknown } }>
@@ -763,8 +768,10 @@ const validateCustomProvider = async (
     }
 
     const isMessagesProbe = request.endpoint === 'messages'
-    const isCloudflareChatProbe = provider.cloudflare?.mode === 'rest'
-    if (category === 'ok' && (isMessagesProbe || isCloudflareChatProbe)) {
+    const requiresChatReply =
+      request.endpoint === 'chat-completions' &&
+      (provider.cloudflare?.mode === 'rest' || provider.vendorId === 'aws-bedrock')
+    if (category === 'ok' && (isMessagesProbe || requiresChatReply)) {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -783,7 +790,7 @@ const validateCustomProvider = async (
       }
       const hasExpectedResponse = isMessagesProbe
         ? hasValidMessagesResponse(bodyText)
-        : hasValidCloudflareChatResponse(bodyText)
+        : hasValidChatResponse(bodyText)
       if (!hasExpectedResponse) {
         return toResult('unknown', {
           status: response.status,

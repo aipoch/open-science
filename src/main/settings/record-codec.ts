@@ -1,3 +1,7 @@
+import {
+  manualProviderDefinition,
+  resolveManualProviderConnection
+} from '../../shared/manual-provider'
 import { parseCloudflareGateway } from '../../shared/cloudflare-gateway'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
@@ -231,6 +235,16 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     )
       return undefined
     provider.cloudflare = cloudflare
+  }
+  if (type === 'official' && vendorId && manualProviderDefinition(vendorId)) {
+    const resolved = resolveManualProviderConnection(vendorId, value.manualConnection)
+    if (
+      !resolved ||
+      !model?.trim() ||
+      characterCount(model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+    )
+      return undefined
+    provider.manualConnection = resolved.connection
   }
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)

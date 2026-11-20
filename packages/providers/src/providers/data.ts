@@ -2054,6 +2054,17 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: false }
   },
   {
+    id: 'aws-bedrock',
+    label: 'AWS Bedrock',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions'],
+    messagesApiKeyHeader: true,
+    apiKeyUrl: 'https://console.aws.amazon.com/bedrock/home#/api-keys',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
     id: 'kilo',
     label: 'Kilo Gateway',
     baseUrl: 'https://ai-gateway.kilo.ai/api',

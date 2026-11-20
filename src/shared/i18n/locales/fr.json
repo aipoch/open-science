@@ -222,6 +222,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "Impossible de téléverser le paquet de session vers Lab. Vérifiez votre connexion et réessayez."
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "Saisissez un point de terminaison de fournisseur valide.",
     "Account ID": "ID de compte",
     "Gateway ID": "ID de passerelle",
     "Cloudflare REST API": "API REST de Cloudflare",

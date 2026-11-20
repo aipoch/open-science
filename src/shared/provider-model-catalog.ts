@@ -1,4 +1,9 @@
 import {
+  manualProviderDefinition,
+  resolveManualProviderConnection,
+  type ManualProviderConnection
+} from './manual-provider'
+import {
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
   type CloudflareGateway
@@ -29,6 +34,7 @@ export type OfficialCatalogSource = {
   keyRef?: string
   region?: string
   cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
   model?: string
   fetchedModels?: readonly string[]
   // ProviderView already contains the region and legacy discovery policy applied by main.
@@ -82,6 +88,12 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
         routes: { [cloudflareGatewayProtocol(cloudflare.mode)]: cloudflareGatewayBase(cloudflare) }
       }
     ]
+  }
+  if (manualProviderDefinition(vendorId)) {
+    const resolved = resolveManualProviderConnection(vendorId, source.manualConnection)
+    return resolved && source.model
+      ? [{ id: source.model, routes: { [resolved.connection.protocol]: resolved.baseUrl } }]
+      : []
   }
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []

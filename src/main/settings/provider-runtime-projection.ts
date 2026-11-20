@@ -1,3 +1,5 @@
+import { manualProviderDefinition } from '../../shared/manual-provider'
+import { resolveManualProviderTarget } from './manual-provider-target'
 import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
@@ -146,6 +148,7 @@ class ProviderRuntimeProjectionOwner {
       vendorId: provider.vendorId,
       region: provider.region,
       ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+      ...(provider.manualConnection && { manualConnection: provider.manualConnection }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),
@@ -469,6 +472,10 @@ class ProviderRuntimeProjectionOwner {
     if (vendorId === 'cloudflare-ai-gateway') {
       if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
       return resolveCloudflareGateway(provider.cloudflare, model, key)
+    }
+    if (manualProviderDefinition(vendorId)) {
+      if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
+      return resolveManualProviderTarget(vendorId, provider.manualConnection, model, key)
     }
     const contextWindow = descriptor?.contextWindow
     const routes = descriptor?.routes

@@ -221,6 +221,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "Das Sitzungspaket konnte nicht zu Lab hochgeladen werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut."
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "Geben Sie einen gültigen Anbieterendpunkt ein.",
     "Account ID": "Konto-ID",
     "Gateway ID": "Gateway-ID",
     "Cloudflare REST API": "Cloudflare REST API",

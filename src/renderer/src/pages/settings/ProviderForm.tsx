@@ -1,3 +1,7 @@
+import {
+  manualProviderDefinition,
+  sameManualProviderCredentialScope
+} from '../../../../shared/manual-provider'
 import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
 import { ErrorNotice } from '@/components/error-notice'
 import {
@@ -327,6 +331,8 @@ const ProviderForm = ({
     vendor?.id === 'cloudflare-ai-gateway'
       ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
       : undefined
+  const manualProvider = manualProviderDefinition(vendor?.id)
+  const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
   const keyLabel = cloudflare
     ? cloudflare.mode === 'rest'
       ? t('Cloudflare API token')
@@ -398,7 +404,9 @@ const ProviderForm = ({
             ? cloudflare.mode === 'rest'
               ? 'openai/gpt-4.1'
               : 'claude-sonnet-4-5'
-            : t('e.g. deepseek-v4-flash')
+            : manualProvider
+              ? undefined
+              : t('e.g. deepseek-v4-flash')
         }
         onChange={(event) => onChange({ model: event.target.value })}
       />
@@ -1175,6 +1183,63 @@ const ProviderForm = ({
                 </div>
               )
             })}
+          </div>
+          {modelField}
+          {keyField}
+        </>
+      ) : manualProvider && manualConnection ? (
+        <>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-manual-location">
+              {t('Region')}
+              <RequiredMark />
+            </label>
+            <Input
+              id="provider-manual-location"
+              aria-label={t('Region')}
+              aria-required="true"
+              aria-invalid={Boolean(errors.location) || undefined}
+              aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
+              value={manualConnection.location}
+              disabled={disabled}
+              onChange={(event) => {
+                const next = { ...manualConnection, location: event.target.value }
+                onChange({
+                  manualConnection: next,
+                  ...(!sameManualProviderCredentialScope(manualConnection, next) && { key: '' })
+                })
+              }}
+            />
+            {errors.location ? (
+              <p id="provider-manual-location-error" className={fieldErrorClassName} role="alert">
+                {t(errors.location)}
+              </p>
+            ) : null}
+          </div>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-manual-format">
+              {t('API format')}
+            </label>
+            <Select
+              value={manualConnection.protocol}
+              disabled={disabled}
+              onValueChange={(value) => {
+                const protocol = manualProvider.protocols.find((option) => option === value)
+                if (protocol)
+                  onChange({ manualConnection: { ...manualConnection, protocol }, model: '' })
+              }}
+            >
+              <SelectTrigger id="provider-manual-format" aria-label={t('API format')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {manualProvider.protocols.map((protocol) => (
+                  <SelectItem key={protocol} value={protocol}>
+                    {API_FORMAT_LABELS[protocol]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {modelField}
           {keyField}

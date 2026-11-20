@@ -1,4 +1,9 @@
 import {
+  manualProviderDefinition,
+  resolveManualProviderConnection,
+  type ManualProviderConnection
+} from '../../../../shared/manual-provider'
+import {
   DEFAULT_CLOUDFLARE_GATEWAY,
   cloudflareGatewayProtocol,
   validCloudflareAccountId,
@@ -75,6 +80,7 @@ export type ProviderFormValue = {
   vendorId?: OfficialVendorId
   region?: string
   cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -173,6 +179,9 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtoco
     if (value.vendorId === 'cloudflare-ai-gateway') {
       return [cloudflareGatewayProtocol((value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY).mode)]
     }
+    const manualProvider = manualProviderDefinition(value.vendorId)
+    if (manualProvider)
+      return [(value.manualConnection ?? manualProvider.defaultConnection).protocol]
     return resolveVendorModelApiEndpoints(
       value.vendorId,
       value.model.trim() || defaultVendorModel(value.vendorId, value.region)
@@ -247,6 +256,7 @@ export type ProviderFormErrorKey =
   | 'Model is required.'
   | 'Enter a valid Cloudflare Account ID.'
   | 'Enter a valid Gateway ID.'
+  | 'Enter a valid provider endpoint.'
   | 'API key is required.'
   | 'Context window must be a positive whole number of tokens.'
   | 'Maximum input tokens must be a positive whole number of tokens.'
@@ -255,6 +265,7 @@ export type ProviderFormErrorKey =
 export type ProviderFormErrors = {
   accountId?: ProviderFormErrorKey
   gatewayId?: ProviderFormErrorKey
+  location?: ProviderFormErrorKey
   baseUrl?: ProviderFormErrorKey
   contextWindow?: ProviderFormErrorKey
   key?: ProviderFormErrorKey
@@ -282,6 +293,12 @@ export const getProviderFormErrors = (
       errors.accountId = 'Enter a valid Cloudflare Account ID.'
     if (!validCloudflareGatewayId(cloudflare.gatewayId))
       errors.gatewayId = 'Enter a valid Gateway ID.'
+    if (!value.model.trim()) errors.model = 'Model is required.'
+  }
+
+  if (value.type === 'official' && value.vendorId && manualProviderDefinition(value.vendorId)) {
+    if (!resolveManualProviderConnection(value.vendorId, value.manualConnection))
+      errors.location = 'Enter a valid provider endpoint.'
     if (!value.model.trim()) errors.model = 'Model is required.'
   }
 
@@ -432,6 +449,7 @@ export const providerKindPatch = (
     key: '',
     catalogParameters: undefined,
     cloudflare: undefined,
+    manualConnection: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -484,6 +502,7 @@ export const providerKindPatch = (
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
+    const manualProvider = manualProviderDefinition(vendorId)
 
     return {
       ...reset,
@@ -491,7 +510,8 @@ export const providerKindPatch = (
       name: vendor?.label,
       vendorId,
       region: vendor?.regions?.[0]?.id,
-      ...(vendorId === 'cloudflare-ai-gateway' && { cloudflare: DEFAULT_CLOUDFLARE_GATEWAY })
+      ...(vendorId === 'cloudflare-ai-gateway' && { cloudflare: DEFAULT_CLOUDFLARE_GATEWAY }),
+      ...(manualProvider && { manualConnection: manualProvider.defaultConnection })
     }
   }
 

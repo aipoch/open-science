@@ -223,6 +223,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "Не удалось загрузить пакет сеанса в Lab. Проверьте подключение и повторите попытку."
   },
   "renderer": {
+    "Enter a valid provider endpoint.": "Укажите действительную конечную точку поставщика.",
     "Account ID": "ID аккаунта",
     "Gateway ID": "ID шлюза",
     "Cloudflare REST API": "REST API Cloudflare",

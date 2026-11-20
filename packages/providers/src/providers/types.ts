@@ -30,6 +30,7 @@ export type OfficialVendorId =
   | 'requesty'
   | 'kilo'
   | 'cloudflare-ai-gateway'
+  | 'aws-bedrock'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
