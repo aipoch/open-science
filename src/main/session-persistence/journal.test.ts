@@ -188,10 +188,10 @@ describe('simple Session JSONL persistence', () => {
       .map((line) => JSON.parse(line))
     expect(lines).toHaveLength(140)
     expect(Object.keys(lines[0])).toEqual(['type', 'journalVersion', 'document'])
-    expect(lines[0].journalVersion).toBe(1)
+    expect(lines[0].journalVersion).toBe(2)
     for (const line of lines.slice(1)) {
       expect(Object.keys(line)).toEqual(['type', 'journalVersion', 'revision', 'records'])
-      expect(line.journalVersion).toBe(1)
+      expect(line.journalVersion).toBe(2)
     }
     expect((await fresh().read(path))?.document).toEqual(doc(140, 'next 140'))
     expect((await fresh().read(sessionJournalPath(path)))?.document).toEqual(doc(140, 'next 140'))
@@ -219,9 +219,43 @@ describe('simple Session JSONL persistence', () => {
       .map((line) => JSON.parse(line))
     expect(lines[2]).toMatchObject({
       type: 'session_update',
-      journalVersion: 1,
+      journalVersion: 2,
       revision: 3
     })
+  })
+  it('writes a suffix append as one v2 append record and replays it over a v1 prefix', async () => {
+    const { path, store } = await fixture()
+    const roster = (revision: number, ids: readonly string[]): TestDocument => ({
+      version: 2,
+      session: {
+        id: 's',
+        projectId: 'p',
+        revision,
+        messages: ids.map((id) => ({ id, content: `content-${id}` }))
+      }
+    })
+    await store.write(path, { document: roster(1, ['m']), expectedRevision: 0 })
+    const target = sessionJournalPath(path)
+    // Simulate a v1 writer for the published prefix. A v2 reader must keep the full-order state
+    // and then apply new-format append records on top of it; the v1 line itself may not use them.
+    await writeFile(
+      target,
+      (await readFile(target, 'utf8')).replace(/"journalVersion":2/g, '"journalVersion":1')
+    )
+    await fresh().write(path, { document: roster(2, ['m', 'n']), expectedRevision: 1 })
+    await fresh().write(path, { document: roster(3, ['m', 'n', 'o']), expectedRevision: 2 })
+    const lines = (await readFile(target, 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(lines.slice(0, 3).map((line) => line.journalVersion)).toEqual([1, 2, 2])
+    expect(lines[2].records).toContainEqual({
+      type: 'entities',
+      collection: 'messages',
+      upserts: [{ id: 'o', content: 'content-o' }],
+      append: ['o']
+    })
+    expect((await fresh().read(path))?.document).toEqual(roster(3, ['m', 'n', 'o']))
   })
   it('refuses a newer journal version before parsing its records', async () => {
     const { path, store } = await fixture()
@@ -231,7 +265,7 @@ describe('simple Session JSONL persistence', () => {
       target,
       JSON.stringify({
         type: 'session_update',
-        journalVersion: 2,
+        journalVersion: 3,
         revision: 2,
         records: 'not parsed'
       }) + '\n'
@@ -244,7 +278,7 @@ describe('simple Session JSONL persistence', () => {
       target,
       JSON.stringify({
         type: 'session_snapshot',
-        journalVersion: 2,
+        journalVersion: 3,
         document: doc(1),
         records: 'not parsed'
       }) + '\n'
@@ -275,7 +309,7 @@ describe('simple Session JSONL persistence', () => {
       sessionJournalPath(path),
       JSON.stringify({
         type: 'session_update',
-        journalVersion: 1,
+        journalVersion: 2,
         revision: 2,
         records: [{ type: 'unknown' }]
       }) + '\n'
@@ -457,6 +491,23 @@ describe('simple Session JSONL persistence', () => {
     await rm(sessionLegacyBackupPath(path))
     await writeFile(`${sessionJournalPath(path)}.pending.tmp`, '{partial')
     await expect(write(fresh(), path, 1)).rejects.toThrow('primary is missing')
+  })
+  it('rejects v2-only append records in a v1 journal line', async () => {
+    const { path } = await fixture()
+    const target = sessionJournalPath(path)
+    await writeFile(
+      target,
+      JSON.stringify({ type: 'session_snapshot', journalVersion: 1, document: doc(1) }) +
+        '\n' +
+        JSON.stringify({
+          type: 'session_update',
+          journalVersion: 1,
+          revision: 2,
+          records: [{ type: 'entities', collection: 'messages', upserts: [], append: ['m'] }]
+        }) +
+        '\n'
+    )
+    await expect(fresh().read(path)).rejects.toBeInstanceOf(SessionJournalCorruptionError)
   })
   it('rejects symlink files and directories before reading or writing', async () => {
     const { path, root } = await fixture()
