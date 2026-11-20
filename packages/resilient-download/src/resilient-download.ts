@@ -68,18 +68,19 @@ const isAbortError = (e: unknown): boolean =>
 
 const isIncompleteResponse = (
   error: unknown,
-  contentLength: number | undefined,
+  expectedBytes: number | undefined,
   receivedBytes: number
 ): boolean => {
   const cause: unknown = error instanceof Error ? error.cause : undefined
-  if (!(cause instanceof Error) || !('code' in cause)) return false
-  // Fetch can report an early FIN on a keep-alive response as a socket error.
+  if (!(cause instanceof Error)) return false
+  const code = 'code' in cause ? cause.code : undefined
+  if (code === 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH') return true
+  if (expectedBytes === undefined || receivedBytes >= expectedBytes) return false
+  // Undici reports premature EOF through different errors depending on HTTP framing.
   return (
-    cause.code === 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH' ||
-    (cause.code === 'UND_ERR_SOCKET' &&
-      cause.message === 'other side closed' &&
-      contentLength !== undefined &&
-      receivedBytes < contentLength)
+    (code === 'UND_ERR_SOCKET' && cause.message === 'other side closed') ||
+    code === 'HPE_INVALID_EOF_STATE' ||
+    (cause.name === 'HTTPParserError' && cause.message.endsWith('(Invalid EOF state)'))
   )
 }
 
@@ -487,7 +488,8 @@ export const downloadWithDependencies = async (
           })
         }
       } catch (error) {
-        if (!combined.aborted && isIncompleteResponse(error, contentLength, transferred - offset)) {
+        const expectedBytes = contentLength ?? (total === undefined ? undefined : total - offset)
+        if (!combined.aborted && isIncompleteResponse(error, expectedBytes, transferred - offset)) {
           throw new IncompleteStreamError('short read', { cause: error })
         }
         throw error

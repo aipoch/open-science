@@ -61,15 +61,23 @@ it('classifies a truncated archive as a verification failure', async () => {
   ).rejects.toMatchObject({ name: 'UseCaseDownloadError', reason: 'verification' })
 })
 
-it.each(['close', 'keep-alive'])(
-  'classifies a truncated HTTP response with Connection: %s as a verification failure',
-  async (connection) => {
+it.each([
+  { framing: 'Content-Length', connection: 'close' },
+  { framing: 'Content-Length', connection: 'keep-alive' },
+  { framing: 'chunked', connection: 'close' },
+  { framing: 'chunked', connection: 'keep-alive' }
+])(
+  'classifies a truncated $framing HTTP response with Connection: $connection as a verification failure',
+  async ({ framing, connection }) => {
     const server = createServer((_request, response) => {
       const socket = response.socket
-      response.writeHead(200, { 'Content-Length': bytes.length, Connection: connection })
-      const partial = bytes.subarray(0, -1)
-      if (connection === 'close') response.end(partial)
-      else response.write(partial, () => socket?.end())
+      response.writeHead(
+        200,
+        framing === 'chunked'
+          ? { 'Transfer-Encoding': 'chunked', Connection: connection }
+          : { 'Content-Length': bytes.length, Connection: connection }
+      )
+      response.write(bytes.subarray(0, -1), () => socket?.end())
     })
     server.listen(0, '127.0.0.1')
     await once(server, 'listening')
