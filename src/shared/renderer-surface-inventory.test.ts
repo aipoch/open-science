@@ -185,6 +185,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.retryHandoff',
   'specialist.savePackageReport',
   'specialist.selectPackage',
+  'update.setAutomaticDownloads',
   'uploads.onTransferProgress',
   'window.announceWindowFindAppearance',
   'window.announceWindowFindContentReady',
