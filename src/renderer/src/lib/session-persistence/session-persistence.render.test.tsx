@@ -1046,10 +1046,12 @@ describe('session persistence startup', () => {
   })
 
   it.each(
-    (['read-only', 'failed-save', 'pending-save', 'running'] as const).flatMap((mode) => [
-      { mode, bodySize: 64 * 1024, count: 40, retained: 16 },
-      { mode, bodySize: 8 * 1024 * 1024, count: 6, retained: 3 }
-    ])
+    (['read-only', 'failed-save', 'pending-save', 'running', 'pending-replay'] as const).flatMap(
+      (mode) => [
+        { mode, bodySize: 64 * 1024, count: 40, retained: 16 },
+        { mode, bodySize: 8 * 1024 * 1024, count: 6, retained: 3 }
+      ]
+    )
   )(
     'bounds $bodySize-character historical bodies without discarding $mode state',
     async ({ mode, bodySize, count, retained }) => {
@@ -1057,6 +1059,8 @@ describe('session persistence startup', () => {
         createPersistedSession({
           id: `history-${index}`,
           number: index + 1,
+          pendingHistoryReplay:
+            index === 0 && mode === 'pending-replay' ? { kind: 'all' } : undefined,
           messages: [
             {
               id: `message-${index}`,
@@ -1143,6 +1147,7 @@ describe('session persistence startup', () => {
         expect(first.contentLoaded).not.toBe(false)
         expect(first.messages[0].content).toBe(persisted[0].messages[0].content)
         if (mode === 'failed-save') expect(first.title).toBe('Unsaved title')
+        if (mode === 'pending-replay') expect(first.pendingHistoryReplay).toEqual({ kind: 'all' })
       }
       // Navigating back loads the original body; unloading must neither save empty content nor
       // trigger an immediate reload of every evicted summary through the saver subscription.

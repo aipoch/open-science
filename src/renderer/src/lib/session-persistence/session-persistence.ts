@@ -74,6 +74,7 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import { sessionAwaitsHistoryReplay } from '../../stores/session-actionability'
 import type { ChatSession } from '../../stores/session-store-contract'
 import type {
   SessionHydrationSelection,
@@ -2407,7 +2408,7 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const canUnloadIdleHistory = (session: ChatSession): boolean =>
   session.status === 'idle' &&
   !session.activeRun &&
-  !session.isPending &&
+  !sessionAwaitsHistoryReplay(session) &&
   !session.unsavedTitle &&
   !session.needsStartupRecovery &&
   !session.recordProblems?.length &&
