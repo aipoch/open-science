@@ -117,6 +117,9 @@ jobs:
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
+    env:
+      # Linux sessions in this job reopen the same on-disk test keyring.
+      PACKAGE_SMOKE_KEYRING_PASSWORD: package-smoke-ci-vault
     # Windows certification can use a 30-minute hosted-runner ACL budget after dependency setup,
     # artifact download, installer smoke, and post-job evidence collection.
     timeout-minutes: ${{ matrix.platform == 'win' && 90 || 50 }}
@@ -270,7 +273,7 @@ jobs:
           export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1
           export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/e2e.json
           xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
-            printf "update-occupancy-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
             npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
           '
           node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
@@ -287,7 +290,7 @@ jobs:
           export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1
           export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/appimage.json
           xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
-            printf "update-occupancy-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
             npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/appimage
           '
           node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/appimage.json
@@ -347,7 +350,7 @@ jobs:
             bash scripts/ci/run-macos-packaged-e2e.sh node scripts/ci/run-default-agent-conversation.mjs
           elif [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
-              printf "default-agent-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+              printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
               node scripts/ci/run-default-agent-conversation.mjs
             '
           else
