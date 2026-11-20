@@ -144,9 +144,29 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.downloadUpdate.mock.calls[0][0]?.cancelled).toBe(true)
     transfer.resolve()
     await pending
+    await strategy.setAutomaticDownloads(true)
+    await strategy.check()
+    expect(strategy.getBackgroundDownloadOffer()).toBeUndefined()
     await strategy.download()
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
   })
+
+  it('retries a failed background transfer after a fresh check offers the same version', async () => {
+    const updater = new FakeUpdater()
+    updater.downloadUpdate.mockRejectedValueOnce(new Error('Connection interrupted'))
+    const strategy = createStrategy({
+      updater,
+      downloadPreference: Promise.resolve({ enabled: true, setEnabled: vi.fn() }),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    expect((await strategy.downloadInBackground('0.3.0')).state).toBe('error')
+    expect(strategy.getBackgroundDownloadOffer()).toBeUndefined()
+    await strategy.check()
+    expect((await strategy.downloadInBackground('0.3.0')).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['up-to-date', 'error'])(
     'releases a waiting download after a provider check returns %s',
     async (outcome) => {

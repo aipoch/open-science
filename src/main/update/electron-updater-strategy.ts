@@ -259,7 +259,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readyCheckError?: unknown
   private status: UpdateStatus
   private applying = false
-  private lastBackgroundVersion?: string
+  private cancelledDownloadVersion?: string
   private installerStarted = false
   private pendingInstallRollback?: () => void
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
@@ -707,7 +707,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       !this.checkLifecycle &&
       !this.downloadLifecycle &&
       this.status.state === 'available' &&
-      this.status.latest !== this.lastBackgroundVersion
+      this.status.latest !== this.cancelledDownloadVersion
     )
       return this.status
     return undefined
@@ -715,7 +715,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
 
   async downloadInBackground(version: string): Promise<UpdateStatus> {
     if (this.getBackgroundDownloadOffer()?.latest !== version) return this.status
-    this.lastBackgroundVersion = version
     return this.startDownload({ nonInteractive: true }, true)
   }
 
@@ -869,7 +868,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.downloadToken?.cancel()
     this.downloadToken = undefined
     if (this.status.state === 'downloading') {
-      this.lastBackgroundVersion = this.status.latest
+      this.cancelledDownloadVersion = this.status.latest
       this.setStatus(toAvailableUpdateStatus(this.status))
     }
     this.downloadOperation?.cancel({ reason: 'user' })
