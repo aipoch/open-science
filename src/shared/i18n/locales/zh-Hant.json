@@ -220,6 +220,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "無法將工作階段套件上傳至 Lab。請檢查網路連線並重試。"
   },
   "renderer": {
+    "Third-party platforms": "第三方平台",
     "Deployment name": "部署名稱",
     "Azure resource name or endpoint": "Azure 資源名稱或端點",
     "Enter a valid provider endpoint.": "請輸入有效的服務商端點。",

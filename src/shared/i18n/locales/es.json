@@ -222,6 +222,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "No se pudo subir el paquete de sesión a Lab. Verifique su conexión e inténtelo de nuevo."
   },
   "renderer": {
+    "Third-party platforms": "Plataformas de terceros",
     "Deployment name": "Nombre de la implementación",
     "Azure resource name or endpoint": "Nombre del recurso o endpoint de Azure",
     "Enter a valid provider endpoint.": "Introduzca un endpoint válido del proveedor.",

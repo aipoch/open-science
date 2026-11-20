@@ -333,8 +333,12 @@ const ProviderForm = ({
       : undefined
   const isFoundry = vendor?.id === 'microsoft-foundry'
   const modelLabel = isFoundry ? t('Deployment name') : t('Model')
-  const manualLocationLabel = isFoundry ? t('Azure resource name or endpoint') : t('Region')
   const manualProvider = manualProviderDefinition(vendor?.id)
+  const manualLocationLabel = isFoundry
+    ? t('Azure resource name or endpoint')
+    : manualProvider?.locations
+      ? t('Endpoint')
+      : t('Region')
   const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
   const keyLabel = cloudflare
     ? cloudflare.mode === 'rest'
@@ -407,8 +411,8 @@ const ProviderForm = ({
             ? cloudflare.mode === 'rest'
               ? 'openai/gpt-4.1'
               : 'claude-sonnet-4-5'
-            : manualProvider
-              ? undefined
+            : manualProvider && manualConnection
+              ? manualProvider.modelExamples?.[manualConnection.protocol]
               : t('e.g. deepseek-v4-flash')
         }
         onChange={(event) => onChange({ model: event.target.value })}
@@ -1197,26 +1201,47 @@ const ProviderForm = ({
               {manualLocationLabel}
               <RequiredMark />
             </label>
-            <Input
-              id="provider-manual-location"
-              aria-label={manualLocationLabel}
-              aria-required="true"
-              aria-invalid={Boolean(errors.location) || undefined}
-              aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
-              value={manualConnection.location}
-              disabled={disabled}
-              onChange={(event) => {
-                const next = { ...manualConnection, location: event.target.value }
-                onChange({
-                  manualConnection: next,
-                  ...(!sameManualProviderCredentialScope(
-                    value.vendorId,
-                    manualConnection,
-                    next
-                  ) && { key: '' })
-                })
-              }}
-            />
+            {manualProvider.locations ? (
+              <Select
+                value={manualConnection.location}
+                disabled={disabled}
+                onValueChange={(location) =>
+                  onChange({ manualConnection: { ...manualConnection, location } })
+                }
+              >
+                <SelectTrigger id="provider-manual-location" aria-label={manualLocationLabel}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {manualProvider.locations.map((location) => (
+                    <SelectItem key={location} value={location}>
+                      {location}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id="provider-manual-location"
+                aria-label={manualLocationLabel}
+                aria-required="true"
+                aria-invalid={Boolean(errors.location) || undefined}
+                aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
+                value={manualConnection.location}
+                disabled={disabled}
+                onChange={(event) => {
+                  const next = { ...manualConnection, location: event.target.value }
+                  onChange({
+                    manualConnection: next,
+                    ...(!sameManualProviderCredentialScope(
+                      value.vendorId,
+                      manualConnection,
+                      next
+                    ) && { key: '' })
+                  })
+                }}
+              />
+            )}
             {errors.location ? (
               <p id="provider-manual-location-error" className={fieldErrorClassName} role="alert">
                 {t(errors.location)}

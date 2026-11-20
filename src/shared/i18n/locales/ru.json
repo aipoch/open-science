@@ -223,6 +223,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "Не удалось загрузить пакет сеанса в Lab. Проверьте подключение и повторите попытку."
   },
   "renderer": {
+    "Third-party platforms": "Сторонние платформы",
     "Deployment name": "Имя развёртывания",
     "Azure resource name or endpoint": "Имя ресурса или конечная точка Azure",
     "Enter a valid provider endpoint.": "Укажите действительную конечную точку поставщика.",

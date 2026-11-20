@@ -220,6 +220,7 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "세션 패키지를 Lab에 업로드할 수 없습니다. 연결을 확인한 후 다시 시도하세요."
   },
   "renderer": {
+    "Third-party platforms": "타사 플랫폼",
     "Deployment name": "배포 이름",
     "Azure resource name or endpoint": "Azure 리소스 이름 또는 엔드포인트",
     "Enter a valid provider endpoint.": "유효한 모델 제공업체 엔드포인트를 입력하세요.",

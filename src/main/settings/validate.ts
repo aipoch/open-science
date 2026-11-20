@@ -241,7 +241,7 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
     body: JSON.stringify({
       model: provider.model ?? '',
       input: 'ping',
-      max_output_tokens: 16
+      max_output_tokens: provider.vendorId === 'vectrust' ? 128 : 16
     })
   }
 }
@@ -279,6 +279,33 @@ const hasValidChatResponse = (bodyText: string): boolean => {
       message?.role === 'assistant' &&
       typeof message.content === 'string' &&
       message.content.trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Responses 探测需要一条已完成的文本回复。 */
+const hasValidResponsesReply = (bodyText: string): boolean => {
+  try {
+    const { status, output } = JSON.parse(bodyText) as {
+      status?: unknown
+      output?: { type?: unknown; content?: { type?: unknown; text?: unknown }[] }[]
+    }
+    return (
+      status === 'completed' &&
+      Array.isArray(output) &&
+      output.some(
+        (item) =>
+          item?.type === 'message' &&
+          Array.isArray(item.content) &&
+          item.content.some(
+            (part) =>
+              part?.type === 'output_text' &&
+              typeof part.text === 'string' &&
+              part.text.trim().length > 0
+          )
+      )
     )
   } catch {
     return false
@@ -773,7 +800,9 @@ const validateCustomProvider = async (
     const requiresChatReply =
       request.endpoint === 'chat-completions' &&
       (provider.cloudflare?.mode === 'rest' || manualProviderDefinition(provider.vendorId))
-    if (category === 'ok' && (isMessagesProbe || requiresChatReply)) {
+    const requiresResponsesReply =
+      request.endpoint === 'responses' && provider.vendorId === 'vectrust'
+    if (category === 'ok' && (isMessagesProbe || requiresChatReply || requiresResponsesReply)) {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -792,7 +821,9 @@ const validateCustomProvider = async (
       }
       const hasExpectedResponse = isMessagesProbe
         ? hasValidMessagesResponse(bodyText)
-        : hasValidChatResponse(bodyText)
+        : requiresResponsesReply
+          ? hasValidResponsesReply(bodyText)
+          : hasValidChatResponse(bodyText)
       if (!hasExpectedResponse) {
         return toResult('unknown', {
           status: response.status,

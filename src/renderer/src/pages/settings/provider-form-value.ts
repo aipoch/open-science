@@ -338,7 +338,8 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
 // framework). Cloud providers are shown in their own section.
-export type ProviderKindGroup = 'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'other'
+export type ProviderKindGroup =
+  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'third-party' | 'other'
 
 export type ProviderKindGroupLabelKey =
   | 'Codex subscription'
@@ -346,6 +347,7 @@ export type ProviderKindGroupLabelKey =
   | 'Subscription'
   | 'Official API'
   | 'Cloud providers'
+  | 'Third-party platforms'
   | 'Other'
 
 // A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
@@ -370,6 +372,7 @@ export const PROVIDER_KIND_GROUPS: {
   { id: 'subscription', labelKey: 'Subscription' },
   { id: 'api', labelKey: 'Official API' },
   { id: 'cloud', labelKey: 'Cloud providers' },
+  { id: 'third-party', labelKey: 'Third-party platforms' },
   { id: 'other', labelKey: 'Other' }
 ]
 
@@ -426,7 +429,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
       : vendor.supportsAnonymousAccess
         ? 'Free models work without an API key.'
         : 'API key — models provided',
-    group: vendor.cloudProvider ? 'cloud' : 'api'
+    group: vendor.cloudProvider ? 'cloud' : vendor.thirdPartyPlatform ? 'third-party' : 'api'
   })),
   {
     key: 'custom',

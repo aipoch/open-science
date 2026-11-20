@@ -8,6 +8,9 @@ export type ManualProviderConnection = Readonly<{
 type ManualProviderDefinition = Readonly<{
   defaultConnection: ManualProviderConnection
   protocols: readonly ModelProtocol[]
+  locations?: readonly string[]
+  sharedCredential?: true
+  modelExamples?: Partial<Record<ModelProtocol, string>>
   parseLocation: (location: string, protocol: ModelProtocol) => string | undefined
   baseUrl: (location: string, protocol: ModelProtocol) => string
 }>
@@ -41,7 +44,22 @@ function parseFoundryLocation(location: string, protocol: ModelProtocol): string
   return validPaths.includes(path) ? url.hostname : undefined
 }
 
+const vectrustLocations = ['api.openai-next.com', 'us.api.openai-next.com'] as const
+
 const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> = {
+  vectrust: {
+    defaultConnection: { location: vectrustLocations[0], protocol: 'chat-completions' },
+    protocols: ['messages', 'chat-completions', 'responses'],
+    locations: vectrustLocations,
+    sharedCredential: true,
+    modelExamples: {
+      messages: 'claude-opus-5-5',
+      'chat-completions': 'gpt-6.1-sol',
+      responses: 'gpt-6.1-sol'
+    },
+    parseLocation: (location) => vectrustLocations.find((endpoint) => location === endpoint),
+    baseUrl: (hostname, protocol) => `https://${hostname}${protocol === 'messages' ? '' : '/v1'}`
+  },
   'microsoft-foundry': {
     defaultConnection: { location: '', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
@@ -92,8 +110,11 @@ export function sameManualProviderCredentialScope(
   right?: ManualProviderConnection
 ): boolean {
   if (!left || !right) return left === right
-  const location = (connection: ManualProviderConnection): string =>
-    (vendorId && resolveManualProviderConnection(vendorId, connection)?.connection.location) ||
-    connection.location.trim().toLowerCase()
-  return location(left) === location(right)
+  if (!vendorId) return left.location === right.location
+  const leftLocation = resolveManualProviderConnection(vendorId, left)?.connection.location
+  const rightLocation = resolveManualProviderConnection(vendorId, right)?.connection.location
+  if (!leftLocation || !rightLocation) return false
+  return (
+    leftLocation === rightLocation || manualProviderDefinition(vendorId)?.sharedCredential === true
+  )
 }

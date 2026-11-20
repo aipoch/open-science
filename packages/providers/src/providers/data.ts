@@ -2076,6 +2076,16 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: false }
   },
   {
+    id: 'vectrust',
+    label: 'Vectrust',
+    thirdPartyPlatform: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
+    apiKeyUrl: 'https://api.openai-next.com/console/token',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
     id: 'kilo',
     label: 'Kilo Gateway',
     baseUrl: 'https://ai-gateway.kilo.ai/api',

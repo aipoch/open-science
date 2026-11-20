@@ -32,6 +32,7 @@ export type OfficialVendorId =
   | 'cloudflare-ai-gateway'
   | 'aws-bedrock'
   | 'microsoft-foundry'
+  | 'vectrust'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -81,6 +82,7 @@ export type OfficialVendor = {
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
   readonly cloudProvider?: true
+  readonly thirdPartyPlatform?: true
   // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['messages']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['messages', 'chat-completions'].
