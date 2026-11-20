@@ -379,10 +379,18 @@ export const validateSessionRecords = (
   return records as unknown as readonly SessionBusinessRecord[]
 }
 
+// Estimate repeated indexing/copying work independently of unchanged payloads referenced by a row.
+const replayIndexWork = (entries: unknown): number =>
+  Array.isArray(entries) ? 64 * entries.length : 0
+const replayTextWork = (message: Record<string, unknown>): number =>
+  (typeof message.content === 'string' ? 3 * message.content.length : 0) +
+  replayIndexWork(message.eventIds)
+
 export const applySessionRecord = (
   document: JournalValue,
   record: SessionBusinessRecord,
-  visitJoinedText?: (text: string) => void
+  visitJoinedText?: (text: string) => void,
+  chargeReplayWork?: (units: number) => void
 ): JournalValue => {
   if (record.type === 'snapshot') return record.document
   if (!object(document) || document.version !== 2 || !object(document.session))
@@ -392,8 +400,10 @@ export const applySessionRecord = (
   if (record.type === 'assistant_text_received') {
     if (session.id !== record.sessionId || !object(graph))
       return fail('Assistant text event has no matching Session graph.')
+    chargeReplayWork?.(replayIndexWork(graph.messages) + replayIndexWork(session.messages))
     const messages = index(graph.messages)
     const before = messages?.get(record.messageId)
+    if (before) chargeReplayWork?.(replayTextWork(before))
     const projected = before && appendText(before, record, true, true)
     if (!messages || !before || !projected)
       return fail('Assistant text event does not match its streaming Message.')
@@ -411,6 +421,7 @@ export const applySessionRecord = (
       return fail('Assistant text event has an invalid compatibility projection.')
     const oldFlat = flat?.get(record.messageId)
     if (oldFlat) {
+      chargeReplayWork?.(replayTextWork(oldFlat))
       const projectedFlat = appendText(oldFlat, record, false, true)
       if (
         oldFlat.content !== before.content ||
@@ -471,6 +482,7 @@ export const applySessionRecord = (
   const [scope, field] = COLLECTIONS[record.collection]
   const owner = scope === 'session' ? session : graph
   if (!object(owner)) return fail('Session entity record has no graph owner.')
+  chargeReplayWork?.(replayIndexWork(owner[field]))
   const previous =
     owner[field] === undefined ? new Map<string, Record<string, unknown>>() : index(owner[field])
   if (!previous) return fail('Session entity collection has invalid or duplicate IDs.')

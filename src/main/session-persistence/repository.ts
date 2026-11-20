@@ -1237,7 +1237,19 @@ class SessionRepository {
   async loadSessionRecoverySnapshot(
     projectIdValue: string,
     sessionIdValue: string
-  ): Promise<SessionRecoverySnapshot> {
+  ): Promise<SessionRecoverySnapshot>
+  async loadSessionRecoverySnapshot(
+    projectIdValue: string,
+    sessionIdValue: string,
+    budget: { maxBytes: number; signal?: AbortSignal }
+  ): Promise<SessionRecoverySnapshot | { status: 'budget-exceeded' }>
+  async loadSessionRecoverySnapshot(
+    projectIdValue: string,
+    sessionIdValue: string,
+    budget?: { maxBytes: number; signal?: AbortSignal }
+  ): Promise<SessionRecoverySnapshot | { status: 'budget-exceeded' }> {
+    const check = (): void => budget?.signal?.throwIfAborted()
+    check()
     const projectId = assertSafeSegment(projectIdValue)
     const sessionId = assertSafeSegment(sessionIdValue)
     const boundary = await this.inspectActiveProjectBoundary(projectId)
@@ -1247,13 +1259,24 @@ class SessionRepository {
     const metrics = { sessionBytes: 0, authorityReadMs: 0, jsonParseMs: 0 }
     try {
       const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
-      if (entries.some((entry) => temporarySessionPrimaryName(entry.name) === fileName))
+      check()
+      if (
+        entries.some(
+          (entry) =>
+            temporarySessionPrimaryName(entry.name) === fileName ||
+            (budget && entry.name.startsWith(`${fileName}l.`) && entry.name.endsWith('.tmp'))
+        )
+      )
         return { status: 'repair-required' }
       const journalPath = sessionJournalPath(filePath)
-      if ((await this.inspectFileBoundary(journalPath)) === 'valid') {
+      const journalBoundary = await this.inspectFileBoundary(journalPath)
+      if (budget && journalBoundary === 'invalid') return { status: 'unreadable' }
+      if (journalBoundary === 'valid') {
         const readStartedAt = performance.now()
-        const current = await this.journal.read(filePath)
-        if (!current) return { status: 'repair-required' }
+        const current = await this.journal.read(filePath, budget)
+        check()
+        if (!current || (budget && current.format !== 'journal'))
+          return { status: 'repair-required' }
         metrics.authorityReadMs = performance.now() - readStartedAt
         metrics.sessionBytes = current.storageBytes
         const decoded = this.decodeSessionDocument(
@@ -1269,14 +1292,16 @@ class SessionRepository {
       const readStartedAt = performance.now()
       let contents: string
       try {
+        check()
         contents = await this.dependencies.readSessionFileWithinLimit(
           filePath,
-          this.dependencies.maxSessionBytes
+          Math.min(this.dependencies.maxSessionBytes, budget?.maxBytes ?? Infinity)
         )
       } finally {
         metrics.authorityReadMs = performance.now() - readStartedAt
       }
       const after = await lstat(filePath)
+      check()
       if (
         !after.isFile() ||
         after.isSymbolicLink() ||
@@ -1287,10 +1312,19 @@ class SessionRepository {
         before.ctimeMs !== after.ctimeMs
       )
         return { status: 'repair-required' }
+      if (budget && (await this.inspectFileBoundary(journalPath)) !== 'missing')
+        return { status: 'repair-required' }
+      check()
       const decoded = this.decodeSessionContents(filePath, projectId, contents, undefined, metrics)
       metrics.sessionBytes = decoded.bytes
       return { status: 'found', session: decoded.session, metrics }
-    } catch {
+    } catch (error) {
+      check()
+      if (
+        budget &&
+        (error instanceof DurableJsonReadLimitError || error instanceof SessionJournalSizeError)
+      )
+        return { status: 'budget-exceeded' }
       // Missing, malformed, or changing authority may have temp/quarantine evidence. Only the
       // guarded diagnostic reader can classify and repair it; never infer absence here.
       return { status: 'repair-required' }

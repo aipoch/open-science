@@ -70,6 +70,7 @@ describe('contextUsageMcpSections', () => {
       // dialect and recovery prerequisite instead of guessing from the host platform.
       // Scoped recovery keeps selectors and tool behavior here; failure-specific advice is dynamic.
       // Optional option pros/cons, their bounds and meaningful-trade-off guidance add ~130 tokens.
+      // The read-only Session history tool adds a bounded schema and replay guidance (~200 tokens).
       // Retain the existing guidance and bound the complete largest platform/framework variant.
       for (const { frameworkId, codexBridgeAliases } of frameworks) {
         const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
@@ -90,7 +91,7 @@ describe('contextUsageMcpSections', () => {
             tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${JSON.stringify(tools)}`),
             `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
           )
-          .toBeLessThanOrEqual(4_950)
+          .toBeLessThanOrEqual(5_150)
       }
     }
   )

@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  synchronizeActiveConversationActivities
+} from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  normalizeSessionFile,
+  SESSION_FILE_VERSION,
   type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
@@ -58,6 +63,137 @@ const renameRootFrame = (target: PersistedChatSession, frameId: string): void =>
 }
 
 describe('HostFramesService', () => {
+  it('reads receipts from a decoded legacy flat Session without changing its stored graph', async () => {
+    const target = session({
+      id: context.sessionId,
+      messages: [message('old-prompt', 'user', 100), message('current-prompt', 'user', 200)],
+      conversationGraph: undefined,
+      activities: [
+        {
+          id: 'old-receipt',
+          kind: 'tool',
+          title: 'Read document',
+          status: 'completed',
+          promptMessageId: 'old-prompt',
+          rawOutput: 'Saved receipt',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 110,
+          updatedAt: 110
+        }
+      ]
+    })
+    const decoded = normalizeSessionFile({ version: SESSION_FILE_VERSION, session: target })!
+    const graph = decoded.conversationGraph!
+    const turn = {
+      rootFrameId: graph.rootFrameId,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: graph.branches[0].id,
+      runtimeSegmentId: graph.runtimeSegments[0].id,
+      promptMessageId: 'current-prompt'
+    }
+    const service = new HostFramesService({
+      readProject: vi.fn(),
+      readSession: vi.fn(),
+      readHistorySnapshot: vi.fn(async () => ({ status: 'found' as const, session: decoded }))
+    })
+
+    expect(graph.activities).toEqual([])
+    await expect(service.toolHistory({}, context, turn)).resolves.toMatchObject({
+      totals: { activities: 1, withRawOutput: 1, withSavedOutput: 1 }
+    })
+    await expect(
+      service.toolHistory({ activityId: 'old-receipt' }, context, turn)
+    ).resolves.toMatchObject({ output: { text: 'Saved receipt', truncated: false } })
+    expect(graph.activities).toEqual([])
+
+    const flat = decoded.activities![0]
+    decoded.conversationGraph = synchronizeActiveConversationActivities(
+      graph,
+      [
+        { ...flat, id: 'graph-receipt', rawOutput: 'Authoritative graph receipt' },
+        { ...flat, id: 'current-graph', promptMessageId: 'current-prompt' }
+      ],
+      []
+    )
+    decoded.activities!.push(
+      { ...flat, id: 'graph-receipt', rawOutput: 'Stale flat copy' },
+      { ...flat, id: 'timestamp-only', promptMessageId: undefined },
+      { ...flat, id: 'current-flat', promptMessageId: undefined, createdAt: 200 },
+      { ...flat, id: 'other-flat', promptMessageId: 'another-prompt' }
+    )
+    await expect(service.toolHistory({}, context, turn)).resolves.toMatchObject({
+      totals: { activities: 3, withRawOutput: 3, withSavedOutput: 3 },
+      activities: [
+        { activityId: 'graph-receipt' },
+        { activityId: 'old-receipt' },
+        { activityId: 'timestamp-only' }
+      ]
+    })
+    await expect(
+      service.toolHistory({ activityId: 'graph-receipt' }, context, turn)
+    ).resolves.toMatchObject({ output: { text: 'Authoritative graph receipt' } })
+    expect(decoded.conversationGraph.activities.map(({ id }) => id)).toEqual([
+      'graph-receipt',
+      'current-graph'
+    ])
+
+    decoded.conversationGraph = graph
+    graph.branches.push({ ...graph.branches[0], id: 'non-active-branch' })
+    await expect(service.toolHistory({ activityId: 'old-receipt' }, context, turn)).rejects.toThrow(
+      'Activity not found'
+    )
+  })
+
+  it('admits one read per Session with a shared capacity and releases it on cancellation', async () => {
+    const controller = new AbortController()
+    const entered = Promise.withResolvers<void>()
+    const first = Promise.withResolvers<{ status: 'budget-exceeded' }>()
+    const second = Promise.withResolvers<{ status: 'repair-required' }>()
+    const readHistorySnapshot = vi
+      .fn<NonNullable<HostFramesRepository['readHistorySnapshot']>>()
+      .mockImplementationOnce(async (_projectId, _sessionId, { signal }) => {
+        entered.resolve()
+        signal?.addEventListener('abort', () => first.reject(signal.reason), { once: true })
+        return first.promise
+      })
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue({ status: 'budget-exceeded' })
+    const readSession = vi.fn()
+    const service = new HostFramesService({
+      readProject: vi.fn(),
+      readSession,
+      readHistorySnapshot
+    })
+    const turn = {
+      rootFrameId: 'frame',
+      agentFrameId: 'frame',
+      messageBranchId: 'branch',
+      runtimeSegmentId: 'runtime',
+      promptMessageId: 'prompt'
+    }
+    const active = service.toolHistory({}, context, turn, controller.signal)
+    await entered.promise
+    await expect(service.toolHistory({}, context, turn)).rejects.toThrow('busy')
+    const another = service.toolHistory({}, { ...context, sessionId: 'second' }, turn)
+    await expect(service.toolHistory({}, { ...context, sessionId: 'third' }, turn)).rejects.toThrow(
+      'busy'
+    )
+    expect(readHistorySnapshot).toHaveBeenCalledTimes(2)
+    expect(readHistorySnapshot).toHaveBeenNthCalledWith(1, context.projectId, context.sessionId, {
+      maxBytes: 16 * 1024 * 1024,
+      signal: controller.signal
+    })
+    const cancelled = expect(active).rejects.toThrow('turn cancelled')
+    controller.abort(new Error('turn cancelled'))
+    await cancelled
+    await expect(service.toolHistory({}, context, turn)).rejects.toThrow('read budget')
+    const unavailable = expect(another).rejects.toThrow('history was not scanned')
+    second.resolve({ status: 'repair-required' })
+    await unavailable
+    expect(readSession).not.toHaveBeenCalled()
+  })
+
   it('lists the current Project root Frame through the stable metadata projection', async () => {
     const readProject = vi.fn(async () => ({ sessions: [session()], isComplete: true }))
     const repository: HostFramesRepository = {

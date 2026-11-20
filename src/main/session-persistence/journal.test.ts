@@ -67,6 +67,112 @@ afterEach(async () => {
 })
 
 describe('simple Session JSONL persistence', () => {
+  it('stops a bounded cold replay at cancellation, without changing the journal', async () => {
+    const { path, store } = await fixture()
+    await write(store, path, 1)
+    await write(store, path, 2, 'history continued')
+    const target = sessionJournalPath(path)
+    const before = await readFile(target)
+    const split = before.indexOf(10) + 1
+    const controller = new AbortController()
+    const closed = vi.fn()
+    const continued = vi.fn()
+    const reader = new SessionJournalStore({
+      maxBytes: 1024 * 1024,
+      dependencies: {
+        readChunks: async function* () {
+          try {
+            yield before.subarray(0, split)
+            controller.abort(new Error('read cancelled'))
+            yield before.subarray(split)
+            continued()
+          } finally {
+            closed()
+          }
+        }
+      }
+    })
+
+    await expect(
+      reader.read(path, { maxBytes: 1024 * 1024, signal: controller.signal })
+    ).rejects.toThrow('read cancelled')
+    expect(closed).toHaveBeenCalledOnce()
+    expect(continued).not.toHaveBeenCalled()
+    expect(await readFile(target)).toEqual(before)
+  })
+
+  it('cancels a queued read before older I/O settles and preserves lane order', async () => {
+    const { path, store } = await fixture()
+    await write(store, path, 1)
+    const bytes = await readFile(sessionJournalPath(path))
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const reader = new SessionJournalStore({
+      maxBytes: 1024 * 1024,
+      dependencies: {
+        readChunks: async function* () {
+          entered.resolve()
+          await resume.promise
+          yield bytes
+        }
+      }
+    })
+    const head = reader.read(path)
+    await entered.promise
+    const controller = new AbortController()
+    const reason = new Error('turn ended while queued')
+    const cancelled = reader.read(path, { maxBytes: 1024, signal: controller.signal }).then(
+      () => 'completed',
+      (error: unknown) => error
+    )
+    const following = write(reader, path, 2, 'continued')
+    const afterWrite = reader.read(path)
+    controller.abort(reason)
+    const tick = new Promise<'still queued'>((resolve) => setImmediate(resolve, 'still queued'))
+    const result = await Promise.race([cancelled, tick])
+    const behindHead = await Promise.race([following, tick])
+    resume.resolve()
+
+    await expect(head).resolves.toMatchObject({ revision: 1 })
+    await expect(following).resolves.toMatchObject({ revision: 2 })
+    await expect(afterWrite).resolves.toMatchObject({ revision: 2 })
+    expect(result).toBe(reason)
+    expect(behindHead).toBe('still queued')
+  })
+
+  it('reads metadata updates cold without charging for retained message bodies', async () => {
+    const { path, store } = await fixture()
+    const budget = { maxBytes: 96 * 1024 }
+    const content = 'old note '.repeat(8_000)
+    for (let revision = 1; revision <= 52; revision++) {
+      const document = doc(revision, content)
+      await store.write(path, { document, expectedRevision: revision - 1 })
+    }
+    const before = await readFile(sessionJournalPath(path))
+    expect(before.length).toBeLessThan(budget.maxBytes)
+    const warmed = await store.read(path, budget)
+    expect(warmed?.revision).toBe(52)
+    await expect(fresh().read(path, budget)).resolves.toEqual(warmed)
+    expect(await readFile(sessionJournalPath(path))).toEqual(before)
+  })
+
+  it('still bounds repeated reconstruction of a large entity collection', async () => {
+    const { path, store } = await fixture()
+    const budget = { maxBytes: 48 * 1024 }
+    const messages = Array.from({ length: 1_000 }, (_, i) => ({ id: `m${i}`, content: '' }))
+    for (let revision = 1; revision <= 40; revision++) {
+      const document = doc(revision)
+      document.session.messages = [...messages]
+      document.session.messages[0] = { id: 'm0', content: `change ${revision}` }
+      await store.write(path, { document, expectedRevision: revision - 1 })
+    }
+    const before = await readFile(sessionJournalPath(path))
+    expect(before.length).toBeLessThan(budget.maxBytes)
+    await expect(fresh().read(path, budget)).rejects.toThrow(SessionJournalSizeError)
+    await expect(fresh().read(path)).resolves.toMatchObject({ revision: 40 })
+    expect(await readFile(sessionJournalPath(path))).toEqual(before)
+  })
+
   it('reads large UTF-8 lines across a reused chunk buffer and keeps an incomplete tail', async () => {
     const { path, store } = await fixture()
     const content = '汉字😀\\n'.repeat(12_000)

@@ -410,7 +410,9 @@ export async function composeNotebookBridge({
           readSession: (projectId, sessionId) =>
             sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
               mode: 'read-only'
-            })
+            }),
+          readHistorySnapshot: (projectId, sessionId, budget) =>
+            sessionRepository.loadSessionRecoverySnapshot(projectId, sessionId, budget)
         },
         resolveHostReferencedSession
       ),

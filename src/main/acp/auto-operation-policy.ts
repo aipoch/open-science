@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { createPlanDocumentV1, generatePlanContentSchema } from '../../shared/session-plan/contract'
 import { NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
+import { sessionToolHistorySchema } from '../notebook/session-tool-history'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
 import { generatePlanToolSchema } from '../session-plan/plan-mcp-server'
 
@@ -17,6 +18,7 @@ export const IMAGE_MCP_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
 export const APP_AUTO_OPERATION_IDENTITIES: ReadonlySet<string> = new Set([
   ...IMAGE_MCP_TOOL_IDENTITIES,
   'open-science-notebook/background_run',
+  'open-science-notebook/session_tool_history',
   'open-science-notebook/manage_environments',
   'open-science-plan/generate_plan',
   'open-science-skills/request_skill_import'
@@ -44,6 +46,10 @@ export const classifyAppAutoOperation = (
     return { kind: 'allow_once', reason: 'image_mcp_auto' }
   }
   switch (trustedIdentity) {
+    case 'open-science-notebook/session_tool_history':
+      return sessionToolHistorySchema.safeParse(input).success
+        ? { kind: 'allow_once', reason: 'read_saved_session_tool_history' }
+        : legacy
     case 'open-science-notebook/background_run': {
       const parsed = backgroundRunSchema.safeParse(input)
       if (!parsed.success) return legacy

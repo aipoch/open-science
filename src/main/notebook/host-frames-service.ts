@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import {
+  createLinearConversationGraph,
   resolveMessageBranchPath,
   type PersistedAgentFrame,
   type PersistedConversationGraph,
@@ -8,8 +9,10 @@ import {
 } from '../../shared/conversation-graph'
 import { sanitizeExportMarkdown } from '../../shared/conversation-export'
 import { fuzzyScore } from '../../shared/fuzzy-match'
+import type { NotebookRunProvenanceContext } from '../../shared/notebook'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import { isRecord } from '../value-guards'
+import { readSessionToolHistory, sessionToolHistorySchema } from './session-tool-history'
 
 type HostFrameReadContext = Readonly<{ projectId: string; sessionId: string }>
 
@@ -24,6 +27,11 @@ type HostFramesRepository = {
     isComplete: boolean
   }>
   readSession(projectId: string, sessionId: string): Promise<HostFramesSessionDiagnostic>
+  readHistorySnapshot?(
+    projectId: string,
+    sessionId: string,
+    budget: { maxBytes: number; signal?: AbortSignal }
+  ): Promise<HostFramesSessionDiagnostic | { status: 'repair-required' | 'budget-exceeded' }>
 }
 
 type HostFramesReferencedSessionResolver = (
@@ -378,11 +386,65 @@ const frameProjection = (
   child_count: graph.frames.filter((candidate) => candidate.parentFrameId === frame.id).length
 })
 
+const MAX_HISTORY_SNAPSHOT_BYTES = 16 * 1024 * 1024
+const MAX_CONCURRENT_HISTORY_READS = 2
+
 class HostFramesService {
+  private readonly historyReads = new Set<string>()
+
   constructor(
     private readonly repository: HostFramesRepository,
     private readonly resolveReferencedSession?: HostFramesReferencedSessionResolver
   ) {}
+
+  async toolHistory(
+    input: unknown,
+    context: HostFrameReadContext,
+    turn: NotebookRunProvenanceContext,
+    signal?: AbortSignal
+  ): Promise<unknown> {
+    const query = sessionToolHistorySchema.parse(input)
+    signal?.throwIfAborted()
+    if (!this.repository.readHistorySnapshot) throw new Error('Saved tool history is unavailable.')
+    const key = JSON.stringify([context.projectId, context.sessionId])
+    if (this.historyReads.has(key) || this.historyReads.size >= MAX_CONCURRENT_HISTORY_READS)
+      throw new Error('Saved tool history is busy. Wait for the active read before retrying.')
+
+    this.historyReads.add(key)
+    try {
+      const result = await this.repository.readHistorySnapshot(
+        context.projectId,
+        context.sessionId,
+        {
+          maxBytes: MAX_HISTORY_SNAPSHOT_BYTES,
+          signal
+        }
+      )
+      signal?.throwIfAborted()
+      if (result.status === 'budget-exceeded')
+        throw new Error('Saved tool history exceeds the read budget; history was not scanned.')
+      if (result.status === 'repair-required')
+        throw new Error('A stable saved Session is unavailable; history was not scanned.')
+      if (
+        result.status !== 'found' ||
+        result.session.id !== context.sessionId ||
+        result.session.projectId !== context.projectId
+      )
+        throw new Error('The current saved Session is unavailable.')
+      const session = result.session
+      const conversationGraph =
+        session.conversationGraph ??
+        createLinearConversationGraph({
+          sessionId: session.id,
+          messages: session.messages,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt
+        })
+      return readSessionToolHistory({ ...session, conversationGraph }, turn, query)
+    } finally {
+      this.historyReads.delete(key)
+    }
+  }
 
   async list(options: unknown, context: HostFrameReadContext): Promise<unknown> {
     const normalized = normalizeListOptions(options)

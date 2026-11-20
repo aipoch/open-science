@@ -125,6 +125,88 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('binds saved tool history to the live Main turn and discards late responses', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      repository: new NotebookRunRepository(root)
+    })
+    const entered = createDeferred()
+    const release = createDeferred()
+    const toolHistory = vi.fn(async (_input, _scope, _turn, signal: AbortSignal) => {
+      entered.resolve()
+      await release.promise
+      signal.throwIfAborted()
+      return { resultFromHistory: 'saved' }
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'server-token',
+      hostFrames: { toolHistory, list: vi.fn(), get: vi.fn() }
+    })
+    const connection = await server.ensureStarted()
+    const request = (token: string): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'sessionToolHistory',
+          params: {
+            sessionId: 'other-session',
+            projectId: 'other-project',
+            workspaceCwd: '/other',
+            limit: 1
+          }
+        })
+      })
+    const turn = {
+      ownerExecutionId: 'turn',
+      projectId: 'project',
+      provenanceContext: {
+        rootFrameId: 'durable-import-frame',
+        agentFrameId: 'durable-import-frame',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'runtime',
+        promptMessageId: 'prompt'
+      }
+    }
+    const control = await server.issueControlConnection('copy', 'project', 'root-frame-copy')
+    const main = await server.issueSessionConnection('copy', 'project', 'root-frame-copy')
+    try {
+      expect((await request(main.token)).status).toBe(403)
+      server.setArtifactTurnBinding('copy', turn)
+      expect((await request('server-token')).status).toBe(403)
+      expect((await request(control.token)).status).toBe(403)
+      expect(toolHistory).not.toHaveBeenCalled()
+      const refreshed = await server.issueSessionConnection('copy', 'project', 'root-frame-copy')
+      const response = request(refreshed.token)
+      await entered.promise
+      expect(toolHistory).toHaveBeenCalledWith(
+        { limit: 1 },
+        { projectId: 'project', sessionId: 'copy' },
+        turn.provenanceContext,
+        expect.any(AbortSignal)
+      )
+      await server.clearArtifactTurnBinding('copy', turn.ownerExecutionId)
+      expect(toolHistory.mock.calls[0][3].aborted).toBe(true)
+      release.resolve()
+      expect((await response).status).toBe(403)
+      server.setArtifactTurnBinding('copy', { ...turn, ownerExecutionId: 'turn-2' })
+      expect(await (await request(refreshed.token)).json()).toEqual({
+        result: { resultFromHistory: 'saved' }
+      })
+    } finally {
+      release.resolve()
+      main.release?.()
+      control.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
   it('activates the installed connection only for its current first-send owner', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({

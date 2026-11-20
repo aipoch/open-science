@@ -48,6 +48,12 @@ const context: PermissionPolicyContext = {
 }
 const cases = [
   [
+    'open-science-notebook/session_tool_history',
+    { activityId: 'local-id' },
+    'allow_once',
+    'read_saved_session_tool_history'
+  ],
+  [
     'open-science-notebook/background_run',
     { action: 'query', runId: 'run' },
     'allow_once',
@@ -128,6 +134,8 @@ describe('Auto operation policy through the public permission entry', () => {
   )
 
   it.each([
+    ['open-science-notebook/session_tool_history', { sessionId: 'another-session' }],
+    ['open-science-notebook/session_tool_history', { activityId: 'id', search: 'mixed' }],
     ['open-science-notebook/background_run', { action: 'start', runId: 'run' }],
     ['open-science-notebook/background_run', { action: 'query' }],
     ['open-science-notebook/background_run', { action: 'query', runId: 1 }],

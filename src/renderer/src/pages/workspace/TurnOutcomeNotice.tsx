@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { TurnOutcome } from '../../../../shared/session-persistence'
 import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import { presentTurnOutcomeFailure } from '@/lib/composer-notice/turn-outcome-failure'
 
 type TurnOutcomeActions = {
   artifactRetryingPromptMessageId?: string
@@ -23,13 +24,6 @@ const TurnOutcomeNotice = ({
   actions: TurnOutcomeActions
 }): React.JSX.Element | null => {
   if (outcome.kind !== 'failed') return null
-  const failure = {
-    ...(outcome.failure ?? { category: 'internal' as const }),
-    diagnostics: {
-      ...outcome.failure?.diagnostics,
-      raw: outcome.failure?.diagnostics.raw ?? outcome.error
-    }
-  }
   return (
     <div data-slot="turn-outcome-notice" data-prompt-message-id={promptMessageId}>
       <ComposerNoticeSlot
@@ -38,7 +32,7 @@ const TurnOutcomeNotice = ({
             id: promptMessageId,
             source: 'turn',
             occurredAt: outcome.settledAt,
-            failure,
+            failure: presentTurnOutcomeFailure(outcome),
             promptMessageId,
             recovery: outcome.recovery
           }

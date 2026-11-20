@@ -60,6 +60,7 @@ const registrations: Record<
   'web/mcp-server.ts:WEB_SEARCH_TOOL_NAME': 'host_web'
 }
 const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'operations'> = {
+  session_tool_history: 'operations',
   ask_user_question: 'inner_authorization',
   notebook_execute: 'legacy',
   background_run: 'operations',
@@ -204,9 +205,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
+        // Saved history is bounded and read-only, scoped to the authenticated active Main turn.
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
         'notebook/mcp-server.ts':
-          '0774ab4a833ec59e3d416f3d1d9d414ee0b95afd3858e8dd9a306afe58cc9acc',
+          '3034e1aef4ac75124b6f983c0f3cd570bcc2490f35932a782385e25422d37e1e',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
@@ -226,7 +228,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         ask_user_question: '7c4a9484087130798fec4a767b43804bed689aceceaa250db53ef79d6c09f003',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
-        request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf'
+        request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf',
+        session_tool_history: '1b1b4673e297c1d6768d2b0a1fad0250581c42df31679eed39c239235d7ad201'
       },
       sharedContracts: {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
