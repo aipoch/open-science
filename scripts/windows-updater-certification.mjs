@@ -7,6 +7,7 @@ import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from
 import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
@@ -528,6 +529,7 @@ const runElectronUpdater = async ({
   expectedVersion,
   expectedInstaller,
   onDownloaded,
+  transferMetrics,
   beforeApply,
   coldLaunch,
   ownedAgentFixture,
@@ -630,6 +632,7 @@ const runElectronUpdater = async ({
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
+    let admission
     if (coldLaunch) {
       // CI can start the desktop without a foreground HWND. The product admission rule is
       // lack of focus. Use the actual tray action only when a foreground window needs hiding.
@@ -651,12 +654,36 @@ const runElectronUpdater = async ({
         { env }
       )
       console.log('Windows connection cost at download admission:', connection.stdout.trim())
+      const cost = JSON.parse(connection.stdout)
+      admission =
+        cost.NetworkCostType === 1 &&
+        !cost.Roaming &&
+        !cost.OverDataLimit &&
+        !cost.ApproachingDataLimit &&
+        !cost.BackgroundDataUsageRestricted
+          ? 'unrestricted'
+          : 'restricted-or-unknown'
       if (await page.evaluate(() => document.hasFocus())) {
         await page.evaluate(async () => {
           await window.api.settings.setClosePreference({ preference: 'minimize' })
           await window.api.window.close()
         })
-        await page.waitForFunction(() => !document.hasFocus())
+      }
+      if (admission === 'restricted-or-unknown') {
+        // Hosted Windows Server commonly reports Unknown. Observe a full admission interval,
+        // then exercise the real user's Download action to certify preparation and cold launch.
+        await delay(65_000)
+        const status = await page.evaluate(() => window.api.update.getStatus())
+        if (
+          status.state !== 'available' ||
+          transferMetrics.blockmapRequests ||
+          transferMetrics.downloadedInstallerBytes
+        )
+          throw new Error(
+            'An ineligible connection started a background transfer: ' +
+              JSON.stringify(transferMetrics)
+          )
+        await invoke('download')
       }
     }
     await waitFor(
@@ -700,7 +727,11 @@ const runElectronUpdater = async ({
       })
       const code = await waitForShutdownExit(exit, child, diagnosticOutput)
       if (code !== 0) throw new Error(`Normal desktop quit failed (${code})`)
-      return { normalQuit: true }
+      return {
+        normalQuit: true,
+        admission,
+        downloadInitiator: admission === 'unrestricted' ? 'scheduler' : 'manual'
+      }
     }
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
@@ -1017,6 +1048,7 @@ const main = async () => {
         basename(currentInstaller)
       ),
       onDownloaded: persistObservation,
+      transferMetrics: assetServer.metrics,
       coldLaunch: options.coldLaunch,
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
