@@ -440,13 +440,14 @@ tests. Commit `45e1cc2f3` passed 2,824 CLI, MCP, and service regression tests ac
 A focused rerun passed 314 tests across six suites, including the updated command wiring,
 Fork publication fixture, Desktop-only continuation inventory, and Notebook tool review guard.
 The guard review confirmed that the tool text changes do not change schemas, dispatch, or
-authorization. Changes after the preview build below only touch tests and documentation.
+authorization. The preview below exercised the same CLI and MCP package operations.
 
 The first upstream Windows Core and Ubuntu host checks found the same Desktop Fork test failure:
 the Notebook execution fence does a separate Owner lookup while the source is reserved. The
 test now checks the actual Archive and persistence reservations once each and verifies their
 release. The failure reproduced locally before the change, and the three package lifecycle and
 export suites passed 37 tests afterward (three Windows-only cases skipped on macOS).
+The same fix passed Windows Core and the previously failing Ubuntu shard on upstream CI.
 
 The full macOS run started before these test fixes and reported 143,412 passing tests. All six
 integration failures passed on the focused reruns above. The other 64 failures and two
@@ -455,6 +456,11 @@ path, and the two Python suites picked up the system Python 3.9 shim. The three 
 160 tests on the candidate with a canonical `TMPDIR` and test-only interpreter overrides
 (`OPEN_SCIENCE_TEST_PY_ENV` and `PYTHON`) pointing to the existing Python 3.12.16. These are
 separate runs; the first full run was not green.
+
+The Windows updater occupancy check separately hit the five-second PowerShell boot identity
+deadline on two hosted runs. The CLI case in the same job still passed. The asynchronous probe
+now allows up to 12 seconds for the same kernel query. A timeout or invalid identity still
+blocks update recovery; the test continues to require a real identity for both launchers.
 
 A Linux arm64 preview was built from `bde5ca99bcab6509a0f86e387c42bdb4fddcc805`. The npm install
 check passed; the CLI and native archives had SHA-256

@@ -55,7 +55,8 @@ export function prefetchSystemBootIdentity(): Promise<string> {
     execFile(
       resolveWindowsPowerShellExecutable(),
       WINDOWS_POWERSHELL_ARGS,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true },
+      // Add-Type can take several seconds to compile the probe on a cold Windows host.
+      { encoding: 'utf8', timeout: 12_000, windowsHide: true },
       (error, stdout) => {
         if (error) return reject(bootIdentityUnavailable('PowerShell query failed', error))
         try {
