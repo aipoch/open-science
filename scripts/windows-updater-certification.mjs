@@ -512,11 +512,9 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
     const { current } = await page.evaluate(() => window.api.update.getStatus())
     if (current !== expectedVersion)
       throw new Error(`Shortcut opened ${current}, expected ${expectedVersion}`)
-    const closed = browser.waitForEvent('disconnected', { timeout: 60_000 })
     await page.evaluate(() => {
       void window.api.databaseStartup.quit()
     })
-    await closed
     await waitForInstalledApplicationsToExit(installDirectory, env)
   } finally {
     await browser.close()
