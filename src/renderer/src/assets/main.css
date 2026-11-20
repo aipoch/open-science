@@ -450,6 +450,28 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   padding: 2rem 2.5rem 1.5rem;
 }
 
+.onboarding-quick-connect {
+  --connect-inset: 2.5rem;
+  height: min(760px, calc(100svh - 1.5rem));
+}
+.onboarding-quick-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.onboarding-quick-scroll {
+  flex: 1;
+  min-height: 0;
+  margin-inline: calc(-1 * var(--connect-inset));
+  padding-inline: var(--connect-inset);
+  padding-bottom: 0.25rem;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.onboarding-quick-footer {
+  flex: none;
+}
 .onboarding-quick-header {
   display: flex;
   align-items: flex-start;
@@ -1111,6 +1133,9 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   .onboarding-ring-convergence {
     width: 8rem;
     height: 4.5rem;
+  }
+  .onboarding-quick-connect {
+    --connect-inset: 1.15rem;
   }
   .onboarding-provider-viewport {
     margin-left: -1.15rem;
