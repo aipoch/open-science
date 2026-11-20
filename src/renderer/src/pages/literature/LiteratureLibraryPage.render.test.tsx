@@ -3498,6 +3498,116 @@ describe('LiteratureLibraryPage', () => {
     expect(within(dialog).getByText('100 selected')).toBeTruthy()
   })
 
+  it.each(
+    (['collection', 'comparison', 'selection', 'page', 'comparison round trip'] as const).flatMap(
+      (change) => (['success', 'failure'] as const).map((outcome) => ({ change, outcome }))
+    )
+  )(
+    'ignores a stale comparison selection $outcome after a $change change',
+    async ({ change, outcome }) => {
+      const records = Array.from({ length: 26 }, (_, index) => createLibraryItem(index))
+      const membership = Promise.withResolvers<{ entries: []; itemIds: string[] }>()
+      const collection = {
+        id: 'other-collection',
+        name: 'Other collection',
+        itemCount: 1,
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const table: ComparisonTable = {
+        id: 'other-comparison',
+        name: 'Other comparison',
+        language: 'en',
+        sourcePolicy: 'abstract',
+        revision: 1,
+        fields: [{ id: 'population', name: 'Population', rule: 'Report N', version: 1 }],
+        members: [],
+        itemIds: [],
+        cells: [],
+        state: 'idle',
+        remainingCellIds: []
+      }
+      vi.mocked(window.api.literature.comparisons).mockResolvedValue({ tables: [table] })
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections') return { entries: [collection] }
+        if (request.scope !== 'library') return { entries: [] }
+        if (request.allItemIds) return membership.promise
+        if (request.collectionId) return { entries: [records[0]], totalCount: 1 }
+        const offset = request.offset ?? 0
+        return {
+          entries: records.slice(offset, offset + 25),
+          totalCount: records.length,
+          ...(offset === 0 ? { nextOffset: 25 } : {})
+        }
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Reference 0')
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+      fireEvent.click(await selectionButton('Create comparison table'))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ allItemIds: true }))
+      )
+
+      if (change === 'collection') {
+        fireEvent.click(await screen.findByRole('button', { name: collection.name }))
+        await screen.findByRole('heading', { name: collection.name })
+      } else if (change === 'comparison' || change === 'comparison round trip') {
+        fireEvent.click(await screen.findByRole('button', { name: table.name }))
+        await screen.findByRole('region', { name: 'Comparison tables' })
+        if (change === 'comparison round trip') {
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          await screen.findByRole('heading', { name: 'All references' })
+        }
+      } else if (change === 'selection') {
+        fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+        await screen.findByText('Reference 25')
+      }
+
+      await act(async () => {
+        if (outcome === 'failure') membership.reject(new Error('old membership unavailable'))
+        else membership.resolve({ entries: [], itemIds: records.map(({ id }) => id) })
+      })
+      expect(screen.queryByRole('dialog', { name: 'Create comparison table' })).toBeNull()
+      expect(screen.queryByText('Comparison table could not be saved.')).toBeNull()
+    }
+  )
+
+  it('keeps a newer comparison selection usable when an older matching read finishes', async () => {
+    const records = Array.from({ length: 26 }, (_, index) => createLibraryItem(index))
+    const membership = Promise.withResolvers<{ entries: []; itemIds: string[] }>()
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'library') return { entries: [] }
+      if (request.allItemIds) return membership.promise
+      return { entries: records.slice(0, 25), totalCount: 26, nextOffset: 25 }
+    })
+    get.mockResolvedValue(records[0])
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByText('Reference 0')
+    fireEvent.click(screen.getByLabelText('Select all references'))
+    fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+    fireEvent.click(await selectionButton('Create comparison table'))
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ allItemIds: true }))
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Reference 0' }))
+    fireEvent.click(await selectionButton('Create comparison table'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create comparison table' })
+    expect(within(dialog).getByText('1 selected')).toBeTruthy()
+    await act(async () => {
+      membership.resolve({ entries: [], itemIds: records.map(({ id }) => id) })
+    })
+    expect(screen.getByRole('dialog', { name: 'Create comparison table' })).toBe(dialog)
+    expect(within(dialog).getByText('1 selected')).toBeTruthy()
+    expect(within(dialog).queryByText('26 selected')).toBeNull()
+  })
+
   it('starts sidebar comparison creation by choosing references without changing the current view', async () => {
     get.mockResolvedValue(libraryItem)
     search.mockImplementation((request: { scope: string }) =>

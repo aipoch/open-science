@@ -118,6 +118,23 @@ function page(
   )
   return command
 }
+
+function paginatedFixture(): ComparisonTable {
+  const table = fixture()
+  for (let index = 1; index < 28; index++) {
+    const itemId = `paper-${index}`
+    table.itemIds.push(itemId)
+    table.members.push({ ...table.members[0], itemId, title: `Paper ${index + 1}` })
+    table.cells.push({
+      ...table.cells[0],
+      itemId,
+      id: `cell-${index}`,
+      history: [{ ...table.cells[0].history[0], value: `Value ${index + 1}` }]
+    })
+  }
+  return table
+}
+
 describe('comparison workflow', () => {
   it.each(['configure', 'export'] as const)(
     'defers a requested %s until a pending command settles, then opens it only once',
@@ -1678,6 +1695,101 @@ describe('comparison workflow', () => {
     ).toBe(true)
   })
 
+  it('preserves cross-page matrix selections for samples and column reruns while page selection affects only its page', async () => {
+    const table = paginatedFixture()
+    const command = page(
+      table,
+      vi.fn(async (request: ComparisonRequest) => ({
+        tables: [table],
+        ...(request.action === 'check-sources'
+          ? {
+              sourceChecks: request.itemIds!.map((itemId) => ({
+                itemId,
+                sourceKey: 'source',
+                status: 'available' as const
+              }))
+            }
+          : {})
+      }))
+    )
+    const matrix = screen.getByRole('table', { name: 'Comparison matrix' })
+    const rowSelection = (title: string): HTMLInputElement =>
+      within(within(matrix).getByRole('rowheader', { name: title }).closest('tr')!).getByRole(
+        'checkbox'
+      ) as HTMLInputElement
+    const pageSelection = (): HTMLInputElement =>
+      within(matrix).getByRole('checkbox', { name: 'Select all references' }) as HTMLInputElement
+    fireEvent.click(rowSelection('Paper'))
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    fireEvent.click(rowSelection('Paper 28'))
+    expect(pageSelection().indeterminate).toBe(true)
+    fireEvent.click(pageSelection())
+    expect(pageSelection().checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(rowSelection('Paper').checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    fireEvent.click(pageSelection())
+    expect(pageSelection().checked).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(rowSelection('Paper').checked).toBe(true)
+    expect(rowSelection('Paper 2').checked).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    fireEvent.click(rowSelection('Paper 28'))
+    fireEvent.click(screen.getByRole('button', { name: 'Use selection as sample' }))
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith({
+        action: 'set-sample',
+        tableId: table.id,
+        itemIds: ['paper', 'paper-27']
+      })
+    )
+    await waitFor(() => expect(rowSelection('Paper 28').checked).toBe(false))
+    fireEvent.click(rowSelection('Paper 28'))
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
+    fireEvent.click(rowSelection('Paper'))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Re-extract a column' }), {
+      key: 'ArrowDown'
+    })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Population' }))
+    const start = await screen.findByRole('button', { name: 'Confirm and start' })
+    await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(start)
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'rerun-field',
+          fieldId: 'field',
+          itemIds: ['paper', 'paper-27']
+        })
+      )
+    )
+  })
+
+  it('preserves cross-page row selection through keyboard paging and still clears it when filters or search change', async () => {
+    page(paginatedFixture())
+    const matrix = screen.getByRole('table', { name: 'Comparison matrix' })
+    const firstRowSelection = (): HTMLInputElement =>
+      within(within(matrix).getByRole('rowheader', { name: 'Paper' }).closest('tr')!).getByRole(
+        'checkbox'
+      ) as HTMLInputElement
+    fireEvent.click(firstRowSelection())
+    fireEvent.keyDown(screen.getByRole('button', { name: /Value 25/ }), { key: 'ArrowDown' })
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Value 26/ }))
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(firstRowSelection().checked).toBe(true)
+    chooseOption(screen.getByRole('combobox', { name: 'References per page' }), '50')
+    expect(firstRowSelection().checked).toBe(true)
+    selectFilter('review')
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull()
+    fireEvent.click(within(matrix).getAllByRole('checkbox', { name: 'Select {{title}}' })[0])
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search titles and results' }), {
+      target: { value: 'Paper' }
+    })
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull()
+  })
+
   it('searches titles and displayed values across pages and intersects the status filter', async () => {
     const table = fixture()
     for (let i = 1; i <= 28; i++) {
@@ -3048,6 +3160,103 @@ describe('comparison workflow', () => {
       )
     }
   )
+
+  it.each(['full-text', 'passages'] as const)(
+    'opens every %s quotation on its own recorded PDF page, including history and unpaged evidence',
+    (coverage) => {
+      const table = fixture()
+      const old = table.cells[0].history[0]
+      old.coverage = coverage
+      old.attachmentVersionId = 'old-pdf'
+      old.evidence = [
+        { quote: 'Historical first quotation', pageStart: 3, pageEnd: 3 },
+        { quote: 'Historical later quotation', pageStart: 8, pageEnd: 9 }
+      ]
+      table.cells[0].history.push({
+        ...old,
+        id: 'latest',
+        attachmentVersionId: 'latest-pdf',
+        evidence: [
+          { quote: 'Latest first quotation', pageStart: 7, pageEnd: 7 },
+          { quote: 'Latest later quotation', pageStart: 19, pageEnd: 20 },
+          { quote: 'Unpaged quotation', pageStart: null, pageEnd: null }
+        ]
+      })
+      const onOpenItem = vi.fn()
+      render(
+        <ComparisonCellReview
+          tableId={table.id}
+          cell={table.cells[0]}
+          field={table.fields[0]}
+          sourceKey="source"
+          command={vi.fn()}
+          onClose={vi.fn()}
+          onOpenItem={onOpenItem}
+        />
+      )
+      const openQuotation = (quote: string): void => {
+        const quotation = screen.getByText(quote).closest('blockquote')!
+        fireEvent.click(within(quotation).getByRole('button', { name: 'Open source page' }))
+      }
+      openQuotation('Latest later quotation')
+      expect(onOpenItem).toHaveBeenLastCalledWith({
+        kind: 'document',
+        itemId: 'paper',
+        attachmentVersionId: 'latest-pdf',
+        page: 19
+      })
+      openQuotation('Latest first quotation')
+      expect(onOpenItem).toHaveBeenLastCalledWith({
+        kind: 'document',
+        itemId: 'paper',
+        attachmentVersionId: 'latest-pdf',
+        page: 7
+      })
+      openQuotation('Unpaged quotation')
+      expect(onOpenItem).toHaveBeenLastCalledWith({
+        kind: 'document',
+        itemId: 'paper',
+        attachmentVersionId: 'latest-pdf',
+        page: undefined
+      })
+      fireEvent.click(screen.getByText(/Machine history/))
+      openQuotation('Historical later quotation')
+      expect(onOpenItem).toHaveBeenLastCalledWith({
+        kind: 'document',
+        itemId: 'paper',
+        attachmentVersionId: 'old-pdf',
+        page: 8
+      })
+    }
+  )
+
+  it('keeps a PDF source link when an attempt contains no quotations', () => {
+    const table = fixture()
+    Object.assign(table.cells[0].history[0], {
+      coverage: 'full-text',
+      attachmentVersionId: 'recorded-version',
+      evidence: []
+    })
+    const onOpenItem = vi.fn()
+    render(
+      <ComparisonCellReview
+        tableId={table.id}
+        cell={table.cells[0]}
+        field={table.fields[0]}
+        sourceKey="source"
+        command={vi.fn()}
+        onClose={vi.fn()}
+        onOpenItem={onOpenItem}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Open source page' }))
+    expect(onOpenItem).toHaveBeenCalledWith({
+      kind: 'document',
+      itemId: 'paper',
+      attachmentVersionId: 'recorded-version',
+      page: undefined
+    })
+  })
   it('labels legacy full-text evidence as a reference when no attachment version was recorded', () => {
     const table = fixture()
     table.cells[0].history[0].coverage = 'full-text'

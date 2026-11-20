@@ -157,6 +157,7 @@ let fakePdf: {
   vector?: boolean
 }
 type FakePdfDocument = {
+  destroy: () => Promise<void>
   promise: Promise<{
     numPages: number
     getPage: (pageNumber: number) => Promise<{
@@ -170,6 +171,7 @@ type FakePdfDocument = {
   }>
 }
 const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(() => ({
+  destroy: async () => {},
   promise: Promise.resolve({
     numPages: fakePdf.numPages,
     getPage: async (pageNumber: number) => ({
@@ -704,6 +706,115 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
+  it('cancels a blocked byte source without constructing a parser or publishing late bytes', async () => {
+    const controller = new AbortController()
+    let release!: (bytes: Uint8Array) => void
+    const bytes = new Promise<Uint8Array>((resolve) => {
+      release = resolve
+    })
+    const readBytes = vi.fn(() => bytes)
+    const pending = extractPdfText(
+      'leased.pdf',
+      { size: 10, readBytes },
+      { signal: controller.signal }
+    )
+    const rejected = expect(pending).rejects.toThrow('cancel bytes')
+    await vi.waitFor(() => expect(readBytes).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel bytes'))
+    await rejected
+    expect(getDocument).not.toHaveBeenCalled()
+    release(Buffer.from('%PDF-1.4 late'))
+    await Promise.resolve()
+    expect(getDocument).not.toHaveBeenCalled()
+  })
+
+  it('destroys an active parser and releases its slot when page text never settles', async () => {
+    const path = join(root, 'cancel-parser.pdf')
+    await writeFile(path, Buffer.from('%PDF-1.4 fake'))
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pageRead = vi.fn(() => blocked)
+    beforePdfPageRead = pageRead
+    const controller = new AbortController()
+    const pending = extractPdfText(path, undefined, { signal: controller.signal })
+    const rejected = expect(pending).rejects.toThrow('cancel parser')
+    await vi.waitFor(() => expect(pageRead).toHaveBeenCalledOnce())
+    const document = await getDocument.mock.results[0].value.promise
+    const destroy = vi.spyOn(document, 'destroy')
+    controller.abort(new Error('cancel parser'))
+    await rejected
+    expect(destroy).toHaveBeenCalledOnce()
+    beforePdfPageRead = undefined
+    await expect(extractPdfText(path)).resolves.toMatchObject({ pageCount: 2 })
+    release()
+    await Promise.resolve()
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('destroys a loading task when cancellation arrives before its document resolves', async () => {
+    const path = join(root, 'cancel-loading.pdf')
+    await writeFile(path, Buffer.from('%PDF-1.4 fake'))
+    const destroy = vi.fn(async () => {})
+    getDocument.mockReturnValueOnce({ promise: new Promise(() => {}), destroy })
+    const controller = new AbortController()
+    const pending = extractPdfText(path, undefined, { signal: controller.signal })
+    const rejected = expect(pending).rejects.toThrow('cancel loading')
+    await vi.waitFor(() => expect(getDocument).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel loading'))
+    await rejected
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('closes OCR once when cancellation races final parser cleanup', async () => {
+    const path = join(root, 'cancel-ocr.pdf')
+    await writeFile(path, Buffer.from('%PDF-1.4 fake'))
+    fakePdf = { numPages: 2, pages: [[], []], raster: true }
+    const recognize = vi.fn(() => new Promise<string>(() => {}))
+    const close = vi.fn(async () => {})
+    const controller = new AbortController()
+    const pending = extractPdfText(path, undefined, {
+      signal: controller.signal,
+      ocr: true,
+      createOcrSession: () => ({ recognize, close })
+    })
+    const rejected = expect(pending).rejects.toThrow('cancel OCR')
+    await vi.waitFor(() => expect(recognize).toHaveBeenCalledOnce())
+    const document = await getDocument.mock.results[0].value.promise
+    const destroy = vi.spyOn(document, 'destroy')
+    controller.abort(new Error('cancel OCR'))
+    await rejected
+    expect(close).toHaveBeenCalledOnce()
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('removes cancelled queued extraction without starving the next reader', async () => {
+    const path = join(root, 'queued.pdf')
+    await writeFile(path, Buffer.from('%PDF-1.4 fake'))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = vi.fn(() => gate)
+    beforePdfPageRead = started
+    const running = Array.from({ length: MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS }, () =>
+      extractPdfText(path)
+    )
+    await vi.waitFor(() =>
+      expect(started).toHaveBeenCalledTimes(MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS)
+    )
+    const controller = new AbortController()
+    const cancelled = extractPdfText(path, undefined, { signal: controller.signal })
+    const rejected = expect(cancelled).rejects.toThrow('cancel queued')
+    const next = extractPdfText(path)
+    controller.abort(new Error('cancel queued'))
+    await rejected
+    release()
+    await Promise.all([...running, next])
+    expect(getDocument).toHaveBeenCalledTimes(MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS + 1)
+  })
+
   it.each([false, true])(
     'automatically orders ragged columns in both ordinary and targeted extraction, ignoring legacy regions (ocr=%s)',
     async (ocr) => {

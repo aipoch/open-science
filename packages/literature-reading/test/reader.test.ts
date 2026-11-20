@@ -31,6 +31,126 @@ function setup(text: string) {
   const authorize = vi.fn(async () => extract)
   return { index, extract, authorize, reader: new LiteratureReader({ index, authorize }) }
 }
+const deferred = <T>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+it('cancels one shared reader without aborting another consumer or evicting its cache', async () => {
+  const gate = deferred<{ text: string; pageCount: number; truncated: boolean }>()
+  let extractionSignal!: AbortSignal
+  const extract = vi.fn(async (signal?: AbortSignal) => {
+    extractionSignal = signal!
+    return gate.promise
+  })
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const cancelled = new AbortController()
+  const first = reader.classificationEvidence(reference('a'), 'evidence', cancelled.signal)
+  const second = reader.classificationEvidence(reference('b'), 'evidence')
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledOnce())
+  cancelled.abort(new Error('cancel one'))
+  await expect(first).rejects.toThrow('cancel one')
+  expect(extractionSignal.aborted).toBe(false)
+  gate.resolve({ text: 'shared evidence', pageCount: 2, truncated: false })
+  expect((await second).passages[0].content).toBe('shared evidence')
+  expect(
+    (await reader.classificationEvidence(reference('c'), 'evidence')).passages[0].content
+  ).toBe('shared evidence')
+  expect(extract).toHaveBeenCalledOnce()
+  await reader.close()
+})
+
+it('evicts the last cancelled extraction before joining cleanup and ignores its late result', async () => {
+  const old = deferred<{ text: string; pageCount: number; truncated: boolean }>()
+  let extractionSignal!: AbortSignal
+  const extract = vi.fn(async (signal?: AbortSignal) => {
+    if (extract.mock.calls.length === 1) {
+      extractionSignal = signal!
+      return old.promise
+    }
+    return { text: 'fresh evidence', pageCount: 2, truncated: false }
+  })
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const controller = new AbortController()
+  const first = reader.classificationEvidence(reference(), 'evidence', controller.signal)
+  const rejected = expect(first).rejects.toThrow('cancel old')
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledOnce())
+  controller.abort(new Error('cancel old'))
+  await vi.waitFor(() => expect(extractionSignal.aborted).toBe(true))
+  expect((await reader.classificationEvidence(reference(), 'evidence')).passages[0].content).toBe(
+    'fresh evidence'
+  )
+  old.resolve({ text: 'stale evidence', pageCount: 2, truncated: false })
+  await rejected
+  expect((await reader.classificationEvidence(reference(), 'evidence')).passages[0].content).toBe(
+    'fresh evidence'
+  )
+  expect(extract).toHaveBeenCalledTimes(2)
+  await reader.close()
+})
+
+it('closes every pending extraction including jobs evicted from the bounded cache', async () => {
+  const signals: AbortSignal[] = []
+  const reader = new LiteratureReader({
+    authorize: async () => async (signal) => {
+      signals.push(signal!)
+      return new Promise((_, reject) =>
+        signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+      )
+    }
+  })
+  const pending = Array.from({ length: 8 }, (_, i) =>
+    reader.classificationEvidence(reference(String(i), String(i).repeat(64)), 'evidence')
+  )
+  const observed = Promise.allSettled(pending)
+  await vi.waitFor(() => expect(signals).toHaveLength(8))
+  await reader.close()
+  expect(signals.every((signal) => signal.aborted)).toBe(true)
+  expect((await observed).every((result) => result.status === 'rejected')).toBe(true)
+  await expect(reader.classificationEvidence(reference(), 'evidence')).rejects.toThrow('closed')
+})
+
+it('does not start extraction when authorization returns after cancellation', async () => {
+  const extract = vi.fn(async () => ({ text: 'late', pageCount: 2, truncated: false }))
+  const gate = deferred<typeof extract>()
+  const reader = new LiteratureReader({ authorize: async () => gate.promise })
+  const controller = new AbortController()
+  const pending = reader.classificationEvidence(reference(), 'evidence', controller.signal)
+  controller.abort(new Error('cancel authorization'))
+  await expect(pending).rejects.toThrow('cancel authorization')
+  gate.resolve(extract)
+  await Promise.resolve()
+  expect(extract).not.toHaveBeenCalled()
+  await reader.close()
+})
+
+it('cancels an index-open wait and closes a late connection before starting index work', async () => {
+  const index = createIndex(root)
+  const connection = await index.open()
+  const gate = deferred<typeof connection>()
+  const open = vi.spyOn(index, 'open').mockReturnValue(gate.promise)
+  const close = vi.spyOn(connection, 'close')
+  const hasExtraction = vi.spyOn(connection, 'hasExtraction')
+  const onIndexError = vi.fn()
+  const reader = new LiteratureReader({
+    index,
+    onIndexError,
+    authorize: async () => async () => ({ text: 'evidence', pageCount: 2, truncated: true })
+  })
+  const controller = new AbortController()
+  const pending = reader.classificationEvidence(reference(), 'evidence', controller.signal)
+  await vi.waitFor(() => expect(open).toHaveBeenCalledOnce())
+  controller.abort(new Error('cancel index'))
+  await expect(pending).rejects.toThrow('cancel index')
+  gate.resolve(connection)
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+  expect(hasExtraction).not.toHaveBeenCalled()
+  expect(onIndexError).not.toHaveBeenCalled()
+  await reader.close()
+})
 it.each([
   'open-science-pdfjs-verified-bytes-v2',
   'open-science-pdfjs-verified-bytes-prose-columns-v3'

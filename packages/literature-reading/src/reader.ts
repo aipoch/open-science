@@ -15,7 +15,7 @@ type LayoutEvidence = {
 export type ReadingOptions<Reference extends DocumentReference> = {
   index?: LiteratureIndex
   /** Resolve current authority first, then return a loader for verified bounded text. */
-  authorize(reference: Reference): Promise<() => Promise<TextExtraction>>
+  authorize(reference: Reference): Promise<(signal?: AbortSignal) => Promise<TextExtraction>>
   /** Stable identity for every extraction-affecting option owned by the caller. */
   extractionFingerprint?(reference: Reference): string
   log?(message: string, fields: Record<string, unknown>): void
@@ -76,6 +76,38 @@ const MAX_EXTRACTED_DOCUMENTS = 6
 const MAX_EXTRACTED_CACHE_CHARS = 24 * 1024 * 1024
 const PAGE_MARKER = /^--- Page (\d+) ---$/gm
 const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
+
+const abortable = <T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return pending
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', aborted)
+    const aborted = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', aborted, { once: true })
+    pending.then(
+      (value) => {
+        cleanup()
+        if (signal.aborted) reject(signal.reason)
+        else resolve(value)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      }
+    )
+    if (signal.aborted) aborted()
+  })
+}
+
+type SharedExtraction = {
+  result: Promise<TextExtraction>
+  incomplete: boolean
+  controller: AbortController
+  consumers: number
+  settled: boolean
+}
 
 type ExtractedDocument = Readonly<{
   context: DocumentReference
@@ -268,14 +300,21 @@ const cursorOffset = (
 }
 
 export class LiteratureReader<Reference extends DocumentReference = DocumentReference> {
-  private readonly extracted = new Map<
-    string,
-    { result: Promise<TextExtraction>; incomplete: boolean }
-  >()
+  private readonly extracted = new Map<string, SharedExtraction>()
   private readonly extractedChars = new Map<string, number>()
   private readonly indexBuilds = new Map<string, Promise<void>>()
+  private readonly inFlight = new Set<SharedExtraction>()
+  private closed = false
 
   constructor(private readonly options: ReadingOptions<Reference>) {}
+  async close(): Promise<void> {
+    this.closed = true
+    const entries = [...this.inFlight]
+    this.extracted.clear()
+    this.extractedChars.clear()
+    for (const entry of entries) entry.controller.abort(new Error('Literature reader is closed.'))
+    await Promise.allSettled(entries.map((entry) => entry.result))
+  }
   async readDocument(reference: Reference, cursor?: string): Promise<ReadDocumentResult> {
     return this.readBatch(await this.resolveDocument(reference, cursor === undefined), cursor)
   }
@@ -290,12 +329,14 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
   }
   async classificationEvidence(
     reference: Reference,
-    query: string
+    query: string,
+    signal?: AbortSignal
   ): Promise<{
     coverage: 'full-text' | 'passages' | 'unavailable'
     passages: { pageStart: number; pageEnd: number; content: string }[]
   }> {
-    const document = await this.resolveDocument(reference, true)
+    const document = await this.resolveDocument(reference, true, signal)
+    signal?.throwIfAborted()
     if (!document.text.trim()) return { coverage: 'unavailable', passages: [] }
     const chunks = indexChunks(document.text, document.pageStarts)
     const complete =
@@ -311,7 +352,10 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       (document.coverage?.unverifiedPages?.length ?? 0) === 0 &&
       Buffer.byteLength(JSON.stringify(chunks), 'utf8') <= 32000 &&
       chunks.length <= 8
-    const candidates = complete ? chunks : (await this.search([document], query)).passages
+    const candidates = complete
+      ? chunks
+      : (await abortable(this.search([document], query, signal), signal)).passages
+    signal?.throwIfAborted()
     const passages: { pageStart: number; pageEnd: number; content: string }[] = []
     let bytes = 0
     for (const { pageStart, pageEnd, content } of candidates) {
@@ -325,26 +369,57 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
 
   private async resolveDocument(
     context: Reference,
-    retryIncomplete = false
+    retryIncomplete = false,
+    signal?: AbortSignal
   ): Promise<ExtractedDocument> {
+    signal?.throwIfAborted()
+    if (this.closed) throw new Error('Literature reader is closed.')
     // Authority is rechecked even on a cache hit; a checksum is not an access grant.
-    const extract = await this.options.authorize(context)
+    const extract = await abortable(this.options.authorize(context), signal)
+    signal?.throwIfAborted()
+    if (this.closed) throw new Error('Literature reader is closed.')
     const extractorFingerprint =
       this.options.extractionFingerprint?.(context) ?? EXTRACTOR_FINGERPRINT
     const extractionId = createHash('sha256')
       .update(`${context.checksum}:${extractorFingerprint}`)
       .digest('hex')
     const cached = this.extracted.get(extractionId)
-    const entry =
-      cached && !(retryIncomplete && cached.incomplete)
-        ? cached
-        : { result: extract(), incomplete: false }
+    let entry = cached
+    if (!entry || entry.controller.signal.aborted || (retryIncomplete && entry.incomplete)) {
+      const controller = new AbortController()
+      entry = {
+        controller,
+        incomplete: false,
+        consumers: 0,
+        settled: false,
+        result: Promise.resolve().then(() => {
+          controller.signal.throwIfAborted()
+          return extract(controller.signal)
+        })
+      }
+      const created = entry
+      this.inFlight.add(entry)
+      entry.result.then(
+        () => {
+          created.settled = true
+          this.inFlight.delete(created)
+        },
+        () => {
+          created.settled = true
+          this.inFlight.delete(created)
+        }
+      )
+    }
+    entry.consumers++
     const extraction = entry.result
     if (cached) this.extracted.delete(extractionId)
     this.extracted.set(extractionId, entry)
     this.trimExtractedCache()
     try {
-      const resolved = await extraction
+      const resolved = await abortable(extraction, signal)
+      signal?.throwIfAborted()
+      entry.controller.signal.throwIfAborted()
+      if (this.closed) throw new Error('Literature reader is closed.')
       // These offsets come from the extractor, never from page-like strings in document data.
       if (
         resolved.pageStarts &&
@@ -383,11 +458,27 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
         : extractionId
       return { context, extractionId: resultId, extractorFingerprint, ...resolved }
     } catch (error) {
-      if (this.extracted.get(extractionId) === entry) {
+      if (
+        (!signal?.aborted || entry.controller.signal.aborted) &&
+        this.extracted.get(extractionId) === entry
+      ) {
         this.extracted.delete(extractionId)
         this.extractedChars.delete(extractionId)
       }
       throw error
+    } finally {
+      entry.consumers--
+      if (!entry.settled && entry.consumers === 0) {
+        if (this.extracted.get(extractionId) === entry) {
+          this.extracted.delete(extractionId)
+          this.extractedChars.delete(extractionId)
+        }
+        entry.controller.abort(
+          signal?.reason ?? new DOMException('Reading cancelled.', 'AbortError')
+        )
+        // The final consumer joins parser/file cleanup; other consumers can cancel independently.
+        await entry.result.catch(() => undefined)
+      }
     }
   }
 
@@ -468,8 +559,10 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
 
   private async search(
     documents: readonly ExtractedDocument[],
-    query: string
+    query: string,
+    signal?: AbortSignal
   ): Promise<SearchDocumentsResult> {
+    signal?.throwIfAborted()
     const byExtractionId = new Map<string, ExtractedDocument[]>()
     const descriptorByExtractionId = new Map<
       string,
@@ -549,12 +642,17 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     let index: LiteratureFullTextIndex | undefined
     try {
       index = await this.options.index.open()
-      for (const descriptor of descriptors) await this.ensureIndexed(index, descriptor)
+      signal?.throwIfAborted()
+      for (const descriptor of descriptors) {
+        await this.ensureIndexed(index, descriptor)
+        signal?.throwIfAborted()
+      }
       const passages = await index.search({
         extractionIds: descriptors.map(({ extractionId }) => extractionId),
         query,
         limit: SEARCH_RESULT_LIMIT
       })
+      signal?.throwIfAborted()
       if (passages.length === 0) return fallbackResponse('empty-bm25')
       this.options.log?.('Literature retrieval completed', {
         retrievalMode: 'bm25',
@@ -598,6 +696,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
         })
       }
     } catch (error) {
+      signal?.throwIfAborted()
       this.options.onIndexError?.(error)
       return fallbackResponse('bm25-error')
     } finally {

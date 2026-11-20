@@ -181,6 +181,58 @@ describe('LiteratureDocumentReader', () => {
       })
     })
 
+  it('closes an immutable lease that arrives after cancellation without starting its parser', async () => {
+    const close = vi.fn(async () => {})
+    const lease = {
+      path: join(root, 'late.pdf'),
+      size: 42,
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close
+    }
+    let release!: (value: typeof lease) => void
+    const gate = new Promise<typeof lease>((resolve) => {
+      release = resolve
+    })
+    const openContent = vi.fn(() => gate)
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: { loadSessionForContinuation: vi.fn() },
+      sources: {
+        resolveVersion: async () => ({
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment',
+          sourceVersionId: 'version',
+          filename: 'late.pdf',
+          sizeBytes: 42,
+          checksum,
+          path: lease.path,
+          openContent
+        })
+      }
+    })
+    const controller = new AbortController()
+    const pending = reader.classificationEvidence(
+      {
+        attachmentId: 'attachment',
+        attachmentVersionId: 'version',
+        filename: 'late.pdf',
+        sizeBytes: 42,
+        checksum,
+        query: 'evidence'
+      },
+      controller.signal
+    )
+    const rejected = expect(pending).rejects.toThrow('cancel opening')
+    await vi.waitFor(() => expect(openContent).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel opening'))
+    release(lease)
+    await rejected
+    await reader.close()
+    expect(close).toHaveBeenCalledOnce()
+    expect(extractPdfText).not.toHaveBeenCalled()
+  })
+
   const confirmedSession = (
     proseRegionsByBindingId: Readonly<Record<string, readonly PdfProseRegion[]>>
   ): PersistedChatSession => {
@@ -224,7 +276,8 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
       maxChars: 24 * 1024 * 1024,
-      includeLayout: true
+      includeLayout: true,
+      signal: expect.any(AbortSignal)
     })
   })
 
@@ -313,7 +366,12 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(
       join(root, 'verified.pdf'),
       expect.objectContaining({ size: 42, readBytes: expect.any(Function) }),
-      { ocr: true, maxChars: 24 * 1024 * 1024, includeLayout: true }
+      {
+        ocr: true,
+        maxChars: 24 * 1024 * 1024,
+        includeLayout: true,
+        signal: expect.any(AbortSignal)
+      }
     )
     expect(close).toHaveBeenCalledOnce()
     expect(verifyUnchanged).not.toHaveBeenCalled()
@@ -552,7 +610,8 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
       maxChars: 24 * 1024 * 1024,
-      includeLayout: true
+      includeLayout: true,
+      signal: expect.any(AbortSignal)
     })
   })
 
@@ -707,7 +766,8 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
       ocr: true,
       maxChars: 24 * 1024 * 1024,
-      includeLayout: true
+      includeLayout: true,
+      signal: expect.any(AbortSignal)
     })
   })
 

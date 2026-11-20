@@ -842,7 +842,6 @@ export function LiteratureComparisonPage({
     setOffset(nextOffset)
     setCellId(undefined)
     setSelectedCellId(undefined)
-    selection.clear()
     if (matrixScrollRef.current) matrixScrollRef.current.scrollTop = 0
   }
   const navigateReview = (offset: number): void => {
@@ -2015,6 +2014,7 @@ export function LiteratureComparisonPage({
                   >
                     <LiteratureSelectPageCheckbox
                       store={selection}
+                      preserveOtherSelections
                       itemIds={[...pageItemIds]}
                       label={t('Select all references')}
                       disabled={busy || taskActive || !pageMembers.length}

@@ -76,7 +76,7 @@ class LiteratureDocumentReader {
           throw new Error(
             'LINKED_PDF_UNAVAILABLE: The immutable linked PDF Version is unavailable.'
           )
-        return () => this.extract(source, context.ocrRevision, context.ocrLanguages)
+        return (signal) => this.extract(source, context.ocrRevision, context.ocrLanguages, signal)
       },
       log: (message, fields) => log.info(message, fields),
       onIndexError: (error) => log.warn('Literature BM25 search failed', errorLogFields(error))
@@ -84,6 +84,7 @@ class LiteratureDocumentReader {
   }
   async close(): Promise<void> {
     this.closed = true
+    await this.core.close()
     await Promise.all([...this.ocrSessions].map((session) => session.close()))
   }
   private async reference(
@@ -129,8 +130,8 @@ class LiteratureDocumentReader {
         )),
         reading: { order: 'automatic' }
       }),
-      classificationEvidence: async (binding, query) =>
-        this.core.classificationEvidence(await this.reference(binding, projectId), query)
+      classificationEvidence: async (binding, query, signal) =>
+        this.core.classificationEvidence(await this.reference(binding, projectId), query, signal)
     }
   }
   async readCurrent(request: ReadCurrentLiteratureRequest): Promise<unknown> {
@@ -171,7 +172,8 @@ class LiteratureDocumentReader {
   }
 
   async classificationEvidence(
-    request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>
+    request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>,
+    signal?: AbortSignal
   ): Promise<{
     coverage: 'full-text' | 'passages' | 'unavailable'
     passages: { pageStart: number; pageEnd: number; content: string }[]
@@ -192,7 +194,8 @@ class LiteratureDocumentReader {
           checksum: request.checksum,
           linkedAt: 0
         },
-        request.query
+        request.query,
+        signal
       )
     } catch (error) {
       // Screening can persist deterministic evidence gaps; failed reads must remain retryable.
@@ -236,8 +239,10 @@ class LiteratureDocumentReader {
   private async extract(
     input: ResolvedSessionPdfVersion,
     ocrRevision?: string,
-    ocrLanguages?: readonly OcrLanguage[]
+    ocrLanguages?: readonly OcrLanguage[],
+    signal?: AbortSignal
   ): Promise<TextExtraction> {
+    signal?.throwIfAborted()
     if (this.closed) throw new Error('Literature reader is closed.')
     const ocrOptions = this.options.ocrModels
       ? {
@@ -272,6 +277,7 @@ class LiteratureDocumentReader {
     if (input.openContent) {
       const lease = await input.openContent()
       try {
+        signal?.throwIfAborted()
         extraction = await extractPdfText(
           lease.path,
           {
@@ -290,7 +296,13 @@ class LiteratureDocumentReader {
               return bytes
             }
           },
-          { ocr: true, ...ocrOptions, includeLayout: true, maxChars: MAX_EXTRACTED_CACHE_CHARS }
+          {
+            ocr: true,
+            ...ocrOptions,
+            includeLayout: true,
+            maxChars: MAX_EXTRACTED_CACHE_CHARS,
+            signal
+          }
         )
         await lease.verifyUnchanged()
       } finally {
@@ -303,7 +315,8 @@ class LiteratureDocumentReader {
         ocr: true,
         ...ocrOptions,
         includeLayout: true,
-        maxChars: MAX_EXTRACTED_CACHE_CHARS
+        maxChars: MAX_EXTRACTED_CACHE_CHARS,
+        signal
       })
     }
     if (extraction.truncated) {

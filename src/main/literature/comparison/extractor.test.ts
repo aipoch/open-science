@@ -131,7 +131,8 @@ it('admits readable PDFs when translated field names have no hits but the extrac
     coverage: 'passages'
   })
   expect(f.reader.classificationEvidence).toHaveBeenLastCalledWith(
-    expect.objectContaining({ query: translatedField.rule })
+    expect.objectContaining({ query: translatedField.rule }),
+    undefined
   )
   expect(f.infer).not.toHaveBeenCalled()
   expect(
@@ -141,9 +142,37 @@ it('admits readable PDFs when translated field names have no hits but the extrac
     evidence: [{ pageStart: 7, pageEnd: 7, quote: 'Sample comprised 20 patients.' }]
   })
   expect(f.reader.classificationEvidence).toHaveBeenLastCalledWith(
-    expect.objectContaining({ query: translatedField.rule })
+    expect.objectContaining({ query: translatedField.rule }),
+    expect.any(AbortSignal)
   )
 })
+it.each(['extract', 'checkSource'] as const)(
+  'passes cancellation through full-text %s without inferring an answer',
+  async (operation) => {
+    const f = fixture()
+    const item = paperWithPdf()
+    f.catalog.get.mockResolvedValue(item)
+    f.table.sourcePolicy = 'full-text'
+    f.table.fields = [field]
+    f.table.members[0].sourceKey = literatureOverviewSource(item).key
+    f.reader.classificationEvidence.mockImplementation(
+      async (_request, signal: AbortSignal) =>
+        new Promise((_, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        )
+    )
+    const controller = new AbortController()
+    const pending =
+      operation === 'extract'
+        ? f.extractor.extract(f.table, field, 'paper', controller.signal)
+        : f.extractor.checkSource(f.table, 'paper', controller.signal)
+    const rejected = expect(pending).rejects.toThrow('cancel reading')
+    await vi.waitFor(() => expect(f.reader.classificationEvidence).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel reading'))
+    await rejected
+    expect(f.infer).not.toHaveBeenCalled()
+  }
+)
 it('keeps empty search results as an extraction evidence gap rather than a readability failure', async () => {
   const f = fixture()
   const item = paperWithPdf()
@@ -282,7 +311,8 @@ it.each(['passages', 'full-text'] as const)(
         attachmentVersionId: 'pdf-version',
         checksum: 'a'.repeat(64),
         sizeBytes: 200
-      })
+      }),
+      expect.any(AbortSignal)
     )
     reader.classificationEvidence.mockRejectedValue(new Error('ENOENT private file path'))
     await expect(

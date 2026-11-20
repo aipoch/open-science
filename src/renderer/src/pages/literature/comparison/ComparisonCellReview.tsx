@@ -353,6 +353,33 @@ function CellReviewBody({
       {t('Revise')}
     </Button>
   )
+  const documentVersionFor = (attempt: ComparisonCell['history'][number]): string | undefined =>
+    attempt.coverage === 'full-text' || attempt.coverage === 'passages'
+      ? attempt.attachmentVersionId
+      : undefined
+  const renderSourceLink = (
+    attempt: ComparisonCell['history'][number],
+    page?: number
+  ): React.JSX.Element => {
+    const attachmentVersionId = documentVersionFor(attempt)
+    return (
+      <Button
+        className="h-auto gap-1.5 px-0 py-1 text-xs"
+        variant="link"
+        size="sm"
+        onClick={() =>
+          onOpenItem(
+            attachmentVersionId
+              ? { kind: 'document', itemId: cell.itemId, attachmentVersionId, page }
+              : { kind: 'reference', itemId: cell.itemId }
+          )
+        }
+      >
+        <ExternalLink className="size-3.5" aria-hidden="true" />
+        {attachmentVersionId ? t('Open source page') : t('Open reference')}
+      </Button>
+    )
+  }
   const renderAttempt = (
     attempt: ComparisonCell['history'][number],
     index: number
@@ -398,32 +425,11 @@ function CellReviewBody({
                 })}
               </p>
             )}
+            {documentVersionFor(attempt) &&
+              renderSourceLink(attempt, evidence.pageStart ?? undefined)}
           </blockquote>
         ))}
-        <Button
-          className="h-auto gap-1.5 px-0 py-1 text-xs"
-          variant="link"
-          size="sm"
-          onClick={() =>
-            onOpenItem(
-              (attempt.coverage === 'full-text' || attempt.coverage === 'passages') &&
-                attempt.attachmentVersionId
-                ? {
-                    kind: 'document',
-                    itemId: cell.itemId,
-                    attachmentVersionId: attempt.attachmentVersionId,
-                    page: attempt.evidence[0]?.pageStart ?? undefined
-                  }
-                : { kind: 'reference', itemId: cell.itemId }
-            )
-          }
-        >
-          <ExternalLink className="size-3.5" aria-hidden="true" />
-          {(attempt.coverage === 'full-text' || attempt.coverage === 'passages') &&
-          attempt.attachmentVersionId
-            ? t('Open source page')
-            : t('Open reference')}
-        </Button>
+        {(!documentVersionFor(attempt) || !attempt.evidence.length) && renderSourceLink(attempt)}
       </div>
       <details className="mt-3 text-xs text-muted-foreground">
         <summary className="w-fit cursor-pointer rounded-sm font-medium focus-visible:keyboard-focus">

@@ -140,6 +140,7 @@ export class LiteratureComparisons {
   private serial: Promise<unknown> = Promise.resolve()
   private worker: Promise<void> | undefined
   private readonly inFlightAdmissions = new Map<string, Set<string>>()
+  private readonly activeSourceChecks = new Set<Promise<unknown>>()
   private lastSourceScan?: { revision: number; at: number }
   private needsSourceScan(revision: number | undefined): boolean {
     return (
@@ -384,9 +385,7 @@ export class LiteratureComparisons {
         if (this.closed) throw new Error('comparison-owner-unavailable')
         sourceChecks.push(
           ...(await Promise.all(
-            snapshot.itemIds
-              .slice(offset, offset + 4)
-              .map((id) => check.call(this.options.extractor, snapshot, id))
+            snapshot.itemIds.slice(offset, offset + 4).map((id) => this.sourceCheck(snapshot, id))
           ))
         )
       }
@@ -813,6 +812,24 @@ export class LiteratureComparisons {
       throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
   }
   /** Check each report once at admission; unavailable sources never enter the model queue. */
+  private sourceCheck(
+    table: ComparisonTable,
+    itemId: string
+  ): ReturnType<ComparisonExtractor['checkSource']> {
+    this.lifetime.signal.throwIfAborted()
+    const pending = this.options.extractor.checkSource!.call(
+      this.options.extractor,
+      table,
+      itemId,
+      this.lifetime.signal
+    )
+    this.activeSourceChecks.add(pending)
+    pending.then(
+      () => this.activeSourceChecks.delete(pending),
+      () => this.activeSourceChecks.delete(pending)
+    )
+    return pending
+  }
   private async readableTargets(
     table: ComparisonTable,
     targets: ComparisonCell[]
@@ -828,7 +845,7 @@ export class LiteratureComparisons {
       const checks = await Promise.all(
         itemIds.slice(offset, offset + 4).map((itemId) =>
           check
-            ? check.call(this.options.extractor, table, itemId)
+            ? this.sourceCheck(table, itemId)
             : this.options.extractor.member(itemId).then(
                 (member) => ({ itemId, sourceKey: member.sourceKey, status: 'available' as const }),
                 () => ({ itemId, sourceKey: '', status: 'missing' as const })
@@ -1185,6 +1202,7 @@ export class LiteratureComparisons {
   async dispose(): Promise<void> {
     this.closed = true
     this.lifetime.abort()
+    await Promise.allSettled([...this.activeSourceChecks])
     await this.worker
     await this.serial
     this.matrixSnapshots.clear()

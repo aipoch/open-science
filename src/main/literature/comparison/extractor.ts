@@ -35,9 +35,12 @@ export class ComparisonExtractor {
   /** Readability preflight only. Never capture a model or infer an answer. */
   async checkSource(
     table: ComparisonTable,
-    itemId: string
+    itemId: string,
+    signal?: AbortSignal
   ): Promise<NonNullable<ComparisonResult['sourceChecks']>[number]> {
+    signal?.throwIfAborted()
     const item = await this.options.catalog.get(itemId)
+    signal?.throwIfAborted()
     const source = item && literatureOverviewSource(item)
     if (!item || item.id !== itemId || !source?.active)
       return { itemId, sourceKey: '', status: 'missing' }
@@ -51,10 +54,11 @@ export class ComparisonExtractor {
       }
     if (!source.document) return { ...base, status: 'missing' }
     try {
-      const evidence = await this.options.reader.classificationEvidence({
-        ...source.document,
-        query: table.fields.map(retrievalQuery).join(' ').slice(0, 4000)
-      })
+      const evidence = await this.options.reader.classificationEvidence(
+        { ...source.document, query: table.fields.map(retrievalQuery).join(' ').slice(0, 4000) },
+        signal
+      )
+      signal?.throwIfAborted()
       const current = await this.options.catalog.get(itemId)
       if (!current || literatureOverviewSource(current).key !== source.key)
         return { ...base, status: 'unreadable' }
@@ -63,6 +67,7 @@ export class ComparisonExtractor {
       if (evidence.coverage === 'unavailable') return { ...base, status: 'unreadable' }
       return { ...base, status: 'available', coverage: evidence.coverage }
     } catch {
+      signal?.throwIfAborted()
       return { ...base, status: 'unreadable' }
     }
   }
@@ -99,10 +104,7 @@ export class ComparisonExtractor {
     } else {
       if (!source.document) throw new Error('full-text-unavailable')
       const evidence = await this.options.reader
-        .classificationEvidence({
-          ...source.document,
-          query: retrievalQuery(field)
-        })
+        .classificationEvidence({ ...source.document, query: retrievalQuery(field) }, signal)
         .catch(() => {
           signal.throwIfAborted()
           throw new Error('full-text-unavailable')

@@ -774,6 +774,44 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
 
+  // A matching-selection read can outlive its view. Returning to the same view is a new visit,
+  // and selection snapshots also change when a user clears or revises the selection meanwhile.
+  const comparisonSelectionRequest = useRef(0)
+  useLayoutEffect(
+    () => () => {
+      comparisonSelectionRequest.current += 1
+    },
+    [
+      entriesKey,
+      entriesOffset,
+      entriesPageSize,
+      comparisonId,
+      duplicatesOpen,
+      citationStylesOpen,
+      journalsOpen,
+      choosingComparisonMembers
+    ]
+  )
+  const addSelectionToComparison = (): void => {
+    const request = ++comparisonSelectionRequest.current
+    const selection = selectionStore.getSnapshot()
+    const isCurrent = (): boolean =>
+      comparisonSelectionRequest.current === request && selectionStore.getSnapshot() === selection
+    void resolveSelectedItemIds()
+      .then((ids) => {
+        if (!isCurrent()) return
+        if (ids.length > 100) {
+          setError(t('A comparison table can contain up to 100 references.'))
+          return
+        }
+        setError(undefined)
+        setComparisonMembers(ids)
+      })
+      .catch(() => {
+        if (isCurrent()) setError(t('Comparison table could not be saved.'))
+      })
+  }
+
   const { setReadingStatus, readingStatusError, readingStatusPending } = useLiteratureReadingStatus(
     {
       scopeKey: entriesKey,
@@ -2374,24 +2412,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     )}
                                     {hasSelection && (
                                       <LiteratureSelectionToolbar
-                                        onAddToComparison={() => {
-                                          void resolveSelectedItemIds()
-                                            .then((ids) => {
-                                              if (ids.length > 100) {
-                                                setError(
-                                                  t(
-                                                    'A comparison table can contain up to 100 references.'
-                                                  )
-                                                )
-                                                return
-                                              }
-                                              setError(undefined)
-                                              setComparisonMembers(ids)
-                                            })
-                                            .catch(() =>
-                                              setError(t('Comparison table could not be saved.'))
-                                            )
-                                        }}
+                                        onAddToComparison={addSelectionToComparison}
                                         overviewActions={overviewActions}
                                         overviewMenuAction={generateOverviews}
                                         selectedItemCount={selectedItemCount}

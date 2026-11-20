@@ -2479,6 +2479,41 @@ it('checks just the requested source without blocking other comparison commands'
     await f.owner.dispose()
   }
 })
+it('cancels and joins source preflight cleanup before disposal completes', async () => {
+  const f = await fixture()
+  const cleanup = deferred<void>()
+  let aborted = false
+  const check = vi.fn<NonNullable<OwnerOptions['extractor']['checkSource']>>(
+    async (_table, _itemId, signal) =>
+      new Promise((_, reject) => {
+        signal!.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            void cleanup.promise.then(() => reject(signal!.reason))
+          },
+          { once: true }
+        )
+      })
+  )
+  f.options.extractor.checkSource = check
+  const running = f.owner.run({ action: 'run', tableId: f.table.id })
+  const rejected = expect(running).rejects.toThrow()
+  await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2))
+  let disposed = false
+  const closing = f.owner.dispose().then(() => {
+    disposed = true
+  })
+  await Promise.resolve()
+  expect(aborted).toBe(true)
+  expect(disposed).toBe(false)
+  cleanup.resolve()
+  await rejected
+  await closing
+  expect(disposed).toBe(true)
+  expect(f.capture).not.toHaveBeenCalled()
+  expect(f.extract).not.toHaveBeenCalled()
+})
 it('allows resuming after a paused extraction checkpoint fails', async () => {
   const blocked = deferred<ComparisonExtraction>()
   const f = await fixture(vi.fn(() => blocked.promise))
