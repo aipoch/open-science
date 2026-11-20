@@ -773,6 +773,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   min-width: 0;
   flex: 1;
   border: 1px solid color-mix(in oklab, var(--foreground) 20%, transparent);
+  border-radius: var(--radius);
   background: color-mix(in oklab, var(--bg-000) 55%, transparent);
   padding: 0.55rem 0.65rem;
   color: var(--foreground);
@@ -848,7 +849,6 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 .dark .onboarding-provider-key-row input {
   border-color: color-mix(in oklab, var(--text-300) 35%, transparent);
-  border-radius: 0.5rem;
   background: var(--bg-10);
   color: var(--text-000);
 }
