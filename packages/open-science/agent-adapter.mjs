@@ -191,7 +191,14 @@ export class AgentError extends Error {
 const safeId = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 const requestReferences = (error, args) => {
   const references = {}
-  for (const key of ['requestId', 'runId', 'sessionId', 'projectId', 'operationId', 'correlationId']) {
+  for (const key of [
+    'requestId',
+    'runId',
+    'sessionId',
+    'projectId',
+    'operationId',
+    'correlationId'
+  ]) {
     const value = [error?.[key], args?.[key]].find((id) => safeId.safeParse(id).success)
     if (value) references[key] = value
   }

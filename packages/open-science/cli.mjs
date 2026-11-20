@@ -1372,7 +1372,9 @@ const outputValue = (value, options, deps) => {
   if (options.json || options.jsonl) deps.log(JSON.stringify(value))
   else if (Array.isArray(value)) {
     for (const item of value) {
-      deps.log(`${item.id ?? item.downloadId}\t${item.name ?? item.title ?? item.path ?? ''}`.trimEnd())
+      deps.log(
+        `${item.id ?? item.downloadId}\t${item.name ?? item.title ?? item.path ?? ''}`.trimEnd()
+      )
     }
   } else {
     deps.log(
@@ -2030,11 +2032,15 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const downloadId = positionals[0]
     if (!downloadId) throw new CliUsageError('Download ID is required.')
     if (!options.session) throw new CliUsageError('--session is required.')
-    outputValue(await call('download_artifact', {
-      sessionId: options.session,
-      downloadId,
-      ...(options.output ? { outputPath: resolve(options.output) } : {})
-    }), options, deps)
+    outputValue(
+      await call('download_artifact', {
+        sessionId: options.session,
+        downloadId,
+        ...(options.output ? { outputPath: resolve(options.output) } : {})
+      }),
+      options,
+      deps
+    )
     return
   }
   if (command === 'literature' && subcommand === 'search') {
@@ -2204,7 +2210,10 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const { AgentError } = await import('./agent-adapter.mjs')
     const { waitTimeoutMs } = await import('./agent-capabilities.mjs')
     const budget = waitTimeoutMs.safeParse(options.timeoutMs)
-    if (!budget.success) throw new AgentError('invalid_request', { message: 'Use a Run wait between 1 and 30000 milliseconds.' })
+    if (!budget.success)
+      throw new AgentError('invalid_request', {
+        message: 'Use a Run wait between 1 and 30000 milliseconds.'
+      })
     const timeoutMs = budget.data
     const projectId = waiting ? undefined : await resolveCliProjectId(client, options.project)
     const prompt = waiting ? undefined : await readPrompt(options, deps)
@@ -2272,7 +2281,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       }
       let receipt = waiting
         ? undefined
-        : await call('start_run', {
+        : await call(
+            'start_run',
+            {
               requestId,
               projectId,
               prompt,
@@ -2303,16 +2314,30 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
                       ? { computeHostIds: options.computeHosts }
                       : {})
                   })
-            }, observation)
+            },
+            observation
+          )
       if (options.wait && requestId && (!receipt || receipt.status === 'pending')) {
-        receipt = (await call('wait_submission', { requestId, timeoutMs: remainingTimeout() }, observation)).receipt
+        receipt = (
+          await call('wait_submission', { requestId, timeoutMs: remainingTimeout() }, observation)
+        ).receipt
       }
       runId ??= receipt?.runId
       if (!options.wait || !runId) {
         if (options.json || options.jsonl)
-          outputValue({ ...receipt, ...(recoveryFile ? { recoveryFile } : {}), ...(options.wait ? { timeoutMs } : {}) }, options, deps)
+          outputValue(
+            {
+              ...receipt,
+              ...(recoveryFile ? { recoveryFile } : {}),
+              ...(options.wait ? { timeoutMs } : {})
+            },
+            options,
+            deps
+          )
         else
-          deps.log(`Submission ${receipt.status}: ${requestId}. Query: open-science run status --request-id ${requestId}.`)
+          deps.log(
+            `Submission ${receipt.status}: ${requestId}. Query: open-science run status --request-id ${requestId}.`
+          )
         if (['failed', 'interrupted'].includes(receipt.status)) deps.setExitCode(1)
         return
       }
@@ -2335,9 +2360,11 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         if (options.cancelOnTimeout && details.code === 'timeout') {
           try {
             await call('cancel_run', { runId })
-            details.message = 'The observation timed out and cancellation was requested. Query the original Run for its final state.'
+            details.message =
+              'The observation timed out and cancellation was requested. Query the original Run for its final state.'
           } catch {
-            details.message = 'The observation timed out and cancellation was not confirmed. Query the original Run for its final state.'
+            details.message =
+              'The observation timed out and cancellation was not confirmed. Query the original Run for its final state.'
           }
         }
       }
@@ -2360,7 +2387,16 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       }
     }
     if (options.json || options.jsonl)
-      outputValue({ ...result, timeoutMs, ...(requestId ? { requestId } : {}), ...(recoveryFile ? { recoveryFile } : {}) }, options, deps)
+      outputValue(
+        {
+          ...result,
+          timeoutMs,
+          ...(requestId ? { requestId } : {}),
+          ...(recoveryFile ? { recoveryFile } : {})
+        },
+        options,
+        deps
+      )
     else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
     else if (result.status === 'failed') deps.log(`Run failed: ${result.error ?? result.id}`)
     else if (result.status === 'cancelled') deps.log(`Run cancelled: ${result.id}`)

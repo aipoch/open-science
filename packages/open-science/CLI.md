@@ -1155,46 +1155,46 @@ Read the Markdown resource `openscience://agent/guide` or call `get_agent_guide`
 does not expose resources. The full local workflow requires the external Agent, MCP process, and
 service on the same machine with access to the input and delivery files.
 
-| Tool                           | Purpose                                                  |
-| ------------------------------ | -------------------------------------------------------- |
-| `doctor`                       | Check base Agent readiness                               |
-| `list_runtimes`                | List detected Agent runtimes                             |
-| `list_projects`                | List projects and IDs                                    |
-| `create_project`               | Create a persistent project                              |
-| `update_project`               | Update project metadata and Agent Context                |
-| `get_project_session_defaults` | Read defaults for new Sessions and the Project revision  |
-| `update_project_session_defaults` | Update defaults for new Sessions                       |
-| `list_sessions`                | List sessions, optionally by project                     |
-| `get_session`                  | Read Session status and import or Fork provenance        |
-| `get_session_configuration`    | Read session configuration and revision                  |
-| `update_session_configuration` | Update settings with `expectedRevision`                  |
-| `start_run`                    | Submit research under a caller-supplied request ID        |
-| `get_submission`               | Read the original durable receipt                        |
-| `wait_submission`              | Wait until the original receipt leaves `pending`         |
-| `get_run`                      | Read progress, output and attention state                |
-| `wait_run`                     | Wait until a Run finishes or needs attention             |
-| `cancel_run`                   | Explicitly cancel a run without undoing previous effects |
-| `get_plan`                     | Read the plan and its version/revision                   |
-| `respond_plan`                 | Approve/reject a reviewed version or request changes     |
-| `list_artifacts`               | List published Artifact versions and download IDs        |
-| `download_artifact`            | Deliver one listed version to a new local file           |
-| `get_delivery_status`         | Check report and result table delivery for one Run       |
-| `export_session`              | Export one Session to a local `.science` file           |
-| `import_session`              | Import a local `.science` file as a read-only Session     |
-| `fork_session`                | Create a writable copy after the user agrees            |
-| `get_package_operation`      | Check the outcome of a specific package operation        |
-| `search_literature`            | Search or browse Literature library records              |
-| `get_literature_item`          | Read one Literature record                               |
-| `list_citation_styles`         | List citation styles available for formatting            |
-| `format_references`            | Format records as citations with BibTeX/RIS exports      |
-| `get_reference_metadata`       | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
-| `import_literature`            | Preview, then commit a BibTeX/RIS/NBIB or item import    |
-| `create_literature_item`       | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
-| `update_project_literature`    | Link or unlink records and a project                     |
-| `create_literature_collection` | Create a collection                                      |
-| `update_collection_items`      | Add or remove records in a collection                    |
-| `set_reading_status`           | Set unread, reading, or read                             |
-| `set_literature_lifecycle`     | Move records to the trash or restore them                |
+| Tool                              | Purpose                                                  |
+| --------------------------------- | -------------------------------------------------------- |
+| `doctor`                          | Check base Agent readiness                               |
+| `list_runtimes`                   | List detected Agent runtimes                             |
+| `list_projects`                   | List projects and IDs                                    |
+| `create_project`                  | Create a persistent project                              |
+| `update_project`                  | Update project metadata and Agent Context                |
+| `get_project_session_defaults`    | Read defaults for new Sessions and the Project revision  |
+| `update_project_session_defaults` | Update defaults for new Sessions                         |
+| `list_sessions`                   | List sessions, optionally by project                     |
+| `get_session`                     | Read Session status and import or Fork provenance        |
+| `get_session_configuration`       | Read session configuration and revision                  |
+| `update_session_configuration`    | Update settings with `expectedRevision`                  |
+| `start_run`                       | Submit research under a caller-supplied request ID       |
+| `get_submission`                  | Read the original durable receipt                        |
+| `wait_submission`                 | Wait until the original receipt leaves `pending`         |
+| `get_run`                         | Read progress, output and attention state                |
+| `wait_run`                        | Wait until a Run finishes or needs attention             |
+| `cancel_run`                      | Explicitly cancel a run without undoing previous effects |
+| `get_plan`                        | Read the plan and its version/revision                   |
+| `respond_plan`                    | Approve/reject a reviewed version or request changes     |
+| `list_artifacts`                  | List published Artifact versions and download IDs        |
+| `download_artifact`               | Deliver one listed version to a new local file           |
+| `get_delivery_status`             | Check report and result table delivery for one Run       |
+| `export_session`                  | Export one Session to a local `.science` file            |
+| `import_session`                  | Import a local `.science` file as a read-only Session    |
+| `fork_session`                    | Create a writable copy after the user agrees             |
+| `get_package_operation`           | Check the outcome of a specific package operation        |
+| `search_literature`               | Search or browse Literature library records              |
+| `get_literature_item`             | Read one Literature record                               |
+| `list_citation_styles`            | List citation styles available for formatting            |
+| `format_references`               | Format records as citations with BibTeX/RIS exports      |
+| `get_reference_metadata`          | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
+| `import_literature`               | Preview, then commit a BibTeX/RIS/NBIB or item import    |
+| `create_literature_item`          | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
+| `update_project_literature`       | Link or unlink records and a project                     |
+| `create_literature_collection`    | Create a collection                                      |
+| `update_collection_items`         | Add or remove records in a collection                    |
+| `set_reading_status`              | Set unread, reading, or read                             |
+| `set_literature_lifecycle`        | Move records to the trash or restore them                |
 
 Generate and retain a `requestId` before calling `start_run` over MCP or `tools call`. Send
 `{ "requestId": "analysis-001", "projectId": "…", "prompt": "…" }`. The result is a durable

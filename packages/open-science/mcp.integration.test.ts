@@ -124,7 +124,10 @@ async function resourceAgents(
 
 it('recovers the original study after the initial submission response is lost', async () => {
   const args = {
-    requestId: 'study-request', projectId: 'p1', prompt: 'Review these results.', permissionProfile: 'auto'
+    requestId: 'study-request',
+    projectId: 'p1',
+    prompt: 'Review these results.',
+    permissionProfile: 'auto'
   }
   const receipt = { requestId: args.requestId, status: 'accepted', runId: 'run-1', createdAt: 1 }
   let accepted = false
@@ -1442,9 +1445,12 @@ it('delivers a pinned Artifact through either entry point without overwriting lo
   })
   Object.assign(run, { execution: { status: 'failed', sessionId: 's1', kernelDispatched: true } })
   expect(await both('get_delivery_status', { ...expected, tablePath })).toMatchObject({
-    handoffStatus: 'incomplete', execution: { status: 'failed', kernelDispatched: true }
+    handoffStatus: 'incomplete',
+    execution: { status: 'failed', kernelDispatched: true }
   })
-  Object.assign(run, { execution: { status: 'completed', sessionId: 's1', kernelDispatched: true } })
+  Object.assign(run, {
+    execution: { status: 'completed', sessionId: 's1', kernelDispatched: true }
+  })
   expect(await both('get_delivery_status', expected)).toMatchObject({
     handoffStatus: 'incomplete',
     delivery: {
@@ -1463,19 +1469,33 @@ it('delivers a pinned Artifact through either entry point without overwriting lo
     ]
   })
   expect(await both('get_delivery_status', { ...expected, tablePath })).toMatchObject({
-    handoffStatus: 'complete', delivery: { status: 'verified', verified: true }
+    handoffStatus: 'complete',
+    delivery: { status: 'verified', verified: true }
   })
   const shortcutPath = join(profile, 'shortcut.csv')
   const shortcut = [
-    'artifacts', 'download', 'table-version', '--session', 's1', '--output', shortcutPath,
-    '--profile', profile, '--json'
+    'artifacts',
+    'download',
+    'table-version',
+    '--session',
+    's1',
+    '--output',
+    shortcutPath,
+    '--profile',
+    profile,
+    '--json'
   ]
   expect(JSON.parse((await runCli(shortcut)).stdout)).toMatchObject({
-    sessionId: 's1', downloadId: 'table-version', path: shortcutPath, bytes: 3,
-    sha256: report.sha256, verified: true
+    sessionId: 's1',
+    downloadId: 'table-version',
+    path: shortcutPath,
+    bytes: 3,
+    sha256: report.sha256,
+    verified: true
   })
   expect((await cliError(shortcut)).error).toMatchObject({
-    code: 'delivery_target_exists', sessionId: 's1'
+    code: 'delivery_target_exists',
+    sessionId: 's1'
   })
 
   await bothFail(request, 'delivery_target_exists')

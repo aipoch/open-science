@@ -41,10 +41,10 @@ turn, a Notebook dispatch, and verified files are separate observations.
   mean `14`, min `10`, and max `18`. A same-Run `get_delivery_status` with the chosen local paths
   returned `handoffStatus: complete` and `delivery.status: verified`.
 
-| File | Download or operation ID | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
-| `stats_report.md` | `d123ce6c-faab-48b7-9175-1bb057a8e9ad` | 717 | `795a4c0a0a046b074220ef088b894604f7885e93693e210f0963049833237bb2` |
-| `stats_results.csv` | `5be63a7c-843c-4f92-8f65-7b88844b5dd8` | 37 | `6f0ec537637ce5de3ad68d1ba4da9a0599768815f8077134a587f6802781d3c9` |
+| File                  | Download or operation ID               |  Bytes | SHA-256                                                            |
+| --------------------- | -------------------------------------- | -----: | ------------------------------------------------------------------ |
+| `stats_report.md`     | `d123ce6c-faab-48b7-9175-1bb057a8e9ad` |    717 | `795a4c0a0a046b074220ef088b894604f7885e93693e210f0963049833237bb2` |
+| `stats_results.csv`   | `5be63a7c-843c-4f92-8f65-7b88844b5dd8` |     37 | `6f0ec537637ce5de3ad68d1ba4da9a0599768815f8077134a587f6802781d3c9` |
 | `first-study.science` | `d7502d20-befd-4484-ad13-e03a21117f50` | 220810 | `8b30109c9e684f26318d10895f9a2bf19954a6947ca67eba53b28bc8ab26babd` |
 
 The original export lookup returned the completed operation and verified file. The archive's
@@ -172,10 +172,10 @@ receipt commands. It does not change read-only doctor into an online provider pr
   archive paths contained no credential files. The report and CSV were read independently and
   the results recalculated from the input.
 
-| File | Download or operation ID | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
-| `followup_report.md` | `4e771478-8b0a-4f80-8471-0922ebe1b3f7` | 154 | `60e82b32006765ee44886ab93f20af4db8b21396a8d281be04daff906bae485b` |
-| `followup_results.csv` | `4bdf31a6-2082-4b11-844e-04421d5a8e11` | 41 | `6f141f51adb0b0bde0baed696b27286a6c11d694960cbe173e844cae937e0254` |
+| File                     | Download or operation ID               |  Bytes | SHA-256                                                            |
+| ------------------------ | -------------------------------------- | -----: | ------------------------------------------------------------------ |
+| `followup_report.md`     | `4e771478-8b0a-4f80-8471-0922ebe1b3f7` |    154 | `60e82b32006765ee44886ab93f20af4db8b21396a8d281be04daff906bae485b` |
+| `followup_results.csv`   | `4bdf31a6-2082-4b11-844e-04421d5a8e11` |     41 | `6f141f51adb0b0bde0baed696b27286a6c11d694960cbe173e844cae937e0254` |
 | `followup-study.science` | `60d0068f-5e62-47a9-831e-3aa05c0349c0` | 499414 | `aa15a387ffc592d418dc85f6b7f10edf375c4f7d8707b82b5f225cfe7cee3b7b` |
 
 The receiving service and MCP were then switched to the matching CLI/native npm build from
@@ -227,10 +227,10 @@ the focused contracts and Owner test run passed 1,058 tests across 17 files.
   OpenCode downloaded both files and exported the package itself over MCP. The original Session
   remained read-only, and no CLI was used for import, research submission, Fork, or delivery.
 
-| File | Download or operation ID | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
-| `continued_report.md` | `acfff3ec-4607-438e-8731-8d67ec7f1d97` | 159 | `568d5eab4008b38fc7b0e363df9d24b39392e3af23e6dd84c274a35a11fc5285` |
-| `continued_results.csv` | `a17224c7-7ffb-42e0-bb64-12640231e10a` | 41 | `6f141f51adb0b0bde0baed696b27286a6c11d694960cbe173e844cae937e0254` |
+| File                      | Download or operation ID               |  Bytes | SHA-256                                                            |
+| ------------------------- | -------------------------------------- | -----: | ------------------------------------------------------------------ |
+| `continued_report.md`     | `acfff3ec-4607-438e-8731-8d67ec7f1d97` |    159 | `568d5eab4008b38fc7b0e363df9d24b39392e3af23e6dd84c274a35a11fc5285` |
+| `continued_results.csv`   | `a17224c7-7ffb-42e0-bb64-12640231e10a` |     41 | `6f141f51adb0b0bde0baed696b27286a6c11d694960cbe173e844cae937e0254` |
 | `continued-study.science` | `5ea2608d-0138-49ce-94b5-55d2912faae2` | 567366 | `04e5bdec55bdcd68ef6f03a2bc3c1d32bc8f35369f38c5df6d32323ab5004ab1` |
 
 The export operation lookup confirmed the same file (correlation

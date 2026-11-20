@@ -54,15 +54,31 @@ function probeLinuxIsolation(): Promise<LinuxIsolationProbe> {
   return new Promise((resolve) => {
     execFile(
       bwrap,
-      [...namespaceArgs, '--ro-bind', '/', '/', '--proc', '/proc', '--dev', '/dev', '--', '/bin/true'],
+      [
+        ...namespaceArgs,
+        '--ro-bind',
+        '/',
+        '/',
+        '--proc',
+        '/proc',
+        '--dev',
+        '/dev',
+        '--',
+        '/bin/true'
+      ],
       { env: { LANG: 'C', LC_ALL: 'C' }, timeout: 1500, killSignal: 'SIGKILL', maxBuffer: 8192 },
       (error, _stdout, stderr) => {
         if (!error) return resolve('ready')
-        if (error.killed || error.signal || typeof error.code !== 'number') return resolve('unconfirmed')
+        if (error.killed || error.signal || typeof error.code !== 'number')
+          return resolve('unconfirmed')
         const diagnostic = stderr.trim()
         if (/^bwrap: (?:Can't mount proc on |Failed to mount procfs)/.test(diagnostic))
           return resolve('procfs-unavailable')
-        if (/^bwrap: (?:No permissions to create(?: a)? new namespace|Creating new namespace failed|Failed to (?:create|unshare) .*namespace)/.test(diagnostic))
+        if (
+          /^bwrap: (?:No permissions to create(?: a)? new namespace|Creating new namespace failed|Failed to (?:create|unshare) .*namespace)/.test(
+            diagnostic
+          )
+        )
           return resolve('namespaces-unavailable')
         resolve('unconfirmed')
       }

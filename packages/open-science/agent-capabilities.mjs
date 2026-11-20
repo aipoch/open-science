@@ -294,7 +294,10 @@ registerResource(
     ).optional(),
     ...agentConfiguration.shape,
     ...sessionPreferences,
-    permissionPrompts: z.literal('none').describe('Deny requests that still need a person.').optional(),
+    permissionPrompts: z
+      .literal('none')
+      .describe('Deny requests that still need a person.')
+      .optional(),
     skillIds: z.array(id('Skill ID.')).optional(),
     specialist: id('Specialist ID or exact name for a new session.').optional(),
     turnIntent: z

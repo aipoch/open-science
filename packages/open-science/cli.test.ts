@@ -931,7 +931,9 @@ describe('task CLI', () => {
       expect.objectContaining({ returnOnAttention: true, timeoutMs: expect.any(Number) })
     )
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
-      status: 'completed', output: 'Done', timeoutMs: 10_000
+      status: 'completed',
+      output: 'Done',
+      timeoutMs: 10_000
     })
     expect(log).toHaveBeenCalledTimes(1)
   })
@@ -1048,7 +1050,8 @@ describe('task CLI', () => {
       expect.any(Object)
     )
     expect(client.waitForRun).toHaveBeenCalledWith(
-      'run-1', expect.objectContaining({ returnOnAttention: true })
+      'run-1',
+      expect.objectContaining({ returnOnAttention: true })
     )
     expect(log).toHaveBeenCalledWith(
       'Run is waiting for Plan approval: open-science plan approve session-1 --artifact-version plan-version --revision 4'
@@ -1251,7 +1254,16 @@ describe('task CLI', () => {
         }
 
         await runTaskCommand(
-          parseCliArgs(['artifacts', 'download', 'artifact-1', '--session', 'session-1', '--output', output, '--json']),
+          parseCliArgs([
+            'artifacts',
+            'download',
+            'artifact-1',
+            '--session',
+            'session-1',
+            '--output',
+            output,
+            '--json'
+          ]),
           { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
         )
 
@@ -1280,11 +1292,23 @@ describe('task CLI', () => {
             }
           })
         )
-        const client = { listArtifacts: artifactList, downloadArtifact: vi.fn().mockResolvedValue(response) }
+        const client = {
+          listArtifacts: artifactList,
+          downloadArtifact: vi.fn().mockResolvedValue(response)
+        }
 
         await expect(
           runTaskCommand(
-            parseCliArgs(['artifacts', 'download', 'artifact-1', '--session', 'session-1', '--output', output, '--json']),
+            parseCliArgs([
+              'artifacts',
+              'download',
+              'artifact-1',
+              '--session',
+              'session-1',
+              '--output',
+              output,
+              '--json'
+            ]),
             { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
           )
         ).rejects.toMatchObject({ details: { code: 'request_failed' } })
@@ -1735,7 +1759,10 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ timeoutMs: expect.any(Number) }))
+    expect(client.waitForRun).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({ timeoutMs: expect.any(Number) })
+    )
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(30_000)
     expect(warn.mock.calls.map(([message]) => message)).toEqual([
@@ -1803,7 +1830,9 @@ describe('task CLI', () => {
   it('observes an existing Run even if the event stream is never ready', async () => {
     const submitRun = vi.fn()
     const getRun = vi.fn().mockResolvedValue(running)
-    const waitForRun = vi.fn().mockResolvedValue({ ...running, status: 'completed', output: 'Done' })
+    const waitForRun = vi
+      .fn()
+      .mockResolvedValue({ ...running, status: 'completed', output: 'Done' })
     const events = (): { ready: Promise<void> } => ({ ready: new Promise<void>(() => {}) })
     const log = vi.fn()
     await runTaskCommand(parseCliArgs(['run', 'wait', 'run-1', '--timeout-ms', '100']), {
@@ -1860,11 +1889,19 @@ describe('task CLI', () => {
         },
         { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true }
       )
-    ).rejects.toMatchObject({ details: {
-      code: 'timeout', runId: 'run-1', timeoutMs: 25, next: [{ action: 'get_run', runId: 'run-1' }]
-    } })
+    ).rejects.toMatchObject({
+      details: {
+        code: 'timeout',
+        runId: 'run-1',
+        timeoutMs: 25,
+        next: [{ action: 'get_run', runId: 'run-1' }]
+      }
+    })
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ timeoutMs: expect.any(Number) }))
+    expect(client.waitForRun).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({ timeoutMs: expect.any(Number) })
+    )
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(25)
     expect(eventSignal?.aborted).toBe(true)
@@ -1937,7 +1974,10 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ returnOnAttention: true }))
+    expect(client.waitForRun).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({ returnOnAttention: true })
+    )
     expect(warn).toHaveBeenCalledWith(
       'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
     )
@@ -2055,7 +2095,10 @@ describe('task CLI', () => {
       )
     ).rejects.toMatchObject({ details: { code: 'timeout', runId: 'run-1' } })
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ timeoutMs: expect.any(Number) }))
+    expect(client.waitForRun).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({ timeoutMs: expect.any(Number) })
+    )
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(25)
     expect(client.cancelRun).toHaveBeenCalledWith('run-1', expect.any(Object))
@@ -2091,7 +2134,8 @@ describe('task CLI', () => {
       )
     ).rejects.toMatchObject({
       details: {
-        code: 'timeout', runId: 'run-1',
+        code: 'timeout',
+        runId: 'run-1',
         message: expect.stringContaining('cancellation was not confirmed')
       }
     })
@@ -2203,20 +2247,23 @@ describe('service interruption results', () => {
         output: 'Done'
       })
       const log = vi.fn()
-      await runTaskCommand(parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait']), {
-        connect: async () => ({
-          listProjects,
-          submitRun,
-          waitForRun,
-          events: (options: { signal: AbortSignal }) => {
-            signal = options.signal
-            if (phase === 'create') throw failure
-            return { ready: Promise.reject(failure), return: release }
-          }
-        }),
-        stdinIsTTY: true,
-        log
-      })
+      await runTaskCommand(
+        parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait']),
+        {
+          connect: async () => ({
+            listProjects,
+            submitRun,
+            waitForRun,
+            events: (options: { signal: AbortSignal }) => {
+              signal = options.signal
+              if (phase === 'create') throw failure
+              return { ready: Promise.reject(failure), return: release }
+            }
+          }),
+          stdinIsTTY: true,
+          log
+        }
+      )
       expect(signal?.aborted).toBe(true)
       expect(submitRun).toHaveBeenCalledOnce()
       expect(log).toHaveBeenCalledWith('Done')
@@ -2267,7 +2314,9 @@ describe('service interruption results', () => {
         connect: async () => ({ listProjects, submitRun }),
         stdinIsTTY: true
       })
-    ).rejects.toMatchObject({ details: { code: 'request_failed', completionStatus: 'submission-unconfirmed' } })
+    ).rejects.toMatchObject({
+      details: { code: 'request_failed', completionStatus: 'submission-unconfirmed' }
+    })
     expect(submitRun).toHaveBeenCalledOnce()
   })
 
@@ -2308,35 +2357,38 @@ describe('service interruption results', () => {
     }
   )
 
-  it.each(['text', 'json'])('returns a durable receipt for a submit-only Run in %s output', async (format) => {
-    const submitRun = acceptedSubmission()
-    const log = vi.fn()
-    await runTaskCommand(
-      parseCliArgs([
-        'run',
-        '--project',
-        'Research',
-        '--prompt',
-        'work',
-        ...(format === 'text' ? [] : [`--${format}`])
-      ]),
-      {
-        connect: async () => ({ listProjects, submitRun }),
-        stdinIsTTY: true,
-        log
+  it.each(['text', 'json'])(
+    'returns a durable receipt for a submit-only Run in %s output',
+    async (format) => {
+      const submitRun = acceptedSubmission()
+      const log = vi.fn()
+      await runTaskCommand(
+        parseCliArgs([
+          'run',
+          '--project',
+          'Research',
+          '--prompt',
+          'work',
+          ...(format === 'text' ? [] : [`--${format}`])
+        ]),
+        {
+          connect: async () => ({ listProjects, submitRun }),
+          stdinIsTTY: true,
+          log
+        }
+      )
+      if (format === 'text') {
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Submission accepted'))
+      } else {
+        expect(log).toHaveBeenCalledOnce()
+        expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+          requestId: expect.any(String),
+          runId: 'run-1',
+          status: 'accepted'
+        })
       }
-    )
-    if (format === 'text') {
-      expect(log).toHaveBeenCalledWith(expect.stringContaining('Submission accepted'))
-    } else {
-      expect(log).toHaveBeenCalledOnce()
-      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
-        requestId: expect.any(String),
-        runId: 'run-1',
-        status: 'accepted'
-      })
     }
-  })
+  )
 
   it.each([true, false])(
     'reports an unconfirmed result without fabricating an ID (submitted=%s)',
@@ -2360,10 +2412,12 @@ describe('service interruption results', () => {
       } catch (error) {
         caught = error
       }
-      expect(caught).toMatchObject({ details: {
-        code: 'daemon_unavailable',
-        completionStatus: submitted ? 'unconfirmed' : 'submission-unconfirmed'
-      } })
+      expect(caught).toMatchObject({
+        details: {
+          code: 'daemon_unavailable',
+          completionStatus: submitted ? 'unconfirmed' : 'submission-unconfirmed'
+        }
+      })
       if (submitted) expect(client.waitForRun).toHaveBeenCalledOnce()
       else expect(client.waitForRun).not.toHaveBeenCalled()
       const error = vi.fn()

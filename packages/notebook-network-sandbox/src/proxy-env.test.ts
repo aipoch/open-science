@@ -50,25 +50,28 @@ describe('Notebook network proxy environment', () => {
   })
 })
 
-it.runIf(process.platform !== 'win32')('distinguishes Linux isolation failures through the sandbox executable', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'open-science-isolation-check-'))
-  vi.stubEnv('PATH', directory)
-  try {
-    for (const [diagnostic, expected] of [
-      ['', 'ready'],
-      ['bwrap: Creating new namespace failed: Operation not permitted', 'namespaces-unavailable'],
-      ["bwrap: Can't mount proc on /newroot/proc: Operation not permitted", 'procfs-unavailable'],
-      ['bwrap: unrecognized host failure', 'unconfirmed']
-    ]) {
-      await writeFile(
-        join(directory, 'bwrap'),
-        `#!/bin/sh\n[ "$*" = '--die-with-parent --new-session --unshare-all --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true' ] || exit 2\n${diagnostic ? `printf '%s\\n' "${diagnostic}" >&2\nexit 1` : 'exit 0'}\n`,
-        { mode: 0o700 }
-      )
-      await expect(probeLinuxIsolation()).resolves.toBe(expected)
+it.runIf(process.platform !== 'win32')(
+  'distinguishes Linux isolation failures through the sandbox executable',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-isolation-check-'))
+    vi.stubEnv('PATH', directory)
+    try {
+      for (const [diagnostic, expected] of [
+        ['', 'ready'],
+        ['bwrap: Creating new namespace failed: Operation not permitted', 'namespaces-unavailable'],
+        ["bwrap: Can't mount proc on /newroot/proc: Operation not permitted", 'procfs-unavailable'],
+        ['bwrap: unrecognized host failure', 'unconfirmed']
+      ]) {
+        await writeFile(
+          join(directory, 'bwrap'),
+          `#!/bin/sh\n[ "$*" = '--die-with-parent --new-session --unshare-all --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true' ] || exit 2\n${diagnostic ? `printf '%s\\n' "${diagnostic}" >&2\nexit 1` : 'exit 0'}\n`,
+          { mode: 0o700 }
+        )
+        await expect(probeLinuxIsolation()).resolves.toBe(expected)
+      }
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
     }
-  } finally {
-    vi.unstubAllEnvs()
-    await rm(directory, { recursive: true, force: true })
   }
-})
+)
