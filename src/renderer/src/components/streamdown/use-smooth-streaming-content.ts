@@ -39,6 +39,16 @@ const splitGraphemes = (value: string): string[] =>
     ? Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment)
     : Array.from(value)
 
+// Closing a stream only needs a threshold decision. Avoid materializing the entire unseen tail.
+const exceedsCatchUpThreshold = (text: string): boolean => {
+  if (text.length <= CATCH_UP_GRAPHEMES) return false
+  const segments = (graphemeSegmenter?.segment(text) ?? text)[Symbol.iterator]()
+  for (let count = 0; count <= CATCH_UP_GRAPHEMES; count++) {
+    if (segments.next().done) return false
+  }
+  return true
+}
+
 const shouldAnimateStreamingContent = (): boolean => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false
   return !(
@@ -129,7 +139,7 @@ const useSmoothStreamingContent = (
     if (
       sourceWasOpen &&
       !sourceOpen &&
-      splitGraphemes(content.slice(visibleContentRef.current.length)).length > CATCH_UP_GRAPHEMES
+      exceedsCatchUpThreshold(content.slice(visibleContentRef.current.length))
     ) {
       resetPending()
       commit(content)

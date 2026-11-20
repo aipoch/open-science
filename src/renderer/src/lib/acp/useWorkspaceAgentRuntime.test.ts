@@ -828,14 +828,17 @@ describe('workspace agent runtime event processing', () => {
         presentation: createTimerPresentation()
       })
 
-      const drain = processor.process(createTextEvents(24))
+      const singleGraphemes = ['x', '\r\n', '👩‍🔬', '字']
+      const events = createTextEvents(24).map((event, i) => ({
+        ...event,
+        text: singleGraphemes[i % singleGraphemes.length]
+      }))
+      const drain = processor.process(events)
       await vi.advanceTimersByTimeAsync(200)
       await drain
 
       expect(visibleBatches.map(({ ids }) => ids.length)).toEqual([8, 8, 8])
-      expect(visibleBatches.flatMap(({ ids }) => ids)).toEqual(
-        createTextEvents(24).map((event) => event.id)
-      )
+      expect(visibleBatches.flatMap(({ ids }) => ids)).toEqual(events.map((event) => event.id))
       expect(
         visibleBatches
           .slice(1)

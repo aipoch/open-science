@@ -31,6 +31,8 @@ const graphemeSegmenter =
 
 const countEventGraphemes = (event: AcpRuntimeEvent): number => {
   const text = getAcpRuntimeEventText(event) ?? ''
+  // Each printable ASCII character, tab and LF is one grapheme. Leave CRLF to the segmenter.
+  if (!/[^\t\n -~]/u.test(text)) return text.length
   return graphemeSegmenter
     ? Array.from(graphemeSegmenter.segment(text)).length
     : Array.from(text).length
