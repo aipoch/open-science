@@ -128,6 +128,8 @@ win:
   target:
     - nsis
   extraResources:
+    - from: out/windows-delta/${arch}/bin
+      to: windows-delta
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json
