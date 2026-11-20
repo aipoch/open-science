@@ -91,5 +91,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Notebook readiness and Agent Session package operations extend the reviewed Web Service boundary to new runtime and filesystem contracts. Retain full validation until those consumers are reviewed."
 }
