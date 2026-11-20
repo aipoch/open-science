@@ -254,11 +254,10 @@ export const turnMarkdownBlockInto = (
   const current = editor.api.node<TElement>(path)![0]
   const item = isMarkdownListItem(editor, path)
   const value = NodeApi.string(item ? current.children[0] : current)
-  const node = createMarkdownBlock(kind, {
-    code: value,
-    date: value || undefined,
-    imageAlt: value
-  })
+  const node: MarkdownPlaceholderElement = {
+    ...createMarkdownBlock(kind, { code: value, date: value || undefined, imageAlt: value }),
+    placeholderKind: kind
+  }
   if (kind !== 'divider' && kind !== 'dropdown' && !(kind === 'date' && !value))
     setBlockText(node, value)
   if (kind === 'dropdown' && value) {

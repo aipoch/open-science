@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MarkdownEditorSurface } from './MarkdownEditorSurface'
-import { insertMarkdownBlock } from './markdown-blocks'
+import { insertMarkdownBlock, turnMarkdownBlockInto } from './markdown-blocks'
 import { createMarkdownEditor } from './markdown-editor'
 import type * as MarkdownEditorModule from './markdown-editor'
 
@@ -130,6 +130,18 @@ describe('MarkdownEditorSurface', () => {
       expect(surface.querySelector('[data-markdown-placeholder]')).toBeNull()
     }
   )
+
+  it('shows the target placeholder after converting an empty block', async () => {
+    render(<MarkdownEditorSurface source="" onChange={vi.fn()} />)
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    await act(async () => {
+      editor.tf.select({ path: [0, 0], offset: 0 })
+      turnMarkdownBlockInto(editor, [0], 'h2')
+    })
+    expect(
+      screen.getByRole('heading', { level: 2 }).getAttribute('data-markdown-placeholder')
+    ).toBe('Heading 2')
+  })
 
   it('uses the generic placeholder after an inserted heading becomes a paragraph', async () => {
     render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
