@@ -140,4 +140,18 @@ describe('Onboarding entry flow', () => {
     await clickButton(/Test & continue/)
     expect(useSettingsStore.getState().saveAndActivateProvider).not.toHaveBeenCalled()
   })
+
+  it('keeps the second-stage feedback and navigation inside one scrollable content region', async () => {
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+
+    const content = container.querySelector('.onboarding-quick-content')
+    expect(content).not.toBeNull()
+    expect(content?.querySelector('.onboarding-quick-footer')).not.toBeNull()
+    expect(content?.querySelector('[data-onboarding-action="advanced"]')).not.toBeNull()
+    expect(
+      content?.querySelector('.onboarding-quick-scroll .onboarding-provider-track')
+    ).not.toBeNull()
+  })
 })

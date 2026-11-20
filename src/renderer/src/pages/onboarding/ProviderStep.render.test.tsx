@@ -473,7 +473,10 @@ describe('ProviderStep', () => {
     expect(details.querySelector('pre')?.textContent).toBe(rawError)
     expect(warning.querySelector('svg')).not.toBeNull()
     expect(loginIsolatedCodex).not.toHaveBeenCalled()
-    await clickButton(/^Dismiss$/)
+    expect(warning.closest('.onboarding-quick-scroll')).not.toBeNull()
+    await act(async () =>
+      warning.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click()
+    )
     expect(container.contains(warning)).toBe(false)
     await clickButton(/^Sign in with Open-Science$/)
     expect(saveProvider).toHaveBeenCalledTimes(1)
