@@ -66,6 +66,10 @@ import {
   type RuntimeDirectoryLease
 } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
+import {
+  canDownloadWindowsUpdate,
+  loadWindowsDownloadPreference
+} from './update/windows-background-download'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
 import { installationRootForEntry } from './update/installation-protection'
 import {
@@ -759,6 +763,7 @@ async function startDesktop(): Promise<void> {
     'cli:install',
     'cli:uninstall',
     'update:get-app-info',
+    'update:set-automatic-downloads',
     'update:get-status',
     'update:get-installer',
     'update:reveal-installer',
@@ -1797,7 +1802,12 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
+  const backgroundDownloads =
+    process.platform === 'win32' && app.isPackaged && !headless && !app.getVersion().includes('-')
+      ? loadWindowsDownloadPreference(profilePath)
+      : undefined
   const update = createUpdateStrategy(process.platform, {
+    downloadPreference: backgroundDownloads,
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
@@ -1834,7 +1844,28 @@ async function startDesktop(): Promise<void> {
       : {})
   })
   registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame)
-  const stopUpdates = startUpdateScheduler(update)
+  const stopUpdates = startUpdateScheduler(
+    update,
+    undefined,
+    backgroundDownloads
+      ? {
+          isInBackground: () => {
+            const activity = resourceActivityRelay.state()
+            return (
+              ready &&
+              !runtimeStopped &&
+              !updateCommitted &&
+              !activity.suspended &&
+              !activity.foreground
+            )
+          },
+          canDownload: (bytes) =>
+            process.env.LOCALAPPDATA
+              ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
+              : Promise.resolve(false)
+        }
+      : undefined
+  )
   app.once('will-quit', () => {
     stopUpdates()
     removeNativeBroadcast()

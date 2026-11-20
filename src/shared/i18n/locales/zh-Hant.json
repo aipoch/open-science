@@ -232,6 +232,7 @@
   },
   "renderer": {
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "尚未安裝 Claude ACP。請在設定中安裝 Claude Agent 以使用 Claude Code。",
+    "Automatically download updates": "自動下載更新",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（預留 {{min}}–{{max}} 分鐘）",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（每分鐘影片預留 {{min}}–{{max}} 分鐘）",
     "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 以橫向（16:9）匯出。匯出中斷後，再次匯出將從頭開始。",

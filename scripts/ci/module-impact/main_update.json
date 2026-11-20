@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/update/windows-background-download.ts",
     "src/main/update/windows-recovery-identity.integration.test.ts",
     "src/main/update/windows-signature-verification.test.ts",
     "src/main/update/create-strategy.test.ts",
@@ -60,6 +61,7 @@
     "scripts/windows-extraction-partitions.test.ts"
   ],
   "interfacePaths": [
+    "src/main/update/windows-background-download.ts",
     "src/main/update/create-strategy.ts",
     "src/main/update/ipc.ts",
     "src/main/update/scheduler.ts",

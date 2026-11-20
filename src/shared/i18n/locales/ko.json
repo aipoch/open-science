@@ -232,6 +232,7 @@
   },
   "renderer": {
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP가 설치되어 있지 않습니다. Claude Code를 사용하려면 설정에서 Claude Agent를 설치하세요.",
+    "Automatically download updates": "업데이트 자동 다운로드",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (예상 소요 시간: {{min}}–{{max}}분)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (영상 1분당 예상 소요 시간: {{min}}–{{max}}분)",
     "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4는 가로(16:9)로 내보냅니다. 내보내기가 중단되면 다음 내보내기는 처음부터 시작합니다.",

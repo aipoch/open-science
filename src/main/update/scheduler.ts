@@ -7,14 +7,47 @@ const SIX_HOURS_MS = 6 * 60 * 60 * 1000
 // so a failed check never becomes an uncaught rejection or nags the user. Returns a stop function.
 export const startUpdateScheduler = (
   strategy: UpdateStrategy,
-  intervalMs: number = SIX_HOURS_MS
+  intervalMs: number = SIX_HOURS_MS,
+  background?: { isInBackground(): boolean; canDownload(bytes: number): Promise<boolean> }
 ): (() => void) => {
+  let stopped = false
   void strategy.check().then((status) => {
-    if (process.argv.includes(MAC_INSTALLATION_RESUME_UPDATE_ARG) && status.state === 'available') {
+    if (
+      !stopped &&
+      process.argv.includes(MAC_INSTALLATION_RESUME_UPDATE_ARG) &&
+      status.state === 'available'
+    ) {
       return strategy.download()
     }
     return undefined
   })
   const timer = setInterval(() => void strategy.check(), intervalMs)
-  return () => clearInterval(timer)
+  let probing = false
+  const considerDownload = async (): Promise<void> => {
+    if (probing || !background || !strategy.downloadInBackground || !background.isInBackground())
+      return
+    const offer = strategy.getBackgroundDownloadOffer?.()
+    if (!offer?.latest || !offer.totalBytes) return
+    probing = true
+    try {
+      if (
+        (await background.canDownload(offer.totalBytes)) &&
+        !stopped &&
+        background.isInBackground() &&
+        strategy.getBackgroundDownloadOffer?.() === offer
+      ) {
+        await strategy.downloadInBackground(offer.latest)
+      }
+    } finally {
+      probing = false
+    }
+  }
+  const backgroundTimer = background
+    ? setInterval(() => void considerDownload(), 60_000)
+    : undefined
+  return () => {
+    stopped = true
+    clearInterval(timer)
+    clearInterval(backgroundTimer)
+  }
 }

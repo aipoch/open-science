@@ -234,6 +234,7 @@
   },
   "renderer": {
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP n’est pas installé. Installez Claude Agent dans les paramètres pour utiliser Claude Code.",
+    "Automatically download updates": "Télécharger automatiquement les mises à jour",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prévoir {{min}}–{{max}} min)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (prévoir {{min}}–{{max}} min par minute de film)",
     "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "Le MP4 est exporté au format paysage (16:9). Après une interruption, le prochain export reprend depuis le début.",
