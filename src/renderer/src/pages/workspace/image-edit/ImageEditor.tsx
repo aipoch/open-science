@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   MapPin,
   MoveUpRight,
+  Pencil,
   Redo2,
   Scan,
   Sparkles,
@@ -931,7 +932,7 @@ function ActiveImageEditor({
     >
       {composerTarget ? (
         <div className="flex items-center gap-2 border-b border-border-300/40 px-3 py-2">
-          <Sparkles className="size-4 shrink-0 text-primary" />
+          <Pencil className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{t('Edit image')}</span>
           <Button type="button" size="sm" variant="ghost" onClick={onClose}>
             {t('Back to conversation')}
@@ -1561,13 +1562,12 @@ function ActiveImageEditor({
                           <Button
                             type="button"
                             variant="ghost"
-                            size="sm"
+                            size="icon-xs"
                             aria-label={t('Done')}
                             disabled={!selectedRegion.instruction.trim()}
                             onClick={confirmRegion}
                           >
                             <Check className="size-3.5" />
-                            {t('Add instruction')}
                           </Button>
                         </div>
                       </>
