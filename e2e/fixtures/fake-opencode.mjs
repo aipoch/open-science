@@ -997,10 +997,11 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     // Hosted runners need 30-80s per AppContainer launch; the MCP SDK's default per-request
     // timeout (-32001) is far below the certification's per-cell budget.
-    const call = async (name, arguments_ = {}) =>
+    const call = async (name, arguments_ = {}, options) =>
       toolResult(
         name,
-        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 })
+        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 }),
+        options
       )
     const execute = async (code) =>
       controlResultValue(await call('repl_execute', { code, timeoutMs: 180_000 }))
@@ -1027,8 +1028,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
     if (second.marker !== 'second-cell' || !second.reset)
       throw new Error('REPL restart did not produce a fresh interpreter.')
     // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
-    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 180_000 })
-    if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
+    const exited = await call(
+      'repl_execute',
+      { code: 'process.exit(23)', timeoutMs: 180_000 },
+      { allowToolError: true }
+    )
+    const kernel = exited.recovery?.kernel
+    if (
+      exited.status !== 'failed' ||
+      kernel?.kind !== 'repl' ||
+      kernel.exitCode !== 23 ||
+      kernel.cleanup !== 'verified'
+    )
+      throw new Error(`Unexpected result for the deliberate REPL exit: ${JSON.stringify(exited)}`)
     const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
     if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))
       throw new Error('Shell remained blocked after REPL exit.')
