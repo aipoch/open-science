@@ -39,7 +39,10 @@ int main(int argc, char **argv) {
         }
         NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
         config.arguments = request[@"args"];
-        config.environment = NSProcessInfo.processInfo.environment;
+        NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+        if ([request[@"openInterrupted"] boolValue]) environment[@"OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED"] = @"1";
+        else [environment removeObjectForKey:@"OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED"];
+        config.environment = environment;
         config.allowsRunningApplicationSubstitution = NO;
         config.promptsUserIfNeeded = NO;
         config.addsToRecentItems = NO;

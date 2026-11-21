@@ -269,7 +269,13 @@ async function reopen() {
     ).stdout.trim() === targetVersion
   // A failed replacement must never deliver a document or browser transfer to the old version.
   sender.stdin.end(
-    JSON.stringify({ bundle, args: request.args, urls: installed ? request.urls : [] })
+    JSON.stringify({
+      bundle,
+      args: request.args,
+      urls: installed ? request.urls : [],
+      // A plain activation is satisfied by reopening the current app.
+      openInterrupted: !installed && request.urls.some((url) => url !== 'open-science://open')
+    })
   )
   if (!(await senderDone)) process.exitCode = 1
 }

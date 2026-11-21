@@ -243,6 +243,10 @@ const buildZoomSafeApplicationMenu = (
 }
 
 async function startDesktop(): Promise<void> {
+  // Consume the native sender's one-launch signal before starting any child processes.
+  let updateOpenInterrupted =
+    process.platform === 'darwin' && process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED === '1'
+  delete process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
@@ -1001,9 +1005,14 @@ async function startDesktop(): Promise<void> {
   // Keep the protocol presentation available before Node/DB readiness, with no secret in IPC.
   // Chromium may open its persistent session only after credential preflight has finished.
   let browserImportShellReady = false
+  const createDesktopWindow = (options?: Parameters<typeof createMainWindow>[0]): BrowserWindow => {
+    const window = createMainWindow(options, translate, updateOpenInterrupted)
+    updateOpenInterrupted = false
+    return window
+  }
   const showStartupWindow = (): BrowserWindow => {
     if (!startupWindow || startupWindow.isDestroyed()) {
-      const window = createMainWindow(undefined, translate)
+      const window = createDesktopWindow()
       startupWindow = window
       window.once('closed', () => {
         if (startupWindow !== window) return
@@ -1950,7 +1959,7 @@ async function startDesktop(): Promise<void> {
     app,
     createInitialWindow: !headless || Boolean(finishedStartupWindow),
     initialWindow: finishedStartupWindow,
-    createMainWindow: (options) => createMainWindow(options, translate),
+    createMainWindow: createDesktopWindow,
     configureMainWindow,
     createTray: (handlers) =>
       (tray = createAppTray({
