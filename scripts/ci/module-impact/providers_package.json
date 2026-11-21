@@ -1372,5 +1372,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The shared protocol error formatter feeds ACP, saved turns, diagnostic exports and renderer notices. Run full validation until these cross-process consumers are reviewed for selective testing."
 }
