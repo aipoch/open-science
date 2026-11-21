@@ -5395,6 +5395,90 @@ it('advertises managed Notebook setup locally and returns the outcome for the or
   }
 })
 
+it('enables only an explicitly selected available Notebook runtime on the local Task connection', async () => {
+  const existing = {
+    language: 'r',
+    envId: '/existing/bin/R',
+    interpreterPath: '/existing/bin/R',
+    label: 'External R',
+    provenance: 'user-own',
+    version: '4.5.0',
+    runnable: true
+  } as const
+  const enablement = { enabled: {} as Record<string, boolean>, installAuthorized: {} }
+  const tasks = new HeadlessTaskApi({
+    commands: { commandNames: () => [], invoke: async () => undefined },
+    agent: {} as never,
+    notebookRuntimes: {
+      listLanguageEnvironments: async (language) => (language === 'r' ? [existing] : []),
+      registerCheckedInterpreter: async ({ language, path }) =>
+        language === 'r' && path === existing.interpreterPath ? existing : undefined,
+      getEnablement: async () => enablement,
+      setEnvironmentEnabled: async ({ envId, enabled }) => {
+        enablement.enabled[envId] = enabled
+        return enablement
+      }
+    }
+  })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    tasks,
+    externalAccess: {
+      authorizeHttp: async () => accessOnlyExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    rpc: { channels: () => [], invoke: async () => undefined },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const local = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const remote = new OpenScienceClient({ baseUrl, token: 'remote-token' })
+  const target = { language: 'r', runtimeId: existing.envId }
+  try {
+    expect((await local.health()).taskCapabilities).toContain('notebook-runtime-selection')
+    expect((await remote.health()).taskCapabilities).not.toContain('notebook-runtime-selection')
+    await expect(remote.enableNotebookRuntime(target)).rejects.toMatchObject({ status: 403 })
+    await expect(
+      local.registerNotebookInterpreter({ language: 'r', path: '/wrong/path' })
+    ).rejects.toMatchObject({ code: 'notebook_runtime_unavailable' })
+    await expect(
+      local.registerNotebookInterpreter({ language: 'r', path: existing.interpreterPath })
+    ).resolves.toMatchObject({ ...target, enabled: false, source: 'external' })
+    await expect(
+      local.enableNotebookRuntime({ ...target, language: 'python' })
+    ).rejects.toMatchObject({ code: 'notebook_runtime_unavailable' })
+    const response = await fetch(`${baseUrl}/api/v1/notebook-runtimes`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'enable', ...target, installAuthorized: true })
+    })
+    expect(response.status).toBe(400)
+    await expect(local.listNotebookRuntimes('r')).resolves.toMatchObject([
+      { ...target, enabled: false }
+    ])
+    await expect(local.enableNotebookRuntime(target)).resolves.toMatchObject({
+      ...target,
+      enabled: true
+    })
+    await expect(local.listNotebookRuntimes('python')).resolves.toEqual([])
+    await expect(local.listNotebookRuntimes('r')).resolves.toMatchObject([
+      { ...target, enabled: true }
+    ])
+  } finally {
+    await tasks.dispose()
+  }
+})
+
 describe('Connector Task HTTP routes', () => {
   it('routes authenticated SDK reads and writes to the same Settings snapshot', async () => {
     const snapshot = {

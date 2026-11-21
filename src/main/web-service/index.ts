@@ -85,6 +85,7 @@ const createWebServiceController = (
     taskAgent,
     taskNotebook,
     taskNotebookEnvironment,
+    taskNotebookRuntimes,
     taskControls,
     computePreferences,
     detectActiveSessions
@@ -98,6 +99,7 @@ const createWebServiceController = (
     taskAgent: TaskAgentPort
     taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
     taskNotebookEnvironment?: ManagedNotebookSetup
+    taskNotebookRuntimes?: import('./task-api').TaskNotebookRuntimes
     taskControls?: TaskControlPorts
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -129,6 +131,7 @@ const createWebServiceController = (
       agent: taskAgent,
       notebook: taskNotebook,
       notebookEnvironment: taskNotebookEnvironment,
+      notebookRuntimes: taskNotebookRuntimes,
       controls: taskControls,
       computePreferences,
       detectActiveSessions

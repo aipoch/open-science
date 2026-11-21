@@ -32,6 +32,7 @@ const TASK_RUN_REQUEST_FIELDS = {
   project: true,
   prompt: true,
   cwd: true,
+  notebookRuntime: true,
   sessionId: true,
   permissionProfile: true,
   permissionPrompts: true,

@@ -206,6 +206,7 @@ type TaskAgentPromptRequest = {
   promptMessageId: string
   provenanceContext: AgentTurnProvenanceContext
   text: string
+  notebookRuntime?: StartTaskRunRequest['notebookRuntime']
   notebookContinuation?: NotebookTaskContinuationOperation
   turnIntent?: 'plan-first'
   skillIds?: string[]
@@ -1364,6 +1365,21 @@ class TaskRunner {
     if (request.cwd !== undefined && typeof request.cwd !== 'string') {
       throw new TaskRunnerError('invalid_request', 'Working directory must be a string.')
     }
+    const target = request.notebookRuntime
+    if (
+      target !== undefined &&
+      (!target ||
+        (target.language !== 'python' && target.language !== 'r') ||
+        typeof target.runtimeId !== 'string' ||
+        !target.runtimeId ||
+        target.runtimeId.length > 4096 ||
+        Object.keys(target).length !== 2)
+    ) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Supply the Notebook language and exact runtime ID.'
+      )
+    }
     if (
       request.permissionProfile !== undefined &&
       !['ask', 'auto', 'full'].includes(request.permissionProfile)
@@ -2438,6 +2454,7 @@ class TaskRunner {
           promptMessageId,
           provenanceContext,
           text: prompt,
+          ...(request.notebookRuntime ? { notebookRuntime: request.notebookRuntime } : {}),
           ...(notebookContinuation
             ? {
                 notebookContinuation: {

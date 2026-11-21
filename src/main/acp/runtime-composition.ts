@@ -162,6 +162,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   notebookRpcServer: NotebookLocalRpcServer
   wslSetupSessions?: AcpRuntimeOptions['wslSetupSessions']
   getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
+  bindTaskNotebookRuntime?: NonNullable<AcpRuntimeOptions['notebook']>['bindTaskRuntime']
   canOwnRuntimeBindingDecision?: NonNullable<
     AcpRuntimeOptions['notebook']
   >['canOwnRuntimeBindingDecision']
@@ -298,6 +299,7 @@ const createAcpRuntime = ({
   wslSetupSessions,
   getShellRuntimeBinding,
   canOwnRuntimeBindingDecision,
+  bindTaskNotebookRuntime,
   peekNotebookHandoffContext,
   isReplNamespaceUnavailable,
   authorizeSkillImportReferencedUploads,
@@ -1011,6 +1013,7 @@ const createAcpRuntime = ({
         notebook: {
           ...(!delegatedNotebookConnection
             ? {
+                bindTaskRuntime: bindTaskNotebookRuntime,
                 createExecutionIntent: (
                   scope: import('../notebook/execution-intent').NotebookExecutionIntentScope
                 ) => notebookRpcServer.createExecutionIntent(scope),

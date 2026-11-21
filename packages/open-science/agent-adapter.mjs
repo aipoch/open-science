@@ -114,6 +114,11 @@ const policies = {
     'Open-Science could not prepare the requested Notebook language. Recheck setup and inspect the service log before repeating it.',
     { action: 'get_setup_status' }
   ],
+  notebook_runtime_unavailable: [
+    'agent',
+    'The selected Notebook interpreter is no longer available for this language. Read current runtimes and check that the exact target is runnable and enabled.',
+    { action: 'list_notebook_runtimes' }
+  ],
   notebook_environment_operation_conflict: [
     'agent',
     'This operation ID belongs to another request, or this language already has a setup operation in progress. Check setup before requesting another write.',
@@ -841,6 +846,52 @@ const definitions = [
     exposure: { cli: true, mcp: true },
     serviceCapability: 'provider-setup',
     handler: (args, context) => providerSetup({ action: 'provider-activate', ...args }, context)
+  },
+  {
+    name: 'list_notebook_runtimes',
+    group: 'setup',
+    description:
+      'Discover existing Notebook interpreters for one language, including disabled ones. Returns their runtimeId, source, readiness and effective enabled status. Does not register, enable or install anything.',
+    inputSchema: z.strictObject({ language: languageInput }),
+    annotations: readOnly,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async ({ language }, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).listNotebookRuntimes(language, {
+        signal: context.signal
+      })
+  },
+  {
+    name: 'register_notebook_interpreter',
+    group: 'setup',
+    description:
+      'Probe and register a user-selected existing Python or R interpreter by its absolute local path. Only use a path the user trusts; the application runs a version/readiness probe. Does not enable it or install dependencies.',
+    inputSchema: z.strictObject({ language: languageInput, path: z.string().min(1).max(4096) }),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async (request, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).registerNotebookInterpreter(
+        request,
+        { signal: context.signal }
+      )
+  },
+  {
+    name: 'enable_notebook_runtime',
+    group: 'setup',
+    description:
+      'Enable one explicitly user-selected, runnable Notebook environment in this local profile. Pass the language and exact runtimeId from discovery. Does not bind it to a Session or grant package installation rights.',
+    inputSchema: z.strictObject({
+      language: languageInput,
+      runtimeId: z.string().min(1).max(4096)
+    }),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async (request, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).enableNotebookRuntime(request, {
+        signal: context.signal
+      })
   },
   {
     name: 'prepare_notebook_environment',

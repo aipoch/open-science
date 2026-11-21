@@ -247,6 +247,29 @@ export class OpenScienceClient {
     })
   }
 
+  listNotebookRuntimes(language, options) {
+    return this.request(`/api/v1/notebook-runtimes?${new URLSearchParams({ language })}`, {
+      ...options,
+      method: 'GET'
+    })
+  }
+
+  registerNotebookInterpreter({ language, path }, options) {
+    return this.request('/api/v1/notebook-runtimes', {
+      ...options,
+      method: 'POST',
+      body: { action: 'register', language, path }
+    })
+  }
+
+  enableNotebookRuntime({ language, runtimeId }, options) {
+    return this.request('/api/v1/notebook-runtimes', {
+      ...options,
+      method: 'POST',
+      body: { action: 'enable', language, runtimeId }
+    })
+  }
+
   startNotebookEnvironmentOperation({ language, operationId, action }, options) {
     return this.request(
       `/api/v1/notebook-environment/operations/${encodeURIComponent(operationId)}`,

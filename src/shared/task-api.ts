@@ -58,6 +58,22 @@ export type TaskNotebookEnvironmentTarget = Readonly<{
   operationId: string
 }>
 
+export type TaskNotebookRuntimeSelection = Readonly<{
+  language: NotebookLanguage
+  runtimeId: string
+}>
+
+export type TaskNotebookRuntime = TaskNotebookRuntimeSelection & {
+  source: 'managed' | 'external'
+  provenance: 'app-managed' | 'agent-created' | 'user-own'
+  interpreterPath: string
+  label: string
+  version?: string
+  runnable: boolean
+  enabled: boolean
+  detail?: string
+}
+
 export type TaskNotebookEnvironmentRequest = TaskNotebookEnvironmentTarget &
   Readonly<{ action: 'prepare' | 'repair' }>
 
@@ -127,6 +143,8 @@ export type TaskNotebookExecution = {
   promptMessageId?: string
   messageBranchId?: string
   language?: NotebookLanguage
+  runtimeId?: string
+  runtimeSource?: 'managed' | 'external'
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string
@@ -173,6 +191,7 @@ export type StartTaskRunRequest = {
   prompt: string
   sessionId?: string
   cwd?: string
+  notebookRuntime?: TaskNotebookRuntimeSelection
   permissionProfile?: PermissionProfileId
   /** Per-execution: deny unresolved human interactions instead of waiting. */
   permissionPrompts?: 'none'
@@ -376,6 +395,7 @@ export type AcquiredTaskArtifact = {
 
 export type TaskApiErrorCode =
   | 'notebook_setup_failed'
+  | 'notebook_runtime_unavailable'
   | 'notebook_continuation_expired'
   | 'task_relay_required'
   | 'interaction_not_found'

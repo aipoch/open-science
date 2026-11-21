@@ -377,6 +377,7 @@ export type AcpRuntimeUploadOptions = {
 }
 
 export type AcpRuntimeNotebookOptions = {
+  bindTaskRuntime?: import('../notebook/runtime-service').NotebookRuntimeService['bindTaskRuntime']
   createExecutionIntent?: (scope: NotebookExecutionIntentScope) => NotebookExecutionIntent
   currentExecutionIntent?: (
     scope: NotebookExecutionIntentScope

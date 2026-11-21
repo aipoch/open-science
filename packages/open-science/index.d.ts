@@ -319,6 +319,22 @@ export type NotebookEnvironmentOperationTarget = {
   operationId: string
 }
 
+export type NotebookRuntimeSelection = {
+  language: 'python' | 'r'
+  runtimeId: string
+}
+
+export type NotebookRuntime = NotebookRuntimeSelection & {
+  source: 'managed' | 'external'
+  provenance: 'app-managed' | 'agent-created' | 'user-own'
+  interpreterPath: string
+  label: string
+  version?: string
+  runnable: boolean
+  enabled: boolean
+  detail?: string
+}
+
 export type NotebookEnvironmentOperationRequest = NotebookEnvironmentOperationTarget & {
   action: 'prepare' | 'repair'
 }
@@ -427,6 +443,8 @@ export type NotebookExecution = {
   promptMessageId?: string
   messageBranchId?: string
   language?: 'python' | 'r'
+  runtimeId?: string
+  runtimeSource?: 'managed' | 'external'
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string
@@ -903,6 +921,18 @@ export class OpenScienceClient {
     language: 'python' | 'r',
     options?: RequestOptions
   ): Promise<Record<string, never>>
+  listNotebookRuntimes(
+    language: NotebookRuntimeSelection['language'],
+    options?: RequestOptions
+  ): Promise<NotebookRuntime[]>
+  registerNotebookInterpreter(
+    input: { language: NotebookRuntimeSelection['language']; path: string },
+    options?: RequestOptions
+  ): Promise<NotebookRuntime>
+  enableNotebookRuntime(
+    input: NotebookRuntimeSelection,
+    options?: RequestOptions
+  ): Promise<NotebookRuntime>
   startNotebookEnvironmentOperation(
     request: NotebookEnvironmentOperationRequest,
     options?: RequestOptions
@@ -1126,6 +1156,7 @@ export class OpenScienceClient {
       prompt: string
       cwd?: string
       sessionId?: string
+      notebookRuntime?: NotebookRuntimeSelection
       permissionProfile?: PermissionProfile
       skillIds?: string[]
       turnIntent?: TurnIntent

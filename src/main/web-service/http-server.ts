@@ -213,6 +213,9 @@ type WebServerOptions = {
         | 'doctor'
         | 'bootstrap'
         | 'prepareNotebookEnvironment'
+        | 'supportsNotebookRuntimeSelection'
+        | 'listNotebookRuntimes'
+        | 'configureNotebookRuntime'
         | 'supportsNotebookEnvironmentOperations'
         | 'startNotebookEnvironmentOperation'
         | 'getNotebookEnvironmentOperation'
@@ -644,6 +647,7 @@ const taskErrorStatus = (error: TaskApiError): number => {
     error.code === 'interaction_revision_conflict' ||
     error.code === 'question_already_answered' ||
     error.code === 'notebook_environment_operation_conflict' ||
+    error.code === 'notebook_runtime_unavailable' ||
     error.code === 'notebook_continuation_expired' ||
     error.code === 'session_read_only' ||
     error.code === 'session_project_mismatch'
@@ -1188,6 +1192,25 @@ const handleTaskApiRequest = async (
         await tasks.prepareNotebookEnvironment(language)
         reply(200, { data: {} })
         return true
+      }
+      if (
+        url.pathname === '/api/v1/notebook-runtimes' &&
+        tasks.supportsNotebookRuntimeSelection?.()
+      ) {
+        if (request.method === 'GET' && tasks.listNotebookRuntimes) {
+          reply(200, { data: await tasks.listNotebookRuntimes(url.searchParams.get('language')) })
+          return true
+        }
+        if (request.method === 'POST' && tasks.configureNotebookRuntime) {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          reply(200, { data: await tasks.configureNotebookRuntime(body) })
+          return true
+        }
       }
       const environmentOperation = url.pathname.match(
         /^\/api\/v1\/notebook-environment\/operations\/([A-Za-z0-9_-]{1,128})$/
@@ -2005,6 +2028,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   ...(auth.localBearer && options.tasks.bootstrap ? ['provider-setup'] : []),
                   ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
                     ? ['notebook-setup']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsNotebookRuntimeSelection?.()
+                    ? ['notebook-runtime-selection']
                     : []),
                   ...(!externalAuthorization &&
                   options.tasks.supportsNotebookEnvironmentOperations?.()

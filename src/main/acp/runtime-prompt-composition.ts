@@ -4,6 +4,10 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  taskNotebookRuntimeSelection
+} from '../notebook/runtime-binding-admission'
 import type { AgentFramework } from '../agent-framework/types'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -450,6 +454,42 @@ const composeAcpRuntimePromptOwners = (
           text
         }),
       beforePromptDispatch: beforeFrameworkPromptDispatch,
+      prepareTaskNotebookRuntime: async (request, workspaceCwd, signal) => {
+        const target = taskNotebookRuntimeSelection(request)
+        if (!target) return
+        const bind = options.notebook?.bindTaskRuntime
+        const { rootFrameId, agentFrameId, messageBranchId, runtimeSegmentId, promptMessageId } =
+          request.provenanceContext ?? {}
+        if (
+          !bind ||
+          !rootFrameId ||
+          !agentFrameId ||
+          !messageBranchId ||
+          !runtimeSegmentId ||
+          !promptMessageId
+        )
+          throw new Error('Notebook runtime selection is unavailable for this Task branch.')
+        notebookExecutionIntent(request)?.assertExecutable()
+        await bind(
+          markTrustedNotebookBindingPermissionPrompts(
+            {
+              ...target,
+              projectId: projectId(request.sessionId),
+              sessionId: request.sessionId,
+              workspaceCwd,
+              provenanceContext: {
+                rootFrameId,
+                agentFrameId,
+                messageBranchId,
+                runtimeSegmentId,
+                promptMessageId
+              }
+            },
+            request.permissionPrompts
+          ),
+          signal
+        )
+      },
       commitNotebookDispatch: (appSessionId) =>
         base.sessionCapabilities.commitNotebookDispatch(appSessionId),
       prepareNotebookIntent: (request, mode) => {

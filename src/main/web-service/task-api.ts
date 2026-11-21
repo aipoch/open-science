@@ -2,9 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
 import type { CliLauncherStatus } from '../../shared/cli'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { isEnvEnabled, type RuntimeEnablement } from '../../shared/notebook-runtime'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
@@ -72,6 +74,7 @@ import type {
   TaskNotebookEnvironmentOperation,
   TaskNotebookEnvironmentRequest,
   TaskNotebookEnvironmentTarget,
+  TaskNotebookRuntime,
   TaskPlanResponseRequest,
   TaskProject,
   TaskProjectSessionDefaults,
@@ -99,6 +102,7 @@ import {
   type ManagedNotebookSetup
 } from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import type { RuntimeWorkflows } from '../notebook/runtime-workflows'
 import { containsSecretBearingMaterial } from '../permission-grants/capability'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import {
@@ -130,6 +134,36 @@ const notebookContinuationRequest = z.strictObject({
   prompt: z.string().trim().min(1)
 }) satisfies z.ZodType<TaskNotebookContinuationRequest>
 
+const notebookLanguage = z.enum(['python', 'r'])
+const notebookRuntimeMutation = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('register'),
+    language: notebookLanguage,
+    path: z.string().min(1).max(4096)
+  }),
+  z.strictObject({
+    action: z.literal('enable'),
+    language: notebookLanguage,
+    runtimeId: z.string().min(1).max(4096)
+  })
+])
+
+const taskNotebookRuntime = (
+  env: DiscoveredInterpreter,
+  enablement: RuntimeEnablement
+): TaskNotebookRuntime => ({
+  language: env.language,
+  runtimeId: env.envId,
+  source: env.provenance === 'user-own' ? 'external' : 'managed',
+  provenance: env.provenance,
+  interpreterPath: env.interpreterPath,
+  label: env.label,
+  ...(env.version ? { version: env.version } : {}),
+  runnable: env.runnable,
+  enabled: isEnvEnabled(env, enablement),
+  ...(env.detail ? { detail: env.detail } : {})
+})
+
 const notebookStopExpired = (): TaskRunnerError =>
   new TaskRunnerError(
     'notebook_continuation_expired',
@@ -158,11 +192,20 @@ function permissionPreview(
   }
 }
 
+type TaskNotebookRuntimes = Pick<
+  RuntimeWorkflows,
+  | 'listLanguageEnvironments'
+  | 'registerCheckedInterpreter'
+  | 'getEnablement'
+  | 'setEnvironmentEnabled'
+>
+
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
   notebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
   notebookEnvironment?: ManagedNotebookSetup
+  notebookRuntimes?: TaskNotebookRuntimes
   controls?: TaskControlPorts
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -472,6 +515,67 @@ class HeadlessTaskApi {
 
   supportsNotebookEnvironmentOperations(): boolean {
     return this.ports.notebookEnvironment !== undefined
+  }
+
+  supportsNotebookRuntimeSelection(): boolean {
+    return this.ports.notebookRuntimes !== undefined
+  }
+
+  async listNotebookRuntimes(language: unknown): Promise<TaskNotebookRuntime[]> {
+    const owner = this.taskNotebookRuntimes()
+    const target = notebookLanguage.safeParse(language)
+    if (!target.success)
+      throw new TaskRunnerError('invalid_request', 'Supply a Notebook language: python or r.')
+    const [environments, enablement] = await Promise.all([
+      owner.listLanguageEnvironments(target.data),
+      owner.getEnablement({ language: target.data })
+    ])
+    return environments.map((env) => taskNotebookRuntime(env, enablement))
+  }
+
+  async configureNotebookRuntime(input: unknown): Promise<TaskNotebookRuntime> {
+    const owner = this.taskNotebookRuntimes()
+    const parsed = notebookRuntimeMutation.safeParse(input)
+    if (!parsed.success)
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Supply the language and an interpreter path to register, or an exact runtime ID to enable.'
+      )
+    const request = parsed.data
+    const { language } = request
+    if (request.action === 'register') {
+      const registered = await owner.registerCheckedInterpreter(request)
+      if (!registered)
+        throw new TaskRunnerError(
+          'notebook_runtime_unavailable',
+          'The path does not point to an existing interpreter for the selected language.'
+        )
+      return taskNotebookRuntime(registered, await owner.getEnablement({ language }))
+    }
+    const env = (await owner.listLanguageEnvironments(language)).find(
+      ({ envId, runnable }) => envId === request.runtimeId && runnable
+    )
+    if (!env)
+      throw new TaskRunnerError(
+        'notebook_runtime_unavailable',
+        'Choose an exact runnable runtime ID from the requested language.'
+      )
+    const enablement = await owner.setEnvironmentEnabled({
+      language,
+      envId: env.envId,
+      enabled: true
+    })
+    return taskNotebookRuntime(env, enablement)
+  }
+
+  private taskNotebookRuntimes(): TaskNotebookRuntimes {
+    this.requireTaskRelay()
+    if (!this.ports.notebookRuntimes)
+      throw new TaskRunnerError(
+        'notebook_setup_failed',
+        'Notebook runtime selection is unavailable.'
+      )
+    return this.ports.notebookRuntimes
   }
 
   startNotebookEnvironmentOperation(
@@ -1755,7 +1859,8 @@ class HeadlessTaskApi {
     requestId: string,
     request: StartTaskRunRequest
   ): Promise<import('../../shared/task-api').TaskSubmission> {
-    if (request?.interactionMode === 'delegate') this.requireTaskRelay()
+    if (request?.interactionMode === 'delegate' || request?.notebookRuntime !== undefined)
+      this.requireTaskRelay()
     if (!this.submissions)
       throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
     return this.submissions.submit(requestId, request)
@@ -1768,7 +1873,8 @@ class HeadlessTaskApi {
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
-    if (request?.interactionMode === 'delegate') this.requireTaskRelay()
+    if (request?.interactionMode === 'delegate' || request?.notebookRuntime !== undefined)
+      this.requireTaskRelay()
     return this.runner.startRun(request)
   }
 
@@ -2080,4 +2186,4 @@ class HeadlessTaskApi {
 }
 
 export { HeadlessTaskApi, TaskRunnerError as TaskApiError, summarizeSession }
-export type { TaskApiDependencies, TaskApiPorts }
+export type { TaskApiDependencies, TaskApiPorts, TaskNotebookRuntimes }
