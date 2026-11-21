@@ -3,11 +3,9 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { randomUUID } from 'node:crypto'
-import { closeSync, createWriteStream, existsSync, openSync, realpathSync } from 'node:fs'
-import { chmod, lstat, mkdir, open, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
+import { closeSync, existsSync, openSync, realpathSync } from 'node:fs'
+import { lstat, mkdir, open, readFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -22,6 +20,7 @@ import {
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
+import { openBrowser } from './agent-setup-action.mjs'
 import { startLaunchLogReader } from './launch-log.mjs'
 import { protectInstallationStartup } from './installation-startup.cjs'
 import {
@@ -35,11 +34,6 @@ const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 120_000
 // Cover the service's 40s authentication-aware stop budget plus exit-record observation.
 const STOP_TIMEOUT_MS = 42_000
-// Artifact content may be produced after a long-running task completes. Keep the CLI's
-// default transfer budget separate from the short control-request timeout used by the SDK.
-const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1_000
-const MAX_DOWNLOAD_SYMLINK_HOPS = 40
-
 const usage = `Usage: open-science <command> [options]
 
 Commands:
@@ -53,6 +47,9 @@ Commands:
   status      Show local service status, App sessions, and persistent running
   url         Print the authenticated web URL
   mcp         Start or reuse the local service and serve research tools over MCP stdio (--profile <path>)
+  tools list [group] [--check-service] --json  Discover capabilities and optionally probe service support
+  tools describe <name> --json                Read the capability input schema
+  tools call <name> --json                    Invoke with a JSON object on stdin
   doctor --json  Inspect headless readiness
   runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
@@ -82,11 +79,11 @@ Commands:
   settings agent-routing show
   settings agent-routing update [routing options]
   plan show <session-id>
-  plan approve <session-id> --artifact-version <id> --revision <number>
-  plan reject <session-id> --artifact-version <id> --revision <number>
-  plan revise <session-id> --feedback <text>
+  plan approve <session-id> --artifact-version <id> --revision <number> --branch <id>
+  plan reject <session-id> --artifact-version <id> --revision <number> --branch <id>
+  plan revise <session-id> --artifact-version <id> --revision <number> --branch <id> --feedback <text>
   artifacts list <session-id>
-  artifacts download <artifact-id> --output <path>
+  artifacts download <download-id> --session <session-id> [--output <path>]
   literature search [query] [--project <id-or-name>] [--limit <n>] [--offset <n>]
   literature show <item-id>
   literature styles
@@ -106,14 +103,14 @@ Options:
   --config-root <path>   Config directory override
   --profile <path>       Alias for --config-root (portable CLI profile)
   --project <id-or-name> Project id or exact name
-  --session <id>         Resume an existing session
+  --session <id>         Resume a session or identify the Session for Artifact download
   --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
   --prompt-file <path>   Read the prompt from a UTF-8 file
   --agent-context <text> Persistent Project Agent Context
   --agent-context-file <path>  Read Project Agent Context from a UTF-8 file
   --clear-agent-context  Clear a Project's persistent Agent Context
-  --approval-profile <profile>  ask, auto, or full (default: ask)
+  --approval-profile <profile>  ask, auto, or full (omit to use configured permissions)
   --provider <provider-id>  Configured Main provider
   --model <model-id>       Main model
   --provider-default-model Follow the provider-owned default model
@@ -135,14 +132,15 @@ Options:
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
   --clear-delegation | --clear-specialist  Clear one automation new-session default
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
+  --interaction-mode relay|delegate  Handle routine approvals in this task (default: relay)
   --request-id <id>      Stable submission identity for lookup and safe retries
-  --wait                 Wait for the run to finish
-  --return-on-attention  With --wait, return when the Plan needs approval
-  --timeout-ms <ms>      Bound startup, run waiting, or package transfer time
+  --wait                 Observe the Run until completion or attention (default: 10s, max: 30s)
+  --return-on-attention  Accepted for older scripts; --wait now returns on attention
+  --timeout-ms <ms>      Bound startup or observation of a Run or package operation
   --output <path>        Destination path (session export, artifacts download)
   --style <style-id>     Citation style (literature format)
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
-  --limit <n>            Page size, 1-100 (literature search)
+  --limit <n>            Page size, 1-100 (literature search; default: 20)
   --offset <n>           Page offset (literature search)
   --commit               Save a literature import; without it import only previews
   --duplicates <policy>  reuse (default), separate, or fill-missing (literature import --commit)
@@ -180,6 +178,7 @@ const VALUE_OPTIONS = {
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
   '--permission-prompts': 'permissionPrompts',
+  '--interaction-mode': 'interactionMode',
   '--provider': 'provider',
   '--model': 'model',
   '--reasoning-effort': 'reasoningEffort',
@@ -193,6 +192,7 @@ const VALUE_OPTIONS = {
   '--specialist': 'specialist',
   '--delegation': 'delegation',
   '--artifact-version': 'artifactVersion',
+  '--branch': 'branchId',
   '--revision': 'revision',
   '--feedback': 'feedback',
   '--timeout-ms': 'timeoutMs',
@@ -230,6 +230,7 @@ const TASK_COMMANDS = new Set([
 ])
 const GROUP_COMMANDS = new Set([
   'codex',
+  'tools',
   'runtime',
   'project',
   'session',
@@ -251,6 +252,9 @@ const POSITIONAL_LIMITS = new Map([
   ['paths', 0],
   ['mcp', 0],
   ['doctor', 0],
+  ['tools list', 1],
+  ['tools describe', 1],
+  ['tools call', 1],
   ['runtime list', 0],
   ['runtime install', 1],
   ['provider add', 0],
@@ -340,7 +344,16 @@ export const parseCliArgs = (argv) => {
           ? ['--help', '-h', '--config-root', '--profile']
           : command === 'help'
             ? ['--help', '-h']
-            : undefined
+            : command === 'doctor' || command === 'tools'
+              ? [
+                  '--json',
+                  '--help',
+                  '-h',
+                  '--config-root',
+                  '--profile',
+                  ...(command === 'tools' ? ['--check-service'] : [])
+                ]
+              : undefined
   const subcommand =
     (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
     (command === 'run' && ['status', 'cancel', 'wait'].includes(args[0]))
@@ -367,6 +380,7 @@ export const parseCliArgs = (argv) => {
       options.passwordStore = arg.slice('--password-store='.length)
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
+    else if (arg === '--check-service' && command === 'tools') options.checkService = true
     else if (arg === '--force') options.force = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
@@ -438,6 +452,9 @@ export const parseCliArgs = (argv) => {
     options
   }
   if (localOptions) {
+    if (!options.help && (command === 'doctor' || command === 'tools') && !options.json) {
+      throw new CliUsageError(`${command} requires --json.`)
+    }
     assertPositionalLimit(command, subcommand, positionals)
     return parsed
   }
@@ -451,6 +468,15 @@ export const parseCliArgs = (argv) => {
   }
   if (options.permissionPrompts === 'none' && options.planFirst) {
     throw new CliUsageError('--plan-first cannot be combined with --permission-prompts none.')
+  }
+  if (
+    options.interactionMode !== undefined &&
+    !['relay', 'delegate'].includes(options.interactionMode)
+  ) {
+    throw new CliUsageError('--interaction-mode must be relay or delegate.')
+  }
+  if (options.permissionPrompts === 'none' && options.interactionMode === 'delegate') {
+    throw new CliUsageError('--interaction-mode delegate requires permission prompts.')
   }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
@@ -522,9 +548,6 @@ export const parseCliArgs = (argv) => {
   }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
-  }
-  if (command === 'doctor' && !options.json) {
-    throw new CliUsageError('doctor requires --json.')
   }
   if (command === 'runtime' && subcommand !== 'list' && subcommand !== 'install') {
     throw new CliUsageError(`Unknown command: runtime ${subcommand ?? ''}`.trimEnd())
@@ -666,6 +689,7 @@ export const parseCliArgs = (argv) => {
   const runOnlyOptions = [
     ['--plan-first', options.planFirst],
     ['--permission-prompts', options.permissionPrompts !== undefined],
+    ['--interaction-mode', options.interactionMode !== undefined],
     ['--skill', options.skills !== undefined]
   ]
   for (const [label, present] of runOnlyOptions) {
@@ -723,6 +747,7 @@ export const parseCliArgs = (argv) => {
     !isSessionConfigUpdate &&
     (options.artifactVersion !== undefined ||
       (options.revision !== undefined && !isSessionConfigUpdate) ||
+      options.branchId !== undefined ||
       options.feedback !== undefined)
   ) {
     throw new CliUsageError('Plan response options require a plan command.')
@@ -826,7 +851,8 @@ const waitForState = async (
   configRoot,
   deps = DEFAULT_DEPS,
   timeoutMs = START_TIMEOUT_MS,
-  signal
+  signal,
+  port
 ) => {
   const deadline = deps.now() + timeoutMs
   while (deps.now() < deadline && !signal?.aborted) {
@@ -834,7 +860,7 @@ const waitForState = async (
     if (signal?.aborted) return undefined
     if (await healthCheck(state, deps)) return state
     if (deps.requestExistingRuntimeWeb)
-      await deps.requestExistingRuntimeWeb({ configRoot }, deps.fetch)
+      await deps.requestExistingRuntimeWeb({ configRoot, port }, deps.fetch)
     if (signal?.aborted) return undefined
     await deps.sleep(250)
   }
@@ -847,7 +873,8 @@ export const waitForStartup = async (
   configRoot,
   child,
   deps = DEFAULT_DEPS,
-  timeoutMs = START_TIMEOUT_MS
+  timeoutMs = START_TIMEOUT_MS,
+  port
 ) => {
   const abortController = new AbortController()
   let cleanup = () => {}
@@ -869,8 +896,8 @@ export const waitForStartup = async (
       child.off('error', onError)
     }
   })
-  const healthy = waitForState(configRoot, deps, timeoutMs, abortController.signal).then((state) =>
-    state ? { kind: 'ready', state } : { kind: 'timeout' }
+  const healthy = waitForState(configRoot, deps, timeoutMs, abortController.signal, port).then(
+    (state) => (state ? { kind: 'ready', state } : { kind: 'timeout' })
   )
   try {
     return await Promise.race([healthy, childFailure])
@@ -878,17 +905,6 @@ export const waitForStartup = async (
     abortController.abort()
     cleanup()
   }
-}
-
-const openBrowser = (url) => {
-  const [command, args] =
-    process.platform === 'win32'
-      ? ['cmd', ['/c', 'start', '', url]]
-      : process.platform === 'darwin'
-        ? ['open', [url]]
-        : ['xdg-open', [url]]
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
-  child.unref()
 }
 
 // The real I/O the commands use, bundled so tests can substitute fakes. Declared after the helpers it
@@ -1076,7 +1092,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       env: childEnv
     })
     launcherPid = child.pid
-    const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs)
+    const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs, options.port)
     child.unref()
     capture.input.destroy()
     capture.control.destroy()
@@ -1318,47 +1334,30 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
   deps.log(await authenticatedUrl(state, deps))
 }
 
-const resolveDownloadOutput = async (output) => {
-  let candidate = output
-  for (let hop = 0; ; hop += 1) {
-    const linkTarget = await lstat(candidate).then(
-      (metadata) => (metadata.isSymbolicLink() ? readlink(candidate) : undefined),
-      (error) => {
-        if (error?.code === 'ENOENT') return undefined
-        throw error
-      }
-    )
-    if (linkTarget === undefined) return candidate
-    if (hop === MAX_DOWNLOAD_SYMLINK_HOPS) break
-    candidate = resolve(dirname(candidate), linkTarget)
-  }
-  throw new Error(`Too many symbolic links in artifact output: ${output}`)
-}
-
-const writeDownload = async (response, output) => {
-  if (!response.body) throw new Error('Artifact download returned no data.')
-  const destination = await resolveDownloadOutput(output)
-  const existingMode = await stat(destination).then(
-    ({ mode }) => mode & 0o777,
-    (error) => {
-      if (error?.code === 'ENOENT') return undefined
-      throw error
-    }
-  )
-  const temporaryOutput = join(dirname(destination), `.open-science-${randomUUID()}.tmp`)
+const persistRunRequest = async ({ profile, requestId, projectId, sessionId }) => {
+  const directory = join(profile, 'agent-run-requests')
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  if (!(await lstat(directory)).isDirectory()) throw new Error('Invalid recovery directory.')
+  const path = join(directory, `${requestId}.json`)
+  const file = await open(path, 'wx', 0o600)
   try {
-    await pipeline(
-      Readable.fromWeb(response.body),
-      createWriteStream(temporaryOutput, {
-        flags: 'wx',
-        ...(existingMode === undefined ? {} : { mode: existingMode })
-      })
-    )
-    if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
-    await rename(temporaryOutput, destination)
+    await file.writeFile(`${JSON.stringify({ requestId, profile, projectId, sessionId })}\n`)
+    await file.sync()
   } finally {
-    await rm(temporaryOutput, { force: true }).catch(() => undefined)
+    await file.close()
   }
+  // Persist the directory entries before the service can admit the request.
+  if (process.platform !== 'win32') {
+    for (const current of [directory, profile]) {
+      const entry = await open(current, 'r')
+      try {
+        await entry.sync()
+      } finally {
+        await entry.close()
+      }
+    }
+  }
+  return path
 }
 
 const TASK_DEPS = {
@@ -1366,7 +1365,7 @@ const TASK_DEPS = {
   readFile: (path) => readFile(path, 'utf8'),
   readBinaryFile: (path) => readFile(path),
   readStdin: () => readStreamText(process.stdin),
-  writeDownload,
+  persistRunRequest,
   log: (...args) => console.log(...args),
   warn: (...args) => console.warn(...args),
   stdinIsTTY: process.stdin.isTTY,
@@ -1379,7 +1378,9 @@ const outputValue = (value, options, deps) => {
   if (options.json || options.jsonl) deps.log(JSON.stringify(value))
   else if (Array.isArray(value)) {
     for (const item of value) {
-      deps.log(`${item.id}\t${item.name ?? item.title ?? item.path ?? ''}`.trimEnd())
+      deps.log(
+        `${item.id ?? item.downloadId}\t${item.name ?? item.title ?? item.path ?? ''}`.trimEnd()
+      )
     }
   } else {
     deps.log(
@@ -1471,8 +1472,13 @@ const emitRunEvent = (event, options, deps) => {
     }[event.data?.phase]
     if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
+    const notice = {
+      notebook_code_review_required: 'Notebook code review is pending.',
+      notebook_runtime_review_required:
+        'Notebook environment approval is pending. This does not mean the environment is missing.'
+    }[event.data?.reasonCode]
     deps.warn(
-      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
+      `${notice ?? 'Run is waiting for approval.'} Use list_interactions with this Run ID to review the request.`
     )
   } else if (
     event.type === 'run.event' &&
@@ -1489,7 +1495,8 @@ const emitRunEvent = (event, options, deps) => {
 }
 
 const isEventForRun = (event, run) => {
-  if (event?.runId) return event.runId === run.runId
+  const runId = event?.runId ?? event?.data?.runId
+  if (runId) return runId === run.runId
   const sessionId = event?.sessionId ?? event?.data?.sessionId
   return !sessionId || sessionId === run.sessionId
 }
@@ -1498,7 +1505,7 @@ const streamRunEvents = async (eventStream, runRef, options, deps, signal) => {
   try {
     for await (const event of eventStream) {
       if (!runRef.current) {
-        runRef.pending.push(event)
+        if (runRef.pending.length < 256) runRef.pending.push(event)
         continue
       }
       if (!isEventForRun(event, runRef.current)) continue
@@ -1539,6 +1546,11 @@ const computeHostsPatch = (options, current = { enabled: [], selected: [] }) => 
   return { enabled, selected }
 }
 
+const agentComputeHostFields = ({ enabled, selected }) => ({
+  enabledComputeHostIds: enabled,
+  selectedComputeHostIds: selected
+})
+
 const modelRouting = (options, prefix) => {
   const inherit = options[`${prefix}Inherit`]
   const providerId = options[`${prefix}Provider`]
@@ -1567,29 +1579,55 @@ const assertNoClearConflict = (clear, present, label) => {
   if (clear && present) throw new CliUsageError(`Cannot set and clear ${label} together.`)
 }
 
+const runAgentCommand = async ({ command, subcommand, positionals = [], options }, deps) => {
+  const { AgentError, invokeAgentCapability } = await import('./agent-adapter.mjs')
+  const [operand] = positionals
+  let name
+  let input
+  if (command === 'doctor') {
+    name = 'doctor'
+    input = {}
+  } else if (subcommand === 'list') {
+    name = 'list_capabilities'
+    input = { group: operand, checkService: options.checkService }
+  } else if (!options.checkService && subcommand === 'describe' && operand) {
+    name = 'describe_capability'
+    input = { name: operand }
+  } else if (!options.checkService && subcommand === 'call' && operand) {
+    name = operand
+    const text = deps.stdinIsTTY ? '' : (await deps.readStdin()).trim()
+    try {
+      input = text ? JSON.parse(text) : {}
+    } catch {
+      throw new AgentError('invalid_request')
+    }
+  } else {
+    throw new AgentError('invalid_request', {
+      message: 'Use tools list, tools describe <name>, or tools call <name>.',
+      next: [{ action: 'show_help', executable: 'open-science', argv: ['tools', '--help'] }]
+    })
+  }
+  const result = await invokeAgentCapability(name, input, {
+    exposure: 'cli',
+    configRoot: options.configRoot,
+    connect: deps.connect
+  })
+  deps.log(JSON.stringify({ result: result ?? null }))
+}
+
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
-  let client
-  try {
-    client = await deps.connect({ configRoot: options.configRoot })
-  } catch (error) {
-    if (command !== 'doctor' || error?.code !== 'daemon_unavailable' || error?.status !== undefined)
-      throw error
-    deps.log(
-      JSON.stringify({
-        ready: false,
-        checks: { daemon: { status: 'missing' } },
-        next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
-      })
-    )
-    deps.setExitCode(3)
-    return
-  }
-
-  if (command === 'doctor') {
-    deps.log(JSON.stringify(await client.doctor()))
-    return
+  if (command === 'doctor' || command === 'tools') return runAgentCommand(parsed, deps)
+  const client = await deps.connect({ configRoot: options.configRoot })
+  const call = async (name, input = {}, signal) => {
+    const { invokeAgentCapability } = await import('./agent-adapter.mjs')
+    return invokeAgentCapability(name, input, {
+      exposure: 'cli',
+      configRoot: options.configRoot,
+      signal,
+      connect: async () => client
+    })
   }
 
   if (command === 'runtime' && subcommand === 'list') {
@@ -1624,9 +1662,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       return key
     }
     let request
-    if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex')
-      request = { action: 'runtime' }
-    else if (
+    if (
       command === 'provider' &&
       subcommand === 'add' &&
       options.providerType === 'official' &&
@@ -1634,13 +1670,15 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       options.model
     ) {
       request = { action: 'provider', key: readSecret(options.apiKeyEnv), model: options.model }
+    } else if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex') {
+      request = { action: 'runtime' }
     } else if (command === 'connector' && positionals[0] === 'literature')
       request = { action: 'openalex', key: readSecret(options.openAlexKeyEnv) }
     else
       throw new CliUsageError(
         'Supported setup commands: runtime install codex; provider add --type official --vendor openai --model <id> --api-key-env <ENV>; connector configure literature --openalex-key-env <ENV>.'
       )
-    const result = await client.bootstrap(request, { timeoutMs: 600_000 })
+    const result = await client.bootstrap(request, { timeoutMs: options.timeoutMs ?? 600_000 })
     if (!result.ok)
       throw Object.assign(new Error(`Setup failed: ${result.code}.`), { code: result.code })
     outputValue(result, options, deps)
@@ -1700,7 +1738,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   }
 
   if (command === 'project' && subcommand === 'list') {
-    outputValue(await client.listProjects(), options, deps)
+    outputValue(await call('list_projects'), options, deps)
     return
   }
   if (command === 'project' && subcommand === 'create') {
@@ -1708,7 +1746,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!name) throw new CliUsageError('Project name is required.')
     const agentContext = await readAgentContext(options, deps)
     outputValue(
-      await client.createProject({
+      await call('create_project', {
         name,
         description: options.description,
         ...(agentContext === undefined ? {} : { agentContext })
@@ -1731,11 +1769,14 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     }
     const project = await resolveCliProject(client, selector)
     outputValue(
-      await client.updateProject(project.id, {
+      await call('update_project', {
+        projectId: project.id,
         expectedUpdatedAt: project.updatedAt,
         ...(options.name === undefined ? {} : { name: options.name }),
         ...(options.description === undefined ? {} : { description: options.description }),
-        ...(agentContext === undefined ? {} : { agentContext })
+        ...(agentContext === undefined
+          ? {}
+          : { agentContext: agentContext === '' ? null : agentContext })
       }),
       options,
       deps
@@ -1747,7 +1788,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const selector = positionals.slice(1).join(' ').trim()
     if (!selector) throw new CliUsageError('Project id or name is required.')
     const project = await resolveCliProject(client, selector)
-    const current = await client.getProjectSessionDefaults(project.id)
+    const current = await call('get_project_session_defaults', { projectId: project.id })
     if (action === 'show') {
       outputValue(current, options, deps)
       return
@@ -1784,11 +1825,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     )
     const computeHosts = computeHostsPatch(options, current.configured.computeHosts)
     const patch = {
-      ...(options.clearProvider
-        ? { agentConfiguration: null }
-        : agent
-          ? { agentConfiguration: agent }
-          : {}),
+      ...(options.clearProvider ? { clearAgentConfiguration: true } : agent),
       ...(options.clearApprovalProfile
         ? { permissionProfile: null }
         : options.approvalProfile !== undefined
@@ -1814,17 +1851,18 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         : options.specialist !== undefined
           ? { specialistId: options.specialist }
           : {}),
-      ...(computeHosts !== undefined
-        ? { computeHosts: options.clearComputeHosts ? null : computeHosts }
-        : {})
+      ...(options.clearComputeHosts
+        ? { clearComputeHosts: true }
+        : computeHosts && agentComputeHostFields(computeHosts))
     }
     if (Object.keys(patch).length === 0) {
       throw new CliUsageError('Project Session defaults update requires at least one field.')
     }
     outputValue(
-      await client.updateProjectSessionDefaults(project.id, {
+      await call('update_project_session_defaults', {
+        projectId: project.id,
         expectedUpdatedAt: current.updatedAt,
-        patch
+        ...patch
       }),
       options,
       deps
@@ -1834,7 +1872,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'session' && subcommand === 'status') {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
-    outputValue(await client.getSession(sessionId), options, deps)
+    outputValue(await call('get_session', { sessionId }), options, deps)
     return
   }
   if (command === 'session' && subcommand === 'config') {
@@ -1842,17 +1880,15 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const sessionId = positionals[1]
     if (!sessionId) throw new CliUsageError('Session id is required.')
     if (action === 'show') {
-      outputValue(await client.getSessionConfiguration(sessionId), options, deps)
+      outputValue(await call('get_session_configuration', { sessionId }), options, deps)
       return
     }
     if (action !== 'update') throw new CliUsageError('Use session config show or update.')
     if (options.revision === undefined) throw new CliUsageError('--revision is required.')
-    const current = await client.getSessionConfiguration(sessionId)
+    const current = await call('get_session_configuration', { sessionId })
     const computeHosts = computeHostsPatch(options, current.persisted.computeHosts)
     const patch = {
-      ...(agentConfigurationPatch(options)
-        ? { agentConfiguration: agentConfigurationPatch(options) }
-        : {}),
+      ...agentConfigurationPatch(options),
       ...(options.approvalProfile !== undefined
         ? { permissionProfile: options.approvalProfile }
         : {}),
@@ -1861,13 +1897,14 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         : {}),
       ...(options.memoryEnabled !== undefined ? { memoryEnabled: options.memoryEnabled } : {}),
       ...(options.delegation !== undefined ? { delegationPolicy: options.delegation } : {}),
-      ...(computeHosts !== undefined ? { computeHosts } : {})
+      ...(computeHosts && agentComputeHostFields(computeHosts))
     }
     if (Object.keys(patch).length === 0) {
       throw new CliUsageError('Session configuration update requires at least one field.')
     }
     outputValue(
-      await client.updateSessionConfiguration(sessionId, {
+      await call('update_session_configuration', {
+        sessionId,
         expectedRevision: options.revision,
         ...patch
       }),
@@ -1881,18 +1918,13 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!sessionId) throw new CliUsageError('Session id is required.')
     if (!options.project) throw new CliUsageError('--project is required.')
     const projectId = await resolveCliProjectId(client, options.project)
-    try {
-      outputValue(
-        await client.forkSession(projectId, sessionId, { timeoutMs: options.timeoutMs }),
-        options,
-        deps
-      )
-    } catch (error) {
-      if (error?.code === 'timeout')
-        error.message +=
-          ' Fork outcome is unconfirmed. Inspect the package operation and Session list before forking again.'
-      throw error
-    }
+    const result = await call('fork_session', {
+      projectId,
+      sessionId,
+      ...(options.timeoutMs === undefined ? {} : { waitMs: options.timeoutMs })
+    })
+    if (options.json) deps.log(JSON.stringify({ result }))
+    else outputValue(result, options, deps)
     return
   }
 
@@ -1902,40 +1934,35 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!options.project) throw new CliUsageError('--project is required.')
     if (!options.output) throw new CliUsageError('--output is required.')
     const projectId = await resolveCliProjectId(client, options.project)
-    outputValue(
-      await client.exportSessionPackage(projectId, sessionId, resolve(options.output), {
-        timeoutMs: options.timeoutMs
-      }),
-      options,
-      deps
+    const { invokeAgentCapability } = await import('./agent-adapter.mjs')
+    const result = await invokeAgentCapability(
+      'export_session',
+      {
+        projectId,
+        sessionId,
+        destinationPath: resolve(options.output),
+        ...(options.timeoutMs === undefined ? {} : { waitMs: options.timeoutMs })
+      },
+      { exposure: 'cli', configRoot: options.configRoot, connect: async () => client }
     )
+    if (options.json) deps.log(JSON.stringify({ result }))
+    else outputValue(result, options, deps)
     return
   }
   if (command === 'session' && subcommand === 'import') {
     const packagePath = positionals[0]
     if (!packagePath) throw new CliUsageError('Session package path is required.')
-    const resolvedPath = resolve(packagePath)
-    const target = {}
-    if (options.project) target.projectId = await resolveCliProjectId(client, options.project)
-    else if (options.newProject) target.projectName = options.newProject
-    let imported
-    try {
-      imported = await client.importSessionPackage(
-        target,
-        resolvedPath,
-        { nonInteractive: true },
-        { timeoutMs: options.timeoutMs }
-      )
-    } catch (error) {
-      if (error?.code === 'timeout') {
-        error.completionStatus = 'unconfirmed'
-        error.message += ' The import may still complete. Check the destination before retrying.'
-      }
-      throw error
-    }
-    if (imported === null)
-      throw new OpenScienceApiError('Session import was cancelled.', { code: 'cancelled' })
-    outputValue(imported, options, deps)
+    const result = await call('import_session', {
+      sourcePath: resolve(packagePath),
+      ...(options.project
+        ? { targetProjectId: await resolveCliProjectId(client, options.project) }
+        : options.newProject
+          ? { newProjectName: options.newProject }
+          : {}),
+      ...(options.timeoutMs === undefined ? {} : { waitMs: options.timeoutMs })
+    })
+    if (options.json) deps.log(JSON.stringify({ result }))
+    else outputValue(result, options, deps)
     return
   }
   if (command === 'settings' && subcommand === 'agent-routing') {
@@ -1964,31 +1991,30 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
     if (subcommand === 'show') {
-      outputValue(await client.getSessionPlan(sessionId), options, deps)
+      outputValue(await call('get_plan', { sessionId }), options, deps)
       return
     }
-    if (subcommand === 'approve' || subcommand === 'reject') {
+    if (['approve', 'reject', 'revise'].includes(subcommand)) {
       if (!options.artifactVersion) {
         throw new CliUsageError('--artifact-version is required.')
       }
       if (options.revision === undefined) {
         throw new CliUsageError('--revision is required.')
       }
+      if (!options.branchId) throw new CliUsageError('--branch is required.')
+      if (subcommand === 'revise' && !options.feedback?.trim())
+        throw new CliUsageError('--feedback is required.')
       outputValue(
-        await client.respondSessionPlan(sessionId, {
-          decision: subcommand === 'approve' ? 'approved' : 'rejected',
+        await call('respond_plan', {
+          sessionId,
           artifactVersionId: options.artifactVersion,
-          expectedRevision: options.revision
+          expectedRevision: options.revision,
+          expectedBranchId: options.branchId,
+          source: 'user_relay',
+          ...(subcommand === 'revise'
+            ? { feedback: options.feedback.trim() }
+            : { decision: subcommand === 'approve' ? 'approved' : 'rejected' })
         }),
-        options,
-        deps
-      )
-      return
-    }
-    if (subcommand === 'revise') {
-      if (!options.feedback?.trim()) throw new CliUsageError('--feedback is required.')
-      outputValue(
-        await client.respondSessionPlan(sessionId, { feedback: options.feedback.trim() }),
         options,
         deps
       )
@@ -1998,23 +2024,27 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'artifacts' && subcommand === 'list') {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
-    outputValue(await client.listArtifacts(sessionId), options, deps)
+    outputValue(await call('list_artifacts', { sessionId }), options, deps)
     return
   }
   if (command === 'artifacts' && subcommand === 'download') {
-    const artifactId = positionals[0]
-    if (!artifactId) throw new CliUsageError('Artifact id is required.')
-    if (!options.output) throw new CliUsageError('--output is required.')
-    const response = await client.downloadArtifact(artifactId, {
-      timeoutMs: options.timeoutMs ?? ARTIFACT_DOWNLOAD_TIMEOUT_MS
-    })
-    await deps.writeDownload(response, options.output)
-    outputValue({ artifactId, output: resolve(options.output) }, options, deps)
+    const downloadId = positionals[0]
+    if (!downloadId) throw new CliUsageError('Download ID is required.')
+    if (!options.session) throw new CliUsageError('--session is required.')
+    outputValue(
+      await call('download_artifact', {
+        sessionId: options.session,
+        downloadId,
+        ...(options.output ? { outputPath: resolve(options.output) } : {})
+      }),
+      options,
+      deps
+    )
     return
   }
   if (command === 'literature' && subcommand === 'search') {
     const query = positionals.join(' ').trim()
-    const page = await client.searchLiterature({
+    const page = await call('search_literature', {
       ...(query ? { query } : {}),
       ...(options.project ? { projectId: await resolveCliProjectId(client, options.project) } : {}),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
@@ -2031,19 +2061,19 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'literature' && subcommand === 'show') {
     const itemId = positionals[0]
     if (!itemId) throw new CliUsageError('Literature item id is required.')
-    const item = await client.getLiteratureItem(itemId)
+    const item = await call('get_literature_item', { itemId })
     if (options.json) deps.log(JSON.stringify(item))
     else deps.log(`${item.id}\t${item.item?.title ?? ''}`.trimEnd())
     return
   }
   if (command === 'literature' && subcommand === 'styles') {
-    outputValue(await client.listCitationStyles(), options, deps)
+    outputValue(await call('list_citation_styles'), options, deps)
     return
   }
   if (command === 'literature' && subcommand === 'format') {
     if (!positionals.length) throw new CliUsageError('At least one literature item id is required.')
     if (!options.style) throw new CliUsageError('--style is required.')
-    const result = await client.formatReferences({
+    const result = await call('format_references', {
       itemIds: positionals,
       styleId: options.style,
       locale: options.locale ?? 'en-US'
@@ -2056,7 +2086,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const identifier = positionals[0]
     if (!identifier)
       throw new CliUsageError('A DOI, pmid:, pmcid: or arxiv: identifier is required.')
-    deps.log(JSON.stringify(await client.getReferenceMetadata(identifier)))
+    deps.log(JSON.stringify(await call('get_reference_metadata', { identifier })))
     return
   }
   if (command === 'literature' && subcommand === 'import') {
@@ -2064,7 +2094,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!source) throw new CliUsageError('A reference file path or - for stdin is required.')
     const content = source === '-' ? await deps.readStdin() : await deps.readFile(source)
     if (!content.trim()) throw new CliUsageError('Reference import content is empty.')
-    const result = await client.importLiterature({
+    const result = await call('import_literature', {
       mode: options.commit ? 'commit' : 'preview',
       content,
       ...(options.duplicates ? { duplicatePolicy: options.duplicates } : {}),
@@ -2087,7 +2117,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const identifier = positionals[0]
     if (!identifier)
       throw new CliUsageError('A DOI, pmid:, pmcid: or arxiv: identifier is required.')
-    outputValue(await client.createLiteratureItem(identifier), options, deps)
+    outputValue(await call('create_literature_item', { identifier }), options, deps)
     return
   }
   if (command === 'literature' && (subcommand === 'link' || subcommand === 'unlink')) {
@@ -2095,7 +2125,11 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!options.project) throw new CliUsageError('--project is required.')
     const projectId = await resolveCliProjectId(client, options.project)
     outputValue(
-      await client.setProjectLiterature(projectId, positionals, subcommand === 'link'),
+      await call('update_project_literature', {
+        projectId,
+        itemIds: positionals,
+        included: subcommand === 'link'
+      }),
       options,
       deps
     )
@@ -2107,7 +2141,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       const name = rest.join(' ').trim()
       if (!name) throw new CliUsageError('Collection name is required.')
       outputValue(
-        await client.createLiteratureCollection({
+        await call('create_literature_collection', {
           name,
           ...(options.description === undefined ? {} : { description: options.description }),
           ...(options.parent === undefined ? {} : { parentId: options.parent })
@@ -2123,7 +2157,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!collectionId || !itemIds.length)
       throw new CliUsageError('Collection id and at least one literature item id are required.')
     outputValue(
-      await client.setCollectionLiterature(collectionId, itemIds, action === 'add'),
+      await call('update_collection_items', { collectionId, itemIds, included: action === 'add' }),
       options,
       deps
     )
@@ -2134,16 +2168,16 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!['unread', 'reading', 'read'].includes(readingStatus))
       throw new CliUsageError('Reading status must be unread, reading, or read.')
     if (!itemIds.length) throw new CliUsageError('At least one literature item id is required.')
-    outputValue(await client.setLiteratureReadingStatus(itemIds, readingStatus), options, deps)
+    outputValue(await call('set_reading_status', { itemIds, readingStatus }), options, deps)
     return
   }
   if (command === 'literature' && (subcommand === 'trash' || subcommand === 'restore')) {
     if (!positionals.length) throw new CliUsageError('At least one literature item id is required.')
     outputValue(
-      await client.setLiteratureLifecycle(
-        positionals,
-        subcommand === 'trash' ? 'deleted' : 'active'
-      ),
+      await call('set_literature_lifecycle', {
+        itemIds: positionals,
+        state: subcommand === 'trash' ? 'deleted' : 'active'
+      }),
       options,
       deps
     )
@@ -2154,8 +2188,8 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!runId && !options.requestId) throw new CliUsageError('Run id is required.')
     outputValue(
       options.requestId
-        ? await client.getSubmission(options.requestId)
-        : await client.getRun(runId),
+        ? await call('get_submission', { requestId: options.requestId })
+        : await call('get_run', { runId }),
       options,
       deps
     )
@@ -2164,7 +2198,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'run' && subcommand === 'cancel') {
     const runId = positionals[0]
     if (!runId) throw new CliUsageError('Run id is required.')
-    outputValue(await client.cancelRun(runId), options, deps)
+    outputValue(await call('cancel_run', { runId }), options, deps)
     return
   }
   if (command === 'run') {
@@ -2172,20 +2206,51 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (waiting && !positionals[0] && !options.requestId)
       throw new CliUsageError('Run id or --request-id is required.')
     if (!waiting && !options.project) throw new CliUsageError('--project is required.')
+    const { AgentError } = await import('./agent-adapter.mjs')
+    const { waitTimeoutMs } = await import('./agent-capabilities.mjs')
+    const budget = waitTimeoutMs.safeParse(options.timeoutMs)
+    if (!budget.success)
+      throw new AgentError('invalid_request', {
+        message: 'Use a Run wait between 1 and 30000 milliseconds.'
+      })
+    const timeoutMs = budget.data
     const projectId = waiting ? undefined : await resolveCliProjectId(client, options.project)
     const prompt = waiting ? undefined : await readPrompt(options, deps)
     if (!waiting && !prompt) throw new CliUsageError('Prompt is required.')
     const requestId = options.requestId ?? (waiting ? undefined : randomUUID())
-    const waitStartedAt = Date.now()
-    const remainingTimeout = () => {
-      if (options.timeoutMs === undefined) return undefined
-      const remaining = options.timeoutMs - (Date.now() - waitStartedAt)
-      if (remaining <= 0)
-        throw new OpenScienceApiError('Timed out waiting for the Run.', { code: 'timeout' })
-      return remaining
+    let recoveryFile
+    if (!waiting && options.requestId === undefined) {
+      try {
+        recoveryFile = await deps.persistRunRequest({
+          profile: client.configRoot ?? options.configRoot,
+          requestId,
+          projectId,
+          sessionId: options.session
+        })
+      } catch {
+        throw new AgentError('recovery_record_failed', {
+          requestId,
+          projectId,
+          ...(options.session ? { sessionId: options.session } : {}),
+          message: 'Could not save the request in the selected profile. No research was submitted.',
+          owner: 'deployment',
+          next: [{ action: 'check_profile', profile: client.configRoot ?? options.configRoot }]
+        })
+      }
     }
+    const deadline = Date.now() + timeoutMs
+    const remainingTimeout = () => Math.max(1, deadline - Date.now())
+    const observation = options.wait ? AbortSignal.timeout(timeoutMs) : undefined
+    let runId = waiting ? positionals[0] : undefined
     const runRef = { current: undefined, pending: [] }
     const abortController = new AbortController()
+    const attachEvents = (run) => {
+      if (abortController.signal.aborted) return
+      runRef.current = { runId, sessionId: run.sessionId }
+      for (const event of runRef.pending.splice(0)) {
+        if (isEventForRun(event, runRef.current)) emitRunEvent(event, options, deps)
+      }
+    }
     let eventStream
     // The event stream only renders progress; waitForRun remains authoritative for the final Run
     // state, so a mid-run stream failure must not fail an otherwise-successful command.
@@ -2199,52 +2264,27 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         )
     }
     let eventTask
-    let submissionAttempted = false
     let result
     try {
-      eventStream =
-        options.wait && !options.json && typeof client.events === 'function'
-          ? client.events({ signal: abortController.signal })
-          : undefined
-      let readyTimer
       try {
-        await (eventStream && options.timeoutMs !== undefined
-          ? Promise.race([
-              eventStream.ready,
-              new Promise((_, reject) => {
-                readyTimer = setTimeout(
-                  () =>
-                    reject(
-                      new OpenScienceApiError('Timed out waiting for the Run event stream.', {
-                        code: 'timeout'
-                      })
-                    ),
-                  remainingTimeout()
-                )
-              })
-            ])
-          : eventStream?.ready)
-      } finally {
-        clearTimeout(readyTimer)
-      }
-      eventTask = eventStream
-        ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal).catch(
-            (error) => {
+        if (options.wait && !options.json && typeof client.events === 'function') {
+          eventStream = client.events({ signal: abortController.signal })
+          eventTask = Promise.resolve(eventStream.ready)
+            .then(() => streamRunEvents(eventStream, runRef, options, deps, abortController.signal))
+            .catch((error) => {
               if (!abortController.signal.aborted) warnEventFailure(error)
-            }
-          )
-        : undefined
-      submissionAttempted = !waiting
-      const started = waiting
-        ? requestId
-          ? await client.waitForSubmission(requestId, { timeoutMs: remainingTimeout() })
-          : await client.getRun(
-              positionals[0],
-              options.timeoutMs === undefined ? undefined : { timeoutMs: remainingTimeout() }
-            )
-        : await client.startRun(
+            })
+        }
+      } catch (error) {
+        warnEventFailure(error)
+      }
+      let receipt = waiting
+        ? undefined
+        : await call(
+            'start_run',
             {
-              project: projectId,
+              requestId,
+              projectId,
               prompt,
               ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
               ...(options.session ? { sessionId: options.session } : {}),
@@ -2254,14 +2294,13 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
                 ? { permissionPrompts: options.permissionPrompts }
                 : {}),
               ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
+              ...(options.interactionMode ? { interactionMode: options.interactionMode } : {}),
               ...(options.autoReviewEnabled !== undefined
                 ? { autoReviewEnabled: options.autoReviewEnabled }
                 : {}),
               ...(options.specialist ? { specialist: options.specialist } : {}),
               ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
-              ...(agentConfigurationPatch(options)
-                ? { agentConfiguration: agentConfigurationPatch(options) }
-                : {}),
+              ...agentConfigurationPatch(options),
               ...(options.memoryEnabled !== undefined
                 ? { memoryEnabled: options.memoryEnabled }
                 : {}),
@@ -2276,64 +2315,60 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
                       : {})
                   })
             },
-            {
-              requestId,
-              ...(options.timeoutMs === undefined ? {} : { timeoutMs: remainingTimeout() })
-            }
+            observation
           )
-      runRef.current = { runId: started.id, sessionId: started.sessionId }
-      for (const event of runRef.pending.splice(0)) {
-        if (isEventForRun(event, runRef.current)) emitRunEvent(event, options, deps)
+      if (options.wait && requestId && (!receipt || receipt.status === 'pending')) {
+        receipt = (
+          await call('wait_submission', { requestId, timeoutMs: remainingTimeout() }, observation)
+        ).receipt
       }
-      try {
-        const waitOptions = {
-          ...(options.timeoutMs === undefined ? {} : { timeoutMs: remainingTimeout() }),
-          ...(options.returnOnAttention ? { returnOnAttention: true } : {})
-        }
-        result = options.wait
-          ? Object.keys(waitOptions).length === 0
-            ? await client.waitForRun(started.id)
-            : await client.waitForRun(started.id, waitOptions)
-          : started
-      } catch (error) {
-        if (options.cancelOnTimeout && error?.code === 'timeout') {
+      runId ??= receipt?.runId
+      if (!options.wait || !runId) {
+        if (options.json || options.jsonl)
+          outputValue(
+            {
+              ...receipt,
+              ...(recoveryFile ? { recoveryFile } : {}),
+              ...(options.wait ? { timeoutMs } : {})
+            },
+            options,
+            deps
+          )
+        else
+          deps.log(
+            `Submission ${receipt.status}: ${requestId}. Query: open-science run status --request-id ${requestId}.`
+          )
+        if (['failed', 'interrupted'].includes(receipt.status)) deps.setExitCode(1)
+        return
+      }
+      if (eventStream) {
+        // Read Session identity for progress independently of the authoritative wait.
+        void call('get_run', { runId }, abortController.signal).then(attachEvents, () => {})
+      }
+      result = (await call('wait_run', { runId, timeoutMs: remainingTimeout() }, observation)).run
+      if (eventStream) attachEvents(result)
+    } catch (error) {
+      if (!(error instanceof AgentError)) throw error
+      const details = { ...error.details }
+      if (requestId) details.requestId ??= requestId
+      if (recoveryFile) details.recoveryFile = recoveryFile
+      if (options.wait) details.timeoutMs = timeoutMs
+      if (runId) {
+        details.runId ??= runId
+        details.completionStatus ??= 'unconfirmed'
+        details.next = [{ action: 'get_run', runId }]
+        if (options.cancelOnTimeout && details.code === 'timeout') {
           try {
-            await client.cancelRun(started.id)
-          } catch (cancelError) {
-            if (error instanceof Error) {
-              if (error.cause === undefined) error.cause = cancelError
-              const cancelMessage =
-                cancelError instanceof Error ? cancelError.message : String(cancelError)
-              error.message = `${error.message} Server run cancellation also failed: ${cancelMessage}`
-            }
+            await call('cancel_run', { runId })
+            details.message =
+              'The observation timed out and cancellation was requested. Query the original Run for its final state.'
+          } catch {
+            details.message =
+              'The observation timed out and cancellation was not confirmed. Query the original Run for its final state.'
           }
         }
-        throw error
       }
-    } catch (error) {
-      if (error && typeof error === 'object' && requestId) {
-        error.requestId = requestId
-        error.message += ` Request: ${requestId}. Query: open-science run status --request-id ${requestId}.`
-      }
-      if (
-        error &&
-        typeof error === 'object' &&
-        ((runRef.current && options.wait) ||
-          (submissionAttempted &&
-            (['daemon_unavailable', 'timeout'].includes(error.code) ||
-              error instanceof SyntaxError ||
-              (error instanceof TypeError && error.message === 'fetch failed') ||
-              ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET'].includes(
-                error.cause?.code
-              ))))
-      ) {
-        error.completionStatus = runRef.current ? 'unconfirmed' : 'submission-unconfirmed'
-        if (runRef.current) error.runId = runRef.current.runId
-        error.message += runRef.current
-          ? ` Completion status unconfirmed for run ${runRef.current.runId}. Query: open-science run status ${runRef.current.runId}. The run was not retried.`
-          : ' Submission result unconfirmed. Query the request receipt before retrying; the request was not retried.'
-      }
-      throw error
+      throw new AgentError(details.code, details)
     } finally {
       abortController.abort()
       // Progress transports are advisory. An iterator ignoring abort must not trap CLI exit.
@@ -2351,27 +2386,31 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         clearTimeout(timer)
       }
     }
-    if (!options.wait && !['completed', 'failed', 'cancelled'].includes(result.status)) {
-      result = {
-        ...result,
-        submissionStatus: 'submitted-not-completed',
-        notice: 'Submitted, not completed. Exiting the App may interrupt this work.',
-        next: ['run', 'status', result.id]
-      }
-    }
-    if (options.json || options.jsonl) outputValue(result, options, deps)
-    else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
+    if (options.json || options.jsonl)
+      outputValue(
+        {
+          ...result,
+          timeoutMs,
+          ...(requestId ? { requestId } : {}),
+          ...(recoveryFile ? { recoveryFile } : {})
+        },
+        options,
+        deps
+      )
+    else if (result.attention?.kind === 'interactions') {
+      deps.log(
+        `Run needs a response: ${result.id}. To inspect it, pass ${JSON.stringify({ runId: result.id })} to open-science tools call list_interactions --json.`
+      )
+    } else if (result.status === 'completed')
+      deps.log(result.output || `Run completed: ${result.id}`)
     else if (result.status === 'failed') deps.log(`Run failed: ${result.error ?? result.id}`)
     else if (result.status === 'cancelled') deps.log(`Run cancelled: ${result.id}`)
+    else if (result.execution?.status === 'waiting_for_user')
+      deps.log(result.execution.next?.message ?? `Notebook execution needs the user: ${result.id}`)
     else if (result.attention?.kind === 'plan-approval') {
-      const plan = result.attention.plan
       deps.log(
-        `Run is waiting for Plan approval: open-science plan approve ${result.sessionId} --artifact-version ${plan.artifactVersionId} --revision ${plan.revision}`
+        `Run is waiting for Plan approval: open-science plan show ${result.sessionId} --json`
       )
-      if (!options.wait)
-        deps.log(
-          `Submitted, not completed: ${result.id}. Exiting the App may interrupt this work. Query: open-science run status ${result.id}`
-        )
     } else
       deps.log(
         `Submitted, not completed: ${result.id} (session ${result.sessionId}). Exiting the App may interrupt this work. Query: open-science run status ${result.id}`
@@ -2391,31 +2430,35 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
     },
     ...dependencies
   }
-  const code = error?.code ?? 'command_failed'
+  const agentError = error?.name === 'AgentError' ? error.details : undefined
+  const code = agentError?.code ?? error?.code ?? 'command_failed'
   const message = error instanceof Error ? error.message : String(error)
   const exitCode =
     error?.exitCode ??
-    (code === 'daemon_unavailable'
-      ? 3
-      : [
-            'project_not_found',
-            'session_not_found',
-            'run_not_found',
-            'artifact_not_found',
-            'literature_item_not_found'
-          ].includes(code) || code === 'specialist_not_found'
-        ? 4
-        : 1)
+    (code === 'invalid_request' && agentError
+      ? 2
+      : code === 'daemon_unavailable'
+        ? 3
+        : [
+              'project_not_found',
+              'session_not_found',
+              'run_not_found',
+              'artifact_not_found',
+              'literature_item_not_found'
+            ].includes(code) || code === 'specialist_not_found'
+          ? 4
+          : 1)
   if (argv.includes('--json') || argv.includes('--jsonl')) {
     deps.error(
       JSON.stringify({
-        error: {
+        error: agentError ?? {
           code,
           message,
           ...(error?.correlationId ? { correlationId: error.correlationId } : {}),
           ...(error?.requestId ? { requestId: error.requestId } : {}),
           ...(error?.completionStatus ? { completionStatus: error.completionStatus } : {}),
           ...(error?.runId ? { runId: error.runId } : {}),
+          ...(error?.recoveryFile ? { recoveryFile: error.recoveryFile } : {}),
           ...(error?.code === 'startup_unconfirmed'
             ? {
                 configRoot: error.configRoot,
@@ -2490,7 +2533,20 @@ const pathsCommand = async (options) => {
 }
 
 export const runCli = async (argv = process.argv.slice(2)) => {
-  const parsed = parseCliArgs(argv)
+  let parsed
+  try {
+    parsed = parseCliArgs(argv)
+  } catch (error) {
+    if (
+      error instanceof CliUsageError &&
+      ['doctor', 'tools'].includes(argv[0]) &&
+      argv.includes('--json')
+    ) {
+      const { AgentError } = await import('./agent-adapter.mjs')
+      throw new AgentError('invalid_request')
+    }
+    throw error
+  }
   const { command, options } = parsed
   if (options.help || !command || command === 'help' || command === '-h' || command === '--help') {
     console.log(commandHelp(command === 'help' ? parsed.positionals?.[0] : command))
@@ -2504,11 +2560,13 @@ export const runCli = async (argv = process.argv.slice(2)) => {
     const { runResearchMcpServer } = await import('./mcp.mjs')
     const { version } = await readCliMetadata()
     await runResearchMcpServer({
+      configRoot: options.configRoot,
       version,
       startService: async (signal) => {
-        // stdout belongs to the MCP transport. The persistent service has its own startup log.
+        // Let the kernel bind a free loopback port for a new MCP service. Reuse still uses the
+        // authenticated profile's existing endpoint. stdout is reserved for MCP messages.
         const { state } = await startCommand(
-          { configRoot: options.configRoot, open: false, signal },
+          { configRoot: options.configRoot, open: false, port: 0, signal },
           {
             ...DEFAULT_DEPS,
             log: () => {},
@@ -2529,7 +2587,7 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)
   else if (command === 'codex' && parsed.subcommand === 'login') await codexLoginCommand(options)
-  else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
+  else if (command === 'tools' || TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
   else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)
 }
 

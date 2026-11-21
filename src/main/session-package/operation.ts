@@ -18,6 +18,7 @@ import {
   packageImportPercent
 } from '../../shared/session-package'
 import type {
+  AgentPackageOperationReference,
   BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot,
@@ -26,7 +27,8 @@ import type {
   PackageSelectionSummary,
   SessionPackageRequest,
   SessionPackageImportRequest,
-  SensitiveContentEvidence
+  SensitiveContentEvidence,
+  SensitiveExportDecision
 } from '../../shared/session-package'
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
@@ -163,7 +165,13 @@ export class SessionPackageOperation {
       completedBytes: current.progress.completedBytes,
       totalBytes: current.progress.totalBytes,
       completedFiles: current.progress.completedFiles,
-      totalFiles: current.progress.totalFiles
+      totalFiles: current.progress.totalFiles,
+      ...(current.sensitiveExportDecision
+        ? {
+            reviewDecision: current.sensitiveExportDecision.decision,
+            reviewSource: current.sensitiveExportDecision.source
+          }
+        : {})
     }
   }
 
@@ -330,6 +338,10 @@ export class SessionPackageOperation {
   respond(request: PackageOperationRequest): PackageOperationSnapshot | null {
     if (request.action === 'snapshot') return this.snapshot
     if (
+      request.action === 'agent-export' ||
+      request.action === 'agent-import' ||
+      request.action === 'agent-fork' ||
+      request.action === 'respond-export-review' ||
       [
         'reveal',
         'retry-cleanup',
@@ -431,6 +443,53 @@ export class SessionPackageOperation {
     this.publish()
   }
 
+  requestSensitiveExportReview(
+    review: NonNullable<PackageOperationSnapshot['sensitiveExportReview']>,
+    evidence: SensitiveContentEvidence[]
+  ): void {
+    if (!this.current || !this.controller) throw new Error('No active export operation.')
+    this.current = {
+      ...this.current,
+      state: 'awaiting-selection',
+      progress: { phase: 'confirming' },
+      sensitiveExportReview: review,
+      sensitiveContent: evidence.slice(0, 20),
+      presentationRevision: (this.current.presentationRevision ?? 0) + 1
+    }
+    this.publish()
+  }
+
+  finishSensitiveExportReview(
+    decision?: Pick<SensitiveExportDecision, 'source' | 'decision'>
+  ): void {
+    const review = this.current?.sensitiveExportReview
+    if (!this.current || !review || !this.controller) return
+    const destinationPath = this.current.agent?.destinationPath
+    this.current = {
+      ...this.current,
+      sensitiveExportReview: undefined,
+      sensitiveContent: undefined,
+      ...(decision && destinationPath
+        ? {
+            sensitiveExportDecision: {
+              ...decision,
+              destinationPath,
+              expiresAt: review.expiresAt,
+              sizeBytes: review.fileDigest.sizeBytes,
+              sha256: review.fileDigest.checksum
+            }
+          }
+        : {}),
+      ...(this.current.state === 'awaiting-selection' ? { state: 'running' as const } : {})
+    }
+    this.publish()
+  }
+
+  setAgentFailure(failure: NonNullable<PackageOperationSnapshot['agent']>['failure']): void {
+    if (this.current?.agent)
+      this.current = { ...this.current, agent: { ...this.current.agent, failure } }
+  }
+
   async retryCleanup(
     work: (signal: AbortSignal) => Promise<void>
   ): Promise<PackageOperationSnapshot | null> {
@@ -484,7 +543,8 @@ export class SessionPackageOperation {
     importTarget?: PackageOperationSnapshot['importTarget'],
     requiresRecovery?: () => boolean,
     downloadSlug?: string,
-    exportDestination?: PackageOperationSnapshot['exportDestination']
+    exportDestination?: PackageOperationSnapshot['exportDestination'],
+    agent?: AgentPackageOperationReference
   ): Promise<T> {
     if (this.controller)
       throw new ApplicationCommandError(
@@ -499,6 +559,7 @@ export class SessionPackageOperation {
       kind,
       session,
       ...(exportDestination ? { exportDestination } : {}),
+      ...(agent ? { agent } : {}),
       importTarget,
       state: 'running',
       ...(downloadSlug ? { useCaseDownload: { slug: downloadSlug, completedBytes: 0 } } : {}),

@@ -60,6 +60,7 @@ import {
   type TaskRunnerDependencies,
   type TaskSessionPort
 } from './task-runner'
+import { TaskSubmissions } from './task-submissions'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
@@ -504,6 +505,50 @@ describe('TaskRunner', () => {
     }
   )
 
+  it('keeps task delegation on the original Run across a restart', async () => {
+    let journal: TaskRunJournalEntry[] = []
+    const runJournal = {
+      load: async () => structuredClone(journal),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        journal = structuredClone([...runs])
+      }
+    }
+    const release = Promise.withResolvers<void>()
+    const runner = createRunner({ runJournal, agent: { prompt: async () => release.promise } })
+    try {
+      const run = await runner.startRun({ project: project.id, prompt: 'Compare groups.' })
+      expect(run.interactionPolicy).toEqual({ mode: 'relay', revision: 0 })
+      await expect(runner.setRunInteractionMode(run.id, 0, 'delegate')).resolves.toEqual({
+        mode: 'delegate',
+        revision: 1
+      })
+      await expect(runner.setRunInteractionMode(run.id, 0, 'relay')).rejects.toMatchObject({
+        code: 'interaction_revision_conflict'
+      })
+      const copy = structuredClone(journal)
+      const recovered = createRunner({
+        runJournal: { load: async () => copy, replace: async () => {} }
+      })
+      try {
+        await recovered.initialize()
+        expect(recovered.getRun(run.id)).toMatchObject({
+          status: 'failed',
+          failureCode: 'process_restarted',
+          interactionPolicy: { mode: 'delegate', revision: 1 }
+        })
+      } finally {
+        await recovered.dispose()
+      }
+      await expect(runner.setRunInteractionMode(run.id, 1, 'relay')).resolves.toEqual({
+        mode: 'relay',
+        revision: 2
+      })
+    } finally {
+      release.resolve()
+      await runner.dispose()
+    }
+  })
+
   it('passes unattended policy to the prompt without persisting it as a Session preference', async () => {
     const saved: PersistedChatSession[] = []
     const prompt = vi.fn(async (_request, observer) => {
@@ -530,6 +575,53 @@ describe('TaskRunner', () => {
     )
     expect(saved.length).toBeGreaterThan(0)
     expect(saved.every((session) => !('permissionPrompts' in session))).toBe(true)
+  })
+
+  it('reads and revokes one task delegation through either the original or continuation Run', async () => {
+    const run = {
+      id: 'original',
+      sessionId: 'session-1',
+      projectId: project.id,
+      cwd: '/workspace',
+      status: 'failed',
+      failureCode: 'process_restarted',
+      startedAt: 1,
+      completedAt: 2,
+      artifacts: [],
+      preferredComputeHostIds: [],
+      interactionPolicy: { mode: 'delegate', revision: 2 }
+    } satisfies TaskRunJournalEntry
+    const continuation = {
+      ...run,
+      id: 'continuation',
+      continuedFromRunId: run.id,
+      startedAt: 3,
+      completedAt: 4,
+      interactionPolicy: undefined
+    } satisfies TaskRunJournalEntry
+    const runner = createRunner({
+      runJournal: { load: async () => [run, continuation], replace: async () => {} }
+    })
+    try {
+      await runner.initialize()
+      expect(runner.getRun(continuation.id).interactionPolicy).toEqual({
+        mode: 'delegate',
+        revision: 2
+      })
+      expect(() =>
+        runner.assertTaskInteractionDecision(continuation.id, 'delegated_agent', 2)
+      ).not.toThrow()
+      await expect(runner.setRunInteractionMode(continuation.id, 2, 'relay')).resolves.toEqual({
+        mode: 'relay',
+        revision: 3
+      })
+      expect(runner.getRun(run.id).interactionPolicy).toEqual({ mode: 'relay', revision: 3 })
+      expect(() =>
+        runner.assertTaskInteractionDecision(continuation.id, 'delegated_agent', 2)
+      ).toThrow()
+    } finally {
+      await runner.dispose()
+    }
   })
 
   it.each([
@@ -2563,33 +2655,63 @@ describe('TaskRunner', () => {
     }
   })
 
-  it('rejects imported history before attaching an Agent or saving a turn', async () => {
+  it('exposes imported history for inspection and rejects configuration changes and turns', async () => {
+    const origin = {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'checksum'
+    }
+    const imported = { ...session, packageOrigin: { ...origin, excludedFiles: [] } }
+    const forked = { ...session, id: 'fork-1', forkOrigin: imported.packageOrigin }
     const resumeSession = vi.fn()
     const save = vi.fn()
+    const updateConfiguration = vi.fn()
     const runner = createRunner({
+      projects: {
+        list: async () => [project, { ...project, id: origin.sourceProjectId }],
+        create: async () => project
+      },
       sessions: {
-        list: async () => [
-          {
-            ...session,
-            packageOrigin: {
-              importId: 'import-1',
-              sourceProjectId: 'source-project',
-              sourceSessionId: 'source-session',
-              importedAt: 1,
-              manifestChecksum: 'checksum',
-              excludedFiles: []
-            }
-          }
-        ],
-        save
+        list: async () => [imported, forked],
+        save,
+        updateConfiguration
       },
       agent: { resumeSession }
     })
+    const inspected = await runner.getSession(imported.id, project.id)
+    expect(inspected).toMatchObject({ id: imported.id, projectId: project.id, readOnly: true })
+    expect(inspected.packageOrigin).toEqual(origin)
+    await expect(runner.getSession(forked.id, project.id)).resolves.toMatchObject({
+      id: forked.id,
+      readOnly: false,
+      forkOrigin: origin
+    })
+    await expect(runner.getSession(imported.id, origin.sourceProjectId)).rejects.toMatchObject({
+      code: 'session_project_mismatch'
+    })
+    await expect(
+      runner.startRun({
+        project: origin.sourceProjectId,
+        sessionId: imported.id,
+        prompt: 'Continue'
+      })
+    ).rejects.toMatchObject({ code: 'session_project_mismatch' })
+    await expect(
+      runner.updateSessionConfiguration(imported.id, {
+        projectId: project.id,
+        expectedRevision: imported.revision ?? 0,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_read_only' })
     await expect(
       runner.startRun({ project: project.id, sessionId: session.id, prompt: 'Continue' })
     ).rejects.toMatchObject({ code: 'session_read_only' })
     expect(resumeSession).not.toHaveBeenCalled()
     expect(save).not.toHaveBeenCalled()
+    expect(updateConfiguration).not.toHaveBeenCalled()
+    await expect(runner.getSession(imported.id)).resolves.toEqual(inspected)
     await runner.dispose()
   })
 
@@ -3299,6 +3421,7 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        taskRunId: started.id,
         promptMessageId: 'new-user',
         provenanceContext: {
           rootFrameId: 'root-frame-session-1',
@@ -3713,6 +3836,7 @@ describe('TaskRunner', () => {
       expect(prompts).toEqual([
         {
           sessionId: existing.id,
+          taskRunId: started.id,
           promptMessageId: 'skill-user',
           provenanceContext: {
             rootFrameId: 'root-frame-session-1',
@@ -6609,9 +6733,14 @@ describe('TaskRunner', () => {
 })
 
 describe('runtime terminal outcomes and recovery retention', () => {
-  it.each(['cancelled', 'end_turn'] as const)(
+  it.each([
+    ['cancelled', 'cancelled', undefined],
+    ['end_turn', 'completed', undefined],
+    ['max_turn_requests', 'failed', 'turn limit'],
+    ['max_tokens', 'failed', 'output token limit']
+  ] as const)(
     'honors a prompt-scoped %s stop when the prompt resolves normally',
-    async (stopReason) => {
+    async (stopReason, expectedStatus, errorMessage) => {
       let emit: ((event: AcpRuntimeEvent) => void) | undefined
       const review = vi.fn(async () => ({ started: true }))
       const root = await mkdtemp(join(tmpdir(), 'task-outcome-'))
@@ -6656,7 +6785,8 @@ describe('runtime terminal outcomes and recovery retention', () => {
           autoReviewEnabled: true
         })
         const result = await runner.waitForRun(started.id)
-        expect.soft(result.status).toBe(stopReason === 'cancelled' ? 'cancelled' : 'completed')
+        expect.soft(result.status).toBe(expectedStatus)
+        if (errorMessage) expect.soft(result.error).toContain(errorMessage)
         expect.soft(result.output).toBe('Partial output.')
         expect
           .soft(result.cancelledAt)
@@ -6672,7 +6802,7 @@ describe('runtime terminal outcomes and recovery retention', () => {
         expect((await runJournal.load()).find((run) => run.id === result.id)?.cancelledAt).toBe(
           result.cancelledAt
         )
-        expect.soft(review).toHaveBeenCalledTimes(stopReason === 'cancelled' ? 0 : 1)
+        expect.soft(review).toHaveBeenCalledTimes(expectedStatus === 'completed' ? 1 : 0)
       } finally {
         await runner.dispose()
       }
@@ -7026,6 +7156,7 @@ describe('runtime terminal outcomes and recovery retention', () => {
 
 const RESTART_PROMPT = 'task-prompt'
 const RESTART_RUN = 'task-run'
+const RESTART_REQUEST = 'task-request'
 
 // Reproduces the real restart path: the Session JSON still carries the crashed turn's activeRun,
 // the Task journal still holds the running Run, and the first process-wide load is the startup load.
@@ -7073,6 +7204,7 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
   let journal: TaskRunJournalEntry[] = [
     {
       id: RESTART_RUN,
+      requestId: RESTART_REQUEST,
       sessionId: 'session',
       projectId: 'project',
       cwd: '/workspace',
@@ -7150,16 +7282,30 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
     if (loaded.status !== 'found') throw new Error('Expected durable Session')
     return loaded.session
   }
-  return { makeRunner, raw, journal: () => journal, failRunOnce }
+  return { root, makeRunner, raw, journal: () => journal, failRunOnce }
 }
 
 it.each([undefined, 'main'] as const)(
   'recovers a Task Run interrupted by app restart through the real startup load (owner=%s)',
   async (owner) => {
     const h = await crashedRestartTaskRun(owner)
+    const preparation = Promise.withResolvers<TaskRun>()
+    const start = vi.fn(() => preparation.promise)
+    const request = { project: 'project', sessionId: 'session', prompt: 'Run the analysis' }
+    const ports = { loadRuns: async () => h.journal(), startRun: start }
+    const submissions = new TaskSubmissions(h.root, ports)
+    expect(await submissions.submit(RESTART_REQUEST, request)).toMatchObject({ status: 'pending' })
+    await submissions.dispose()
+    const restarted = new TaskSubmissions(h.root, ports)
+    await restarted.initialize()
     const runner = h.makeRunner()
     await expect(runner.initialize()).resolves.toBeUndefined()
+    const receipt = await restarted.get(RESTART_REQUEST)
+    expect(receipt).toMatchObject({ status: 'accepted', runId: RESTART_RUN })
+    expect(await restarted.submit(RESTART_REQUEST, request)).toEqual(receipt)
+    expect(start).toHaveBeenCalledOnce()
     expect(runner.getRun(RESTART_RUN)).toMatchObject({
+      requestId: RESTART_REQUEST,
       status: 'failed',
       failureCode: 'process_restarted'
     })

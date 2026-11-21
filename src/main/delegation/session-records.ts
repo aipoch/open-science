@@ -1,5 +1,6 @@
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ArtifactFile } from '../../shared/artifacts'
+import type { DelegatedQuestionTaskResponse } from '../../shared/delegated-work-contract'
 import type { JsonValue, StructuredOutputEvidence } from './structured-output'
 import type {
   DelegatedWorkAttemptRecord,
@@ -102,6 +103,8 @@ type ConfirmQuestionInput = Readonly<{
   executionModel: ResolvedSubagentModelSnapshot
   startedAt: number
   initiatingTurnMessageId: string
+  taskResponse?: DelegatedQuestionTaskResponse
+  assertTaskCurrent?: () => void
 }>
 
 type AttemptAgentEvent =

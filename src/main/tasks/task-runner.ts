@@ -22,7 +22,7 @@ import type {
   FinalizeRunArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import { artifactCreatedAtMs } from '../../shared/artifacts'
+import { artifactCreatedAtMs, MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import {
@@ -30,6 +30,7 @@ import {
   getActiveConversationContext
 } from '../../shared/conversation-graph'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import type { NotebookTaskContinuationOperation } from '../notebook/execution-intent'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import {
@@ -79,7 +80,6 @@ import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
-  TaskApiErrorCode,
   TaskProject,
   TaskProjectSessionDefaults,
   TaskRun,
@@ -89,12 +89,24 @@ import type {
   TaskRunReview,
   TaskRunStatus,
   TaskSessionConfiguration,
+  TaskSessionOrigin,
   TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import type {
+  TaskInteractionDecisionSource,
+  TaskInteractionMode,
+  TaskInteractionPolicy
+} from '../../shared/task-interaction'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
-import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
+import type {
+  TaskRunJournal,
+  TaskRunJournalEntry,
+  TaskRunPermissionRecord
+} from './task-run-journal'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import { TaskRunnerError } from './task-runner-error'
 
 const log = createLogger('task-runner')
 
@@ -191,9 +203,12 @@ type TaskAgentResumeSessionRequest = {
 type TaskAgentPromptRequest = {
   permissionPrompts?: 'none'
   sessionId: string
+  taskRunId?: string
   promptMessageId: string
   provenanceContext: AgentTurnProvenanceContext
   text: string
+  notebookRuntime?: StartTaskRunRequest['notebookRuntime']
+  notebookContinuation?: NotebookTaskContinuationOperation
   turnIntent?: 'plan-first'
   skillIds?: string[]
   historyPreamble?: string
@@ -207,6 +222,14 @@ type TaskAgentPromptObserver = {
 }
 
 type TaskAgentPort = {
+  delegateInteractions?: import('../delegation/durable-delegated-work-contract').TaskDelegateInteractions
+  questions?: {
+    list(sessionId: string): import('../acp/elicitation-owner').LiveTaskQuestion[]
+    respond(
+      input: import('../acp/question-continuation-workflow').TaskQuestionOwnerResponse
+    ): Promise<void>
+  }
+  setContinuationTracker?(tracker: TaskContinuationTracker): () => void
   withSessionAvailable<Result>(
     projectId: string,
     sessionId: string,
@@ -219,6 +242,25 @@ type TaskAgentPort = {
   setMemoryEnabled(sessionId: string, enabled: boolean): Promise<void>
   prompt(request: TaskAgentPromptRequest, observer?: TaskAgentPromptObserver): Promise<void>
   cancelPrompt(sessionId: string): Promise<void>
+  respondDelegatedPlan?(
+    command: import('../../shared/session-plan/contract').PlanResponseCommand,
+    isCurrent: () => boolean
+  ): Promise<import('../session-plan/plan-service').PlanResponseResult>
+  getTaskPermissions?(
+    sessionId: string,
+    promptMessageId: string
+  ): import('../../shared/acp-permission-contract').AcpPermissionRequest[]
+  respondTaskPermission?(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: import('../acp/permission-broker').TaskPermissionDecision
+  ): Promise<boolean>
+  restoreTaskPermission?(
+    scope: { projectId: string; sessionId: string; requestId: string; optionId: string },
+    decision: import('../acp/permission-continuation-workflow').TaskRestoredPermissionDecision
+  ): Promise<boolean>
 }
 
 type TaskArtifactPort = {
@@ -269,7 +311,7 @@ type TaskRunEventAccumulator = {
   assistantEventIds: string[]
   images: PersistedMessageImage[]
   imageBytes: number
-  runtimeCancelled?: boolean
+  runtimeStopReason?: 'cancelled' | 'max_tokens' | 'max_turn_requests'
   terminalStop?: Pick<AcpRuntimeEvent, 'turnUsage' | 'modelCallUsage'>
   runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'failure'>
   activities: Map<string, PendingTaskRunActivity>
@@ -278,6 +320,12 @@ type TaskRunEventAccumulator = {
 }
 
 type MutableTaskRun = TaskRun & {
+  permissionPrompts?: 'none'
+  interactionPolicy?: TaskInteractionPolicy
+  changingInteractionMode?: boolean
+  committingPermissionDecision?: boolean
+  continuationKind?: TaskRunJournalEntry['continuationKind']
+  permissionInteractions?: TaskRunJournalEntry['permissionInteractions']
   eventAccumulator?: TaskRunEventAccumulator
   completion: Promise<void>
   promptMessageId: string
@@ -437,6 +485,7 @@ const createTaskRunActivities = (
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
   ...(run.requestId ? { requestId: run.requestId } : {}),
+  ...(run.continuedFromRunId ? { continuedFromRunId: run.continuedFromRunId } : {}),
   id: run.id,
   sessionId: run.sessionId,
   projectId: run.projectId,
@@ -451,6 +500,7 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   failureCode: run.failureCode,
   artifacts: [...run.artifacts],
   attention: run.attention,
+  interactionPolicy: run.interactionPolicy ?? { mode: 'relay', revision: 0 },
   review: run.review,
   preferredComputeHostIds: [...run.preferredComputeHostIds]
 })
@@ -461,6 +511,11 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
     ...cloneRun(run),
     status: run.terminalStatus ?? run.status,
     ...(run.promptMessageId ? { promptMessageId: run.promptMessageId } : {}),
+    ...(run.continuationKind ? { continuationKind: run.continuationKind } : {}),
+    ...(run.permissionPrompts ? { permissionPrompts: run.permissionPrompts } : {}),
+    ...(run.permissionInteractions?.length
+      ? { permissionInteractions: [...run.permissionInteractions] }
+      : {}),
     ...(sessionCommit
       ? {
           sessionCommitStatus: sessionCommit.status,
@@ -478,10 +533,18 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
   }
 }
 
+const isAppContinuation = (
+  run: Pick<TaskRunJournalEntry, 'continuedFromRunId' | 'continuationKind'>
+): boolean => Boolean(run.continuedFromRunId && run.continuationKind !== 'notebook')
+
 const sessionOwnsTaskRunPrompt = (
   session: PersistedChatSession,
-  run: Pick<TaskRunJournalEntry, 'id' | 'sessionId' | 'projectId' | 'promptMessageId'>
+  run: Pick<
+    TaskRunJournalEntry,
+    'id' | 'sessionId' | 'projectId' | 'promptMessageId' | 'continuedFromRunId' | 'continuationKind'
+  >
 ): boolean =>
+  !isAppContinuation(run) &&
   run.promptMessageId !== undefined &&
   session.id === run.sessionId &&
   session.projectId === run.projectId &&
@@ -573,6 +636,20 @@ const consumePendingHistoryReplay = (session: PersistedChatSession): PersistedCh
   return accepted
 }
 
+const summarizeSessionOrigin = ({
+  importId,
+  sourceProjectId,
+  sourceSessionId,
+  importedAt,
+  manifestChecksum
+}: TaskSessionOrigin): TaskSessionOrigin => ({
+  importId,
+  sourceProjectId,
+  sourceSessionId,
+  importedAt,
+  manifestChecksum
+})
+
 const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => ({
   id: session.id,
   projectId: session.projectId,
@@ -588,7 +665,12 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
   updatedAt: session.updatedAt,
   output: [...session.messages].reverse().find((message) => message.role === 'agent')?.content,
   error: session.error,
-  artifactCount: session.artifacts?.length ?? 0
+  artifactCount: session.artifacts?.length ?? 0,
+  readOnly: Boolean(session.packageOrigin),
+  ...(session.packageOrigin
+    ? { packageOrigin: summarizeSessionOrigin(session.packageOrigin) }
+    : {}),
+  ...(session.forkOrigin ? { forkOrigin: summarizeSessionOrigin(session.forkOrigin) } : {})
 })
 
 const projectTaskProjection = (project: Project): TaskProject => ({
@@ -698,16 +780,6 @@ const applyProjectDefaultsPatch = (
     else next[key] = value
   }
   return projectSessionDefaultsSchema.parse(next)
-}
-
-class TaskRunnerError extends Error {
-  constructor(
-    readonly code: TaskApiErrorCode,
-    message: string
-  ) {
-    super(message)
-    this.name = 'TaskRunnerError'
-  }
 }
 
 const isMissingPathError = (error: unknown): boolean =>
@@ -935,8 +1007,8 @@ class TaskRunner {
     return sessions.filter((session) => session.projectId === resolved.id).map(summarizeSession)
   }
 
-  async getSession(sessionId: string): Promise<TaskSessionSummary> {
-    return summarizeSession(await this.findSession(sessionId))
+  async getSession(sessionId: string, projectId?: string): Promise<TaskSessionSummary> {
+    return summarizeSession(await this.findSession(sessionId, projectId))
   }
 
   async ensureSessionAttached(sessionId: string): Promise<PersistedChatSession> {
@@ -962,9 +1034,12 @@ class TaskRunner {
     return session
   }
 
-  async getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
+  async getSessionConfiguration(
+    sessionId: string,
+    projectId?: string
+  ): Promise<TaskSessionConfiguration> {
     const [session, settings, availableComputeHosts] = await Promise.all([
-      this.findSession(sessionId),
+      this.findSession(sessionId, projectId),
       this.dependencies.settings.get(),
       this.dependencies.computePreferences.listAvailable?.() ?? Promise.resolve([])
     ])
@@ -1022,12 +1097,18 @@ class TaskRunner {
       typeof request !== 'object' ||
       !Number.isSafeInteger(request.expectedRevision) ||
       request.expectedRevision < 0 ||
-      !parsed.success ||
-      Object.keys(parsed.data).length === 1
+      !parsed.success
     ) {
       throw new TaskRunnerError('invalid_request', 'Invalid Session configuration update.')
     }
-    const session = await this.findSession(sessionId)
+    const { expectedRevision, projectId, ...patch } = parsed.data
+    if (Object.keys(patch).length === 0) {
+      throw new TaskRunnerError('invalid_request', 'Invalid Session configuration update.')
+    }
+    const session = await this.findSession(sessionId, projectId)
+    if (session.packageOrigin) {
+      throw new TaskRunnerError('session_read_only', 'Imported Session configuration is read-only.')
+    }
     if ((session.revision ?? 0) !== request.expectedRevision) {
       throw new TaskRunnerError(
         'session_revision_conflict',
@@ -1042,7 +1123,6 @@ class TaskRunner {
       throw new TaskRunnerError('session_busy', `Session has active work: ${session.id}`)
     }
     const settings = await this.dependencies.settings.get()
-    const patch = parsed.data
     const agentConfiguration = patch.agentConfiguration
       ? validateTaskAgentConfiguration(
           mergeAgentConfigurationPatch(
@@ -1078,10 +1158,7 @@ class TaskRunner {
       updatedAt: Math.max(session.updatedAt + 1, this.dependencies.now())
     }
     try {
-      const persisted = await this.dependencies.sessions.updateConfiguration(
-        next,
-        request.expectedRevision
-      )
+      const persisted = await this.dependencies.sessions.updateConfiguration(next, expectedRevision)
       this.dependencies.computePreferences.project?.(persisted)
     } catch (error) {
       if (isSessionConfigurationBusyError(error)) {
@@ -1177,8 +1254,40 @@ class TaskRunner {
     }
   }
 
-  async listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
-    return [...((await this.findSession(sessionId)).artifacts ?? [])]
+  async listArtifacts(
+    sessionId: string
+  ): Promise<Array<PersistedArtifact & { artifactRunId?: string; producerRunId?: string }>> {
+    const session = await this.findSession(sessionId)
+    const artifacts = session.artifacts ?? []
+    const versionIds = artifacts
+      .filter(({ kind }) => kind === 'managed-file')
+      .map(({ versionId, id }) => versionId ?? id)
+    const descriptors = new Map<string, ArtifactVersionDescriptor>()
+    for (let i = 0; i < versionIds.length; i += MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS) {
+      const batch = await this.dependencies.artifacts.resolveVersionDescriptors({
+        projectId: session.projectId,
+        appSessionId: session.id,
+        versionIds: versionIds.slice(i, i + MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS)
+      })
+      for (const descriptor of batch) descriptors.set(descriptor.versionId, descriptor)
+    }
+    return artifacts.map((artifact) => {
+      const version = descriptors.get(artifact.versionId ?? artifact.id)
+      return version
+        ? {
+            ...artifact,
+            artifactId: version.artifactId,
+            versionId: version.versionId,
+            versionNumber: version.versionNumber,
+            artifactRunId: version.runId,
+            producerRunId: version.producerRunId,
+            name: version.name,
+            mimeType: version.mimeType,
+            size: version.size,
+            sha256: version.checksum
+          }
+        : artifact
+    })
   }
 
   async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
@@ -1229,7 +1338,13 @@ class TaskRunner {
       )
   }
 
-  async startRun(request: StartTaskRunRequest, requestId?: string): Promise<TaskRun> {
+  async startRun(
+    request: StartTaskRunRequest,
+    requestId?: string,
+    continuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'> & {
+      originalRunId: string
+    }
+  ): Promise<TaskRun> {
     this.assertAcceptingRuns()
     await this.initialize()
     this.assertAcceptingRuns()
@@ -1244,6 +1359,21 @@ class TaskRunner {
     }
     if (request.cwd !== undefined && typeof request.cwd !== 'string') {
       throw new TaskRunnerError('invalid_request', 'Working directory must be a string.')
+    }
+    const target = request.notebookRuntime
+    if (
+      target !== undefined &&
+      (!target ||
+        (target.language !== 'python' && target.language !== 'r') ||
+        typeof target.runtimeId !== 'string' ||
+        !target.runtimeId ||
+        target.runtimeId.length > 4096 ||
+        Object.keys(target).length !== 2)
+    ) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Supply the Notebook language and exact runtime ID.'
+      )
     }
     if (
       request.permissionProfile !== undefined &&
@@ -1264,10 +1394,20 @@ class TaskRunner {
         'Permission prompts must be none when specified.'
       )
     }
-    if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
+    if (
+      request.interactionMode !== undefined &&
+      request.interactionMode !== 'relay' &&
+      request.interactionMode !== 'delegate'
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Interaction mode must be relay or delegate.')
+    }
+    if (
+      request.permissionPrompts === 'none' &&
+      (request.turnIntent === 'plan-first' || request.interactionMode === 'delegate')
+    ) {
       throw new TaskRunnerError(
         'invalid_request',
-        'Plan-first requires an available human approver.'
+        'Plan-first and task delegation require permission prompts.'
       )
     }
     if (request.turnIntent !== undefined && request.turnIntent !== 'plan-first') {
@@ -1336,6 +1476,12 @@ class TaskRunner {
     if (request.sessionId && !existing) {
       throw new TaskRunnerError('session_not_found', `Session not found: ${request.sessionId}`)
     }
+    if (existing && existing.projectId !== project.id) {
+      throw new TaskRunnerError(
+        'session_project_mismatch',
+        `Session ${existing.id} does not belong to project ${project.id}.`
+      )
+    }
     if (existing?.packageOrigin) {
       throw new TaskRunnerError(
         'session_read_only',
@@ -1344,12 +1490,6 @@ class TaskRunner {
     }
     if (existing?.archivedAt !== undefined) {
       throw new TaskRunnerError('session_archived', archiveAvailabilityMessage('session-archived'))
-    }
-    if (existing && existing.projectId !== project.id) {
-      throw new TaskRunnerError(
-        'invalid_request',
-        `Session ${existing.id} does not belong to project ${project.id}.`
-      )
     }
     if (
       existing &&
@@ -1471,11 +1611,19 @@ class TaskRunner {
         this.reserveSession(session.id, runId)
         const run = {
           ...(requestId ? { requestId } : {}),
+          ...(continuation
+            ? {
+                continuedFromRunId: continuation.originalRunId,
+                continuationKind: 'notebook' as const
+              }
+            : {}),
           id: runId,
           sessionId: session.id,
           projectId: project.id,
           cwd: session.cwd,
           status: 'running' as const,
+          interactionPolicy: { mode: request.interactionMode ?? 'relay', revision: 0 },
+          permissionPrompts: request.permissionPrompts,
           startedAt: this.dependencies.now(),
           artifacts: [],
           preferredComputeHostIds: [
@@ -1575,7 +1723,8 @@ class TaskRunner {
       prepared.historyPreamble,
       prepared.contextReset,
       prepared.resumeFallback,
-      prepared.persistOnPromptAdmission
+      prepared.persistOnPromptAdmission,
+      continuation
     ).finally(() => {
       this.releaseSession(session.id, runId)
       if (run.status !== 'running') this.publishProgress(run, run.status)
@@ -1586,20 +1735,331 @@ class TaskRunner {
   getRun(runId: string): TaskRun {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
-    const snapshot = cloneRun(run)
+    const snapshot = this.publicRun(run)
     // A terminal fact is public only after all Session admission ownership has been released.
     if (this.activeRunBySession.get(run.sessionId) === run.id) {
       snapshot.status = 'running'
       snapshot.completedAt = undefined
     }
+    const continuations: NonNullable<TaskRun['continuations']> = []
+    for (const entry of this.runs.values()) {
+      if (
+        entry.continuedFromRunId !== run.id ||
+        entry.projectId !== run.projectId ||
+        entry.sessionId !== run.sessionId ||
+        !entry.requestId
+      )
+        continue
+      continuations.push({
+        runId: entry.id,
+        requestId: entry.requestId,
+        status:
+          this.activeRunBySession.get(entry.sessionId) === entry.id ? 'running' : entry.status,
+        ...(entry.failureCode ? { failureCode: entry.failureCode } : {})
+      })
+    }
+    if (continuations.length) snapshot.continuations = continuations
     return snapshot
+  }
+
+  async beginContinuation(
+    originalRunId: string,
+    promptMessageId: string,
+    requestId: string
+  ): Promise<{
+    run: TaskRun
+    onProviderDispatched: () => void
+    settle: (outcome: { stopReason?: string; error?: unknown }) => Promise<void>
+  }> {
+    await this.initialize()
+    const original = this.runs.get(originalRunId)
+    if (!original)
+      throw new TaskRunnerError('run_not_found', 'The original Task Run could not be found.')
+    this.assertAcceptingRuns()
+    const id = this.dependencies.createId()
+    this.reserveSession(original.sessionId, id)
+    const completion = Promise.withResolvers<void>()
+    const run: MutableTaskRun = {
+      requestId,
+      continuedFromRunId: original.id,
+      continuationKind: 'app',
+      id,
+      sessionId: original.sessionId,
+      projectId: original.projectId,
+      cwd: original.cwd,
+      status: 'running',
+      startedAt: this.dependencies.now(),
+      artifacts: [],
+      preferredComputeHostIds: [...original.preferredComputeHostIds],
+      eventAccumulator: createTaskRunEventAccumulator(),
+      promptMessageId,
+      progressPhase: 'accepted',
+      providerAccepted: false,
+      firstVisibleOutput: false,
+      completion: completion.promise
+    }
+    this.pruneRuns()
+    this.runs.set(id, run)
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      this.runs.delete(id)
+      this.releaseSession(run.sessionId, id)
+      completion.resolve()
+      throw error
+    }
+    this.publishProgress(run, 'accepted')
+    this.scheduleHeartbeat(run)
+    return {
+      run: this.getRun(id),
+      onProviderDispatched: () => {
+        run.providerAccepted = true
+        this.publishProgress(run, 'provider-accepted')
+      },
+      settle: async ({ stopReason, error }) => {
+        const captured = run.eventAccumulator!
+        run.completedAt = this.dependencies.now()
+        run.output = captured.assistantOutput || undefined
+        run.artifacts = captured.publishedArtifacts
+        const failed =
+          error !== undefined ||
+          !run.providerAccepted ||
+          stopReason === 'max_tokens' ||
+          stopReason === 'max_turn_requests'
+        this.stopHeartbeat(run)
+        try {
+          if (failed)
+            run.error =
+              'The Task continuation did not finish. Check the original interaction and Session.'
+          if (stopReason === 'cancelled' && !failed) run.cancelledAt = run.completedAt
+          await this.persistTerminalRun(
+            run,
+            failed ? 'failed' : stopReason === 'cancelled' ? 'cancelled' : 'completed'
+          )
+        } finally {
+          this.releaseSession(run.sessionId, id)
+          run.eventAccumulator = undefined
+          completion.resolve()
+          if (run.status !== 'running') this.publishProgress(run, run.status)
+        }
+      }
+    }
+  }
+
+  getRunPromptMessageId(runId: string): string | undefined {
+    return this.runs.get(runId)?.promptMessageId || undefined
+  }
+
+  private interactionPolicyOwner(run: MutableTaskRun): MutableTaskRun | undefined {
+    let owner = run
+    const visited = new Set([run.id])
+    while (owner.continuedFromRunId) {
+      const previous = this.runs.get(owner.continuedFromRunId)
+      if (
+        !previous ||
+        visited.has(previous.id) ||
+        previous.sessionId !== run.sessionId ||
+        previous.projectId !== run.projectId
+      )
+        return undefined
+      visited.add(previous.id)
+      owner = previous
+    }
+    return owner
+  }
+
+  private publicRun(run: MutableTaskRun): TaskRun {
+    return {
+      ...cloneRun(run),
+      interactionPolicy: this.interactionPolicyOwner(run)?.interactionPolicy ?? {
+        mode: 'relay',
+        revision: 0
+      }
+    }
+  }
+
+  async setRunInteractionMode(
+    runId: string,
+    expectedRevision: number,
+    mode: TaskInteractionMode
+  ): Promise<TaskInteractionPolicy> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    const owner = this.interactionPolicyOwner(run)
+    if (!owner)
+      throw new TaskRunnerError(
+        'task_delegation_required',
+        'The original task policy is no longer available.'
+      )
+    if (mode !== 'relay' && mode !== 'delegate')
+      throw new TaskRunnerError('invalid_request', 'Interaction mode must be relay or delegate.')
+    if (owner.permissionPrompts === 'none' && mode === 'delegate')
+      throw new TaskRunnerError('invalid_request', 'Task delegation requires permission prompts.')
+    if (run.status === 'cancelled')
+      throw new TaskRunnerError('interaction_not_found', 'The original Run was cancelled.')
+    const current = owner.interactionPolicy ?? { mode: 'relay', revision: 0 }
+    if (
+      owner.changingInteractionMode ||
+      owner.committingPermissionDecision ||
+      current.revision !== expectedRevision
+    )
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Read the current Run interaction policy before changing it.'
+      )
+    if (current.mode === mode) return current
+    const next = { mode, revision: current.revision + 1 }
+    owner.changingInteractionMode = true
+    owner.interactionPolicy = next
+    try {
+      await this.persistRuns()
+      return next
+    } catch (error) {
+      // A failed write cannot grant authority in the current process.
+      owner.interactionPolicy = { mode: 'relay', revision: next.revision }
+      log.error('Task interaction policy needs recovery.', { runId, error })
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'Could not confirm the task interaction policy change.'
+      )
+    } finally {
+      owner.changingInteractionMode = false
+    }
+  }
+
+  assertTaskInteractionDecision(
+    runId: string | undefined,
+    source: TaskInteractionDecisionSource,
+    expectedModeRevision?: number
+  ): void {
+    const run = runId ? this.runs.get(runId) : undefined
+    if (run?.status === 'cancelled' || run?.cancelRequestedAt !== undefined)
+      throw new TaskRunnerError('interaction_revision_conflict', 'The original Run was cancelled.')
+    if (source === 'user_relay') return
+    const owner = run && this.interactionPolicyOwner(run)
+    if (!owner || owner.changingInteractionMode || owner.interactionPolicy?.mode !== 'delegate')
+      throw new TaskRunnerError(
+        'task_delegation_required',
+        'This Run has no current task delegation.'
+      )
+    if (owner.interactionPolicy.revision !== expectedModeRevision)
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Read the current Run interaction policy before responding.'
+      )
+  }
+
+  getPermissionInteractions(runId: string): readonly TaskRunPermissionRecord[] {
+    return this.runs.get(runId)?.permissionInteractions ?? []
+  }
+
+  findRunIdForPermission(sessionId: string, interactionId: string): string | undefined {
+    return [...this.runs.values()].findLast(
+      (run) =>
+        run.sessionId === sessionId &&
+        run.permissionInteractions?.some(({ id }) => id === interactionId)
+    )?.id
+  }
+
+  async recordPermissionInteraction(
+    runId: string,
+    interaction: TaskRunPermissionRecord
+  ): Promise<void> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    const existing = run.permissionInteractions ?? []
+    const prior = existing.find(({ id }) => id === interaction.id)
+    if (!interaction.response && prior) return
+    run.permissionInteractions = [
+      ...existing.filter(({ id }) => id !== interaction.id).slice(-31),
+      interaction
+    ]
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      // A release write may be ambiguous. Keep the prior fail-closed receipt for local queries.
+      if (interaction.response?.status === 'released') {
+        run.permissionInteractions = [...existing]
+      }
+      log.error('Could not confirm Task permission receipt persistence.', { runId, error })
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'Could not confirm the permission receipt. Query the original interaction before retrying.'
+      )
+    }
+  }
+
+  async withPermissionDecision<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    const owner = this.interactionPolicyOwner(run) ?? run
+    if (owner.committingPermissionDecision || owner.changingInteractionMode)
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'A decision for this Run is being committed. Check the current state.'
+      )
+    owner.committingPermissionDecision = true
+    try {
+      return await operation()
+    } finally {
+      owner.committingPermissionDecision = false
+    }
+  }
+
+  sharesContinuationPrompt(run: TaskRun, promptMessageId: string): boolean {
+    return (
+      isAppContinuation(this.runs.get(run.id) ?? run) ||
+      [...this.runs.values()].some(
+        (entry) => entry.continuedFromRunId === run.id && entry.promptMessageId === promptMessageId
+      )
+    )
+  }
+
+  findRunIdForPrompt(
+    sessionId: string,
+    promptMessageId: string,
+    admittedAt?: number
+  ): string | undefined {
+    return [...this.runs.values()].findLast(
+      (run) =>
+        run.sessionId === sessionId &&
+        run.promptMessageId === promptMessageId &&
+        (admittedAt === undefined || run.startedAt <= admittedAt)
+    )?.id
+  }
+
+  resolveInteractionRun(
+    scope: { sessionId: string; projectId: string },
+    promptMessageId: string,
+    taskRunId?: string
+  ): { runId?: string; unresolved?: true } {
+    const matchesPrompt = (run: MutableTaskRun): boolean =>
+      run.sessionId === scope.sessionId &&
+      run.projectId === scope.projectId &&
+      run.promptMessageId === promptMessageId
+    if (taskRunId) {
+      const run = this.runs.get(taskRunId)
+      return run && matchesPrompt(run) ? { runId: run.id } : { unresolved: true }
+    }
+    const matching = [...this.runs.values()].filter(matchesPrompt)
+    if (!matching.length) return {}
+    // New app continuations always record their exact owner. A legacy unbound interaction can
+    // therefore belong to a unique original Run, but not to an ambiguous older continuation.
+    const legacy = matching.filter(({ continuationKind }) => continuationKind !== 'app')
+    return legacy.length === 1 && !isAppContinuation(legacy[0])
+      ? { runId: legacy[0].id }
+      : { unresolved: true }
+  }
+
+  findLatestRunIdForSession(sessionId: string): string | undefined {
+    return [...this.runs.values()].findLast((run) => run.sessionId === sessionId)?.id
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
     await run.completion
-    return cloneRun(run)
+    return this.publicRun(run)
   }
 
   async cancelRun(runId: string): Promise<TaskRun> {
@@ -1607,17 +2067,17 @@ class TaskRunner {
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
     if (run.status !== 'running') {
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
     if (run.terminalStatus) {
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
     const existingCancellation = run.cancellation
     if (existingCancellation) {
       await existingCancellation.dispatch
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
 
     run.cancelRequestedAt = this.dependencies.now()
@@ -1657,7 +2117,7 @@ class TaskRunner {
 
     await cancellation.dispatch
     await run.completion
-    return cloneRun(run)
+    return this.publicRun(run)
   }
 
   private async failUnpublishedRunAfterSessionSave(
@@ -2022,7 +2482,8 @@ class TaskRunner {
     historyPreamble?: string,
     contextReset?: boolean,
     resumeFallback?: TaskAgentPromptRequest['resumeFallback'],
-    persistOnPromptAdmission = false
+    persistOnPromptAdmission = false,
+    notebookContinuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'>
   ): Promise<void> {
     let promptError: unknown
     let admissionPersistenceError: unknown
@@ -2040,9 +2501,26 @@ class TaskRunner {
       await this.dependencies.agent.prompt(
         {
           sessionId: session.id,
+          taskRunId: run.id,
           promptMessageId,
           provenanceContext,
           text: prompt,
+          ...(request.notebookRuntime ? { notebookRuntime: request.notebookRuntime } : {}),
+          ...(notebookContinuation
+            ? {
+                notebookContinuation: {
+                  ...notebookContinuation,
+                  assertCurrent: () => {
+                    if (
+                      this.disposed ||
+                      this.activeRunBySession.get(session.id) !== run.id ||
+                      run.cancelRequestedAt !== undefined
+                    )
+                      throw new Error('This Notebook continuation Run is no longer active.')
+                  }
+                }
+              }
+            : {}),
           ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
           ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
@@ -2140,7 +2618,19 @@ class TaskRunner {
     promptError: unknown,
     cancellationAtPromptFailure: MutableTaskRun['cancellation']
   ): Promise<void> {
-    const runtimeCancelled = run.eventAccumulator?.runtimeCancelled === true
+    const stopReason = run.eventAccumulator?.runtimeStopReason
+    const runtimeCancelled = stopReason === 'cancelled'
+    if (promptError === undefined) {
+      if (stopReason === 'max_tokens') {
+        promptError = new Error(
+          'The model reached its output token limit before completing this Run.'
+        )
+      } else if (stopReason === 'max_turn_requests') {
+        promptError = new Error(
+          'The model reached its turn limit before completing this Run. Check the model and context window for this Session.'
+        )
+      }
+    }
     const acceptedSession =
       promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 
@@ -2532,18 +3022,27 @@ class TaskRunner {
     for (const run of this.runs.values()) {
       if (run.status !== 'running' || run.terminalStatus || run.sessionId !== event.sessionId)
         continue
+      const planOwner = event.planProjection?.originatingTaskRunId
+      if (planOwner && planOwner !== run.id) continue
+      if (
+        isAppContinuation(run) &&
+        (!run.providerAccepted || event.promptMessageId !== run.promptMessageId)
+      )
+        continue
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
       if (run.eventAccumulator) {
-        // Only the current prompt's terminal fact can cancel this Run. Unscoped compatibility
+        // Only the current prompt's terminal fact can stop this Run. Unscoped compatibility
         // events may still contribute output/usage, but cannot decide its terminal status.
         if (
           event.kind === 'stop' &&
-          event.text === 'cancelled' &&
-          event.promptMessageId === run.promptMessageId
+          event.promptMessageId === run.promptMessageId &&
+          (event.text === 'cancelled' ||
+            event.text === 'max_tokens' ||
+            event.text === 'max_turn_requests')
         ) {
-          run.eventAccumulator.runtimeCancelled = true
+          run.eventAccumulator.runtimeStopReason = event.text
         }
         accumulateTaskRunEvent(run.eventAccumulator, event)
       }
@@ -2953,11 +3452,17 @@ class TaskRunner {
     }
   }
 
-  private async findSession(sessionId: string): Promise<PersistedChatSession> {
+  async findSession(sessionId: string, projectId?: string): Promise<PersistedChatSession> {
     const session = (await this.dependencies.sessions.list()).find(
       (candidate) => candidate.id === sessionId
     )
     if (!session) throw new TaskRunnerError('session_not_found', `Session not found: ${sessionId}`)
+    if (projectId !== undefined && session.projectId !== projectId) {
+      throw new TaskRunnerError(
+        'session_project_mismatch',
+        'Session does not belong to this Project.'
+      )
+    }
     return session
   }
 }

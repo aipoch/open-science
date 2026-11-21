@@ -205,8 +205,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
+        // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
+        // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
         'notebook/mcp-server.ts':
-          '0774ab4a833ec59e3d416f3d1d9d414ee0b95afd3858e8dd9a306afe58cc9acc',
+          '20a588b8780c1163ad2423253dca6f057401f58ad6e72473213847b86973823a',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

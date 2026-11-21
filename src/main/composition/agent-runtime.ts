@@ -168,6 +168,8 @@ export async function composeAgentRuntime({
       notebookRpcServer,
       wslSetupSessions,
       getShellRuntimeBinding: getAvailableShellRuntimeBinding,
+      bindTaskNotebookRuntime: (request, signal) =>
+        notebookService.bindTaskRuntime(request, signal),
       canOwnRuntimeBindingDecision: (request) =>
         notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),

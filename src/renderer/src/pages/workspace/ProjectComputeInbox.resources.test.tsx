@@ -135,6 +135,7 @@ describe('Compute Notebook resource controls', () => {
   afterEach(() => {
     act(() => root?.unmount())
     document.body.innerHTML = ''
+    document.documentElement.removeAttribute('data-open-science-web-events')
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
@@ -375,6 +376,27 @@ describe('Compute Notebook resource controls', () => {
       text: 'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
     })
     expect(releaseSessionResources).not.toHaveBeenCalled()
+  })
+
+  it('shows where to continue stopped Notebook work when Compute is open in Web', async () => {
+    document.documentElement.setAttribute('data-open-science-web-events', 'true')
+    view = {
+      groups: [],
+      releases: [],
+      pendingDecisions: [
+        { projectId: 'project-1', sessionId: 'session-1', refusalId: 'refusal-original' }
+      ]
+    }
+    await render()
+    expect(container.textContent).toContain(
+      'Open the same Session and branch in the Open-Science desktop app'
+    )
+    expect(
+      [...container.querySelectorAll('button')].some(
+        (item) => item.textContent === 'Continue Notebook work'
+      )
+    ).toBe(false)
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('polls at five-second intervals without overlapping reads and stops while hidden or unmounted', async () => {

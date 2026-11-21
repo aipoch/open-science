@@ -1114,6 +1114,47 @@ describe('notebook_execute tool', () => {
     }
   })
 
+  it.each([
+    ['NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION: Execution was stopped.', 'Continue Notebook work'],
+    [
+      'Notebook execution declined: this code requires one-time approval.',
+      'Wait for the user to authorize a different action.'
+    ],
+    ['Notebook runtime selection declined.', 'Wait for the user to authorize a different action.']
+  ])(
+    'does not suggest retry for a stopped or declined Notebook action: %s',
+    async (error, guidance) => {
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'test-token',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({ name: 'notebook-stop', version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const fetchRpc = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 500 }))
+      try {
+        await server.connect(serverTransport)
+        await client.connect(clientTransport)
+        const result = await client.callTool({
+          name: 'notebook_execute',
+          arguments: { code: 'print(42)' }
+        })
+        expect(result.isError).toBe(true)
+        const text = (result.content as { text: string }[])[0]!.text
+        expect(text).toContain(guidance)
+        expect(text).not.toMatch(/retrying once|retry once/i)
+      } finally {
+        fetchRpc.mockRestore()
+        await client.close()
+        await server.close()
+      }
+    }
+  )
+
   it('reports failed foreground cells and failed background Runs as tool errors', async () => {
     const server = createNotebookMcpServer({
       endpoint: 'http://127.0.0.1:4567',

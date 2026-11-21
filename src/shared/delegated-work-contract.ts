@@ -1,4 +1,4 @@
-import type { AgentUserChoicePrompt } from './elicitation'
+import type { AgentUserChoicePrompt, TaskQuestionReceipt } from './elicitation'
 import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { AgentFrameworkId } from './settings'
 
@@ -100,6 +100,9 @@ export type DelegatedWorkRecord = Readonly<{
 }>
 
 export type DelegatedQuestionAnswer = Readonly<{ questionIndex: number; value: string | string[] }>
+export type DelegatedQuestionTaskResponse = Readonly<
+  Pick<TaskQuestionReceipt, 'source' | 'reviewedRevision' | 'checksum'>
+>
 
 export type DelegatedQuestionRequest = Readonly<{
   requestId: string
@@ -120,6 +123,7 @@ export type DelegatedQuestionRequest = Readonly<{
   answers?: readonly DelegatedQuestionAnswer[]
   respondedAt?: number
   continuationAttemptId?: string
+  taskResponse?: DelegatedQuestionTaskResponse
   failure?: Readonly<{ code: string; message: string }>
 }>
 

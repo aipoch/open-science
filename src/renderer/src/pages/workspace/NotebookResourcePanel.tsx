@@ -28,6 +28,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { formatDisplayNumber } from '@/lib/locale-format'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { formatByteSize } from '@/lib/utils'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -51,6 +52,7 @@ const NotebookContinuation = ({
     (state) => state.projects.find((project) => project.id === decision.projectId)?.name
   )
   const [sending, setSending] = useState(false)
+  const canContinue = isDesktopRenderer()
   const continueWork = async (): Promise<void> => {
     if (!session || sending) return
     setSending(true)
@@ -90,22 +92,28 @@ const NotebookContinuation = ({
         {t('Project: {{name}}', { name: projectName ?? decision.projectId })}
       </p>
       <p className="text-text-100">
-        {t(
-          'Notebook work remains stopped until you explicitly continue. This sends a new guidance message and checks memory again.'
-        )}
+        {canContinue
+          ? t(
+              'Notebook work remains stopped until you explicitly continue. This sends a new guidance message and checks memory again.'
+            )
+          : t(
+              'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
+            )}
       </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={sending}
-        aria-busy={sending}
-        onClick={() => void continueWork()}
-      >
-        <span key={String(sending)} className="button-feedback">
-          {t('Continue Notebook work')}
-        </span>
-      </Button>
+      {canContinue ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={sending}
+          aria-busy={sending}
+          onClick={() => void continueWork()}
+        >
+          <span key={String(sending)} className="button-feedback">
+            {t('Continue Notebook work')}
+          </span>
+        </Button>
+      ) : null}
     </div>
   )
 }

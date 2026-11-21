@@ -221,11 +221,23 @@ const createDeterministicDelegateExecution = (
           }
           permissionProfiles.push(profile)
         },
-        async respondToPermission(response) {
-          responses.push(response)
-          for (const listener of listeners) {
-            listener({ kind: 'permission', awaiting: false, requestId: response.requestId })
+        async respondToPermission(response, decision) {
+          const release = (): void => {
+            responses.push(response)
+            for (const listener of listeners) {
+              listener({ kind: 'permission', awaiting: false, requestId: response.requestId })
+            }
           }
+          if (decision)
+            await decision.commit(async () => {
+              await decision.record('unconfirmed')
+              await decision.assertScope?.()
+              decision.assertCurrent()
+              release()
+              await decision.record('released')
+              return true
+            })
+          else release()
         },
         async cancel() {
           control.cancel()

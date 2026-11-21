@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { NotebookMemoryPolicyDiagnostic } from '../../shared/notebook-memory'
 import { DEFAULT_NOTEBOOK_MEMORY_POLICY, type NotebookMemoryPolicy } from './memory-policy-config'
 
 export type MemoryPressureLevel = 'normal' | 'warning' | 'critical'
@@ -38,6 +39,7 @@ export type MemoryPolicySample = {
 export type MemoryPolicyReason = {
   code: string
   detail?: string
+  diagnostic?: NotebookMemoryPolicyDiagnostic
   // A local limit cannot authorize reclamation in unrelated cgroups.
   pressureScope?: 'host' | 'execution-domain'
   constraintPath?: string
@@ -58,7 +60,8 @@ export type MemoryPolicyObservation = {
 export class MemoryPolicyError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly diagnostic?: NotebookMemoryPolicyDiagnostic
   ) {
     super(message)
     this.name = 'MemoryPolicyError'
@@ -117,11 +120,6 @@ const errorBackoffMs = 30_000
 
 const validBytes = (value: number | undefined): value is number =>
   value !== undefined && Number.isSafeInteger(value) && value >= 0
-
-const unavailable = (code: string, detail?: string): MemoryPolicyReason => ({
-  code,
-  ...(detail ? { detail } : {})
-})
 
 const pressureReason = (code: string, constraintPath?: string): MemoryPolicyReason => ({
   code,
@@ -350,7 +348,7 @@ export class MemoryPolicyService {
         key,
         error instanceof MemoryPolicyError ? error.code : 'sample-failed',
         undefined,
-        error instanceof MemoryPolicyError ? error.message : undefined
+        error instanceof MemoryPolicyError ? error : undefined
       )
       this.publish(state.observation)
       return state.observation
@@ -507,12 +505,16 @@ export class MemoryPolicyService {
     key: string,
     code: string,
     age?: number,
-    detail?: string
+    error?: MemoryPolicyError
   ): MemoryPolicyObservation {
     const state = this.domains.get(key)
     return {
       status: 'unavailable',
-      reason: unavailable(code, detail),
+      reason: {
+        code,
+        ...(error?.message ? { detail: error.message } : {}),
+        ...(error?.diagnostic ? { diagnostic: error.diagnostic } : {})
+      },
       source: state?.sample?.source ?? this.options.adapter.platform,
       executionScope: state?.observation?.executionScope ?? key,
       ...(state?.sampledAt === undefined ? {} : { sampledAt: state.sampledAt }),

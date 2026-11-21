@@ -111,11 +111,10 @@ describe('production application command wiring', () => {
     expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
     )
-    for (const call of [
-      'sessionPackageDesktop.respond(',
-      'sessionPackageDesktop.export(',
-      'sessionPackageDesktop.import('
-    ]) {
+    expect(dependencyBlock).toContain(
+      "invocation.callerContext.surface === 'electron' ? sessionPackageSurfaces.sessionPackageDesktop.respond( invocation.args[0], invocation.callerContext.clientId ) : sessionPackageSurfaces.sessionPackageDesktop.respond(invocation.args[0])"
+    )
+    for (const call of ['sessionPackageDesktop.export(', 'sessionPackageDesktop.import(']) {
       expect(occurrences(dependencyBlock, call)).toBe(1)
     }
     expect(ipcSource).toContain('sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)')
@@ -601,8 +600,11 @@ describe('production application command wiring', () => {
     expect(webServiceSource).toContain(
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
+    expect(webServiceSource).toContain(
+      "taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>"
+    )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, controls: taskControls, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
@@ -813,6 +815,7 @@ it('connects committed deletion to the same credential broker used by approval s
     sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
+    notebookEnvironmentLifecycle: { managedSetup: {} },
     specialistDomain: {},
     notebookCommands: {},
     jobRepository: {},

@@ -174,13 +174,21 @@ const operationStatus = (
     (packageOperationActive(operation) && operation.progress.phase === 'cleaning')
       ? t('Removing temporary files. Keep the app open until cleanup finishes.')
       : waiting
-        ? operation.progress.phase === 'confirming'
-          ? t('Review the package summary before importing.')
-          : operation.progress.phase === 'choosing-location'
-            ? t('Choose where to save the package in the system dialog.')
-            : t('Choose package contents')
+        ? operation.sensitiveExportReview
+          ? undefined
+          : operation.progress.phase === 'confirming'
+            ? t('Review the package summary before importing.')
+            : operation.progress.phase === 'choosing-location'
+              ? t('Choose where to save the package in the system dialog.')
+              : t('Choose package contents')
         : undefined
-  return { phase, status, waiting, busy, description }
+  return {
+    phase,
+    status: operation.sensitiveExportReview ? t('Sensitive content') : status,
+    waiting,
+    busy,
+    description
+  }
 }
 
 const importStageLabel = (
@@ -722,11 +730,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         : t('Import Session package')
   const { phase, status, waiting, busy, description } = operationStatus(operation, t)
   const canOverride =
+    !isWeb &&
     operation.kind === 'export' &&
-    operation.state === 'failed' &&
-    Boolean(operation.session && operation.sensitiveContent?.length) &&
-    !operation.cleanupPending &&
-    !operation.result?.recovery
+    operation.state === 'awaiting-selection' &&
+    Boolean(operation.session && operation.sensitiveExportReview && !operation.cleanupPending)
   const canUploadToOrg =
     lab?.state === 'authenticated' && !isRemoteWeb && !operation.browserReceiptOnly
   const copiedUploadCode = copiedUploadOperationId === operation.id
@@ -776,7 +783,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       // Ignore clipboard errors when copy is unavailable.
     }
   }
-  const selecting = operation.state === 'awaiting-selection'
+  const selecting = operation.state === 'awaiting-selection' && !operation.sensitiveExportReview
   const OperationIcon =
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
   const respond = async (request: PackageOperationRequest): Promise<void> => {
@@ -840,14 +847,16 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
           projectId: operation.session.projectId
         })
       } else if (operation.kind === 'export' && operation.session) {
-        await drainWorkspaceRuntimeEventsForPersistence(operation.session.sessionId)
-        await flushSessionPersistence()
         if (allowSensitiveContent)
           await window.api.sessions.packageOperation({
             action: 'export-with-sensitive-content',
             operationId: operation.id
           })
-        else await window.api.sessions.exportPackage(operation.session)
+        else {
+          await drainWorkspaceRuntimeEventsForPersistence(operation.session.sessionId)
+          await flushSessionPersistence()
+          await window.api.sessions.exportPackage(operation.session)
+        }
       } else if (operation.importRequestId && !chooseAnotherPackage)
         await respond({ action: 'retry-import', operationId: operation.id })
       else if (isWeb) await importSessionPackage(operation.importTarget?.projectId)
@@ -1255,7 +1264,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                             </pre>
                           </details>
                         ) : null}
-                        {canOverride ? (
+                        {operation.sensitiveExportReview ? (
                           <div className="space-y-3 rounded-lg border border-border bg-status-warning-surface p-3 dark:bg-status-warning-dark-surface">
                             <p
                               id={`${riskId}-description`}
@@ -1265,24 +1274,35 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                                 'This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.'
                               )}
                             </p>
-                            <div className="flex items-start gap-2">
-                              <input
-                                id={riskId}
-                                type="checkbox"
-                                className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-                                aria-describedby={`${riskId}-description`}
-                                checked={riskAcceptedFor === operation.id}
-                                disabled={retrying}
-                                onChange={(event) =>
-                                  setRiskAcceptedFor(
-                                    event.target.checked ? operation.id : undefined
-                                  )
-                                }
-                              />
-                              <Label htmlFor={riskId} className="min-w-0 text-sm leading-5">
-                                {t('I understand the risk and want to export anyway')}
-                              </Label>
-                            </div>
+                            {operation.sensitiveExportReview.destination ? (
+                              <p className="break-all text-sm text-muted-foreground">
+                                {operation.sensitiveExportReview.destination}
+                              </p>
+                            ) : null}
+                            {canOverride ? (
+                              <div className="flex items-start gap-2">
+                                <input
+                                  id={riskId}
+                                  type="checkbox"
+                                  className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+                                  aria-describedby={`${riskId}-description`}
+                                  checked={riskAcceptedFor === operation.id}
+                                  disabled={retrying}
+                                  onChange={(event) =>
+                                    setRiskAcceptedFor(
+                                      event.target.checked ? operation.id : undefined
+                                    )
+                                  }
+                                />
+                                <Label htmlFor={riskId} className="min-w-0 text-sm leading-5">
+                                  {t('I understand the risk and want to export anyway')}
+                                </Label>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-foreground">
+                                {t('Open Open-Science Desktop to review this export.')}
+                              </p>
+                            )}
                           </div>
                         ) : null}
                         {operation.cleanupPending && !active ? (
@@ -1446,6 +1466,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     </Button>
                   ) : null}
                   {operation.state === 'failed' &&
+                  !operation.agent &&
                   !operation.cleanupPending &&
                   !operation.result?.recovery ? (
                     <Button

@@ -31,7 +31,12 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
-import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
+import {
+  canAccessSessionPlan,
+  canRelayTaskInteraction,
+  canSatisfyHumanApproval,
+  requireDesktopCaller
+} from '../caller-context'
 import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { z } from 'zod'
 import type { AcpHandlerWorkflows } from './handler-workflows'
@@ -41,7 +46,7 @@ import {
 } from './response-session-admission'
 import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import { PlanCommandError, type ActivePlanProjection } from '../../shared/session-plan/contract'
 import { preserveSessionSizeLimitCode } from '../session-persistence/application-command-errors'
 import { withAgentAuthenticationRecovery } from './prompt-error'
 
@@ -141,13 +146,26 @@ const acpResponseCommandContracts = Object.freeze({
               sessionId: z.string().min(1),
               artifactVersionId: z.string().min(1),
               expectedRevision: z.number().int().nonnegative(),
-              decision: z.enum(['approved', 'rejected'])
+              decision: z.enum(['approved', 'rejected']),
+              source: z.literal('user_relay').optional(),
+              expectedBranchId: z.string().min(1).optional()
             })
             .strict(),
           z
             .object({
               projectId: z.string().min(1),
               sessionId: z.string().min(1),
+              feedback: z.string().min(1)
+            })
+            .strict(),
+          z
+            .object({
+              projectId: z.string().min(1),
+              sessionId: z.string().min(1),
+              artifactVersionId: z.string().min(1),
+              expectedRevision: z.number().int().nonnegative(),
+              source: z.literal('user_relay'),
+              expectedBranchId: z.string().min(1),
               feedback: z.string().min(1)
             })
             .strict()
@@ -421,6 +439,7 @@ const registerAcpCommands = (
             !invocation.callerLease.isCurrent()
           )
             throw new Error('Only a current human caller can continue Notebook execution.')
+          requireDesktopCaller(invocation.callerContext)
         }
         assertCurrent()
         const { projectId, refusalId, ...request } = invocation.args[0]
@@ -531,19 +550,33 @@ const registerAcpCommands = (
         )
       },
       'acp:respond-plan': (invocation) => {
-        if (!canAccessSessionPlan(invocation.callerContext)) {
-          throw new Error(
-            'Only a current human or Task automation caller can respond to a Session Plan.'
+        const [input] = invocation.args
+        const context = invocation.callerContext
+        const external =
+          input.source === 'user_relay' &&
+          Boolean(input.expectedBranchId) &&
+          canRelayTaskInteraction(context)
+        if (!external && !(input.source === undefined && canSatisfyHumanApproval(context))) {
+          throw new PlanCommandError(
+            'interaction-mismatch',
+            'Plan responses require a current human caller or an authenticated local Task relaying a user decision.'
           )
         }
+        const respond = (): ReturnType<AcpRuntimeCoordinator['respondSessionPlan']> =>
+          external
+            ? dependencies.runtime.respondSessionPlan(
+                input,
+                () => canRelayTaskInteraction(context) && invocation.callerLease.isCurrent()
+              )
+            : dependencies.runtime.respondSessionPlan(input)
         return preserveSessionSizeLimitCode(() =>
           dependencies.archiveAvailability
             ? dependencies.archiveAvailability.withSessionAvailable(
-                invocation.args[0].projectId,
-                invocation.args[0].sessionId,
-                () => dependencies.runtime.respondSessionPlan(invocation.args[0])
+                input.projectId,
+                input.sessionId,
+                respond
               )
-            : dependencies.runtime.respondSessionPlan(invocation.args[0])
+            : respond()
         )
       }
     })

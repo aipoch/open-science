@@ -36,6 +36,7 @@ import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared
 import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
@@ -167,6 +168,21 @@ type PromptAdmissionGuard = <Result>(
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
+  private continuationTracker?: TaskContinuationTracker
+
+  setContinuationTracker(tracker: TaskContinuationTracker): () => void {
+    this.continuationTracker = tracker
+    return () => {
+      if (this.continuationTracker === tracker) this.continuationTracker = undefined
+    }
+  }
+
+  trackTaskContinuation: TaskContinuationTracker = (identity, send) => {
+    if (this.continuationTracker) return this.continuationTracker(identity, send)
+    if (identity.kind === 'permission')
+      return Promise.reject(new Error('Task continuation tracking is unavailable.'))
+    return send(() => undefined)
+  }
   private readonly runtimes = new Set<AcpRuntime>()
   // A failed incoming resume must retry the same provider history even after its writer detached.
   private readonly sessionWriterTransfers = new Map<
@@ -271,6 +287,10 @@ class AcpRuntimeCoordinator {
     return this.projectState(
       Array.from(this.runtimes, (runtime) => ({ runtime, state: runtime.getState() }))
     )
+  }
+
+  pendingNotebookReviews(sessionId: string): ReturnType<AcpRuntime['pendingNotebookReviews']> {
+    return Array.from(this.runtimes).flatMap((runtime) => runtime.pendingNotebookReviews(sessionId))
   }
 
   getSnapshot(): AcpStateSnapshot {
@@ -430,9 +450,10 @@ class AcpRuntimeCoordinator {
   }
 
   respondSessionPlan(
-    input: Parameters<AcpRuntime['respondSessionPlan']>[0]
+    input: Parameters<AcpRuntime['respondSessionPlan']>[0],
+    isAuthorizationCurrent?: () => boolean
   ): ReturnType<AcpRuntime['respondSessionPlan']> {
-    return this.runtimeForSession(input.sessionId).respondSessionPlan(input)
+    return this.runtimeForSession(input.sessionId).respondSessionPlan(input, isAuthorizationCurrent)
   }
 
   getActivePromptSessions(): { projectId: string; sessionId: string }[] {
@@ -2081,6 +2102,31 @@ class AcpRuntimeCoordinator {
     return this.getState()
   }
 
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string
+  ): ReturnType<AcpRuntime['getTaskPermissions']> {
+    return this.sessionRuntimes.get(sessionId)?.getTaskPermissions(sessionId, promptMessageId) ?? []
+  }
+
+  get delegateInteractions(): RootDelegatedWorkControl['taskInteractions'] {
+    return this.delegatedWork?.taskInteractions
+  }
+
+  respondTaskPermission(
+    ...args: Parameters<AcpRuntime['respondTaskPermission']>
+  ): Promise<boolean> {
+    return (
+      this.sessionRuntimes.get(args[0])?.respondTaskPermission(...args) ?? Promise.resolve(false)
+    )
+  }
+
+  restoreTaskPermission(
+    ...args: Parameters<AcpRuntime['restoreTaskPermission']>
+  ): Promise<boolean> {
+    return this.runtimeForSession(args[0].sessionId).restoreTaskPermission(...args)
+  }
+
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpRuntimeState> {
     if (this.delegatedWork && (await this.delegatedWork.respondToPermission(response))) {
       return this.getState()
@@ -2122,6 +2168,16 @@ class AcpRuntimeCoordinator {
       this.preparedElicitationContinuations.set(sessionId, response.requestId)
     }
     return this.getState()
+  }
+
+  listTaskQuestions(sessionId: string): ReturnType<AcpRuntime['listTaskQuestions']> {
+    return this.findRuntimeForSession(sessionId)?.listTaskQuestions(sessionId) ?? []
+  }
+
+  respondToTaskQuestion(
+    input: Parameters<AcpRuntime['respondToTaskQuestion']>[0]
+  ): ReturnType<AcpRuntime['respondToTaskQuestion']> {
+    return this.runtimeForSession(input.request.sessionId).respondToTaskQuestion(input)
   }
 
   getPermissionPrompts(sessionId: string): 'none' | undefined {

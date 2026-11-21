@@ -23,6 +23,7 @@ const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceCont
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
     expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'delegateInteractions'
       | 'withSessionAvailable'
       | 'listAttachedSessionIds'
       | 'createSession'
@@ -31,6 +32,12 @@ describe('ACP Task Agent port', () => {
       | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
+      | 'getTaskPermissions'
+      | 'respondTaskPermission'
+      | 'restoreTaskPermission'
+      | 'respondDelegatedPlan'
+      | 'questions'
+      | 'setContinuationTracker'
     >()
   })
 

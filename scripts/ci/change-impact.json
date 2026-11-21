@@ -256,6 +256,7 @@
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
+        "src/main/web-service/task-notebook-readiness.ts",
         "src/main/notebook/memory-policy.ts",
         "src/main/notebook/memory-policy-platform.ts",
         "src/main/notebook/resource-memory.ts",

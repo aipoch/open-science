@@ -18,6 +18,7 @@ import type {
   ShellRuntimeBinding
 } from '../../shared/notebook'
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type {
   AgentFramework,
@@ -83,6 +84,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  trackTaskContinuation?: TaskContinuationTracker
   schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
@@ -376,6 +378,7 @@ export type AcpRuntimeUploadOptions = {
 }
 
 export type AcpRuntimeNotebookOptions = {
+  bindTaskRuntime?: import('../notebook/runtime-service').NotebookRuntimeService['bindTaskRuntime']
   createExecutionIntent?: (scope: NotebookExecutionIntentScope) => NotebookExecutionIntent
   currentExecutionIntent?: (
     scope: NotebookExecutionIntentScope

@@ -39,6 +39,7 @@ import type {
   DelegateMessageAcceptanceEvidence
 } from './execution-port'
 import { DelegateExecutionCleanupError } from './execution-port'
+import type { TaskDelegateInteractions } from './durable-delegated-work-contract'
 import type { DelegatedWorkRecordCommands, SessionKey } from './session-records'
 
 import {
@@ -96,6 +97,7 @@ type RootDelegatedWorkEvent =
   | Readonly<{ kind: 'unavailable-reason-cleared'; sessionId: string }>
 
 type RootDelegatedWorkControl = Readonly<{
+  taskInteractions?: TaskDelegateInteractions
   pendingPermissions(): readonly AcpPermissionRequest[]
   unavailableReasons?(): Readonly<Record<string, DelegatedWorkUnavailableReason>>
   clearUnavailableReason?(sessionId: string): void
@@ -590,6 +592,44 @@ const createProductionDelegatedWorkComposition = (
   }
 
   const root: RootDelegatedWorkControl = Object.freeze({
+    taskInteractions: {
+      async permissions(key) {
+        const scoped = await works.get(keyOf(key))
+        if (!scoped) return []
+        return (await scoped.work.rootPermissionRequests(key)).flatMap((request) =>
+          request.taskBranchId
+            ? [{ request: projectPermission(key, request), branchId: request.taskBranchId }]
+            : []
+        )
+      },
+      async respondPermission(key, input, decision) {
+        const pending = permissions.get(input.requestId)
+        if (
+          !pending ||
+          keyOf(pending.key) !== keyOf(key) ||
+          pending.request.frameId !== input.frameId ||
+          pending.request.attemptId !== input.attemptId ||
+          pending.request.taskBranchId !== input.branchId
+        )
+          return false
+        const scoped = await works.get(keyOf(key))
+        if (!scoped) return false
+        await scoped.work.respondToPermission(
+          key,
+          {
+            frameId: input.frameId,
+            attemptId: input.attemptId,
+            requestId: pending.request.requestId,
+            optionId: input.optionId
+          },
+          decision
+        )
+        return true
+      },
+      async answerQuestion(key, input) {
+        await (await workFor(key)).work.confirmQuestion(key, input)
+      }
+    } satisfies TaskDelegateInteractions,
     pendingPermissions: () =>
       Object.freeze(
         [...permissions.values()].map(({ key, request }) => projectPermission(key, request))

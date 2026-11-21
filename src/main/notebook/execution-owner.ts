@@ -173,6 +173,7 @@ type NotebookExecutionOwnerOptions = {
   prepareRuntimeSelection?: (
     session: NotebookSessionAggregate,
     language: NotebookLanguage,
+    request: RunNotebookCellRequest,
     signal?: AbortSignal
   ) => Promise<void>
   helperModules: Pick<
@@ -734,7 +735,7 @@ class NotebookExecutionOwner {
     onAdmitted?: (run: NotebookRunRecord) => void
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     if ((request.source ?? 'agent') === 'agent') {
-      await this.options.prepareRuntimeSelection?.(session, cell.language, signal)
+      await this.options.prepareRuntimeSelection?.(session, cell.language, request, signal)
     }
     const admittedAt = Date.now()
     const executionCount = session.nextExecutionCount()

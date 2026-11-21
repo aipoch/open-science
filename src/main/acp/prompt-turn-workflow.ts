@@ -1,4 +1,5 @@
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
+import { taskPromptOwnerOf } from '../../shared/task-continuation'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
@@ -150,6 +151,11 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  prepareTaskNotebookRuntime?: (
+    request: AcpPromptRequest,
+    cwd: string,
+    signal: AbortSignal
+  ) => Promise<void>
   commitNotebookDispatch?: (appSessionId: string) => void
   prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
   observeNotebookExecutionLoop?: (input: {
@@ -482,7 +488,10 @@ class AcpPromptTurnWorkflow {
       // rejected commit releases ownership below without publishing prompt start or dispatching.
       const admittedProvenanceContext = await onPromptAdmitted?.()
       if (admittedProvenanceContext) {
-        this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
+        this.options.interactions.updatePromptProvenance(
+          interaction,
+          this.taskProvenance(request, admittedProvenanceContext)
+        )
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
       this.options.environment.prepareNotebookIntent?.(admittedRequest, mode)
@@ -634,6 +643,12 @@ class AcpPromptTurnWorkflow {
           }
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
+      if (turn.mode.kind === 'user' && turn.mode.runtimeReviewOwner === 'task')
+        await env.prepareTaskNotebookRuntime?.(
+          request,
+          snapshot?.cwd ?? this.options.currentCwd(),
+          interaction.signal
+        )
       const backend = env.backend()
       promptBackend = backend
       const planContext =
@@ -1078,7 +1093,7 @@ class AcpPromptTurnWorkflow {
       kind: 'prompt',
       ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.provenanceContext?.promptMessageId,
-      provenanceContext: request.provenanceContext,
+      provenanceContext: this.taskProvenance(request, request.provenanceContext),
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.continuation?.originatingTurnToken,
       ...(request.referencedSessions?.length
@@ -1087,6 +1102,17 @@ class AcpPromptTurnWorkflow {
           }
         : {})
     })
+  }
+
+  private taskProvenance(
+    request: AcpPromptRequest,
+    provenance: AcpPromptRequest['provenanceContext']
+  ): AcpPromptRequest['provenanceContext'] {
+    if (!provenance) return undefined
+    const { taskRunId: _untrusted, ...context } = provenance
+    void _untrusted
+    const taskRunId = taskPromptOwnerOf(request)
+    return taskRunId ? { ...context, taskRunId } : context
   }
 
   private checkpoint(

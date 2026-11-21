@@ -692,9 +692,9 @@ export class NotebookRuntimeBindingOwner {
     )
     if (!match) {
       throw new Error(
-        `"${runtimeId}" is not an enabled ${language} runtime. Use list_notebook_runtimes to see the ` +
-          'available runtimes, or enable it in Settings → Runtimes first (disabled and unknown ' +
-          'runtimes are refused).'
+        `"${runtimeId}" is not an enabled ${language} runtime. ` +
+          `Use the exact runtimeId from list_notebook_runtimes for ${language}. ` +
+          'Enable the selected runtime in Settings → Runtimes if needed.'
       )
     }
     const candidate = this.toInternalBinding(match)

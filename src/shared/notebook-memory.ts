@@ -1,8 +1,11 @@
 // Live policy/notification data only. These values never belong to run.json or portable packages.
+export type NotebookMemoryPolicyDiagnostic = 'linux-procfs' | 'linux-cgroup-visibility'
+
 export type NotebookMemoryPolicyState = Readonly<{
   status: 'healthy' | 'pressured' | 'unavailable'
   reason: string
   detail?: string
+  diagnostic?: NotebookMemoryPolicyDiagnostic
   source: string
   executionScope: string
   checkedAt: number

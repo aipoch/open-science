@@ -239,6 +239,63 @@ export class OpenScienceClient {
     return this.request('/api/v1/doctor', { ...options, method: 'GET' })
   }
 
+  prepareNotebookEnvironment(language, options) {
+    return this.request('/api/v1/notebook-environment', {
+      ...options,
+      method: 'POST',
+      body: { language }
+    })
+  }
+
+  listNotebookRuntimes(language, options) {
+    return this.request(`/api/v1/notebook-runtimes?${new URLSearchParams({ language })}`, {
+      ...options,
+      method: 'GET'
+    })
+  }
+
+  registerNotebookInterpreter({ language, path }, options) {
+    return this.request('/api/v1/notebook-runtimes', {
+      ...options,
+      method: 'POST',
+      body: { action: 'register', language, path }
+    })
+  }
+
+  enableNotebookRuntime({ language, runtimeId }, options) {
+    return this.request('/api/v1/notebook-runtimes', {
+      ...options,
+      method: 'POST',
+      body: { action: 'enable', language, runtimeId }
+    })
+  }
+
+  startNotebookEnvironmentOperation({ language, operationId, action }, options) {
+    return this.request(
+      `/api/v1/notebook-environment/operations/${encodeURIComponent(operationId)}`,
+      {
+        ...options,
+        method: 'PUT',
+        body: { language, action }
+      }
+    )
+  }
+
+  getNotebookEnvironmentOperation(target, options) {
+    return this.#notebookEnvironmentOperationRequest('GET', target, options)
+  }
+
+  cancelNotebookEnvironmentOperation(target, options) {
+    return this.#notebookEnvironmentOperationRequest('DELETE', target, options)
+  }
+
+  #notebookEnvironmentOperationRequest(method, { language, operationId }, options) {
+    return this.request(
+      `/api/v1/notebook-environment/operations/${encodeURIComponent(operationId)}?${new URLSearchParams({ language })}`,
+      { ...options, method }
+    )
+  }
+
   listRuntimes(options) {
     return this.request('/api/v1/runtimes', { ...options, method: 'GET' })
   }
@@ -349,11 +406,27 @@ export class OpenScienceClient {
   }
 
   getSession(sessionId, options) {
-    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, options)
+    return this.#readSessionResource(sessionId, '', options)
   }
 
   getSessionConfiguration(sessionId, options) {
-    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, options)
+    return this.#readSessionResource(sessionId, '/config', options)
+  }
+
+  async #readSessionResource(sessionId, suffix, { projectId, ...options } = {}) {
+    const query = projectId === undefined ? '' : `?project=${encodeURIComponent(projectId)}`
+    const data = await this.request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}${suffix}${query}`,
+      options
+    )
+    // Legacy servers may ignore the Project query. Never confirm an unverified association.
+    if (projectId !== undefined && data?.projectId !== projectId) {
+      throw new OpenScienceApiError('Session does not belong to this Project.', {
+        code: 'session_project_mismatch',
+        status: 409
+      })
+    }
+    return data
   }
 
   // Web RPC seam: authenticated loopback dispatch of one application command channel.
@@ -399,11 +472,54 @@ export class OpenScienceClient {
     })
   }
 
+  startAgentPackageFork(projectId, sessionId, correlationId, options) {
+    return this.callRpc(
+      'sessions:package-operation',
+      [{ action: 'agent-fork', session: { projectId, sessionId }, correlationId }],
+      options
+    )
+  }
+
   exportSessionPackage(projectId, sessionId, destinationPath, options) {
     return this.callRpc('sessions:export-package', [{ projectId, sessionId }, destinationPath], {
       ...options,
       timeoutMs: options?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
     })
+  }
+
+  startAgentPackageExport(projectId, sessionId, destinationPath, correlationId, options) {
+    return this.callRpc(
+      'sessions:package-operation',
+      [
+        {
+          action: 'agent-export',
+          session: { projectId, sessionId },
+          destinationPath,
+          correlationId
+        }
+      ],
+      options
+    )
+  }
+
+  getPackageOperation(options) {
+    return this.callRpc('sessions:package-operation', [{ action: 'snapshot' }], options)
+  }
+
+  respondExportReview(request, options) {
+    return this.callRpc(
+      'sessions:package-operation',
+      [{ ...request, action: 'respond-export-review' }],
+      options
+    )
+  }
+
+  startAgentPackageImport(sourcePath, target, correlationId, options) {
+    return this.callRpc(
+      'sessions:package-operation',
+      [{ action: 'agent-import', sourcePath, target, correlationId }],
+      options
+    )
   }
 
   importSessionPackage(target, sourcePath, options, rpcOptions) {
@@ -439,7 +555,55 @@ export class OpenScienceClient {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`, options)
   }
 
-  respondSessionPlan(sessionId, response, options) {
+  listInteractions(scope, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(`/api/v1/interactions?${query}`, options)
+  }
+
+  getInteraction(interactionId, scope, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}?${query}`,
+      options
+    )
+  }
+
+  setRunInteractionMode(runId, request, options) {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/interaction-mode`, {
+      ...options,
+      method: 'PUT',
+      body: request
+    })
+  }
+
+  respondPermission(interactionId, scope, response, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}/permission?${query}`,
+      { ...options, method: 'POST', body: response }
+    )
+  }
+
+  answerQuestion(interactionId, scope, response, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}/answer?${query}`,
+      {
+        ...options,
+        method: 'POST',
+        body: response
+      }
+    )
+  }
+
+  async respondSessionPlan(sessionId, response, options) {
+    const bootstrap = await this.health(options)
+    if (!bootstrap.taskCapabilities?.includes('task-interactions')) {
+      throw new OpenScienceApiError(
+        'Update the service to respond to Plan reviews through a local Task connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan/respond`, {
       ...options,
       method: 'POST',
@@ -456,14 +620,72 @@ export class OpenScienceClient {
         { code: 'unsupported_capability' }
       )
     }
+    if (
+      request.permissionPrompts === 'none' &&
+      !bootstrap.taskCapabilities.includes('permission-prompts-none')
+    ) {
+      throw new OpenScienceApiError(
+        'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    if (
+      request.interactionMode === 'delegate' &&
+      !bootstrap.taskCapabilities.includes('task-delegation')
+    ) {
+      throw new OpenScienceApiError(
+        'This server does not support task delegation on this connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    if (
+      request.notebookRuntime !== undefined &&
+      !bootstrap.taskCapabilities.includes('notebook-runtime-selection')
+    ) {
+      throw new OpenScienceApiError(
+        'This server does not support selecting a Notebook runtime for a Task on this connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    return this.#putSubmission(
+      'run-submissions',
+      requestId,
+      request,
+      beforeDeadline(options, deadline)
+    )
+  }
+
+  async continueNotebook(requestId, request, options) {
+    const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
+    const bootstrap = await this.health(beforeDeadline(options, deadline))
+    if (!bootstrap.taskCapabilities?.includes('notebook-continuation')) {
+      throw new OpenScienceApiError(
+        'This service does not support Notebook continuation through a local Task connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    return this.#putSubmission(
+      'notebook-continuations',
+      requestId,
+      request,
+      beforeDeadline(options, deadline)
+    )
+  }
+
+  async #putSubmission(endpoint, requestId, request, options) {
     try {
-      return await this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, {
-        ...beforeDeadline(options, deadline),
+      return await this.request(`/api/v1/${endpoint}/${encodeURIComponent(requestId)}`, {
+        ...options,
         method: 'PUT',
         body: request
       })
     } catch (error) {
-      error.requestId = requestId
+      if (error && typeof error === 'object') {
+        error.requestId = requestId
+        if (error.status === undefined || error.status >= 500) {
+          error.completionStatus = 'submission-unconfirmed'
+        }
+      }
       throw error
     }
   }
@@ -472,7 +694,10 @@ export class OpenScienceClient {
     return this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, options)
   }
 
-  async waitForSubmission(requestId, { pollIntervalMs = 250, timeoutMs, signal } = {}) {
+  async waitForSubmission(
+    requestId,
+    { pollIntervalMs = 250, timeoutMs, signal, returnReceipt = false } = {}
+  ) {
     if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0))
       throw new TypeError('timeoutMs must be a positive number.')
     if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0)
@@ -492,12 +717,16 @@ export class OpenScienceClient {
           throw new OpenScienceApiError('Submission identity mismatch.', {
             code: 'invalid_response'
           })
-        if (receipt.status === 'accepted' && receipt.runId)
+        if (receipt.status === 'accepted' && receipt.runId) {
+          if (returnReceipt) return receipt
           return await this.getRun(receipt.runId, beforeDeadline(options, deadline))
-        if (receipt.status === 'failed' || receipt.status === 'interrupted')
+        }
+        if (receipt.status === 'failed' || receipt.status === 'interrupted') {
+          if (returnReceipt) return receipt
           throw new OpenScienceApiError(receipt.error?.message ?? 'Submission failed.', {
             code: receipt.error?.code ?? 'submission_failed'
           })
+        }
         if (receipt.status !== 'pending')
           throw new OpenScienceApiError('Unknown submission status.', { code: 'invalid_response' })
         const sleepOptions = beforeDeadline({ timeoutMs: pollIntervalMs }, deadline)
@@ -511,11 +740,37 @@ export class OpenScienceClient {
 
   async startRun(request, options) {
     const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
-    if (request.permissionPrompts === 'none') {
+    if (
+      !options?.requestId &&
+      (request.permissionPrompts === 'none' ||
+        request.interactionMode === 'delegate' ||
+        request.notebookRuntime !== undefined)
+    ) {
       const bootstrap = await this.health(beforeDeadline(options, deadline))
-      if (!bootstrap.taskCapabilities?.includes('permission-prompts-none')) {
+      if (
+        request.permissionPrompts === 'none' &&
+        !bootstrap.taskCapabilities?.includes('permission-prompts-none')
+      ) {
         throw new OpenScienceApiError(
           'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
+          { code: 'unsupported_capability' }
+        )
+      }
+      if (
+        request.interactionMode === 'delegate' &&
+        !bootstrap.taskCapabilities?.includes('task-delegation')
+      ) {
+        throw new OpenScienceApiError(
+          'This server does not support task delegation on this connection.',
+          { code: 'unsupported_capability' }
+        )
+      }
+      if (
+        request.notebookRuntime !== undefined &&
+        !bootstrap.taskCapabilities?.includes('notebook-runtime-selection')
+      ) {
+        throw new OpenScienceApiError(
+          'This server does not support selecting a Notebook runtime for a Task on this connection.',
           { code: 'unsupported_capability' }
         )
       }
@@ -580,7 +835,8 @@ export class OpenScienceClient {
       if (['completed', 'failed', 'cancelled'].includes(run.status)) return run
       if (run.status !== 'running')
         throw new OpenScienceApiError('Unknown Run status.', { code: 'invalid_response' })
-      if (returnOnAttention && run.attention) return run
+      if (returnOnAttention && (run.attention || run.execution?.status === 'waiting_for_user'))
+        return run
       const sleepMs =
         deadline === undefined
           ? pollIntervalMs
@@ -1056,7 +1312,8 @@ export class OpenScienceClient {
       error?.message ?? `Open-Science request failed (${response.status}).`,
       {
         code: error?.code,
-        status: response.status
+        status: response.status,
+        correlationId: response.headers.get('x-correlation-id')
       }
     )
   }
@@ -1084,6 +1341,7 @@ export const connectToOpenScience = async ({
           requestTimeoutMs
         })
         await candidate.health({ signal })
+        candidate.configRoot = state.configRoot
         client = candidate
         return true
       } catch (error) {
