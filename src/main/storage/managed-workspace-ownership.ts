@@ -1,13 +1,15 @@
-import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import {
   MANAGED_WORKSPACE_OWNERSHIP_DIR,
   RETIRED_WORKSPACES_DIR
 } from './managed-workspace-ownership-dir'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
+import { locateManagedWorkspacePath, type ManagedWorkspacePath } from './workspace-location'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { resolveDataRoot } from '../storage-root'
+import { bindStorageRoot } from './root-binding'
 import {
   DurableJsonRecoveryBarrierError,
   defaultFileDurability,
@@ -30,7 +32,7 @@ type ManagedWorkspaceOwnership = Readonly<{
 
 type ManagedWorkspaceLocation = Readonly<{
   workspacesRoot: string
-  directory: string
+  directory: ManagedWorkspacePath
   workspaceId: string
   ownershipDirectory: string
   receiptPath: string
@@ -82,18 +84,9 @@ const locateManagedWorkspace = (
   dataRoot = resolveDataRoot()
 ): ManagedWorkspaceLocation | undefined => {
   const workspacesRoot = resolve(dataRoot, 'workspaces')
-  const directory = resolve(cwd)
+  const directory = locateManagedWorkspacePath(cwd, dataRoot)
+  if (!directory) return undefined
   const workspaceId = relative(workspacesRoot, directory)
-  if (
-    !workspaceId ||
-    workspaceId === MANAGED_WORKSPACE_OWNERSHIP_DIR ||
-    workspaceId === '..' ||
-    workspaceId.startsWith(`..${sep}`) ||
-    isAbsolute(workspaceId) ||
-    workspaceId.includes(sep)
-  ) {
-    return undefined
-  }
   const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
   return {
     workspacesRoot,
@@ -125,6 +118,18 @@ const assertManagedWorkspaceDirectory = async (
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return undefined
   if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) return undefined
+  // win32.relative folds case even in case-sensitive directories. Check the physical parent;
+  // neither a similarly named sibling nor an alias to the receipt directory is workspace data.
+  if ((await realpath(dirname(cwd))) !== (await realpath(location.workspacesRoot))) return undefined
+  const physicalDirectory = await realpath(location.directory).catch((error: unknown) => {
+    if (isFileSystemError(error, 'ENOENT')) return undefined
+    throw error
+  })
+  const physicalOwnership = await realpath(location.ownershipDirectory).catch((error: unknown) => {
+    if (isFileSystemError(error, 'ENOENT')) return undefined
+    throw error
+  })
+  if (physicalDirectory && physicalDirectory === physicalOwnership) return undefined
   let info
   try {
     info = await lstat(location.directory)
@@ -384,6 +389,7 @@ const planProvisionalManagedWorkspaceReconciliation = async (
   createdBefore: number,
   dataRoot = resolveDataRoot()
 ): Promise<Array<() => Promise<(() => Promise<void>) | undefined>>> => {
+  const rootBinding = bindStorageRoot(dataRoot)
   const sessionsByDirectory = new Map<string, typeof sessions>()
   for (const session of sessions) {
     const directory = resolve(session.cwd)
@@ -407,19 +413,39 @@ const planProvisionalManagedWorkspaceReconciliation = async (
     throw error
   })
   if (locations.length || retired.length) {
+    await rootBinding.verify()
     await mkdir(retiredRoot, { recursive: true })
     const info = await lstat(retiredRoot)
     if (!info.isDirectory() || info.isSymbolicLink())
       throw new Error('Retired workspace path is unsafe.')
   }
+  const retiredBinding =
+    locations.length || retired.length ? bindStorageRoot(retiredRoot) : undefined
+  const verifyRetired = async (): Promise<void> => {
+    await rootBinding.verify()
+    await retiredBinding?.verify()
+  }
+  const removeRetired = async (path: string): Promise<void> => {
+    await verifyRetired()
+    if (
+      !(await assertOwnershipDirectoryPath(resolve(dataRoot, 'workspaces'), dirname(retiredRoot)))
+    )
+      return
+    const info = await lstat(retiredRoot)
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw new Error('Retired workspace path is unsafe.')
+    // rm unlinks a symlink at the leaf instead of traversing it.
+    await rm(path, { recursive: true, force: true })
+  }
   const retries = retired
     .filter((entry) => entry.isDirectory() && /^[0-9a-f-]{36}$/.test(entry.name))
     .map((entry) => async () => async () => {
-      await rm(join(retiredRoot, entry.name), { recursive: true, force: true })
+      await removeRetired(join(retiredRoot, entry.name))
     })
   return [
     ...retries,
     ...locations.map((location) => async () => {
+      await verifyRetired()
       const ownership = await readOwnershipForUpdate(location)
       if (!ownership || ownership.retainedAfterDelete) return
 
@@ -444,6 +470,7 @@ const planProvisionalManagedWorkspaceReconciliation = async (
       const workspace = await assertManagedWorkspaceDirectory(location.directory, dataRoot)
       const retiredPath = join(retiredRoot, randomUUID())
       if (workspace) {
+        await verifyRetired()
         await rename(workspace.directory, retiredPath)
         await defaultFileDurability.syncDirectory(workspace.workspacesRoot)
         await defaultFileDurability.syncDirectory(retiredRoot)
@@ -451,7 +478,7 @@ const planProvisionalManagedWorkspaceReconciliation = async (
       await removeManagedWorkspaceOwnership(location.directory, dataRoot)
       return workspace
         ? async () => {
-            await rm(retiredPath, { recursive: true, force: true })
+            await removeRetired(retiredPath)
           }
         : undefined
     })
@@ -493,7 +520,21 @@ const readManagedWorkspaceOwnership = async (
   }
 }
 
-const removeManagedWorkspaceOwnership = async (cwd: string, dataRoot?: string): Promise<void> => {
+// Destructive entry point: the brand prevents accidental external-directory calls, while the
+// location and lstat checks still protect JavaScript callers and stale persisted paths.
+const removeManagedWorkspaceDirectory = async (
+  cwd: ManagedWorkspacePath,
+  dataRoot = resolveDataRoot()
+): Promise<void> => {
+  const location = await assertManagedWorkspaceDirectory(cwd, dataRoot)
+  if (!location) return
+  await rm(location.directory, { recursive: true, force: true })
+}
+
+const removeManagedWorkspaceOwnership = async (
+  cwd: ManagedWorkspacePath,
+  dataRoot?: string
+): Promise<void> => {
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return
   try {
@@ -515,6 +556,7 @@ export {
   readManagedWorkspaceOwnership,
   reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
+  removeManagedWorkspaceDirectory,
   restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 }

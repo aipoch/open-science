@@ -1,3 +1,5 @@
+import { posix, win32 } from 'node:path'
+import type { ProjectFolderRunInput } from '../../shared/project-folder-changes'
 import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import type {
   PersistedArtifactExecutionSnapshot,
@@ -7,13 +9,47 @@ import {
   decodeVersionedJson,
   type VersionedJsonDecodeResult
 } from '../storage/versioned-json-decoder'
-import {
-  decodeNotebookHelperEvidence,
-  notebookHelperEvidenceKey
-} from '../notebook/helper-evidence'
+import { decodeNotebookHelperEvidence } from '../notebook/helper-evidence'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
 import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revision'
-import { reproductionRecipes } from './reproducibility-host'
+import { notebookHelperEvidenceKey, reproductionRecipes } from './reproducibility-host'
+
+// This is display provenance, never authority to open today's source files. Bound its payload and
+// retain only portable filenames plus recorded facts; a checksum was optional for direct execution.
+export function projectFolderInputEvidence(value: unknown): ProjectFolderRunInput[] | undefined {
+  if (!Array.isArray(value) || value.length > 256) return undefined
+  const inputs: ProjectFolderRunInput[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return undefined
+    const input = item as Record<string, unknown>
+    if (
+      typeof input.relativePath !== 'string' ||
+      input.relativePath.length === 0 ||
+      input.relativePath.length > 4096 ||
+      posix.isAbsolute(input.relativePath) ||
+      win32.isAbsolute(input.relativePath) ||
+      /^[a-z]:/i.test(input.relativePath) ||
+      input.relativePath.replaceAll('\\', '/').split('/').includes('..') ||
+      input.relativePath.includes('\0') ||
+      !Number.isSafeInteger(input.sizeBytes) ||
+      Number(input.sizeBytes) < 0 ||
+      input.frozen !== false ||
+      (input.checksum !== undefined &&
+        (typeof input.checksum !== 'string' || !/^[a-f0-9]{64}$/.test(input.checksum))) ||
+      Object.keys(input).some(
+        (key) => !['relativePath', 'sizeBytes', 'frozen', 'checksum'].includes(key)
+      )
+    )
+      return undefined
+    inputs.push({
+      relativePath: input.relativePath,
+      sizeBytes: Number(input.sizeBytes),
+      frozen: false,
+      ...(typeof input.checksum === 'string' ? { checksum: input.checksum } : {})
+    })
+  }
+  return inputs
+}
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -240,6 +276,8 @@ const executionRunValue = (value: unknown): boolean => {
     run.outputs.every((output) => normalizeStoredProvenanceOutput(output).length > 0) &&
     Array.isArray(run.inputFileVersionKeys) &&
     run.inputFileVersionKeys.every(executionInputKeyValue) &&
+    (run.projectFolderInputs === undefined ||
+      projectFolderInputEvidence(run.projectFolderInputs) !== undefined) &&
     (run.hasOmittedFiles === undefined || run.hasOmittedFiles === true) &&
     (run.hasOmittedInputs === undefined || run.hasOmittedInputs === true) &&
     (run.omittedOutputCount === undefined ||

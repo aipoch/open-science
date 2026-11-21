@@ -354,6 +354,42 @@ const managedInspect = {
 }
 
 describe('PreviewFileSurface header', () => {
+  it.each([false, true])(
+    'offers project delivery only for the current Artifact, historical=%s',
+    async (historical) => {
+      const artifact = {
+        ...managedUploadItem,
+        source: 'artifact' as const,
+        id: 'artifact-1',
+        artifactId: 'artifact-1',
+        managedFileId: 'artifact-1',
+        selectedVersionId: historical ? 'upload-v1' : 'upload-v2'
+      }
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          source: 'artifact',
+          fileId: 'artifact-1',
+          selectedVersionId: artifact.selectedVersionId,
+          outputDelivery: {
+            state: 'pending',
+            versionId: 'upload-v2',
+            relativePath: 'artifacts/project-1/session-1/README.md',
+            canRetry: true
+          }
+        }
+      })
+      const retry = vi.fn().mockResolvedValue({ ok: true, value: undefined })
+      window.api.managedFileVersions.retryOutputDelivery = retry
+      await act(async () => root.render(<PreviewFileSurface item={artifact} onClose={vi.fn()} />))
+      expect(container.textContent?.includes('Version saved; project file needs attention')).toBe(
+        !historical
+      )
+      expect(retry).not.toHaveBeenCalled()
+    }
+  )
+
   it('shows the file type icon before the file name', async () => {
     await act(async () => {
       root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)

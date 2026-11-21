@@ -60,7 +60,7 @@ it('preserves released usage, constraints and indexes, backs up, and rejects old
       }
     })
   ).resolves.toMatchObject({
-    applied: ['0060_image_models']
+    applied: ['0060_image_models', '0061_project_folder', '0062_artifact_output_delivery']
   })
   expect(backup).toBeTruthy()
   expect((await stat(backup!)).size).toBeGreaterThan(0)

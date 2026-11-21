@@ -1053,3 +1053,20 @@ describe('appendLiteratureMentions', () => {
     ).toHaveLength(MAX_COMPOSER_ARTIFACT_MENTIONS)
   })
 })
+
+it('round-trips live Project folder path identity through chips, messages and runtime references', () => {
+  const reference = {
+    id: 'project-folder:p:nested/sample.csv',
+    name: 'sample.csv',
+    source: 'project-folder' as const,
+    projectId: 'p',
+    path: 'nested/sample.csv'
+  }
+  const doc = docFromMessageParts([{ type: 'artifact', ...reference }])
+  const editor = document.createElement('div')
+  applyDocToDom(editor, doc)
+  expect(editor.querySelector('[data-mention-project-id="p"]')).not.toBeNull()
+  expect(docToText(domToDoc(editor))).toBe('@nested/sample.csv')
+  expect(docToArtifactRefs(domToDoc(editor))).toEqual([reference])
+  expect(docToMessageParts(domToDoc(editor))).toEqual([{ type: 'artifact', ...reference }])
+})

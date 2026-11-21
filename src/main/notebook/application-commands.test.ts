@@ -261,11 +261,15 @@ describe('Notebook application commands', () => {
     expect(terminateMonitoredProcess).toHaveBeenCalledOnce()
   })
 
-  it('owns exactly the 29 renderer-callable Notebook and Environment commands', () =>
+  it('owns exactly the 33 renderer-callable Notebook and Environment commands', () =>
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
+      expect.objectContaining({ name: 'notebook:inspect-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:revert-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:preview-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:list-project-folder-changes' }),
       expect.objectContaining({ name: 'notebook:run-index' }),
       expect.objectContaining({ name: 'notebook:state' }),
       expect.objectContaining({ name: 'notebook:project-activity' }),

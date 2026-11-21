@@ -12,6 +12,7 @@ import {
   type SessionPackageManifest,
   type PackageProgress
 } from '../../shared/session-package'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { readStoredResearchFilm } from '../research-video/stored-presentation'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { ResourceBudgetExceededError } from '../resource-budget'
@@ -141,7 +142,8 @@ export async function captureResearchFilms(
         signal?.throwIfAborted()
         const sourceKey = sources.get(key)!
         await assertPackageSourcePath(root, sourceKey)
-        const stat = await lstat(join(root, sourceKey), { bigint: true })
+        const sourcePath = resolveStorageKey(root, sourceKey)
+        const stat = await lstat(sourcePath, { bigint: true })
         if (!stat.isFile() || stat.size === 0n)
           throw new Error('Research presentation is unavailable.')
         const sizeBytes = Number(stat.size)
@@ -150,8 +152,7 @@ export async function captureResearchFilms(
         const checksum = sourceKey === key ? inheritedChecksums.get(key) : undefined
         if (
           checksum &&
-          (await digestFileWithinBudget(join(root, sourceKey), sizeBytes, signal)).checksum !==
-            checksum
+          (await digestFileWithinBudget(sourcePath, sizeBytes, signal)).checksum !== checksum
         )
           throw new Error('Research film content checksum mismatch.')
         filmFiles.set(key, { sourceKey, sizeBytes, observation: fileObservation(stat), checksum })
@@ -242,29 +243,23 @@ export async function appendResearchFilms(options: {
       for (const storageKey of researchFilmStorageKeys([film])) {
         const file = captured.files.get(storageKey)!
         signal.throwIfAborted()
-        const digest = await readFilmSource(signal, async () => {
+        const { digest, sourcePath } = await readFilmSource(signal, async () => {
           await assertPackageSourcePath(root, file.sourceKey)
-          if (
-            fileObservation(await lstat(join(root, file.sourceKey), { bigint: true })) !==
-            file.observation
-          )
+          const sourcePath = resolveStorageKey(root, file.sourceKey)
+          if (fileObservation(await lstat(sourcePath, { bigint: true })) !== file.observation)
             throw new Error('Research film changed during export.')
-          const digest = await digestFileWithinBudget(
-            join(root, file.sourceKey),
-            file.sizeBytes,
-            signal
-          )
+          const digest = await digestFileWithinBudget(sourcePath, file.sizeBytes, signal)
           if (
             digest.sizeBytes !== file.sizeBytes ||
             (file.checksum && digest.checksum !== file.checksum)
           )
             throw new Error('Research film changed during export.')
-          return digest
+          return { digest, sourcePath }
         })
         const objectPath = `objects/${digest.checksum}`
         if (![...manifest.inventory, ...entries].some((entry) => entry.path === objectPath)) {
           const copied = await copyFileWithinBudget(
-            join(root, file.sourceKey),
+            sourcePath,
             join(directory, objectPath),
             file.sizeBytes,
             signal,
@@ -277,10 +272,7 @@ export async function appendResearchFilms(options: {
               })
           ).catch((error: NodeJS.ErrnoException) => {
             signal.throwIfAborted()
-            if (
-              error.path === join(root, file.sourceKey) ||
-              error instanceof ResourceBudgetExceededError
-            )
+            if (error.path === sourcePath || error instanceof ResourceBudgetExceededError)
               throw new UnavailableResearchFilm('Research film source is unavailable.', {
                 cause: error
               })
@@ -291,10 +283,7 @@ export async function appendResearchFilms(options: {
             throw new UnavailableResearchFilm('Research film changed during export.')
         }
         await readFilmSource(signal, async () => {
-          if (
-            fileObservation(await lstat(join(root, file.sourceKey), { bigint: true })) !==
-            file.observation
-          )
+          if (fileObservation(await lstat(sourcePath, { bigint: true })) !== file.observation)
             throw new Error('Research film changed during export.')
         })
         completedBytes += file.sizeBytes

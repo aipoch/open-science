@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { resolveDataRoot } from '../storage-root'
+import { bindStorageRoot } from '../storage/root-binding'
+import {
+  locateManagedWorkspacePath,
+  type ManagedWorkspacePath
+} from '../storage/workspace-location'
 import {
   assertManagedWorkspacesRoot,
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
-  removeManagedWorkspaceOwnership
+  removeManagedWorkspaceOwnership,
+  removeManagedWorkspaceDirectory
 } from '../storage/managed-workspace-ownership'
 
 type ManagedSessionWorkspaceLease = {
@@ -21,16 +27,18 @@ type ManagedSessionWorkspaceCapability = {
 }
 
 type ManagedSessionWorkspaceDependencies = {
+  bindRoot: typeof bindStorageRoot
   resolveRoot: () => string
   createId: () => string
   createDirectory: (path: string) => Promise<void>
-  removeDirectory: (path: string) => Promise<void>
+  removeDirectory: (path: ManagedWorkspacePath, dataRoot: string) => Promise<void>
   initializeOwnership: (path: string, projectId: string, dataRoot: string) => Promise<void>
   finalizeOwnership: (path: string, sessionId: string, dataRoot: string) => Promise<void>
-  removeOwnership: (path: string, dataRoot: string) => Promise<void>
+  removeOwnership: (path: ManagedWorkspacePath, dataRoot: string) => Promise<void>
 }
 
 const defaultDependencies: ManagedSessionWorkspaceDependencies = {
+  bindRoot: bindStorageRoot,
   resolveRoot: resolveDataRoot,
   createId: randomUUID,
   createDirectory: async (path) => {
@@ -41,10 +49,7 @@ const defaultDependencies: ManagedSessionWorkspaceDependencies = {
     }
     await mkdir(path, { recursive: false })
   },
-  removeDirectory: async (path) => {
-    if (!(await assertManagedWorkspacesRoot(dirname(path)))) return
-    await rm(path, { recursive: true, force: true })
-  },
+  removeDirectory: removeManagedWorkspaceDirectory,
   initializeOwnership: (path, projectId, dataRoot) =>
     initializeManagedWorkspaceOwnership(path, projectId, Date.now(), dataRoot),
   finalizeOwnership: (path, sessionId, dataRoot) =>
@@ -63,15 +68,29 @@ const createManagedSessionWorkspaceCapability = (
   return {
     async acquire(input): Promise<ManagedSessionWorkspaceLease> {
       const dataRoot = resolvedDependencies.resolveRoot()
-      const cwd = join(dataRoot, 'workspaces', resolvedDependencies.createId())
+      const cwd = locateManagedWorkspacePath(
+        join(dataRoot, 'workspaces', resolvedDependencies.createId()),
+        dataRoot
+      )
+      if (!cwd) throw new Error('Managed workspace identity is outside the app workspace root.')
+      const rootBinding = resolvedDependencies.bindRoot(dataRoot)
+      await rootBinding.prepare((path) => mkdir(path))
       await resolvedDependencies.createDirectory(cwd)
+      const workspaceBinding = resolvedDependencies.bindRoot(cwd)
+      const verify = async (): Promise<void> => {
+        await rootBinding.verify()
+        await workspaceBinding.verify()
+      }
+      const remove = async (): Promise<void> => {
+        await verify()
+        await resolvedDependencies.removeDirectory(cwd, dataRoot)
+        await rootBinding.verify()
+        await resolvedDependencies.removeOwnership(cwd, dataRoot)
+      }
       try {
         await resolvedDependencies.initializeOwnership(cwd, input.projectId, dataRoot)
       } catch (error) {
-        await resolvedDependencies
-          .removeDirectory(cwd)
-          .then(() => resolvedDependencies.removeOwnership(cwd, dataRoot))
-          .catch(() => undefined)
+        await remove().catch(() => undefined)
         throw error
       }
 
@@ -81,6 +100,7 @@ const createManagedSessionWorkspaceCapability = (
         cwd,
         commit: async (sessionId) => {
           if (released) return
+          await verify()
           await resolvedDependencies.finalizeOwnership(cwd, sessionId, dataRoot)
           committed = true
         },
@@ -88,10 +108,7 @@ const createManagedSessionWorkspaceCapability = (
           if (released) return
           released = true
           if (committed) return
-          await resolvedDependencies
-            .removeDirectory(cwd)
-            .then(() => resolvedDependencies.removeOwnership(cwd, dataRoot))
-            .catch(() => undefined)
+          await remove().catch(() => undefined)
         }
       }
     }

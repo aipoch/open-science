@@ -808,6 +808,29 @@ export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?:
   void sampleActiveProcessTrees().finally(scheduleTrackedProcessSample)
 }
 
+// A read-only proof for retiring per-run files while their persistent kernel stays alive.
+// Unknown topology is deliberately not an empty tree; callers retain files until owned teardown.
+export const snapshotOwnedPosixProcessIdentities = async (
+  child: ChildProcess
+): Promise<readonly string[] | undefined> => {
+  const tracker = trackedPosixProcessTrees.get(child)
+  if (!tracker?.leaderIdentity) return undefined
+  const table = await sampleActiveProcessTrees()
+  if (
+    !table.complete ||
+    !tracker.complete ||
+    tracker.ambiguousIdentities.size > 0 ||
+    !samePosixIdentity(tracker.leaderIdentity, table.processes.get(tracker.leaderPid))
+  )
+    return undefined
+  const live: string[] = []
+  for (const identity of tracker.identities.values()) {
+    if (samePosixIdentity(identity, table.processes.get(identity.pid)))
+      live.push(`${identity.pid}:${identity.birthToken}`)
+  }
+  return live
+}
+
 const stopSamplingTracker = (tracker: PosixProcessTracker): void => {
   activePosixProcessTrackers.delete(tracker)
   if (activePosixProcessTrackers.size === 0 && ownershipSampleTimer) {

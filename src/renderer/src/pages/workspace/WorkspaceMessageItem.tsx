@@ -621,7 +621,7 @@ const MessagePartsMeasurement = ({
               key={index}
               data-slot="user-message-measurement-part"
               data-part-type="artifact"
-              data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
+              data-content={`@${isLinkedFolder ? part.relativePath : !isStatic && 'source' in part && part.source === 'project-folder' ? part.path : part.name}`}
               className={cn(
                 isStatic ? mentionPillClassName : artifactMentionPillClassName,
                 measurementContentClassName
@@ -1217,8 +1217,12 @@ const MessagePartsContent = ({
               )}
               onClick={() => onPreviewMentionArtifact(part)}
               aria-label={t('Preview {{name}}', { name: part.name })}
+              title={part.source === 'project-folder' ? `@${part.path}` : undefined}
             >
-              @<ExtensionPreservingFileName name={part.name} />
+              @
+              <ExtensionPreservingFileName
+                name={part.source === 'project-folder' ? part.path : part.name}
+              />
             </button>
           )
         }

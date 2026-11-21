@@ -4580,3 +4580,34 @@ describe('working-file evidence', () => {
 })
 
 ;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()
+
+it('captures a frame-owned public output without observing its project or sibling frame', async () => {
+  const { sessionRoot, dataRoot } = await createRoots()
+  const outputRelativePath = 'notebooks/project-1/session-1/frames/child/data'
+  const outputRoot = join(storageRoot!, 'project', outputRelativePath)
+  await mkdir(outputRoot, { recursive: true })
+  const sibling = join(storageRoot!, 'project', 'notebooks/project-1/session-1/frames/sibling/data')
+  await mkdir(sibling, { recursive: true })
+  const outputPath = join(outputRoot, 'result.csv')
+  const observation = await startWorkingFileObservation(
+    {
+      dataRoot,
+      notebookSessionRoot: sessionRoot,
+      cwd: dataRoot,
+      outputRoot,
+      outputRelativePath,
+      code: `open(${JSON.stringify(outputPath)}, "w").write("frame result")`,
+      language: 'python',
+      runId: 'frame-public-output'
+    },
+    { watchDirectory: watcherUnavailable }
+  )
+  await writeFile(outputPath, 'frame result')
+  await writeFile(join(sibling, 'private.csv'), 'sibling result')
+  const result = await observation.finish()
+  expect(result.workingFiles).toMatchObject([
+    { relativePath: `data/${outputRelativePath}/result.csv`, generationId: expect.any(String) }
+  ])
+  expect(JSON.stringify(result)).not.toContain('sibling')
+  expect(result.fileEvidence).toMatchObject({ state: 'available' })
+})

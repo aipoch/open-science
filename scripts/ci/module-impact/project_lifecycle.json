@@ -15,7 +15,28 @@
     "src/main/projects/repository.test.ts",
     "src/main/projects/prompt-optimization.ts",
     "src/main/projects/prompt-optimization.test.ts",
-    "src/main/projects/prompt-optimization-persistence.test.ts"
+    "src/main/projects/prompt-optimization-persistence.test.ts",
+    "src/main/project-folders/staged-files.test.ts",
+    "src/main/project-folders/staged-files.ts",
+    "src/main/projects/project-folder-binding.integration.test.ts",
+    "src/main/projects/project-folder-binding.ts",
+    "src/main/projects/project-folder-files.integration.test.ts",
+    "src/main/projects/project-folder-files.ts",
+    "src/main/projects/project-folder-location.integration.test.ts",
+    "src/main/projects/project-folder-location.test.ts",
+    "src/main/projects/project-folder-location.ts",
+    "src/main/projects/project-folder-search.test.ts",
+    "src/main/projects/project-folder-validation.test.ts",
+    "src/main/projects/project-folder-validation.ts",
+    "src/main/projects/project-record-location.test.ts",
+    "src/main/projects/project-record-location.ts",
+
+    "src/main/projects/record-storage.integration.test.ts",
+    "src/main/projects/record-storage.ts",
+    "src/main/projects/restore-record-sessions.integration.test.ts",
+    "src/main/projects/restore-record-sessions.ts",
+    "src/main/projects/session-output-layout.ts",
+    "src/main/projects/session-output-layout.test.ts"
   ],
   "interfacePaths": [
     "src/main/projects/deletion-coordinator.ts",
@@ -23,7 +44,16 @@
     "src/main/projects/preview-repository.ts",
     "src/main/projects/project-runtime-quiescence-owner.ts",
     "src/main/projects/repository.ts",
-    "src/main/projects/prisma-client.ts"
+    "src/main/projects/prisma-client.ts",
+    "src/main/project-folders/staged-files.ts",
+    "src/main/projects/project-folder-binding.ts",
+    "src/main/projects/project-folder-files.ts",
+    "src/main/projects/project-folder-location.ts",
+    "src/main/projects/project-folder-validation.ts",
+    "src/main/projects/project-record-location.ts",
+    "src/main/projects/record-storage.ts",
+    "src/main/projects/restore-record-sessions.ts",
+    "src/main/projects/session-output-layout.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -35,7 +65,18 @@
       "src/main/projects/project-runtime-quiescence-owner.test.ts",
       "src/main/projects/repository.test.ts",
       "src/main/projects/prompt-optimization.test.ts",
-      "src/main/projects/prompt-optimization-persistence.test.ts"
+      "src/main/projects/prompt-optimization-persistence.test.ts",
+      "src/main/project-folders/staged-files.test.ts",
+      "src/main/projects/project-folder-binding.integration.test.ts",
+      "src/main/projects/project-folder-files.integration.test.ts",
+      "src/main/projects/project-folder-location.integration.test.ts",
+      "src/main/projects/project-folder-location.test.ts",
+      "src/main/projects/project-folder-search.test.ts",
+      "src/main/projects/project-folder-validation.test.ts",
+      "src/main/projects/project-record-location.test.ts",
+      "src/main/projects/record-storage.integration.test.ts",
+      "src/main/projects/restore-record-sessions.integration.test.ts",
+      "src/main/projects/session-output-layout.test.ts"
     ],
     "contract": [
       "src/main/projects/ipc.test.ts",

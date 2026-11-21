@@ -92,8 +92,10 @@ const sharedActions: PreviewTabActionCommand[] = ['close', 'close-others']
 
 // File tabs add source-specific actions; tool tabs (Files, Notebook, Session Plan, Reviewer,
 // Subagents) offer none here — their operations are content-surface interactions.
-const fileSpecificActions = (item: PreviewFileItem): PreviewTabActionCommand[] =>
-  item.source === 'local' ? ['copy-path', 'download', 'save-as-artifact'] : ['download']
+const fileSpecificActions = (item: PreviewFileItem): PreviewTabActionCommand[] => {
+  if (item.source === 'project-folder') return []
+  return item.source === 'local' ? ['copy-path', 'download', 'save-as-artifact'] : ['download']
+}
 
 export const getPreviewTabActionGroups = (
   item: PreviewItem,
@@ -207,6 +209,7 @@ const downloadManagedFile = async (
   deps: PreviewTabActionDeps
 ): Promise<void> => {
   const source = item.source ?? 'artifact'
+  if (source === 'project-folder') return
   if (source === 'artifact' || source === 'upload') {
     if (!item.projectId || !item.managedFileId) {
       throw new Error('Managed file download requires a logical identity.')
@@ -239,7 +242,7 @@ export const runPreviewTabAction = (
     return
   }
 
-  if (item.type !== 'file') return
+  if (item.type !== 'file' || item.source === 'project-folder') return
 
   if (command === 'toggle-pdf-context') {
     deps.togglePdfContext?.(item)

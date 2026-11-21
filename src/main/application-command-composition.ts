@@ -174,6 +174,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'projects:inspect-dropped-folder',
   'resource-recording:get-state',
   'resource-recording:start',
   'resource-recording:stop',
@@ -250,6 +251,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'locale:set-preference',
   'network:get-info',
   'network:check-connectivity',
+  'managed-file-versions:retry-output-delivery',
   'managed-file-versions:save-text-edit',
   'managed-file-versions:save-binary-edit',
   'managed-file-versions:diff-text',

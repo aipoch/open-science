@@ -2,12 +2,21 @@
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
     "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
+    "src/renderer/src/pages/workspace/project-files-navigation.tsx",
     "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
     "src/renderer/src/pages/workspace/project-files-query-model.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts",
     "src/renderer/src/pages/workspace/use-project-files-index.ts",
     "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
-    "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+    "src/renderer/src/pages/workspace/use-project-files-index.test.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderBrowser.test.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderBrowser.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderChangeHistory.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderChangeReview.test.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderChangeReview.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderRecovery.behavior.test.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderRecovery.tsx",
+    "src/renderer/src/pages/workspace/project-folder-change-presentation.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
@@ -15,14 +24,22 @@
     "src/renderer/src/pages/workspace/project-file-mention.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-action.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-availability.ts",
-    "src/renderer/src/pages/workspace/use-project-file-mention-drop.ts"
+    "src/renderer/src/pages/workspace/use-project-file-mention-drop.ts",
+    "src/renderer/src/pages/workspace/ProjectFolderBrowser.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderChangeHistory.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderChangeReview.tsx",
+    "src/renderer/src/pages/workspace/ProjectFolderRecovery.tsx",
+    "src/renderer/src/pages/workspace/project-folder-change-presentation.ts"
   ],
   "consumerModules": ["workspace_page", "workspace_conversation", "workspace_file_presentation"],
   "testFiles": {
     "owner": [
       "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
-      "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+      "src/renderer/src/pages/workspace/use-project-files-index.test.tsx",
+      "src/renderer/src/pages/workspace/ProjectFolderBrowser.test.tsx",
+      "src/renderer/src/pages/workspace/ProjectFolderChangeReview.test.tsx",
+      "src/renderer/src/pages/workspace/ProjectFolderRecovery.behavior.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
@@ -66,5 +83,6 @@
     ]
   },
   "capabilityOverlays": ["renderer_state"],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Project-folder browsing, change review and recovery add renderer sources and dynamic application-command consumers beyond the reviewed file-view boundary; retain full CI validation until the expanded boundary is reviewed."
 }

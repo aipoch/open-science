@@ -2,16 +2,20 @@
   "ownerPaths": [
     "src/renderer/src/lib/acp/workspace-operation-error.ts",
     "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
+    "src/renderer/src/lib/project-folder-error.ts",
     "src/renderer/src/lib/provider-validation-snapshot.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/acp/workspace-operation-error.ts",
+    "src/renderer/src/lib/project-folder-error.ts",
     "src/renderer/src/lib/provider-validation-snapshot.ts"
   ],
   "testFiles": {
     "owner": ["src/renderer/src/lib/acp/workspace-operation-error.test.ts"],
     "contract": [
       "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx",
+      "src/renderer/src/hooks/useProjectFormDialog.test.tsx",
+      "src/renderer/src/pages/home/ProjectFolderForm.behavior.test.tsx",
       "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
@@ -147,5 +151,6 @@
   },
   "consumerModules": ["workspace_page"],
   "capabilityOverlays": ["renderer_state"],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Project folder error handling extends the renderer runtime boundary to project forms, settings, and workspace consumers; retain full CI coverage."
 }

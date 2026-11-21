@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  assertProjectRecordPath,
+  getProjectRecordRoot,
+  getProjectRecordRoute,
+  listProjectRecordIds
+} from '../storage/data-location-identity'
 
 import type {
   NotebookKernelMetadata,
@@ -225,6 +231,11 @@ type NotebookRunLookupResult = Readonly<{
 
 type AppendOrGetNotebookRunResult = NotebookRunMutationResult & { admitted: boolean }
 type TransitionNotebookRunResult = NotebookRunMutationResult & { transitioned: boolean }
+
+type NotebookRecordStorageOptions = {
+  getProjectRecordRoot?: (projectId: string) => string | undefined
+  listProjectRecordIds?: () => readonly string[]
+}
 
 type RecoveredBackgroundRun = Readonly<{
   projectId: string
@@ -836,6 +847,24 @@ class NotebookRunRepository {
     return index
   }
 
+  async listProjectSessionIds(projectId: string): Promise<string[]> {
+    const root = join(
+      this.projectStorageRoot(projectId),
+      NOTEBOOKS_DIR,
+      assertSafeNotebookPathSegment(projectId)
+    )
+    this.assertRecordPath(projectId, root)
+    try {
+      return (await readdir(root, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && SAFE_SEGMENT_PATTERN.test(entry.name))
+        .map((entry) => entry.name)
+        .sort()
+    } catch (error) {
+      if (isMissingFileError(error)) return []
+      throw error
+    }
+  }
+
   async readSessionRunIndex(projectId: string, sessionId: string): Promise<ReplayRunIndex[]> {
     return (await this.readSessionDocuments(projectId, sessionId))
       .flatMap((document) => this.runIndex(document).rows)
@@ -854,7 +883,70 @@ class NotebookRunRepository {
     return undefined
   }
 
-  constructor(private readonly storageRoot: string) {}
+  constructor(
+    private readonly storageRoot: string,
+    private readonly recordStorage: NotebookRecordStorageOptions = {}
+  ) {}
+
+  // Durable records may travel with a custom project. Execution workspaces and runtimes always
+  // continue to use storageRoot; never pass this root to data/input/runtime path helpers.
+  projectStorageRoot(projectId: string): string {
+    assertSafeNotebookPathSegment(projectId)
+    try {
+      return (
+        (this.recordStorage.getProjectRecordRoot
+          ? this.recordStorage.getProjectRecordRoot(projectId)
+          : getProjectRecordRoot(this.storageRoot, projectId)) ?? this.storageRoot
+      )
+    } catch (cause) {
+      // ENOENT here means an unavailable registered Project, not a missing run.json. Do not let
+      // findExisting's absent-document adapter hide that distinction.
+      throw new Error('Notebook project records are unavailable.', { cause })
+    }
+  }
+
+  runJsonPath(projectId: string, sessionId: string, lane?: NotebookLaneIdentity): string {
+    return this.assertRecordPath(
+      projectId,
+      getNotebookRunJsonPath(this.projectStorageRoot(projectId), projectId, sessionId, lane)
+    )
+  }
+
+  private assertRecordPath(projectId: string, path: string): string {
+    const root = this.projectStorageRoot(projectId)
+    return root === this.storageRoot ? path : assertProjectRecordPath(root, path)
+  }
+
+  fileEvidenceLocation(
+    projectId: string,
+    sessionId: string,
+    lane: NotebookLaneIdentity
+  ): {
+    storageRoot: string
+    root: string
+    storageKeyPrefix: string
+  } {
+    const storageRoot = this.projectStorageRoot(projectId)
+    const location = getNotebookFileEvidenceLocation(storageRoot, projectId, sessionId, lane)
+    this.assertRecordPath(projectId, location.root)
+    return {
+      storageRoot,
+      ...location
+    }
+  }
+
+  private projectDirectory(projectId: string): string | undefined {
+    const root = this.projectStorageRoot(projectId)
+    return root === this.storageRoot ? undefined : dirname(root)
+  }
+
+  private recordDirectory(
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity
+  ): string {
+    return dirname(this.runJsonPath(projectId, sessionId, lane))
+  }
 
   private async hydrate(
     filePath: string,
@@ -879,7 +971,7 @@ class NotebookRunRepository {
     if (!request.lane) throw new Error('Notebook writes require an explicit Frame lane.')
     const projectId = assertSafeNotebookPathSegment(request.projectId)
     const sessionId = assertSafeNotebookPathSegment(request.sessionId)
-    const filePath = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, request.lane)
+    const filePath = this.runJsonPath(projectId, sessionId, request.lane)
 
     const read = await readDurableJsonFile(filePath, (contents) => {
       const document = decodeNotebookDocument(contents)
@@ -891,7 +983,11 @@ class NotebookRunRepository {
       // Decode $DATA sentinels against the current data root before recomputing session roots,
       // so a relocated data root and the decoded working-file paths agree.
       const hydrated = await this.hydrate(filePath, read.value)
-      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+      const decoded = decodeRunDocumentDataPaths(
+        hydrated,
+        this.storageRoot,
+        this.projectDirectory(projectId)
+      )
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
       const normalized = normalizeDocument(this.storageRoot, request, decoded)
       this.records.remember(normalized.runs, read.value.runs, dirname(filePath))
@@ -1119,18 +1215,23 @@ class NotebookRunRepository {
       throw new Error('Notebook terminal outcome must have a terminal status.')
     }
     const factPath = getNotebookTerminalFactPath(
-      this.storageRoot,
+      this.projectStorageRoot(request.projectId),
       request.projectId,
       request.sessionId,
       request.lane,
       request.run.runId
     )
+    this.assertRecordPath(request.projectId, factPath)
     const fact: NotebookRunTerminalFact = {
       version: 1,
       projectId: request.projectId,
       sessionId: request.sessionId,
       expectedStatus: 'running',
-      run: ownRun(request.lane, request.run)
+      run: encodeNotebookRunDataPaths(
+        ownRun(request.lane, request.run),
+        this.storageRoot,
+        this.projectDirectory(request.projectId)
+      )
     }
     await mkdir(dirname(factPath), { recursive: true })
     await writeDurableJsonFile(factPath, `${JSON.stringify(fact, null, 2)}\n`)
@@ -1146,26 +1247,48 @@ class NotebookRunRepository {
   async recoverAllRunLifecycles(): Promise<RecoveredBackgroundRun[]> {
     const recovered: RecoveredBackgroundRun[] = []
     const notebooksRoot = join(this.storageRoot, NOTEBOOKS_DIR)
-    let projects
+    let projects: Dirent[]
     try {
       projects = await readdir(notebooksRoot, { withFileTypes: true })
     } catch (error) {
-      if (isMissingFileError(error)) return recovered
-      throw error
+      if (!isMissingFileError(error)) throw error
+      projects = []
     }
-    for (const project of projects) {
-      if (!project.isDirectory() || !SAFE_SEGMENT_PATTERN.test(project.name)) continue
-      const projectRoot = join(notebooksRoot, project.name)
-      const sessions = await readdir(projectRoot, { withFileTypes: true })
+    const projectIds = new Set([
+      ...projects.filter((project) => project.isDirectory()).map((project) => project.name),
+      ...(this.recordStorage.listProjectRecordIds?.() ?? listProjectRecordIds(this.storageRoot))
+    ])
+    for (const projectId of projectIds) {
+      if (!SAFE_SEGMENT_PATTERN.test(projectId)) continue
+      if (getProjectRecordRoute(this.storageRoot, projectId)?.detached) continue
+      let projectRoot: string
+      try {
+        projectRoot = join(this.projectStorageRoot(projectId), NOTEBOOKS_DIR, projectId)
+      } catch (error) {
+        // An unavailable custom folder blocks only its own scoped reads/admission. Do not disable
+        // recovery for unrelated Projects or silently switch this Project to managed records.
+        log.warn('skipping unavailable Notebook project records', {
+          projectId,
+          error: String(error)
+        })
+        continue
+      }
+      let sessions
+      try {
+        sessions = await readdir(projectRoot, { withFileTypes: true })
+      } catch (error) {
+        if (isMissingFileError(error)) continue
+        throw error
+      }
       for (const session of sessions) {
         if (!session.isDirectory() || !SAFE_SEGMENT_PATTERN.test(session.name)) continue
         const sessionRoot = join(projectRoot, session.name)
         if (await this.pathExists(join(sessionRoot, NOTEBOOK_RUN_FILE))) {
           recovered.push(
             ...(await this.recoverLaneIfReadable(
-              project.name,
+              projectId,
               session.name,
-              createRootNotebookLane(project.name, session.name, `root-frame-${session.name}`)
+              createRootNotebookLane(projectId, session.name, `root-frame-${session.name}`)
             ))
           )
         }
@@ -1182,9 +1305,9 @@ class NotebookRunRepository {
           if (!(await this.pathExists(join(framesRoot, frame.name, NOTEBOOK_RUN_FILE)))) continue
           recovered.push(
             ...(await this.recoverLaneIfReadable(
-              project.name,
+              projectId,
               session.name,
-              createFrameNotebookLane(project.name, session.name, frame.name)
+              createFrameNotebookLane(projectId, session.name, frame.name)
             ))
           )
         }
@@ -1350,10 +1473,8 @@ class NotebookRunRepository {
     const root = await this.findExisting(projectId, sessionId)
     if (root) return root
 
-    const framesRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
-      'frames'
-    )
+    const framesRoot = join(this.recordDirectory(projectId, sessionId), 'frames')
+    this.assertRecordPath(projectId, framesRoot)
     let entries
     try {
       entries = await readdir(framesRoot, { withFileTypes: true })
@@ -1393,10 +1514,8 @@ class NotebookRunRepository {
     })
     if (legacy) documents.push(legacy)
 
-    const framesRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
-      'frames'
-    )
+    const framesRoot = join(this.recordDirectory(projectId, sessionId), 'frames')
+    this.assertRecordPath(projectId, framesRoot)
     let entries
     try {
       entries = await readdir(framesRoot, { withFileTypes: true })
@@ -1581,7 +1700,7 @@ class NotebookRunRepository {
   ): Promise<NotebookRunDocument> {
     const safeProjectId = assertSafeNotebookPathSegment(projectId)
     const safeSessionId = assertSafeNotebookPathSegment(sessionId)
-    const filePath = getNotebookRunJsonPath(this.storageRoot, safeProjectId, safeSessionId, lane)
+    const filePath = this.runJsonPath(safeProjectId, safeSessionId, lane)
     for (let attempt = 0; attempt < MAX_DOCUMENT_READ_ATTEMPTS; attempt += 1) {
       let fileInfo
       try {
@@ -1614,7 +1733,11 @@ class NotebookRunRepository {
       if (read.status === 'missing') throw new Error(`Notebook document disappeared: ${filePath}`)
       // Decode before normalization for the same reason as loadOrCreate above.
       const hydrated = await this.hydrate(filePath, read.value)
-      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+      const decoded = decodeRunDocumentDataPaths(
+        hydrated,
+        this.storageRoot,
+        this.projectDirectory(projectId)
+      )
 
       const normalized = normalizeDocument(
         this.storageRoot,
@@ -1659,9 +1782,10 @@ class NotebookRunRepository {
   ): Promise<RecoveredBackgroundRun[]> {
     const recovered = new Map<string, NotebookRunRecord>()
     const outboxRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane),
+      this.recordDirectory(projectId, sessionId, lane),
       RUN_TERMINAL_OUTBOX_DIR
     )
+    this.assertRecordPath(projectId, outboxRoot)
     await recoverDurableJsonDirectory(outboxRoot, (_targetPath, contents) =>
       parseNotebookRunTerminalFact(contents)
     )
@@ -1686,7 +1810,14 @@ class NotebookRunRepository {
         sessionId,
         lane,
         expectedStatus: fact.expectedStatus,
-        run: fact.run
+        run: decodeRunDocumentDataPaths(
+          {
+            ...(await this.loadExisting(projectId, sessionId, lane)),
+            runs: [fact.run]
+          },
+          this.storageRoot,
+          this.projectDirectory(projectId)
+        ).runs[0]
       })
       if (!result.transitioned && result.run.status === 'running') {
         throw new Error(`Notebook terminal outcome recovery is blocked: ${fact.run.runId}`)
@@ -1711,12 +1842,12 @@ class NotebookRunRepository {
         recovered.set(run.runId, run)
       }
     }
+    const directory = this.recordDirectory(projectId, sessionId, lane)
     const manifest = await readDurableJsonFile(
-      join(document.notebookSessionRoot, NOTEBOOK_RUN_FILE),
+      join(directory, NOTEBOOK_RUN_FILE),
       decodeNotebookDocument
     )
-    if (manifest.status === 'found')
-      await this.records.prune(document.notebookSessionRoot, manifest.value.runs)
+    if (manifest.status === 'found') await this.records.prune(directory, manifest.value.runs)
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
   }
 
@@ -1830,19 +1961,26 @@ class NotebookRunRepository {
   // Writes one document to disk via a temp file + atomic rename. Always invoked from inside the
   // saveQueue chain (mutate() or writeDocument() above), never called directly.
   private async persist(document: NotebookRunDocument): Promise<void> {
-    const directory = document.notebookSessionRoot
+    const workspace = document.notebookSessionRoot
+    // Physical record ownership follows the lane, while the document still describes its managed
+    // execution workspace. Infer the lane from that trusted managed path, never persisted Frame ids.
+    const directory = join(
+      this.projectStorageRoot(document.projectId),
+      relative(this.storageRoot, workspace)
+    )
     const filePath = join(directory, NOTEBOOK_RUN_FILE)
+    this.assertRecordPath(document.projectId, filePath)
 
     // Ensure the full notebook workspace exists before exposing run.json to readers.
-    await mkdir(join(directory, 'data', 'raw'), { recursive: true })
-    await mkdir(join(directory, 'data', 'processed'), { recursive: true })
-    await mkdir(join(directory, 'work'), { recursive: true })
-    await mkdir(join(directory, 'cache'), { recursive: true })
-    await mkdir(join(directory, 'scripts'), { recursive: true })
+    await mkdir(join(workspace, 'data', 'raw'), { recursive: true })
+    await mkdir(join(workspace, 'data', 'processed'), { recursive: true })
+    await mkdir(join(workspace, 'work'), { recursive: true })
+    await mkdir(join(workspace, 'cache'), { recursive: true })
+    await mkdir(join(workspace, 'scripts'), { recursive: true })
     // Cross-kernel handoff channel: the REPL fetches external data here and hands files to
     // python/r via disk; 'outputs' collects results kernels want to surface back out.
-    await mkdir(join(directory, 'handoff'), { recursive: true })
-    await mkdir(join(directory, 'outputs'), { recursive: true })
+    await mkdir(join(workspace, 'handoff'), { recursive: true })
+    await mkdir(join(workspace, 'outputs'), { recursive: true })
     // The sandbox receives this stable sibling as read-only at process launch. Main may then stage
     // exact, verified Versions into it without exposing the authoritative Upload/Artifact stores.
     await ensureNotebookInputRoot(this.storageRoot, document.projectId, document.sessionId)
@@ -1850,15 +1988,20 @@ class NotebookRunRepository {
     // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
     // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores
     // portable "$DATA/..." paths that survive a data-root relocation.
-    const header = encodeRunDocumentDataPaths({ ...document, runs: [] }, this.storageRoot)
+    const header = encodeRunDocumentDataPaths(
+      { ...document, runs: [] },
+      this.storageRoot,
+      this.projectDirectory(document.projectId)
+    )
     const runs = await this.records.write(directory, document.runs, (run) =>
-      encodeNotebookRunDataPaths(run, this.storageRoot)
+      encodeNotebookRunDataPaths(run, this.storageRoot, this.projectDirectory(document.projectId))
     )
     const encoded = {
       ...header,
       version: runs.some(isNotebookRunReference) ? 2 : 1,
       runs
     }
+    await mkdir(directory, { recursive: true })
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
     this.rememberDocument(filePath, {
@@ -1882,7 +2025,7 @@ export {
   getNotebookSessionRoot,
   getRuntimeRoot
 }
-export type { RecoveredBackgroundRun }
+export type { RecoveredBackgroundRun, NotebookRecordStorageOptions }
 export type {
   AppendNotebookRunRequest,
   AppendOrGetNotebookRunResult,

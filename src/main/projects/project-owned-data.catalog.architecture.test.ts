@@ -210,6 +210,7 @@ describe('Project-owned data catalog architecture', () => {
 
   it('locks the curated SQL, filesystem, and runtime ownership inventory', () => {
     expect(PROJECT_OWNED_DATA_CATALOG.map((entry) => entry.id)).toEqual([
+      'project-folder',
       'pdf-annotations',
       'bookmarks',
       'project-memory',
@@ -233,6 +234,8 @@ describe('Project-owned data catalog architecture', () => {
       'compute-session-cache',
       'project-session-json',
       'managed-session-workspaces',
+      'project-folder-change-history',
+      'project-folder-created-files',
       'artifact-bytes',
       'upload-bytes',
       'delegated-frame-workspaces',
@@ -352,6 +355,19 @@ describe('Project-owned data catalog architecture', () => {
         effect: 'retain'
       }
     })
+  })
+
+  it('retains Project folder change backups and creation identities across Project deletion', () => {
+    for (const [id, resource] of [
+      ['project-folder-change-history', 'project-folder-history/changes/<projectId>/<sessionId>/'],
+      ['project-folder-created-files', 'project-folder-history/created/<projectId>/']
+    ]) {
+      expect(PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === id)).toMatchObject({
+        medium: 'filesystem',
+        resources: [resource],
+        policy: { kind: 'retained-history', effect: 'retain' }
+      })
+    }
   })
 
   it('checks declared Prisma cascades and Restrict boundaries through generated DMMF', () => {

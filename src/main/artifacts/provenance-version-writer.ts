@@ -121,11 +121,13 @@ type WriteVersionWithinSession = (
   request: CreateArtifactVersionRequest,
   publishCompatibilityRouting: PublishCompatibilityRouting,
   signal?: AbortSignal,
-  appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+  appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+  projectFolderRoot?: string
 ) => Promise<ArtifactVersionFile>
 
 type ArtifactProvenanceVersionWriterOptions = {
   storageRoot: string
+  resolveVersionPath: (storageKey: string) => string
   getClient: () => Promise<PrismaClient>
   compatibilityRepository: Pick<ArtifactRepository, 'listPendingRunFiles'>
   createId: () => string
@@ -137,7 +139,8 @@ type ArtifactProvenanceVersionWriterOptions = {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: { versionId: string; filename: string; checksum: string; sizeBytes: number },
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
     request: CreateArtifactVersionRequest
@@ -178,10 +181,17 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     return this.withSessionWrite(request, (writeVersion) =>
-      writeVersion(request, publishCompatibilityRouting, signal, appGeneratedProducer)
+      writeVersion(
+        request,
+        publishCompatibilityRouting,
+        signal,
+        appGeneratedProducer,
+        projectFolderRoot
+      )
     )
   }
 
@@ -246,7 +256,8 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     if (request.resourceReservationId) {
       if (
@@ -277,7 +288,8 @@ class ArtifactProvenanceVersionWriter {
         request,
         publishCompatibilityRouting,
         signal,
-        appGeneratedProducer
+        appGeneratedProducer,
+        projectFolderRoot
       )
     } catch (error) {
       if (request.resourceReservationId) {
@@ -312,7 +324,8 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
@@ -396,7 +409,7 @@ class ArtifactProvenanceVersionWriter {
       'versions',
       versionId
     )
-    const stagingDirectory = join(this.options.storageRoot, ...stagingStorageKey.split('/'))
+    const stagingDirectory = this.options.resolveVersionPath(stagingStorageKey)
     const stagingContentPath = join(stagingDirectory, 'content')
 
     let stagingRowPersisted = false
@@ -425,7 +438,8 @@ class ArtifactProvenanceVersionWriter {
         request,
         createdAt,
         { versionId, filename: request.filename, checksum, sizeBytes },
-        appGeneratedProducer
+        appGeneratedProducer,
+        projectFolderRoot
       )
       const literatureManifest = await this.options.prepareLiteratureManifest(request.literature, {
         projectId,
@@ -660,10 +674,7 @@ class ArtifactProvenanceVersionWriter {
           signal
         )
       }
-      const finalContentPath = join(
-        this.options.storageRoot,
-        ...persisted.contentStorageKey.split('/')
-      )
+      const finalContentPath = this.options.resolveVersionPath(persisted.contentStorageKey)
       await mkdir(dirname(dirname(finalContentPath)), { recursive: true })
       await this.options.durability.syncDirectory(stagingDirectory)
       const finalDirectory = dirname(finalContentPath)

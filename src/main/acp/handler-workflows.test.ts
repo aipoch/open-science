@@ -16,6 +16,7 @@ import { estimateHistoryTokens, resolveHistoryReplayBudget } from '../../shared/
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelRoute } from '../agent-framework'
 import { createAcpHandlerWorkflows } from './handler-workflows'
+import { freshSessionAttachment } from './session-agent-target'
 
 const createSession = (): PersistedChatSession =>
   materializeSessionConversationGraph({
@@ -195,6 +196,65 @@ describe('ACP resume Session workflow', () => {
       operation: (projectId: string) => Promise<Result>
     ): Promise<Result> => operation(persistedProjectId)
   }
+
+  const markUnattachedFork = (session: PersistedChatSession): void => {
+    session.projectId = persistedProjectId
+    session.forkOrigin = {
+      importId: 'fork-operation',
+      sourceProjectId: persistedProjectId,
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: '0'.repeat(64)
+    }
+    session.branchContextResetRequired = true
+    session.pendingHistoryReplay = { kind: 'all' }
+  }
+
+  it('attaches a dormant Fork without asking the provider to resume the application Session ID', async () => {
+    const harness = createHarness(markUnattachedFork, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
+    const response = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      providerSessionId: 'fresh-provider-session',
+      contextReset: true
+    }
+    harness.resumeSession.mockImplementationOnce(async (request: object) => {
+      if (!(freshSessionAttachment in request))
+        throw new Error('Provider Session binding is absent')
+      return response
+    })
+
+    await expect(
+      harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    ).resolves.toEqual(response)
+    expect(harness.prepareRuntimeResume).toHaveBeenCalledBefore(harness.resumeSession)
+    expect(harness.completeRuntimeAttachment).toHaveBeenCalledWith(
+      persistedProjectId,
+      'session-1',
+      response
+    )
+  })
+
+  it.each(['provider bound', 'live runtime', 'no Fork origin'] as const)(
+    'preserves ordinary Resume for a Session with %s',
+    async (scenario) => {
+      const harness = createHarness((session) => {
+        markUnattachedFork(session)
+        if (scenario === 'provider bound') session.providerSessionId = 'existing-provider-session'
+        if (scenario === 'no Fork origin') session.forkOrigin = undefined
+      }, archiveAvailability)
+      harness.hasLiveSession.mockReturnValue(scenario === 'live runtime')
+      const request = { sessionId: 'session-1', cwd: '/workspace' }
+
+      await harness.workflows.resumeSession(request)
+      expect(harness.resumeSession).toHaveBeenCalledWith({
+        ...request,
+        projectId: persistedProjectId
+      })
+      expect(freshSessionAttachment in harness.resumeSession.mock.calls[0][0]).toBe(false)
+    }
+  )
 
   it('commits restart recovery before a dormant runtime attaches', async () => {
     const harness = createHarness(undefined, archiveAvailability)

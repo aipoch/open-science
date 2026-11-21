@@ -162,7 +162,9 @@
     "src/main/notebook/memory-admission.windows.integration.test.ts",
     "src/main/notebook/python-lifecycle.macos.integration.test.ts",
     "src/main/notebook/python-lifecycle.windows.integration.test.ts",
-    "src/main/notebook/resource-release-commands.integration.test.ts"
+    "src/main/notebook/resource-release-commands.integration.test.ts",
+    "src/main/notebook/project-folder-acp-bridge.test.ts",
+    "src/main/notebook/project-folder-relocation.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/harness-mcp-turn.ts",
@@ -374,7 +376,8 @@
       "src/main/notebook/memory-admission.windows.integration.test.ts",
       "src/main/notebook/python-lifecycle.macos.integration.test.ts",
       "src/main/notebook/python-lifecycle.windows.integration.test.ts",
-      "src/main/notebook/resource-release-commands.integration.test.ts"
+      "src/main/notebook/resource-release-commands.integration.test.ts",
+      "src/main/notebook/project-folder-relocation.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -389,7 +392,8 @@
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/windows-runtime-download.contract.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
-      "src/main/notebook/local-rpc-execution-intent.integration.test.ts"
+      "src/main/notebook/local-rpc-execution-intent.integration.test.ts",
+      "src/main/notebook/project-folder-acp-bridge.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",

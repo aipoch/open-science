@@ -65,6 +65,10 @@ const createManagedPreviewRequest = (
       ...presentation
     }
   }
+  if (source === 'project-folder') {
+    if (!scope.projectId) throw new Error('Project folder preview requires a Project.')
+    return { source, projectId: scope.projectId, path: input.path, ...presentation }
+  }
 
   return {
     source,
@@ -80,6 +84,17 @@ const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFi
   if (source === 'compute-output') return window.api.compute.readOutputPreview
   if (source === 'notebook-input') return window.api.notebook.readInputPreview
   if (source === 'local') return window.api.localFs.readPreview
+  if (source === 'project-folder') {
+    return ({ projectId, path, maxBytes, encoding }) => {
+      if (!projectId) throw new Error('Project folder preview requires a Project.')
+      return window.api.projects.readFolderPreview({
+        projectId,
+        relativePath: path,
+        maxBytes,
+        encoding
+      })
+    }
+  }
   return window.api.artifacts.readPreview
 }
 

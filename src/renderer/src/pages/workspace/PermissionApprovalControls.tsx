@@ -1,3 +1,5 @@
+import { ProjectFolderChangeReview } from './ProjectFolderChangeReview'
+import { readProjectFolderChange } from './project-folder-change-presentation'
 import { scheduleToolPresentation } from './schedules/schedule-tool-presentation'
 import {
   findImageToolSourceName,
@@ -17,7 +19,7 @@ import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
-import { ChevronDown, ChevronRight, Info, Search, TriangleAlert } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, Search, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -774,6 +776,13 @@ const PermissionApprovalCard = ({
 
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
+  const parsedFolderChange = request.appOwned
+    ? readProjectFolderChange(request.rawInput)
+    : undefined
+  const folderChange =
+    parsedFolderChange?.state === 'prepared' && parsedFolderChange.requiresConfirmation
+      ? parsedFolderChange
+      : undefined
   const codeReview = request.appOwned ? readNotebookCodeReview(request.rawInput) : undefined
   const appInput = request.appOwned ? notebookInput(request.rawInput) : {}
   const selection = appInput.notebookRuntimeSelection
@@ -910,6 +919,7 @@ const PermissionApprovalCard = ({
   const presentation: PermissionPresentation = {
     ...sourcePresentation,
     actionTitle:
+      (folderChange ? t('Review file changes') : undefined) ??
       schedule?.summary.title ??
       (webSearchInput
         ? t('Allow web search?')
@@ -919,7 +929,7 @@ const PermissionApprovalCard = ({
     categoryLabel: schedule ? t('Schedule') : t(sourcePresentation.categoryLabel),
     description: t(sourcePresentation.description)
   }
-  const allowOptionId = getAllowOptionId(request.options, effectiveScope)
+  const allowOptionId = getAllowOptionId(request.options, folderChange ? 'once' : effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
   // Translate the complete action so languages can choose their own verb and scope order.
   const allowLabel: Record<PermissionScope, string> = {
@@ -948,7 +958,7 @@ const PermissionApprovalCard = ({
                 { runtime: notebookRuntimeLabel[presentation.notebookRuntime] }
               )
             : t('Approval remains attached to this conversation across restarts.')
-  const hasScopePicker = availableScopes.size > 1
+  const hasScopePicker = !folderChange && availableScopes.size > 1
   const isFixedOnce = availableScopes.size === 1 && availableScopes.has('once')
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
@@ -995,7 +1005,7 @@ const PermissionApprovalCard = ({
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
   // Keep the destructive treatment even when a fixed one-time approval reads as Allow.
-  const isDeleteRequest = isSpecialistDeleteRequest(request)
+  const isDeleteRequest = folderChange?.operation === 'delete' || isSpecialistDeleteRequest(request)
 
   // Most identity details stay in the impact tip. When no path or preview exists, retain the only
   // actionable target inline so the approval is reviewable without relying on hover.
@@ -1039,6 +1049,19 @@ const PermissionApprovalCard = ({
     if (!pending || pending.requestId !== request.requestId) return
     respondOnce(pending.optionId, true)
   }
+
+  const denyButton = (
+    <Button
+      type="button"
+      variant={folderChange ? 'ghost' : 'outline'}
+      data-testid="deny-button"
+      className="px-4"
+      disabled={disabled || isSubmitting}
+      onClick={() => respondOnce(denyOptionId)}
+    >
+      {folderChange ? t('Reject') : t('Deny')}
+    </Button>
+  )
 
   return (
     <div
@@ -1113,6 +1136,9 @@ const PermissionApprovalCard = ({
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-1.5">
+              {folderChange ? (
+                <ShieldCheck className="size-5 shrink-0 text-primary" aria-hidden="true" />
+              ) : null}
               {webSearchInput ? (
                 <Search className="size-4 shrink-0 text-primary" aria-hidden="true" />
               ) : null}
@@ -1125,13 +1151,15 @@ const PermissionApprovalCard = ({
               >
                 {presentation.actionTitle}
               </span>
-              <PermissionImpactTip
-                description={presentation.description}
-                detail={titleDetail}
-                scopeDescription={schedule ? scopeDescription : undefined}
-              />
+              {!folderChange && (
+                <PermissionImpactTip
+                  description={presentation.description}
+                  detail={titleDetail}
+                  scopeDescription={schedule ? scopeDescription : undefined}
+                />
+              )}
             </div>
-            {!schedule && (
+            {!schedule && !folderChange && (
               <PermissionHeaderBadges
                 lookup={notebookLookup}
                 runtime={presentation.notebookRuntime}
@@ -1149,7 +1177,7 @@ const PermissionApprovalCard = ({
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}
-      {request.toolLocations?.length ? (
+      {!folderChange && request.toolLocations?.length ? (
         <div className="flex flex-wrap gap-x-2 gap-y-0.5 break-all text-xs text-muted-foreground">
           {request.toolLocations.map((location) => (
             <span key={location.path}>{location.path}</span>
@@ -1157,7 +1185,7 @@ const PermissionApprovalCard = ({
         </div>
       ) : null}
 
-      {showInlineDetail ? (
+      {!folderChange && showInlineDetail ? (
         <p className="break-all text-xs text-muted-foreground">{titleDetail}</p>
       ) : null}
 
@@ -1173,7 +1201,9 @@ const PermissionApprovalCard = ({
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. Skill loads
           show the SKILL.md document itself — it is the payload being approved. */}
-      {codeReview ? (
+      {folderChange ? (
+        <ProjectFolderChangeReview key={requestId} change={folderChange} />
+      ) : codeReview ? (
         <NotebookCodeReviewDetail key={requestId} review={codeReview} />
       ) : selectedLabel ? (
         <div data-testid="notebook-runtime-selection" className="space-y-3 text-sm">
@@ -1269,6 +1299,7 @@ const PermissionApprovalCard = ({
           webSearchInput && embedded && 'sm:-mx-4 sm:-mb-4 sm:px-4 sm:pb-4'
         )}
       >
+        {folderChange && denyButton}
         {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
             Styled like the shared Button (default size, including flex centering so the label baseline
             matches the neighboring Button primitives) but kept as two segments so the chevron
@@ -1299,7 +1330,13 @@ const PermissionApprovalCard = ({
                 respondOnce(allowOptionId)
               }}
             >
-              {isFixedOnce ? (
+              {folderChange ? (
+                <span className="font-semibold">
+                  {folderChange.operation === 'delete'
+                    ? t('Back up and delete')
+                    : t('Back up and replace')}
+                </span>
+              ) : isFixedOnce ? (
                 <span className="font-semibold">{t('Allow')}</span>
               ) : isDeleteRequest ? (
                 <span className="font-semibold">{t('Delete')}</span>
@@ -1361,16 +1398,7 @@ const PermissionApprovalCard = ({
             {getExtraOptionLabel(option, t)}
           </Button>
         ))}
-        <Button
-          type="button"
-          variant="outline"
-          data-testid="deny-button"
-          className="px-4"
-          disabled={disabled || isSubmitting}
-          onClick={() => respondOnce(denyOptionId)}
-        >
-          {t('Deny')}
-        </Button>
+        {!folderChange && denyButton}
       </div>
       <PermissionScopeConfirmationDialog
         confirmation={scopeConfirmation}

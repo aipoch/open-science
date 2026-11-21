@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import type { ArtifactOutputDelivery } from '../artifacts/output-delivery'
+import type {
+  ManagedFileRetryOutputDeliveryRequest,
+  ArtifactOutputDeliveryStatus
+} from '../../shared/managed-file-versions'
 import {
   VERSION_HISTORY_PAGE_SIZE,
   parseVersionHistoryCursor,
@@ -44,6 +49,7 @@ import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-
 import { ManagedTextDiffTaskRunner } from './diff-task'
 import { ManagedFileVersionError } from './error'
 import {
+  errorChainHasCode,
   NodeVersionFileOperator,
   VersionFileOperatorError,
   type OpenImmutableOptions,
@@ -75,6 +81,11 @@ type ManagedFileVersionIntegrityError = {
 
 type ManagedFileVersionTestFault =
   'after-journal' | 'after-temp-write' | 'after-file-publish' | 'after-file-ready'
+
+type ForkContentExclusionCheck = (
+  scope: { projectId: string; sessionId: string },
+  storageKey: string
+) => Promise<boolean>
 
 type ManagedFileVersionServiceOptions = {
   storageRoot: string
@@ -213,6 +224,62 @@ const isManagedVisibleArtifactVersion = (version: ManagedFileVersionRecord): boo
   version.originKind !== 'agent_generated' || version.managedVisibleAt != null
 
 class ManagedFileVersionService {
+  private isForkContentExcluded?: ForkContentExclusionCheck
+
+  setForkContentExclusionCheck(check: ForkContentExclusionCheck): void {
+    this.isForkContentExcluded = check
+  }
+
+  private outputDelivery?: ArtifactOutputDelivery
+  private writeAdmission?: <Result>(
+    scope: { projectId: string; sessionId: string },
+    operation: () => Promise<Result>
+  ) => Promise<Result>
+  setWriteAdmission(admit: NonNullable<ManagedFileVersionService['writeAdmission']>): void {
+    this.writeAdmission = admit
+  }
+  private async withWriteAdmission<Result>(
+    request: ManagedFileIdentity,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    if (!this.writeAdmission) return operation()
+    const logical = await this.loadLogicalFile(await this.options.getClient(), request)
+    return this.writeAdmission(logical, operation)
+  }
+  setArtifactOutputDelivery(delivery: ArtifactOutputDelivery): void {
+    this.outputDelivery = delivery
+  }
+
+  retryOutputDelivery(
+    request: ManagedFileRetryOutputDeliveryRequest
+  ): Promise<ArtifactOutputDeliveryStatus | undefined> {
+    if (request.source !== 'artifact' || !request.versionId)
+      operationError('INVALID_REQUEST', 'Only an exact Artifact head can be delivered.')
+    return this.withWriteAdmission(
+      request,
+      () => this.outputDelivery?.deliver(request) ?? Promise.resolve(undefined)
+    )
+  }
+
+  private async withOutputDelivery(
+    request: ManagedFileIdentity,
+    result: SaveTextEditResult
+  ): Promise<SaveTextEditResult> {
+    if (!this.outputDelivery || request.source !== 'artifact' || result.kind === 'conflict')
+      return result
+    let outputDelivery: ArtifactOutputDeliveryStatus | undefined
+    try {
+      outputDelivery =
+        result.kind === 'created' && !result.replayed
+          ? await this.outputDelivery.deliver({ ...request, versionId: result.headVersionId })
+          : await this.outputDelivery.inspect(request)
+    } catch {
+      // An immutable edit has already committed. Retain that successful result and let inspection
+      // expose the independent pending/failed delivery; never ask the caller to save it again.
+      outputDelivery = await this.outputDelivery.inspect(request).catch(() => undefined)
+    }
+    return outputDelivery ? { ...result, outputDelivery } : result
+  }
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
@@ -509,6 +576,15 @@ class ManagedFileVersionService {
 
     return {
       source: request.source,
+      ...(this.outputDelivery
+        ? {
+            outputDelivery: await this.outputDelivery.inspect({
+              source: request.source,
+              projectId: resolved.logicalFile.projectId,
+              fileId: request.fileId
+            })
+          }
+        : {}),
       projectId: resolved.logicalFile.projectId,
       fileId: request.fileId,
       sessionId: resolved.logicalFile.sessionId,
@@ -549,8 +625,33 @@ class ManagedFileVersionService {
     return authorship
   }
 
-  async openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease> {
-    return this.openVersionLease(await this.resolveRecord(request))
+  openLatest(
+    request: ManagedFileIdentity & { source: 'upload' },
+    history: { replaySessionId: string }
+  ): Promise<ManagedFileReadLease | undefined>
+  openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease>
+  async openLatest(
+    request: ManagedFileIdentity,
+    history?: { replaySessionId: string }
+  ): Promise<ManagedFileReadLease | undefined> {
+    const resolved = await this.resolveRecord(request)
+    try {
+      return await this.openVersionLease(resolved)
+    } catch (error) {
+      if (
+        history &&
+        error instanceof ManagedFileVersionError &&
+        (error.code === 'STORAGE_UNAVAILABLE' || error.code === 'INTEGRITY_FAILED') &&
+        errorChainHasCode(error, 'ENOENT')
+      ) {
+        const excluded = await this.isForkContentExcluded?.(
+          { projectId: request.projectId, sessionId: history.replaySessionId },
+          resolved.version.contentStorageKey
+        ).catch(() => false)
+        if (excluded) return undefined
+      }
+      throw error
+    }
   }
 
   async openVersion(
@@ -783,6 +884,14 @@ class ManagedFileVersionService {
   }
 
   async saveTextEdit(request: ManagedFileVersionSaveTextEditRequest): Promise<SaveTextEditResult> {
+    return this.withWriteAdmission(request, async () =>
+      this.withOutputDelivery(request, await this.saveTextEditVersion(request))
+    )
+  }
+
+  private async saveTextEditVersion(
+    request: ManagedFileVersionSaveTextEditRequest
+  ): Promise<SaveTextEditResult> {
     this.assertSaveRequest(request)
     const client = await this.options.getClient()
     await this.assertProjectWritable(client, request.projectId)
@@ -881,6 +990,14 @@ class ManagedFileVersionService {
   async saveDerivedArtifactEdit(
     request: ManagedFileVersionSaveDerivedEditRequest
   ): Promise<SaveTextEditResult> {
+    return this.withWriteAdmission(request, async () =>
+      this.withOutputDelivery(request, await this.saveDerivedArtifactVersion(request))
+    )
+  }
+
+  private async saveDerivedArtifactVersion(
+    request: ManagedFileVersionSaveDerivedEditRequest
+  ): Promise<SaveTextEditResult> {
     this.assertDerivedSaveRequest(request)
     const literature = artifactLiteratureManifestSchema.parse(request.literature)
     const bytes = Buffer.from(request.content)
@@ -938,6 +1055,14 @@ class ManagedFileVersionService {
   }
 
   async saveBinaryEdit(
+    request: ManagedFileVersionSaveBinaryEditRequest
+  ): Promise<SaveTextEditResult> {
+    return this.withWriteAdmission(request, async () =>
+      this.withOutputDelivery(request, await this.saveBinaryEditVersion(request))
+    )
+  }
+
+  private async saveBinaryEditVersion(
     request: ManagedFileVersionSaveBinaryEditRequest
   ): Promise<SaveTextEditResult> {
     this.assertBinarySaveRequest(request)

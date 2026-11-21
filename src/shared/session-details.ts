@@ -64,7 +64,9 @@ const displayNameForPart = (part: MessagePart): string => {
       return `@${
         part.source === 'linked-folder'
           ? linkedFolderDisplayName(part.relativePath, part.name)
-          : safeBaseName(part.name)
+          : part.source === 'project-folder'
+            ? linkedFolderDisplayName(part.path, part.name)
+            : safeBaseName(part.name)
       }`
   }
 }

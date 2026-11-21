@@ -19,6 +19,11 @@ import { readLoggedEvidence, readNativeEvidence } from '../artifacts/execution-e
 import { parseNativeRecords, remapStorageKey } from './native-snapshot'
 import { validatePackageRecords } from './validation'
 import { ProjectRepository } from '../projects/repository'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
+import {
+  assertResearchSessionWritable,
+  isImportedResearchSession
+} from '../storage/session-package-state'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
@@ -1166,7 +1171,6 @@ it.each(['success', 'rollback', 'late-ack', 'publication-retry', 'ownership-coll
           'utf8'
         )
       ).toBe('Imported research')
-      const { isImportedResearchSession } = await import('../storage/session-package-state')
       expect(await isImportedResearchSession(target.storageRoot, 'target', imported[0].id)).toBe(
         true
       )
@@ -1199,6 +1203,90 @@ it.each(['success', 'rollback', 'late-ack', 'publication-retry', 'ownership-coll
     }
   }
 )
+
+it('preserves read-only ownership for a referenced Session imported into Project records', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  const projectId = 'project-1'
+  await source.client.project.create({ data: { id: projectId, name: 'Research' } })
+  await source.stagePng('Retained upstream plot')
+  const version = await source.repository.createVersion(
+    createArtifactVersionRequest({ appSessionId: 'upstream' })
+  )
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId,
+    title: 'Uses upstream evidence',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'question',
+        role: 'user',
+        content: 'Review the plot',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        delegatedInputVersionIds: [version.versionId]
+      }
+    ]
+  })
+  const destination = join(await realpath(target.storageRoot), 'records-project')
+  await mkdir(destination)
+  await target.client.project.create({
+    data: { id: projectId, name: 'Receiving research', rootPath: destination }
+  })
+  await initializeProjectRecordStorage(target.storageRoot, destination, {
+    format: 'open-science-project',
+    version: 2,
+    outputLayout: 'session-v1',
+    projectId,
+    name: 'Receiving research',
+    createdAt: 1
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client,
+    assertProjectFolderHealthy: async () => destination
+  })
+  try {
+    const archive = join(source.storageRoot, 'reference.science')
+    await exporter.exportTo({ projectId, sessionId: 'session-1' }, archive)
+    const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
+      projectId
+    })
+    const origin = await importer.readOrigin(imported)
+    const retainedSessionId = origin.identities.upstream
+    expect(retainedSessionId).toBeDefined()
+    const marker = join(
+      destination,
+      '.open-science',
+      'artifacts',
+      projectId,
+      retainedSessionId,
+      '.session-package'
+    )
+    await expect(readdir(marker)).resolves.toEqual([])
+    await expect(
+      assertResearchSessionWritable(target.storageRoot, projectId, retainedSessionId)
+    ).rejects.toThrow('Imported research history is read-only.')
+    await fsPromises.rename(destination, destination + '-moved')
+    await expect(
+      assertResearchSessionWritable(target.storageRoot, projectId, retainedSessionId)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
 
 it.each([1, 12, 'unavailable'] as const)(
   'uses stage-level capacity queries for %s files and retains the normal transfer when queries are unavailable',

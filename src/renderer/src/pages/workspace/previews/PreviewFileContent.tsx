@@ -39,7 +39,7 @@ export const PreviewFileContent = ({
     onPinImageSource,
     onImageEditorVersionChange,
     presentation,
-    readOnly: item.source === 'compute-output' || readOnly,
+    readOnly: item.source === 'compute-output' || item.source === 'project-folder' || readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,

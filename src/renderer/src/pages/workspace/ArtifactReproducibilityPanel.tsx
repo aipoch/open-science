@@ -8,6 +8,7 @@ import {
   EnvironmentRestoreHint,
   ReproducibilityLogViewport
 } from './ReproducibilityProgress'
+import { requestInputUpload } from './composer-focus-events'
 import type { LucideIcon } from 'lucide-react'
 import {
   AlertCircle,
@@ -103,7 +104,10 @@ type ArtifactReproducibilityPanelProps = {
   artifactName?: string
   tooltipClassName?: string
   environmentRuns?: ReadonlyArray<
-    Pick<ProvenanceNotebookRun, 'runId' | 'runIndex' | 'environmentName' | 'environmentLock'>
+    Pick<
+      ProvenanceNotebookRun,
+      'runId' | 'runIndex' | 'environmentName' | 'environmentLock' | 'projectFolderInputs'
+    >
   >
 }
 
@@ -1483,8 +1487,21 @@ export const ArtifactReproducibilityPanel = ({
     )
   ]
   const captureIssues = summarizedIssues(captureReasonCodes, t)
+  const projectFolderInputs = [
+    ...new Set(
+      environmentRuns
+        .filter((run) =>
+          projection.activities.some(
+            (activity) =>
+              activity.activityId === run.runId && activity.inclusion === 'target-closure'
+          )
+        )
+        .flatMap((run) => run.projectFolderInputs?.map((input) => input.relativePath) ?? [])
+    )
+  ]
   const captureCompleteness =
-    projection.completeness === 'complete' && captureIssues.length > 0
+    projection.completeness === 'complete' &&
+    (captureIssues.length > 0 || projectFolderInputs.length > 0)
       ? 'incomplete'
       : projection.completeness
   const statusLabel =
@@ -3030,6 +3047,10 @@ export const ArtifactReproducibilityPanel = ({
                     ))}
                   </ul>
                 </div>
+              ) : projectFolderInputs.length > 0 ? (
+                t(
+                  'Inputs from the project folder are not frozen, so this run has partial provenance.'
+                )
               ) : environmentLockMissing || environmentLockPartial ? (
                 t(
                   'The execution path was captured, but its environment lock is not ready for verification.'
@@ -3040,6 +3061,37 @@ export const ArtifactReproducibilityPanel = ({
             </TooltipContent>
           </PanelTooltip>
         </div>
+        {projectFolderInputs.length > 0 ? (
+          <div
+            className="mt-3 space-y-1 text-xs text-text-200"
+            data-testid="artifact-project-folder-inputs"
+          >
+            <p>
+              {t(
+                'Inputs from the project folder are not frozen, so this run has partial provenance.'
+              )}
+            </p>
+            {projectFolderInputs.map((path) => (
+              <code key={path} className="block break-all">
+                {path}
+              </code>
+            ))}
+            {artifactVersion && !readOnly ? (
+              <button
+                type="button"
+                className="text-text-100 underline underline-offset-2 hover:text-text-000"
+                onClick={() =>
+                  requestInputUpload({
+                    projectId: artifactVersion.projectId,
+                    sessionId: artifactVersion.appSessionId
+                  })
+                }
+              >
+                {t('Add key inputs as uploads')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section

@@ -111,17 +111,22 @@
     "src/main/database/migrations/0059-session-history.ts",
     "src/main/database/image-generation-usage.test.ts",
     "src/main/database/migrations/0060-image-models.ts",
-    "src/main/database/image-task-provenance.test.ts"
+    "src/main/database/image-task-provenance.test.ts",
+    "src/main/database/artifact-output-delivery-migration.test.ts",
+    "src/main/database/migrations/0061-project-folder.ts",
+    "src/main/database/migrations/0062-artifact-output-delivery.ts",
+    "src/main/database/project-folder-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
     "src/main/database/database-startup-logging.ts",
     "src/main/database/database-startup-owner.ts",
+    "src/main/database/migrated-database.test-support.ts",
     "src/main/database/migration-service.ts",
     "src/main/database/migration-sql-executor.ts",
     "src/main/database/migrations/0047-session-replay.ts",
-    "test/fixtures/application-database.ts",
-    "src/main/database/migrated-database.test-support.ts"
+    "src/main/database/migrations/0061-project-folder.ts",
+    "test/fixtures/application-database.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -165,7 +170,9 @@
       "src/main/database/slurm-job-reliability-migration.test.ts",
       "src/main/database/session-history-migration.test.ts",
       "src/main/database/image-generation-usage.test.ts",
-      "src/main/database/image-task-provenance.test.ts"
+      "src/main/database/image-task-provenance.test.ts",
+      "src/main/database/artifact-output-delivery-migration.test.ts",
+      "src/main/database/project-folder-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

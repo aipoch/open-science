@@ -76,6 +76,7 @@ const nodeToText = (node: ComposerNode): string => {
     return `@${node.scope === 'collection' ? node.name : 'Library'}`
   if (node.type === 'pasted-text') return ''
   if (node.source === 'linked-folder') return `@${node.relativePath}`
+  if (node.source === 'project-folder') return `@${node.path}`
   return `@${node.name}`
 }
 
@@ -214,11 +215,22 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
     const location =
       node.source === 'linked-folder'
         ? `${node.source}:${node.rootId}:${node.relativePath}`
-        : `${node.source}:${node.path}`
+        : node.source === 'project-folder'
+          ? `${node.source}:${node.projectId}:${node.path}`
+          : `${node.source}:${node.path}`
     if (seenLocations.has(location)) continue
     seenLocations.add(location)
 
-    if (node.source === 'linked-folder') {
+    if (node.source === 'project-folder') {
+      refs.push({
+        id: node.id,
+        name: node.name,
+        source: node.source,
+        projectId: node.projectId,
+        path: node.path,
+        mimeType: node.mimeType
+      })
+    } else if (node.source === 'linked-folder') {
       refs.push({
         id: node.id,
         name: node.name,
@@ -354,6 +366,7 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
     }
     if (part.type === 'literature') return part
     if (part.type === 'literature-scope') return part
+    if (part.source === 'project-folder') return { ...part }
     if (part.source === 'linked-folder') {
       return {
         type: 'artifact',
@@ -408,6 +421,13 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   // Prefer the stored filename; fall back to the visible label with its leading `@` stripped.
   const name = el.getAttribute('data-mention-filename') ?? (el.textContent ?? '').replace(/^@/, '')
   const mimeType = el.getAttribute('data-mention-mime-type') ?? undefined
+  if (source === 'project-folder') {
+    const projectId = el.getAttribute('data-mention-project-id')
+    const path = el.getAttribute('data-mention-path')
+    return projectId && path
+      ? { type: 'artifact', id, name, source, projectId, path, mimeType }
+      : null
+  }
   if (source === 'linked-folder') {
     const rootId = el.getAttribute('data-mention-root-id')
     const relativePath = el.getAttribute('data-mention-relative-path')
@@ -617,6 +637,8 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
     span.setAttribute('data-mention-relative-path', node.relativePath)
   } else {
     span.setAttribute('data-mention-path', node.path)
+    if (node.source === 'project-folder')
+      span.setAttribute('data-mention-project-id', node.projectId)
     if (node.sourceFileId) span.setAttribute('data-mention-source-file-id', node.sourceFileId)
   }
   if (node.mimeType) span.setAttribute('data-mention-mime-type', node.mimeType)
@@ -633,9 +655,14 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   }`
   const labelPrefix = '@'
   // The label truncates the relative path for linked-folder chips, the plain name otherwise.
-  const labelSource = linkedFolder ? node.relativePath : node.name
+  const labelSource = linkedFolder
+    ? node.relativePath
+    : node.source === 'project-folder'
+      ? node.path
+      : node.name
   // Linked-folder chips tooltip the full `@` label; others keep the original bare name.
-  span.title = linkedFolder ? `${labelPrefix}${labelSource}` : node.name
+  span.title =
+    linkedFolder || node.source === 'project-folder' ? `${labelPrefix}${labelSource}` : node.name
   const { head, tail, extension } = getExtensionPreservingFileNameParts(labelSource)
   const headSpan = document.createElement('span')
   headSpan.className = 'min-w-0 flex-1 truncate'

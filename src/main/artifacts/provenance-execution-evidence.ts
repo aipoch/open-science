@@ -23,14 +23,12 @@ import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonica
 import { artifactProvenanceGraphMatchesTarget } from './artifact-provenance-graph'
 import {
   decodeArtifactExecutionSnapshot,
-  parseArtifactExecutionSnapshot
+  parseArtifactExecutionSnapshot,
+  projectFolderInputEvidence
 } from './provenance-execution-snapshot-decoder'
-import { reproductionRecipes } from './reproducibility-host'
+import { notebookHelperEvidenceKey, reproductionRecipes } from './reproducibility-host'
 
-import {
-  decodeNotebookHelperEvidence,
-  notebookHelperEvidenceKey
-} from '../notebook/helper-evidence'
+import { decodeNotebookHelperEvidence } from '../notebook/helper-evidence'
 
 const MAX_EXECUTION_SNAPSHOT_BYTES = 4 * 1024 * 1024
 const MAX_EXECUTION_SNAPSHOT_RUNS = 128
@@ -144,6 +142,7 @@ const sanitizeRun = (
   helperModuleKeys: string[] = []
 ): ProvenanceNotebookRun => {
   const script = clipText(run.script)
+  const projectFolderInputs = projectFolderInputEvidence(run.projectFolderInputs?.slice(0, 256))
   return {
     runId: run.runId,
     runIndex,
@@ -172,6 +171,7 @@ const sanitizeRun = (
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId
     })),
+    ...(projectFolderInputs?.length ? { projectFolderInputs } : {}),
     ...(run.workingFiles.length > 0 ? { hasOmittedFiles: true } : {}),
     ...(helperModuleKeys.length ? { helperModuleKeys } : {})
   }

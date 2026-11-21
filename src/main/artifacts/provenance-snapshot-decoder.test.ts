@@ -170,6 +170,19 @@ describe('Artifact persistence decoders', () => {
       expect(decodeArtifactExecutionSnapshot(JSON.stringify(value))).toEqual({ status: 'corrupt' })
     }
   )
+  it.each([
+    { relativePath: '/private/source/raw.csv', sizeBytes: 8, frozen: false },
+    { relativePath: 'C:\\research\\raw.csv', sizeBytes: 8, frozen: false },
+    { relativePath: '../raw.csv', sizeBytes: 8, frozen: false },
+    { relativePath: 'raw.csv', sizeBytes: -1, frozen: false },
+    { relativePath: 'raw.csv', sizeBytes: 8, frozen: true },
+    { relativePath: 'raw.csv', sizeBytes: 8, frozen: false, checksum: 'not-a-checksum' },
+    { relativePath: 'raw.csv', sizeBytes: 8, frozen: false, rootPath: '/private/source' }
+  ])('rejects nonportable or malformed external-folder input metadata %j', (input) => {
+    const value = executionSnapshot(2)
+    Object.assign((value.runs as Record<string, unknown>[])[0]!, { projectFolderInputs: [input] })
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(value))).toEqual({ status: 'corrupt' })
+  })
   it('accepts additive Environment lock references without changing Execution v2', () => {
     const snapshot = executionSnapshot(2)
     const run = (snapshot.runs as Record<string, unknown>[])[0]!

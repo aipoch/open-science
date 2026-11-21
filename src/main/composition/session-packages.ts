@@ -48,6 +48,7 @@ type SessionExportReservation = (
 
 export async function composeSessionPackages({
   settingsRepository,
+  notebookNetworkSandbox,
   settingsService,
   storedSettings,
   storageLog,
@@ -59,6 +60,7 @@ export async function composeSessionPackages({
   modules
 }: {
   settingsRepository: SettingsRepository
+  notebookNetworkSandbox?: import('../notebook/network-sandbox-owner').NotebookNetworkSandboxOwner
   settingsService: SettingsService
   storedSettings: import('../settings/types').StoredSettings
   storageLog: ReturnType<typeof createLogger>
@@ -100,7 +102,13 @@ export async function composeSessionPackages({
       getWebInvocationStore(join(resolveDataRoot(), 'web-invocations')).deleteSession(binding),
     () => getWebInvocationStore(join(resolveDataRoot(), 'web-invocations')).ownedSessions()
   )
-  const projectRepository = createDefaultProjectRepository()
+  const projectRepository = createDefaultProjectRepository({
+    preflight: async (path, access, requestedPath, scope) => {
+      if (!notebookNetworkSandbox)
+        throw new Error('Project folder execution preflight is unavailable.')
+      await notebookNetworkSandbox.preflightGrantedRoot(path, access, requestedPath, scope)
+    }
+  })
   const sessionPackageDesktopLifecycle = {
     close: async (): Promise<void> => undefined,
     isActive: () => false
@@ -188,6 +196,10 @@ export async function composeSessionPackages({
           )
         }
       },
+      getProjectRootPath: async (projectId) =>
+        (await projectRepository.get(projectId))?.rootPath ?? undefined,
+      assertProjectFolderHealthy: (projectId) =>
+        projectRepository.assertProjectFolderHealthy(projectId),
       literatureSource: createLiteraturePackageSource(() =>
         getProjectDbClient(resolveConfigRoot())
       ),

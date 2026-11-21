@@ -182,10 +182,14 @@ describe('Web RPC contract', () => {
       'notebook.getReference',
       'notebook.getResourceRelease',
       'notebook.inspectNamespace',
+      'notebook.inspectProjectFolderChange',
+      'notebook.listProjectFolderChanges',
+      'notebook.previewProjectFolderChange',
       'notebook.readInputPreview',
       'notebook.releaseSessionResources',
       'notebook.restart',
       'notebook.retryResourceRelease',
+      'notebook.revertProjectFolderChange',
       'notebook.runCell',
       'notebook.runIndex',
       'notebook.shutdown',
@@ -217,7 +221,8 @@ describe('Web RPC contract', () => {
       'notebook.onAvailable',
       'notebook.onChanged',
       'notebook.onMemoryPolicyChanged',
-      'notebook.onMemoryRejected'
+      'notebook.onMemoryRejected',
+      'notebook.onProjectFolderChangesChanged'
     ])
     // This generated mapping remains dormant for Web: production publishes environment progress
     // directly to Electron BrowserWindows and never adds it to ApplicationEventMap.

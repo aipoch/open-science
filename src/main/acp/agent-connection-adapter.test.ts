@@ -1249,3 +1249,58 @@ describe('AcpAgentConnectionAdapter', () => {
     }
   )
 })
+
+it('maps ACP filenames to the bound file root while writes go through the trusted staged owner', async () => {
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'acp-bound-wire-')))
+  const project = join(workspace, 'project')
+  const managed = join(workspace, 'managed')
+  await mkdir(project)
+  await mkdir(managed)
+  await writeFile(join(project, 'raw.csv'), 'ORIGINAL')
+  const process = new FakeAgentProcess()
+  const agentConnection = acp
+    .agent({ name: 'test-agent' })
+    .connect(
+      acp.ndJsonStream(
+        Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+        Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+      )
+    )
+  const intercept = vi.fn(async () => true)
+  const baseHooks = hooks()
+  vi.mocked(baseHooks.filesystem.resolveSessionCwd).mockReturnValue(managed)
+  const connectionHooks = {
+    ...baseHooks,
+    filesystem: {
+      ...baseHooks.filesystem,
+      resolveFileAccess: vi.fn(async () => ({
+        root: project,
+        canonicalRoot: true,
+        write: intercept
+      }))
+    }
+  }
+  const { close } = await openConnection(process, connectionHooks)
+  try {
+    await expect(
+      agentConnection.client.request(acp.methods.client.fs.readTextFile, {
+        sessionId: 'provider-session',
+        path: 'raw.csv'
+      })
+    ).resolves.toEqual({ content: 'ORIGINAL' })
+    await expect(
+      agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
+        sessionId: 'provider-session',
+        path: 'raw.csv',
+        content: 'CANDIDATE'
+      })
+    ).resolves.toEqual({})
+    expect(intercept).toHaveBeenCalledWith(join(project, 'raw.csv'), 'CANDIDATE')
+    expect(await readFile(join(project, 'raw.csv'), 'utf8')).toBe('ORIGINAL')
+    expect(await readFile(join(managed, 'raw.csv'), 'utf8').catch(() => 'MISSING')).toBe('MISSING')
+  } finally {
+    await close()
+    agentConnection.close()
+    await rm(workspace, { recursive: true, force: true })
+  }
+})

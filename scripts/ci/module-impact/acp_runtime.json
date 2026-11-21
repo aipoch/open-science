@@ -255,7 +255,9 @@
     "src/main/acp/permission-continuation-workflow.ts",
     "src/main/acp/question-continuation-workflow.ts",
     "src/main/acp/plan-continuation-workflow.ts",
-    "src/main/acp/runtime-continuation-composition.ts"
+    "src/main/acp/runtime-continuation-composition.ts",
+    "src/main/acp/project-folder-file-path.test.ts",
+    "src/main/acp/project-folder-file-path.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -298,7 +300,8 @@
     "src/main/acp/side-chat-relay-owner.ts",
     "src/main/acp/task-agent-port.ts",
     "src/main/acp/workspace-path.ts",
-    "src/main/acp/approved-handoff-outcome.ts"
+    "src/main/acp/approved-handoff-outcome.ts",
+    "src/main/acp/project-folder-file-path.ts"
   ],
   "consumerModules": [
     "reviewer_orchestrator",
@@ -441,7 +444,8 @@
       "src/main/acp/opencode-service.test.ts",
       "src/main/acp/opencode-store.test.ts",
       "src/main/acp/opencode-v2.integration.test.ts",
-      "src/main/acp/harness-turn-adapter.test.ts"
+      "src/main/acp/harness-turn-adapter.test.ts",
+      "src/main/acp/project-folder-file-path.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

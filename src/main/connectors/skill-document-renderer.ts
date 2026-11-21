@@ -15,7 +15,7 @@ const CONVENTIONS = [
   'Return only the compact summary needed for reasoning, not full arrays or documents.',
   'Do NOT reimplement calls with raw HTTP (urllib / requests / httpx / fetch): it bypasses approval, policy, credentials, and rate limits.',
   'Prefer bulk/list tools over per-item loops.',
-  'For Python/R, write results under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL, then read that path from the data cell, not through model context or a cwd-relative path.'
+  'For Python/R, write reusable results under `process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR` when set, otherwise under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL. Read the exact same absolute path from the data cell; never substitute a cwd-relative same-name input or pass large results through model context.'
 ].join('\n')
 
 // A Skill may be loaded outside the bundled-connector baseline (notably for custom MCP servers), so

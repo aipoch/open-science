@@ -94,6 +94,18 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
+    id: 'project-folder',
+    medium: 'filesystem',
+    resources: ['Project.rootPath (user-owned project folder outside application storage)'],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'The user owns the folder and its files permanently.',
+      reason:
+        'Project deletion, Session deletion, storage relocation and garbage collection must never remove the project folder.'
+    }
+  },
+  {
     id: 'pdf-annotations',
     medium: 'sqlite',
     resources: [
@@ -696,6 +708,31 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       retention: 'Retained until the user removes the workspace files.',
       reason:
         'Session and Project deletion preserve ordinary workspace files and their ownership receipt for user recovery.'
+    }
+  },
+  {
+    id: 'project-folder-change-history',
+    medium: 'filesystem',
+    resources: ['project-folder-history/changes/<projectId>/<sessionId>/'],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention:
+        'Retained with independent backups and immutable reviewed candidates for user recovery.',
+      reason:
+        'Project and Session deletion must preserve approved file-change evidence and undo bytes; user-owned originals are never removed.'
+    }
+  },
+  {
+    id: 'project-folder-created-files',
+    medium: 'filesystem',
+    resources: ['project-folder-history/created/<projectId>/'],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'Retained with the associated Project folder history.',
+      reason:
+        'File-creation identities distinguish Project-created files from original user files; missing or mismatched identities always require confirmation.'
     }
   },
   {

@@ -7,7 +7,8 @@
     "src/main/notebook/repository.ts",
     "src/main/notebook/run-document-data-path-codec.ts",
     "src/main/notebook/run-document-data-paths.test.ts",
-    "src/main/notebook/run-document-data-paths.ts"
+    "src/main/notebook/run-document-data-paths.ts",
+    "src/main/notebook/project-record-storage.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-file-evidence.ts",
@@ -54,7 +55,8 @@
     "owner": [
       "src/main/notebook/input-staging.test.ts",
       "src/main/notebook/repository.test.ts",
-      "src/main/notebook/run-document-data-paths.test.ts"
+      "src/main/notebook/run-document-data-paths.test.ts",
+      "src/main/notebook/project-record-storage.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

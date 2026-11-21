@@ -29,6 +29,7 @@ export async function composeNotebookRuntime({
   settingsService,
   backgroundResultDelivery,
   notebookRepository,
+  projectRepository,
   notebookDependencyAnalyzer,
   grantedRootsRepository,
   notebookActivityRef,
@@ -46,6 +47,7 @@ export async function composeNotebookRuntime({
   notebookNetworkSandbox: NotebookNetworkSandboxOwner
   settingsService: SettingsService
   backgroundResultDelivery: BackgroundResultDeliveryOwner
+  projectRepository: import('../projects/repository').ProjectRepository
   notebookRepository: NotebookRunRepository
   notebookDependencyAnalyzer: NotebookDependencyAnalyzer
   grantedRootsRepository: GrantedLocalRootsRepository
@@ -132,6 +134,8 @@ export async function composeNotebookRuntime({
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,
       getGrantedLocalRoots: () => grantedRootsRepository.list(),
+      assertProjectFolderHealthy: (projectId: string) =>
+        projectRepository.assertProjectFolderHealthy(projectId),
       onBackgroundRunTerminal: (source) =>
         backgroundResultDelivery.enqueue(source).then(() => undefined),
       onBackgroundRunAdmitted: (source) =>

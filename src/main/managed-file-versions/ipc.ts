@@ -4,6 +4,8 @@ import { callerLeaseForEvent } from '../caller-lifecycle'
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type {
   ManagedFileVersionInspectRequest,
+  ManagedFileRetryOutputDeliveryRequest,
+  ArtifactOutputDeliveryStatus,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult,
   ManagedFileVersionSaveBinaryEditRequest,
@@ -18,6 +20,9 @@ import { ManagedFileVersionError } from './error'
 
 type ManagedFileVersionIpcService = {
   inspect(request: ManagedFileVersionInspectRequest): Promise<ManagedFileVersionInspectResult>
+  retryOutputDelivery?(
+    request: ManagedFileRetryOutputDeliveryRequest
+  ): Promise<ArtifactOutputDeliveryStatus | undefined>
   diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult>
   cancelDiff(requestId: string): boolean
   saveTextEdit(request: ManagedFileVersionSaveTextEditRequest): Promise<SaveTextEditResult>
@@ -30,6 +35,9 @@ type ManagedFileVersionHandlerDependencies = {
 }
 
 type ManagedFileVersionHandlers = {
+  retryOutputDelivery(
+    request: ManagedFileRetryOutputDeliveryRequest
+  ): Promise<ManagedFileVersionIpcResult<ArtifactOutputDeliveryStatus | undefined>>
   inspect(
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>
@@ -71,6 +79,18 @@ const createManagedFileVersionHandlers = (
   dependencies: ManagedFileVersionHandlerDependencies
 ): ManagedFileVersionHandlers => ({
   inspect: (request) => rendererResult(() => service.inspect(request)),
+  retryOutputDelivery: (request) =>
+    rendererResult(() =>
+      dependencies.withDataRootWrite(async () => {
+        const result = await service.retryOutputDelivery?.(request)
+        dependencies.onChanged?.({
+          projectId: request.projectId,
+          sources: ['artifact'],
+          kind: 'upsert'
+        })
+        return result
+      })
+    ),
   diffText: (request) => rendererResult(() => service.diffText(request)),
   cancelDiff: ({ requestId }) => ({
     ok: true,
@@ -103,6 +123,7 @@ const createManagedFileVersionHandlers = (
 })
 
 export type ManagedFileVersionCommandOwner = Readonly<{
+  retryOutputDelivery: ManagedFileVersionHandlers['retryOutputDelivery']
   inspect: ManagedFileVersionHandlers['inspect']
   saveTextEdit: ManagedFileVersionHandlers['saveTextEdit']
   saveBinaryEdit: ManagedFileVersionHandlers['saveBinaryEdit']
@@ -130,6 +151,7 @@ export const createManagedFileVersionCommandOwner = (
     return true
   }
   return {
+    retryOutputDelivery: handlers.retryOutputDelivery,
     inspect: handlers.inspect,
     saveTextEdit: handlers.saveTextEdit,
     saveBinaryEdit: handlers.saveBinaryEdit,
@@ -189,6 +211,10 @@ export const createManagedFileVersionCommandOwner = (
 }
 
 const registerManagedFileVersionIpcHandlers = (owner: ManagedFileVersionCommandOwner): void => {
+  ipcMainHandle(
+    'managed-file-versions:retry-output-delivery',
+    (_event, request: ManagedFileRetryOutputDeliveryRequest) => owner.retryOutputDelivery(request)
+  )
   ipcMainHandle(
     'managed-file-versions:inspect',
     (_event, request: ManagedFileVersionInspectRequest) => owner.inspect(request)

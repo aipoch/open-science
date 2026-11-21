@@ -54,6 +54,9 @@ export async function composeNotebookSurfaces({
   runtimeWorkflows: ReturnType<typeof createRuntimeWorkflows>
   notebookEnvironmentLifecycle: Awaited<ReturnType<typeof registerNotebookEnvironmentComposition>>
 }> {
+  managedFiles.artifactOutputDelivery.setMutationOwner((input) =>
+    notebookRuntime.notebookService.deliverArtifactOutput(input)
+  )
   // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
   // runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.

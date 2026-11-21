@@ -159,6 +159,47 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     return { source, fileId, versionIds }
   }
 
+  it('skips only an absent Upload head deliberately excluded from the replaying Fork', async () => {
+    const fixture = await createFixture('upload')
+    const service = new ManagedFileVersionService({ storageRoot, getClient: async () => client })
+    const request = { source: 'upload' as const, projectId: 'project-1', fileId: fixture.fileId }
+    const history = { replaySessionId: 'replaying-fork' }
+    const head = await client.uploadVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[1] }
+    })
+    const path = join(storageRoot, head.contentStorageKey)
+    const isExcluded = vi.fn(async () => false)
+    service.setForkContentExclusionCheck(isExcluded)
+
+    const included = await service.openLatest(request, history)
+    expect(included?.version.id).toBe(head.id)
+    await included?.close()
+    expect(isExcluded).not.toHaveBeenCalled()
+
+    await rm(path)
+    await expect(service.openLatest(request, history)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    expect(isExcluded).toHaveBeenCalledWith(
+      { projectId: request.projectId, sessionId: history.replaySessionId },
+      head.contentStorageKey
+    )
+    isExcluded.mockResolvedValue(true)
+    await expect(service.openLatest(request, history)).resolves.toBeUndefined()
+    await rm(dirname(path), { recursive: true })
+    await expect(service.openLatest(request, history)).resolves.toBeUndefined()
+    isExcluded.mockClear()
+    await expect(service.openLatest(request)).rejects.toMatchObject({
+      code: 'STORAGE_UNAVAILABLE'
+    })
+    await mkdir(dirname(path))
+    await writeFile(path, 'corrupt')
+    await expect(service.openLatest(request, history)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    expect(isExcluded).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['artifact', true],
     ['upload', true],

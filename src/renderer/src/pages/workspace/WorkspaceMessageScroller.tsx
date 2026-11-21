@@ -67,6 +67,7 @@ import {
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromLocal,
   createPreviewFileItemFromMention,
+  createPreviewFileItemFromProjectFolder,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import { createPreviewRequestScope } from './previews/preview-file-reader'
@@ -1592,10 +1593,18 @@ const WorkspaceMessageScrollerImpl = ({
     [currentProjectId, currentSessionId]
   )
 
-  // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
+  // Opens a file mention in the preview workbench.
   const onPreviewMentionArtifact = useCallback(
     async (part: ArtifactMentionPart): Promise<void> => {
       if (!currentSessionId) return
+      if (part.source === 'project-folder') {
+        if (part.projectId === currentProjectId) {
+          usePreviewWorkbenchStore
+            .getState()
+            .upsertAndActivateItem(createPreviewFileItemFromProjectFolder(part))
+        }
+        return
+      }
       if (part.source === 'linked-folder') {
         // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
         // plus the mention's relative path gives the local file to preview. A revoked root keeps

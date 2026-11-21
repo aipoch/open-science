@@ -66,7 +66,20 @@ export type LinkedFolderFileReference = {
   mimeType?: string
 }
 
-export type FileReference = ArtifactReference | LinkedFolderFileReference
+// Live file identity follows the current Project binding, including folder relocation. It is not
+// an imported ManagedFile or an immutable Version. `path` is always Project-relative.
+export type ProjectFolderFileReference = Omit<
+  ArtifactReference,
+  'source' | 'versionId' | 'sourceFileId'
+> & {
+  source: 'project-folder'
+  projectId: string
+  versionId?: never
+  sourceFileId?: never
+}
+
+export type FileReference =
+  ArtifactReference | LinkedFolderFileReference | ProjectFolderFileReference
 
 export type ArtifactWriteEncoding = 'utf8' | 'base64'
 

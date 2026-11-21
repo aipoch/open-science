@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 // Checks whether a resolved candidate path remains under the workspace root.
 const isPathInsideWorkspace = (workspaceRoot: string, candidatePath: string): boolean => {
@@ -6,7 +6,10 @@ const isPathInsideWorkspace = (workspaceRoot: string, candidatePath: string): bo
   const resolvedCandidate = resolve(candidatePath)
   const relativePath = relative(resolvedRoot, resolvedCandidate)
 
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+  )
 }
 
 // Returns a safe absolute path or rejects access outside the workspace root.

@@ -10,6 +10,7 @@ type PendingFileTransactionOptions = {
   allowedImportRoots?: string[]
   grantedImportRoots?: string[]
   relativeBaseDirs?: string[]
+  projectFolderRoot?: string
   maxFileBytes?: number
   maxInlineBytes?: number
   diskReserveBytes?: number
@@ -28,7 +29,8 @@ type PendingFileTransactionStorage = {
     allowedImportRoots: string[],
     relativeBaseDirs?: string[],
     purpose?: 'artifact' | 'literature',
-    grantedImportRoots?: string[]
+    grantedImportRoots?: string[],
+    projectFolderRoot?: string
   ) => Promise<string>
   readFilePrefix: (path: string) => Promise<Buffer>
   renameIfPresent: (sourcePath: string, targetPath: string) => Promise<boolean>

@@ -92,6 +92,7 @@ import { HostViewImageError } from './host-view-image-service'
 import { MemoryPolicyError, MemoryPolicyService, type MemoryPolicyAdapter } from './memory-policy'
 import { WindowsMemoryPolicyAdapter } from './memory-policy-platform'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
 
 let storageRoot: string | undefined
 const liveShellServices: NotebookRuntimeService[] = []
@@ -4572,6 +4573,127 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs[0].workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
     expect(state.runs[0].fileEvidence).toEqual(result.fileEvidence)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'runs real Shell with project inputs and explicit session outputs without reading a stale root result',
+    async () => {
+      const root = await createStorageRoot()
+      const folder = await realpath(
+        await mkdir(join(root, 'project'), { recursive: true }).then(() => join(root, 'project'))
+      )
+      await initializeProjectRecordStorage(root, folder, {
+        format: 'open-science-project',
+        version: 2,
+        outputLayout: 'session-v1',
+        projectId: 'default-project',
+        name: 'Research',
+        createdAt: 1
+      })
+      await writeFile(join(folder, 'raw.csv'), 'project input')
+      await writeFile(join(folder, 'result.csv'), 'stale root result')
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        assertProjectFolderHealthy: async () => folder,
+        platform: 'linux'
+      })
+      liveShellServices.push(service)
+      const scope = { sessionId: 'shell-output', workspaceCwd: root }
+      const execution = await service.executeShell({
+        ...scope,
+        command:
+          'cat raw.csv > "$OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR/result.csv" && cat "$OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR/result.csv"'
+      })
+      expect(execution.exitCode, execution.stderr).toBe(0)
+      expect(execution.stdout).toBe('project input')
+      const state = await service.state(scope)
+      await expect(readFile(join(state.outputRoot!, 'result.csv'), 'utf8')).resolves.toBe(
+        'project input'
+      )
+      await expect(readFile(join(folder, 'result.csv'), 'utf8')).resolves.toBe('stale root result')
+    }
+  )
+
+  it('keeps cwd and internal data independent of public session and frame output roots across dispatch kinds', async () => {
+    const root = await createStorageRoot()
+    const folder = await realpath(
+      await mkdir(join(root, 'project'), { recursive: true }).then(() => join(root, 'project'))
+    )
+    await initializeProjectRecordStorage(root, folder, {
+      format: 'open-science-project',
+      version: 2,
+      outputLayout: 'session-v1',
+      projectId: 'default-project',
+      name: 'Research',
+      createdAt: 1
+    })
+    const executionRequests: NotebookExecutionRequest[] = []
+    const shell = vi.fn<NotebookShellProcess['execute']>(async () => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      assertProjectFolderHealthy: async () => folder,
+      executorFactory: () => ({
+        execute: async (request) => {
+          executionRequests.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: folder,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      }),
+      shellProcess: { execute: shell, prepareEnvironment: async () => ({ PATH: '/usr/bin:/bin' }) },
+      platform: 'linux'
+    })
+    liveShellServices.push(service)
+    const scope = { sessionId: 'session-1', workspaceCwd: root }
+    const state = await service.state(scope)
+    const outputRoot = join(folder, 'notebooks', 'default-project', 'session-1', 'data')
+    expect(state.outputRoot).toBe(outputRoot)
+    expect(state.dataRoot).toBe(getNotebookDataRoot(root, 'default-project', 'session-1'))
+    expect(state.cwd).not.toBe(outputRoot)
+    await service.executeControl({ ...scope, code: 'return 1' })
+    expect(executionRequests.at(-1)).toMatchObject({
+      kind: 'repl',
+      cwd: folder,
+      outputRoot,
+      dataRoot: state.dataRoot
+    })
+    await service.executeShell({ ...scope, command: 'true' })
+    expect(shell.mock.calls.at(-1)?.[0]).toMatchObject({
+      cwd: folder,
+      environment: { OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: outputRoot }
+    })
+    const next = await service.state({ ...scope, sessionId: 'session-2' })
+    expect(next.outputRoot).toBe(join(folder, 'notebooks', 'default-project', 'session-2', 'data'))
+    const child = await service.state({
+      ...scope,
+      provenanceContext: {
+        rootFrameId: 'root',
+        agentFrameId: 'child',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'prompt'
+      }
+    })
+    expect(child.outputRoot).toBe(
+      join(folder, 'notebooks', 'default-project', 'session-1', 'frames', 'child', 'data')
+    )
+    expect(
+      await readFile(join(folder, '.open-science', 'session-output-directories.json'), 'utf8')
+    ).toContain('frames/child/data')
   })
 
   describe('executeShell', () => {

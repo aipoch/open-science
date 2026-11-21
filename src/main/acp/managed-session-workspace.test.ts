@@ -20,6 +20,7 @@ const createCapability = (): ManagedSessionWorkspaceHarness => {
   const finalizeOwnership = vi.fn().mockResolvedValue(undefined)
   const removeOwnership = vi.fn().mockResolvedValue(undefined)
   const capability = createManagedSessionWorkspaceCapability({
+    bindRoot: (path) => ({ path, verify: async () => undefined, prepare: async () => undefined }),
     resolveRoot: () => '/relocatable/data',
     createId: () => 'workspace-id',
     createDirectory,
@@ -54,6 +55,7 @@ describe('managed Session workspace capability', () => {
     let dataRoot = '/data-before-relocation'
     const createDirectory = vi.fn().mockResolvedValue(undefined)
     const capability = createManagedSessionWorkspaceCapability({
+      bindRoot: (path) => ({ path, verify: async () => undefined, prepare: async () => undefined }),
       resolveRoot: () => dataRoot,
       createId: () => 'workspace-id',
       createDirectory,
@@ -75,7 +77,7 @@ describe('managed Session workspace capability', () => {
     await lease.release()
 
     expect(removeDirectory).toHaveBeenCalledOnce()
-    expect(removeDirectory).toHaveBeenCalledWith(lease.cwd)
+    expect(removeDirectory).toHaveBeenCalledWith(lease.cwd, '/relocatable/data')
     expect(removeOwnership).toHaveBeenCalledWith(lease.cwd, '/relocatable/data')
   })
 
@@ -107,7 +109,30 @@ describe('managed Session workspace capability', () => {
     await expect(lease.commit('session-1')).rejects.toThrow('receipt publication failed')
     await lease.release()
 
-    expect(removeDirectory).toHaveBeenCalledWith(lease.cwd)
+    expect(removeDirectory).toHaveBeenCalledWith(lease.cwd, '/relocatable/data')
     expect(removeOwnership).toHaveBeenCalledWith(lease.cwd, '/relocatable/data')
   })
+  it.each(['../..', '../../research', '.ownership', 'nested/directory', '.OWNERSHIP'])(
+    'rejects unsafe workspace identity %s before allocation',
+    async (id) => {
+      const createDirectory = vi.fn().mockResolvedValue(undefined)
+      const removeDirectory = vi.fn().mockResolvedValue(undefined)
+      const capability = createManagedSessionWorkspaceCapability({
+        bindRoot: (path) => ({
+          path,
+          verify: async () => undefined,
+          prepare: async () => undefined
+        }),
+        resolveRoot: () => '/relocatable/data',
+        createId: () => id,
+        createDirectory,
+        removeDirectory
+      })
+      await expect(capability.acquire({ projectId: 'project-1' })).rejects.toThrow(
+        /workspace identity/i
+      )
+      expect(createDirectory).not.toHaveBeenCalled()
+      expect(removeDirectory).not.toHaveBeenCalled()
+    }
+  )
 })

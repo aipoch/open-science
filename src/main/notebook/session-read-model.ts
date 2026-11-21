@@ -23,9 +23,13 @@ import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shar
 import { resolveProjectId } from '../../shared/project-scope'
 import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
 import type { NotebookLaneIdentity } from './lane-identity'
+import { join } from 'node:path'
+import {
+  getProjectSessionOutputLayout,
+  getNotebookSessionOutputRelativePath
+} from '../projects/session-output-layout'
 import {
   getNotebookDataRoot,
-  getNotebookRunJsonPath,
   getNotebookSessionRoot,
   getRuntimeRoot,
   NotebookRunRepository
@@ -85,6 +89,7 @@ type NotebookSessionReadSource = {
   readonly cwd: string
   readonly notebookSessionRoot: string
   readonly dataRoot: string
+  readonly outputRoot?: string
   readonly runtimeRoot: string
   readonly runJsonPath: string
   readonly lane: NotebookLaneIdentity
@@ -212,6 +217,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       cwd: session.cwd,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
+      ...(session.outputRoot ? { outputRoot: session.outputRoot } : {}),
       runtimeRoot: session.runtimeRoot,
       pythonPath: document.kernel.pythonPath,
       // Backward-compatible coarse status represents only the default Python environment. Exact
@@ -279,8 +285,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       cwd: root,
       notebookSessionRoot: root,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
+      outputRoot: this.outputRoot(projectId, request.sessionId),
       runtimeRoot: getRuntimeRoot(this.options.storageRoot),
-      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId),
+      runJsonPath: this.options.repository.runJsonPath(projectId, request.sessionId),
       kernelStatus: 'idle',
       cells: [],
       runCount: window.total,
@@ -293,6 +300,16 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       environments: [],
       runtimeBindings: {}
     }
+  }
+
+  private outputRoot(projectId: string, sessionId: string, frameId?: string): string | undefined {
+    const layout = getProjectSessionOutputLayout(this.options.storageRoot, projectId, sessionId)
+    return layout
+      ? join(
+          layout.projectRoot,
+          getNotebookSessionOutputRelativePath(projectId, sessionId, frameId)
+        )
+      : undefined
   }
 
   async getSessionReference(
@@ -320,8 +337,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
       notebookSessionRoot,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
+      outputRoot: this.outputRoot(projectId, request.sessionId),
       runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId)
+      runJsonPath: this.options.repository.runJsonPath(projectId, request.sessionId)
     }
   }
 
@@ -332,6 +350,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       workspaceCwd: session.cwd,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
+      ...(session.outputRoot ? { outputRoot: session.outputRoot } : {}),
       runtimeRoot: session.runtimeRoot,
       runJsonPath: session.runJsonPath
     }
@@ -352,6 +371,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       inputFiles,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
+      ...(session.outputRoot ? { outputRoot: session.outputRoot } : {}),
       runtimeRoot: getRuntimeRoot(this.options.storageRoot),
       kernelName: 'python3',
       ...(dependencyProjection?.stalenessByRunId[run.runId]
@@ -377,6 +397,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       inputFiles,
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
+      outputRoot: this.outputRoot(
+        document.projectId,
+        document.sessionId,
+        document.notebookSessionRoot ===
+          getNotebookSessionRoot(this.options.storageRoot, document.projectId, document.sessionId)
+          ? undefined
+          : run.agentFrameId
+      ),
       runtimeRoot: getRuntimeRoot(this.options.storageRoot),
       kernelName: document.kernel.kernelName ?? 'python3'
     }

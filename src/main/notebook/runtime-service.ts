@@ -2,6 +2,16 @@ import type {
   NotebookMemoryPolicyState,
   NotebookMemoryPolicyStateRequest
 } from '../../shared/notebook-memory'
+import { getProjectRecordRoute } from '../storage/data-location-identity'
+import { ProjectFolderStagedFiles } from '../project-folders/staged-files'
+import {
+  ProjectFolderNotebookExecution,
+  ProjectFolderExecutionUnavailableError
+} from './project-folder-execution'
+import type {
+  ProjectFolderChange,
+  ProjectFolderChangeScope
+} from '../../shared/project-folder-changes'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { NotebookOwnedResource } from './owned-resources'
 import { NotebookResourceReleaseOwner } from './resource-release'
@@ -39,9 +49,9 @@ import type {
   NotebookProcessMonitorRequest,
   TerminateNotebookProcessRequest
 } from '../../shared/notebook-process-monitor'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { ReplayRunIndex } from '../../shared/replay'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
@@ -169,11 +179,7 @@ import {
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import {
-  NotebookRunRepository,
-  getNotebookFileEvidenceLocation,
-  getRuntimeRoot
-} from './repository'
+import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
@@ -254,6 +260,7 @@ type NotebookMemoryRejectionContext = Pick<NotebookSessionReference, 'projectId'
   messageBranchId?: string
   terminalTarget?: string
 }
+
 type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks & {
   onMemoryPolicyChanged?: (
     state: import('./memory-policy').MemoryPolicyObservation,
@@ -263,6 +270,7 @@ type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks & {
     context: NotebookMemoryRejectionContext,
     state: import('./memory-policy').MemoryPolicyObservation
   ) => void
+  onProjectFolderChangesChanged?: (scope: ProjectFolderChangeScope) => void
 }
 
 // Background execution is part of the normal Notebook contract. Environment flags remain an
@@ -290,6 +298,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   }) => NotebookOwnedResource[]
   holdExternalNotebookStarts?: (scope: NotebookExecutionIntentScope) => () => void
   memoryPolicy?: NotebookMemoryPolicyPort
+  assertProjectFolderHealthy?: (projectId: string) => Promise<string | undefined>
   isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
   isSessionExporting?: (projectId: string, sessionId: string) => boolean
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
@@ -770,6 +779,158 @@ class NotebookRuntimeService {
     })
   }
   private executionApproval: NotebookExecutionApproval | undefined
+  private projectFolderChangeApproval: NotebookExecutionApproval | undefined
+  private readonly projectFolderFiles: ProjectFolderStagedFiles
+  private readonly projectFolderExecution: ProjectFolderNotebookExecution
+
+  setProjectFolderChangeApproval(approve: NotebookExecutionApproval): void {
+    this.projectFolderChangeApproval = approve
+  }
+
+  async resolveProjectFolderRoot(projectId: string): Promise<string | undefined> {
+    return this.options.assertProjectFolderHealthy?.(projectId)
+  }
+
+  async listProjectFolderChanges(
+    scope: ProjectFolderChangeScope,
+    options?: { afterId?: string; limit?: number }
+  ): Promise<import('../../shared/project-folder-changes').ProjectFolderChangePage> {
+    return this.projectFolderFiles.list(scope, options)
+  }
+
+  async previewProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<import('../../shared/project-folder-changes').ProjectFolderChangePreview> {
+    return this.projectFolderFiles.preview(scope, id)
+  }
+
+  async prepareAcpProjectFolderChange(
+    input: ProjectFolderChangeScope & {
+      runId: string
+      cwd: string
+      path: string
+      operation: 'write' | 'delete'
+      content?: string
+    }
+  ): Promise<ProjectFolderChange | undefined> {
+    const root = await this.options.assertProjectFolderHealthy?.(input.projectId)
+    if (!root) return undefined
+    if (input.path.split(/[\\/]/).includes('..'))
+      throw new ProjectFolderExecutionUnavailableError('unsupported-path')
+    const physicalTarget = (path: string): string => {
+      try {
+        return realpathSync.native(path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+        const entry = lstatSync(path, { throwIfNoEntry: false })
+        if (entry?.isSymbolicLink())
+          throw new ProjectFolderExecutionUnavailableError('unsupported-path')
+        const parent = dirname(path)
+        if (parent === path) throw error
+        return join(physicalTarget(parent), basename(path))
+      }
+    }
+    const target = physicalTarget(
+      isAbsolute(input.path) ? input.path : `${input.cwd}${sep}${input.path}`
+    )
+    const prefix = root.endsWith(sep) ? root : root + sep
+    if (!target.startsWith(prefix)) return undefined
+    return this.projectFolderFiles.prepareMutation({
+      ...input,
+      folder: root,
+      relativePath: target.slice(prefix.length),
+      content: input.content === undefined ? undefined : Buffer.from(input.content, 'utf8')
+    })
+  }
+
+  // Artifact delivery uses the same approval, durable backup/undo and deletion cancellation owner
+  // as application-managed Project folder changes. Its version authority supplies the head check.
+  async deliverArtifactOutput(
+    input: import('../artifacts/output-delivery').ArtifactOutputMutation
+  ): Promise<{
+    change?: ProjectFolderChange
+    baseline?: import('../project-folders/staged-files').ProjectFolderDeliveryBaseline
+  }> {
+    return this.sessionLifecycle.runProjectOperation(
+      { ...input, workspaceCwd: this.options.dataRoot },
+      async (signal) => {
+        const folder = await this.options.assertProjectFolderHealthy?.(input.projectId)
+        if (!folder || folder !== input.folder)
+          throw new Error('Artifact output Project folder changed.')
+        await input.assertCurrent()
+        const change = await this.projectFolderFiles.prepareMutation({
+          ...input,
+          operation: 'write'
+        })
+        signal.throwIfAborted()
+        await input.assertCurrent()
+        const applied = change
+          ? await this.projectFolderFiles.apply(
+              input,
+              change.id,
+              signal,
+              undefined,
+              folder,
+              input.assertCurrent
+            )
+          : undefined
+        return {
+          change: applied,
+          baseline:
+            applied?.state === 'rejected'
+              ? undefined
+              : await this.projectFolderFiles.inspectDeliveryTarget(folder, input.relativePath)
+        }
+      },
+      false
+    )
+  }
+
+  async applyProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string,
+    signal?: AbortSignal,
+    permissionPrompts?: 'none'
+  ): Promise<ProjectFolderChange> {
+    return this.sessionLifecycle.runProjectOperation(
+      { ...scope, workspaceCwd: this.options.dataRoot },
+      async (deletionSignal) => {
+        const folder = await this.options.assertProjectFolderHealthy?.(scope.projectId)
+        if (!folder) throw new Error('The Project has no bound Project folder.')
+        const change = await this.projectFolderFiles.inspect(scope, id, folder)
+        const activeSignal = signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        return change.state === 'prepared'
+          ? this.projectFolderFiles.apply(scope, id, activeSignal, permissionPrompts, folder)
+          : change
+      },
+      false
+    )
+  }
+
+  async revertProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<ProjectFolderChange> {
+    return this.sessionLifecycle.runProjectOperation(
+      { ...scope, workspaceCwd: this.options.dataRoot },
+      async () => {
+        const folder = await this.options.assertProjectFolderHealthy?.(scope.projectId)
+        if (!folder) throw new Error('The Project has no bound Project folder.')
+        return this.projectFolderFiles.revert(scope, id, folder)
+      },
+      false
+    )
+  }
+
+  async inspectProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<ProjectFolderChange> {
+    const folder = await this.options.assertProjectFolderHealthy?.(scope.projectId)
+    return this.projectFolderFiles.inspect(scope, id, folder)
+  }
+
   private runtimeBindingApproval: NotebookRuntimeBindingApproval | undefined
   private readonly runtimeBindingPermissionPolicies = new WeakMap<AbortSignal, 'none'>()
 
@@ -1160,6 +1321,36 @@ class NotebookRuntimeService {
       backgroundExecutionEnabledByDefault(process.env.OPEN_SCIENCE_SHELL_BACKGROUND_EXECUTION)
     const defaultProjectId = resolveProjectId(options)
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
+    const approveChange = (
+      change: ProjectFolderChange,
+      signal: AbortSignal | undefined,
+      original: boolean,
+      permissionPrompts?: 'none'
+    ): Promise<boolean> => {
+      const approve = original ? this.projectFolderChangeApproval : this.executionApproval
+      if (!approve) return Promise.resolve(false)
+      return approve({
+        projectId: change.projectId,
+        sessionId: change.sessionId,
+        title: (options.translate ?? englishNativeTranslator)('Review project folder changes'),
+        rawInput: { projectFolderChange: change },
+        signal,
+        permissionPrompts
+      })
+    }
+    this.projectFolderFiles = new ProjectFolderStagedFiles({
+      storageRoot: options.dataRoot,
+      onChanged: (scope) => options.callbacks?.onProjectFolderChangesChanged?.(scope),
+      approve: (change, signal, permissionPrompts) =>
+        approveChange(change, signal, true, permissionPrompts),
+      authorizeCreatedFile: async () => true
+    })
+    this.projectFolderExecution = new ProjectFolderNotebookExecution({
+      files: this.projectFolderFiles,
+      getFolder: (projectId) =>
+        options.assertProjectFolderHealthy?.(projectId) ?? Promise.resolve(undefined),
+      analyze: analyzeNotebookSourceFileAccessOffMainThread
+    })
     this.exportReader = new NotebookExportReader({
       repository: this.repository,
       defaultProjectId,
@@ -1376,15 +1567,14 @@ class NotebookRuntimeService {
       repository: this.repository,
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
       afterCommit: async (session, run) => {
-        const location = getNotebookFileEvidenceLocation(
-          options.dataRoot,
+        const location = this.repository.fileEvidenceLocation(
           session.projectId,
           session.sessionId,
           session.lane
         )
         await completeWorkingFileEvidence(
           {
-            storageRoot: options.dataRoot,
+            storageRoot: location.storageRoot,
             root: location.root,
             storageKeyPrefix: location.storageKeyPrefix
           },
@@ -1426,6 +1616,15 @@ class NotebookRuntimeService {
         options.configRoot
       )
     this.executionOwner = new NotebookExecutionOwner({
+      repository: this.repository,
+      projectFolderForSession: (session) =>
+        notebookLaneScope(session.lane).kind === 'root'
+          ? (options.assertProjectFolderHealthy?.(session.projectId) ?? Promise.resolve(undefined))
+          : Promise.resolve(undefined),
+      executeNotebook: (session, request) =>
+        notebookLaneScope(session.lane).kind === 'root'
+          ? this.projectFolderExecution.execute(request, (prepared) => session.execute(prepared))
+          : session.execute(request),
       reviewCode: (...args) => this.reviewCode(...args),
       prepareRuntimeSelection: (...args) => this.prepareRuntimeSelection(...args),
       configRoot: options.configRoot,
@@ -2050,6 +2249,9 @@ class NotebookRuntimeService {
     }
     request = await this.admitExecutionRequest(request, signal)
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+      await this.options.assertProjectFolderHealthy?.(
+        resolveProjectId(request, this.options.projectId)
+      )
       const session = await this.sessionLifecycle.ensure(request)
       // Select the execution route only after an admitted binding transition has committed or
       // reconciled its failure; the old interpreter must not restart during stop/persist.
@@ -2204,6 +2406,9 @@ class NotebookRuntimeService {
     let admittedRunId: string | undefined
     const completion = this.sessionLifecycle
       .runProjectOperation(request, async (deletionSignal) => {
+        await this.options.assertProjectFolderHealthy?.(
+          resolveProjectId(request, this.options.projectId)
+        )
         const session = await this.sessionLifecycle.ensure(request)
         const executionSignal = this.runtimeSelectionExecutionSignal(request, [
           controller.signal,
@@ -2501,6 +2706,9 @@ class NotebookRuntimeService {
     }
     request = await this.admitExecutionRequest(request, signal)
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+      await this.options.assertProjectFolderHealthy?.(
+        resolveProjectId(request, this.options.projectId)
+      )
       assertNotebookCodeWithinLimit(request.code)
       const session = await this.sessionLifecycle.ensure(request)
       return this.executionOwner.executeControl(
@@ -2549,6 +2757,9 @@ class NotebookRuntimeService {
     let admittedRunId: string | undefined
     const completion = this.sessionLifecycle
       .runProjectOperation(request, async (deletionSignal) => {
+        await this.options.assertProjectFolderHealthy?.(
+          resolveProjectId(request, this.options.projectId)
+        )
         const session = await this.sessionLifecycle.ensure(request)
         return this.executionOwner.executeControl(
           session,
@@ -2623,6 +2834,9 @@ class NotebookRuntimeService {
     }
     request = await this.admitExecutionRequest(request, signal, this.shellMemoryScope(request))
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+      await this.options.assertProjectFolderHealthy?.(
+        resolveProjectId(request, this.options.projectId)
+      )
       assertNotebookCodeWithinLimit(request.command)
       const session = await this.sessionLifecycle.ensure(request)
       return this.executionOwner.executeShell(
@@ -2675,6 +2889,9 @@ class NotebookRuntimeService {
     let admittedRunId: string | undefined
     const completion = this.sessionLifecycle
       .runProjectOperation(backgroundRequest, async (deletionSignal) => {
+        await this.options.assertProjectFolderHealthy?.(
+          resolveProjectId(backgroundRequest, this.options.projectId)
+        )
         const session = await this.sessionLifecycle.ensure(backgroundRequest)
         return this.executionOwner.executeShell(
           session,
@@ -3186,11 +3403,25 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.shutdownSession(sessionId)
   }
 
+  async withProjectFolderRelocation<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.sessionLifecycle.withProjectFolderRelocation(projectId, operation)
+  }
+
+  async recoverProjectFolderRelocation(projectId: string): Promise<void> {
+    return this.sessionLifecycle.recoverProjectFolderRelocation(projectId)
+  }
+
   async shutdownProject(projectId: string): Promise<void> {
     return this.sessionLifecycle.shutdownProject(projectId)
   }
 
   async deleteProjectFileEvidence(projectId: string): Promise<void> {
+    // Removing an app Project leaves portable records in its user-owned folder, including when
+    // that folder is currently unavailable. Managed projects retain their existing cleanup.
+    if (getProjectRecordRoute(this.options.dataRoot, projectId)) return
     await deleteWorkingFileEvidenceProject(this.options.dataRoot, projectId)
   }
 

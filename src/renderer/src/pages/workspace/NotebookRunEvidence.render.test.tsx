@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, cleanup } from '@testing-library/react'
-import { afterEach, expect, it } from 'vitest'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
 
@@ -56,4 +56,38 @@ it('shows the frozen interpreter and saved helper digest without inventing legac
   )
   expect(screen.getByTestId('notebook-run-evidence').textContent).not.toContain('/old/bin/python')
   expect(screen.getByTestId('notebook-run-evidence').textContent).not.toContain('old-digest')
+})
+
+it('explains unfrozen Project inputs and opens the existing scoped upload flow', () => {
+  const scope = { projectId: 'project-a', sessionId: 'session-a' }
+  const requested = vi.fn()
+  window.addEventListener('open-science:open-input-upload', requested)
+  try {
+    const run: NotebookRunRecord = {
+      runId: 'project-run',
+      cellId: 'cell',
+      source: 'agent',
+      kernelKind: 'python',
+      script: '',
+      status: 'completed',
+      startedAt: 0,
+      outputs: [],
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      workingFiles: [],
+      projectFolderInputs: [{ relativePath: 'raw.csv', sizeBytes: 8, frozen: false }]
+    }
+    const { rerender } = render(<NotebookRunEvidence run={run} uploadScope={scope} />)
+    expect(screen.getByTestId('project-folder-input-evidence').textContent).toContain(
+      'Inputs from the project folder are not frozen'
+    )
+    fireEvent.click(screen.getByText('Add key inputs as uploads'))
+    expect(requested).toHaveBeenCalledOnce()
+    expect((requested.mock.calls[0][0] as CustomEvent).detail).toEqual(scope)
+    rerender(
+      <NotebookRunEvidence run={{ ...run, projectFolderInputs: undefined }} uploadScope={scope} />
+    )
+    expect(screen.queryByTestId('project-folder-input-evidence')).toBeNull()
+  } finally {
+    window.removeEventListener('open-science:open-input-upload', requested)
+  }
 })

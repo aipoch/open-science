@@ -382,6 +382,15 @@ it('preserves omitted-file evidence through an imported fork and another fork', 
     (await repository.loadSession(second.projectId, second.sessionId))?.forkOrigin?.excludedFiles
       ?.length
   ).toBeGreaterThan(0)
+  for (const fork of [first, second]) {
+    const version = await fixture.client.artifactVersion.findFirstOrThrow({
+      where: { artifact: { projectId: fork.projectId, sessionId: fork.sessionId } }
+    })
+    await expect(service.isForkContentExcluded(fork, version.contentStorageKey)).resolves.toBe(true)
+    await expect(
+      service.isForkContentExcluded(fork, `${version.contentStorageKey}-other`)
+    ).resolves.toBe(false)
+  }
   await service.close()
 })
 

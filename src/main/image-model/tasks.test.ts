@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as durableFiles from '@aipoch/durable-files'
 import { afterEach, expect, it, vi } from 'vitest'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
 import { ImageTaskOwner } from './tasks'
 import { ImageModelError } from './contract'
 import {
@@ -546,4 +547,33 @@ it('keeps healthy history visible when a single interrupted result cannot be rec
     result: output
   })
   expect(prepare).not.toHaveBeenCalled()
+})
+
+it('stores and lists image tasks in the bound project record tree', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'image-tasks-project-')))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const folder = join(root, 'bound')
+  await mkdir(folder)
+  const task = { ...request(), state: 'queued' as const, createdAt: 1, updatedAt: 1 }
+  await initializeProjectRecordStorage(root, folder, {
+    format: 'open-science-project',
+    version: 2,
+    outputLayout: 'session-v1',
+    projectId: task.projectId,
+    name: 'Images',
+    createdAt: 1
+  })
+  await writeStoredImageTask(root, task)
+  const expected = join(
+    folder,
+    '.open-science',
+    'artifacts',
+    task.projectId,
+    task.sessionId,
+    '.image-tasks',
+    `${task.id}.json`
+  )
+  expect(JSON.parse(await readFile(expected, 'utf8'))).toEqual(task)
+  await expect(readStoredImageTask(root, task)).resolves.toEqual(task)
+  await expect(readStoredImageTasks(root, task)).resolves.toEqual([task])
 })
