@@ -117,6 +117,36 @@ This shows the parent can finish without the unrelated approval and that the ans
 child. The test used no Python or R cell and made no file delivery claim. It did not use the
 WorkBuddy desktop client, whose window was unavailable while macOS was locked.
 
+### WorkBuddy desktop replay of the fix
+
+WorkBuddy 5.9.4 (Hy4 flash) reconnected to the installed `daef8c104` macOS arm64 npm pair on
+the prepared test profile. MCP and CLI JSON agreed that the Agent and R were ready and Python
+was absent. The first scope request created a project over MCP but used WorkBuddy's own
+reviewer; that question was skipped and does not count as Open-Science execution. The next
+request specified that the reviewer should run inside Open-Science, without naming any tools
+or call order.
+
+Request `gsr-scope-review-20261121-1926` admitted Run `af2161b7-97d4-4431-abe4-5f40a9e9f705`
+in Session `dafc60f6-49c8-48de-92da-4f509e12f48c`. The original Run used the default `relay`
+policy and exposed a scoped child question. The automatic parent Run
+`035b7094-a808-4852-9402-582658b232d6` used `host.collect` and completed before the answer,
+reporting that the child was waiting for input. No Specialist switch or hidden approval
+interrupted it. WorkBuddy presented the question in its own conversation and read the
+interaction again before relaying the operator's `GROUP COUNTS` choice. Two invalid requests
+were rejected. WorkBuddy looked up the schema and retried successfully on the original Run
+with `user_relay`. The child continuation `attempt-f88deb8a-89f4-4be2-872a-9a2103a325f4`
+completed. Both Run scopes had no remaining interactions, and WorkBuddy identified the older
+waiting messages as historical output.
+
+When asked to read the finished review, WorkBuddy submitted one short reporting turn in the
+same Session (`gsr-scope-report-20261121-1930`, Run
+`b0b9bcb2-8b4f-4b6a-8f83-40fae0d82c84`). It followed that Run after a bounded timeout. The
+main Agent used `host.children` and `host.collect` on the exact resumed Attempt, then
+reported `GROUP COUNTS`. WorkBuddy returned the result and both identities. The MCP trace
+contains one study submission, one reporting turn, one accepted answer, and no `open_setup`
+calls. No replacement study or new reviewer was created. This scope review did not perform
+Python or R analysis; the Notebook and file delivery evidence is recorded separately above.
+
 ### Installed sensitive export review
 
 An independent installed `8a3f8a4fd` MCP stdio run used a scripted loopback Provider and a
@@ -958,10 +988,9 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 The original pre-release README runs (#66 and #67) preceded the revised short prompt and setup
 capabilities. The current WorkBuddy run completed research and file delivery, and the actual
 WorkBuddy package passed the independent receiving run in [#81](https://github.com/guch96/open-science/issues/81).
-The WorkBuddy interaction gate [#80](https://github.com/guch96/open-science/issues/80) still needs
-the updated package's final desktop replay of the parent continuation. The original Run remained
-stalled until cancelled; the updated installed package completed the fixture and a live Kilo
-replay through MCP. The [upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+The WorkBuddy interaction gate [#80](https://github.com/guch96/open-science/issues/80) passed
+the installed desktop replay of the child question, parent continuation, and final result read.
+The [upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
 remains Draft and requires the upstream checks and CI owner review of the Windows routing
 registration before merge.
 Registry verification ([#68](https://github.com/guch96/open-science/issues/68)) is blocked until an
