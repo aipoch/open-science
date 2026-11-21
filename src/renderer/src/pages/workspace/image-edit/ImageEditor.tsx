@@ -29,6 +29,7 @@ import {
   MoveUpRight,
   Pencil,
   Redo2,
+  RotateCcw,
   Scan,
   Sparkles,
   Trash2,
@@ -628,6 +629,21 @@ function ActiveImageEditor({
         : next
     })
     setLocalError(undefined)
+  }
+  const reviseLastEdit = (): void => {
+    updateDraft(editorKey, (current) => {
+      if (!current?.lastEdit) return current
+      const previous = current.lastEdit
+      const next = switchImageEditorSource(current, previous.source)
+      if (next.sourceSwitchBlocked) return next
+      return {
+        ...next,
+        prompt: previous.prompt,
+        regions: previous.regions,
+        completedResult: undefined,
+        composerCollapsed: false
+      }
+    })
   }
   const regions = (next: ImageEditRegion[]): void =>
     updateDraft(editorKey, (current) => (current ? changeImageRegions(current, next) : current))
@@ -1328,6 +1344,28 @@ function ActiveImageEditor({
           </Tooltip>
           <div className="min-w-0 flex-1 truncate text-sm font-medium">{displayed.name}</div>
           <div className="flex items-center">
+            {draft.lastEdit ? (
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={locked}
+                    aria-label={t('Revise last edit')}
+                    onClick={reviseLastEdit}
+                  >
+                    <RotateCcw className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Revise last edit')}</TooltipContent>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
@@ -1633,31 +1671,6 @@ function ActiveImageEditor({
                     className="size-4 animate-spin motion-reduce:animate-none"
                   />
                 </div>
-              ) : null}
-              {draft.lastEdit ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={locked}
-                  onClick={() => {
-                    updateDraft(editorKey, (current) => {
-                      if (!current?.lastEdit) return current
-                      const previous = current.lastEdit
-                      const next = switchImageEditorSource(current, previous.source)
-                      if (next.sourceSwitchBlocked) return next
-                      return {
-                        ...next,
-                        prompt: previous.prompt,
-                        regions: previous.regions,
-                        completedResult: undefined,
-                        composerCollapsed: false
-                      }
-                    })
-                  }}
-                >
-                  {t('Revise last edit')}
-                </Button>
               ) : null}
             </div>
           </div>
