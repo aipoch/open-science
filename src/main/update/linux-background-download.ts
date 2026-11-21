@@ -34,6 +34,7 @@ async function cacheHasSpace(directory: string, bytes: number): Promise<boolean>
   // The SDK creates its pending directory on first download. Inspect the volume which
   // will actually contain it, including a separately mounted cache or pending directory.
   try {
+    await access(directory, constants.W_OK | constants.X_OK)
     const volume = await statfs(directory, { bigint: true })
     return volume.bavail * volume.bsize >= BigInt(bytes) * 2n
   } catch (error) {
