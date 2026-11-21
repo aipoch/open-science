@@ -2129,6 +2129,16 @@ class AcpRuntimeCoordinator {
     return this.getState()
   }
 
+  listTaskQuestions(sessionId: string): ReturnType<AcpRuntime['listTaskQuestions']> {
+    return this.findRuntimeForSession(sessionId)?.listTaskQuestions(sessionId) ?? []
+  }
+
+  respondToTaskQuestion(
+    input: Parameters<AcpRuntime['respondToTaskQuestion']>[0]
+  ): ReturnType<AcpRuntime['respondToTaskQuestion']> {
+    return this.runtimeForSession(input.request.sessionId).respondToTaskQuestion(input)
+  }
+
   getPermissionPrompts(sessionId: string): 'none' | undefined {
     return (
       this.activePromptRequests.get(sessionId)?.request.permissionPrompts ??

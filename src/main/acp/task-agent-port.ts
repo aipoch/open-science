@@ -15,6 +15,8 @@ import {
 } from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
+  listTaskQuestions?: NonNullable<TaskAgentPort['questions']>['list']
+  respondToTaskQuestion?: NonNullable<TaskAgentPort['questions']>['respond']
   captureNotebookTaskIntent?(request: AcpPromptRequest): AcpPromptRequest
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
@@ -62,6 +64,14 @@ const createAcpTaskAgentPort = (
   resolveSessionAgentTarget?: SessionAgentTargetResolver,
   resolveDefaultSessionAgentTarget?: DefaultSessionAgentTargetResolver
 ): TaskAgentPort => ({
+  ...(runtime.listTaskQuestions && runtime.respondToTaskQuestion
+    ? {
+        questions: {
+          list: runtime.listTaskQuestions.bind(runtime),
+          respond: runtime.respondToTaskQuestion.bind(runtime)
+        }
+      }
+    : {}),
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability
       ? archiveAvailability.withSessionAvailable(projectId, sessionId, operation)

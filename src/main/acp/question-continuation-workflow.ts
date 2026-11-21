@@ -4,10 +4,12 @@ import type { AcpPromptRequest, AcpStateSnapshot, ElicitationResponse } from '..
 import {
   AGENT_USER_CHOICE_REQUEST_CONTRACT,
   sanitizeAgentUserChoiceRequest,
+  type AgentTurnProvenanceContext,
   type AgentUserChoiceRequest,
   type AgentUserChoiceResult,
   type ElicitationField,
-  type PendingElicitationRequest
+  type PendingElicitationRequest,
+  type TaskQuestionReceipt
 } from '../../shared/elicitation'
 import {
   agentUserChoiceOutcomes,
@@ -35,7 +37,12 @@ type QuestionContinuationDependencies = Readonly<{
   interactions: Pick<AcpSessionInteractionOwner, 'current' | 'has'>
   elicitation: Pick<
     AcpElicitationOwner,
-    'getPendingRequests' | 'respond' | 'restoreDetached' | 'appendDetached' | 'requestDetached'
+    | 'getPendingRequests'
+    | 'listTaskQuestions'
+    | 'respond'
+    | 'restoreDetached'
+    | 'appendDetached'
+    | 'requestDetached'
   >
   context: Pick<
     AcpDurableContinuationContextOwner,
@@ -44,6 +51,22 @@ type QuestionContinuationDependencies = Readonly<{
   continuations: Pick<AcpAppContinuationOwner, 'set' | 'delete'>
   publication: Pick<AcpRuntimePublicationOwner, 'getSnapshot' | 'pushEvent' | 'emitState'>
   schedule: (sessionId: string) => void
+}>
+
+type TaskQuestionOwnerResponse = Readonly<{
+  projectId: string
+  request: PendingElicitationRequest
+  action: 'accept' | 'decline'
+  answers: ElicitationResponse['answers']
+  waitsForProvider: boolean
+  receipt: TaskQuestionReceipt
+  assertCurrent: NonNullable<
+    Parameters<AcpDurableContinuationContextOwner['prepareElicitation']>[0]['taskResponse']
+  >['assertCurrent']
+  assertLive: (
+    request: PendingElicitationRequest | undefined,
+    provenance: AgentTurnProvenanceContext | undefined
+  ) => void
 }>
 const log = createLogger('acp')
 const errorMessage = (error: unknown): string => {
@@ -66,6 +89,86 @@ class AcpQuestionContinuationWorkflow {
     }>
   >()
   constructor(private readonly deps: QuestionContinuationDependencies) {}
+  async respondToTask(input: TaskQuestionOwnerResponse): Promise<void> {
+    const { request, action, answers, receipt } = input
+    const response = { requestId: request.requestId, action, answers }
+    if (input.waitsForProvider) {
+      const live = this.deps.elicitation
+        .listTaskQuestions(request.sessionId)
+        .find(
+          (question) =>
+            question.waitsForProvider &&
+            !question.receipt &&
+            question.request.requestId === request.requestId
+        )
+      const turn = this.deps.interactions.current(request.sessionId)
+      input.assertLive(live?.request, turn?.kind === 'prompt' ? turn.provenanceContext : undefined)
+      this.deps.elicitation.respond(response, receipt)
+      this.deps.publication.emitState()
+      return
+    }
+    const prepared = await this.deps.context.prepareElicitation({
+      ...response,
+      projectId: input.projectId,
+      sessionId: request.sessionId,
+      toolCallId: request.toolCallId,
+      replayIfContextReset: true,
+      taskResponse: { receipt, assertCurrent: input.assertCurrent }
+    })
+    if (
+      this.deps.elicitation
+        .getPendingRequests()
+        .some(({ requestId }) => requestId === request.requestId)
+    ) {
+      this.deps.elicitation.respond(response, receipt)
+    }
+    this.userChoiceProvenanceContexts.delete(request.requestId)
+    const continuation = this.userChoiceContinuation(
+      prepared.request,
+      response,
+      prepared.historyReplay,
+      prepared.provenanceContext,
+      prepared.memoryEnabled,
+      prepared.referencedSessions
+    )
+    if (continuation) this.scheduleTaskContinuation(continuation, input)
+    this.deps.context.clearContextReset(request.sessionId)
+    this.deps.publication.emitState()
+  }
+
+  private scheduleTaskContinuation(
+    continuation: AcpPromptRequest,
+    input: TaskQuestionOwnerResponse
+  ): void {
+    this.deps.continuations.set(input.request.sessionId, {
+      request: continuation,
+      condition: 'always',
+      settle: async (outcome) => {
+        if (outcome.phase === 'dispatched') return
+        const promptMessageId = continuation.provenanceContext?.promptMessageId
+        if (!promptMessageId) return
+        try {
+          await this.deps.context.rearmElicitation({
+            projectId: input.projectId,
+            sessionId: input.request.sessionId,
+            promptMessageId,
+            requestId: input.request.requestId,
+            toolCallId: input.request.toolCallId,
+            recovery: {
+              error:
+                'The Task could not continue. Query the recorded answer before taking another action.'
+            }
+          })
+        } catch (error) {
+          log.warn('Could not publish Task question recovery', {
+            sessionId: input.request.sessionId,
+            ...diagnosticErrorFields(error)
+          })
+        }
+      }
+    })
+    this.deps.schedule(input.request.sessionId)
+  }
   async respond(
     response: ElicitationResponse,
     continuePrepared = false
@@ -468,4 +571,4 @@ class AcpQuestionContinuationWorkflow {
   }
 }
 export { AcpQuestionContinuationWorkflow }
-export type { QuestionContinuationDependencies }
+export type { QuestionContinuationDependencies, TaskQuestionOwnerResponse }
