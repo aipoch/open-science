@@ -13,7 +13,7 @@ import {
   assertElectronHostDependencies,
   backendOnlyElectronDependencies,
   electronHostDependencyGuard,
-  macBackendOnlyElectronDependencies
+  platformBackendOnlyElectronDependencies
 } from './electron-host-dependencies.mjs'
 
 import {
@@ -85,8 +85,11 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
-      for (const name of macBackendOnlyElectronDependencies)
+      for (const name of platformBackendOnlyElectronDependencies('darwin', 'arm64')) {
         expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
+        expect(() => assertElectronHostDependencies([name], root, 'win32', 'x64')).toThrow(name)
+      }
+      expect(() => assertElectronHostDependencies(['diff'], root, 'win32', 'arm64')).not.toThrow()
       expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
       await put('@fixture/desktop', {
         dependencies: { bridge: '1' },
@@ -102,6 +105,10 @@ describe('electron-builder local evidence exclusion', () => {
           root
         )
       ).not.toThrow()
+      await put('bridge', { dependencies: { diff: '1' } })
+      expect(() =>
+        assertElectronHostDependencies(['@fixture/desktop'], root, 'win32', 'x64')
+      ).toThrow('@fixture/desktop -> bridge -> diff')
       for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
         await put('bridge', { [field]: { 'styled-exceljs': '1' } })
         expect(() => assertElectronHostDependencies(['@fixture/desktop'], root)).toThrow(

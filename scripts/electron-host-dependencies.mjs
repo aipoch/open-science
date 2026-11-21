@@ -37,8 +37,8 @@ export const backendOnlyElectronDependencies = [
   '@tesseract.js-data/chi_sim'
 ]
 
-// The macOS packaging hook omits these audited copies. i18next still needs @babel/runtime.
-export const macBackendOnlyElectronDependencies = [
+// Audited duplicate packages in the Electron archive. i18next still needs @babel/runtime.
+const auditedBackendDependencies = [
   '@babel/code-frame',
   '@babel/compat-data',
   '@babel/core',
@@ -81,10 +81,22 @@ export const macBackendOnlyElectronDependencies = [
   'zlibjs'
 ]
 
-export function assertElectronHostDependencies(specifiers, root, platform = process.platform) {
-  const excluded = new Set(backendOnlyElectronDependencies)
-  if (platform === 'darwin')
-    for (const name of macBackendOnlyElectronDependencies) excluded.add(name)
+export function platformBackendOnlyElectronDependencies(platform, arch) {
+  return platform === 'darwin' || (platform === 'win32' && arch === 'x64')
+    ? auditedBackendDependencies
+    : []
+}
+
+export function assertElectronHostDependencies(
+  specifiers,
+  root,
+  platform = process.platform,
+  arch = process.arch
+) {
+  const excluded = new Set([
+    ...backendOnlyElectronDependencies,
+    ...platformBackendOnlyElectronDependencies(platform, arch)
+  ])
   const visited = new Set()
   const visit = (specifier, from, chain) => {
     if (
