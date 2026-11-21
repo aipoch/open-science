@@ -306,19 +306,13 @@ type DrillablePanelName = keyof typeof PANEL_NAME_LOWER
 type SettingsGroup = {
   // The union rather than `string` is deliberate: a group added later cannot compile until its
   // heading is a known catalog key, so it can never reach the nav as a raw untranslated label.
-  labelKey: 'Capabilities' | 'Intelligence' | 'Connections' | 'Workspace' | 'System'
+  labelKey: 'Intelligence' | 'Connections' | 'Workspace' | 'System'
   panels: ReadonlyArray<SettingsPanel>
 }
 
+// Four purpose-based groups: model/agent intelligence, external connections, workspace
+// organization, and the app-level system panel.
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
-  {
-    labelKey: 'Capabilities',
-    panels: [
-      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
-      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
-      { id: 'specialists', labelKey: 'Specialists', Icon: Users }
-    ]
-  },
   {
     labelKey: 'System',
     panels: [
@@ -332,12 +326,15 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
+      { id: 'specialists', labelKey: 'Specialists', Icon: Users },
       { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit }
     ]
   },
   {
     labelKey: 'Connections',
     panels: [
+      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'lab', labelKey: 'Lab', Icon: FlaskConical },

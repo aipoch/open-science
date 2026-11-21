@@ -1407,15 +1407,15 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = navScroll?.querySelectorAll('li') ?? []
     expect([...navItems].map((item) => item.textContent?.trim())).toEqual([
-      'Skills',
-      'Connectors',
-      'Specialists',
       'General',
       'Appearance',
       'Notifications',
       'Model',
       'Agent',
+      'Skills',
+      'Specialists',
       'Memory',
+      'Connectors',
       'Network',
       'Remote',
       'Lab',
@@ -1429,12 +1429,6 @@ describe('SettingsPage layout', () => {
       'Archived'
     ])
     const navGroups = Array.from(navScroll?.querySelectorAll(':scope > div') ?? [])
-    expect(navGroups[0]?.firstElementChild?.textContent).toBe('Capabilities')
-    expect(Array.from(navGroups[0].querySelectorAll('li'), (item) => item.textContent)).toEqual([
-      'Skills',
-      'Connectors',
-      'Specialists'
-    ])
     const connectionsGroup = navGroups.find(
       (group) => group.firstElementChild?.textContent?.trim() === 'Connections'
     )
