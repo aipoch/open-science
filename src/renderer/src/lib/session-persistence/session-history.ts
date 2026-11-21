@@ -166,7 +166,7 @@ export const ensureSessionContentLoaded = (
   const pending = pendingAuthorities.get(key)
   if (pending) return pending
   const load = api
-    .loadOne({ ...request, reportReadFailure: true })
+    .loadOne(request)
     .then((authority) => {
       if (
         !authority ||
@@ -207,10 +207,14 @@ export const loadSessionHistoryPage = (
   if (pending) return pending
   const beforeCursor = earlier ? source.historyPage?.beforeCursor : undefined
   const load = (async (): Promise<void> => {
+    const pageRequest = { projectId: request.projectId, sessionId: request.sessionId }
     let page: SessionHistoryPage | undefined
     let append = earlier
     try {
-      page = await api.loadHistoryPage!({ ...request, ...(beforeCursor ? { beforeCursor } : {}) })
+      page = await api.loadHistoryPage!({
+        ...pageRequest,
+        ...(beforeCursor ? { beforeCursor } : {})
+      })
     } catch (error) {
       const stale =
         error &&
@@ -220,7 +224,7 @@ export const loadSessionHistoryPage = (
             typeof error.message === 'string' &&
             error.message.includes(SESSION_HISTORY_CURSOR_STALE)))
       if (!beforeCursor || !stale) throw error
-      page = await api.loadHistoryPage!(request)
+      page = await api.loadHistoryPage!(pageRequest)
       append = false
     }
     if (!page) throw new Error('Session content could not be loaded.')

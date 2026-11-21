@@ -21,7 +21,11 @@ export const SessionHistoryLoadButton = ({
   const load = async (target: 'earlier' | 'full'): Promise<void> => {
     setPending(target)
     setFailure(undefined)
-    const request = { projectId: session.projectId, sessionId: session.id }
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      reportReadFailure: true as const
+    }
     try {
       if (target === 'earlier') await loadSessionHistoryPage(request, true)
       else await ensureSessionContentLoaded(request)

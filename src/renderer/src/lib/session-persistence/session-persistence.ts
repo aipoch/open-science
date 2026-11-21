@@ -4406,7 +4406,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             : supportsPages
               ? loadSessionHistoryPage({
                   projectId: selected.projectId,
-                  sessionId: selected.id
+                  sessionId: selected.id,
+                  reportReadFailure: true
                 })
               : loadPersistedSession({
                   projectId: selected.projectId,
