@@ -990,7 +990,8 @@ class ArtifactProvenanceRepository {
             signal,
             // Host-generated images already passed the image service's 64 MiB byte check.
             maxInlineBytes:
-              app?.producer?.kind === 'connector' && app.producer.connectorId === 'image-model'
+              app?.producer?.kind === 'connector' &&
+              ['image-model', 'image-vectorization'].includes(app.producer.connectorId)
                 ? LOCAL_RESOURCE_BUDGETS.requestBytes
                 : undefined,
             reserveFile: (fileBytes) => this.writeBudgetOwner.reserve({ ...request, fileBytes }),

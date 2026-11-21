@@ -144,6 +144,7 @@ const desktopExternalRoots = [
   '@aipoch/literature-citations',
   '@aipoch/pdf-translation',
   '@aipoch/pdf-structure',
+  '@aipoch/image-vectorization',
   '@aipoch/research-film',
   'tslib'
 ]

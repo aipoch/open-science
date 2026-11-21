@@ -4,14 +4,15 @@ import type { ArtifactProducerInputScope } from '../managed-file-versions/read-p
 import type { ImageModelBinding } from '../../shared/image-model-settings'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { extname, isAbsolute } from 'node:path'
+import type { ImageRegion, vectorizeImage } from '@aipoch/image-vectorization'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
   NotebookExecutionStopError,
   isNotebookKernelStopResolved,
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
-import { artifactSaveRequestSchema } from '../artifacts/save-request'
+import { artifactToolSaveRequestSchema } from '../artifacts/save-request'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import {
   ImageModelError,
@@ -294,6 +295,11 @@ type NotebookLocalRpcServerOptions = {
     binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
     invocationId: string
   ) => Promise<ArtifactVersionCoreProvenance | undefined>
+  vectorizeImage?: (
+    bytes: Buffer,
+    signal: AbortSignal,
+    preserveRegion?: ImageRegion
+  ) => ReturnType<typeof vectorizeImage>
   writeImageArtifact?: (
     binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
     input: ReturnType<typeof imageArtifactContent>
@@ -764,6 +770,7 @@ class NotebookLocalRpcServer {
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly readImageArtifact: NotebookLocalRpcServerOptions['readImageArtifact']
+  private readonly vectorizeImage: NotebookLocalRpcServerOptions['vectorizeImage']
   private readonly writeImageArtifact: NotebookLocalRpcServerOptions['writeImageArtifact']
   private readonly imageModel: NotebookLocalRpcServerOptions['imageModel']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
@@ -874,6 +881,7 @@ class NotebookLocalRpcServer {
     this.requestUserInput = options.requestUserInput
     this.artifactProvenance = options.artifactProvenance
     this.readImageArtifact = options.readImageArtifact
+    this.vectorizeImage = options.vectorizeImage
     this.writeImageArtifact = options.writeImageArtifact
     this.imageModel = options.imageModel
     this.inputRegistry = options.inputRegistry
@@ -3515,8 +3523,68 @@ class NotebookLocalRpcServer {
     // save envelope back into the main process, where the Provenance repository owns transactions,
     // immutable Version publication, and idempotency.
     if (method === 'artifactSaveVersion') {
+      const request = artifactToolSaveRequestSchema.parse(params)
+      if (request.source.kind === 'vectorizedImage') {
+        if (!artifactCapability || !this.vectorizeImage || !this.writeImageArtifact)
+          throw new RpcHttpError(403, 'Local image conversion is unavailable.')
+        if (
+          request.producerRunId ||
+          request.literature ||
+          (request.contentType && request.contentType !== 'image/svg+xml')
+        )
+          throw new RpcHttpError(400, 'Conversion determines its own producer and output format.')
+        const { projectId, sourceKind, sourceFileId, inputFileVersionId, preserveRegion } =
+          request.source
+        const source = { projectId, sourceKind, sourceFileId, inputFileVersionId }
+        const { input, bytes } = await this.readImageInput(source, artifactCapability)
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(input.contentType ?? ''))
+          throw new RpcHttpError(400, 'Expected a PNG, JPEG or WebP image Version.')
+        const { mimeType, content, detail } = await this.vectorizeImage(
+          bytes,
+          signal,
+          preserveRegion
+        )
+        signal.throwIfAborted()
+        this.assertImageGenerationActive(artifactCapability)
+        const suffix = {
+          'image/svg+xml': '.svg',
+          'image/jpeg': '.jpg',
+          'image/png': '.png',
+          'image/webp': '.webp'
+        }[mimeType]
+        const artifact = await this.writeImageArtifact(artifactCapability, {
+          filename:
+            request.filename.slice(0, request.filename.length - extname(request.filename).length) +
+            suffix,
+          mimeType,
+          content,
+          producer: {
+            kind: 'connector',
+            connectorId: 'image-vectorization',
+            toolId: 'vectorize_image',
+            invocationId: createHash('sha256')
+              .update(
+                JSON.stringify([
+                  'vectorize',
+                  request.projectId,
+                  request.appSessionId,
+                  request.artifactRunId,
+                  request.writeOperationId
+                ])
+              )
+              .digest('hex'),
+            implementationVersion: '1',
+            inputFiles: [input],
+            normalizedArguments: {
+              inputFileVersionId: source.inputFileVersionId,
+              ...(preserveRegion ? { preserveRegion } : {}),
+              outputMimeType: mimeType
+            }
+          }
+        })
+        return { ...artifact, imageExport: detail }
+      }
       if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
-      const request = artifactSaveRequestSchema.parse(params)
       const sourceScope = params.sourceScope as ArtifactWriteSourceScope
       // Read current host-owned grants, never caller hints or a turn-start snapshot. Relative
       // sources keep their original authority and cannot traverse into granted external folders.
@@ -3525,7 +3593,7 @@ class NotebookLocalRpcServer {
           ? ((await this.authorizedDirectories?.())?.directories.map((root) => root.path) ?? [])
           : []
       return this.artifactProvenance.saveVersion(
-        request,
+        { ...request, source: request.source },
         { ...sourceScope, grantedImportRoots },
         signal,
         onArtifactMetadataBytes

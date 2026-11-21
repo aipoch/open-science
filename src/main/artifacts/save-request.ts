@@ -2,6 +2,22 @@ import { z } from 'zod'
 import { artifactLiteratureRequestSchema } from '../../shared/artifact-literature'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget-policy'
 
+export const vectorizedImageSourceSchema = z
+  .object({
+    kind: z.literal('vectorizedImage'),
+    projectId: z.string().min(1),
+    sourceKind: z.enum(['upload-version', 'artifact-version']),
+    sourceFileId: z.string().min(1),
+    inputFileVersionId: z.string().min(1),
+    preserveRegion: z
+      .tuple([z.int().nonnegative(), z.int().nonnegative(), z.int().positive(), z.int().positive()])
+      .optional()
+      .describe(
+        'Optional original-pixel rectangle [left, top, right, bottom] for a photo or overlapping objects to keep together; right and bottom are exclusive.'
+      )
+  })
+  .strict()
+
 export const artifactSaveRequestSchema = z.object({
   projectId: z.string().min(1),
   appSessionId: z.string().min(1),
@@ -25,6 +41,10 @@ export const artifactSaveRequestSchema = z.object({
     z.object({ kind: z.literal('localPath'), path: z.string().min(1) }),
     z.object({ kind: z.literal('inline'), content: z.string(), encoding: z.literal('base64') })
   ])
+})
+
+export const artifactToolSaveRequestSchema = artifactSaveRequestSchema.extend({
+  source: z.union([artifactSaveRequestSchema.shape.source, vectorizedImageSourceSchema])
 })
 
 export const validateArtifactSaveSource = (source: unknown): void => {

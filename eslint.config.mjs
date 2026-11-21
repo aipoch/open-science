@@ -66,6 +66,7 @@ export default defineConfig(
   },
   {
     files: [
+      'packages/image-vectorization/*.cjs',
       'resources/notebook/*.js',
       'resources/find-overlay/*.js',
       'scripts/build-pi-acp.mjs',

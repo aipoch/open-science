@@ -177,6 +177,7 @@
     "zod": "^4.6.6",
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
+    "@aipoch/image-vectorization": "file:packages/image-vectorization",
     "@aipoch/pdf-structure": "file:packages/pdf-structure",
     "@aipoch/pdf-translation": "file:packages/pdf-translation",
     "@aipoch/skills": "file:packages/skills",

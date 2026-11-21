@@ -549,6 +549,7 @@ export const createApplicationModules = async (
     mainEntryPath
   })
   const notebookBridge = await composeNotebookBridge({
+    ocrModels: documentReading.ocrModels,
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
     runtimeRef,

@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 
+import type { ImageExportDetail } from '@aipoch/image-vectorization'
 import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
 import type {
   ArtifactVersionFile,
@@ -22,6 +23,7 @@ import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 import { ArtifactRepository } from './repository'
+import { vectorizedImageSourceSchema } from './save-request'
 import { inlineDecodedSize } from '../bounded-file-io'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
@@ -63,10 +65,13 @@ type ArtifactMcpServerConfigRequest = ArtifactMcpEnvironment & {
   entryPath: string
 }
 
+type ToolSource = ArtifactWriteSource | z.infer<typeof vectorizedImageSourceSchema>
+type ToolSaveRequest = Omit<SaveArtifactVersionRequest, 'source'> & { source: ToolSource }
+
 type ArtifactToolWriteInput = {
   filename: string
   mimeType?: string
-  source?: ArtifactWriteSource
+  source?: ToolSource
   producerRunId?: string
   literature?: ArtifactLiteratureRequest
 }
@@ -103,6 +108,7 @@ const writeArtifactFileToolSchema = {
     .preprocess(
       parseJsonString,
       z.union([
+        vectorizedImageSourceSchema,
         z.object({
           kind: z.literal('inline'),
           content: z
@@ -125,7 +131,7 @@ const writeArtifactFileToolSchema = {
     )
     .optional()
     .describe(
-      'Where the bytes come from: {kind:"localPath", path} or {kind:"inline", content, encoding?}. Omit to use filename as a localPath. A JSON-encoded string of this object is also accepted.'
+      'For local vectorization of a referenced PNG, JPEG or WebP, pass kind:"vectorizedImage" with the exact projectId, sourceKind, sourceFileId and inputFileVersionId. The app exports a hybrid SVG or retains the original format. Other sources: {kind:"localPath", path} or {kind:"inline", content, encoding?}. Omit to use filename as a localPath. A JSON-encoded string of this object is also accepted.'
     ),
   producerRunId: z
     .string()
@@ -159,7 +165,7 @@ const writeArtifactFileInputSchema = z
 const writeArtifactFileToolDefinition = {
   title: 'Write artifact file',
   description:
-    'Save a generated or existing file as a downloadable Artifact (chart, image, report, CSV, archive, …). After a Notebook run saved "plot.png", pass just filename:"plot.png" plus that run\'s producerRunId; the app resolves it against the kernel cwd and copies it. Otherwise pass source: {kind:"localPath", path} for a file already on disk (a relative name, the Notebook workingFiles `data/…` path, or an absolute path on this host in the workspace, Notebook, or a user-authorized folder; read-only access suffices; use list_authorized_directories to discover grants), or {kind:"inline", content} for small generated text such as Markdown or plain text, so no intermediate file is needed. Binary output must already exist on disk. Literature formatting tools attach their prepared DOCX and LaTeX outputs themselves; do not write those again. The app assigns session and message ownership.',
+    'Save a generated or existing file as a downloadable Artifact (chart, image, report, CSV, archive, …). After a Notebook run saved "plot.png", pass just filename:"plot.png" plus that run\'s producerRunId; the app resolves it against the kernel cwd and copies it. Otherwise pass source: {kind:"localPath", path} for a file already on disk (a relative name, the Notebook workingFiles `data/…` path, or an absolute path on this host in the workspace, Notebook, or a user-authorized folder; read-only access suffices; use list_authorized_directories to discover grants), or {kind:"inline", content} for small generated text such as Markdown or plain text, so no intermediate file is needed. For image vectorization, use the vectorizedImage source on a generated or uploaded image Version. The app preserves uncertain regions as source pixels. Literature formatting tools attach their prepared DOCX and LaTeX outputs themselves; do not write those again. The app assigns session and message ownership.',
   inputSchema: writeArtifactFileToolSchema
 }
 
@@ -226,13 +232,14 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
   }
 }
 
-type ArtifactRpcResponse<Result> = { result?: Result | null; error?: string }
+type SavedArtifact = ArtifactVersionFile & { imageExport?: ImageExportDetail }
+type ArtifactRpcResponse<Result> = { result?: Result | null; error?: string | { message: string } }
 
 // The model cannot repair the app-owned run capability or RPC wiring, so it must not loop on them.
 const ARTIFACT_PUBLICATION_UNAVAILABLE =
   'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact publication is not available in this turn. Do not retry in this turn; tell the user the file was not saved as an Artifact and publish the existing file again in a later turn, preserving any producerRunId.'
 
-const serializeArtifactSaveRequest = (request: SaveArtifactVersionRequest): string => {
+const serializeArtifactSaveRequest = (request: ToolSaveRequest): string => {
   const body = JSON.stringify({ method: 'artifactSaveVersion', params: request })
   assertWithinResourceBudget(
     'request',
@@ -245,9 +252,9 @@ const serializeArtifactSaveRequest = (request: SaveArtifactVersionRequest): stri
 const callArtifactRpc = async (
   environment: ArtifactMcpEnvironment,
   capabilityToken: string,
-  request: SaveArtifactVersionRequest,
+  request: ToolSaveRequest,
   signal?: AbortSignal
-): Promise<ArtifactVersionFile> => {
+): Promise<SavedArtifact> => {
   if (!environment.rpcEndpoint) {
     throw new Error(ARTIFACT_PUBLICATION_UNAVAILABLE)
   }
@@ -268,19 +275,18 @@ const callArtifactRpc = async (
     },
     'Artifact Provenance RPC'
   )
-  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactVersionFile>
+  const payload = (await response.json()) as ArtifactRpcResponse<SavedArtifact>
 
+  const errorMessage = typeof payload.error === 'string' ? payload.error : payload.error?.message
   if (response.status === 401) {
     throw new Error(
       'Artifact publication authorization has expired or is no longer active. Start a new conversation turn and retry publishing the existing file, preserving any producerRunId. Do not regenerate the file or drop provenance to retry. ' +
-        (payload.error ?? 'Artifact RPC authentication failed.')
+        (errorMessage ?? 'Artifact RPC authentication failed.')
     )
   }
 
   if (!response.ok || payload.error || !payload.result) {
-    throw new Error(
-      payload.error ?? `Artifact Provenance RPC failed with status ${response.status}`
-    )
+    throw new Error(errorMessage ?? `Artifact Provenance RPC failed with status ${response.status}`)
   }
   return payload.result
 }
@@ -292,7 +298,7 @@ const callArtifactRpc = async (
 const normalizeArtifactToolWriteInput = (
   input: ArtifactToolWriteInput,
   hasRelativeBase: boolean
-): ArtifactWriteSource => {
+): ToolSource => {
   // An explicit source passes through untouched; the repository resolves a relative localPath
   // against the turn's ordered base dirs (never the MCP/app process cwd) and rejects when the turn
   // carries no base at all, so the caller gets a clear "pass an absolute path" error instead of a
@@ -324,7 +330,7 @@ const writeArtifactFileForCurrentRun = async (
   environment: ArtifactMcpEnvironment,
   input: ArtifactToolWriteInput,
   invocation: ArtifactWriteInvocation = {}
-): Promise<ArtifactVersionFile> => {
+): Promise<SavedArtifact> => {
   const projectId = resolveProjectId(environment)
   const context = await readCurrentRunContext(environment.currentRunFile)
   const artifactStorageSessionId = context.artifactStorageSessionId ?? environment.sessionId
@@ -394,7 +400,7 @@ const writeArtifactFileForCurrentRun = async (
 }
 
 const toWriteArtifactToolResult = (
-  artifact: ArtifactFile | ArtifactVersionFile
+  artifact: (ArtifactFile | ArtifactVersionFile) & { imageExport?: ImageExportDetail }
 ): { artifact: unknown } => {
   if ('versionId' in artifact) {
     return {
@@ -402,6 +408,7 @@ const toWriteArtifactToolResult = (
         artifact_id: artifact.artifactId,
         version_id: artifact.versionId,
         version_number: artifact.versionNumber,
+        ...(artifact.imageExport ? { image_export: artifact.imageExport } : {}),
         filename: artifact.name,
         size_bytes: artifact.size,
         producer_run_id: artifact.producerRunId

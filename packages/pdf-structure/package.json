@@ -18,6 +18,7 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./scan-ocr": "./resources/literature-pdf-scan-ocr.mjs",
     "./result": {
       "types": "./dist/result.d.ts",
       "default": "./dist/result.js"

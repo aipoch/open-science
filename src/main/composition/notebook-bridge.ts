@@ -1,3 +1,5 @@
+import { vectorizeImage } from '@aipoch/image-vectorization'
+import { acquirePdfStructureOcr } from '../literature/pdf-structure/ocr'
 import { createHash } from 'node:crypto'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
@@ -77,6 +79,7 @@ export async function composeNotebookBridge({
   notebookService,
   notebookLocalRpc,
   imageModel,
+  ocrModels,
   grantedRootsRepository,
   specialistService,
   memoryService,
@@ -113,6 +116,7 @@ export async function composeNotebookBridge({
   notebookService: NotebookRuntimeService
   grantedRootsRepository: GrantedLocalRootsRepository
   notebookLocalRpc: ReturnType<typeof createNotebookApplicationModule>['capability']['localRpc']
+  ocrModels?: Parameters<typeof acquirePdfStructureOcr>[0]
   imageModel: ImageModelService
   specialistService: SpecialistService
   memoryService: MemoryService
@@ -332,6 +336,14 @@ export async function composeNotebookBridge({
           )
       },
       imageModel,
+      vectorizeImage: async (bytes, signal, preserveRegion) => {
+        const ocr = await acquirePdfStructureOcr(ocrModels)
+        try {
+          return await vectorizeImage(bytes, { ocr: ocr?.options, signal, preserveRegion })
+        } finally {
+          ocr?.release()
+        }
+      },
       readImageArtifact: (binding, invocationId) =>
         artifactProvenanceRepository.readImageInvocationVersion({
           ...binding,

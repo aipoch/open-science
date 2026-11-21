@@ -1,0 +1,25 @@
+{
+  "ownerPaths": [
+    "packages/image-vectorization/arrows.cjs",
+    "packages/image-vectorization/colors.cjs",
+    "packages/image-vectorization/index.cjs",
+    "packages/image-vectorization/index.d.ts",
+    "packages/image-vectorization/package.json",
+    "packages/image-vectorization/regions.cjs",
+    "packages/image-vectorization/worker.cjs",
+    "src/main/artifacts/vectorization.test.ts"
+  ],
+  "interfacePaths": [
+    "packages/image-vectorization/index.cjs",
+    "packages/image-vectorization/index.d.ts"
+  ],
+  "consumerModules": ["desktop_composition"],
+  "testFiles": {
+    "owner": ["src/main/artifacts/vectorization.test.ts"],
+    "contract": [],
+    "consumer": ["src/main/artifacts/mcp-server.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Image exports use a native decoder and a separate worker to publish a scoped Artifact version."
+}

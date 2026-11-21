@@ -142,6 +142,11 @@
     "src/main/composition/session-foundation.ts",
     "src/main/session-diagnostics/electron-fallback.ts"
   ],
+  "packages/image-vectorization/worker.cjs": ["packages/image-vectorization/index.cjs"],
+  "packages/pdf-structure/resources/literature-pdf-scan-ocr.mjs": [
+    "packages/image-vectorization/worker.cjs",
+    "packages/pdf-structure/resources/literature-pdf-scanned-page.mjs"
+  ],
   "packages/pdf-structure/resources/host.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/scratch.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/literature-pdf-extract.mjs": [

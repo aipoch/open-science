@@ -1,0 +1,12 @@
+{
+  "name": "@aipoch/image-vectorization",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "dependencies": {
+    "@aipoch/pdf-structure": "file:../pdf-structure",
+    "sharp": "0.35.5"
+  }
+}
