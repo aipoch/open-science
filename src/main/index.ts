@@ -55,7 +55,8 @@ import {
   session
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
@@ -253,11 +254,37 @@ async function startDesktop(): Promise<void> {
     MANAGED_PREVIEW_SCHEME,
     OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
   ])
+  const packageFiles = new PackageFileOpenRelay(() => {
+    void client?.invokeHost('desktop:open-package', [null]).catch(reportError)
+  })
+  app.on('open-file', (event, path) => {
+    event.preventDefault()
+    packageFiles.receive(path)
+  })
+  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  browserImports.receiveArgv(process.argv)
   if (
     process.platform === 'darwin' &&
     app.isPackaged &&
     !headless &&
-    (await macQuitHandoff('reopen', app.getVersion(), process.argv.slice(1)))
+    (await macQuitHandoff('reopen', app.getVersion(), [], async () => {
+      // LaunchServices delivers cold open-file/open-url events before Electron is ready.
+      await app.whenReady()
+      return {
+        args: process.argv
+          .slice(1)
+          .filter(
+            (arg) =>
+              !arg.startsWith('open-science:') && !packageFiles.pendingPaths.includes(resolve(arg))
+          ),
+        urls: [
+          ...new Set([
+            ...packageFiles.pendingPaths.map((path) => pathToFileURL(path).href),
+            ...browserImports.pendingUrls
+          ])
+        ]
+      }
+    }))
   ) {
     app.exit(0)
     return
@@ -437,13 +464,6 @@ async function startDesktop(): Promise<void> {
     if (startupBlocked) void exitFromBlockedStartup()
   }
   app.on('before-quit', holdStartupQuit)
-  const packageFiles = new PackageFileOpenRelay(() => {
-    void client?.invokeHost('desktop:open-package', [null]).catch(reportError)
-  })
-  app.on('open-file', (event, path) => {
-    event.preventDefault()
-    packageFiles.receive(path)
-  })
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
   app.on('second-instance', (_event, argv, cwd) => {
@@ -452,8 +472,6 @@ async function startDesktop(): Promise<void> {
     if (showMainWindow) showMainWindow()
     else secondInstancePending = true
   })
-  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
-  browserImports.receiveArgv(process.argv)
   let client: DesktopRuntimeClient | undefined = undefined
   let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
   let initialBackendLaunch: Promise<void> | undefined
@@ -2129,7 +2147,13 @@ async function startDesktop(): Promise<void> {
               AbortSignal.timeout(10_000)
             )
         )
-        if (prepared && !(await macQuitHandoff('watch', app.getVersion(), [macCache])))
+        if (
+          prepared &&
+          !(await macQuitHandoff('watch', app.getVersion(), [
+            macCache,
+            update.getStatus().latest ?? ''
+          ]))
+        )
           bootstrapLog.warn('macOS update handoff observer unavailable')
       }
     }

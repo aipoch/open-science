@@ -87,7 +87,7 @@ export async function prepareMacUpdateOnQuit(
   )
     return false
   const cancellation = new AbortController()
-  const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(30_000)])
+  const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(60_000)])
   const refused = (): void => cancellation.abort(new Error('No staged macOS update'))
   native.once('update-not-available', refused)
   const prepared = once(native, 'update-downloaded', { signal })

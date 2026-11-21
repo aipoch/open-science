@@ -16,7 +16,8 @@ function socketPath(version: string): string {
 export async function macQuitHandoff(
   mode: 'watch' | 'reopen',
   version: string,
-  args: string[]
+  args: string[],
+  launchRequest?: () => Promise<{ args: string[]; urls: string[] }>
 ): Promise<boolean> {
   const path = socketPath(version)
   if (mode === 'reopen' && !existsSync(path)) return false
@@ -42,7 +43,10 @@ export async function macQuitHandoff(
     { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
   )
   return new Promise((resolve) => {
+    let settled = false
     const finish = (armed: boolean): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       if (child.connected) child.disconnect()
       child.unref()
@@ -54,6 +58,24 @@ export async function macQuitHandoff(
     }, 2500)
     child.once('error', () => finish(false))
     child.once('exit', () => finish(false))
-    child.once('message', (message) => finish(message === 'armed'))
+    child.once('message', async (message) => {
+      if (message !== 'armed' || !launchRequest) return finish(message === 'armed')
+      try {
+        let previous: string | undefined
+        // Re-snapshot after the IPC write to include launches received while it was in flight.
+        for (;;) {
+          const request = await launchRequest()
+          const snapshot = JSON.stringify(request)
+          if (snapshot === previous) break
+          await new Promise<void>((sent, reject) =>
+            child.send(request, (error) => (error ? reject(error) : sent()))
+          )
+          previous = snapshot
+        }
+        finish(true)
+      } catch {
+        finish(false)
+      }
+    })
   })
 }
