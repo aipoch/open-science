@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
+import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { macQuitHandoff } from './mac-quit-handoff'
 
@@ -76,5 +78,32 @@ describe('macOS quit handoff', () => {
     const reopening = macQuitHandoff('reopen', '1', [], async () => ({ args: [], urls: [] }))
     child.emit('message', 'armed')
     expect(await reopening).toBe(false)
+  })
+})
+
+const { readHandoffLine } = createRequire(import.meta.url)('../../../build/mac-quit-handoff.cjs')
+
+describe('macOS handoff framing', () => {
+  it.each(['reopen', JSON.stringify({ targetVersion: '1.3.2' })])(
+    'waits for a complete handshake and delivers it once: %s',
+    (line) => {
+      const peer = new PassThrough()
+      const received = vi.fn()
+      readHandoffLine(peer, received)
+      for (const byte of Buffer.from(line)) peer.write(Buffer.from([byte]))
+      expect(received).not.toHaveBeenCalled()
+      peer.end('\nextra\n')
+      expect(received.mock.calls).toEqual([[line]])
+    }
+  )
+
+  it('closes the peer when an unterminated handshake grows too large', () => {
+    const peer = new PassThrough()
+    const received = vi.fn()
+    readHandoffLine(peer, received)
+    peer.write(Buffer.alloc(1024))
+    peer.write('x')
+    expect(peer.destroyed).toBe(true)
+    expect(received).not.toHaveBeenCalled()
   })
 })

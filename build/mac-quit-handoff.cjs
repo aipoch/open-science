@@ -10,9 +10,27 @@ const { setTimeout: delay } = require('node:timers/promises')
 
 const run = promisify(execFile)
 const [mode, socketPath, executable, parentPid, ...args] = process.argv.slice(2)
-const bundle = dirname(dirname(dirname(executable)))
 const label = 'com.aipoch.open-science.ShipIt'
 const reopenWaitMs = 60_000
+
+// Each peer sends one newline-terminated handshake, then keeps the socket open until release.
+function readHandoffLine(peer, onLine) {
+  let pending = Buffer.alloc(0)
+  function receive(chunk) {
+    const newline = chunk.indexOf(0x0a)
+    const fragment = newline === -1 ? chunk : chunk.subarray(0, newline)
+    if (pending.length + fragment.length > 1024) {
+      peer.off('data', receive)
+      peer.destroy()
+      return
+    }
+    pending = Buffer.concat([pending, fragment])
+    if (newline === -1) return
+    peer.off('data', receive)
+    onLine(pending.toString('utf8'))
+  }
+  peer.on('data', receive)
+}
 
 function alive(pid) {
   try {
@@ -50,7 +68,7 @@ async function clearStaleSocket() {
   if (stale && (await sameFile(socketPath, entry))) await fs.unlink(socketPath)
 }
 
-async function watch() {
+async function watch(bundle) {
   const [cache, targetVersion] = args
   if (!targetVersion) return
   const nativeCache = join(await fs.realpath(cache), label)
@@ -84,8 +102,8 @@ async function watch() {
     peers.add(peer)
     peer.on('error', () => peer.destroy())
     peer.on('close', () => peers.delete(peer))
-    peer.once('data', (message) => {
-      if (!accepting || message.toString() !== 'reopen\n') return peer.destroy()
+    readHandoffLine(peer, (message) => {
+      if (!accepting || message !== 'reopen') return peer.destroy()
       firstOpen ??= performance.now()
       peer.write(JSON.stringify({ targetVersion }) + '\n')
     })
@@ -187,7 +205,7 @@ async function watch() {
   }
 }
 
-async function reopen() {
+async function reopen(bundle) {
   const originalExecutable = await fs.stat(executable)
   let sender
   let senderDone
@@ -198,9 +216,9 @@ async function reopen() {
   let armed = false
   let refused = false
   const timer = setTimeout(() => peer.destroy(), 1500)
-  peer.once('data', (message) => {
+  readHandoffLine(peer, (message) => {
     try {
-      targetVersion = JSON.parse(message.toString()).targetVersion
+      targetVersion = JSON.parse(message).targetVersion
     } catch {
       return peer.destroy()
     }
@@ -280,7 +298,13 @@ async function reopen() {
   if (!(await senderDone)) process.exitCode = 1
 }
 
-;(mode === 'watch' ? watch() : reopen()).catch(() => {
-  // Close the native sender's pipe on a verification error as well.
-  process.exit(1)
-})
+if (require.main === module) {
+  const bundle = dirname(dirname(dirname(executable)))
+  const handoff = mode === 'watch' ? watch(bundle) : reopen(bundle)
+  handoff.catch(() => {
+    // Close the native sender's pipe on a verification error as well.
+    process.exit(1)
+  })
+}
+
+module.exports = { readHandoffLine }
