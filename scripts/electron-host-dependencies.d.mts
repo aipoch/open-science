@@ -1,7 +1,7 @@
 import type { Plugin } from 'vite'
 
 export const backendOnlyElectronDependencies: string[]
-export const macBackendOnlyElectronDependencies: string[]
+export const auditedBackendOnlyElectronDependencies: string[]
 export function assertElectronHostDependencies(
   specifiers: Iterable<string>,
   root: string,

@@ -37,8 +37,8 @@ export const backendOnlyElectronDependencies = [
   '@tesseract.js-data/chi_sim'
 ]
 
-// The macOS packaging hook omits these audited copies. i18next still needs @babel/runtime.
-export const macBackendOnlyElectronDependencies = [
+// The macOS and Windows packaging hook omits these audited copies. i18next still needs @babel/runtime.
+export const auditedBackendOnlyElectronDependencies = [
   '@babel/code-frame',
   '@babel/compat-data',
   '@babel/core',
@@ -83,8 +83,8 @@ export const macBackendOnlyElectronDependencies = [
 
 export function assertElectronHostDependencies(specifiers, root, platform = process.platform) {
   const excluded = new Set(backendOnlyElectronDependencies)
-  if (platform === 'darwin')
-    for (const name of macBackendOnlyElectronDependencies) excluded.add(name)
+  if (platform === 'darwin' || platform === 'win32')
+    for (const name of auditedBackendOnlyElectronDependencies) excluded.add(name)
   const visited = new Set()
   const visit = (specifier, from, chain) => {
     if (

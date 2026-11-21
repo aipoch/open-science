@@ -13,7 +13,7 @@ import {
   assertElectronHostDependencies,
   backendOnlyElectronDependencies,
   electronHostDependencyGuard,
-  macBackendOnlyElectronDependencies
+  auditedBackendOnlyElectronDependencies
 } from './electron-host-dependencies.mjs'
 
 import {
@@ -85,8 +85,9 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
-      for (const name of macBackendOnlyElectronDependencies)
-        expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
+      for (const name of auditedBackendOnlyElectronDependencies)
+        for (const platform of ['darwin', 'win32'] as const)
+          expect(() => assertElectronHostDependencies([name], root, platform)).toThrow(name)
       expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
       await put('@fixture/desktop', {
         dependencies: { bridge: '1' },

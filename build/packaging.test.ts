@@ -25,7 +25,7 @@ import { load } from 'js-yaml'
 import type { Configuration } from 'electron-builder'
 import { doMergeConfigs } from 'app-builder-lib/out/util/config/config'
 import { FileMatcher, getFileMatchers } from 'app-builder-lib/out/fileMatcher'
-import { macBackendOnlyElectronDependencies } from '../scripts/electron-host-dependencies.mjs'
+import { auditedBackendOnlyElectronDependencies } from '../scripts/electron-host-dependencies.mjs'
 
 const repoRoot = join(__dirname, '..')
 // Exercise the same packaging dependencies as the installed electron-builder.
@@ -86,7 +86,8 @@ describe('desktop packaging preparation', () => {
       const matchers = getFileMatchers(config, 'files', repoRoot, {
         defaultSrc: repoRoot,
         globalOutDir: join(repoRoot, 'dist'),
-        customBuildOptions: platform === 'darwin' ? config.mac! : {},
+        customBuildOptions:
+          platform === 'darwin' ? config.mac! : platform === 'win32' ? config.win! : {},
         macroExpander: (pattern) => pattern
       })!
       expect(matchers).toHaveLength(1)
@@ -96,9 +97,9 @@ describe('desktop packaging preparation', () => {
         ...matchers[0].patterns
       ]).createFilter()
       const stat = { isDirectory: () => false } as ReturnType<typeof statSync>
-      for (const name of macBackendOnlyElectronDependencies)
+      for (const name of auditedBackendOnlyElectronDependencies)
         expect(filter(join(repoRoot, 'node_modules', name, 'package.json'), stat)).toBe(
-          platform !== 'darwin'
+          platform === 'linux'
         )
       expect(filter(join(repoRoot, 'node_modules/@babel/runtime/package.json'), stat)).toBe(true)
       expect(filter(join(repoRoot, 'docs/internal/local-plan.md'), stat)).toBe(false)

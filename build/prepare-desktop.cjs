@@ -7,15 +7,15 @@ module.exports = async (context) => {
   const arch = require('builder-util').Arch[context.arch]
   if (context.electronPlatformName !== process.platform || arch !== process.arch)
     throw new Error('Build the desktop application on its target platform/architecture.')
-  if (context.electronPlatformName === 'darwin') {
-    // Extend the normalized root file set. A separate mac.files matcher can copy the project
+  if (context.electronPlatformName === 'darwin' || context.electronPlatformName === 'win32') {
+    // Extend the normalized root file set. A separate platform matcher can copy the project
     // tree independently of the root exclusions.
     const {
-      macBackendOnlyElectronDependencies
+      auditedBackendOnlyElectronDependencies
     } = require('../scripts/electron-host-dependencies.mjs')
     const appFiles = context.packager.config.files.find((set) => !set.from && !set.to)
     if (!Array.isArray(appFiles?.filter)) throw new Error('Missing root application file filter.')
-    for (const name of macBackendOnlyElectronDependencies) {
+    for (const name of auditedBackendOnlyElectronDependencies) {
       const pattern = `!node_modules/${name}{,/**/*}`
       if (!appFiles.filter.includes(pattern)) appFiles.filter.push(pattern)
     }
