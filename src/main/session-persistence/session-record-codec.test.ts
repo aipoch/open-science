@@ -144,6 +144,72 @@ describe('Session business records', () => {
     })
   })
 
+  it('writes a suffix-only addition as one append record instead of restating the order', () => {
+    const before = document()
+    const after = fixtureValue(structuredClone(before))
+    after.session.revision = 2
+    const appended = { id: 'appended', content: 'new tail' }
+    after.session.messages.push(appended)
+    after.session.conversationGraph!.messages.push(appended)
+    const records = diffSessionRecords(before, after)
+    expect(replay(before, records)).toEqual(after)
+    expect(records).toContainEqual({
+      type: 'entities',
+      collection: 'messages',
+      upserts: [appended],
+      append: ['appended']
+    })
+    expect(records).toContainEqual({
+      type: 'entities',
+      collection: 'graphMessages',
+      upserts: [appended],
+      append: ['appended']
+    })
+    expect(
+      records.every((record) => record.type !== 'entities' || record.order === undefined)
+    ).toBe(true)
+  })
+
+  it('still restates the whole order when the membership change is not a suffix', () => {
+    const before = document()
+    const after = fixtureValue(structuredClone(before))
+    after.session.revision = 2
+    const inserted = { id: 'inserted', content: 'new head' }
+    after.session.messages.unshift(inserted)
+    const records = diffSessionRecords(before, after)
+    expect(replay(before, records)).toEqual(after)
+    expect(records).toContainEqual({
+      type: 'entities',
+      collection: 'messages',
+      upserts: [inserted],
+      order: ['inserted', 'old', 'active']
+    })
+    expect(
+      records.every((record) => record.type !== 'entities' || record.append === undefined)
+    ).toBe(true)
+  })
+
+  it('applies an append over the replayed roster while still accepting content upserts', () => {
+    const records = validateSessionRecords([
+      {
+        type: 'entities',
+        collection: 'messages',
+        upserts: [
+          { id: 'appended', content: 'tail' },
+          { id: 'active', content: 'edited' }
+        ],
+        append: ['appended']
+      }
+    ])
+    const replayed = fixtureValue(replay(document(), records))
+    expect(replayed.session.messages.map((message) => message.id)).toEqual([
+      'old',
+      'active',
+      'appended'
+    ])
+    expect(replayed.session.messages[1].content).toBe('edited')
+  })
+
   it('preserves every graph entity and metadata with graph creation and removal', () => {
     const full = document()
     const plain = fixtureValue(structuredClone(full))
@@ -218,6 +284,10 @@ describe('Session business records', () => {
     { type: 'entities', collection: 'messages', upserts: [{ id: 'a' }, { id: 'a' }] },
     { type: 'entities', collection: 'messages', upserts: [], order: ['a', 'a'] },
     { type: 'entities', collection: 'messages', upserts: [{ id: 'a' }], order: null },
+    { type: 'entities', collection: 'messages', upserts: [], append: [] },
+    { type: 'entities', collection: 'messages', upserts: [], append: ['a', 'a'] },
+    { type: 'entities', collection: 'messages', upserts: [], append: ['a'], order: ['a'] },
+    { type: 'entities', collection: 'messages', upserts: [{ id: 'a' }], append: [1] },
     { type: 'metadata', envelope: { version: 2 }, session: { messages: [] }, graph: null }
   ])('rejects invalid or field-patch record %j', (record) => {
     expect(() => validateSessionRecords([record])).toThrow()
@@ -227,7 +297,15 @@ describe('Session business records', () => {
     for (const record of [
       { type: 'entities', collection: 'messages', upserts: [], order: ['missing'] },
       { type: 'entities', collection: 'messages', upserts: [{ id: 'new' }] },
-      { type: 'entities', collection: 'messages', upserts: [{ id: 'new' }], order: ['old'] }
+      { type: 'entities', collection: 'messages', upserts: [{ id: 'new' }], order: ['old'] },
+      { type: 'entities', collection: 'messages', upserts: [], append: ['missing'] },
+      { type: 'entities', collection: 'messages', upserts: [], append: ['old'] },
+      {
+        type: 'entities',
+        collection: 'artifacts',
+        upserts: [{ id: 'a', name: 'x' }],
+        append: ['a']
+      }
     ])
       expect(() => replay(document(), validateSessionRecords([record]))).toThrow()
   })

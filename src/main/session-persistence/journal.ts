@@ -105,7 +105,7 @@ const fail = (message: string): never => {
 }
 const exact = (value: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key))
-const SESSION_JOURNAL_VERSION = 1
+const SESSION_JOURNAL_VERSION = 2
 const assertJournalVersion = (value: Record<string, unknown>): void => {
   const version = Object.hasOwn(value, 'journalVersion')
     ? value.journalVersion
