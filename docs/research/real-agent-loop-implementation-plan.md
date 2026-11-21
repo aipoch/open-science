@@ -5,6 +5,10 @@
 `recovery-interface-notes.md` 的历史调研。调研证明过核心 Notebook 与包迁移路径，不能作为本次构建的验收结果。
 本轮代码核对基线：`b41cbc4be84e56c56f8c5e75581e50bcd181c7e2`。
 
+2026-11-21 追加确认了 [CLI/MCP 任务交互与配置闭环](real-agent-loop-task-interactions-plan.md)，
+核对基线为 `750ff8d2f`。任务委托、权限/AskUser/Plan 响应、外部用户接力和完整配置纳入本期。
+这是已确认、待实现的扩展；下方既有任务记录中的 Desktop 专属审批边界属于扩展前的实现状态。
+
 一期保证外部 Agent、MCP 进程和 OpenScience 服务同机并共享可访问的文件系统。README 的一段英文提示语
 只负责安装或连接 MCP、发现版本能力、检查环境和说明需要本人处理的动作。研究、文件交付、导入和 Fork
 根据后续实际用户请求调用 MCP。即使附有 `.science`，单独的设置提示也不触发导入、执行或 Fork。
@@ -16,10 +20,10 @@
 | 发现与准备     | SDK `doctor`、`bootstrap`、现有登录和配置流程                              | CLI/MCP 共用能力定义、Schema、默认值、Handler 和错误；分别判断适配器已注册、服务是否支持、Agent/Notebook 是否就绪。服务未启动也可读本地指南。                                                                      |
 | 资源选择与配置 | Task API 的 Project/Session Owner、Literature SDK                          | CLI/MCP 共用 Project、Session 和 Literature 能力。用返回的 ID 明确指定资源；可校验 Session 归属。配置使用扁平字段及现有版本检查。导入 Session 公开只读及来源字段，Owner 拒绝修改配置和恢复研究，无需变更持久格式。 |
 | 研究提交与恢复 | `submitRun`、`getSubmission`、`waitForSubmission` 和服务端 TaskSubmissions | 显式 `projectId`；无 `sessionId` 新建。MCP 发送前持有并传入 `requestId`；CLI 自动生成时先落恢复记录。超时只结束观察，重连或重启后查原回执。                                                                        |
-| Notebook       | 现有 runtime、memory policy 和 execution intent                            | 外层 Run 状态独立于 dispatch、执行和人工停止。停止态只提供定位和用户继续入口，无自动重试或规避动作；检查 readiness 不创建执行域。                                                                                  |
+| Notebook       | 现有 runtime、memory policy 和 execution intent                            | 外层 Run 状态独立于 dispatch、执行和停止。绑定/代码审阅可按任务委托处理；停止后的继续可由外部宿主逐次转交用户决定，保留原 refusal/branch 和实时检查。                                                                                  |
 | Artifact       | SDK 列举与内容响应、Artifact Owner                                         | 显式区分 lineage、version 和 downloadId；MCP 与 CLI 共用无覆盖的本地交付。报告和结果表需对应当前研究；可信源端的大小与 SHA-256 匹配时才可验证交付。                                                                |
 | 包操作         | SDK export/import/fork 与既有 Package Owner                                | 复用 `.science` 格式。操作结果须与原操作关联；仅有相似快照时返回 `unconfirmed` 并停止自动重试。                                                                                                                    |
-| 敏感导出       | 服务端扫描与现有 Web/Desktop 风险审阅                                      | 确认须绑定具体导出及内容。Web RPC 的本地认证或默认 human caller 本身不能充当确认；自动调用方只观察原操作并获取已获准的交付。                                                                                       |
+| 敏感导出       | 服务端扫描、候选包及现有风险审阅                                      | 外部宿主可转交用户对具体候选包的决定；保留操作、摘要、目标和时效检查。任务委托不自动批准敏感导出，Task caller 不伪装 human 身份。                                                                                       |
 
 验收分别检查 **readiness**（能否开始）、**execution**（实际执行了什么）和 **delivery**（实际交付了什么）。
 文件核验通过不能证明计算正确，使用已知数据另行核对报告和结果表。以上三层状态、统一错误和敏感确认均为一期门槛。
@@ -29,15 +33,30 @@
 
 - `doctor` / `get_setup_status` 只读。没有已选 runtime 时列举本版可用的选择；服务的有效默认值不能代替用户选择。
   `list_runtimes`、`select_runtime` 和 `prepare_runtime` 共用现有运行时清单、路由与托管安装。选择运行时与选择 provider 是两件事。
-- 用户选定免密钥的 Kilo Gateway 免费路由后，Agent 可用 `configure_provider` 配置并检查。其他 provider 可通过
-  `open_setup` 打开同 profile 的 Web 配置；Agent 可处理已授权的非凭据步骤。OAuth 同意和凭据输入由用户完成。
-  认证 URL 只交给浏览器，不进入 MCP 返回或验收记录。没有浏览器时说明宿主限制和同 profile 入口。
+- 复用现有 Settings 实现，补齐普通 API Provider 和模型的发现、配置、选择与验证。密钥使用用户指定的
+  凭据引用或适配器进程可见的环境变量名，原值不进入工具参数、返回或日志。OAuth 授权仍由用户完成；
+  Web 保留为备用配置入口，不能补齐声明已支持的 MCP 配置流程。
 - 分别报告 Python、R 与宿主依赖、隔离、内存。只检查环境时不推断语言或主动安装。已知研究所需语言时，
   在提交前调用 `get_setup_status` 检查该语言。环境缺失时，用户可让 Agent 用 `prepare_notebook_environment`
   代办，或用 `open_setup` 的 `section: notebook` 打开同 profile 的 Web「设置 → Runtimes」，由用户或获授权的
   Agent 操作。设置后复查该语言；缺 Python 不阻止仅需要 R 的工作，反之亦然。
+- 同时支持已有解释器的发现/登记、可用性检查、明确选择、启用和研究绑定；托管安装的进度、取消与明确请求的
+  修复纳入 CLI/MCP。已有环境的包修改继续遵守安装授权，不把选择环境等同于允许修改依赖。
 
-## 任务依赖与验证
+## 任务交互扩展的实施顺序
+
+1. 统一按任务查询待办和详情，使权限、AskUser、Plan、Notebook 及子任务阻塞都能触发有限等待返回。
+2. 增加任务级 `relay/delegate` 模式和运行中追加/收回能力，接入具体权限、问题和 Plan 响应。
+3. 增加 Notebook 停止后继续和敏感导出的逐项外部用户接力，校验当前分支、内容、时效及运行条件。
+4. 补齐 Provider/模型和已有 Notebook 环境管理，复用配置、安装、取消和修复逻辑。
+5. 验证重复响应、撤回竞态、断连、重启和失效待办；原失败 Run 不被伪装为恢复运行。
+6. 从 README 短提示和实际 npm 构建复验 CLI、WorkBuddy 与独立迁移环境，业务主链不强制打开 Web。
+
+详细契约、信任边界和验收矩阵见 [任务交互方案](real-agent-loop-task-interactions-plan.md)。
+
+## 既有任务与验收基线
+
+以下记录扩展前的实现与原验收安排，用于复用已有处理逻辑和证据；新范围按上面的扩展方案执行。
 
 1. [#55](https://github.com/guch96/open-science/issues/55) 建立共享注册、发现和基础 doctor。
    用真实 MCP stdio、CLI JSON 核对本地发现、Schema 与错误。

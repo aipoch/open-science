@@ -6,6 +6,12 @@ child tickets. It starts from the historical research in `real-agent-loop.md`,
 validated important Notebook and package migration paths, but it is not acceptance evidence for this
 build. The code baseline used for the initial comparison was `b41cbc4be84e56c56f8c5e75581e50bcd181c7e2`.
 
+The November 21 [task interaction and setup extension](real-agent-loop-task-interactions-plan.md)
+records seven confirmed decisions against `750ff8d2f`: task delegation, permission/question/Plan
+responses, user decisions relayed by an external host, and complete setup through CLI/MCP are in Phase 1.
+This extension is planned, not implemented or accepted. Desktop-only boundaries in the historical
+ticket notes below describe the earlier implementation.
+
 Phase 1 guarantees that the external Agent, MCP process, and OpenScience service run on the same
 machine and can access the same filesystem. The README's English setup prompt covers MCP connection,
 capability discovery, readiness checks, and any required user action. Research, delivery, import, and
@@ -19,10 +25,10 @@ execution, or Fork. Only the package crosses into the independent migration envi
 | Discovery and setup                  | SDK `doctor`, `bootstrap`, existing login and configuration flows                  | CLI and MCP share capability definitions, schemas, defaults, handlers, and error mapping. They distinguish adapter registration, service support, Agent readiness, and Notebook readiness. The local guide remains available before the service starts.                                                                                           |
 | Resource selection and configuration | Task API Project/Session Owners and the Literature SDK                             | CLI and MCP share Project, Session, and Literature capabilities. Agents use returned IDs and validate Session ownership. Flat fields and existing revision checks protect configuration. Imported Sessions expose read-only and provenance fields; Owners reject configuration edits and research recovery without changing the persisted format. |
 | Research submission and recovery     | `submitRun`, `getSubmission`, `waitForSubmission`, and server-side TaskSubmissions | `projectId` is explicit. A missing `sessionId` creates a Session. MCP callers hold and send `requestId` before submission; CLI-generated IDs are recorded first. A timeout only ends observation, and the original receipt is queried after reconnect or restart.                                                                                 |
-| Notebook                             | Existing runtime, memory policy, and execution intent                              | Outer Run status is separate from dispatch, execution, and human stops. A stopped state provides references and a user continuation entry point, without automatic retry or bypass. Readiness checks do not create an execution domain.                                                                                                           |
+| Notebook                             | Existing runtime, memory policy, and execution intent                              | Outer Run status is separate from dispatch, execution, and stops. Runtime/code reviews can follow task delegation. An external host may relay a specific user continuation decision, preserving refusal/branch identity and fresh execution checks.                                                                                                           |
 | Artifacts                            | SDK listing and content responses, and the Artifact Owner                          | Lineage, version, and `downloadId` are distinct. CLI and MCP share local delivery that never overwrites a target. Report and result-table files must belong to the current research; delivery verification requires trusted source size and SHA-256 matches.                                                                                      |
 | Package operations                   | SDK export/import/Fork and the existing Package Owner                              | The existing `.science` format is reused. Results remain associated with the original operation. Similar snapshots that cannot identify the original operation return `unconfirmed` and stop automatic retries.                                                                                                                                   |
-| Sensitive export                     | Server-side scanning and existing Web/Desktop review                               | Confirmation is bound to the specific export and content. Web RPC local authentication or a default human caller cannot stand in for confirmation. Automation observes the original operation and receives only an approved delivery.                                                                                                             |
+| Sensitive export                     | Server-side scanning, staged candidates, and existing review                       | An external host may relay a specific user decision bound to the operation, candidate digest, destination, and expiry. Task delegation does not automatically approve sensitive exports. Task callers retain their automation identity.                                                                                                             |
 
 Acceptance checks three independent layers: **readiness** (whether work can start), **execution**
 (what actually ran), and **delivery** (what was actually delivered). File verification cannot prove
@@ -36,18 +42,41 @@ cross-Agent model migration, and subscription reuse are outside this phase.
 - `doctor` and `get_setup_status` are read-only. List the available runtimes when a user has not
   selected one; the effective fallback does not count as a choice. `list_runtimes`, `select_runtime`,
   and `prepare_runtime` reuse runtime discovery, routing, and managed installers.
-- After the user selects the keyless Kilo Gateway free route, `configure_provider` can set it up and
-  check it. `open_setup` opens the same profile in the local browser for other provider settings.
-  The Agent can handle authorized routine setup. The user handles credentials and consent. The browser
-  receives the private URL directly, and MCP results and test evidence omit it.
+- Reuse Settings to expose ordinary API Provider/model discovery, configuration, selection, and
+  validation. Credentials come from an explicitly selected stored reference or environment variable
+  available to the adapter process; secret values stay out of tool arguments, results, and logs.
+  The user completes OAuth consent. Web remains a fallback, not a missing part of a supported MCP flow.
 - Report Python and R readiness separately from dependencies, isolation, and memory. A general
   check does not pick or install a language. When research needs a known language, check it with
   `get_setup_status` before submitting. If the environment is missing, the user can ask the Agent
   to prepare that language through `prepare_notebook_environment` or use `open_setup` with
   `section: notebook` to open the same profile's Web Settings → Runtimes. The user or authorized
   Agent can operate the Web setup. Recheck the same language afterward.
+- Also expose discovery/registration, validation, explicit selection, enablement, and binding of
+  existing interpreters. Managed setup progress, cancellation, and explicitly requested repair are
+  included. Selecting an environment does not authorize changes to its dependencies.
 
-## Ticket Dependencies and Verification
+## Implementation Order for Task Interactions
+
+1. Expose scoped interaction lists/details and attention returns for permissions, questions, Plans,
+   Notebook decisions, and delegated work.
+2. Add task-scoped `relay/delegate` handling and live changes, then connect permission, question,
+   and Plan responses to their existing Owners.
+3. Add specific user decisions relayed through CLI/MCP for Notebook continuation and sensitive exports,
+   retaining branch/content/expiry checks and fresh execution admission.
+4. Complete Provider/model and existing-environment setup using current configuration and installers.
+5. Verify duplicate responses, revocation races, disconnects, restarts, and expired interactions;
+   preserve the facts of an interrupted Run and identify any new continuation.
+6. Re-run the short README flow from real npm builds with CLI, WorkBuddy, and an independent migration
+   environment. Business interactions must not require opening Web.
+
+The [extension plan](real-agent-loop-task-interactions-plan.md) defines the trust boundary, interface
+semantics, and acceptance matrix.
+
+## Historical Ticket and Acceptance Baseline
+
+The following records the earlier implementation and acceptance arrangements. Reuse its Owners and
+evidence; the new interaction behavior follows the extension above.
 
 1. [#55](https://github.com/guch96/open-science/issues/55) establishes shared registration,
    discovery, and the basic `doctor` capability. Real MCP stdio and CLI JSON calls verify local
