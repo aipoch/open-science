@@ -85,11 +85,13 @@ const resolveGetSessionMessages = (): GetSessionMessages => {
 
 const createClaudeTranscriptReader = (
   configDir: string,
-  getSessionMessages: GetSessionMessages = resolveGetSessionMessages()
+  getSessionMessages?: GetSessionMessages
 ): ClaudeTranscriptReader => {
   const sessionStore = createReadOnlyClaudeSessionStore(configDir)
+  let resolvedGetSessionMessages = getSessionMessages
   return ({ providerSessionId, cwd }) => {
-    return getSessionMessages(providerSessionId, { dir: cwd, sessionStore })
+    resolvedGetSessionMessages ??= resolveGetSessionMessages()
+    return resolvedGetSessionMessages(providerSessionId, { dir: cwd, sessionStore })
   }
 }
 
