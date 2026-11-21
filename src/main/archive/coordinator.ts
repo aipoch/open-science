@@ -180,10 +180,12 @@ class ArchiveCoordinator {
         async () => {
           await this.activeProject(projectId)
           this.assertExportAvailable(sessionId)
-          const pending = this.pendingDispatches.get(sessionId)
+          let pending = this.pendingDispatches.get(sessionId)
           if (pending && pending.count > pending.observations) {
             await assertRuntimeIdle()
-            throw new SessionExportBlockedError(pending.userPrompts ? 'agent' : 'pending')
+            pending = this.pendingDispatches.get(sessionId)
+            if (pending && pending.count > pending.observations)
+              throw new SessionExportBlockedError(pending.userPrompts ? 'agent' : 'pending')
           }
           // Fence new work and refreshes before yielding. An already-admitted history read
           // can reconcile durable state and must finish before we freeze persistence.

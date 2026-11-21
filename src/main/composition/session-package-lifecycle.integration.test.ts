@@ -1,4 +1,4 @@
-import { NotebookRunRepository } from '../notebook/repository'
+import * as packageState from '../storage/session-package-state'
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
@@ -420,20 +420,20 @@ it.each(['export', 'fork'] as const)(
     try {
       if (kind === 'export') {
         const destination = join(f.fixture.storageRoot, 'desktop.science')
-        const index = Promise.withResolvers<[]>()
-        vi.spyOn(NotebookRunRepository.prototype, 'readSessionRunIndex').mockReturnValueOnce(
-          index.promise
-        )
-        const reading = f.notebook.runIndex(f.scope)
+        const imported = Promise.withResolvers<boolean>()
+        vi.spyOn(packageState, 'isImportedResearchSession').mockReturnValueOnce(imported.promise)
+        const reading = f.notebook.backgroundTasks(f.scope)
         f.runtimeActivity.isSessionBusy.mockImplementationOnce(() => {
-          setImmediate(() => index.resolve([]))
+          // Resume the panel's read only after export has fenced new work.
+          expect(f.archive.isSessionExporting(request.projectId, request.sessionId)).toBe(true)
+          imported.resolve(false)
           return false
         })
         await expect(sessionPackageDesktop.export(request, 'cli', destination)).resolves.toEqual({
           saved: true,
           filePath: destination
         })
-        await reading
+        await expect(reading).resolves.toEqual({ runs: [] })
         await expect(f.composed.sessionPackageService.inspect(destination)).resolves.toMatchObject({
           title: 'Retained research',
           messageCount: 1
