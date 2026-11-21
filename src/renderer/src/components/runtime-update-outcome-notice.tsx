@@ -58,7 +58,7 @@ export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
   )
   if (!visible) return null
   const dismiss = (): void => {
-    window.history.replaceState(window.history.state, '', window.location.href.split('#')[0])
+    window.location.replace('#')
     setVisible(false)
   }
   return (
