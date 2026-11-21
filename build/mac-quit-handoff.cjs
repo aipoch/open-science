@@ -28,6 +28,13 @@ async function sameFile(path, original) {
   return current && current.dev === original.dev && current.ino === original.ino
 }
 
+function missing(path) {
+  return fs.lstat(path).then(
+    () => false,
+    (error) => error.code === 'ENOENT'
+  )
+}
+
 // A crashed watcher can leave a Unix socket inode. Keep live peers and unrelated entries intact.
 async function clearStaleSocket() {
   const entry = await fs.lstat(socketPath).catch(() => undefined)
@@ -66,6 +73,7 @@ async function watch() {
     basename(staged) !== basename(bundle)
   )
     return
+  const originalBundle = await fs.lstat(bundle)
   const originalStage = await fs.lstat(directory)
   if (!originalStage.isDirectory() || originalStage.uid !== process.getuid()) return
   const peers = new Set()
@@ -95,10 +103,29 @@ async function watch() {
     // Other installations can have active sockets in the same private directory.
     void fs.rmdir(dirname(socketPath)).catch(() => undefined)
   }
-  process.send('armed')
+  // Pin the original directory before the GUI exits. The child releases it on EOF, including
+  // observer crashes. It consults Foundation only after a stopped installer and a missing target.
+  const witness = spawn(
+    join(bundle, 'Contents/MacOS/mac-open-after-update'),
+    ['--check-trashed-install'],
+    {
+      cwd: bundle,
+      stdio: ['pipe', 'ignore', 'ignore']
+    }
+  )
+  witness.stdin.on('error', () => {})
+  const trashed = new Promise((resolve) => {
+    witness.once('error', () => resolve(false))
+    witness.once('exit', (code) => resolve(code === 0))
+  })
+  const shipItPath = await fs
+    .realpath(join(bundle, 'Contents/Frameworks/Squirrel.framework/Resources/ShipIt'))
+    .catch(() => null)
   try {
+    let announced = false
     const deadline = performance.now() + 120_000
     let installerPid
+    let installerProgram
     let nextJobCheck = 0
     while (performance.now() < deadline) {
       if (!(await sameFile(directory, originalStage))) break
@@ -110,15 +137,10 @@ async function watch() {
         )
         const pid = job && /"PID" = (\d+);/.exec(job.stdout)
         const program = job && /"Program" = "([^"]+)";/.exec(job.stdout)
-        if (
-          pid &&
-          program &&
-          (await fs.realpath(program[1]).catch(() => '')) ===
-            (await fs
-              .realpath(join(bundle, 'Contents/Frameworks/Squirrel.framework/Resources/ShipIt'))
-              .catch(() => null))
-        )
+        if (pid && program && (await fs.realpath(program[1]).catch(() => '')) === shipItPath) {
           installerPid = Number(pid[1])
+          installerProgram = program[1]
+        }
       } else if (installerPid && !alive(installerPid) && !alive(Number(parentPid))) {
         // A successful install removes this directory itself. Only reclaim an abandoned native
         // stage when its exact installer has exited and the original receipt still owns the inode.
@@ -126,19 +148,41 @@ async function watch() {
           () => undefined
         )
         if (
-          finalJob &&
-          !/"PID" = \d+;/.test(finalJob.stdout) &&
-          /"LastExitStatus" = 0;/.test(finalJob.stdout) &&
+          !finalJob ||
+          /"PID" = \d+;/.test(finalJob.stdout) ||
+          /"Program" = "([^"]+)";/.exec(finalJob.stdout)?.[1] !== installerProgram
+        )
+          break
+        const targetMissing = await missing(bundle)
+        let abandoned =
+          (await sameFile(bundle, originalBundle)) && /"LastExitStatus" = 0;/.test(finalJob.stdout)
+        if (targetMissing && /"LastExitStatus" = (?:0|19968);/.test(finalJob.stdout)) {
+          // ShipIt reports EX_CONFIG (78 << 8) when its target disappears during signature checks.
+          const timeout = setTimeout(() => witness.kill(), 2500)
+          witness.stdin.end('T')
+          try {
+            abandoned = (await trashed) && (await missing(bundle))
+          } finally {
+            clearTimeout(timeout)
+          }
+        }
+        if (
+          abandoned &&
           (await fs.readFile(receiptPath, 'utf8').catch(() => '')) === receipt &&
           (await sameFile(directory, originalStage))
         )
           await fs.rm(directory, { recursive: true })
         break
       }
+      if (!announced) {
+        announced = true
+        process.send('armed')
+      }
       if (firstOpen !== undefined && performance.now() - firstOpen >= reopenWaitMs) release()
       await delay(150)
     }
   } finally {
+    witness.stdin.end()
     release()
   }
 }

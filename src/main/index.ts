@@ -275,7 +275,7 @@ async function startDesktop(): Promise<void> {
           .slice(1)
           .filter(
             (arg) =>
-              !arg.startsWith('open-science:') && !packageFiles.pendingPaths.includes(resolve(arg))
+              !/^open-science:/i.test(arg) && !packageFiles.pendingPaths.includes(resolve(arg))
           ),
         urls: [
           ...new Set([
