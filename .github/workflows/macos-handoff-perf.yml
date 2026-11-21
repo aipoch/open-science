@@ -1,0 +1,51 @@
+name: Measure signed macOS update handoff
+on:
+  push:
+    branches: [perf/macos-update-handoff]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, os: macos-15-intel }
+          - { arch: arm64, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 80
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0203c93ac87d12a8eed8cb445a05f0e42275a3c6
+          path: timing
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - name: Retrieve the signed candidate and published target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP"
+          mkdir feed candidate
+          gh release download v1.3.2 -R "$GITHUB_REPOSITORY" -D feed -p latest-mac.yml -p "*-mac-$ARCH.zip"
+          for i in {1..80}; do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/44882032087/artifacts" --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
+            sleep 30
+          done
+          gh run download 44882032087 -R "$GITHUB_REPOSITORY" -n "macos-$ARCH" -D candidate
+      - name: Compare signed native preparation and install phases
+        run: bash scripts/validation/macos-handoff-perf/measure.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: handoff-stages-${{ matrix.arch }}
+          path: ${{ runner.temp }}/measurements
+          retention-days: 7
