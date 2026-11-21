@@ -22,6 +22,10 @@ import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
+import type { Configuration } from 'electron-builder'
+import { doMergeConfigs } from 'app-builder-lib/out/util/config/config'
+import { FileMatcher, getFileMatchers } from 'app-builder-lib/out/fileMatcher'
+import { macBackendOnlyElectronDependencies } from '../scripts/electron-host-dependencies.mjs'
 
 const repoRoot = join(__dirname, '..')
 // Exercise the same packaging dependencies as the installed electron-builder.
@@ -71,11 +75,33 @@ describe('desktop packaging preparation', () => {
     'prepares application resources before staging on %s',
     async (platform) => {
       const { run, calls } = preparation(platform)
+      const config = doMergeConfigs([
+        load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as Configuration
+      ])
       await run({
         electronPlatformName: platform,
         arch: require('builder-util').Arch.x64,
-        packager: { projectDir: repoRoot }
+        packager: { projectDir: repoRoot, config }
       })
+      const matchers = getFileMatchers(config, 'files', repoRoot, {
+        defaultSrc: repoRoot,
+        globalOutDir: join(repoRoot, 'dist'),
+        customBuildOptions: platform === 'darwin' ? config.mac! : {},
+        macroExpander: (pattern) => pattern
+      })!
+      expect(matchers).toHaveLength(1)
+      // The pinned builder prepends **/* to its separate node_modules matcher.
+      const filter = new FileMatcher(repoRoot, repoRoot, (pattern) => pattern, [
+        '**/*',
+        ...matchers[0].patterns
+      ]).createFilter()
+      const stat = { isDirectory: () => false } as ReturnType<typeof statSync>
+      for (const name of macBackendOnlyElectronDependencies)
+        expect(filter(join(repoRoot, 'node_modules', name, 'package.json'), stat)).toBe(
+          platform !== 'darwin'
+        )
+      expect(filter(join(repoRoot, 'node_modules/@babel/runtime/package.json'), stat)).toBe(true)
+      expect(filter(join(repoRoot, 'docs/internal/local-plan.md'), stat)).toBe(false)
       expect(calls).toEqual(platform === 'win32' ? ['build-delta', 'stage'] : ['stage'])
     }
   )

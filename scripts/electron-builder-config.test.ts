@@ -75,31 +75,6 @@ describe('electron-builder local evidence exclusion', () => {
       ).toBe(true)
   })
 
-  it('keeps the macOS dependency guard aligned with the packaged Electron modules', () => {
-    const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
-      files: string[]
-      mac: { files: string[] }
-    }
-    const root = process.cwd()
-    const filter = new FileMatcher(root, root, (value) => value, [
-      '**/*',
-      ...config.files,
-      ...config.mac.files
-    ]).createFilter()
-    const includesManifest = (name: string): boolean =>
-      filter(join(root, 'node_modules', name, 'package.json'), {
-        isDirectory: () => false
-      } as Stats)
-
-    for (const name of macBackendOnlyElectronDependencies) {
-      expect(includesManifest(name)).toBe(false)
-      expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
-    }
-    for (const name of ['@babel/runtime', 'js-yaml', 'zod'])
-      expect(includesManifest(name)).toBe(true)
-    expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
-  })
-
   it('rejects direct and transitive desktop consumers of excluded feature packages', async () => {
     const root = await mkdtemp(join(tmpdir(), 'electron-host-boundary-'))
     const put = async (name: string, manifest: object): Promise<void> => {
@@ -110,6 +85,9 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
+      for (const name of macBackendOnlyElectronDependencies)
+        expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
+      expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
       await put('@fixture/desktop', {
         dependencies: { bridge: '1' },
         devDependencies: { 'styled-exceljs': '1' }

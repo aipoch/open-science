@@ -37,7 +37,7 @@ export const backendOnlyElectronDependencies = [
   '@tesseract.js-data/chi_sim'
 ]
 
-// mac.files excludes these desktop copies. Keep @babel/runtime for i18next.
+// The macOS packaging hook omits these audited copies. i18next still needs @babel/runtime.
 export const macBackendOnlyElectronDependencies = [
   '@babel/code-frame',
   '@babel/compat-data',
