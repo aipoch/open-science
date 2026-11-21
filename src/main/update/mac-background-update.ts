@@ -51,7 +51,7 @@ export async function prepareMacUpdateOnQuit(
   bundle: string,
   cache: string,
   checkOccupancy: () => Promise<void>
-): Promise<void> {
+): Promise<boolean> {
   const ready = strategy.getStatus()
   if (
     !ready.automaticDownloads ||
@@ -60,13 +60,13 @@ export async function prepareMacUpdateOnQuit(
     !ready.artifactSha512 ||
     !ready.localPath
   )
-    return
+    return false
   if ((await strategy.getInstaller())?.format !== 'zip' || !(await writableInstallation(bundle)))
-    return
+    return false
   // MacUpdater 6.8.9 has already opened an authenticated loopback feed over this exact ZIP.
   // Calling the provider's downloadUpdate again could pull another copy during quit.
   const feed = native.getFeedURL()
-  if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(feed)) return
+  if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(feed)) return false
   await verifyArtifactChecksum(ready.localPath, ready.artifactSha512)
   const { stdout } = await run('/usr/bin/zipinfo', ['-t', ready.localPath], {
     timeout: 5000,
@@ -78,14 +78,14 @@ export async function prepareMacUpdateOnQuit(
     (await availableBytes(cache)) < BigInt(sizes[1]) + BigInt(sizes[2]) ||
     (await availableBytes(bundle)) < BigInt(sizes[1])
   )
-    return
+    return false
   await checkOccupancy()
   if (
     !(await writableInstallation(bundle)) ||
     strategy.getStatus() !== ready ||
     native.getFeedURL() !== feed
   )
-    return
+    return false
   const cancellation = new AbortController()
   const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(30_000)])
   const refused = (): void => cancellation.abort(new Error('No staged macOS update'))
@@ -94,6 +94,7 @@ export async function prepareMacUpdateOnQuit(
   try {
     native.checkForUpdates()
     await prepared
+    return true
   } finally {
     native.removeListener('update-not-available', refused)
     cancellation.abort()

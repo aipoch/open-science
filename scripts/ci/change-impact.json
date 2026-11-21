@@ -127,6 +127,7 @@
         "scripts/stage-node-runtime.mjs",
         "build/node-runtime.json",
         "build/macos-service-launcher.c",
+        "build/mac-quit-handoff.cjs",
         "build/mac-update-network.c"
       ],
       "mode": "full",
