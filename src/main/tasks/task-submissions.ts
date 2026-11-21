@@ -45,6 +45,13 @@ const receiptSchema = z
 const documentSchema = z.object({ version: z.literal(1), submissions: z.array(receiptSchema) })
 type Receipt = z.infer<typeof receiptSchema>
 
+export type TaskContinuationIdentity = Readonly<{
+  kind: 'plan' | 'permission' | 'question'
+  projectId: string
+  sessionId: string
+  attemptId: string
+}>
+
 // JSON object property order is not request identity; array order remains significant.
 const canonicalRequest = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalRequest)
@@ -66,6 +73,16 @@ const snapshot = (receipt: Receipt): TaskSubmission =>
     ...(receipt.notebookContinuation ? { notebookContinuation: receipt.notebookContinuation } : {}),
     ...(receipt.error ? { error: receipt.error } : {})
   })
+
+export const taskContinuationRequestId = ({
+  kind,
+  projectId,
+  sessionId,
+  attemptId
+}: TaskContinuationIdentity): string =>
+  `continue-${createHash('sha256')
+    .update(JSON.stringify([kind, projectId, sessionId, attemptId]))
+    .digest('hex')}`
 
 /** Local authenticated automation admission. Receipts outlive Run history pruning. */
 export class TaskSubmissions {
@@ -189,36 +206,64 @@ export class TaskSubmissions {
       .update(JSON.stringify(canonicalRequest(request)))
       .digest('hex')
     return this.serialize(async () => {
-      if (this.stopped)
-        throw new TaskRunnerError('submission_unavailable', 'The service is stopping.')
-      const existing = this.entries.get(requestId)
-      if (existing) {
-        if (existing.fingerprint !== fingerprint)
-          throw new TaskRunnerError(
-            'submission_conflict',
-            'This request ID was already used with different input.'
-          )
-        return snapshot(existing)
-      }
-      // Never silently evict a deduplication identity when Run history reaches its retention limit.
-      if (this.entries.size >= (this.dependencies.capacity ?? 10_000))
-        throw new TaskRunnerError(
-          'submission_unavailable',
-          'Submission receipt capacity is full; no task was started.'
-        )
-      const entry: Receipt = {
-        requestId,
-        fingerprint,
-        status: 'pending',
-        createdAt: (this.dependencies.now ?? Date.now)(),
-        ...(notebookContinuation ? { notebookContinuation } : {})
-      }
-      this.entries.set(requestId, entry)
-      await this.persist()
+      const { entry, created } = await this.reserve(requestId, fingerprint, notebookContinuation)
       // Preparation is owned by the service, not by the lifetime of the HTTP response.
-      void this.prepare(entry, () => start(structuredClone(request)))
+      if (created) void this.prepare(entry, () => start(structuredClone(request)))
       return snapshot(entry)
     })
+  }
+
+  // The Owner calls this before its provider send. A prior or uncertain admission must never send
+  // again. The callback only journals the Run; it does not execute the continuation.
+  admitContinuation(
+    identity: TaskContinuationIdentity,
+    createRun: (requestId: string) => Promise<TaskRun>
+  ): Promise<{ admitted: boolean; receipt: TaskSubmission }> {
+    const requestId = taskContinuationRequestId(identity)
+    const fingerprint = createHash('sha256').update(`app-continuation:${requestId}`).digest('hex')
+    return this.serialize(async () => {
+      const { entry, created } = await this.reserve(requestId, fingerprint)
+      if (!created) return { admitted: false, receipt: snapshot(entry) }
+      const run = await createRun(requestId)
+      entry.status = 'accepted'
+      entry.runId = run.id
+      await this.persist()
+      return { admitted: true, receipt: snapshot(entry) }
+    })
+  }
+
+  private async reserve(
+    requestId: string,
+    fingerprint: string,
+    notebookContinuation?: TaskNotebookContinuation
+  ): Promise<{ entry: Receipt; created: boolean }> {
+    if (this.stopped)
+      throw new TaskRunnerError('submission_unavailable', 'The service is stopping.')
+    const existing = this.entries.get(requestId)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint)
+        throw new TaskRunnerError(
+          'submission_conflict',
+          'This request ID was already used with different input.'
+        )
+      return { entry: existing, created: false }
+    }
+    // Never silently evict an identity when Run history reaches its retention limit.
+    if (this.entries.size >= (this.dependencies.capacity ?? 10_000))
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'Submission receipt capacity is full; no task was started.'
+      )
+    const entry: Receipt = {
+      requestId,
+      fingerprint,
+      status: 'pending',
+      createdAt: (this.dependencies.now ?? Date.now)(),
+      ...(notebookContinuation ? { notebookContinuation } : {})
+    }
+    this.entries.set(requestId, entry)
+    await this.persist()
+    return { entry, created: true }
   }
 
   private async prepare(entry: Receipt, start: () => Promise<TaskRun>): Promise<void> {

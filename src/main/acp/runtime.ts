@@ -356,12 +356,31 @@ class AcpRuntime {
     this.questionContinuations = continuations.questions
     const planContinuations = composeAcpRuntimePlanContinuations(options, session, {
       scheduleContinuation: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      send: (request, delivery, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          promptAttemptId: delivery?.commandId,
-          planDelivery: delivery,
-          onProviderDispatched
-        }),
+      send: (request, delivery, onProviderDispatched) => {
+        const send = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
+          this.sendDurableAppContinuation(request, {
+            promptAttemptId: delivery?.commandId,
+            planDelivery: delivery,
+            onProviderDispatched: () => {
+              onTrackedDispatch?.()
+              onProviderDispatched()
+            }
+          })
+        const promptMessageId = request.provenanceContext?.promptMessageId
+        if (!delivery?.externalOriginPromptId || !promptMessageId || !options.trackTaskContinuation)
+          return send()
+        return options.trackTaskContinuation(
+          {
+            kind: 'plan',
+            projectId: delivery.projectId,
+            sessionId: request.sessionId,
+            attemptId: delivery.commandId,
+            promptMessageId,
+            originalPromptMessageId: delivery.externalOriginPromptId
+          },
+          send
+        )
+      },
       projection: (projectId, sessionId) =>
         this.sessionPlanWorkflow.projection(projectId, sessionId)
     })
@@ -2071,11 +2090,14 @@ class AcpRuntime {
   }
 
   respondToTaskQuestion(input: TaskQuestionOwnerResponse): Promise<void> {
-    return this.questionContinuations.respondToTask(input, (request, onProviderDispatched) =>
-      this.sendDurableAppContinuation(request, {
-        promptAttemptId: input.receipt.continuationId,
-        onProviderDispatched
-      })
+    return this.questionContinuations.respondToTask(
+      input,
+      (request, promptAttemptId, onProviderDispatched) =>
+        this.sendDurableAppContinuation(request, {
+          promptAttemptId,
+          onProviderDispatched
+        }),
+      this.options.trackTaskContinuation
     )
   }
 

@@ -17,6 +17,7 @@ import {
 type AcpTaskAgentRuntime = {
   listTaskQuestions?: NonNullable<TaskAgentPort['questions']>['list']
   respondToTaskQuestion?: NonNullable<TaskAgentPort['questions']>['respond']
+  setContinuationTracker?: TaskAgentPort['setContinuationTracker']
   captureNotebookTaskIntent?(request: AcpPromptRequest): AcpPromptRequest
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
@@ -71,6 +72,9 @@ const createAcpTaskAgentPort = (
           respond: runtime.respondToTaskQuestion.bind(runtime)
         }
       }
+    : {}),
+  ...(runtime.setContinuationTracker
+    ? { setContinuationTracker: (tracker) => runtime.setContinuationTracker!(tracker) }
     : {}),
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability

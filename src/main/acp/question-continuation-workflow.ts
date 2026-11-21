@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpStateSnapshot, ElicitationResponse } from '../../shared/acp'
 import {
@@ -21,6 +22,7 @@ import type { AcpDurableContinuationContextOwner } from './durable-continuation-
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import type { TaskContinuationTracker } from '../tasks/task-runner'
 
 type QuestionContinuationDependencies = Readonly<{
   hasActiveSession: (sessionId: string) => boolean
@@ -68,6 +70,12 @@ type TaskQuestionOwnerResponse = Readonly<{
     provenance: AgentTurnProvenanceContext | undefined
   ) => void
 }>
+
+type TaskQuestionSend = (
+  request: AcpPromptRequest,
+  attemptId: string,
+  onProviderDispatched: () => void
+) => Promise<PromptResponse>
 const log = createLogger('acp')
 const errorMessage = (error: unknown): string => {
   try {
@@ -91,7 +99,8 @@ class AcpQuestionContinuationWorkflow {
   constructor(private readonly deps: QuestionContinuationDependencies) {}
   async respondToTask(
     input: TaskQuestionOwnerResponse,
-    send?: AcpAppContinuation['send']
+    send?: TaskQuestionSend,
+    trackSend?: TaskContinuationTracker
   ): Promise<void> {
     const { request, action, answers, receipt } = input
     const response = { requestId: request.requestId, action, answers }
@@ -134,7 +143,33 @@ class AcpQuestionContinuationWorkflow {
       prepared.memoryEnabled,
       prepared.referencedSessions
     )
-    if (continuation) this.scheduleTaskContinuation(continuation, input, send)
+    if (continuation) {
+      const attemptId = receipt.continuationId
+      const sendContinuation: AcpAppContinuation['send'] =
+        send && attemptId
+          ? (request, onProviderDispatched) => {
+              const dispatch = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
+                send(request, attemptId, () => {
+                  onProviderDispatched()
+                  onTrackedDispatch?.()
+                })
+              const promptMessageId = request.provenanceContext?.promptMessageId
+              if (!trackSend || !promptMessageId) return dispatch()
+              return trackSend(
+                {
+                  kind: 'question',
+                  projectId: input.projectId,
+                  sessionId: request.sessionId,
+                  attemptId,
+                  promptMessageId,
+                  originalPromptMessageId: promptMessageId
+                },
+                dispatch
+              )
+            }
+          : undefined
+      this.scheduleTaskContinuation(continuation, input, sendContinuation)
+    }
     this.deps.context.clearContextReset(request.sessionId)
     this.deps.publication.emitState()
   }

@@ -31,7 +31,9 @@ export type TaskPlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
     }
   }
 }

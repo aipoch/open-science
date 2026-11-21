@@ -147,6 +147,8 @@ const decodeRun = (value: unknown): TaskRunJournalEntry => {
   if (
     !identity.safeParse(value.id).success ||
     (value.requestId !== undefined && !identity.safeParse(value.requestId).success) ||
+    (value.continuedFromRunId !== undefined &&
+      !identity.safeParse(value.continuedFromRunId).success) ||
     !identity.safeParse(value.sessionId).success ||
     !identity.safeParse(value.projectId).success ||
     typeof value.cwd !== 'string' ||

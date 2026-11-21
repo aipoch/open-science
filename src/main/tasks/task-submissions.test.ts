@@ -34,6 +34,39 @@ const run: TaskRun = {
   preferredComputeHostIds: []
 }
 
+it('records one canonical app continuation before permitting dispatch, including after restart', async () => {
+  const path = await root()
+  const scope = {
+    kind: 'plan',
+    projectId: 'project',
+    sessionId: 'session',
+    attemptId: 'decision-1'
+  } as const
+  const startRun = vi.fn()
+  const createRun = vi.fn(async (requestId: string) => {
+    expect(await readFile(join(path, 'task-submissions.json'), 'utf8')).toContain(
+      '"status":"pending"'
+    )
+    return { ...run, requestId, id: 'continued-run' }
+  })
+  const owner = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  const admitted = await owner.admitContinuation(scope, createRun)
+  expect(admitted).toMatchObject({
+    admitted: true,
+    receipt: { status: 'accepted', runId: 'continued-run' }
+  })
+  await owner.dispose()
+
+  const restarted = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  expect(await restarted.get(admitted.receipt.requestId)).toEqual(admitted.receipt)
+  expect(await restarted.admitContinuation(scope, createRun)).toEqual({
+    admitted: false,
+    receipt: admitted.receipt
+  })
+  expect(createRun).toHaveBeenCalledOnce()
+  expect(startRun).not.toHaveBeenCalled()
+})
+
 it('persists admission before slow preparation and deduplicates across retry and restart', async () => {
   const path = await root()
   let finish!: (run: TaskRun) => void

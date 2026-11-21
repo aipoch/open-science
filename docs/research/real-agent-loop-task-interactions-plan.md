@@ -117,11 +117,14 @@ Project、Session、Run、分支、prompt 或 delegated attempt 的服务端引�
 #70 的 Plan 响应只接受以同 profile 的本机 Bearer 验证的 Task 调用。浏览器原有的人类响应入口独立保留。
 `get_run` 的 `attention.kind: interactions` 只包含待办引用，具体 Plan 内容和决定回执从 `get_interaction`
 读取。`continuation.id` 沿用 Plan Owner 的持久交付身份；它标识原对话的接续，不改写或重跑原 Task Run。
-`accepted` 只证明接续已交接。没有独立 Task Run 记录时返回 `continuation.taskRunStatus: unconfirmed`，
-不报告已新建 Run、Notebook 执行或文件交付。旧 Run 经重启中断时仍报告中断。
+Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Plan 决定上返回其查询标识与
+`taskRunStatus: tracked`。新 Run 的 `continuedFromRunId` 指向原 Run。`pending` 或 `unconfirmed`
+时重新查询同一决定；`accepted` 只证明 Plan 交付，Notebook 执行和文件交付各自核验。旧 Run 经重启中断时仍报告中断。
 回执随本地 Plan 记录保留，归档导出和 Fork 不带本机响应记录。
 
-#72 的主任务 AskUser 用 `answer_question` 对已读的唯一题目提交 `accept` 或 `decline`。每个答案包含 `fieldId` 和字面 `value`，允许跳过的字段由 `skipFieldIds` 明示，可提交 `{ fieldId, status: "skipped" }`。`known_context` 只用于用户已提供的信息；跳过或拒绝需要 `user_relay`。提交不会授予权限。运行仍在停稳时，待办提示重新查询；普通 ACP 表单直接解除原 Provider 等待。Provider 已结束的持久问题原子保存规范答案，通过既有 Question Owner 接续。若原 Run 已因重启中断，它仍保持中断；后续执行与答复回执分开查询。没有持久记录的表单在重启后失效。回执不进入 `.science` 或其 Fork。
+#72 的主任务 AskUser 用 `answer_question` 对已读的唯一题目提交 `accept` 或 `decline`。每个答案包含 `fieldId` 和字面 `value`，允许跳过的字段由 `skipFieldIds` 明示，可提交 `{ fieldId, status: "skipped" }`。`known_context` 只用于用户已提供的信息；跳过或拒绝需要 `user_relay`。提交不会授予权限。
+
+原 Run 尚未停稳时，待办提示重新查询；普通 ACP 表单直接解除原 Provider 等待。Provider 已结束的持久问题原子保存规范答案，再由既有 Question Owner 接续。接续先登记持久 `requestId` 和新 Run，随后才允许发送。用原交互查询该回执，并用 `get_run` 检查新 Run 的真实执行。若重启时答案已记录、接续仍无登记，查询返回 `unconfirmed`；重复提交已记录的回答不会再次发送。原 Run 若因重启中断，仍保持中断。只有活跃进程能回答的表单在重启后失效。本机回答回执不进入 `.science` 或其 Fork。
 
 #75 在本机 Bearer 连接上公布 `notebook-continuation` 能力。原 Run 的待办返回当前拒绝和分支；
 外部宿主得到本次明确同意后，以保留的 `requestId` 调用 `continue_notebook`。Notebook Owner 核对
