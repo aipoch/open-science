@@ -3834,6 +3834,9 @@ describe('ConversationPanel composer intake', () => {
     }
     renderPanel({ view: { activeSession }, elicitation: { requests: live ? [request] : [] } })
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="ordinary-composer-form"]')?.hasAttribute('inert')
+    ).toBe(false)
     expect(pendingWorkspaceElicitations(activeSession)).toEqual([])
   })
 

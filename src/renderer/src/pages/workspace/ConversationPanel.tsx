@@ -23,7 +23,6 @@ import {
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import {
   pendingWorkspaceElicitations,
-  isCurrentQuestionBranch,
   useWorkspaceElicitationFailures
 } from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
@@ -76,7 +75,10 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { projectSessionActionability } from '@/stores/session-actionability'
+import {
+  isCurrentQuestionBranch,
+  projectSessionActionability
+} from '@/stores/session-actionability'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -1292,7 +1294,15 @@ const ConversationPanel = ({
           : pendingCredentialRequest
             ? 'waiting-for-user'
             : undefined,
-        elicitationPending: pendingElicitation ? true : undefined,
+        elicitationPending: pendingElicitation
+          ? true
+          : sessionPendingElicitations.length &&
+              sessionPendingElicitations.every(
+                (request) =>
+                  !isCurrentQuestionBranch(activeSession, request.toolCallId, request.durable)
+              )
+            ? false
+            : undefined,
         planPending:
           pendingPlan !== undefined
             ? true

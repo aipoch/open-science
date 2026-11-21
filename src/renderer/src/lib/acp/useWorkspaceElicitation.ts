@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
+import { isCurrentQuestionBranch } from '../../stores/session-actionability'
 import { useSessionStore } from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store-contract'
 import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
@@ -21,21 +22,6 @@ import {
   reportWorkspaceElicitationFailure,
   useWorkspaceElicitationFailures
 } from './workspace-operation-error'
-
-// Legacy requests can arrive before their activity. An explicit branch owner is authoritative.
-const isCurrentQuestionBranch = (
-  session: ChatSession,
-  toolCallId: string,
-  durable: PendingElicitationRequest['durable']
-): boolean => {
-  const graph = session.conversationGraph
-  if (!graph) return true
-  const branchId = graph.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId
-  const owner =
-    durable?.provenanceContext?.messageBranchId ??
-    graph.activities.find((activity) => activity.id === toolCallId)?.messageBranchId
-  return !owner || owner === branchId
-}
 
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
@@ -191,7 +177,6 @@ const useWorkspaceElicitation = (
 export {
   createWorkspaceElicitationRuntime,
   pendingWorkspaceElicitations,
-  isCurrentQuestionBranch,
   useWorkspaceElicitation,
   useWorkspaceElicitationFailures
 }

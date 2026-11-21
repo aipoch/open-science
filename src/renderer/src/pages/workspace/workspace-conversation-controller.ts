@@ -1,3 +1,4 @@
+import { reportWorkspaceOperationError } from '@/lib/acp/workspace-operation-error'
 import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -428,7 +429,11 @@ const useWorkspaceConversationController = (
     // Main stopped using the expired credential. End the visible turn immediately instead of
     // leaving the runtime retrying a 5xx until its own timeout.
     cancelledInFlightSessionRef.current = activeSessionId
-    void runtime.cancelRun(activeSessionId).catch(() => undefined)
+    void runtime
+      .cancelRun(activeSessionId)
+      .catch((error: unknown) =>
+        reportWorkspaceOperationError(activeSessionId, errorMessage(error))
+      )
   }, [activeSessionId, cancelInFlightRun, promptInFlightSessionIds, runtime])
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
