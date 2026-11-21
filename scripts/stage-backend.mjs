@@ -11,13 +11,15 @@ import {
   isBackendRuntimeDependency,
   isElectronPackage,
   missingOptionalDependencies,
-  prismaEngineFilenames
+  prismaEngineFilenames,
+  usesPackedDesktopPdfJs
 } from './backend-dependencies.mjs'
 import { prepareBackendStage } from './build-notebook-host.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
+import { packDesktopPdfJs } from './desktop-pdfjs.mjs'
 import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
 import { bundleDesktopFilmCompiler } from './desktop-film-compiler.mjs'
 import { packWebAssets } from './pack-web-assets.mjs'
@@ -189,7 +191,10 @@ async function copyDependency(name, from, destinationParent = stage) {
         )
       }
     })
-  if (values.desktop) await inlineDesktopDependencyMaps(pkg, destination)
+  if (values.desktop) {
+    if (usesPackedDesktopPdfJs(pkg)) await packDesktopPdfJs(source, destination)
+    await inlineDesktopDependencyMaps(pkg, destination)
+  }
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
     delete pkg.scripts
