@@ -28,6 +28,7 @@
     "src/shared/specialist.test.ts",
     "src/shared/specialist.ts",
     "src/shared/task-api.ts",
+    "src/shared/task-interaction-decision-source.ts",
     "src/shared/task-interaction.ts",
     "src/shared/web-event-connection.ts",
     "src/shared/web-tools.ts",

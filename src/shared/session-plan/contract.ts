@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { TaskInteractionDecisionSource } from '../task-interaction'
+import type { TaskInteractionDecisionSource } from '../task-interaction-decision-source'
 
 function planSchemaInputType(input: unknown): string {
   if (input === undefined) return 'missing value'

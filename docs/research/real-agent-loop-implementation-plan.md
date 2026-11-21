@@ -20,10 +20,10 @@
 | 发现与准备     | SDK `doctor`、`bootstrap`、现有登录和配置流程                              | CLI/MCP 共用能力定义、Schema、默认值、Handler 和错误；分别判断适配器已注册、服务是否支持、Agent/Notebook 是否就绪。服务未启动也可读本地指南。                                                                      |
 | 资源选择与配置 | Task API 的 Project/Session Owner、Literature SDK                          | CLI/MCP 共用 Project、Session 和 Literature 能力。用返回的 ID 明确指定资源；可校验 Session 归属。配置使用扁平字段及现有版本检查。导入 Session 公开只读及来源字段，Owner 拒绝修改配置和恢复研究，无需变更持久格式。 |
 | 研究提交与恢复 | `submitRun`、`getSubmission`、`waitForSubmission` 和服务端 TaskSubmissions | 显式 `projectId`；无 `sessionId` 新建。MCP 发送前持有并传入 `requestId`；CLI 自动生成时先落恢复记录。超时只结束观察，重连或重启后查原回执。                                                                        |
-| Notebook       | 现有 runtime、memory policy 和 execution intent                            | 外层 Run 状态独立于 dispatch、执行和停止。绑定/代码审阅可按任务委托处理；停止后的继续可由外部宿主逐次转交用户决定，保留原 refusal/branch 和实时检查。                                                                                  |
+| Notebook       | 现有 runtime、memory policy 和 execution intent                            | 外层 Run 状态独立于 dispatch、执行和停止。绑定/代码审阅可按任务委托处理；停止后的继续可由外部宿主逐次转交用户决定，保留原 refusal/branch 和实时检查。                                                              |
 | Artifact       | SDK 列举与内容响应、Artifact Owner                                         | 显式区分 lineage、version 和 downloadId；MCP 与 CLI 共用无覆盖的本地交付。报告和结果表需对应当前研究；可信源端的大小与 SHA-256 匹配时才可验证交付。                                                                |
 | 包操作         | SDK export/import/fork 与既有 Package Owner                                | 复用 `.science` 格式。操作结果须与原操作关联；仅有相似快照时返回 `unconfirmed` 并停止自动重试。                                                                                                                    |
-| 敏感导出       | 服务端扫描、候选包及现有风险审阅                                      | 外部宿主可转交用户对具体候选包的决定；保留操作、摘要、目标和时效检查。任务委托不自动批准敏感导出，Task caller 不伪装 human 身份。                                                                                       |
+| 敏感导出       | 服务端扫描、候选包及现有风险审阅                                           | 外部宿主可转交用户对具体候选包的决定；保留操作、摘要、目标和时效检查。任务委托不自动批准敏感导出，Task caller 不伪装 human 身份。                                                                                  |
 
 验收分别检查 **readiness**（能否开始）、**execution**（实际执行了什么）和 **delivery**（实际交付了什么）。
 文件核验通过不能证明计算正确，使用已知数据另行核对报告和结果表。以上三层状态、统一错误和敏感确认均为一期门槛。
