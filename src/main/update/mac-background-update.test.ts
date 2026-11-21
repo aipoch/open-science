@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoUpdater } from 'electron'
 import { expect, it, vi } from 'vitest'
-import { prepareMacUpdateOnQuit, canDownloadMacUpdate } from './mac-background-update'
+import { planMacUpdateOnQuit, canDownloadMacUpdate } from './mac-background-update'
 import type { UpdateStrategy } from './strategy'
 import type { UpdateStatus } from '../../shared/update'
 
@@ -71,17 +71,22 @@ it.runIf(process.platform === 'darwin' || process.platform === 'linux')(
       const occupied = vi.fn(async () => {
         throw new Error('occupied')
       })
-      const prepare = (inspect = async (): Promise<void> => {}): Promise<boolean> =>
-        prepareMacUpdateOnQuit(strategy, native as unknown as AutoUpdater, dir, dir, inspect)
+      const prepare = (
+        inspect = async (): Promise<void> => {}
+      ): ReturnType<typeof planMacUpdateOnQuit> =>
+        planMacUpdateOnQuit(strategy, native as unknown as AutoUpdater, dir, dir, inspect)
       expect(await prepare()).toBe(false)
       expect(native.checkForUpdates).not.toHaveBeenCalled()
       status.automaticDownloads = true
       await expect(prepare(occupied)).rejects.toThrow('occupied')
       expect(native.checkForUpdates).not.toHaveBeenCalled()
-      const staged = prepare()
+      const plan = await prepare()
+      if (!plan) throw new Error('Expected an admitted update')
+      expect(native.checkForUpdates).not.toHaveBeenCalled()
+      const staged = plan()
       await vi.waitFor(() => expect(native.checkForUpdates).toHaveBeenCalledOnce())
       native.emit('update-downloaded')
-      expect(await staged).toBe(true)
+      await staged
       expect(native.listenerCount('error')).toBe(0)
       await writeFile(archive, 'changed')
       await expect(prepare()).rejects.toThrow('checksum')

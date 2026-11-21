@@ -2210,6 +2210,28 @@ it('bounds an ordinary exit handoff already in flight when system shutdown arriv
   expect(h.quit).toHaveBeenCalledOnce()
 })
 
+it('gives an admitted native update its own budget and still yields to system shutdown', async () => {
+  vi.useFakeTimers()
+  try {
+    const run = vi.fn(() => new Promise<void>(() => {}))
+    const h = setup({
+      beforeExit: async () => ({ run, timeoutMs: 60_000 }),
+      systemShutdownTimeoutMs: 20
+    })
+    replayQuitSynchronously(h)
+    h.closeOpts[0].requestQuit(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect(h.app.exit).not.toHaveBeenCalled()
+    h.onSystemShutdown()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(h.app.exit).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('refreshes authoritative work before preparing system shutdown', async () => {
   const refreshQuitState = vi.fn(async () => true)
   const prepareForQuit = vi.fn(async () => {

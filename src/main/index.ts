@@ -91,8 +91,12 @@ import { UpdateLifecycleError } from '../shared/update'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
-import { canDownloadMacUpdate, prepareMacUpdateOnQuit } from './update/mac-background-update'
-import { macQuitHandoff } from './update/mac-quit-handoff'
+import {
+  canDownloadMacUpdate,
+  MAC_NATIVE_PREPARATION_TIMEOUT_MS,
+  planMacUpdateOnQuit
+} from './update/mac-background-update'
+import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
@@ -263,32 +267,6 @@ async function startDesktop(): Promise<void> {
   })
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
   browserImports.receiveArgv(process.argv)
-  if (
-    process.platform === 'darwin' &&
-    app.isPackaged &&
-    !headless &&
-    (await macQuitHandoff('reopen', app.getVersion(), [], async () => {
-      // LaunchServices delivers cold open-file/open-url events before Electron is ready.
-      await app.whenReady()
-      return {
-        args: process.argv
-          .slice(1)
-          .filter(
-            (arg) =>
-              !/^open-science:/i.test(arg) && !packageFiles.pendingPaths.includes(resolve(arg))
-          ),
-        urls: [
-          ...new Set([
-            ...packageFiles.pendingPaths.map((path) => pathToFileURL(path).href),
-            ...browserImports.pendingUrls
-          ])
-        ]
-      }
-    }))
-  ) {
-    app.exit(0)
-    return
-  }
   const initialBackendPaths = desktopBackendPaths({
     applicationPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
@@ -485,6 +463,31 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  if (
+    process.platform === 'darwin' &&
+    app.isPackaged &&
+    !headless &&
+    !startupQuitRequested &&
+    (await macQuitHandoff('reopen', app.getVersion(), [], async () => {
+      return {
+        args: process.argv
+          .slice(1)
+          .filter(
+            (arg) =>
+              !/^open-science:/i.test(arg) && !packageFiles.pendingPaths.includes(resolve(arg))
+          ),
+        urls: [
+          ...new Set([
+            ...packageFiles.pendingPaths.map((path) => pathToFileURL(path).href),
+            ...browserImports.pendingUrls
+          ])
+        ]
+      }
+    }))
+  ) {
+    app.exit(0)
+    return
+  }
   if (!ensureWindowsProtocolRegistration(app))
     bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
@@ -2133,29 +2136,29 @@ async function startDesktop(): Promise<void> {
         !updateCommitted &&
         !work?.preserveService
       ) {
-        const prepared = await prepareMacUpdateOnQuit(
-          update,
-          nativeUpdater,
-          macBundle,
-          macCache,
-          () =>
-            inspectInstallationAvailability(
-              {
-                installationRoot: installationRootForEntry(backendPaths.entry),
-                allowedProcessIds: allowedInstallationProcessIds
-              },
-              AbortSignal.timeout(10_000)
-            )
+        const stage = await planMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
+          inspectInstallationAvailability(
+            {
+              installationRoot: installationRootForEntry(backendPaths.entry),
+              allowedProcessIds: allowedInstallationProcessIds
+            },
+            AbortSignal.timeout(10_000)
+          )
         )
-        if (
-          prepared &&
-          !(await macQuitHandoff('watch', app.getVersion(), [
-            macCache,
-            update.getStatus().latest ?? ''
-          ]))
-        )
-          bootstrapLog.warn('macOS update handoff observer unavailable')
+        if (stage) {
+          const targetVersion = update.getStatus().latest
+          if (!targetVersion) return undefined
+          return {
+            timeoutMs: MAC_NATIVE_PREPARATION_TIMEOUT_MS + MAC_HANDOFF_ACK_TIMEOUT_MS,
+            run: async () => {
+              await stage()
+              if (!(await macQuitHandoff('watch', app.getVersion(), [macCache, targetVersion])))
+                bootstrapLog.warn('macOS update handoff observer unavailable')
+            }
+          }
+        }
       }
+      return undefined
     }
   })
   // Install the normal lifecycle and its first window before closing the startup gate.
