@@ -19,7 +19,7 @@ execFileSync(npm, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
 const patchDirectory = resolve(runtimeRoot, '.open-science-patches')
 mkdirSync(patchDirectory, { recursive: true })
 copyFileSync(
-  resolve(root, 'patches/@agentclientprotocol+claude-agent-acp+0.70.0.patch'),
+  resolve(runtimeRoot, '@agentclientprotocol+claude-agent-acp+0.70.0.patch'),
   resolve(patchDirectory, '@agentclientprotocol+claude-agent-acp+0.70.0.patch')
 )
 try {

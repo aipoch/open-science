@@ -354,7 +354,7 @@ describe('desktop-only dependency contents', () => {
         'scripts/desktop-dependency-chains.mjs',
         'scripts/sync-file-evidence-codec.mjs',
         'src/main/artifacts/file-evidence-codec.mjs',
-        'patches/@agentclientprotocol+claude-agent-acp+0.70.0.patch'
+        'resources/claude-acp/@agentclientprotocol+claude-agent-acp+0.70.0.patch'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
