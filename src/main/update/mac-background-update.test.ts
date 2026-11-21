@@ -40,7 +40,7 @@ it.runIf(process.platform === 'darwin')(
   }
 )
 
-it.runIf(process.platform === 'darwin')(
+it.runIf(process.platform === 'darwin' || process.platform === 'linux')(
   'only stages an intact, admitted local ZIP and waits for native readiness',
   async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mac-quit-update-'))

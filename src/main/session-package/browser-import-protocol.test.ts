@@ -42,6 +42,7 @@ it('keeps bounded cold-launch requests and forwards warm launches without treati
   expect(relay.receive('/tmp/local.science')).toBe(false)
   expect(relay.receive(url)).toBe(true)
   relay.receive(url)
+  expect(relay.pendingUrls).toEqual([url])
   relay.bind((request) => {
     delivered.push(request)
   })

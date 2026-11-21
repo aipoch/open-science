@@ -1,8 +1,10 @@
 {
   "ownerPaths": [
+    "build/mac-open-after-update.m",
     "build/mac-quit-handoff.cjs",
     "build/mac-update-network.c",
     "src/main/update/mac-background-update.test.ts",
+    "src/main/update/mac-quit-handoff.test.ts",
     "src/main/update/windows-desktop-version.test.ts",
     "src/main/update/windows-desktop-version.ts",
     "src/main/update/download-preference.ts",
@@ -95,6 +97,7 @@
   "testFiles": {
     "owner": [
       "src/main/update/mac-background-update.test.ts",
+      "src/main/update/mac-quit-handoff.test.ts",
       "src/main/update/windows-desktop-version.test.ts",
       "src/main/update/windows-recovery-identity.integration.test.ts",
       "src/main/update/windows-signature-verification.test.ts",

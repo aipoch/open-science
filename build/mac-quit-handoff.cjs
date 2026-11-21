@@ -44,7 +44,8 @@ async function clearStaleSocket() {
 }
 
 async function watch() {
-  const [cache] = args
+  const [cache, targetVersion] = args
+  if (!targetVersion) return
   const nativeCache = join(await fs.realpath(cache), label)
   if ((await fs.realpath(nativeCache)) !== nativeCache) return
   const receiptPath = join(nativeCache, 'ShipItState.plist')
@@ -78,7 +79,7 @@ async function watch() {
     peer.once('data', (message) => {
       if (!accepting || message.toString() !== 'reopen\n') return peer.destroy()
       firstOpen ??= performance.now()
-      peer.write('waiting\n')
+      peer.write(JSON.stringify({ targetVersion }) + '\n')
     })
   })
   await clearStaleSocket()
@@ -144,17 +145,43 @@ async function watch() {
 
 async function reopen() {
   const originalExecutable = await fs.stat(executable)
+  let sender
+  let senderDone
+  let targetVersion
+  let request
   const peer = createConnection(socketPath)
   peer.on('connect', () => peer.write('reopen\n'))
   let armed = false
   let refused = false
   const timer = setTimeout(() => peer.destroy(), 1500)
   peer.once('data', (message) => {
-    if (message.toString() !== 'waiting\n') return peer.destroy()
-    clearTimeout(timer)
-    armed = true
-    process.send('armed')
-    peer.setTimeout(reopenWaitMs + 5_000, () => peer.destroy())
+    try {
+      targetVersion = JSON.parse(message.toString()).targetVersion
+    } catch {
+      return peer.destroy()
+    }
+    if (typeof targetVersion !== 'string' || !targetVersion) return peer.destroy()
+    // Load the native sender while A is still installed. B may predate this helper.
+    sender = spawn(join(bundle, 'Contents/MacOS/mac-open-after-update'), [], {
+      stdio: ['pipe', 'ignore', 'ignore']
+    })
+    sender.stdin.on('error', () => peer.destroy())
+    senderDone = new Promise((resolve) => {
+      sender.once('error', () => {
+        peer.destroy()
+        resolve(false)
+      })
+      sender.once('exit', (code) => resolve(code === 0))
+    })
+    sender.once('spawn', () => {
+      clearTimeout(timer)
+      process.on('message', (message) => {
+        request = message
+      })
+      armed = true
+      process.send('armed')
+      peer.setTimeout(reopenWaitMs + 5_000, () => peer.destroy())
+    })
   })
   await new Promise((resolve) => {
     peer.on('error', (error) => {
@@ -165,14 +192,19 @@ async function reopen() {
   })
   clearTimeout(timer)
   if (!armed) {
+    sender?.stdin.end()
     if (refused) await clearStaleSocket()
     return
   }
   // The initiating Electron PID must really have exited. Never launch an app that the user has
   // moved away or replaced with an unrelated bundle while ShipIt was working.
   for (let i = 0; i < 40 && alive(Number(parentPid)); i++) await delay(50)
-  if (alive(Number(parentPid))) return
-  if (!(await sameFile(executable, originalExecutable)))
+  if (alive(Number(parentPid)) || !request) {
+    sender.stdin.end()
+    return
+  }
+  const replaced = !(await sameFile(executable, originalExecutable))
+  if (replaced)
     await run(
       '/usr/bin/codesign',
       [
@@ -182,9 +214,23 @@ async function reopen() {
       ],
       { timeout: 15_000 }
     )
-  spawn(executable, args, { detached: true, stdio: 'ignore' }).unref()
+  const installed =
+    replaced &&
+    (
+      await run(
+        '/usr/bin/plutil',
+        ['-extract', 'CFBundleShortVersionString', 'raw', join(bundle, 'Contents/Info.plist')],
+        { timeout: 3000 }
+      )
+    ).stdout.trim() === targetVersion
+  // A failed replacement must never deliver a document or browser transfer to the old version.
+  sender.stdin.end(
+    JSON.stringify({ bundle, args: request.args, urls: installed ? request.urls : [] })
+  )
+  if (!(await senderDone)) process.exitCode = 1
 }
 
 ;(mode === 'watch' ? watch() : reopen()).catch(() => {
-  process.exitCode = 1
+  // Close the native sender's pipe on a verification error as well.
+  process.exit(1)
 })
