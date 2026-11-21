@@ -1,3 +1,4 @@
+import { basename } from 'node:path'
 import { app, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
@@ -452,11 +453,19 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         downloaded?.files?.filter((file) =>
           file.url?.split('?')[0].toLowerCase().endsWith(`.${extension}`)
         ) ?? []
+      const selected =
+        candidates.length === 1
+          ? candidates[0]
+          : candidates.find(
+              (file) =>
+                file.url?.split('?')[0].split('/').pop() ===
+                basename(downloaded?.downloadedFile ?? '')
+            )
       const readyStatus: UpdateStatus = {
         ...this.status,
         state: 'ready',
         progress: 100,
-        artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
+        artifactSha512: selected?.sha512,
         localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
       }
       delete readyStatus.installerMissing

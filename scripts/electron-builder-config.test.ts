@@ -501,6 +501,7 @@ describe('electron-builder native image processing', () => {
       to: 'notebook-network-sandbox/wsl2/manifest.json'
     })
     expect(config.mac?.extraResources).toEqual([
+      { from: 'build/mac-quit-handoff.cjs', to: 'mac-quit-handoff.cjs' },
       { from: 'out/desktop-service-launcher', to: 'backend/desktop-service-launcher' }
     ])
     expect(config.linux?.extraResources).toEqual([

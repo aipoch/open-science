@@ -1183,6 +1183,32 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
+  it('dismisses an interrupted macOS open in the workspace and clears its launch marker', async () => {
+    const originalUrl = window.location.href
+    const { jsdom } = globalThis as unknown as {
+      jsdom: { reconfigure: (options: { url: string }) => void }
+    }
+    try {
+      jsdom.reconfigure({ url: 'file:///app/index.html#update-open-interrupted' })
+      window.api.platform = 'darwin'
+      mocks.settings.isLoaded = true
+      await render()
+      const notice = Array.from(container.querySelectorAll('[role="status"]')).find((node) =>
+        node.textContent?.includes('View updates')
+      )
+      expect(notice?.closest('[data-action-toast-stack]')).toBeTruthy()
+      expect(mocks.update.isDialogOpen).toBe(false)
+      await act(async () =>
+        notice!.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!.click()
+      )
+      expect(notice!.isConnected).toBe(false)
+      expect(window.location.hash).toBe('')
+      expect(mocks.settings.openSettingsToPanel).not.toHaveBeenCalled()
+    } finally {
+      jsdom.reconfigure({ url: originalUrl })
+    }
+  })
+
   it('loads the update owner on first activation and retains it for its close lifecycle', async () => {
     mocks.settings.isLoaded = true
     await render()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ActionToast } from '@/components/ActionToast'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateStatus } from '../../../shared/update'
 
@@ -44,5 +45,33 @@ const RuntimeUpdateCompletedNotice = ({
         onDismiss={() => setDismissed(true)}
       />
     </div>
+  )
+}
+
+export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [visible, setVisible] = useState(
+    () =>
+      window.api?.platform === 'darwin' &&
+      window.location.protocol === 'file:' &&
+      window.location.hash === '#update-open-interrupted'
+  )
+  if (!visible) return null
+  const dismiss = (): void => {
+    window.location.replace('#')
+    setVisible(false)
+  }
+  return (
+    <ActionToast
+      className="[&>span]:whitespace-normal"
+      title={t('The update did not finish. Reopen your file or link after updating.')}
+      actionLabel={t('View updates')}
+      onAction={() => {
+        dismiss()
+        useSettingsStore.getState().openSettingsToPanel('general')
+      }}
+      dismissLabel={t('Dismiss')}
+      onDismiss={dismiss}
+    />
   )
 }

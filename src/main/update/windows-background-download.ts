@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { lstatSync, unlinkSync, writeFileSync } from 'node:fs'
+import { profileDownloadPreference } from './download-preference'
 import { statfs } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import type { DownloadPreference } from './strategy'
@@ -9,35 +9,10 @@ import { stageWindowsDesktopVersion } from './windows-desktop-version'
 
 const execFileAsync = promisify(execFile)
 
-// A missing opt-out marker is the same default for existing and freshly created profiles.
-// Failure to read the profile never authorizes a background transfer.
 export function windowsDownloadPreference(profile: string): DownloadPreference {
-  const marker = join(profile, 'disable-background-update-downloads')
-  let enabled = false
-  try {
-    lstatSync(marker)
-  } catch (error) {
-    enabled = (error as NodeJS.ErrnoException).code === 'ENOENT'
-  }
-  return {
-    stageForNextLaunch: stageWindowsDesktopVersion,
-    get enabled() {
-      return enabled
-    },
-    setEnabled(next: boolean) {
-      if (enabled === next) return
-      if (next) {
-        try {
-          unlinkSync(marker)
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        }
-      } else {
-        writeFileSync(marker, '', { flag: 'wx' })
-      }
-      enabled = next
-    }
-  }
+  return Object.assign(profileDownloadPreference(profile), {
+    stageForNextLaunch: stageWindowsDesktopVersion
+  })
 }
 
 // Use the OS Internet profile and NSIS registration. Interface type (including Wi-Fi) alone

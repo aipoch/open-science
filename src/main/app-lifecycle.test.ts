@@ -478,7 +478,7 @@ describe('installAppLifecycle', () => {
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
-    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledWith(true)
     expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
       app.exit.mock.invocationCallOrder[0]
     )
@@ -2208,6 +2208,28 @@ it('bounds an ordinary exit handoff already in flight when system shutdown arriv
   h.onSystemShutdown()
   await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
   expect(h.quit).toHaveBeenCalledOnce()
+})
+
+it('gives an admitted native update its own budget and still yields to system shutdown', async () => {
+  vi.useFakeTimers()
+  try {
+    const run = vi.fn(() => new Promise<void>(() => {}))
+    const h = setup({
+      beforeExit: async () => ({ run, timeoutMs: 60_000 }),
+      systemShutdownTimeoutMs: 20
+    })
+    replayQuitSynchronously(h)
+    h.closeOpts[0].requestQuit(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect(h.app.exit).not.toHaveBeenCalled()
+    h.onSystemShutdown()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(h.app.exit).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('refreshes authoritative work before preparing system shutdown', async () => {

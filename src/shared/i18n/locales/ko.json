@@ -231,6 +231,8 @@
     "Wait for the application handoff to finish before transferring research.": "연구 데이터를 전송하기 전에 애플리케이션 인계가 완료될 때까지 기다려 주세요."
   },
   "renderer": {
+    "The update did not finish. Reopen your file or link after updating.": "업데이트가 완료되지 않았습니다. 업데이트 후 파일이나 링크를 다시 여세요.",
+    "View updates": "업데이트 보기",
     "Could not confirm that all subagents stopped.": "모든 서브에이전트가 중지되었는지 확인할 수 없습니다.",
     "Could not confirm that the run stopped.": "실행이 중지되었는지 확인할 수 없습니다.",
     "Could not confirm that your response was submitted.": "응답이 제출되었는지 확인할 수 없습니다.",
