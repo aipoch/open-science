@@ -21,6 +21,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: node scripts/ci/npm-ci.mjs
+      - name: Stage pinned notebook runtime
+        run: |
+          case "$(uname -m)" in
+            aarch64) subdir=linux-aarch64; arch=arm64 ;;
+            x86_64) subdir=linux-64; arch=x64 ;;
+            *) exit 1 ;;
+          esac
+          node scripts/fetch-micromamba.mjs "$subdir" "resources/bin/linux/$arch/micromamba"
       - name: Build isolated test version
         env:
           NODE_OPTIONS: --max-old-space-size=8192
@@ -41,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install --yes libfuse2t64 gnome-keyring dbus-user-session
+          sudo apt-get install --yes libfuse2t64 gnome-keyring dbus-user-session desktop-file-utils shared-mime-info libsecret-tools
           export QA_REPO="$PWD"
           dir="$RUNNER_TEMP/release"
           mkdir -p "$dir"

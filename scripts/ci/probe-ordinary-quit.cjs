@@ -19,7 +19,12 @@ async function main(){
  console.log('starting',image)
  const desk=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:45000})
  desk.process().stderr.on('data',b=>{const s=b.toString();if(/fail|error|quit|occup/i.test(s))console.log('desktop',s.slice(-800))})
- await desk.evaluate(({dialog})=>{dialog.showErrorBox=(title,message)=>console.error("QA startup error",title,message)})
+ desk.on('console',m=>{if(m.type()==='error')console.log('main error',m.text())})
+ await desk.evaluate(({dialog})=>{
+   dialog.showErrorBox=(title,message)=>console.error('QA startup error',title,message)
+   const show=dialog.showMessageBox.bind(dialog)
+   dialog.showMessageBox=(...args)=>{const opts=args.at(-1);console.error('QA dialog',opts.title,opts.message,opts.detail);return show(...args)}
+ })
  const page=await desk.firstWindow()
  await page.waitForFunction(async()=>{try{return !!(await window.api.update.getStatus()).current}catch{return false}},{},{timeout:90000})
  await page.evaluate(()=>window.api.settings.markOnboardingComplete())
