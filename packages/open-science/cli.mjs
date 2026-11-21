@@ -1471,14 +1471,12 @@ const emitRunEvent = (event, options, deps) => {
     if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
     const notice = {
-      notebook_code_review_required:
-        'Notebook code review is pending. Review it in the original Session in Open-Science.',
+      notebook_code_review_required: 'Notebook code review is pending.',
       notebook_runtime_review_required:
-        'Notebook environment approval is pending. This does not mean the environment is missing. Respond to Confirm Notebook kernel and environment in the original Session in Open-Science.'
+        'Notebook environment approval is pending. This does not mean the environment is missing.'
     }[event.data?.reasonCode]
     deps.warn(
-      notice ??
-        'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
+      `${notice ?? 'Run is waiting for approval.'} Use list_interactions with this Run ID to review the request.`
     )
   } else if (
     event.type === 'run.event' &&

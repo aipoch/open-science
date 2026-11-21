@@ -1790,7 +1790,7 @@ describe('task CLI', () => {
     expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(30_000)
     expect(warn.mock.calls.map(([message]) => message)).toEqual([
       'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.',
-      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
+      'Run is waiting for approval. Use list_interactions with this Run ID to review the request.'
     ])
   })
 
