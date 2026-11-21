@@ -851,7 +851,8 @@ const waitForState = async (
   configRoot,
   deps = DEFAULT_DEPS,
   timeoutMs = START_TIMEOUT_MS,
-  signal
+  signal,
+  port
 ) => {
   const deadline = deps.now() + timeoutMs
   while (deps.now() < deadline && !signal?.aborted) {
@@ -859,7 +860,7 @@ const waitForState = async (
     if (signal?.aborted) return undefined
     if (await healthCheck(state, deps)) return state
     if (deps.requestExistingRuntimeWeb)
-      await deps.requestExistingRuntimeWeb({ configRoot }, deps.fetch)
+      await deps.requestExistingRuntimeWeb({ configRoot, port }, deps.fetch)
     if (signal?.aborted) return undefined
     await deps.sleep(250)
   }
@@ -872,7 +873,8 @@ export const waitForStartup = async (
   configRoot,
   child,
   deps = DEFAULT_DEPS,
-  timeoutMs = START_TIMEOUT_MS
+  timeoutMs = START_TIMEOUT_MS,
+  port
 ) => {
   const abortController = new AbortController()
   let cleanup = () => {}
@@ -894,8 +896,8 @@ export const waitForStartup = async (
       child.off('error', onError)
     }
   })
-  const healthy = waitForState(configRoot, deps, timeoutMs, abortController.signal).then((state) =>
-    state ? { kind: 'ready', state } : { kind: 'timeout' }
+  const healthy = waitForState(configRoot, deps, timeoutMs, abortController.signal, port).then(
+    (state) => (state ? { kind: 'ready', state } : { kind: 'timeout' })
   )
   try {
     return await Promise.race([healthy, childFailure])
@@ -1090,7 +1092,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       env: childEnv
     })
     launcherPid = child.pid
-    const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs)
+    const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs, options.port)
     child.unref()
     capture.input.destroy()
     capture.control.destroy()
@@ -2561,9 +2563,10 @@ export const runCli = async (argv = process.argv.slice(2)) => {
       configRoot: options.configRoot,
       version,
       startService: async (signal) => {
-        // stdout belongs to the MCP transport. The persistent service has its own startup log.
+        // Let the kernel bind a free loopback port for a new MCP service. Reuse still uses the
+        // authenticated profile's existing endpoint. stdout is reserved for MCP messages.
         const { state } = await startCommand(
-          { configRoot: options.configRoot, open: false, signal },
+          { configRoot: options.configRoot, open: false, port: 0, signal },
           {
             ...DEFAULT_DEPS,
             log: () => {},

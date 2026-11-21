@@ -1242,9 +1242,12 @@ Use the absolute CLI path if the client cannot find the installed command.
 `~/.open-science-project` (development) before `~/.open-science` (production).
 For a source checkout, use `node` as the command and put the absolute path to
 `packages/open-science/cli.mjs` before `mcp` in `args`. When a client initializes the MCP connection, the adapter starts or reuses the
-standalone service with the same persistent lifetime as `start --no-open`. Discovery and the local
-guide are available during startup. Business calls wait for startup; `doctor` and the optional
-discovery probe report the current state without waiting for startup.
+standalone service with the same persistent lifetime as `start --no-open`. A new service started
+by MCP uses an OS-assigned local port. Existing services for the selected profile keep their port;
+the `start` command retains its own port options and default. Discovery and the local guide are
+available during startup. MCP `doctor`, `get_setup_status`, and calls that need startup observe the
+same startup attempt. The optional discovery probe checks only the service already available at
+that moment. CLI `doctor` and `tools call get_setup_status` still check the existing service only.
 Listing projects works before model setup. A later desktop launch can attach to a compatible
 backend. Closing the MCP connection leaves the service running; use `open-science stop` to
 release the persistent hold. `open-science mcp --help` only prints help.

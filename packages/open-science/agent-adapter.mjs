@@ -709,7 +709,6 @@ const setupStatus = {
   serviceCapability: 'doctor',
   checkSupport: async (client, signal) =>
     typeof (await client.doctor({ signal }))?.ready === 'boolean',
-  probeOnly: true,
   handler: doctor
 }
 

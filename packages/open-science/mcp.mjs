@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { addAbortListener } from 'node:events'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -86,13 +87,18 @@ export const runResearchMcpServer = async ({ configRoot, version, startService }
     probe: connectToOpenScience,
     connect: async ({ signal }) => {
       const attempt = serviceRoot()
+      const cancelled = Promise.withResolvers()
+      const listener = addAbortListener(signal, () => cancelled.reject(signal.reason))
       let runningRoot
       try {
-        runningRoot = await attempt
+        runningRoot = await Promise.race([attempt, cancelled.promise])
       } catch {
+        signal.throwIfAborted()
         // A later call may retry startup. No business operation has been submitted yet.
         if (startup === attempt) startup = undefined
         throw new OpenScienceApiError('Could not confirm startup.', { code: 'startup_unconfirmed' })
+      } finally {
+        listener[Symbol.dispose]()
       }
       signal.throwIfAborted()
       return connectToOpenScience({ configRoot: runningRoot, signal })

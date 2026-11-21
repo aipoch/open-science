@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import {
+  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -39,10 +40,14 @@ const runCli = (
   return promise
 }
 
-async function connectMcp(profile: string, env?: Record<string, string>): Promise<Client> {
+async function connectMcp(
+  profile: string,
+  env?: Record<string, string>,
+  entry = cli
+): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [cli, 'mcp', '--profile', profile],
+    args: [entry, 'mcp', '--profile', profile],
     stderr: 'pipe',
     env
   })
@@ -1317,7 +1322,11 @@ it('shares Literature search defaults and reports unsupported services without f
 it('discovers the same local guide and capability schemas without a running service', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-offline-'))
   cleanup.push(() => rm(profile, { recursive: true, force: true }))
-  const client = await connectMcp(profile)
+  const unavailableInstallation = join(profile, 'blocked-installation-state')
+  await writeFile(unavailableInstallation, '')
+  const client = await connectMcp(profile, {
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: unavailableInstallation
+  })
 
   const { stdout } = await runCli(['tools', 'list', 'setup', '--profile', profile, '--json'])
   const listed = await client.callTool({
@@ -1395,7 +1404,13 @@ it('discovers the same local guide and capability schemas without a running serv
   expect(unavailable.isError).toBe(true)
   const missing = await cliError(['doctor', '--profile', profile, '--json'])
   expect(missing.exitCode).toBe(3)
-  expect(unavailable.structuredContent).toEqual({ error: missing.error })
+  expect(unavailable.structuredContent).toMatchObject({
+    error: {
+      code: 'startup_unconfirmed',
+      next: [{ executable: 'open-science', argv: ['status', '--json', '--profile', profile] }]
+    }
+  })
+  expect(JSON.stringify(unavailable)).not.toContain(unavailableInstallation)
   expect(missing.error).toMatchObject({
     code: 'daemon_unavailable',
     requiresUser: true,
@@ -1404,6 +1419,118 @@ it('discovers the same local guide and capability schemas without a running serv
     next: [{ executable: 'open-science', argv: ['start', '--no-open', '--profile', profile] }]
   })
 })
+
+it('checks a fresh MCP profile after its own startup with another local service holding the configured port', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'osci-mcp-fresh-profile-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const install = join(root, 'install')
+  const backend = join(install, 'out/backend')
+  const profile = join(root, 'profile')
+  await mkdir(backend, { recursive: true })
+  const sources = resolve('packages/open-science')
+  await Promise.all(
+    (await readdir(sources))
+      .filter((file) => file.endsWith('.mjs') || file.endsWith('.cjs') || file === 'package.json')
+      .map((file) => cp(join(sources, file), join(install, file)))
+  )
+  await symlink(
+    resolve('node_modules'),
+    join(install, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+  let foreignRequests = 0
+  const foreign = createServer((_request, response) => {
+    foreignRequests++
+    response.writeHead(418).end()
+  })
+  foreign.listen(0, '127.0.0.1')
+  await once(foreign, 'listening')
+  cleanup.push(async () => {
+    foreign.closeAllConnections()
+    await new Promise<void>((done) => foreign.close(() => done()))
+  })
+  await writeFile(
+    join(backend, 'index.cjs'),
+    `
+const fs = require('node:fs')
+const http = require('node:http')
+const path = require('node:path')
+const profile = process.env.OPEN_SCIENCE_CONFIG_ROOT
+const port = Number(process.argv.find((arg) => arg.startsWith('--serve=')).split('=')[1])
+const token = 'fresh-profile-fixture-token'
+fs.writeFileSync(path.join(profile, 'fixture.pid'), String(process.pid))
+const server = http.createServer((req, res) => {
+  if (req.headers.authorization !== 'Bearer ' + token) return res.writeHead(401).end()
+  res.setHeader('content-type', 'application/json')
+  if (req.url === '/api/bootstrap') return res.end(JSON.stringify({ taskCapabilities: ['doctor'] }))
+  if (req.url === '/api/v1/doctor') {
+    fs.appendFileSync(path.join(profile, 'doctor-requests'), '.')
+    return res.end(JSON.stringify({ data: { ready: true, checks: {} } }))
+  }
+  return res.writeHead(404).end()
+})
+server.listen(port, '127.0.0.1', () => {
+  const check = setInterval(() => {
+    if (!fs.existsSync(path.join(profile, 'publish-fixture'))) return
+    clearInterval(check)
+    fs.writeFileSync(path.join(profile, 'web-token'), token)
+    fs.writeFileSync(path.join(profile, 'web-service.json'), JSON.stringify({
+      pid: process.pid, port: server.address().port, startedAt: new Date().toISOString()
+    }))
+  }, 20)
+})
+`
+  )
+  const occupiedPort = (foreign.address() as { port: number }).port
+  const env = {
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'registration'),
+    OPEN_SCIENCE_WEB_PORT: String(occupiedPort)
+  }
+  cleanup.push(async () => {
+    try {
+      process.kill(Number(await readFile(join(profile, 'fixture.pid'), 'utf8')))
+    } catch (error) {
+      if (!['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    }
+  })
+  const entry = join(install, 'cli.mjs')
+  const client = await connectMcp(profile, env, entry)
+  await expect.poll(() => readFile(join(profile, 'fixture.pid'), 'utf8')).toMatch(/^\d+$/)
+
+  const doctor = client.callTool({ name: 'doctor' })
+  const setup = client.callTool({ name: 'get_setup_status', arguments: { language: 'r' } })
+  const observation = new AbortController()
+  const cancelled = expect(
+    client.callTool({ name: 'doctor' }, undefined, { signal: observation.signal })
+  ).rejects.toThrow()
+  const discovery = await client.callTool({
+    name: 'list_capabilities',
+    arguments: { group: 'setup', checkService: true }
+  })
+  expect(discovery.structuredContent).toMatchObject({
+    result: { service: { status: 'unavailable' } }
+  })
+  observation.abort()
+  await cancelled
+  await writeFile(join(profile, 'publish-fixture'), '')
+  for (const result of await Promise.all([doctor, setup])) {
+    expect(result.structuredContent).toMatchObject({
+      result: { profile, readiness: { service: 'ready' } }
+    })
+  }
+  const statePath = join(profile, 'web-service.json')
+  const original = JSON.parse(await readFile(statePath, 'utf8'))
+  expect(original.port).not.toBe(occupiedPort)
+  expect(await readFile(join(profile, 'doctor-requests'), 'utf8')).toBe('..')
+  expect(foreignRequests).toBe(0)
+
+  const reconnected = await connectMcp(profile, env, entry)
+  expect((await reconnected.callTool({ name: 'doctor' })).structuredContent).toEqual(
+    (await doctor).structuredContent
+  )
+  expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual(original)
+  expect((await readdir(profile)).filter((file) => file.startsWith('cli-daemon-'))).toHaveLength(1)
+}, 15_000)
 
 it('uses the authenticated service for doctor and maps invalid or unsupported calls without exposing secrets', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-doctor-'))
