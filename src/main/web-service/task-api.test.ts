@@ -2257,8 +2257,11 @@ describe('HeadlessTaskApi adapter', () => {
           promptMessageId,
           title: 'Read study table',
           status: 'pending',
-          kind: 'read',
-          startedAt: 2
+          kind: 'tool',
+          eventIds: [],
+          sortIndex: 0,
+          createdAt: 2,
+          updatedAt: 2
         }
       ],
       runtimeContext: {

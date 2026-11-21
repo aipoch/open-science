@@ -3481,6 +3481,114 @@ const RESTORED_CONTINUATION_FRAMEWORKS = [
 ] as const
 
 describe('ACP runtime restored permission continuation', () => {
+  it('tracks a restored Task permission before resuming the original provider turn', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-session'])
+    const admitted = vi.fn()
+    const dispatched = vi.fn()
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'restored-session',
+      requestId: 'permission-restored',
+      optionId: 'once'
+    }
+    let context: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: 'a'.repeat(64),
+        createdAt: 2,
+        request: {
+          requestId: request.requestId,
+          sessionId: request.sessionId,
+          toolCallId: 'read-table',
+          title: 'Read study table',
+          isMcp: true,
+          mcpIdentity: 'science/read_table',
+          options: [{ optionId: 'once', name: 'Once', kind: 'allow_once' }]
+        }
+      }
+    }
+    const session = (): PersistedChatSession =>
+      materializeSessionConversationGraph({
+        ...createRestoredContinuationSession(),
+        runtimeContext: context,
+        activities: [
+          {
+            id: 'read-table',
+            promptMessageId: 'prompt-1',
+            title: 'Read study table',
+            status: 'pending',
+            kind: 'tool',
+            eventIds: [],
+            sortIndex: 0,
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
+      })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework: claudeCodeFramework,
+      spawnAgent: () => asAgentProcess(process),
+      trackTaskContinuation: (identity, send) => {
+        admitted(identity)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return send(dispatched)
+      },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: async () => structuredClone(context),
+          patchSessionRuntimeContext: async (command) => {
+            command.beforePersist?.(session())
+            context = { ...context, ...command.patch, revision: context.revision + 1 }
+            return structuredClone(context)
+          },
+          containsMessageOnActiveBranch: async () => true,
+          loadSessionForContinuation: async () => session()
+        }
+      }
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace', projectId: request.projectId })
+      const decision = {
+        promptMessageId: 'prompt-1',
+        source: 'user_relay' as const,
+        assertCurrent: () => {},
+        record: vi.fn(async () => {}),
+        commit: async (operation: () => Promise<boolean>) => operation()
+      }
+      await expect(
+        runtime.restoreTaskPermission(request, { ...decision, branchId: 'wrong-branch' })
+      ).rejects.toThrow('Message Branch')
+      expect(admitted).not.toHaveBeenCalled()
+      expect(decision.record).not.toHaveBeenCalled()
+      expect(context.permission?.state).toBe('pending')
+
+      const branchId = session().conversationGraph!.branches[0]!.id
+      await expect(runtime.restoreTaskPermission(request, { ...decision, branchId })).resolves.toBe(
+        true
+      )
+      await vi.waitFor(() => expect(context.permission).toBeUndefined())
+      expect(admitted).toHaveBeenCalledExactlyOnceWith({
+        kind: 'permission',
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        attemptId: request.requestId,
+        originalPromptMessageId: 'prompt-1',
+        promptMessageId: 'prompt-1'
+      })
+      expect(dispatched).toHaveBeenCalledOnce()
+      expect(decision.record).toHaveBeenCalledExactlyOnceWith('unconfirmed')
+      expect(fakeAgent.prompts).toHaveLength(1)
+    } finally {
+      runtime.shutdown()
+    }
+  })
+
   it('keeps the original Notebook presentation id while authorizing the provider replay id', async () => {
     const process = new FakeAgentProcess()
     const originalToolCallId = 'notebook-original'
