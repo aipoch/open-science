@@ -676,6 +676,16 @@ export type Run = {
 export type SessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
 
+export type ExportReviewDecisionRequest = {
+  operationId: string
+  destinationPath: string
+  expiresAt: number
+  sizeBytes: number
+  sha256: string
+  source: 'user_relay'
+  decision: 'approved' | 'rejected'
+}
+
 export type PackageOperation = {
   id: string
   kind: 'export' | 'import' | 'fork'
@@ -686,6 +696,16 @@ export type PackageOperation = {
     expiresAt: number
     destination?: string
     fileDigest: { sizeBytes: number; checksum: string }
+    agentDetails?: {
+      fileScope: { fileCount: number; includesSessionHistory: true }
+      findings: {
+        source: 'session_metadata' | 'package_metadata' | 'research_file'
+        rule: 'field' | 'assignment' | 'url' | 'token'
+      }[]
+    }
+  }
+  sensitiveExportDecision?: Omit<ExportReviewDecisionRequest, 'operationId' | 'source'> & {
+    source: 'user_relay' | 'desktop'
   }
   agent?: {
     correlationId: string
@@ -695,6 +715,7 @@ export type PackageOperation = {
       | 'destination-conflict'
       | 'requires-user'
       | 'content-changed'
+      | 'export-review-expired'
       | 'invalid-archive'
       | 'source-unavailable'
       | 'requires-update'
@@ -1064,6 +1085,10 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<PackageOperation>
   getPackageOperation(options?: RequestOptions): Promise<PackageOperation | null>
+  respondExportReview(
+    request: ExportReviewDecisionRequest,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
   startAgentPackageImport(
     sourcePath: string,
     target: { projectId?: string; projectName?: string },

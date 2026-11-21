@@ -10,6 +10,7 @@ const pollIntervalMs = 250
 const serviceCapability = 'agent-package-operations'
 const importCapability = 'agent-package-import'
 const forkCapability = 'agent-package-fork'
+const exportReviewCapability = 'agent-sensitive-export-review'
 const readOnly = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -39,10 +40,11 @@ const references = {
 }
 
 const lookup = (expected) => ({ action: 'get_package_operation', ...expected })
-const unconfirmed = (expected) => ({
+const unconfirmed = (expected, sensitiveExportDecision) => ({
   ...expected,
   completionStatus: 'unconfirmed',
   ...(expected.kind === 'export' ? { delivery: { status: 'unconfirmed' } } : {}),
+  ...(sensitiveExportDecision ? { sensitiveExportDecision } : {}),
   retryable: false,
   next: [
     lookup(expected),
@@ -95,7 +97,16 @@ async function packageStatus(snapshot, expected, signal) {
       ? { newProjectName: snapshot.importTarget.projectName }
       : {})
   }
-  if (snapshot.sensitiveExportReview && snapshot.state === 'awaiting-selection') {
+  const { sensitiveExportReview: review, sensitiveExportDecision: decision } = snapshot
+  const status = {
+    ...reference,
+    ...(decision
+      ? { sensitiveExportDecision: { source: decision.source, decision: decision.decision } }
+      : {})
+  }
+  if (review && snapshot.state === 'awaiting-selection') {
+    const externalReview = review.agentDetails && review.destination === reference.destinationPath
+    const { expiresAt, fileDigest } = review
     return {
       ...reference,
       completionStatus: 'pending',
@@ -104,19 +115,45 @@ async function packageStatus(snapshot, expected, signal) {
       owner: 'user',
       requiresUser: true,
       retryable: false,
-      next: [
-        {
-          action: 'review_sensitive_export_in_open_science',
-          ...reference,
-          expiresAt: snapshot.sensitiveExportReview.expiresAt,
-          message:
-            'Open Open-Science Desktop on this machine with the same profile. In the package operation, review the flagged content and use Export anyway to open the native confirmation. After the user responds, query this original operation.'
-        }
-      ]
+      ...(externalReview
+        ? {
+            sensitiveExportReview: {
+              destinationPath: reference.destinationPath,
+              expiresAt,
+              fileDigest,
+              ...review.agentDetails,
+              actions: ['approved', 'rejected'],
+              responseCapability: 'respond_export_review'
+            }
+          }
+        : {}),
+      next: externalReview
+        ? [
+            {
+              action: 'respond_export_review',
+              operationId: snapshot.id,
+              destinationPath: reference.destinationPath,
+              expiresAt,
+              sizeBytes: fileDigest.sizeBytes,
+              sha256: fileDigest.checksum,
+              source: 'user_relay',
+              message:
+                'Present the redacted findings, file scope and destination in this conversation. Explain that approval includes flagged content. Send approved or rejected only after the user decides on this candidate.'
+            }
+          ]
+        : [
+            {
+              action: 'review_sensitive_export_in_open_science',
+              ...reference,
+              expiresAt,
+              message:
+                'Review the pending package in Open-Science Desktop on the same profile, then query this operation.'
+            }
+          ]
     }
   }
   if (busy(snapshot)) {
-    return { ...reference, completionStatus: 'pending', next: [lookup(reference)] }
+    return { ...status, completionStatus: 'pending', next: [lookup(reference)] }
   }
   if (snapshot.result?.recovery || snapshot.agent.failure === 'import-unconfirmed')
     return unconfirmed(reference)
@@ -126,9 +163,9 @@ async function packageStatus(snapshot, expected, signal) {
         reference.destinationPath &&
         snapshot.result?.filePath === reference.destinationPath &&
         (await verifyLocalPackage(reference.destinationPath, snapshot.result.fileDigest, signal))
-      if (!file) return unconfirmed(reference)
+      if (!file) return unconfirmed(reference, status.sensitiveExportDecision)
       return {
-        ...reference,
+        ...status,
         completionStatus: 'completed',
         delivery: { status: 'verified', file }
       }
@@ -171,7 +208,17 @@ async function packageStatus(snapshot, expected, signal) {
     }
   }
   if (snapshot.state === 'cancelled')
-    return { ...reference, completionStatus: 'cancelled', retryable: false }
+    return {
+      ...status,
+      completionStatus: 'cancelled',
+      retryable: false,
+      ...(snapshot.agent.failure === 'export-review-expired'
+        ? {
+            code: 'package_export_review_expired',
+            message: 'The sensitive export review expired. No file was published.'
+          }
+        : {})
+    }
   if (snapshot.state !== 'failed') return unconfirmed(reference)
   if (snapshot.kind === 'import') {
     const failure = importFailureDetails(snapshot.agent.failure)
@@ -212,7 +259,7 @@ async function packageStatus(snapshot, expected, signal) {
     }
   if (snapshot.agent.failure === 'content-changed')
     return {
-      ...reference,
+      ...status,
       completionStatus: 'failed',
       code: 'package_sensitive_export_changed',
       message: 'The staged package changed after review. No file was published.',
@@ -223,7 +270,7 @@ async function packageStatus(snapshot, expected, signal) {
     }
   if (snapshot.agent.failure === 'destination-conflict')
     return {
-      ...reference,
+      ...status,
       completionStatus: 'failed',
       code: 'package_destination_conflict',
       message: 'The export destination already exists. Choose a new .science path.',
@@ -233,7 +280,7 @@ async function packageStatus(snapshot, expected, signal) {
       next: [{ action: 'choose_new_destination' }]
     }
   return {
-    ...reference,
+    ...status,
     completionStatus: 'failed',
     code: 'package_export_failed',
     message:
@@ -451,6 +498,58 @@ export const getAgentPackageCapabilities = (AgentError) => [
           }),
         AgentError
       )
+    }
+  },
+  {
+    name: 'respond_export_review',
+    group: 'delivery',
+    description:
+      'Relay the user’s approval or rejection of one staged sensitive .science export. Use the original operationId, destination, size, SHA-256 and deadline returned by get_package_operation. Ask the user about this candidate; task delegation cannot approve it. Query the original operation to verify delivery.',
+    inputSchema: z.strictObject({
+      operationId: referenceId,
+      destinationPath: pathSchema,
+      expiresAt: z.number().int().positive(),
+      sizeBytes: z.number().int().nonnegative(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      source: z.literal('user_relay'),
+      decision: z.enum(['approved', 'rejected'])
+    }),
+    annotations: { ...readOnly, readOnlyHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: exportReviewCapability,
+    probeOnly: true,
+    async handler(request, { getClient, signal }) {
+      const { operationId, destinationPath } = request
+      const expected = { kind: 'export', operationId, destinationPath }
+      const timeout = AbortSignal.timeout(defaultWaitMs)
+      const observation = signal ? AbortSignal.any([signal, timeout]) : timeout
+      const client = await getClient(observation)
+      await requirePackageOperations(client, observation, AgentError, exportReviewCapability)
+      try {
+        const snapshot = await client.respondExportReview(request, { signal: observation })
+        return await packageStatus(snapshot, expected, observation)
+      } catch (error) {
+        if (error?.code === 'session-package-review-unavailable')
+          throw new AgentError('package_export_review_unavailable', {
+            ...expected,
+            owner: 'user',
+            message:
+              'This review expired, no longer matches the candidate, or is unavailable. Check the original operation before asking the user for another decision.',
+            next: [lookup(expected)]
+          })
+        if (error?.code === 'session-package-operation-conflict')
+          throw new AgentError('package_export_review_conflict', {
+            ...expected,
+            owner: 'user',
+            message:
+              'The original operation already has a different decision or a native confirmation in progress. Query it before continuing.',
+            next: [lookup(expected)]
+          })
+        if (error?.status === 404)
+          throw new AgentError('unsupported_capability', { ...expected, requiresUser: true })
+        if ([400, 401, 403].includes(error?.status)) throw error
+        return unconfirmed(expected)
+      }
     }
   },
   {

@@ -27,7 +27,8 @@ import type {
   PackageSelectionSummary,
   SessionPackageRequest,
   SessionPackageImportRequest,
-  SensitiveContentEvidence
+  SensitiveContentEvidence,
+  SensitiveExportDecision
 } from '../../shared/session-package'
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
@@ -164,7 +165,13 @@ export class SessionPackageOperation {
       completedBytes: current.progress.completedBytes,
       totalBytes: current.progress.totalBytes,
       completedFiles: current.progress.completedFiles,
-      totalFiles: current.progress.totalFiles
+      totalFiles: current.progress.totalFiles,
+      ...(current.sensitiveExportDecision
+        ? {
+            reviewDecision: current.sensitiveExportDecision.decision,
+            reviewSource: current.sensitiveExportDecision.source
+          }
+        : {})
     }
   }
 
@@ -334,6 +341,7 @@ export class SessionPackageOperation {
       request.action === 'agent-export' ||
       request.action === 'agent-import' ||
       request.action === 'agent-fork' ||
+      request.action === 'respond-export-review' ||
       [
         'reveal',
         'retry-cleanup',
@@ -451,12 +459,27 @@ export class SessionPackageOperation {
     this.publish()
   }
 
-  finishSensitiveExportReview(): void {
-    if (!this.current?.sensitiveExportReview || !this.controller) return
+  finishSensitiveExportReview(
+    decision?: Pick<SensitiveExportDecision, 'source' | 'decision'>
+  ): void {
+    const review = this.current?.sensitiveExportReview
+    if (!this.current || !review || !this.controller) return
+    const destinationPath = this.current.agent?.destinationPath
     this.current = {
       ...this.current,
       sensitiveExportReview: undefined,
       sensitiveContent: undefined,
+      ...(decision && destinationPath
+        ? {
+            sensitiveExportDecision: {
+              ...decision,
+              destinationPath,
+              expiresAt: review.expiresAt,
+              sizeBytes: review.fileDigest.sizeBytes,
+              sha256: review.fileDigest.checksum
+            }
+          }
+        : {}),
       ...(this.current.state === 'awaiting-selection' ? { state: 'running' as const } : {})
     }
     this.publish()
