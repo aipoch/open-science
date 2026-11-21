@@ -2,6 +2,7 @@ import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { SessionExportBlockedError } from '../archive/availability-error'
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
@@ -273,6 +274,38 @@ it('leaves the save-location wait while processing files after destination selec
   }
 })
 
+it('reports a blocked export before opening the save picker', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    reserveExport: async () => {
+      throw new SessionExportBlockedError('permission')
+    },
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => undefined
+  })
+  try {
+    await expect(desktop.export({ projectId: 'p', sessionId: 's' })).rejects.toThrow(
+      'permission request'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      exportBlocked: true,
+      error: expect.stringContaining('permission request')
+    })
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
 it.each([
   {
     name: 'unversioned reference',
@@ -359,6 +392,7 @@ it.each([
     })
     try {
       const failure = await desktop.export(request).catch((error: unknown) => error)
+      expect(desktop.operations.snapshot?.exportBlocked).toBe(reason ? true : undefined)
       if (reason) expect(causeMessages(failure)).toEqual([exportMessage, reason])
       else {
         expect(failure).toBeInstanceOf(Error)
