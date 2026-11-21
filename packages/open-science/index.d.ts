@@ -552,7 +552,9 @@ export type PlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
     }
   }
 }
@@ -570,7 +572,12 @@ export type PermissionInteraction = TaskInteractionReference & {
     source: TaskInteractionDecision['source']
     optionId: string
     status: 'released' | 'unconfirmed'
-    continuation?: { taskRunStatus: 'unconfirmed' }
+    continuation?: {
+      id: string
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
   }
 }
 export type NotebookStopInteraction = TaskInteractionReference & {
@@ -587,6 +594,8 @@ export type PlanResponse = { interaction: PlanInteraction; changed: boolean }
 
 export type Run = {
   requestId?: string
+  /** Original Task Run when a recorded interaction started a separate turn. */
+  continuedFromRunId?: string
   id: string
   sessionId: string
   projectId: string

@@ -2,7 +2,7 @@ import {
   rebaseTaskSessionBinding,
   rebaseTaskTurnOntoLatestSession
 } from '../session-persistence/task-admission'
-import { describe, expect, it, vi, type MockedFunction } from 'vitest'
+import { describe, expect, it, onTestFinished, vi, type MockedFunction } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { TaskNotebookContinuationRequest, TaskNotebookExecution } from '../../shared/task-api'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { ApplicationEventHub } from '../application-events'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
@@ -27,7 +28,7 @@ import {
   type SessionComputeHostAccessMutation
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import type { TaskAgentPort, TaskSessionPort } from '../tasks/task-runner'
+import type { TaskAgentPort, TaskContinuationTracker, TaskSessionPort } from '../tasks/task-runner'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from '../tasks/task-run-journal'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -72,10 +73,10 @@ const taskSettings = {
 }
 
 type TaskAgentMock = {
-  [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
-    NonNullable<TaskAgentPort[Method]>
-  >
-} & Pick<TaskAgentPort, 'withSessionAvailable'>
+  [
+    Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable' | 'setContinuationTracker'>
+  ]: MockedFunction<NonNullable<TaskAgentPort[Method]>>
+} & Pick<TaskAgentPort, 'withSessionAvailable' | 'setContinuationTracker'>
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
   withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
@@ -1447,6 +1448,28 @@ describe('HeadlessTaskApi adapter', () => {
   )
 
   it('finds a restored Plan in the original scope and looks up the recorded decision after reconnect', async () => {
+    const submissionRoot = await mkdtemp(join(tmpdir(), 'plan-task-continuation-'))
+    const repository = new NotebookRunRepository(submissionRoot)
+    const notebook = new NotebookRuntimeService({
+      configRoot: submissionRoot,
+      dataRoot: submissionRoot,
+      projectId: project.id,
+      repository
+    })
+    onTestFinished(async () => {
+      await notebook.dispose()
+      await rm(submissionRoot, { recursive: true, force: true })
+    })
+    let now = 100
+    let trackContinuation: TaskContinuationTracker | undefined
+    const enteredPlanOwner = Promise.withResolvers<void>()
+    const finishPlanPreflight = Promise.withResolvers<void>()
+    const send = vi.fn(async (onProviderDispatched: () => void) => {
+      onProviderDispatched()
+      await appendNotebookRun('continuation-cell', ++now)
+      now++
+      return { stopReason: 'end_turn' }
+    })
     const plan = {
       artifactId: 'plan-artifact',
       artifactVersionId: 'plan-version',
@@ -1459,7 +1482,7 @@ describe('HeadlessTaskApi adapter', () => {
       id: 'session-plan',
       projectId: project.id,
       title: 'Plan session',
-      cwd: '/workspace/plan',
+      cwd: submissionRoot,
       status: 'waiting-plan-approval',
       runtimeContext: { version: 1, revision: 3, plan },
       messages: [
@@ -1476,6 +1499,30 @@ describe('HeadlessTaskApi adapter', () => {
       createdAt: 1,
       updatedAt: 2
     })
+    const frame = persisted.conversationGraph!.frames[0]!
+    const lane = createFrameNotebookLane(project.id, persisted.id, frame.id)
+    const notebookScope = { projectId: project.id, sessionId: persisted.id, lane }
+    const appendNotebookRun = (id: string, at: number): Promise<unknown> =>
+      repository.appendRun({
+        ...notebookScope,
+        run: {
+          runId: id,
+          cellId: id,
+          source: 'agent',
+          kernelKind: 'python',
+          script: 'print(42)',
+          status: 'completed',
+          kernelDispatched: true,
+          startedAt: at,
+          messageBranchId: frame.activeBranchId,
+          promptMessageId: 'plan-prompt',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+      })
+    await repository.loadOrCreate({ ...notebookScope, workspaceCwd: submissionRoot })
+    await appendNotebookRun('original-cell', 5)
     const commandInvoke = vi.fn(async (channel: string) => {
       if (channel === 'sessions:load-all') {
         return { sessions: [persisted], manifest: { version: 1 } }
@@ -1506,6 +1553,17 @@ describe('HeadlessTaskApi adapter', () => {
             }
           }
         }
+        await trackContinuation!(
+          {
+            kind: 'plan',
+            projectId: project.id,
+            sessionId: persisted.id,
+            attemptId: 'continuation-1',
+            originalPromptMessageId: 'plan-prompt',
+            promptMessageId: 'plan-prompt'
+          },
+          send
+        )
         return { changed: true }
       }
       throw new Error(`Unexpected Task command: ${channel}`)
@@ -1527,9 +1585,26 @@ describe('HeadlessTaskApi adapter', () => {
       new HeadlessTaskApi(
         {
           commands: commandsFrom(commandInvoke),
-          agent: createAgent()
+          agent: createAgent({
+            respondDelegatedPlan: vi.fn(async (_command, isCurrent) => {
+              expect(isCurrent()).toBe(true)
+              enteredPlanOwner.resolve()
+              await finishPlanPreflight.promise
+              expect(isCurrent()).toBe(false)
+              throw new PlanCommandError('interaction-mismatch', 'Task delegation was withdrawn.')
+            }),
+            setContinuationTracker: (tracker) => {
+              trackContinuation = tracker
+              return () => {
+                trackContinuation = undefined
+              }
+            }
+          }),
+          notebook
         },
         {
+          now: () => now,
+          submissionRoot,
           runJournal: {
             load: async () => structuredClone(journal),
             replace: async (runs) => {
@@ -1571,21 +1646,53 @@ describe('HeadlessTaskApi adapter', () => {
       await expect(
         api.respondSessionPlan(persisted.id, { ...request, expectedBranchId: 'old-branch' })
       ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+      const delegation = { ...request, source: 'delegated_agent', expectedModeRevision: 1 } as const
+      await expect(api.respondSessionPlan(persisted.id, delegation)).rejects.toMatchObject({
+        code: 'task_delegation_required'
+      })
+      await api.setRunInteractionMode('plan-run', {
+        interactionMode: 'delegate',
+        expectedRevision: 0
+      })
+      const pending = api.respondSessionPlan(persisted.id, delegation)
+      const denied = expect(pending).rejects.toMatchObject({ code: 'interaction-mismatch' })
+      await enteredPlanOwner.promise
+      await api.setRunInteractionMode('plan-run', { interactionMode: 'relay', expectedRevision: 1 })
+      finishPlanPreflight.resolve()
+      await denied
+      await expect(api.listInteractions(scope)).resolves.toMatchObject([
+        { state: 'pending', owner: 'user' }
+      ])
       await expect(api.respondSessionPlan(persisted.id, request)).resolves.toMatchObject({
         changed: true
       })
     })
+    await api.dispose()
     const restarted = createApi()
     await restarted.initialize()
     await restarted.runWithCallerContext(caller, async () => {
       await expect(restarted.listInteractions(scope)).resolves.toEqual([])
-      await expect(restarted.getInteraction('plan:plan-version', scope)).resolves.toMatchObject({
+      const interaction = await restarted.getInteraction('plan:plan-version', scope)
+      if (interaction.kind !== 'plan') throw new Error('Expected the recorded Plan interaction.')
+      expect(interaction).toMatchObject({
         state: 'responded',
         response: {
           source: 'user_relay',
           action: 'approved',
-          continuation: { id: 'continuation-1', taskRunStatus: 'unconfirmed' }
+          continuation: { id: 'continuation-1', taskRunStatus: 'tracked' }
         }
+      })
+      const continuation = interaction.response!.continuation
+      expect(continuation.runId).toBeTruthy()
+      expect(continuation.requestId).toBeTruthy()
+      await expect(restarted.getSubmission(continuation.requestId!)).resolves.toMatchObject({
+        status: 'accepted',
+        runId: continuation.runId
+      })
+      await expect(restarted.getRun(continuation.runId!)).resolves.toMatchObject({
+        status: 'completed',
+        continuedFromRunId: 'plan-run',
+        execution: { status: 'completed', notebookRunId: 'continuation-cell' }
       })
       await expect(restarted.respondSessionPlan(persisted.id, request)).resolves.toMatchObject({
         changed: false
@@ -1593,14 +1700,20 @@ describe('HeadlessTaskApi adapter', () => {
       await expect(
         restarted.respondSessionPlan(persisted.id, { ...request, decision: 'rejected' })
       ).rejects.toMatchObject({ code: 'approval-already-decided' })
-      expect((await restarted.getRun('plan-run')).failureCode).toBe('process_restarted')
+      await expect(restarted.getRun('plan-run')).resolves.toMatchObject({
+        failureCode: 'process_restarted',
+        execution: { status: 'completed', notebookRunId: 'original-cell' }
+      })
     })
     expect(
       commandInvoke.mock.calls.filter(([channel]) => channel === 'acp:respond-plan')
     ).toHaveLength(1)
-    await api.dispose()
+    expect(send).toHaveBeenCalledOnce()
+    await restarted.dispose()
   })
   it('relays a parked permission after restart and expires a known process-only request', async () => {
+    const submissionRoot = await mkdtemp(join(tmpdir(), 'permission-task-continuation-'))
+    onTestFinished(() => rm(submissionRoot, { recursive: true, force: true }))
     const sessionId = 'session-parked-permission'
     const promptMessageId = 'permission-prompt'
     const scope = { runId: 'permission-run' }
@@ -1674,13 +1787,39 @@ describe('HeadlessTaskApi adapter', () => {
         permissionInteractions: [{ id: 'permission:ephemeral', branchId, revision: 0 }]
       }
     ]
+    let trackContinuation: TaskContinuationTracker | undefined
+    let launch: (() => Promise<{ stopReason: string }>) | undefined
+    const send = vi.fn(async (onProviderDispatched: () => void) => {
+      onProviderDispatched()
+      return { stopReason: 'end_turn' }
+    })
     const agent = createAgent({
-      restoreTaskPermission: vi.fn(async (_restored, decision) =>
-        decision.commit(async () => {
+      setContinuationTracker: (tracker) => {
+        trackContinuation = tracker
+        return () => {
+          trackContinuation = undefined
+        }
+      },
+      restoreTaskPermission: vi.fn(async ({ requestId, projectId, sessionId }, decision) => {
+        const committed = await decision.commit(async () => {
           await decision.record('unconfirmed')
           return true
         })
-      )
+        if (committed)
+          launch = () =>
+            trackContinuation!(
+              {
+                kind: 'permission',
+                projectId,
+                sessionId,
+                attemptId: requestId,
+                originalPromptMessageId: promptMessageId,
+                promptMessageId
+              },
+              send
+            )
+        return committed
+      })
     })
     const open = (): HeadlessTaskApi =>
       new HeadlessTaskApi(
@@ -1692,6 +1831,7 @@ describe('HeadlessTaskApi adapter', () => {
           agent
         },
         {
+          submissionRoot,
           runJournal: {
             load: async () => structuredClone(journal),
             replace: async (entries) => {
@@ -1760,6 +1900,7 @@ describe('HeadlessTaskApi adapter', () => {
             }
           }
         })
+        await launch!()
       })
     } finally {
       await api.dispose()
@@ -1770,6 +1911,20 @@ describe('HeadlessTaskApi adapter', () => {
       await reopened.runWithCallerContext(caller, async () => {
         const sessionScope = { projectId: project.id, sessionId }
         await expect(reopened.listInteractions(sessionScope)).resolves.toEqual([])
+        const interaction = await reopened.getInteraction(id, sessionScope)
+        if (interaction.kind !== 'permission')
+          throw new Error('Expected the recorded permission interaction.')
+        const continuation = interaction.response?.continuation
+        expect(continuation).toMatchObject({ id: 'parked', taskRunStatus: 'tracked' })
+        await expect(reopened.getSubmission(continuation!.requestId!)).resolves.toMatchObject({
+          status: 'accepted',
+          runId: continuation!.runId
+        })
+        await expect(reopened.getRun(continuation!.runId!)).resolves.toMatchObject({
+          status: 'completed',
+          continuedFromRunId: scope.runId,
+          interactionPolicy: { mode: 'delegate', revision: 4 }
+        })
         await expect(
           reopened.respondPermission(id, sessionScope, { ...response, expectedModeRevision: 4 })
         ).resolves.toMatchObject({ changed: false })
@@ -1786,6 +1941,7 @@ describe('HeadlessTaskApi adapter', () => {
         })
       })
       expect(agent.restoreTaskPermission).toHaveBeenCalledTimes(1)
+      expect(send).toHaveBeenCalledTimes(1)
       expect(agent.prompt).not.toHaveBeenCalled()
     } finally {
       await reopened.dispose()

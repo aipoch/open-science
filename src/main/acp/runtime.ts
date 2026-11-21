@@ -345,22 +345,65 @@ class AcpRuntime {
     this.permissionWaitOwner = session.permissionWaitOwner
     const continuations = composeAcpRuntimeContinuations(options, base, session, {
       schedule: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      sendPermission: (request, permission, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          permissionContinuation: permission,
-          onProviderDispatched
-        })
+      sendPermission: (request, permission, onProviderDispatched) => {
+        if (!permission.taskResponse) {
+          return this.sendDurableAppContinuation(request, {
+            permissionContinuation: permission,
+            onProviderDispatched
+          })
+        }
+        if (!options.trackTaskContinuation)
+          throw new Error('Task continuation tracking is unavailable.')
+        return options.trackTaskContinuation(
+          {
+            kind: 'permission',
+            projectId: permission.projectId,
+            sessionId: permission.sessionId,
+            attemptId: permission.requestId,
+            originalPromptMessageId: permission.promptMessageId,
+            promptMessageId: permission.promptMessageId
+          },
+          (onTrackedDispatch) =>
+            this.sendDurableAppContinuation(request, {
+              permissionContinuation: permission,
+              promptAttemptId: permission.requestId,
+              onProviderDispatched: () => {
+                onTrackedDispatch()
+                onProviderDispatched()
+              }
+            })
+        )
+      }
     })
     this.permissionContinuations = continuations.permissions
     this.questionContinuations = continuations.questions
     const planContinuations = composeAcpRuntimePlanContinuations(options, session, {
       scheduleContinuation: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      send: (request, delivery, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          promptAttemptId: delivery?.commandId,
-          planDelivery: delivery,
-          onProviderDispatched
-        }),
+      send: (request, delivery, onProviderDispatched) => {
+        const send = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
+          this.sendDurableAppContinuation(request, {
+            promptAttemptId: delivery?.commandId,
+            planDelivery: delivery,
+            onProviderDispatched: () => {
+              onTrackedDispatch?.()
+              onProviderDispatched()
+            }
+          })
+        const promptMessageId = request.provenanceContext?.promptMessageId
+        if (!delivery?.externalOriginPromptId || !promptMessageId || !options.trackTaskContinuation)
+          return send()
+        return options.trackTaskContinuation(
+          {
+            kind: 'plan',
+            projectId: delivery.projectId,
+            sessionId: request.sessionId,
+            attemptId: delivery.commandId,
+            promptMessageId,
+            originalPromptMessageId: delivery.externalOriginPromptId
+          },
+          send
+        )
+      },
       projection: (projectId, sessionId) =>
         this.sessionPlanWorkflow.projection(projectId, sessionId)
     })

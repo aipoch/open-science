@@ -156,7 +156,9 @@ const nestedRunSchema = z.object({
             source: z.enum(['user_relay', 'delegated_agent']),
             optionId: identity,
             status: z.enum(['released', 'unconfirmed']),
-            continuation: z.object({ taskRunStatus: z.literal('unconfirmed') }).optional()
+            continuation: z
+              .object({ id: identity, taskRunStatus: z.literal('unconfirmed') })
+              .optional()
           })
           .optional()
       })
@@ -175,6 +177,8 @@ const decodeRun = (value: unknown): TaskRunJournalEntry => {
   if (
     !identity.safeParse(value.id).success ||
     (value.requestId !== undefined && !identity.safeParse(value.requestId).success) ||
+    (value.continuedFromRunId !== undefined &&
+      !identity.safeParse(value.continuedFromRunId).success) ||
     !identity.safeParse(value.sessionId).success ||
     !identity.safeParse(value.projectId).success ||
     typeof value.cwd !== 'string' ||

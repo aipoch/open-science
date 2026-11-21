@@ -1587,7 +1587,10 @@ class NotebookRuntimeService {
   }
 
   async inspectTaskExecution(
-    request: NotebookExecutionIntentScope & { includeSessionRefusal?: true }
+    request: NotebookExecutionIntentScope & {
+      includeSessionRefusal?: true
+      taskWindow?: { startedAt: number; completedAt?: number }
+    }
   ): Promise<import('../../shared/task-api').TaskNotebookExecution> {
     const { projectId, sessionId, promptMessageId } = request
     const scope = { projectId, sessionId }
@@ -1600,6 +1603,11 @@ class NotebookRuntimeService {
           : undefined
     // The Session can still be blocked while its latest prompt is not bound to the refusal.
     const observedIntent = request.includeSessionRefusal && current?.refusalId ? current : intent
+    const inTaskWindow = (at: number | undefined): boolean =>
+      !request.taskWindow ||
+      (at !== undefined &&
+        at >= request.taskWindow.startedAt &&
+        (request.taskWindow.completedAt === undefined || at < request.taskWindow.completedAt))
     const observedPromptId =
       observedIntent === intent ? promptMessageId : observedIntent?.scope.promptMessageId
     const origin = {
@@ -1612,7 +1620,8 @@ class NotebookRuntimeService {
         ? { continuedFromRefusalId: observedIntent.scope.continuedFromRefusalId }
         : {})
     }
-    if (observedIntent?.refusalId && observedIntent.hasClaimedContinuation) {
+    const currentRefusal = observedIntent?.refusalId && inTaskWindow(observedIntent.refusalAt)
+    if (currentRefusal && observedIntent.hasClaimedContinuation) {
       return {
         ...origin,
         status: 'failed',
@@ -1622,7 +1631,7 @@ class NotebookRuntimeService {
         retryable: false
       }
     }
-    if (observedIntent?.refusalId && observedIntent === current) {
+    if (currentRefusal && observedIntent === current) {
       return {
         ...origin,
         status: 'waiting_for_user',
@@ -1645,10 +1654,14 @@ class NotebookRuntimeService {
           (run) =>
             run.source === 'agent' &&
             run.promptMessageId === promptMessageId &&
-            (branch === undefined || run.messageBranchId === branch)
+            (branch === undefined || run.messageBranchId === branch) &&
+            inTaskWindow(run.admittedAt ?? run.startedAt)
         )
       : []
-    const pendingReviews = promptMessageId ? this.pendingNotebookReviews?.(sessionId) : undefined
+    const pendingReviews =
+      promptMessageId && request.taskWindow?.completedAt === undefined
+        ? this.pendingNotebookReviews?.(sessionId)
+        : undefined
     const runtimeReview = pendingReviews?.find(
       (review) =>
         review.kind === 'runtime' &&

@@ -755,8 +755,10 @@ delegation. New research requests in the same Session default to `relay`.
 
 After losing a response, query the same interaction. A live permission releases the original
 wait. After a restart, a still-valid parked permission can start a continuation while the
-original Run remains interrupted. An `expired` or `unconfirmed` response is not evidence of
-execution: inspect the Run and Session before starting more work.
+original Run remains interrupted. When Plan or permission recovery produces another provider
+turn, `response.continuation.id` identifies the original handoff and `taskRunStatus: tracked`
+includes the new `requestId` and `runId`. Query that submission or Run and check Notebook
+execution and delivered files separately. `pending` or `unconfirmed` does not prove execution.
 
 ## Session configuration
 

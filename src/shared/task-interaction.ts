@@ -38,7 +38,9 @@ export type TaskPlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
     }
   }
 }
@@ -65,7 +67,12 @@ export type TaskPermissionInteraction = TaskInteractionReference & {
     optionId: string
     source: TaskInteractionDecisionSource
     status: 'released' | 'unconfirmed'
-    continuation?: { taskRunStatus: 'unconfirmed' }
+    continuation?: {
+      id: string
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
   }
 }
 

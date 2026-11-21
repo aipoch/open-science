@@ -117,9 +117,18 @@ Project、Session、Run、分支、prompt 或 delegated attempt 的服务端引�
 #70 的 Plan 响应只接受以同 profile 的本机 Bearer 验证的 Task 调用。浏览器原有的人类响应入口独立保留。
 `get_run` 的 `attention.kind: interactions` 只包含待办引用，具体 Plan 内容和决定回执从 `get_interaction`
 读取。`continuation.id` 沿用 Plan Owner 的持久交付身份；它标识原对话的接续，不改写或重跑原 Task Run。
-`accepted` 只证明接续已交接。没有独立 Task Run 记录时返回 `continuation.taskRunStatus: unconfirmed`，
-不报告已新建 Run、Notebook 执行或文件交付。旧 Run 经重启中断时仍报告中断。
+Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Plan 决定上返回其查询标识与
+`taskRunStatus: tracked`。新 Run 的 `continuedFromRunId` 指向原 Run。`pending` 或 `unconfirmed`
+时重新查询同一决定；`accepted` 只证明 Plan 交付，Notebook 执行和文件交付各自核验。旧 Run 经重启中断时仍报告中断。
 回执随本地 Plan 记录保留，归档导出和 Fork 不带本机响应记录。
+
+#71 在同一本机连接上公布 `task-permissions` 和 `task-delegation`。默认的 `relay` 可通过
+`set_run_interaction_mode` 按 `interactionPolicy.revision` 修改；受托的普通权限和 Plan 响应都带
+`expectedModeRevision`，由原 Owner 在最终提交时再次校验。续跑通过 `continuedFromRunId`
+读取原任务的策略，后续撤回同时约束续跑中的待办。普通新研究仍默认 `relay`。
+`respond_permission` 只接受原分支、原请求提供的一次性选项。活跃等待由原 Broker 释放；仍有效的
+持久等待重用原 Permission Wait Owner，从原请求派生新的 continuation 提交 ID。用 `get_interaction`
+查询决定与接续回执；旧 Run 的中断原因仍保留。决定和查询记录都保存在本机 Task Run 日志，不写入 `.science`。
 
 #75 在本机 Bearer 连接上公布 `notebook-continuation` 能力。原 Run 的待办返回当前拒绝和分支；
 外部宿主得到本次明确同意后，以保留的 `requestId` 调用 `continue_notebook`。Notebook Owner 核对

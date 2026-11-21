@@ -106,6 +106,7 @@ import type {
   TaskRunJournalEntry,
   TaskRunPermissionRecord
 } from './task-run-journal'
+import type { TaskContinuationIdentity } from './task-submissions'
 
 const log = createLogger('task-runner')
 
@@ -218,7 +219,13 @@ type TaskAgentPromptObserver = {
   onProviderPromptAccepted?: () => void
 }
 
+type TaskContinuationTracker = <Result extends { stopReason: string }>(
+  identity: TaskContinuationIdentity & { originalPromptMessageId: string; promptMessageId: string },
+  send: (onProviderDispatched: () => void) => Promise<Result>
+) => Promise<Result>
+
 type TaskAgentPort = {
+  setContinuationTracker?(tracker: TaskContinuationTracker): () => void
   withSessionAvailable<Result>(
     projectId: string,
     sessionId: string,
@@ -522,8 +529,12 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
 
 const sessionOwnsTaskRunPrompt = (
   session: PersistedChatSession,
-  run: Pick<TaskRunJournalEntry, 'id' | 'sessionId' | 'projectId' | 'promptMessageId'>
+  run: Pick<
+    TaskRunJournalEntry,
+    'id' | 'sessionId' | 'projectId' | 'promptMessageId' | 'continuedFromRunId'
+  >
 ): boolean =>
+  !run.continuedFromRunId &&
   run.promptMessageId !== undefined &&
   session.id === run.sessionId &&
   session.projectId === run.projectId &&
@@ -1710,6 +1721,89 @@ class TaskRunner {
     return snapshot
   }
 
+  async beginContinuation(
+    originalRunId: string,
+    promptMessageId: string,
+    requestId: string
+  ): Promise<{
+    run: TaskRun
+    onProviderDispatched: () => void
+    settle: (outcome: { stopReason?: string; error?: unknown }) => Promise<void>
+  }> {
+    await this.initialize()
+    const original = this.runs.get(originalRunId)
+    if (!original)
+      throw new TaskRunnerError('run_not_found', 'The original Task Run could not be found.')
+    this.assertAcceptingRuns()
+    const id = this.dependencies.createId()
+    this.reserveSession(original.sessionId, id)
+    const completion = Promise.withResolvers<void>()
+    const run: MutableTaskRun = {
+      requestId,
+      continuedFromRunId: original.id,
+      id,
+      sessionId: original.sessionId,
+      projectId: original.projectId,
+      cwd: original.cwd,
+      status: 'running',
+      startedAt: this.dependencies.now(),
+      artifacts: [],
+      preferredComputeHostIds: [...original.preferredComputeHostIds],
+      eventAccumulator: createTaskRunEventAccumulator(),
+      promptMessageId,
+      progressPhase: 'accepted',
+      providerAccepted: false,
+      firstVisibleOutput: false,
+      completion: completion.promise
+    }
+    this.pruneRuns()
+    this.runs.set(id, run)
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      this.runs.delete(id)
+      this.releaseSession(run.sessionId, id)
+      completion.resolve()
+      throw error
+    }
+    this.publishProgress(run, 'accepted')
+    this.scheduleHeartbeat(run)
+    return {
+      run: this.getRun(id),
+      onProviderDispatched: () => {
+        run.providerAccepted = true
+        this.publishProgress(run, 'provider-accepted')
+      },
+      settle: async ({ stopReason, error }) => {
+        const captured = run.eventAccumulator!
+        run.completedAt = this.dependencies.now()
+        run.output = captured.assistantOutput || undefined
+        run.artifacts = captured.publishedArtifacts
+        const failed =
+          error !== undefined ||
+          !run.providerAccepted ||
+          stopReason === 'max_tokens' ||
+          stopReason === 'max_turn_requests'
+        this.stopHeartbeat(run)
+        try {
+          if (failed)
+            run.error =
+              'The Task continuation did not finish. Check the original interaction and Session.'
+          if (stopReason === 'cancelled' && !failed) run.cancelledAt = run.completedAt
+          await this.persistTerminalRun(
+            run,
+            failed ? 'failed' : stopReason === 'cancelled' ? 'cancelled' : 'completed'
+          )
+        } finally {
+          this.releaseSession(run.sessionId, id)
+          run.eventAccumulator = undefined
+          completion.resolve()
+          if (run.status !== 'running') this.publishProgress(run, run.status)
+        }
+      }
+    }
+  }
+
   getRunPromptMessageId(runId: string): string | undefined {
     return this.runs.get(runId)?.promptMessageId || undefined
   }
@@ -1868,6 +1962,15 @@ class TaskRunner {
     } finally {
       owner.committingPermissionDecision = false
     }
+  }
+
+  sharesContinuationPrompt(run: TaskRun, promptMessageId: string): boolean {
+    return (
+      Boolean(run.continuedFromRunId) ||
+      [...this.runs.values()].some(
+        (entry) => entry.continuedFromRunId === run.id && entry.promptMessageId === promptMessageId
+      )
+    )
   }
 
   findRunIdForPrompt(sessionId: string, promptMessageId: string): string | undefined {
@@ -2845,6 +2948,11 @@ class TaskRunner {
     for (const run of this.runs.values()) {
       if (run.status !== 'running' || run.terminalStatus || run.sessionId !== event.sessionId)
         continue
+      if (
+        run.continuedFromRunId &&
+        (!run.providerAccepted || event.promptMessageId !== run.promptMessageId)
+      )
+        continue
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
@@ -3287,6 +3395,7 @@ export { summarizeSession, TaskRunner, TaskRunnerError }
 export type {
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
+  TaskContinuationTracker,
   TaskAgentPromptObserver,
   TaskAgentPromptRequest,
   TaskAgentResumeSessionRequest,

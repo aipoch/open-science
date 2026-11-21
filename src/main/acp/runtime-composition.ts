@@ -632,6 +632,8 @@ const createAcpRuntime = ({
           : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion,
+        trackTaskContinuation: (identity, send) =>
+          runtimeCoordinator.trackTaskContinuation(identity, send),
         auxiliaryUsage,
         classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
         classifyReadingRoute: delegatedNotebookConnection ? undefined : classifyReadingRoute,

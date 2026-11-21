@@ -218,6 +218,7 @@ describe('OpenScienceClient', () => {
         'respondSessionPlan',
         'submitRun',
         'getSubmission',
+        'continueNotebook',
         'waitForSubmission',
         'forkSession',
         'startRun',

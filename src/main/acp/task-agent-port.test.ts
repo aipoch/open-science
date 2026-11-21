@@ -35,6 +35,7 @@ describe('ACP Task Agent port', () => {
       | 'respondTaskPermission'
       | 'restoreTaskPermission'
       | 'respondDelegatedPlan'
+      | 'setContinuationTracker'
     >()
   })
 

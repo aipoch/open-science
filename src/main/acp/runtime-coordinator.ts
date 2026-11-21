@@ -167,6 +167,26 @@ type PromptAdmissionGuard = <Result>(
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
+  private continuationTracker?: import('../tasks/task-runner').TaskContinuationTracker
+
+  setContinuationTracker(
+    tracker: import('../tasks/task-runner').TaskContinuationTracker
+  ): () => void {
+    this.continuationTracker = tracker
+    return () => {
+      if (this.continuationTracker === tracker) this.continuationTracker = undefined
+    }
+  }
+
+  trackTaskContinuation: import('../tasks/task-runner').TaskContinuationTracker = (
+    identity,
+    send
+  ) => {
+    if (this.continuationTracker) return this.continuationTracker(identity, send)
+    if (identity.kind === 'permission')
+      return Promise.reject(new Error('Task continuation tracking is unavailable.'))
+    return send(() => undefined)
+  }
   private readonly runtimes = new Set<AcpRuntime>()
   // A failed incoming resume must retry the same provider history even after its writer detached.
   private readonly sessionWriterTransfers = new Map<
