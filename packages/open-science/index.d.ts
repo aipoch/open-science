@@ -314,6 +314,23 @@ export type NotebookReadiness = {
   sandbox: NotebookReadinessCheck
   memoryPolicy: NotebookReadinessCheck & { source?: string; executionScope?: string }
 }
+export type NotebookEnvironmentOperationTarget = {
+  language: 'python' | 'r'
+  operationId: string
+}
+
+export type NotebookEnvironmentOperationRequest = NotebookEnvironmentOperationTarget & {
+  action: 'prepare' | 'repair'
+}
+
+export type NotebookEnvironmentOperation = NotebookEnvironmentOperationTarget & {
+  action?: NotebookEnvironmentOperationRequest['action']
+  status: 'preparing' | 'completed' | 'failed' | 'cancelled' | 'unconfirmed'
+  progress?: { phase: string; fraction: number }
+  cancelRequested?: boolean
+  reason?: 'notebook_setup_failed' | 'notebook_environment_recovery_required'
+}
+
 export type DoctorReport = {
   ready: boolean
   checks: {
@@ -754,6 +771,18 @@ export class OpenScienceClient {
     language: 'python' | 'r',
     options?: RequestOptions
   ): Promise<Record<string, never>>
+  startNotebookEnvironmentOperation(
+    request: NotebookEnvironmentOperationRequest,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
+  getNotebookEnvironmentOperation(
+    target: NotebookEnvironmentOperationTarget,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
+  cancelNotebookEnvironmentOperation(
+    target: NotebookEnvironmentOperationTarget,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
   listRuntimes(options?: RequestOptions): Promise<AgentRuntime[]>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(

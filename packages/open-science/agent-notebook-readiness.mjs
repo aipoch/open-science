@@ -10,7 +10,7 @@ const actions = {
   notebook_environment_recovery_required: [
     'user',
     'review_notebook_environment',
-    'Open Notebook environment settings and review recovery for the selected language.'
+    'Review recovery for the selected language. Recheck setup, or use repair_notebook_environment if the user explicitly authorizes rebuilding the managed default.'
   ],
   notebook_environment_missing: [
     'agent',
@@ -212,6 +212,9 @@ export const readinessActions = (checks, profile, language) =>
         message,
         ...(action === 'prepare_notebook_environment' && language
           ? { arguments: { language } }
+          : {}),
+        ...(action === 'review_notebook_environment' && language
+          ? { repair: { capability: 'repair_notebook_environment', arguments: { language } } }
           : {}),
         ...(action === 'prepare_notebook_environment' || action === 'review_notebook_environment'
           ? { web: { capability: 'open_setup', arguments: { section: 'notebook' } } }
