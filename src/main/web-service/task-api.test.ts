@@ -15,6 +15,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import {
+  forkEditedConversationMessage,
   getActiveConversationContext,
   synchronizeActiveConversationActivities
 } from '../../shared/conversation-graph'
@@ -112,6 +113,7 @@ type TaskQuestionHarness = {
   newOwner: () => AcpElicitationOwner
   createApi: (owner: AcpElicitationOwner, restored: boolean) => HeadlessTaskApi
   restart: () => void
+  forkQuestionPrompt: () => void
 }
 
 const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuestionHarness => {
@@ -235,6 +237,14 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuesti
     createApi,
     restart: () => {
       session = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    },
+    forkQuestionPrompt: () => {
+      session.conversationGraph = forkEditedConversationMessage(
+        session.conversationGraph!,
+        promptMessageId,
+        'new-branch',
+        3
+      )
     }
   }
 }
@@ -1784,6 +1794,9 @@ describe('HeadlessTaskApi adapter', () => {
         ]
       } as const
       const submission = { ...response, answers: [...response.answers] }
+      await expect(
+        api.answerQuestion(interactionId, original, { ...submission, source: 'known_context' })
+      ).rejects.toMatchObject({ code: 'invalid_request' })
       await expect(api.answerQuestion(interactionId, original, submission)).resolves.toMatchObject({
         changed: true,
         interaction: {
@@ -1819,6 +1832,61 @@ describe('HeadlessTaskApi adapter', () => {
     })
     expect(h.schedule).toHaveBeenCalledOnce()
     await restarted.dispose()
+  })
+
+  it('refuses an old answer after the user branches from the original question prompt', async () => {
+    const h = taskQuestionHarness('running')
+    const owner = h.newOwner()
+    const api = h.createApi(owner, false)
+    try {
+      await h.interactions.run(
+        { kind: 'prompt', sessionId: h.scope.sessionId, provenanceContext: h.provenance },
+        async () => {
+          const released = vi.fn()
+          const response = owner
+            .request(
+              {
+                mode: 'form',
+                sessionId: 'provider-session',
+                toolCallId: 'question-tool',
+                message: 'Name the group.',
+                requestedSchema: {
+                  type: 'object',
+                  properties: { group: { type: 'string' } },
+                  required: ['group']
+                }
+              },
+              { sessionId: h.scope.sessionId },
+              { promptMessageId: h.provenance.promptMessageId, provenanceContext: h.provenance }
+            )
+            .then(released)
+          await api.runWithCallerContext(
+            createTaskCallerContext({ authenticatedLocalBearer: true }),
+            async () => {
+              const id = 'question:root-question'
+              const question = await api.getInteraction(id, h.scope)
+              h.forkQuestionPrompt()
+              await expect(
+                api.answerQuestion(id, h.scope, {
+                  action: 'accept',
+                  source: 'user_relay',
+                  expectedRevision: question.revision,
+                  expectedBranchId: question.branchId!,
+                  answers: [{ fieldId: 'group', value: 'Treatment' }]
+                })
+              ).rejects.toMatchObject({ code: 'interaction_not_found' })
+              expect(released).not.toHaveBeenCalled()
+            }
+          )
+          owner.dispose()
+          await response
+          expect(released).toHaveBeenCalledExactlyOnceWith({ action: 'cancel' })
+        }
+      )
+    } finally {
+      owner.dispose()
+      await api.dispose()
+    }
   })
 
   it('finds a restored Plan in the original scope and looks up the recorded decision after reconnect', async () => {
