@@ -4440,7 +4440,7 @@ it.each([
   }
 })
 
-it('excludes external Plan response receipts from the archive and the resulting Fork', async () => {
+it('excludes local Plan and AskUser receipts from the archive and the resulting Fork', async () => {
   const source = await createProvenanceTestFixture()
   const target = await createProvenanceTestFixture()
   fixtures.push(source, target)
@@ -4499,6 +4499,32 @@ it('excludes external Plan response receipts from the archive and the resulting 
         updatedAt: 1
       }
     ],
+    activities: [
+      {
+        id: 'question-tool',
+        kind: 'tool',
+        title: 'Choose a statistic',
+        status: 'completed',
+        promptMessageId: 'plan-prompt',
+        sortIndex: 0,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2,
+        elicitation: {
+          message: 'Choose a statistic',
+          fields: [{ id: 'method', label: 'Statistic', kind: 'text' }],
+          state: 'answered',
+          answers: [{ fieldId: 'method', value: 'Median' }],
+          taskRequestId: 'local-question-id',
+          taskResponse: {
+            action: 'accept',
+            source: 'user_relay',
+            reviewedRevision: 1,
+            checksum: 'a'.repeat(64)
+          }
+        }
+      }
+    ],
     createdAt: 1,
     updatedAt: 2,
     runtimeContext: {
@@ -4545,6 +4571,8 @@ it('excludes external Plan response receipts from the archive and the resulting 
     const stored = await readFile(join(expanded, 'session.json'), 'utf8')
     expect(stored).not.toContain('local-plan-receipt')
     expect(stored).not.toContain('externalResponse')
+    expect(stored).not.toContain('local-question-id')
+    expect(stored).not.toContain('taskResponse')
     const imported = await importer.importFrom(archive)
     const forked = await importer.fork(imported)
     const forkedSession = await new SessionRepository(target.storageRoot).loadSession(
@@ -4553,6 +4581,10 @@ it('excludes external Plan response receipts from the archive and the resulting 
     )
     expect(forkedSession).toBeDefined()
     expect(JSON.stringify(forkedSession)).not.toContain('local-plan-receipt')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-question-id')
+    expect(forkedSession?.activities?.[0].elicitation?.answers).toEqual([
+      { fieldId: 'method', value: 'Median' }
+    ])
   } finally {
     await exporter.close()
     await importer.close()

@@ -197,6 +197,50 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
   )
 })
 
+it('answers the same scoped AskUser question through CLI JSON and MCP stdio', async () => {
+  const scope = { runId: 'run-1' }
+  const interactionId = 'question:question-1'
+  const response = {
+    expectedRevision: 2,
+    expectedBranchId: 'branch-1',
+    action: 'accept',
+    source: 'known_context',
+    answers: [
+      { fieldId: 'groups', value: ['Control', 'Treatment'] },
+      { fieldId: 'units_custom', value: 'millimeters', status: 'answered' }
+    ]
+  }
+  let changed = true
+  const agent = await resourceAgents(
+    async (request, reply) => {
+      const url = new URL(request.url!, 'http://localhost')
+      expect(decodeURIComponent(url.pathname)).toBe(`/api/v1/interactions/${interactionId}/answer`)
+      expect(request.method).toBe('POST')
+      expect(url.searchParams.get('runId')).toBe(scope.runId)
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(chunk)
+      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(response)
+      reply.end(
+        JSON.stringify({
+          data: { changed, interaction: { id: interactionId, state: 'responded' } }
+        })
+      )
+      changed = false
+    },
+    ['task-questions']
+  )
+
+  const input = { ...scope, interactionId, ...response }
+  expect(await agent.cli('answer_question', input)).toEqual({
+    result: { changed: true, interaction: { id: interactionId, state: 'responded' } }
+  })
+  const mcp = await agent.mcp('answer_question', input)
+  expect(mcp.isError).not.toBe(true)
+  expect(mcp.structuredContent).toEqual({
+    result: { changed: false, interaction: { id: interactionId, state: 'responded' } }
+  })
+})
+
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
   const target = { language: 'r', operationId: 'prepare-r' }
   const path = `/api/v1/notebook-environment/operations/${target.operationId}`

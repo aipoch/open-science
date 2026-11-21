@@ -546,7 +546,57 @@ export type PlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
+  }
+}
+export type QuestionAnswer =
+  | { fieldId: string; status: 'skipped' }
+  | { fieldId: string; status?: 'answered'; value: string | number | boolean | string[] }
+export type QuestionResponse = {
+  expectedRevision: number
+  expectedBranchId: string
+  source: 'user_relay' | 'known_context'
+} & ({ action: 'accept'; answers?: QuestionAnswer[] } | { action: 'decline'; answers?: never })
+export type QuestionInteraction = TaskInteractionReference & {
+  kind: 'question'
+  question?: {
+    message: string
+    fields: {
+      id: string
+      label: string
+      description?: string
+      kind: 'text' | 'single-select' | 'multi-select' | 'number' | 'integer' | 'boolean'
+      required?: boolean
+      options?: {
+        label: string
+        value: string
+        description?: string
+        pros?: string
+        cons?: string
+      }[]
+      minLength?: number
+      maxLength?: number
+      minimum?: number
+      maximum?: number
+      minItems?: number
+      maxItems?: number
+      format?: 'email' | 'uri' | 'date' | 'date-time'
+      defaultValue?: string | number | boolean | string[]
+    }[]
+    skipFieldIds: string[]
+  }
+  response?: {
+    source: QuestionResponse['source']
+    action: QuestionResponse['action']
+    reviewedRevision: number
+    continuation?: {
+      id: string
+      requestId?: string
+      runId?: string
+      status: 'unconfirmed' | 'pending' | 'accepted' | 'failed' | 'interrupted'
     }
   }
 }
@@ -555,6 +605,7 @@ export type NotebookStopInteraction = TaskInteractionReference & {
   refusalId: string
   reason?: string
 }
+export type TaskInteraction = PlanInteraction | QuestionInteraction | NotebookStopInteraction
 export type RunAttention =
   | { kind: 'plan-approval'; plan: SessionPlan }
   | { kind: 'interactions'; interactions: TaskInteractionReference[] }
@@ -563,6 +614,8 @@ export type PlanResponse = { interaction: PlanInteraction; changed: boolean }
 
 export type Run = {
   requestId?: string
+  /** Original Task Run when a recorded interaction started a separate turn. */
+  continuedFromRunId?: string
   id: string
   sessionId: string
   projectId: string
@@ -942,7 +995,13 @@ export class OpenScienceClient {
     interactionId: string,
     scope: TaskInteractionScope,
     options?: RequestOptions
-  ): Promise<PlanInteraction | NotebookStopInteraction>
+  ): Promise<TaskInteraction>
+  answerQuestion(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    response: QuestionResponse,
+    options?: RequestOptions
+  ): Promise<{ changed: boolean; interaction: QuestionInteraction }>
   respondSessionPlan(
     sessionId: string,
     response: {

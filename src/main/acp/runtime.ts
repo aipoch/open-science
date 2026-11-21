@@ -88,6 +88,7 @@ import type {
 import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpElicitationOwner } from './elicitation-owner'
+import type { TaskQuestionOwnerResponse } from './question-continuation-workflow'
 import type { AcpGenerationActivityOwner } from './generation-activity-owner'
 import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
@@ -355,12 +356,31 @@ class AcpRuntime {
     this.questionContinuations = continuations.questions
     const planContinuations = composeAcpRuntimePlanContinuations(options, session, {
       scheduleContinuation: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      send: (request, delivery, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          promptAttemptId: delivery?.commandId,
-          planDelivery: delivery,
-          onProviderDispatched
-        }),
+      send: (request, delivery, onProviderDispatched) => {
+        const send = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
+          this.sendDurableAppContinuation(request, {
+            promptAttemptId: delivery?.commandId,
+            planDelivery: delivery,
+            onProviderDispatched: () => {
+              onTrackedDispatch?.()
+              onProviderDispatched()
+            }
+          })
+        const promptMessageId = request.provenanceContext?.promptMessageId
+        if (!delivery?.externalOriginPromptId || !promptMessageId || !options.trackTaskContinuation)
+          return send()
+        return options.trackTaskContinuation(
+          {
+            kind: 'plan',
+            projectId: delivery.projectId,
+            sessionId: request.sessionId,
+            attemptId: delivery.commandId,
+            promptMessageId,
+            originalPromptMessageId: delivery.externalOriginPromptId
+          },
+          send
+        )
+      },
       projection: (projectId, sessionId) =>
         this.sessionPlanWorkflow.projection(projectId, sessionId)
     })
@@ -2063,6 +2083,22 @@ class AcpRuntime {
     continuePrepared = false
   ): Promise<AcpStateSnapshot> {
     return this.questionContinuations.respond(response, continuePrepared)
+  }
+
+  listTaskQuestions(sessionId: string): ReturnType<AcpElicitationOwner['listTaskQuestions']> {
+    return this.elicitationOwner.listTaskQuestions(sessionId)
+  }
+
+  respondToTaskQuestion(input: TaskQuestionOwnerResponse): Promise<void> {
+    return this.questionContinuations.respondToTask(
+      input,
+      (request, promptAttemptId, onProviderDispatched) =>
+        this.sendDurableAppContinuation(request, {
+          promptAttemptId,
+          onProviderDispatched
+        }),
+      this.options.trackTaskContinuation
+    )
   }
 
   requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {

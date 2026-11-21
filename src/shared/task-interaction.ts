@@ -1,4 +1,5 @@
 import type { ActivePlanProjection } from './session-plan/contract'
+import type { ElicitationAnswer, ElicitationField, TaskQuestionSource } from './elicitation'
 
 export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
 export type TaskInteractionDecisionSource = 'user_relay' | 'delegated_agent'
@@ -30,7 +31,33 @@ export type TaskPlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
+  }
+}
+
+export type TaskQuestionResponse = {
+  expectedRevision: number
+  expectedBranchId: string
+  source: TaskQuestionSource
+  action: 'accept' | 'decline'
+  answers?: ElicitationAnswer[]
+}
+
+export type TaskQuestionInteraction = TaskInteractionReference & {
+  kind: 'question'
+  question?: { message: string; fields: ElicitationField[]; skipFieldIds: string[] }
+  response?: {
+    source: TaskQuestionSource
+    action: TaskQuestionResponse['action']
+    reviewedRevision: number
+    continuation?: {
+      id: string
+      requestId?: string
+      runId?: string
+      status: 'unconfirmed' | 'pending' | 'accepted' | 'failed' | 'interrupted'
     }
   }
 }
@@ -41,4 +68,5 @@ export type TaskNotebookStopInteraction = TaskInteractionReference & {
   reason?: string
 }
 
-export type TaskInteraction = TaskPlanInteraction | TaskNotebookStopInteraction
+export type TaskInteraction =
+  TaskPlanInteraction | TaskQuestionInteraction | TaskNotebookStopInteraction

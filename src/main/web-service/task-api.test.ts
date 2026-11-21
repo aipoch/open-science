@@ -2,7 +2,7 @@ import {
   rebaseTaskSessionBinding,
   rebaseTaskTurnOntoLatestSession
 } from '../session-persistence/task-admission'
-import { describe, expect, it, vi, type MockedFunction } from 'vitest'
+import { describe, expect, it, onTestFinished, vi, type MockedFunction } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,9 +10,20 @@ import { join } from 'node:path'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import {
   materializeSessionConversationGraph,
+  normalizeSessionFile,
   type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
+import {
+  forkEditedConversationMessage,
+  getActiveConversationContext,
+  synchronizeActiveConversationActivities
+} from '../../shared/conversation-graph'
+import { AcpAppContinuationOwner } from '../acp/app-continuation-owner'
+import { AcpDurableContinuationContextOwner } from '../acp/durable-continuation-context-owner'
+import { AcpElicitationOwner } from '../acp/elicitation-owner'
+import { AcpQuestionContinuationWorkflow } from '../acp/question-continuation-workflow'
+import { AcpSessionInteractionOwner } from '../acp/session-interaction-owner'
 import type { TaskNotebookContinuationRequest, TaskNotebookExecution } from '../../shared/task-api'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { ApplicationEventHub } from '../application-events'
@@ -27,7 +38,7 @@ import {
   type SessionComputeHostAccessMutation
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import type { TaskAgentPort, TaskSessionPort } from '../tasks/task-runner'
+import type { TaskAgentPort, TaskContinuationTracker, TaskSessionPort } from '../tasks/task-runner'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from '../tasks/task-run-journal'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -72,10 +83,13 @@ const taskSettings = {
 }
 
 type TaskAgentMock = {
-  [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
-    TaskAgentPort[Method]
-  >
-} & Pick<TaskAgentPort, 'withSessionAvailable'>
+  [
+    Method in Exclude<
+      keyof TaskAgentPort,
+      'withSessionAvailable' | 'setContinuationTracker' | 'questions'
+    >
+  ]: MockedFunction<TaskAgentPort[Method]>
+} & Pick<TaskAgentPort, 'withSessionAvailable' | 'setContinuationTracker' | 'questions'>
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
   withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
@@ -92,6 +106,179 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
   cancelPrompt: vi.fn<TaskAgentPort['cancelPrompt']>(async () => undefined),
   ...overrides
 })
+
+type TaskQuestionHarness = {
+  scope: { projectId: string; sessionId: string }
+  provenance: ReturnType<typeof getActiveConversationContext>
+  interactions: AcpSessionInteractionOwner
+  continuations: AcpAppContinuationOwner
+  schedule: ReturnType<typeof vi.fn>
+  providerSend: ReturnType<typeof vi.fn>
+  newOwner: () => AcpElicitationOwner
+  createApi: (
+    owner: AcpElicitationOwner,
+    restored: boolean,
+    submissionRoot?: string
+  ) => HeadlessTaskApi
+  restart: () => void
+  forkQuestionPrompt: () => void
+}
+
+const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuestionHarness => {
+  const promptMessageId = 'question-prompt'
+  let session: PersistedChatSession = materializeSessionConversationGraph({
+    id: 'question-session',
+    projectId: project.id,
+    title: 'Question session',
+    cwd: '/workspace',
+    status,
+    runtimeTranscriptOwner: 'main',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: promptMessageId,
+        role: 'user',
+        content: 'Compare the groups.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
+  const scope = { projectId: session.projectId, sessionId: session.id }
+  const provenance = getActiveConversationContext(session.conversationGraph!, promptMessageId)
+  const journal: TaskRunJournalEntry[] = [
+    {
+      id: 'original-run',
+      ...scope,
+      promptMessageId,
+      cwd: session.cwd,
+      status: 'running',
+      startedAt: 1,
+      artifacts: [],
+      preferredComputeHostIds: []
+    }
+  ]
+  const interactions = new AcpSessionInteractionOwner()
+  const continuations = new AcpAppContinuationOwner({ activityChanged: () => undefined })
+  const schedule = vi.fn()
+  const providerSend = vi.fn()
+  const sessionOwner = new AcpDurableContinuationContextOwner({
+    loadSessionForContinuation: async () => structuredClone(session),
+    mutateRuntimeSession: async (_scope, mutate) => {
+      session = mutate(structuredClone(session))
+      return structuredClone(session)
+    }
+  })
+  const newOwner = (): AcpElicitationOwner =>
+    new AcpElicitationOwner({
+      createRequestId: () => 'root-question',
+      onProjection: (request, elicitation) => {
+        session.activities = [
+          {
+            id: request.toolCallId,
+            kind: 'tool',
+            title: request.message,
+            status: 'in_progress',
+            promptMessageId,
+            sortIndex: 0,
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2,
+            elicitation
+          }
+        ]
+        session.conversationGraph = synchronizeActiveConversationActivities(
+          session.conversationGraph!,
+          session.activities,
+          []
+        )
+      }
+    })
+  const createApi = (
+    elicitation: AcpElicitationOwner,
+    restored: boolean,
+    submissionRoot?: string
+  ): HeadlessTaskApi => {
+    let trackSend: TaskContinuationTracker | undefined
+    const workflow = new AcpQuestionContinuationWorkflow({
+      hasActiveSession: () => true,
+      projectId: () => project.id,
+      permissionPrompts: () => undefined,
+      copyReferencedSessions: () => undefined,
+      interactions,
+      elicitation,
+      context: sessionOwner,
+      continuations,
+      schedule,
+      publication: { getSnapshot: vi.fn(), emitState: vi.fn(), pushEvent: vi.fn() }
+    })
+    return new HeadlessTaskApi(
+      {
+        commands: commandsFrom(async (channel) => {
+          if (channel === 'sessions:load-all') return { sessions: [structuredClone(session)] }
+          throw new Error(`Unexpected Task command: ${channel}`)
+        }),
+        agent: createAgent({
+          setContinuationTracker: (tracker) => {
+            trackSend = tracker
+            return () => {
+              trackSend = undefined
+            }
+          },
+          listAttachedSessionIds: vi.fn(async () => [scope.sessionId]),
+          questions: {
+            list: (id) => elicitation.listTaskQuestions(id),
+            respond: (input) =>
+              workflow.respondToTask(
+                input,
+                async (request, attemptId, dispatched) => {
+                  dispatched()
+                  providerSend(request, attemptId)
+                  return { stopReason: 'end_turn' }
+                },
+                trackSend
+              )
+          }
+        })
+      },
+      restored
+        ? {
+            submissionRoot,
+            runJournal: {
+              load: async () => structuredClone(journal),
+              replace: async (runs) => {
+                journal.splice(0, journal.length, ...structuredClone(runs))
+              }
+            }
+          }
+        : {}
+    )
+  }
+  return {
+    scope,
+    provenance,
+    interactions,
+    continuations,
+    schedule,
+    providerSend,
+    newOwner,
+    createApi,
+    restart: () => {
+      session = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    },
+    forkQuestionPrompt: () => {
+      session.conversationGraph = forkEditedConversationMessage(
+        session.conversationGraph!,
+        promptMessageId,
+        'new-branch',
+        3
+      )
+    }
+  }
+}
 
 const commandsFrom = (
   invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>,
@@ -1442,7 +1629,355 @@ describe('HeadlessTaskApi adapter', () => {
     }
   )
 
+  it('validates a live root question before releasing the original Provider wait once', async () => {
+    const h = taskQuestionHarness('running')
+    const owner = h.newOwner()
+    const api = h.createApi(owner, false)
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    const interactionId = 'question:root-question'
+    try {
+      await h.interactions.run(
+        { kind: 'prompt', sessionId: h.scope.sessionId, provenanceContext: h.provenance },
+        async () => {
+          const released = vi.fn()
+          const result = owner
+            .request(
+              {
+                mode: 'form',
+                sessionId: 'provider-session',
+                toolCallId: 'question-tool',
+                message: 'Which measures?',
+                requestedSchema: {
+                  type: 'object',
+                  properties: {
+                    measures: {
+                      type: 'array',
+                      items: { enum: ['mean', 'median'], type: 'string' },
+                      minItems: 1
+                    }
+                  },
+                  required: ['measures']
+                }
+              },
+              { sessionId: h.scope.sessionId },
+              { promptMessageId: h.provenance.promptMessageId, provenanceContext: h.provenance }
+            )
+            .then(released)
+          await expect(api.getInteraction(interactionId, h.scope)).rejects.toMatchObject({
+            code: 'task_relay_required'
+          })
+          await api.runWithCallerContext(caller, async () => {
+            await expect(api.listInteractions(h.scope)).resolves.toMatchObject([
+              { id: interactionId, kind: 'question', state: 'pending' }
+            ])
+            const question = await api.getInteraction(interactionId, h.scope)
+            expect(question).toMatchObject({
+              question: { fields: [{ kind: 'multi-select', required: true }] }
+            })
+            const response = {
+              action: 'accept',
+              source: 'known_context',
+              expectedRevision: question.revision,
+              expectedBranchId: question.branchId!
+            } as const
+            await expect(
+              api.answerQuestion(interactionId, h.scope, response)
+            ).rejects.toMatchObject({ code: 'invalid_request' })
+            await expect(
+              api.answerQuestion(interactionId, h.scope, {
+                ...response,
+                answers: [{ fieldId: 'measures', value: ['invented'] }]
+              })
+            ).rejects.toMatchObject({ code: 'invalid_request' })
+            await expect(
+              api.answerQuestion(interactionId, h.scope, {
+                ...response,
+                expectedBranchId: 'other-branch',
+                answers: [{ fieldId: 'measures', value: ['mean'] }]
+              })
+            ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+            expect(released).not.toHaveBeenCalled()
+            const answer = {
+              ...response,
+              answers: [{ fieldId: 'measures', value: ['mean', 'median'] }]
+            }
+            const replies = await Promise.all([
+              api.answerQuestion(interactionId, h.scope, answer),
+              api.answerQuestion(interactionId, h.scope, answer)
+            ])
+            expect(replies.map(({ changed }) => changed)).toEqual([true, false])
+            expect(replies[0].interaction.response?.continuation).toBeUndefined()
+            await expect(
+              api.answerQuestion(interactionId, h.scope, {
+                ...response,
+                answers: [{ fieldId: 'measures', value: ['median'] }]
+              })
+            ).rejects.toMatchObject({ code: 'question_already_answered' })
+          })
+          await result
+          expect(released).toHaveBeenCalledExactlyOnceWith({
+            action: 'accept',
+            content: { measures: ['mean', 'median'] }
+          })
+          expect(h.schedule).not.toHaveBeenCalled()
+        }
+      )
+    } finally {
+      owner.dispose()
+      await api.dispose()
+    }
+  })
+
+  it('expires a pending form whose Provider wait disappeared on restart', async () => {
+    const h = taskQuestionHarness('running')
+    const owner = h.newOwner()
+    const response = owner.request(
+      {
+        mode: 'form',
+        sessionId: 'provider-session',
+        toolCallId: 'question-tool',
+        message: 'Name the group.',
+        requestedSchema: {
+          type: 'object',
+          properties: { group: { type: 'string' } },
+          required: ['group']
+        }
+      },
+      { sessionId: h.scope.sessionId },
+      { promptMessageId: h.provenance.promptMessageId, provenanceContext: h.provenance }
+    )
+    h.restart()
+    owner.dispose()
+    await expect(response).resolves.toEqual({ action: 'cancel' })
+    const api = h.createApi(h.newOwner(), true)
+    try {
+      await api.initialize()
+      await api.runWithCallerContext(
+        createTaskCallerContext({ authenticatedLocalBearer: true }),
+        async () => {
+          await expect(api.listInteractions(h.scope)).resolves.toEqual([])
+          await expect(
+            api.getInteraction('question:root-question', h.scope)
+          ).resolves.toMatchObject({
+            state: 'expired',
+            actions: [],
+            next: expect.stringContaining('Check the current Session')
+          })
+        }
+      )
+    } finally {
+      await api.dispose()
+    }
+  })
+
+  it.each([false, true])(
+    'recovers a detached question and its saved response without replay (dispatched: %s)',
+    async (dispatched) => {
+      const h = taskQuestionHarness('waiting-for-user')
+      const owner = h.newOwner()
+      expect(
+        owner.requestDetached(
+          {
+            mode: 'form',
+            sessionId: 'provider-session',
+            toolCallId: 'question-tool',
+            message: 'Pick a method and output.',
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                question_0: { type: 'string', enum: ['Median', 'Mean'] },
+                question_0_custom: { type: 'string' },
+                question_1: { type: 'string', enum: ['Table', 'Chart'] },
+                question_1_custom: { type: 'string' }
+              }
+            }
+          },
+          { sessionId: h.scope.sessionId },
+          {
+            kind: 'agent-user-choice',
+            requestId: 'root-question',
+            promptMessageId: h.provenance.promptMessageId,
+            provenanceContext: h.provenance
+          }
+        )
+      ).toBeDefined()
+      owner.dispose()
+      h.restart()
+      const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+      const profile = await mkdtemp(join(tmpdir(), 'question-task-continuation-'))
+      const api = h.createApi(h.newOwner(), true, profile)
+      const interactionId = 'question:root-question'
+      const original = { runId: 'original-run' }
+      let restarted: HeadlessTaskApi | undefined
+      try {
+        await api.initialize()
+        const answer = await api.runWithCallerContext(caller, async () => {
+          await expect(api.getRun(original.runId)).resolves.toMatchObject({
+            status: 'failed',
+            failureCode: 'process_restarted',
+            attention: { kind: 'interactions', interactions: [{ id: interactionId }] }
+          })
+          const question = await api.getInteraction(interactionId, original)
+          expect(question).toMatchObject({
+            question: { skipFieldIds: ['question_0', 'question_1'] }
+          })
+          const response = {
+            action: 'accept',
+            source: 'user_relay',
+            expectedRevision: question.revision,
+            expectedBranchId: question.branchId!,
+            answers: [
+              { fieldId: 'question_0_custom', value: 'Mode' },
+              { fieldId: 'question_1', status: 'skipped' }
+            ]
+          } as const
+          const submission = { ...response, answers: [...response.answers] }
+          await expect(
+            api.answerQuestion(interactionId, original, { ...submission, source: 'known_context' })
+          ).rejects.toMatchObject({ code: 'invalid_request' })
+          await expect(
+            api.answerQuestion(interactionId, original, submission)
+          ).resolves.toMatchObject({
+            changed: true,
+            interaction: {
+              state: 'responded',
+              response: { continuation: { id: expect.stringMatching(/^askuser_/) } }
+            }
+          })
+          expect(h.continuations.get(h.scope.sessionId)?.request).toMatchObject({
+            suppressUserMessage: true,
+            text: expect.stringContaining('Answer: Mode')
+          })
+          return submission
+        })
+        if (dispatched) {
+          const continuation = h.continuations.takeAndActivate(h.scope.sessionId)!
+          await continuation.send!(continuation.request, vi.fn())
+          h.continuations.complete(h.scope.sessionId)
+        }
+        await api.dispose()
+        expect(h.schedule).toHaveBeenCalledOnce()
+        h.continuations.clear()
+        h.restart()
+        const apiAfterRestart = h.createApi(h.newOwner(), true, profile)
+        restarted = apiAfterRestart
+        await apiAfterRestart.initialize()
+        await apiAfterRestart.runWithCallerContext(caller, async () => {
+          await expect(apiAfterRestart.listInteractions(h.scope)).resolves.toEqual([])
+          const interaction = await apiAfterRestart.getInteraction(interactionId, original)
+          expect(interaction).toMatchObject({
+            state: 'responded',
+            response: {
+              source: 'user_relay',
+              continuation: { status: dispatched ? 'accepted' : 'unconfirmed' }
+            }
+          })
+          if (dispatched && interaction.kind === 'question') {
+            const { requestId, runId } = interaction.response!.continuation!
+            expect(requestId).toMatch(/^continue-/)
+            await expect(apiAfterRestart.getSubmission(requestId!)).resolves.toMatchObject({
+              status: 'accepted',
+              runId
+            })
+            await expect(apiAfterRestart.getRun(runId!)).resolves.toMatchObject({
+              status: 'completed',
+              continuedFromRunId: original.runId
+            })
+          }
+          await expect(
+            apiAfterRestart.answerQuestion(interactionId, original, answer)
+          ).resolves.toMatchObject({ changed: false })
+          await expect(apiAfterRestart.getRun(original.runId)).resolves.toMatchObject({
+            status: 'failed',
+            failureCode: 'process_restarted'
+          })
+        })
+        expect(h.schedule).toHaveBeenCalledOnce()
+        expect(h.providerSend).toHaveBeenCalledTimes(dispatched ? 1 : 0)
+      } finally {
+        await api.dispose()
+        await restarted?.dispose()
+        await rm(profile, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('refuses an old answer after the user branches from the original question prompt', async () => {
+    const h = taskQuestionHarness('running')
+    const owner = h.newOwner()
+    const api = h.createApi(owner, false)
+    try {
+      await h.interactions.run(
+        { kind: 'prompt', sessionId: h.scope.sessionId, provenanceContext: h.provenance },
+        async () => {
+          const released = vi.fn()
+          const response = owner
+            .request(
+              {
+                mode: 'form',
+                sessionId: 'provider-session',
+                toolCallId: 'question-tool',
+                message: 'Name the group.',
+                requestedSchema: {
+                  type: 'object',
+                  properties: { group: { type: 'string' } },
+                  required: ['group']
+                }
+              },
+              { sessionId: h.scope.sessionId },
+              { promptMessageId: h.provenance.promptMessageId, provenanceContext: h.provenance }
+            )
+            .then(released)
+          await api.runWithCallerContext(
+            createTaskCallerContext({ authenticatedLocalBearer: true }),
+            async () => {
+              const id = 'question:root-question'
+              const question = await api.getInteraction(id, h.scope)
+              h.forkQuestionPrompt()
+              await expect(
+                api.answerQuestion(id, h.scope, {
+                  action: 'accept',
+                  source: 'user_relay',
+                  expectedRevision: question.revision,
+                  expectedBranchId: question.branchId!,
+                  answers: [{ fieldId: 'group', value: 'Treatment' }]
+                })
+              ).rejects.toMatchObject({ code: 'interaction_not_found' })
+              expect(released).not.toHaveBeenCalled()
+            }
+          )
+          owner.dispose()
+          await response
+          expect(released).toHaveBeenCalledExactlyOnceWith({ action: 'cancel' })
+        }
+      )
+    } finally {
+      owner.dispose()
+      await api.dispose()
+    }
+  })
+
   it('finds a restored Plan in the original scope and looks up the recorded decision after reconnect', async () => {
+    const submissionRoot = await mkdtemp(join(tmpdir(), 'plan-task-continuation-'))
+    const repository = new NotebookRunRepository(submissionRoot)
+    const notebook = new NotebookRuntimeService({
+      configRoot: submissionRoot,
+      dataRoot: submissionRoot,
+      projectId: project.id,
+      repository
+    })
+    onTestFinished(async () => {
+      await notebook.dispose()
+      await rm(submissionRoot, { recursive: true, force: true })
+    })
+    let now = 100
+    let trackContinuation: TaskContinuationTracker | undefined
+    const send = vi.fn(async (onProviderDispatched: () => void) => {
+      onProviderDispatched()
+      await appendNotebookRun('continuation-cell', ++now)
+      now++
+      return { stopReason: 'end_turn' }
+    })
     const plan = {
       artifactId: 'plan-artifact',
       artifactVersionId: 'plan-version',
@@ -1455,7 +1990,7 @@ describe('HeadlessTaskApi adapter', () => {
       id: 'session-plan',
       projectId: project.id,
       title: 'Plan session',
-      cwd: '/workspace/plan',
+      cwd: submissionRoot,
       status: 'waiting-plan-approval',
       runtimeContext: { version: 1, revision: 3, plan },
       messages: [
@@ -1472,6 +2007,30 @@ describe('HeadlessTaskApi adapter', () => {
       createdAt: 1,
       updatedAt: 2
     })
+    const frame = persisted.conversationGraph!.frames[0]!
+    const lane = createFrameNotebookLane(project.id, persisted.id, frame.id)
+    const notebookScope = { projectId: project.id, sessionId: persisted.id, lane }
+    const appendNotebookRun = (id: string, at: number): Promise<unknown> =>
+      repository.appendRun({
+        ...notebookScope,
+        run: {
+          runId: id,
+          cellId: id,
+          source: 'agent',
+          kernelKind: 'python',
+          script: 'print(42)',
+          status: 'completed',
+          kernelDispatched: true,
+          startedAt: at,
+          messageBranchId: frame.activeBranchId,
+          promptMessageId: 'plan-prompt',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+      })
+    await repository.loadOrCreate({ ...notebookScope, workspaceCwd: submissionRoot })
+    await appendNotebookRun('original-cell', 5)
     const commandInvoke = vi.fn(async (channel: string) => {
       if (channel === 'sessions:load-all') {
         return { sessions: [persisted], manifest: { version: 1 } }
@@ -1502,6 +2061,17 @@ describe('HeadlessTaskApi adapter', () => {
             }
           }
         }
+        await trackContinuation!(
+          {
+            kind: 'plan',
+            projectId: project.id,
+            sessionId: persisted.id,
+            attemptId: 'continuation-1',
+            originalPromptMessageId: 'plan-prompt',
+            promptMessageId: 'plan-prompt'
+          },
+          send
+        )
         return { changed: true }
       }
       throw new Error(`Unexpected Task command: ${channel}`)
@@ -1523,9 +2093,19 @@ describe('HeadlessTaskApi adapter', () => {
       new HeadlessTaskApi(
         {
           commands: commandsFrom(commandInvoke),
-          agent: createAgent()
+          agent: createAgent({
+            setContinuationTracker: (tracker) => {
+              trackContinuation = tracker
+              return () => {
+                trackContinuation = undefined
+              }
+            }
+          }),
+          notebook
         },
         {
+          now: () => now,
+          submissionRoot,
           runJournal: {
             load: async () => structuredClone(journal),
             replace: async (runs) => {
@@ -1571,17 +2151,32 @@ describe('HeadlessTaskApi adapter', () => {
         changed: true
       })
     })
+    await api.dispose()
     const restarted = createApi()
     await restarted.initialize()
     await restarted.runWithCallerContext(caller, async () => {
       await expect(restarted.listInteractions(scope)).resolves.toEqual([])
-      await expect(restarted.getInteraction('plan:plan-version', scope)).resolves.toMatchObject({
+      const interaction = await restarted.getInteraction('plan:plan-version', scope)
+      if (interaction.kind !== 'plan') throw new Error('Expected the recorded Plan interaction.')
+      expect(interaction).toMatchObject({
         state: 'responded',
         response: {
           source: 'user_relay',
           action: 'approved',
-          continuation: { id: 'continuation-1', taskRunStatus: 'unconfirmed' }
+          continuation: { id: 'continuation-1', taskRunStatus: 'tracked' }
         }
+      })
+      const continuation = interaction.response!.continuation
+      expect(continuation.runId).toBeTruthy()
+      expect(continuation.requestId).toBeTruthy()
+      await expect(restarted.getSubmission(continuation.requestId!)).resolves.toMatchObject({
+        status: 'accepted',
+        runId: continuation.runId
+      })
+      await expect(restarted.getRun(continuation.runId!)).resolves.toMatchObject({
+        status: 'completed',
+        continuedFromRunId: 'plan-run',
+        execution: { status: 'completed', notebookRunId: 'continuation-cell' }
       })
       await expect(restarted.respondSessionPlan(persisted.id, request)).resolves.toMatchObject({
         changed: false
@@ -1589,12 +2184,16 @@ describe('HeadlessTaskApi adapter', () => {
       await expect(
         restarted.respondSessionPlan(persisted.id, { ...request, decision: 'rejected' })
       ).rejects.toMatchObject({ code: 'approval-already-decided' })
-      expect((await restarted.getRun('plan-run')).failureCode).toBe('process_restarted')
+      await expect(restarted.getRun('plan-run')).resolves.toMatchObject({
+        failureCode: 'process_restarted',
+        execution: { status: 'completed', notebookRunId: 'original-cell' }
+      })
     })
     expect(
       commandInvoke.mock.calls.filter(([channel]) => channel === 'acp:respond-plan')
     ).toHaveLength(1)
-    await api.dispose()
+    expect(send).toHaveBeenCalledOnce()
+    await restarted.dispose()
   })
   it('exposes Task Run progress through one subscription seam', async () => {
     const invoke = vi.fn(

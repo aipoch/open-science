@@ -9,6 +9,12 @@ import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
 
+type PlanContinuationDelivery = Readonly<{
+  projectId: string
+  commandId: string
+  externalOriginPromptId?: string
+}>
+
 type PlanContinuationDependencies = Readonly<{
   deliveries?: SessionPlanDeliveryOwner
   sessions?: NonNullable<AcpRuntimeOptions['plan']>['sessions']
@@ -19,7 +25,7 @@ type PlanContinuationDependencies = Readonly<{
   projection: (projectId: string, sessionId: string) => Promise<ActivePlanProjection | null>
   send: (
     request: AcpPromptRequest,
-    delivery: Readonly<{ projectId: string; commandId: string }> | undefined,
+    delivery: PlanContinuationDelivery | undefined,
     onProviderDispatched: () => void
   ) => Promise<PromptResponse>
   scheduleContinuation: (sessionId: string) => void
@@ -55,7 +61,7 @@ type PlanDeliveryClaimRetry = {
 // Teardown callers clear retries both before and after asynchronous disposal: teardown may
 // schedule another retry. This workflow remains reusable after disconnect/update refusal.
 class AcpPlanContinuationWorkflow {
-  private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
+  private durablePlanDeliveries?: Map<string, PlanContinuationDelivery>
   private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
   private readonly planDeliveryPreparations = new Set<string>()
   private readonly planDeliveryPreparationRequests = new Map<string, string | undefined>()
@@ -232,9 +238,15 @@ class AcpPlanContinuationWorkflow {
       throw new Error('The durable Plan review feedback Message is unavailable.')
     }
     const durablePlanDeliveries =
-      this.durablePlanDeliveries ?? new Map<string, { projectId: string; commandId: string }>()
+      this.durablePlanDeliveries ?? new Map<string, PlanContinuationDelivery>()
     this.durablePlanDeliveries = durablePlanDeliveries
-    durablePlanDeliveries.set(sessionId, { projectId, commandId: command.commandId })
+    durablePlanDeliveries.set(sessionId, {
+      projectId,
+      commandId: command.commandId,
+      ...(plan.externalResponse?.commandId === command.commandId && plan.originatingPromptMessageId
+        ? { externalOriginPromptId: plan.originatingPromptMessageId }
+        : {})
+    })
     const rejected = command.kind === 'rejected-plan'
     const reviewed = command.kind === 'review-feedback'
     const request: AcpPromptRequest = {

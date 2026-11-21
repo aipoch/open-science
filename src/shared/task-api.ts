@@ -214,6 +214,7 @@ export type TaskPlanResponseRequest = {
 
 export type TaskRun = {
   requestId?: string
+  continuedFromRunId?: string
   id: string
   sessionId: string
   projectId: string
@@ -370,6 +371,8 @@ export type TaskApiErrorCode =
   | 'notebook_continuation_expired'
   | 'task_relay_required'
   | 'interaction_not_found'
+  | 'interaction_revision_conflict'
+  | 'question_already_answered'
   | 'notebook_environment_operation_conflict'
   | 'submission_conflict'
   | 'submission_unavailable'

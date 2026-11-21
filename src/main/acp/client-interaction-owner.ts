@@ -6,6 +6,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentTurnProvenanceContext } from '../../shared/elicitation'
 import type { AcpElicitationOwner } from './elicitation-owner'
 import type { AcpPermissionContext } from './permission-context'
 
@@ -17,6 +18,7 @@ type AcpClientInteractionOwnerOptions = {
     frameworkForSession: (appSessionId: string) => AgentFrameworkId | undefined
     reviewerFrameworkForSession: (providerSessionId: string) => AgentFrameworkId | undefined
     promptMessageIdForSession: (appSessionId: string) => string | undefined
+    provenanceForSession?: (appSessionId: string) => AgentTurnProvenanceContext | undefined
   }
   elicitation: Pick<AcpElicitationOwner, 'request'>
   permission: Pick<
@@ -75,7 +77,12 @@ class AcpClientInteractionOwner {
     return this.options.elicitation.request(
       params,
       { sessionId },
-      promptMessageId ? { promptMessageId } : undefined
+      promptMessageId
+        ? {
+            promptMessageId,
+            provenanceContext: this.options.routing.provenanceForSession?.(sessionId)
+          }
+        : undefined
     )
   }
 

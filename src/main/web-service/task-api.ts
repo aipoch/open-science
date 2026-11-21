@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { isDeepStrictEqual } from 'node:util'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
@@ -7,7 +8,15 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
+import {
+  resolveAgentUserChoiceQuestions,
+  type PendingElicitationRequest,
+  type TaskQuestionReceipt
+} from '../../shared/elicitation'
 import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
@@ -30,7 +39,9 @@ import type {
   TaskInteraction,
   TaskInteractionReference,
   TaskNotebookStopInteraction,
-  TaskPlanInteraction
+  TaskPlanInteraction,
+  TaskQuestionInteraction,
+  TaskQuestionResponse
 } from '../../shared/task-interaction'
 import type {
   AddCustomServerRequest,
@@ -82,7 +93,11 @@ import {
 } from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
-import { TaskSubmissions } from '../tasks/task-submissions'
+import {
+  TaskSubmissions,
+  taskContinuationRequestId,
+  type TaskContinuationIdentity
+} from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
@@ -92,7 +107,9 @@ import {
   type TaskComputePreferencePort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
+import type { TaskContinuationTracker } from '../tasks/task-runner'
 import { readTaskNotebookReadiness } from './task-notebook-readiness'
+import { taskQuestionAnswer, taskQuestionRevision } from '../acp/elicitation-owner'
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
 const log = createLogger('web-service:task-api')
@@ -134,11 +151,45 @@ type ArtifactBrowserSelection = {
   versionNumber?: number
 }
 
+type ScopedTaskQuestion = {
+  interaction: TaskQuestionInteraction
+  request: PendingElicitationRequest
+  receipt?: TaskQuestionReceipt
+  waitsForProvider: boolean
+  readyToAnswer: boolean
+}
+
+const rootQuestionScope = (
+  session: PersistedChatSession
+): { branchId: string; promptMessageId: string } | undefined => {
+  const graph = session.conversationGraph
+  if (!graph || graph.activeFrameId !== graph.rootFrameId) return undefined
+  const branchId = graph.frames.find(({ id }) => id === graph.rootFrameId)?.activeBranchId
+  const prompt = resolveActiveConversationMessages(graph).findLast(({ role }) => role === 'user')
+  if (
+    !branchId ||
+    !prompt ||
+    !graph.messages.some(
+      ({ id, introducedOnBranchId }) => id === prompt.id && introducedOnBranchId === branchId
+    )
+  )
+    return undefined
+  return { branchId, promptMessageId: prompt.id }
+}
+
+const staleQuestion = (): TaskRunnerError =>
+  new TaskRunnerError(
+    'interaction_revision_conflict',
+    'The question, prompt, or active Message Branch changed. Read the current interaction before answering.'
+  )
+
 class HeadlessTaskApi {
   private readonly callerContexts = new AsyncLocalStorage<CallerContext>()
   private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
   private readonly submissions?: TaskSubmissions
+  private readonly pendingQuestionResponses = new Map<string, Promise<unknown>>()
+  private readonly releaseContinuationTracker?: () => void
 
   constructor(
     private readonly ports: TaskApiPorts,
@@ -270,6 +321,9 @@ class HeadlessTaskApi {
           ),
         now: dependencies.now
       })
+      this.releaseContinuationTracker = this.ports.agent.setContinuationTracker?.(
+        this.trackContinuation
+      )
     }
   }
 
@@ -280,11 +334,73 @@ class HeadlessTaskApi {
   }
 
   async dispose(): Promise<void> {
+    this.releaseContinuationTracker?.()
     try {
       await Promise.all([this.submissions?.dispose(), this.runner.dispose()])
     } finally {
       this.commandClient.dispose()
     }
+  }
+
+  private trackContinuation: TaskContinuationTracker = async (identity, send) => {
+    await this.initialize()
+    const originRunId = this.runner.findRunIdForPrompt(
+      identity.sessionId,
+      identity.originalPromptMessageId
+    )
+    if (!originRunId || this.runner.getRun(originRunId).projectId !== identity.projectId)
+      return send(() => undefined)
+    if (!this.submissions)
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'A durable Task continuation could not be recorded.'
+      )
+    // The Plan Owner may schedule this as the original turn is settling. Do not hold the
+    // submission journal's write queue while waiting for that Run to release the Session.
+    await this.runner.waitForRun(originRunId)
+    const tracking: { active?: Awaited<ReturnType<TaskRunner['beginContinuation']>> } = {}
+    let result
+    try {
+      const admission = await this.submissions.admitContinuation(identity, async (requestId) => {
+        tracking.active = await this.callerContexts.run(TASK_CALLER_CONTEXT, () =>
+          this.runner.beginContinuation(originRunId, identity.promptMessageId, requestId)
+        )
+        return tracking.active.run
+      })
+      if (!admission.admitted || !tracking.active)
+        throw new TaskRunnerError(
+          'submission_conflict',
+          'This continuation was already recorded; the provider was not called again.'
+        )
+      const { onProviderDispatched } = tracking.active
+      result = await this.callerContexts.run(TASK_CALLER_CONTEXT, () => send(onProviderDispatched))
+    } catch (error) {
+      await tracking.active?.settle({ error })
+      throw error
+    }
+    await tracking.active.settle(result)
+    return result
+  }
+
+  private async continuationReceipt(identity: TaskContinuationIdentity): Promise<{
+    taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+    requestId?: string
+    runId?: string
+  }> {
+    const requestId = taskContinuationRequestId(identity)
+    try {
+      const receipt = await this.submissions?.get(requestId)
+      if (receipt?.status === 'accepted')
+        return { taskRunStatus: 'tracked', requestId, runId: receipt.runId }
+      if (receipt?.status === 'pending') return { taskRunStatus: 'pending', requestId }
+    } catch (error) {
+      if (
+        !(error instanceof TaskRunnerError) ||
+        (error.code !== 'submission_not_found' && error.code !== 'submission_unavailable')
+      )
+        throw error
+    }
+    return { taskRunStatus: 'unconfirmed' }
   }
 
   runWithCallerContext<Result>(context: CallerContext, operation: () => Result): Result {
@@ -733,7 +849,12 @@ class HeadlessTaskApi {
               continuation: {
                 id: receipt.commandId,
                 promptMessageId: receipt.promptMessageId,
-                taskRunStatus: 'unconfirmed',
+                ...(await this.continuationReceipt({
+                  kind: 'plan',
+                  projectId: session.projectId,
+                  sessionId: session.id,
+                  attemptId: receipt.commandId
+                })),
                 status:
                   delivery?.state === 'delivering'
                     ? 'unconfirmed'
@@ -748,12 +869,18 @@ class HeadlessTaskApi {
   async listInteractions(scope: TaskInteractionScope): Promise<TaskInteractionReference[]> {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
-    const interaction = await this.planInteraction(session, run)
     const stop = await this.notebookStopInteraction(session, run)
     const references: TaskInteractionReference[] = stop ? [stop] : []
-    if (interaction?.state === 'pending') {
-      const { plan, ...reference } = interaction
-      void plan
+    const plan = await this.planInteraction(session, run)
+    if (plan?.state === 'pending') {
+      const { plan: detail, ...reference } = plan
+      void detail
+      references.push(reference)
+    }
+    for (const { interaction } of this.questionInteractions(session, run)) {
+      if (interaction.state !== 'pending') continue
+      const { question, ...reference } = interaction
+      void question
       references.push(reference)
     }
     return references
@@ -762,6 +889,10 @@ class HeadlessTaskApi {
   async getInteraction(id: string, scope: TaskInteractionScope): Promise<TaskInteraction> {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
+    const question = id.startsWith('question:')
+      ? this.questionInteractions(session, run, id)[0]
+      : undefined
+    if (question) return this.withQuestionContinuation(question.interaction)
     if (id.startsWith(notebookStopPrefix)) {
       const stop = await this.notebookStopInteraction(session, run)
       if (stop?.id !== id) throw notebookStopExpired()
@@ -772,6 +903,329 @@ class HeadlessTaskApi {
       throw new TaskRunnerError('interaction_not_found', 'No matching interaction in this scope.')
     }
     return interaction
+  }
+
+  private questionInteractions(
+    session: PersistedChatSession,
+    run?: TaskRun,
+    interactionId?: string
+  ): ScopedTaskQuestion[] {
+    if (!this.ports.agent.questions || session.packageOrigin || session.archivedAt !== undefined)
+      return []
+    const context = rootQuestionScope(session)
+    const graph = session.conversationGraph
+    if (!graph || !context) return []
+    const { branchId, promptMessageId: activePromptId } = context
+    const byRequestId = new Map<string, ScopedTaskQuestion>()
+    const add = (
+      request: PendingElicitationRequest,
+      promptMessageId: string,
+      waitsForProvider: boolean,
+      pending: boolean,
+      receipt?: TaskQuestionReceipt
+    ): void => {
+      const id = `question:${request.requestId}`
+      if (interactionId && id !== interactionId) return
+      if (run && this.runner.getRunPromptMessageId(run.id) !== promptMessageId) return
+      const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
+      const state = receipt
+        ? 'responded'
+        : pending && run?.status !== 'cancelled' && activePromptId === promptMessageId
+          ? 'pending'
+          : 'expired'
+      const readyToAnswer =
+        waitsForProvider || (session.status === 'waiting-for-user' && !session.activeRun)
+      byRequestId.set(request.requestId, {
+        request,
+        receipt,
+        waitsForProvider,
+        readyToAnswer,
+        interaction: {
+          kind: 'question',
+          id,
+          state,
+          branchId,
+          promptMessageId,
+          projectId: session.projectId,
+          sessionId: session.id,
+          ...(runId ? { runId } : {}),
+          revision: taskQuestionRevision(request, promptMessageId, branchId),
+          owner: state === 'pending' ? 'user' : 'service',
+          actions: state === 'pending' && readyToAnswer ? ['accept', 'decline'] : [],
+          ...(state === 'pending' && readyToAnswer
+            ? { responseCapability: 'answer_question' }
+            : {}),
+          ...(state === 'pending' && !readyToAnswer
+            ? {
+                next: 'The original Run is settling. Read this question again before submitting an answer.'
+              }
+            : {}),
+          ...(state === 'expired'
+            ? {
+                next: 'This question cannot be answered in this Run. Check the current Session before asking the user again.'
+              }
+            : {}),
+          question: {
+            message: request.message,
+            fields: request.fields,
+            skipFieldIds: (resolveAgentUserChoiceQuestions(request.fields) ?? []).map(
+              ({ choiceField }) => choiceField.id
+            )
+          },
+          ...(receipt
+            ? {
+                response: {
+                  source: receipt.source,
+                  action: receipt.action,
+                  reviewedRevision: receipt.reviewedRevision,
+                  ...(receipt.continuationId
+                    ? { continuation: { id: receipt.continuationId, status: 'unconfirmed' } }
+                    : {})
+                }
+              }
+            : {})
+        }
+      })
+    }
+
+    const visible = new Map(
+      resolveActiveConversationActivities(graph).activities.map((activity) => [
+        activity.id,
+        activity
+      ])
+    )
+    for (const activity of graph.activities) {
+      const question = activity.elicitation
+      const requestId = question?.durable?.requestId ?? question?.taskRequestId
+      if (
+        !question ||
+        !requestId ||
+        !visible.has(activity.id) ||
+        activity.agentFrameId !== graph.rootFrameId ||
+        activity.messageBranchId !== branchId
+      )
+        continue
+      if (
+        question.durable?.promptMessageId &&
+        question.durable.promptMessageId !== activity.promptMessageId
+      )
+        continue
+      const flat = (session.activities ?? []).filter(({ id }) => id === activity.id)
+      if (flat.length !== 1 || !isDeepStrictEqual(flat[0].elicitation, question)) continue
+      add(
+        {
+          requestId,
+          sessionId: session.id,
+          toolCallId: activity.id,
+          message: question.message,
+          fields: question.fields,
+          durable: question.durable
+        },
+        activity.promptMessageId,
+        false,
+        Boolean(
+          question.durable && question.state === 'pending' && session.status === 'waiting-for-user'
+        ),
+        question.taskResponse
+      )
+    }
+    for (const {
+      request,
+      provenance,
+      waitsForProvider,
+      receipt
+    } of this.ports.agent.questions.list(session.id)) {
+      if (provenance.agentFrameId !== graph.rootFrameId || provenance.messageBranchId !== branchId)
+        continue
+      if (byRequestId.get(request.requestId)?.receipt) continue
+      add(request, provenance.promptMessageId, waitsForProvider, true, receipt)
+    }
+    return [...byRequestId.values()]
+  }
+
+  supportsTaskQuestions(): boolean {
+    return this.ports.agent.questions !== undefined
+  }
+
+  async answerQuestion(
+    id: string,
+    scope: TaskInteractionScope,
+    response: TaskQuestionResponse
+  ): Promise<{ changed: boolean; interaction: TaskQuestionInteraction }> {
+    this.requireTaskRelay()
+    const { session } = await this.interactionSession(scope)
+    const key = JSON.stringify([session.projectId, session.id, id])
+    const previous = this.pendingQuestionResponses.get(key)
+    const next = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.commitQuestionAnswer(id, scope, response))
+    this.pendingQuestionResponses.set(key, next)
+    try {
+      return await next
+    } finally {
+      if (this.pendingQuestionResponses.get(key) === next) this.pendingQuestionResponses.delete(key)
+    }
+  }
+
+  private async commitQuestionAnswer(
+    id: string,
+    scope: TaskInteractionScope,
+    response: TaskQuestionResponse
+  ): Promise<{ changed: boolean; interaction: TaskQuestionInteraction }> {
+    const { session, run } = await this.interactionSession(scope)
+    const question = this.questionInteractions(session, run, id)[0]
+    if (!question || !this.ports.agent.questions)
+      throw new TaskRunnerError('interaction_not_found', 'No matching question in this scope.')
+    const { interaction, request, waitsForProvider, readyToAnswer } = question
+    const { branchId, promptMessageId } = interaction
+    if (
+      !branchId ||
+      !promptMessageId ||
+      branchId !== response.expectedBranchId ||
+      interaction.revision !== response.expectedRevision ||
+      interaction.state === 'expired'
+    )
+      throw staleQuestion()
+    const { receipt, answers } = (() => {
+      try {
+        return taskQuestionAnswer(request, response)
+      } catch (error) {
+        throw new TaskRunnerError(
+          'invalid_request',
+          error instanceof Error ? error.message : 'Invalid structured input response.'
+        )
+      }
+    })()
+    if (question.receipt) {
+      if (
+        question.receipt.checksum !== receipt.checksum ||
+        question.receipt.action !== receipt.action ||
+        question.receipt.source !== receipt.source ||
+        question.receipt.reviewedRevision !== receipt.reviewedRevision
+      ) {
+        throw new TaskRunnerError(
+          'question_already_answered',
+          'The question already has a different recorded answer.'
+        )
+      }
+      return { changed: false, interaction: await this.withQuestionContinuation(interaction) }
+    }
+    if (interaction.state !== 'pending') throw staleQuestion()
+    if (!readyToAnswer)
+      throw new TaskRunnerError(
+        'session_busy',
+        'The original Run is still settling. Read the question again before submitting an answer.'
+      )
+    if (
+      response.source === 'known_context' &&
+      (response.action === 'decline' || answers.some(({ status }) => status === 'skipped'))
+    ) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Skip or decline only when relaying an explicit user decision. Otherwise leave the question pending.'
+      )
+    }
+    if (!waitsForProvider) {
+      receipt.continuationId = `askuser_${createHash('sha256')
+        .update(
+          JSON.stringify([
+            session.projectId,
+            session.id,
+            request.requestId,
+            branchId,
+            promptMessageId
+          ])
+        )
+        .digest('hex')}`
+    }
+    const assertQuestion = (current: PendingElicitationRequest | undefined): void => {
+      this.requireTaskRelay()
+      if (
+        !current ||
+        taskQuestionRevision(current, promptMessageId, branchId) !== response.expectedRevision
+      )
+        throw staleQuestion()
+    }
+    await this.ports.agent.withSessionAvailable(session.projectId, session.id, async () => {
+      if (waitsForProvider) {
+        const latest = await this.runner.findSession(session.id, session.projectId)
+        const active = rootQuestionScope(latest)
+        if (active?.branchId !== branchId || active?.promptMessageId !== promptMessageId)
+          throw staleQuestion()
+      } else {
+        await this.runner.ensureSessionAttached(session.id)
+      }
+      await this.ports.agent.questions!.respond({
+        projectId: session.projectId,
+        request,
+        waitsForProvider,
+        answers,
+        action: response.action,
+        receipt,
+        assertLive: (current, provenance) => {
+          assertQuestion(current)
+          if (
+            provenance?.messageBranchId !== branchId ||
+            provenance?.promptMessageId !== promptMessageId
+          )
+            throw staleQuestion()
+        },
+        assertCurrent: (latest, current) => {
+          assertQuestion(current)
+          const active = rootQuestionScope(latest)
+          if (
+            latest.packageOrigin ||
+            active?.branchId !== branchId ||
+            active?.promptMessageId !== promptMessageId
+          )
+            throw staleQuestion()
+          if (latest.activeRun)
+            throw new TaskRunnerError(
+              'session_busy',
+              'Wait for the active Run to settle before responding to the question.'
+            )
+        }
+      })
+    })
+    return {
+      changed: true,
+      interaction: (await this.getInteraction(id, scope)) as TaskQuestionInteraction
+    }
+  }
+
+  private async withQuestionContinuation(
+    interaction: TaskQuestionInteraction
+  ): Promise<TaskQuestionInteraction> {
+    const continuation = interaction.response?.continuation
+    if (!continuation || !this.submissions) return interaction
+    const requestId = taskContinuationRequestId({
+      kind: 'question',
+      projectId: interaction.projectId,
+      sessionId: interaction.sessionId,
+      attemptId: continuation.id
+    })
+    try {
+      const receipt = await this.submissions.get(requestId)
+      return {
+        ...interaction,
+        response: {
+          ...interaction.response!,
+          continuation: {
+            ...continuation,
+            requestId: receipt.requestId,
+            status: receipt.status,
+            ...(receipt.runId ? { runId: receipt.runId } : {})
+          }
+        }
+      }
+    } catch (error) {
+      if (
+        !(error instanceof TaskRunnerError) ||
+        (error.code !== 'submission_not_found' && error.code !== 'submission_unavailable')
+      )
+        throw error
+      return interaction
+    }
   }
 
   private async notebookStopInteraction(
@@ -966,7 +1420,8 @@ class HeadlessTaskApi {
       canRelayTaskInteraction(this.currentCallerContext()) &&
       (run.attention?.kind === 'plan-approval' ||
         run.failureCode === 'process_restarted' ||
-        run.execution?.refusalId)
+        run.execution?.refusalId ||
+        this.supportsTaskQuestions())
     ) {
       try {
         const interactions = await this.listInteractions({ runId })
@@ -1002,7 +1457,10 @@ class HeadlessTaskApi {
     return this.withNotebookExecution(run, {
       projectId: run.projectId,
       sessionId: run.sessionId,
-      promptMessageId
+      promptMessageId,
+      ...(this.runner.sharesContinuationPrompt(run, promptMessageId)
+        ? { taskWindow: { startedAt: run.startedAt, completedAt: run.completedAt } }
+        : {})
     })
   }
 
