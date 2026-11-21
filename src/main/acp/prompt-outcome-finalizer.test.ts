@@ -483,6 +483,34 @@ describe('AcpPromptOutcomeFinalizer', () => {
     )
   })
 
+  it('identifies the stack overflow reported by ACP without assigning a provider or HTTP status', async () => {
+    const harness = createHarness()
+    const message = 'Maximum call stack size exceeded'
+    const body = JSON.stringify({ error: { type: 'invalid_request_error', message } })
+    const error = Object.assign(new Error('Internal error: ' + body), {
+      name: 'RequestError',
+      code: -32603,
+      data: { message: body }
+    })
+    await expect(
+      new AcpPromptOutcomeFinalizer().finalize(harness.handles, {
+        kind: 'failed',
+        error
+      })
+    ).rejects.toBe(error)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        text: message,
+        failure: {
+          category: 'internal',
+          reason: 'internal/model-request-stack-overflow',
+          diagnostics: { code: 'invalid_request_error', model: 'test-model', raw: message }
+        }
+      })
+    )
+  })
+
   it('guides the user when Claude Code cannot connect to the model provider', async () => {
     const harness = createHarness({ now: () => 321 })
     const error = Object.assign(

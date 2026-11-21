@@ -7765,6 +7765,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "会話のコンテキストを減らすか、未対応の添付ファイルを削除してから再試行してください。",
     "The conversation was interrupted": "会話が中断されました",
     "Resume the conversation to reconnect and continue.": "会話を再開して再接続し、続行してください。",
+    "Call stack limit reached during a model request": "モデルへのリクエスト中にコールスタックが上限に達しました",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "このターンは中断されました。スタックが上限に達した箇所を特定するには、診断情報をエクスポートしてください。",
     "An unexpected application error occurred": "アプリケーションで予期しないエラーが発生しました",
     "Report this error with its diagnostics to help us investigate.": "調査のため、診断情報とともにこのエラーを報告してください。",
     "Remove attachments": "添付ファイルを削除",

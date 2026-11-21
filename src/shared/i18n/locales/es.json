@@ -8097,6 +8097,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "Reduzca el contexto de la conversación o elimine los archivos adjuntos no compatibles antes de volver a intentarlo.",
     "The conversation was interrupted": "La conversación se interrumpió",
     "Resume the conversation to reconnect and continue.": "Reanude la conversación para volver a conectarse y continuar.",
+    "Call stack limit reached during a model request": "Se alcanzó el límite de la pila de llamadas durante una solicitud al modelo",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "El turno se ha interrumpido. Exporte los datos de diagnóstico para localizar dónde se alcanzó el límite de la pila de llamadas.",
     "An unexpected application error occurred": "Se produjo un error inesperado de la aplicación",
     "Report this error with its diagnostics to help us investigate.": "Informe de este error con sus datos de diagnóstico para ayudarnos a investigarlo.",
     "Remove attachments": "Eliminar archivos adjuntos",

@@ -7765,6 +7765,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "請縮減對話上下文或移除不支援的附件，然後重試。",
     "The conversation was interrupted": "對話已中斷",
     "Resume the conversation to reconnect and continue.": "恢復對話以重新連線並繼續。",
+    "Call stack limit reached during a model request": "模型請求期間達到呼叫堆疊上限",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "本輪已中斷。您可以匯出診斷資料，協助找出呼叫堆疊溢出的原因。",
     "An unexpected application error occurred": "應用程式發生非預期錯誤",
     "Report this error with its diagnostics to help us investigate.": "請提交此錯誤及其診斷資訊，協助我們調查。",
     "Remove attachments": "移除附件",

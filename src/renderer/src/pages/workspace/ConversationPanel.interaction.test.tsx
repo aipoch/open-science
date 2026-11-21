@@ -5716,40 +5716,65 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
-  it('keeps Side chat provider diagnostics in the notice above the composer', () => {
-    renderSidePanel({
-      sideChat: {
-        view: {
-          generation: 1,
-          parentSessionId: 'session-existing',
-          projectId: 'project-a',
-          sideSessionId: 'side-1',
-          entries: [],
-          draft: 'my follow-up',
-          running: false,
-          error: 'Invalid credentials',
-          errorDetails: {
-            message: 'Invalid credentials',
-            failure: {
-              category: 'configuration',
-              reason: 'configuration/auth-failed',
-              responseMessage: 'Invalid credentials',
-              diagnostics: { status: 401, provider: 'Test provider', model: 'test-model' }
+  it.each([
+    ['Invalid credentials', 'configuration/auth-failed', 'Model provider error', 401, undefined],
+    [
+      "Unsupported parameter: 'temperature'",
+      'configuration/request-invalid',
+      'Request parameters need attention',
+      400,
+      undefined
+    ],
+    [
+      'Maximum call stack size exceeded',
+      'service/provider-error',
+      'Model request failed',
+      400,
+      'responses'
+    ]
+  ] as const)(
+    'shows the provider detail %s above the composer',
+    (message, reason, title, status, protocol) => {
+      renderSidePanel({
+        sideChat: {
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-1',
+            entries: [],
+            draft: 'my follow-up',
+            running: false,
+            error: message,
+            errorDetails: {
+              message,
+              failure: {
+                category: protocol ? 'service' : 'configuration',
+                reason,
+                ...(protocol ? {} : { responseMessage: message }),
+                diagnostics: {
+                  ...(protocol ? { protocol, providerExcerpt: message } : {}),
+                  status,
+                  provider: 'Test provider',
+                  model: 'test-model'
+                }
+              }
             }
           }
         }
-      }
-    })
-    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
-    expect(notice?.textContent).toContain('Model provider error')
-    expect(notice?.textContent).toContain('status: 401')
-    expect(notice?.textContent).toContain('provider: Test provider')
-    expect(notice?.textContent).toContain('model: test-model')
-    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
-      'side-chat-composer'
-    )
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
-  })
+      })
+      const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+      expect(notice?.textContent).toContain(title)
+      expect(notice?.textContent).toContain(message)
+      expect(notice?.textContent).toContain(`status: ${status}`)
+      expect(notice?.textContent).toContain('provider: Test provider')
+      expect(notice?.textContent).toContain('model: test-model')
+      expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+        'side-chat-composer'
+      )
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+    }
+  )
 
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
     vi.useFakeTimers()

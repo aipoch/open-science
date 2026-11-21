@@ -27,6 +27,10 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
     ...(facts.origin === 'provider' &&
     !facts.protocol &&
     facts.responseMessage &&
+    !(
+      facts.code === 'invalid_upstream_response' &&
+      recognized?.reason === 'service/response-invalid'
+    ) &&
     (category === 'service' || category === 'configuration')
       ? { responseMessage: facts.responseMessage }
       : {}),
@@ -42,6 +46,9 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
         : { code: String(facts.code) }),
       ...(facts.adapterCode === undefined ? {} : { adapterCode: facts.adapterCode }),
       ...(facts.protocol === undefined ? {} : { protocol: facts.protocol }),
+      ...(facts.protocol && facts.providerExcerpt
+        ? { providerExcerpt: facts.providerExcerpt }
+        : {}),
       ...(facts.phase === undefined ? {} : { phase: facts.phase }),
       ...(facts.provider === undefined ? {} : { provider: facts.provider }),
       ...(facts.model === undefined ? {} : { model: facts.model }),

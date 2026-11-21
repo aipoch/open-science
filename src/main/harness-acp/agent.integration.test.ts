@@ -1814,6 +1814,7 @@ it('injects Schedule identity outside model arguments and fences a cancelled per
 
 for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
   it.each([
+    [400, 'invalid_request_error', 'Maximum call stack size exceeded', 'service/provider-error'],
     [400, 'model_unavailable', 'Model is unavailable', 'configuration/model-unavailable'],
     [401, 'authentication_error', 'Invalid API key', 'configuration/auth-failed'],
     [403, 'permission_denied', 'Access denied', 'configuration/auth-failed'],
@@ -1830,7 +1831,10 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           'x-request-id': 'provider-request-123'
         })
         response.end(
-          JSON.stringify({ error: { code, message }, credentials: 'PRIVATE_REQUEST_DATA' })
+          JSON.stringify({
+            error: { code, message: message + '. PRIVATE_REQUEST_DATA' },
+            credentials: 'PRIVATE_REQUEST_DATA'
+          })
         )
       })
       server.listen(0, '127.0.0.1')
@@ -1881,7 +1885,11 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
         classified
       )
       expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_REQUEST_DATA|local-test-token/)
-      expect(JSON.stringify(failure)).not.toContain(message)
+      if (status === 401 || status === 429 || code === 'invalid_request_error') {
+        expect(classified.diagnostics).toHaveProperty('providerExcerpt', message)
+      } else {
+        expect(JSON.stringify(failure)).not.toContain(message)
+      }
       expect(classified.responseMessage).toBeUndefined()
       expect(classified.diagnostics.raw).toBeUndefined()
       const checkpoint = await createJournalAgentStore({
@@ -1913,6 +1921,13 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       '{"error":{"code":"model_unavailable","message":"Model is unavailable"}}',
       'configuration/model-unavailable',
       'response'
+    ],
+    [
+      200,
+      'text/event-stream',
+      'data: {"type":"error","error":{"type":"invalid_request_error","message":"Unsupported parameter: temperature. PRIVATE_REQUEST_DATA"}}\n\n',
+      'configuration/request-invalid',
+      'provider'
     ],
     [200, 'text/event-stream', 'data: invalid-json\n\n', 'service/response-invalid', 'event-json'],
     [
@@ -1955,7 +1970,18 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           ...(phase === 'response' ? { status } : {})
         }
       })
-      expect(JSON.stringify(classified)).not.toContain('PRIVATE_GATEWAY_PAGE')
+      if (body.includes('Unsupported parameter')) {
+        expect(classified.diagnostics).toHaveProperty(
+          'providerExcerpt',
+          'Unsupported parameter: temperature'
+        )
+        expect(readPersistedFailure({ failure: JSON.parse(JSON.stringify(classified)) })).toEqual(
+          classified
+        )
+      }
+      expect(JSON.stringify([failure, classified])).not.toMatch(
+        /PRIVATE_GATEWAY_PAGE|PRIVATE_REQUEST_DATA/
+      )
     }
   )
 }

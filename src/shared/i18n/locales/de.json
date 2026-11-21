@@ -7927,6 +7927,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "Verkleinern Sie den Konversationskontext oder entfernen Sie nicht unterstützte Anhänge und versuchen Sie es erneut.",
     "The conversation was interrupted": "Die Konversation wurde unterbrochen",
     "Resume the conversation to reconnect and continue.": "Setzen Sie die Konversation fort, um die Verbindung wiederherzustellen.",
+    "Call stack limit reached during a model request": "Aufrufstack-Limit bei einer Modellanfrage erreicht",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "Diese Interaktion wurde abgebrochen. Exportieren Sie die Diagnosedaten, um festzustellen, an welcher Stelle der Aufrufstack sein Limit erreicht hat.",
     "An unexpected application error occurred": "Ein unerwarteter Anwendungsfehler ist aufgetreten",
     "Report this error with its diagnostics to help us investigate.": "Melden Sie diesen Fehler mit den Diagnosedaten, damit wir ihn untersuchen können.",
     "Remove attachments": "Anhänge entfernen",

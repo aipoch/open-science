@@ -1,6 +1,7 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
 import {
   normalizeProviderError,
+  type SummarizeProviderError,
   normalizeUpstreamError,
   responseErrorDiagnostics,
   type ProviderErrorReason
@@ -16,6 +17,7 @@ export type ChatCompletionsOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   /** Provider tuning only. Cannot replace messages, model, tools, streaming or output limits. */
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
@@ -47,6 +49,7 @@ export type ChatCompletionsDiagnostics = Readonly<{
   usage?: Readonly<ModelUsage>
   /** Allowlisted provider diagnostics for HTTP/SSE failures. */
   reason?: ProviderErrorReason
+  providerExcerpt?: string
   requestId?: string
 }>
 
@@ -372,7 +375,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
         if (!response.ok) {
-          const diagnostics = await normalizeUpstreamError(response, signal)
+          const diagnostics = await normalizeUpstreamError(
+            response,
+            signal,
+            input.summarizeProviderError
+          )
           throw new ChatCompletionsError('http', response.status, {
             httpStatus: response.status,
             phase: 'response',
@@ -381,7 +388,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             ...diagnostics
           })
         }
-        const diagnostics = await normalizeUpstreamError(response, signal)
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
         throw new ChatCompletionsError('protocol', response.status, {
           httpStatus: response.status,
           phase: 'response',
@@ -417,7 +428,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
               phase: 'provider',
               eventCount,
               receivedDone: ended,
-              ...normalizeProviderError(event.error ? event : detail)
+              ...normalizeProviderError(
+                event.error ? event : detail,
+                undefined,
+                input.summarizeProviderError
+              )
             })
           }
           phase = 'usage'
@@ -572,6 +587,9 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             ...(error instanceof ChatCompletionsError
               ? {
                   reason: error.diagnostics?.reason,
+                  ...(error.diagnostics?.providerExcerpt
+                    ? { providerExcerpt: error.diagnostics.providerExcerpt }
+                    : {}),
                   requestId: error.diagnostics?.requestId
                 }
               : {}),
