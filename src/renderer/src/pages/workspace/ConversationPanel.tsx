@@ -521,6 +521,28 @@ const ConversationPanel = ({
     state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
   const sourceSessionNumber = sourceSession?.number
+  const sourceSessionId = activeSession?.branchSource?.sessionId
+  const openSourceSession = sessionTools.openSession
+  const forkSourceContent = useMemo(
+    () =>
+      sourceSessionId && openSourceSession ? (
+        <div className="mb-2 flex items-center gap-2 text-xs">
+          <span className="h-px flex-1 bg-border" aria-hidden="true" />
+          <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+          <button
+            type="button"
+            className="text-primary hover:underline"
+            onClick={() => openSourceSession(sourceSessionId)}
+          >
+            {sourceSessionNumber !== undefined
+              ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+              : t('Continued from chat')}
+          </button>
+          <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        </div>
+      ) : null,
+    [openSourceSession, sourceSessionId, sourceSessionNumber, t]
+  )
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -1431,16 +1453,21 @@ const ConversationPanel = ({
   }
   // The scroller memo compares this object by identity, so keep it stable across draft edits:
   // callbacks read the latest render's handlers through a ref instead of being recreated.
-  const turnOutcomeHandlers = {
+  const transcriptHandlers = {
+    insertResearchPrompt,
     retryArtifact: (promptMessageId: string): void => {
       if (activeSession) workflows.artifactFinalization.request(activeSession.id, promptMessageId)
     },
     reportError: openReportDialog
   }
-  const turnOutcomeHandlersRef = useRef(turnOutcomeHandlers)
+  const transcriptHandlersRef = useRef(transcriptHandlers)
   useLayoutEffect(() => {
-    turnOutcomeHandlersRef.current = turnOutcomeHandlers
+    transcriptHandlersRef.current = transcriptHandlers
   })
+  const startResearchFromTranscript = useCallback(
+    (prompt: string) => transcriptHandlersRef.current.insertResearchPrompt(prompt),
+    []
+  )
   const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
   const artifactRetryDisabled = isImported || workflows.artifactFinalization.running
   const turnOutcomeActions = useMemo<TurnOutcomeActions>(
@@ -1448,9 +1475,9 @@ const ConversationPanel = ({
       artifactRetryingPromptMessageId,
       artifactRetryDisabled,
       onRetryArtifact: (promptMessageId) =>
-        turnOutcomeHandlersRef.current.retryArtifact(promptMessageId),
+        transcriptHandlersRef.current.retryArtifact(promptMessageId),
       resolveError: resolveRunError,
-      onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error)
+      onReportError: (error) => transcriptHandlersRef.current.reportError(error)
     }),
     [artifactRetryDisabled, artifactRetryingPromptMessageId, resolveRunError]
   )
@@ -1470,7 +1497,7 @@ const ConversationPanel = ({
       run: async (notice) => {
         if (notice.operation === 'reconfigure') return onReconfigureRetry()
         if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
-          return turnOutcomeHandlers.retryArtifact(notice.promptMessageId)
+          return transcriptHandlers.retryArtifact(notice.promptMessageId)
         if (notice.promptMessageId) {
           const prompt = activeSession?.messages.find(({ id }) => id === notice.promptMessageId)
           if (!prompt) return
@@ -1969,33 +1996,11 @@ const ConversationPanel = ({
                 onStartResearch={
                   canEditDraft &&
                   !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
-                    ? (prompt) => {
-                        onValidatedDraftDocChange(docFromText(prompt))
-                        window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
-                      }
+                    ? startResearchFromTranscript
                     : undefined
                 }
                 onOpenLibraryMention={layout.onOpenLibraryMention}
-                forkSourceContent={
-                  activeSession?.branchSource && sessionTools.openSession ? (
-                    <div className="mb-2 flex items-center gap-2 text-xs">
-                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                      <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() =>
-                          sessionTools.openSession?.(activeSession.branchSource!.sessionId)
-                        }
-                      >
-                        {sourceSessionNumber !== undefined
-                          ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
-                          : t('Continued from chat')}
-                      </button>
-                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                    </div>
-                  ) : null
-                }
+                forkSourceContent={forkSourceContent}
                 credentialPending={pendingCredentialRequest !== undefined}
                 visiblePermissionPending={!isImported && pendingPermissions.length > 0}
                 optimisticMessage={optimisticMessage}
@@ -2410,10 +2415,10 @@ const ConversationPanel = ({
                     ref={attachImageComposerHost}
                     hidden={!imageComposerActive}
                     data-testid="conversation-image-composer"
-                    className="relative z-10"
+                    className="absolute inset-x-0 bottom-0 z-30"
                   />
-                  {/* The ordinary composer keeps this lane's geometry while a blocking interaction
-                      overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
+                  {/* The ordinary composer keeps this lane's geometry under the image editor or a
+                      blocking interaction, so panel entry/resize/exit never resizes the transcript viewport. */}
                   <TooltipProvider>
                     {packageLocked ? (
                       <section
@@ -2524,8 +2529,7 @@ const ConversationPanel = ({
                         inert={ordinaryComposerBlocked || undefined}
                         className={cn(
                           'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                          ordinaryComposerBlocked && 'invisible pointer-events-none',
-                          imageComposerActive && 'hidden'
+                          ordinaryComposerBlocked && 'invisible pointer-events-none'
                         )}
                         data-specialist-color={specialistComposerColor}
                         onSubmit={(event) => event.preventDefault()}

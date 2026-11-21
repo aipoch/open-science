@@ -941,7 +941,7 @@ function ActiveImageEditor({
       <TooltipContent>{t('Image history')}</TooltipContent>
     </Tooltip>
   ) : null
-  const composerContent = (
+  const composerContent = composerTarget !== null && (
     <div
       className={
         composerTarget
@@ -1640,7 +1640,7 @@ function ActiveImageEditor({
       <div
         className="image-edit-dock z-20 mx-auto mb-3 max-h-[55%] w-[calc(100%-1.5rem)] max-w-2xl shrink-0 overflow-y-auto rounded-2xl border border-border-300/60 bg-bg-000 shadow-lg"
         data-testid="image-edit-composer"
-        data-collapsed={Boolean(composerTarget) || !composerOpen}
+        data-collapsed={composerTarget !== undefined || !composerOpen}
       >
         <TooltipProvider>
           <div data-testid="image-recent-results" className="flex items-center gap-2 px-3 py-2">
@@ -1675,7 +1675,7 @@ function ActiveImageEditor({
             </div>
           </div>
         </TooltipProvider>
-        {!composerTarget ? composerContent : null}
+        {composerTarget === undefined ? composerContent : null}
       </div>
       {composerPortal}
     </div>

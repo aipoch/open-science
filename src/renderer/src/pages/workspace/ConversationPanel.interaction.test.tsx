@@ -13,14 +13,19 @@ import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotat
 import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
 import { SideChatPanel } from './SideChatPanel'
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
+import {
+  ImageComposerBridgeProvider,
+  useImageComposerTarget
+} from './image-edit/image-composer-bridge'
+import { imageEditorScope } from './image-edit/image-editor-state'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(async () => undefined),
-  scrollerProps: { turnOutcomeActions: undefined as unknown }
+  scrollerProps: { turnOutcomeActions: undefined as unknown, onStartResearch: undefined as unknown }
 }))
 vi.mock('@/lib/session-fork', () => ({
   forkSession: forkSessionMock,
@@ -257,6 +262,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => {
     scrollerProps.turnOutcomeActions = turnOutcomeActions
+    scrollerProps.onStartResearch = onStartResearch
     return (
       <>
         {forkSourceContent}
@@ -1589,6 +1595,53 @@ describe('ConversationPanel composer errors', () => {
       else expect(request).toHaveBeenCalledExactlyOnceWith('session-artifact-retry', 'plan-origin')
     }
   )
+
+  it('keeps the message viewport and its research action stable under the image editor', () => {
+    const activeSession: ChatSession = {
+      id: 'image-session',
+      cwd: '/workspace',
+      projectId: 'project-a',
+      title: 'Image session',
+      status: 'idle',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    function Editor(): React.JSX.Element {
+      const [viewport, attach] = useState<HTMLDivElement | null>(null)
+      useImageComposerTarget(imageEditorScope(activeSession)!, viewport)
+      return <div ref={attach} />
+    }
+    const props = mergePanelProps(createPanelDefaults(), {
+      view: { activeSession, canEditDraft: true }
+    })
+    const panel = <PanelHarness {...props} />
+    const render = (editing: boolean): void => {
+      act(() =>
+        root.render(
+          <ImageComposerBridgeProvider>
+            {panel}
+            {editing && <Editor />}
+          </ImageComposerBridgeProvider>
+        )
+      )
+    }
+    render(false)
+    const form = getComposerForm()
+    const research = scrollerProps.onStartResearch
+    expect(research).toEqual(expect.any(Function))
+    render(true)
+    const host = container.querySelector('[data-testid="conversation-image-composer"]')!
+    expect(host.hasAttribute('hidden')).toBe(false)
+    expect(host.classList.contains('absolute')).toBe(true)
+    expect(form.hasAttribute('inert')).toBe(true)
+    expect(form.classList.contains('invisible')).toBe(true)
+    expect(form.classList.contains('hidden')).toBe(false)
+    expect(scrollerProps.onStartResearch).toBe(research)
+    render(false)
+    expect(getComposerForm()).toBe(form)
+    expect(form.hasAttribute('inert')).toBe(false)
+  })
 
   it('keeps Turn Outcome actions stable across draft edits but never calls stale handlers', () => {
     const firstRequest = vi.fn()
