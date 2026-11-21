@@ -444,17 +444,25 @@ it.each([
   [2, 'dash'],
   [2, 'clip'],
   [2, 'fill-stroke'],
-  [2, 'fractional']
+  [2, 'fractional'],
+  [2, 'backtrack'],
+  [2, 'mirror']
 ] as const)(
-  'preserves an open rectangular stroke when regenerating at scale %s with %s',
+  'preserves open native strokes when regenerating at scale %s with %s',
   async (scale, style) => {
     const document = await PDFDocument.create()
     const page = document.addPage([220, 120])
+    const path =
+      style === 'backtrack'
+        ? '20 80 m 70 80 l 45 80 l 85 80 l'
+        : style === 'mirror'
+          ? '160 80 m 110 80 l 135 80 l 95 80 l'
+          : '20 80 m 20 30 l 180 30 l 180 80 l'
     page.node.set(
       PDFName.of('Contents'),
       document.context.register(
         document.context.flateStream(
-          `${style === 'dash' ? '[3 2] 1 d ' : ''}${style === 'clip' ? '10 25 160 70 re W n ' : ''}${style === 'fractional' ? '.6502679 0 0 -.6502679 -10 100 cm ' : ''}0.6 0.4 0 RG 0.8 0.7 0.6 rg 0.5 w 20 80 m 20 30 l 180 30 l 180 80 l ${style === 'fill-stroke' ? 'B' : 'S'}`
+          `${style === 'dash' ? '[3 2] 1 d ' : ''}${style === 'clip' ? '10 25 160 70 re W n ' : ''}${style === 'fractional' ? '.6502679 0 0 -.6502679 -10 100 cm ' : ''}0.6 0.4 0 RG 0.8 0.7 0.6 rg 0.5 w ${path} ${style === 'fill-stroke' ? 'B' : 'S'}`
         )
       )
     )
@@ -501,7 +509,7 @@ it.each([
   }
 )
 
-it.each(['closed', 'round-cap', 'non-rectangle'])(
+it.each(['closed', 'round-cap', 'non-rectangle', 'straight'])(
   'leaves other native paths unchanged: %s',
   async (kind) => {
     const document = await PDFDocument.create(),
@@ -509,7 +517,9 @@ it.each(['closed', 'round-cap', 'non-rectangle'])(
     const stream =
       kind === 'closed'
         ? '20 80 160 -50 re S'
-        : `${kind === 'round-cap' ? '1 J ' : ''}20 80 m 20 30 l 180 30 l ${kind === 'non-rectangle' ? '170' : '180'} 80 l S`
+        : kind === 'straight'
+          ? '20 80 m 60 80 l 100 80 l 180 80 l S'
+          : `${kind === 'round-cap' ? '1 J ' : ''}20 80 m 20 30 l 180 30 l ${kind === 'non-rectangle' ? '170' : '180'} 80 l S`
     page.node.set(
       PDFName.of('Contents'),
       document.context.register(document.context.flateStream(stream))

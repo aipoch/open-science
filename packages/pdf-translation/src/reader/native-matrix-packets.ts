@@ -13,7 +13,8 @@ type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type Item = Extract<Content['items'][number], { str: string }>
 type Viewport = ReturnType<PDFPageProxy['getViewport']>
 type Rect = { page: number; x: number; y: number; width: number; height: number }
-type Frame = { indices: number[]; signature: string }
+type MatrixAtom = { origin: number[]; dimensions: number[]; appearance: string }
+type Frame = { indices: number[]; bounds: number[]; atoms: MatrixAtom[] }
 const frames = new WeakMap<ReadonlyMap<number, Rect>, readonly Frame[]>()
 const currentFrames = new WeakMap<readonly Frame[], () => boolean>()
 const candidateCharacters = [String.fromCharCode(20), String.fromCharCode(21)]
@@ -192,21 +193,25 @@ async function readMatrixSelection(
         if (!ys.some((y) => Math.abs(y - i.transform[5]) < h * 0.1)) ys.push(i.transform[5])
       if (ys.length !== 2 || Math.abs(ys[0] - ys[1]) < h * 0.7 || Math.abs(ys[0] - ys[1]) > h * 1.8)
         continue
-      const indices = [...new Set([left.index, ...body, right.index])].sort((a, b) => a - b),
-        signature = JSON.stringify([
-          left.x,
-          left.top,
-          right.right,
-          right.bottom,
-          body
-            .sort((a, b) => {
-              const x = content.items[a] as Item,
-                y = content.items[b] as Item
-              return y.transform[5] - x.transform[5] || x.transform[4] - y.transform[4]
-            })
-            .map((n) => signatures.get(n))
-        ])
-      packets.push({ indices, signature })
+      const indices = [...new Set([left.index, ...body, right.index])].sort((a, b) => a - b)
+      body.sort((a, b) => {
+        const x = content.items[a] as Item,
+          y = content.items[b] as Item
+        return y.transform[5] - x.transform[5] || x.transform[4] - y.transform[4]
+      })
+      const atoms: MatrixAtom[] = []
+      for (const n of body) {
+        const item = content.items[n] as Item,
+          signature = signatures.get(n)
+        if (!Array.isArray(signature) || signature.length !== 9) return
+        const [scaleX, skewX, skewY, scaleY, x, y] = item.transform
+        atoms.push({
+          origin: [x, y],
+          dimensions: [scaleX, scaleY, item.width],
+          appearance: JSON.stringify([signature[0], signature[8], skewX, skewY])
+        })
+      }
+      packets.push({ indices, bounds: [left.x, left.top, right.right, right.bottom], atoms })
     }
     if (!packets.length || !current()) return
     const frozen = Object.freeze(packets)
@@ -315,6 +320,25 @@ export async function nativeMatrixOwners(
   return result
 }
 
+// The native writer can round page coordinates when serializing unchanged text.
+// Compare positions within one hundredth of a point and keep glyph outlines and offsets exact.
+function sameMatrixFrame(before: Frame, after: Frame): boolean {
+  const near = (a: number[], b: number[], tolerance: number): boolean =>
+    a.length === b.length && a.every((value, i) => Math.abs(value - b[i]) <= tolerance)
+  return (
+    near(before.bounds, after.bounds, 0.01) &&
+    before.atoms.length === after.atoms.length &&
+    before.atoms.every((atom, i) => {
+      const written = after.atoms[i]
+      return (
+        atom.appearance === written.appearance &&
+        near(atom.origin, written.origin, 0.01) &&
+        near(atom.dimensions, written.dimensions, 0.00001)
+      )
+    })
+  )
+}
+
 /** A mismatch retains the entire original page, never repaints a matrix. */
 export async function sameNativeMatrixBody(
   original: PDFDocumentProxy,
@@ -353,8 +377,8 @@ export async function sameNativeMatrixBody(
       !!after &&
       !!currentFrames.get(before)?.() &&
       !!currentFrames.get(after)?.() &&
-      JSON.stringify(before.map((f) => f.signature)) ===
-        JSON.stringify(after.map((f) => f.signature))
+      before.length === after.length &&
+      before.every((frame, i) => sameMatrixFrame(frame, after[i]))
     )
   } finally {
     await Promise.all(readers.map((reader) => reader.dispose()))

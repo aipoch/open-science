@@ -194,3 +194,91 @@ for (const [name, mutate] of wrappedProseControls) {
     expect(units.find((unit) => unit.items.includes('1:2'))?.items).not.toContain('1:3')
   })
 }
+
+it.each([0, 6])('joins a noun after an inline variable before a display (shift=%s)', (shift) => {
+  const prose = 'For trials indexed by a positive integer'
+  const suffix = 'in this domain we obtain the'
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [
+          word('The previous comparison uses a uniform model for every sample.', 40, 620, 330),
+          word('This intermediate paragraph ends before the next calculation.', 40, 608, 330),
+          word(prose, 55, 596, 185, false),
+          { ...word('n', 244, 596, 6, false), fontName: 'variable' },
+          word(suffix, 254, 596, 116),
+          word('equality', 40 + shift, 584, 34, false),
+          word('', 84, 570, 0),
+          { ...word('∑', 97, 565, 14), fontName: 'math', fontFamily: 'Symbol' },
+          word('The final paragraph starts again after the display.', 40, 530, 330)
+        ]
+      }
+    ]
+  })
+  const head = units.find((unit) => unit.items.includes('1:2'))
+  expect(head?.source).toBe(`${prose} n ${suffix}${shift ? '' : ' equality'}`)
+  expect(head?.fragments).toHaveLength(shift ? 1 : 2)
+  expect(units.find((unit) => unit.items.includes('1:7'))?.sourceOnly).toBe(true)
+})
+
+it.each(['dependent', 'terminal', 'unstyled', 'off-rail'] as const)(
+  'keeps a short predicate with its prior column before a run-in heading (%s)',
+  (shape) => {
+    const tail = word(
+      'We balance the available examples so that observers' + (shape === 'terminal' ? '.' : ''),
+      52,
+      70,
+      238
+    )
+    const lead = word('alone cannot influence the result.', 312, 464, 122, false)
+    const heading = {
+      ...word('Separate analysis', 327, 452, 82, false),
+      fontName: shape === 'unstyled' ? 'body' : 'bold'
+    }
+    const items = [
+      word('Fig. 1. Overview of the study materials.', 180, 490, 220),
+      word('This earlier comparison establishes the left column below the diagram.', 52, 464, 238),
+      word('The initial comparison records the uniform result for all trials.', 52, 452, 238),
+      ...Array.from({ length: 28 }, (_, index) =>
+        word(
+          'The ordinary body rows establish the column rail for each sample.',
+          52,
+          428 - index * 12,
+          238
+        )
+      ),
+      word(
+        'Independent signals provide useful measurements under different conditions',
+        52,
+        94,
+        238
+      ),
+      word('and the trials avoid strong cues that could bias their decisions.', 52, 82, 238),
+      tail,
+      lead,
+      heading,
+      word(
+        'We also collect a separate set of comparison samples.',
+        413,
+        452,
+        shape === 'off-rail' ? 111 : 137
+      ),
+      word('Each sample follows the same review procedure.', 312, 440, 238)
+    ]
+    const result = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const key = (part: PdfLayoutTextItem): string => `1:${items.indexOf(part)}`
+    const owner = result.units.find((unit) => unit.items.includes(key(tail)))
+    expect(owner?.items.includes(key(lead))).toBe(shape === 'dependent')
+    expect(owner?.items.includes(key(heading))).toBe(false)
+    if (shape === 'dependent') {
+      expect(owner?.source).toContain('so that observers alone cannot influence the result.')
+      expect(owner?.fragments).toHaveLength(2)
+    }
+  }
+)
