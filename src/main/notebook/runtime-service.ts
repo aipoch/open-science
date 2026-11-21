@@ -3275,6 +3275,13 @@ class NotebookRuntimeService {
     return this.recoveryCoordinator.status()
   }
 
+  async ensureEnvironmentStatusReady(): Promise<void> {
+    // Startup already reconciles kernel receipts. Reading status only needs its outcome and the
+    // current environment journal, even if an identifiable kernel still fences a future write.
+    if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
+    await this.recoveryCoordinator.ensureReady()
+  }
+
   async ensureRecovered(laneKey?: string): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     if (laneKey) await this.kernelProcessLifecycle.ensureReadyForLane(laneKey)

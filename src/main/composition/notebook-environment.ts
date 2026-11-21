@@ -37,6 +37,7 @@ type NotebookEnvironmentCompositionDependencies = {
     | 'withEnvLock'
     | 'recoverInterruptedOperations'
     | 'ensureRecovered'
+    | 'ensureEnvironmentStatusReady'
     | 'isDefaultEnvRecoveryBlocked'
     | 'recoveryStatus'
     | 'prepareRuntimeRepair'
@@ -180,6 +181,7 @@ export const registerNotebookEnvironmentComposition = async ({
     root: provisioningRoot,
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
+    waitForStatusRecovery: () => notebookService.ensureEnvironmentStatusReady(),
     recoveryStatus: () => notebookService.recoveryStatus(),
     assertProvisionAllowed,
     onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),
