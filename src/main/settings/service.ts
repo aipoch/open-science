@@ -195,7 +195,11 @@ import { SkillCatalogModule, type SkillCatalogEntry } from '../skills/catalog'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import { resolveConfigRoot } from '../storage-root'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
-import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import {
+  AgentRuntimeManager,
+  type AgentRuntimeManagerOptions,
+  type ExecuteClaudeProbe
+} from './agent-runtime-manager'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -285,6 +289,7 @@ export type SettingsServiceOptions = {
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
   // Same for the managed OpenCode installer.
+  installManagedClaudeAcpImpl?: AgentRuntimeManagerOptions['installManagedClaudeAcpImpl']
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -648,6 +653,7 @@ class SettingsService {
       allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort,
       executeClaudeProbe: options.executeClaudeProbe,
       installManagedClaudeImpl: options.installManagedClaudeImpl,
+      installManagedClaudeAcpImpl: options.installManagedClaudeAcpImpl,
       installManagedOpencodeImpl: options.installManagedOpencodeImpl,
       installManagedCodexImpl: options.installManagedCodexImpl,
       resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
@@ -1621,39 +1627,43 @@ class SettingsService {
     try {
       if (request.action === 'status') {
         const settings = await this.repository.getSettings()
-        const canPrepareCodex =
-          settings.agentFrameworkId === 'codex' ||
-          (!settings.agentFrameworkId && settings.providers.length === 0)
+        const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+        const usingCodex = framework === 'codex'
         const provider =
           settings.providers.find(({ id }) => id === settings.activeProviderId) ??
           settings.providers[0]
-        const providerArgv = !provider
-          ? ['codex', 'login']
-          : provider.type === 'codex-isolated' && provider.codexAuthMode === 'isolated'
-            ? ['codex', 'login', '--force']
-            : provider.id === 'cli-openai' &&
-                provider.type === 'official' &&
-                provider.vendorId === 'openai' &&
-                provider.model
-              ? [
-                  'provider',
-                  'add',
-                  '--type',
-                  'official',
-                  '--vendor',
-                  'openai',
-                  '--model',
-                  settings.activeModel ?? provider.model,
-                  '--api-key-env',
-                  'OPENAI_API_KEY',
-                  '--json'
-                ]
-              : undefined
+        const providerArgv =
+          (usingCodex || framework === DEFAULT_AGENT_FRAMEWORK_ID) &&
+          provider?.id === 'cli-openai' &&
+          provider.type === 'official' &&
+          provider.vendorId === 'openai' &&
+          provider.model
+            ? [
+                'provider',
+                'add',
+                '--type',
+                'official',
+                '--vendor',
+                'openai',
+                '--model',
+                settings.activeModel ?? provider.model,
+                '--api-key-env',
+                'OPENAI_API_KEY',
+                '--json'
+              ]
+            : usingCodex && !provider
+              ? ['codex', 'login']
+              : usingCodex &&
+                  provider?.type === 'codex-isolated' &&
+                  provider.codexAuthMode === 'isolated'
+                ? ['codex', 'login', '--force']
+                : undefined
         return {
           ok: true,
-          next: canPrepareCodex
-            ? { runtime: ['runtime', 'install', 'codex', '--json'], provider: providerArgv }
-            : {}
+          next: {
+            ...(usingCodex ? { runtime: ['runtime', 'install', 'codex', '--json'] } : {}),
+            ...(providerArgv ? { provider: providerArgv } : {})
+          }
         }
       }
       if (request.action === 'runtime' || request.action === 'codex-prepare') {

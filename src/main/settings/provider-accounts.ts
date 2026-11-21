@@ -204,6 +204,7 @@ class ProviderAccountsModule {
   async prepareBootstrapCodex(): Promise<void> {
     await this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const existing = settings.providers.find(({ id }) => id === identity.id)
       if (
@@ -234,6 +235,7 @@ class ProviderAccountsModule {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
       if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -259,10 +261,11 @@ class ProviderAccountsModule {
 
   async bootstrapOpenAi(key: string, model: string): Promise<string> {
     const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const id = 'cli-openai'
     const existing = settings.providers.find((provider) => provider.id === id)
     if (
-      settings.agentFrameworkId !== 'codex' ||
+      (framework !== DEFAULT_AGENT_FRAMEWORK_ID && framework !== 'codex') ||
       settings.providers.some((provider) => provider.id !== id) ||
       (settings.activeProviderId && settings.activeProviderId !== id) ||
       (existing &&

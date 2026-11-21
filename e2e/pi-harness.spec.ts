@@ -385,7 +385,7 @@ test('Pi sees Notebook images, image uploads and PDF attachments on a visual mod
   const uploadMarker = `UPLOAD-${randomUUID().slice(0, 8).toUpperCase()}`
   const pdfMarker = `PDF-${randomUUID().slice(0, 8).toUpperCase()}`
   await app.completeOnboarding()
-  let page = await app.configureLiveAgent(liveSettings!, liveModel!)
+  let page = await app.configureLiveAgent(liveSettings!, liveModel!, undefined, 'opencode')
   await page.evaluate(() => window.api.settings.setDefaultPermissionProfile({ profile: 'ask' }))
   await selectPi(page, app)
   const projectId = await createProject(page, 'Pi visual evidence')
@@ -508,7 +508,7 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
   }
   expect(second.model).not.toBe(liveModel)
   await app.completeOnboarding()
-  let page = await app.configureLiveAgent(liveSettings!, liveModel!)
+  let page = await app.configureLiveAgent(liveSettings!, liveModel!, undefined, 'opencode')
   const { targetProviderId, originalProviderName } = await page.evaluate(async (provider) => {
     const snapshot = await window.api.settings.upsertProvider({
       type: 'custom',

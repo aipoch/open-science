@@ -4,12 +4,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 
+import { resolveClaudeAgentAcpEntry } from './agent-process'
 import type { ClaudeTranscriptReader } from './claude-turn-adapter'
-
-const nodeRequire = createRequire(import.meta.url)
-const { getSessionMessages } = nodeRequire(
-  '@anthropic-ai/claude-agent-sdk'
-) as typeof import('@anthropic-ai/claude-agent-sdk')
 
 const isMissingFile = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -65,11 +61,12 @@ const createReadOnlyClaudeSessionStore = (configDir: string): SessionStore => ({
 
 const createClaudeTranscriptReader = (configDir: string): ClaudeTranscriptReader => {
   const sessionStore = createReadOnlyClaudeSessionStore(configDir)
-  return ({ providerSessionId, cwd }) =>
-    getSessionMessages(providerSessionId, {
-      dir: cwd,
-      sessionStore
-    })
+  return ({ providerSessionId, cwd }) => {
+    const { getSessionMessages } = createRequire(resolveClaudeAgentAcpEntry())(
+      '@anthropic-ai/claude-agent-sdk'
+    ) as typeof import('@anthropic-ai/claude-agent-sdk')
+    return getSessionMessages(providerSessionId, { dir: cwd, sessionStore })
+  }
 }
 
 export { createClaudeTranscriptReader }

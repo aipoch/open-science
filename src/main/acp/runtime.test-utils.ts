@@ -1,3 +1,4 @@
+import { claudeCodeFramework } from '../agent-framework'
 import { onTestFinished, vi } from 'vitest'
 import { AcpRuntime as ProductionAcpRuntime } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -14,7 +15,14 @@ class AcpRuntime extends ProductionAcpRuntime {
   }
 }
 
-export { AcpRuntime }
+// These mock peers model Claude-specific ACP metadata, modes, and MCP setup.
+class ClaudeProtocolFixtureRuntime extends AcpRuntime {
+  constructor(options: AcpRuntimeOptions) {
+    super({ framework: claudeCodeFramework, ...options })
+  }
+}
+
+export { AcpRuntime, ClaudeProtocolFixtureRuntime }
 
 // Keep transport I/O real; the transition-owner suite verifies the full idle clock policy.
 export const shortenIdleReleaseWindow = (): void => {

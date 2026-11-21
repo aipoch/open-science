@@ -50,6 +50,8 @@ files:
   - '!node_modules/{tesseract.js,tesseract.js-core,@tesseract.js-data}{,/**/*}'
   - '!node_modules/@anthropic-ai{,/**/*}'
   - '!node_modules/@agentclientprotocol/claude-agent-acp{,/**/*}'
+  # The Node backend owns Claude ACP install assets. Keep the Electron host copy out of app.asar.
+  - '!resources/claude-acp{,/**/*}'
   - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'
   # These feature packages run in resources/backend; renderer imports are already bundled.
   # electronHostDependencyGuard rejects new direct/transitive Electron consumers before packaging.

@@ -130,7 +130,6 @@
     "test:e2e:web-tools": "playwright test e2e/builtin-web-fetch.spec.ts e2e/builtin-web-evidence-lifecycle.spec.ts e2e/builtin-web-package.spec.ts"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "^0.70.0",
     "@agentclientprotocol/sdk": "^1.2.1",
     "@aipoch/connector-core": "file:packages/connector-core",
     "@aipoch/connector-builtins": "file:packages/connector-builtins",
@@ -212,6 +211,7 @@
     }
   },
   "devDependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.70.0",
     "@aiden0z/pptx-renderer": "1.2.4",
     "@tesseract.js-data/chi_sim": "1.0.0",
     "@tesseract.js-data/chi_tra": "1.0.0",
