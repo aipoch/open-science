@@ -519,10 +519,13 @@ it('discovers, registers and explicitly enables an existing Notebook interpreter
     notebookLanguage: 'r'
   }
   const invalid = await agent.cliError('start_run', withoutRuntimeId)
-  expect(invalid.error.code).toBe('invalid_request')
-  expect((await agent.mcp('start_run', withoutRuntimeId)).structuredContent).toEqual({
-    error: invalid.error
+  expect(invalid.error).toMatchObject({
+    code: 'invalid_request',
+    message: 'Supply notebookLanguage and notebookRuntimeId together.'
   })
+  const rejected = await agent.mcp('start_run', withoutRuntimeId)
+  expect(rejected.isError).toBe(true)
+  expect(rejected.structuredContent).toEqual({ error: invalid.error })
 })
 
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {

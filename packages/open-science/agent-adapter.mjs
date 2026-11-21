@@ -993,7 +993,14 @@ export const invokeAgentCapability = async (
 ) => {
   const entry = getCapability(name, exposure)
   const args = entry.inputSchema.safeParse(input)
-  if (!args.success) throw new AgentError('invalid_request', requestReferences(undefined, input))
+  if (!args.success) {
+    // Object refinements use messages authored by the capability, without echoing input values.
+    const issue = args.error.issues.find(({ code, path }) => code === 'custom' && path.length === 0)
+    throw new AgentError('invalid_request', {
+      ...requestReferences(undefined, input),
+      ...(issue ? { message: issue.message } : {})
+    })
+  }
 
   let client
   const context = {

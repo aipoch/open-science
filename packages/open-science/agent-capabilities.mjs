@@ -293,7 +293,10 @@ registerResource(
     cwd: id(
       'An existing working directory on the Open-Science host. Omit to use the Project or existing Session default.'
     ).optional(),
-    notebookLanguage: z.enum(['python', 'r']).optional(),
+    notebookLanguage: z
+      .enum(['python', 'r'])
+      .describe('Use with notebookRuntimeId to bind a specific interpreter. Otherwise omit both.')
+      .optional(),
     notebookRuntimeId: z
       .string()
       .min(1)
@@ -492,7 +495,7 @@ registerResource(
   'Read the exact interaction, legal actions, current revision, or recorded decision in the scope returned by list_interactions.',
   {
     ...interactionScope,
-    interactionId: id('Interaction ID from list_interactions or Run attention.')
+    interactionId: id('Copy the full interaction ID from list_interactions, including its prefix.')
   },
   read,
   (client, { interactionId, ...scope }, options) =>
