@@ -10,6 +10,7 @@ import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  applyWithOccupancyRecheck,
   certifyForeignProcessRecovery,
   invokeWebRpc,
   inspectUpdaterSuccessor,
@@ -128,6 +129,20 @@ describe('Windows updater certification', () => {
       'recheck'
     ])
     expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('retries apply once after an external holder releases the installation', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'installation-busy',
+        recovery: { detail: 'foreign-process' }
+      })
+      .mockResolvedValueOnce({ state: 'ready', recovery: { canRetryInstall: true } })
+      .mockResolvedValueOnce({ state: 'applying' })
+    await applyWithOccupancyRecheck(invoke)
+    expect(invoke.mock.calls).toEqual([['apply'], ['recheck'], ['apply']])
   })
 
   it('releases its owned handle even if the application fails to identify the blocker', async () => {

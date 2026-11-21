@@ -582,10 +582,7 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const applied = await invoke('apply')
-    if (applied.state !== 'applying') {
-      throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
-    }
+    await applyWithOccupancyRecheck(invoke)
     // Preflight can perform a cold resource scan. Its time must not consume the app-exit budget.
     const exitCode = await waitForShutdownExit(exit, child, diagnosticOutput)
     if (exitCode !== 0)
@@ -659,6 +656,34 @@ const runElectronUpdater = async ({
   }
 }
 
+const isForeignOccupancy = (status) =>
+  status.state === 'ready' &&
+  status.reason === 'installation-busy' &&
+  status.recovery?.detail === 'foreign-process'
+
+const waitForInstallRetry = async (invoke) => {
+  const status = await waitFor(
+    'external file holder to release installation files',
+    async () => {
+      const checked = await invoke('recheck')
+      return isForeignOccupancy(checked) ? undefined : checked
+    },
+    30_000
+  )
+  if (status.state !== 'ready' || status.reason || !status.recovery?.canRetryInstall)
+    throw new Error(`Unexpected updater recheck result: ${JSON.stringify(status)}`)
+}
+
+const applyWithOccupancyRecheck = async (invoke) => {
+  let applied = await invoke('apply')
+  if (isForeignOccupancy(applied)) {
+    await waitForInstallRetry(invoke)
+    applied = await invoke('apply')
+  }
+  if (applied.state !== 'applying')
+    throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
+}
+
 const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
   const lock = await acquireLock()
   const observations = []
@@ -689,19 +714,7 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
   } finally {
     await lock.release()
   }
-  await waitFor(
-    'released file holder to allow retry',
-    async () => {
-      const status = await command('recheck')
-      if (status.state === 'ready' && !status.reason && status.recovery?.canRetryInstall)
-        return status
-      if (status.reason === 'installation-busy') return undefined
-      throw new Error(
-        `Released file holder returned an unexpected status: ${JSON.stringify(status)}`
-      )
-    },
-    30_000
-  )
+  await waitForInstallRetry(command)
   console.log(`External process recovery: ${JSON.stringify(observations)}`)
   return observations
 }
@@ -1037,6 +1050,7 @@ if (invokedAsScript) {
 }
 
 export {
+  applyWithOccupancyRecheck,
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   buildWindowsUninstallHelper,
