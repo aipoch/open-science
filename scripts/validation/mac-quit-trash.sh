@@ -36,14 +36,18 @@ assert path(receipt['targetBundleURL']).resolve()==app.resolve()
 stage=path(receipt['updateBundleURL']).parent
 assert stage.parent==cache and stage.name.startswith('update.') and stage.is_dir()
 assert app.stat().st_ino==inode
-moved=Path(subprocess.check_output([root/'trash',app],text=True).strip())
+if os.environ['MOVE_KIND']=='trash':
+    moved=Path(subprocess.check_output([root/'trash',app],text=True).strip())
+else:
+    moved=root/'Moved.app'
+    app.rename(moved)
 assert moved.stat().st_ino==inode
 start=time.monotonic()
 # Observe through the watcher's full lifetime without launching either installation.
 time.sleep(125)
-result=dict(trashedPath=str(moved),targetRecreated=app.exists(),originalInTrash=moved.stat().st_ino==inode,stage=str(stage),stageRetained=stage.exists(),elapsedSeconds=round(time.monotonic()-start,2))
+result=dict(destination=str(moved),moveKind=os.environ["MOVE_KIND"],targetRecreated=app.exists(),originalAtDestination=moved.stat().st_ino==inode,stage=str(stage),stageRetained=stage.exists(),elapsedSeconds=round(time.monotonic()-start,2))
 (root/'result.json').write_text(json.dumps(result))
 print(result,flush=True)
 assert (root/'Applications/sentinel').read_text()=='other install'
-assert result['originalInTrash'] and not result['targetRecreated'] and not result['stageRetained']
+assert result['originalAtDestination'] and not result['targetRecreated'] and result['stageRetained']==(os.environ['MOVE_KIND']=='ordinary')
 PY
