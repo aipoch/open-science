@@ -83,6 +83,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  trackTaskContinuation?: import('../tasks/task-runner').TaskContinuationTracker
   schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills

@@ -19,7 +19,7 @@ export type NotebookExecutionIntentDeletion =
 // Concrete transports and derived Attempts retain the same immutable reference.
 export class NotebookExecutionIntent {
   declare readonly [notebookExecutionIntentReference]: true
-  private refusal?: Readonly<{ id: string; reason: string }>
+  private refusal?: Readonly<{ id: string; reason: string; blockedAt: number }>
   private userPreparationPending = false
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
@@ -31,6 +31,10 @@ export class NotebookExecutionIntent {
 
   get refusalId(): string | undefined {
     return this.refusal?.id
+  }
+
+  get refusalAt(): number | undefined {
+    return this.refusal?.blockedAt
   }
 
   // A missing origin can inherit only when its admitted conversation contains this grant.
@@ -51,7 +55,7 @@ export class NotebookExecutionIntent {
   }
 
   block(reason: string): string {
-    this.refusal ??= Object.freeze({ id: randomUUID(), reason })
+    this.refusal ??= Object.freeze({ id: randomUUID(), reason, blockedAt: Date.now() })
     return this.refusal.id
   }
 

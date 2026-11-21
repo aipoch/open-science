@@ -31,6 +31,7 @@ describe('ACP Task Agent port', () => {
       | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
+      | 'setContinuationTracker'
     >()
   })
 

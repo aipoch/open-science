@@ -534,7 +534,9 @@ export type PlanInteraction = TaskInteractionReference & {
       id: string
       promptMessageId: string
       status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
-      taskRunStatus: 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
     }
   }
 }
@@ -546,6 +548,8 @@ export type PlanResponse = { interaction: PlanInteraction; changed: boolean }
 
 export type Run = {
   requestId?: string
+  /** Original Task Run when a recorded interaction started a separate turn. */
+  continuedFromRunId?: string
   id: string
   sessionId: string
   projectId: string

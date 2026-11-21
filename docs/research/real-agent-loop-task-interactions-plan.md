@@ -117,8 +117,9 @@ Project、Session、Run、分支、prompt 或 delegated attempt 的服务端引�
 #70 的 Plan 响应只接受以同 profile 的本机 Bearer 验证的 Task 调用。浏览器原有的人类响应入口独立保留。
 `get_run` 的 `attention.kind: interactions` 只包含待办引用，具体 Plan 内容和决定回执从 `get_interaction`
 读取。`continuation.id` 沿用 Plan Owner 的持久交付身份；它标识原对话的接续，不改写或重跑原 Task Run。
-`accepted` 只证明接续已交接。没有独立 Task Run 记录时返回 `continuation.taskRunStatus: unconfirmed`，
-不报告已新建 Run、Notebook 执行或文件交付。旧 Run 经重启中断时仍报告中断。
+Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Plan 决定上返回其查询标识与
+`taskRunStatus: tracked`。新 Run 的 `continuedFromRunId` 指向原 Run。`pending` 或 `unconfirmed`
+时重新查询同一决定；`accepted` 只证明 Plan 交付，Notebook 执行和文件交付各自核验。旧 Run 经重启中断时仍报告中断。
 回执随本地 Plan 记录保留，归档导出和 Fork 不带本机响应记录。
 
 ## 配置与环境准备

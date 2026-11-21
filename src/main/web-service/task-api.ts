@@ -78,7 +78,11 @@ import {
 } from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
-import { TaskSubmissions } from '../tasks/task-submissions'
+import {
+  TaskSubmissions,
+  taskContinuationRequestId,
+  type TaskContinuationIdentity
+} from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
@@ -88,6 +92,7 @@ import {
   type TaskComputePreferencePort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
+import type { TaskContinuationTracker } from '../tasks/task-runner'
 import { readTaskNotebookReadiness } from './task-notebook-readiness'
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
@@ -121,6 +126,7 @@ class HeadlessTaskApi {
   private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
   private readonly submissions?: TaskSubmissions
+  private readonly releaseContinuationTracker?: () => void
 
   constructor(
     private readonly ports: TaskApiPorts,
@@ -252,6 +258,9 @@ class HeadlessTaskApi {
           ),
         now: dependencies.now
       })
+      this.releaseContinuationTracker = this.ports.agent.setContinuationTracker?.(
+        this.trackContinuation
+      )
     }
   }
 
@@ -262,11 +271,73 @@ class HeadlessTaskApi {
   }
 
   async dispose(): Promise<void> {
+    this.releaseContinuationTracker?.()
     try {
       await Promise.all([this.submissions?.dispose(), this.runner.dispose()])
     } finally {
       this.commandClient.dispose()
     }
+  }
+
+  private trackContinuation: TaskContinuationTracker = async (identity, send) => {
+    await this.initialize()
+    const originRunId = this.runner.findRunIdForPrompt(
+      identity.sessionId,
+      identity.originalPromptMessageId
+    )
+    if (!originRunId || this.runner.getRun(originRunId).projectId !== identity.projectId)
+      return send(() => undefined)
+    if (!this.submissions)
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'A durable Task continuation could not be recorded.'
+      )
+    // The Plan Owner may schedule this as the original turn is settling. Do not hold the
+    // submission journal's write queue while waiting for that Run to release the Session.
+    await this.runner.waitForRun(originRunId)
+    const tracking: { active?: Awaited<ReturnType<TaskRunner['beginContinuation']>> } = {}
+    let result
+    try {
+      const admission = await this.submissions.admitContinuation(identity, async (requestId) => {
+        tracking.active = await this.callerContexts.run(TASK_CALLER_CONTEXT, () =>
+          this.runner.beginContinuation(originRunId, identity.promptMessageId, requestId)
+        )
+        return tracking.active.run
+      })
+      if (!admission.admitted || !tracking.active)
+        throw new TaskRunnerError(
+          'submission_conflict',
+          'This continuation was already recorded; the provider was not called again.'
+        )
+      const { onProviderDispatched } = tracking.active
+      result = await this.callerContexts.run(TASK_CALLER_CONTEXT, () => send(onProviderDispatched))
+    } catch (error) {
+      await tracking.active?.settle({ error })
+      throw error
+    }
+    await tracking.active.settle(result)
+    return result
+  }
+
+  private async continuationReceipt(identity: TaskContinuationIdentity): Promise<{
+    taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+    requestId?: string
+    runId?: string
+  }> {
+    const requestId = taskContinuationRequestId(identity)
+    try {
+      const receipt = await this.submissions?.get(requestId)
+      if (receipt?.status === 'accepted')
+        return { taskRunStatus: 'tracked', requestId, runId: receipt.runId }
+      if (receipt?.status === 'pending') return { taskRunStatus: 'pending', requestId }
+    } catch (error) {
+      if (
+        !(error instanceof TaskRunnerError) ||
+        (error.code !== 'submission_not_found' && error.code !== 'submission_unavailable')
+      )
+        throw error
+    }
+    return { taskRunStatus: 'unconfirmed' }
   }
 
   runWithCallerContext<Result>(context: CallerContext, operation: () => Result): Result {
@@ -715,7 +786,12 @@ class HeadlessTaskApi {
               continuation: {
                 id: receipt.commandId,
                 promptMessageId: receipt.promptMessageId,
-                taskRunStatus: 'unconfirmed',
+                ...(await this.continuationReceipt({
+                  kind: 'plan',
+                  projectId: session.projectId,
+                  sessionId: session.id,
+                  attemptId: receipt.commandId
+                })),
                 status:
                   delivery?.state === 'delivering'
                     ? 'unconfirmed'
@@ -873,7 +949,10 @@ class HeadlessTaskApi {
     return this.withNotebookExecution(run, {
       projectId: run.projectId,
       sessionId: run.sessionId,
-      promptMessageId
+      promptMessageId,
+      ...(this.runner.sharesContinuationPrompt(run, promptMessageId)
+        ? { taskWindow: { startedAt: run.startedAt, completedAt: run.completedAt } }
+        : {})
     })
   }
 

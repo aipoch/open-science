@@ -736,8 +736,11 @@ branch the user reviewed. `list_interactions` accepts a Run ID or an explicit Pr
 flat `sessionId`, `artifactVersionId`, `expectedRevision`, `expectedBranchId`, `source: "user_relay"`
 and either `decision` or `feedback`. Ask the user in the current conversation before calling it.
 If the response is lost, query the same interaction. A continuation ID identifies the Plan Owner's
-durable handoff; the original Run keeps its outcome, including any restart interruption. The
-handoff status does not establish Notebook execution or file delivery.
+durable handoff. When it creates a new Task Run, `continuation.taskRunStatus: "tracked"` returns
+the new `requestId` and `runId`. Query that submission or Run and check its Notebook `execution`
+and delivered files separately. `pending` or `unconfirmed` does not prove execution; recheck the
+same interaction before taking another action. The original Run keeps its outcome, including any
+restart interruption.
 
 ## Session configuration
 
