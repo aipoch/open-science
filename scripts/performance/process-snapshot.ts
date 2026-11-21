@@ -145,19 +145,19 @@ const parseWindowsProcessTable = (output: string): ProcessSnapshotEntry[] => {
   return processes
 }
 
-const selectProcessTree = <T extends { pid: number; parentPid: number }>(
-  processes: readonly T[],
+const selectProcessTree = (
+  processes: readonly ProcessSnapshotEntry[],
   rootPid: number
-): T[] => {
+): ProcessSnapshotEntry[] => {
   const byPid = new Map(processes.map((process) => [process.pid, process]))
-  const childrenByParent = new Map<number, T[]>()
+  const childrenByParent = new Map<number, ProcessSnapshotEntry[]>()
   for (const process of processes) {
     const children = childrenByParent.get(process.parentPid) ?? []
     children.push(process)
     childrenByParent.set(process.parentPid, children)
   }
 
-  const selected: T[] = []
+  const selected: ProcessSnapshotEntry[] = []
   const visited = new Set<number>()
   const pending = [rootPid]
   while (pending.length > 0) {

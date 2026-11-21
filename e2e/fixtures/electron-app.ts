@@ -39,8 +39,8 @@ import {
   type ElectronContentTraceArtifact
 } from '../../scripts/performance/electron-content-trace'
 import { terminateProcessTree } from '../../src/main/process-tree'
-import { selectProcessTree } from '../../scripts/performance/process-snapshot'
-import { listWindowsProcesses } from '../../src/main/windows-process-query'
+import { listWindowsProcesses, windowsProcessIsAlive } from '../../src/main/windows-process-query'
+import { terminateWindowsProcessesByIdentity } from '../../src/main/process-tree-windows'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
@@ -1933,24 +1933,42 @@ class ElectronAppHarness implements ElectronApp {
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
     await this.stopElectronTrace(application)
-    let windowsTree: Set<number> | undefined
-    if (process.platform === 'win32') {
-      if (!child.pid) throw new Error('Electron crash simulation has no root PID.')
-      const table = listWindowsProcesses().map(({ pid, ppid }) => ({ pid, parentPid: ppid }))
-      windowsTree = new Set(selectProcessTree(table, child.pid).map(({ pid }) => pid))
-      if (!windowsTree.has(child.pid))
-        throw new Error(`Electron crash simulation could not observe root PID ${child.pid}.`)
-    }
+    const windowsProcesses =
+      process.platform === 'win32'
+        ? await application.evaluate(({ app }) => {
+            const { createRequire } = process.getBuiltinModule('node:module')
+            const { join } = process.getBuiltinModule('node:path')
+            const binding = createRequire(join(app.getAppPath(), 'package.json'))(
+              '@aipoch/process-tree-native'
+            ) as typeof import('@aipoch/process-tree-native')
+            // Capture the fixture app's live tree from inside its root before killing the launcher.
+            const members = () => [process.pid, ...binding.windowsCurrentProcessDescendants()]
+            const births = members().map(
+              (pid) => [pid, binding.getWindowsProcessCreationTime(pid)] as const
+            )
+            const current = new Set(members())
+            return births.filter(
+              (entry): entry is readonly [number, string] =>
+                entry[1] !== null &&
+                current.has(entry[0]) &&
+                binding.getWindowsProcessCreationTime(entry[0]) === entry[1]
+            )
+          })
+        : undefined
     const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
     let reaped = result.reaped
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
-    if (windowsTree) {
-      const before = windowsTree
+    if (windowsProcesses) {
+      if (!child.pid) throw new Error('Electron crash simulation has no launcher PID.')
+      const owned = new Map(windowsProcesses)
+      const before = new Set([child.pid, ...owned.keys()])
       const deadline = Date.now() + 10_000
+      // An intermediate launcher can exit before taskkill reaches every captured descendant.
+      await terminateWindowsProcessesByIdentity(owned, deadline)
       for (;;) {
         const remaining = listWindowsProcesses().filter(
-          ({ pid, ppid }) => before.has(pid) || before.has(ppid)
+          ({ pid, ppid }) => (before.has(pid) || before.has(ppid)) && windowsProcessIsAlive(pid)
         )
         if (remaining.length === 0) {
           reaped = true
@@ -1958,7 +1976,7 @@ class ElectronAppHarness implements ElectronApp {
         }
         if (Date.now() >= deadline)
           throw new Error(
-            `Electron crash simulation still observes PIDs ${remaining.map(({ pid }) => pid).join(', ')}.`
+            `Electron crash simulation still observes PIDs ${remaining.map(({ pid, ppid, executablePath }) => JSON.stringify({ pid, ppid, executablePath })).join(', ')}.`
           )
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
