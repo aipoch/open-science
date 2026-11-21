@@ -3197,6 +3197,8 @@ describe('WorkspaceSidebar accessible render', () => {
           )
         })
         expect(container.querySelectorAll('kbd')).toHaveLength(9)
+        const actions = container.querySelector('[aria-label="Open actions for Pinned target"]')
+        expect(actions?.classList.contains('invisible')).toBe(true)
         expect(container.textContent).toContain(hint)
 
         const openEvent = new KeyboardEvent('keydown', {
@@ -3213,6 +3215,7 @@ describe('WorkspaceSidebar accessible render', () => {
           window.dispatchEvent(new KeyboardEvent('keyup', { key: modifierKey, bubbles: true }))
         })
         expect(container.querySelector('kbd')).toBeNull()
+        expect(actions?.classList.contains('invisible')).toBe(false)
 
         onOpenSession.mockClear()
         dialog = document.createElement('div')
