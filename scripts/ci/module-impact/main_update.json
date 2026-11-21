@@ -9,6 +9,7 @@
     "src/main/update/windows-desktop-version.test.ts",
     "src/main/update/windows-desktop-version.ts",
     "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
     "src/main/update/linux-background-download.ts",
     "src/main/update/mac-background-update.ts",
     "src/main/update/mac-quit-handoff.ts",
@@ -75,6 +76,7 @@
   "interfacePaths": [
     "src/main/update/windows-desktop-version.ts",
     "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
     "src/main/update/linux-background-download.ts",
     "src/main/update/mac-background-update.ts",
     "src/main/update/mac-quit-handoff.ts",
