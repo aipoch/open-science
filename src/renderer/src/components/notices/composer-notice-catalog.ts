@@ -224,7 +224,19 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+export const noticePresentation = (
+  failure: ClassifiedFailure,
+  operation?: string
+): NoticePresentation => {
+  // Attachment recovery belongs to the transfer row or the editable draft.
+  if (operation === 'attachment')
+    return {
+      ...noticeCatalog.internal,
+      level: 'warning',
+      primaryAction: undefined,
+      secondaryActions: [],
+      feedback: 'none'
+    }
   const presentation =
     (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
   return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation

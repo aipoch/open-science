@@ -528,6 +528,7 @@ const ConversationPanel = ({
       error: composerError,
       errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
+      attachmentNotice,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -1072,19 +1073,21 @@ const ConversationPanel = ({
       },
       {
         id: 'action',
-        message: actionError,
+        message: attachmentNotice && actionError === composerError ? undefined : actionError,
         failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
         occurredAt: operationDiagnostic?.occurredAt
       },
       {
-        id: 'composer',
+        id: attachmentNotice ? 'attachment' : 'composer',
+        summary: attachmentNotice,
         message:
-          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+          (attachmentNotice || composerError !== actionError) &&
+          composerError !== DISCUSSION_DRAFT_CONFLICT
             ? composerError
             : undefined,
-        failure: composerFailure,
+        failure: attachmentNotice ? { category: 'internal', diagnostics: {} } : composerFailure,
         detail: composerErrorDetail
       },
       {
@@ -2984,7 +2987,9 @@ const ConversationPanel = ({
                                             ? 'text-red-600'
                                             : 'text-text-300'
                                         }`}
-                                        title={transfer.errorDetail ?? statusLabel}
+                                        title={[statusLabel, transfer.errorDetail]
+                                          .filter(Boolean)
+                                          .join('\n')}
                                       >
                                         {statusLabel}
                                       </div>
