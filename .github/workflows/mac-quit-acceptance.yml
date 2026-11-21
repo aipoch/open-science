@@ -37,10 +37,10 @@ jobs:
           mkdir -p feed source
           gh release download v1.3.2 --repo aipoch/open-science -p "aipoch-open-science-1.3.2-mac-$ARCH.zip" -p latest-mac.yml -D feed
           for i in {1..70}; do
-            if gh api repos/aipoch/open-science/actions/runs/44905917171/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
+            if gh api repos/aipoch/open-science/actions/runs/44906316761/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
             sleep 30
           done
-          gh run download 44905917171 --repo aipoch/open-science -n "macos-$ARCH" -D source
+          gh run download 44906316761 --repo aipoch/open-science -n "macos-$ARCH" -D source
       - name: Exercise a failed replacement in the signed application
         env:
           ARCH: ${{ matrix.arch }}
