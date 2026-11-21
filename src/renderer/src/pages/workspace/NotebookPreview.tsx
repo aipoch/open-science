@@ -733,7 +733,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
     return window.api.notebook.onChanged((event) => {
-      if (event.sessionId === item.notebook.sessionId) {
+      if (!event.codeAppendOnly && event.sessionId === item.notebook.sessionId) {
         void loadNotebookState()
       }
     })
@@ -1215,7 +1215,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   useEffect(() => {
     if (!showVariables && !terminalInputFocused) return
     return window.api.notebook.onChanged((event) => {
-      if (event.sessionId !== item.notebook.sessionId) return
+      if (event.codeAppendOnly || event.sessionId !== item.notebook.sessionId) return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })

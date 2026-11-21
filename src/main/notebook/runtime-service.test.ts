@@ -2963,7 +2963,8 @@ describe('notebook runtime service', () => {
       repository: new NotebookRunRepository(root),
       callbacks: {
         onNotebookAvailable: (event) => notifications.push(`available:${event.sessionId}`),
-        onNotebookChanged: (event) => notifications.push(`changed:${event.sessionId}`)
+        onNotebookChanged: (event) =>
+          notifications.push(`${event.codeAppendOnly ? 'append' : 'changed'}:${event.sessionId}`)
       },
       executorFactory: () => ({
         execute: async (request) => ({
@@ -3018,7 +3019,7 @@ describe('notebook runtime service', () => {
       'changed:user-session',
       'available:agent-session',
       'changed:agent-session',
-      'changed:agent-session',
+      'append:agent-session',
       'changed:agent-session',
       'changed:agent-session',
       'changed:agent-session',

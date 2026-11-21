@@ -113,7 +113,11 @@ const useSessionBackgroundTasks = (
       }) ?? (() => undefined)
     const stop =
       window.api.notebook?.onChanged((event) => {
-        if (event.sessionId === sessionId && event.projectId === projectId) {
+        if (
+          !event.codeAppendOnly &&
+          event.sessionId === sessionId &&
+          event.projectId === projectId
+        ) {
           void load()
         }
       }) ?? (() => undefined)

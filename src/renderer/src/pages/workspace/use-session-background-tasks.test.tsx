@@ -148,6 +148,18 @@ describe('useSessionBackgroundTasks', () => {
     latest = undefined
   })
 
+  it('refreshes task summaries on lifecycle changes and skips draft appends', async () => {
+    const state = vi.fn().mockResolvedValue({ runs: [] })
+    const onChanged = vi.fn<typeof window.api.notebook.onChanged>().mockReturnValue(() => undefined)
+    stubApi({ notebook: { backgroundTasks: state, onChanged } })
+    await mount('session-1', 'project-1', notebook)
+    const notify = onChanged.mock.calls[0][0]
+    await act(async () => notify({ ...notebook, codeAppendOnly: true }))
+    expect(state).toHaveBeenCalledTimes(1)
+    await act(async () => notify(notebook))
+    expect(state).toHaveBeenCalledTimes(2)
+  })
+
   it('pauses Notebook polling while its Session is exporting and resumes after release', async () => {
     vi.useFakeTimers()
     const state = vi.fn().mockResolvedValue({ runs: [run()] })

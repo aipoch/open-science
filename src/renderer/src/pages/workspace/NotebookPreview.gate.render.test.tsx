@@ -636,6 +636,13 @@ describe('NotebookPreview per-kernel tabs', () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('print(1)')
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls.at(-1)![0]({
+        ...item.notebook,
+        codeAppendOnly: true
+      })
+    })
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
 
     await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
     await act(async () => {

@@ -1990,7 +1990,7 @@ class NotebookRuntimeService {
         throw error
       }
       const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeAppendOnly: true })
 
       return {
         sessionId: session.sessionId,

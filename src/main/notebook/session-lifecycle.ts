@@ -1,4 +1,5 @@
 import type {
+  NotebookChangedEvent,
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookNamespaceRequest,
@@ -56,7 +57,7 @@ type NotebookExecutorLifecycleCallbacks = {
 
 type NotebookSessionLifecycleCallbacks = {
   onNotebookAvailable?: (event: NotebookSessionReference) => void
-  onNotebookChanged?: (event: NotebookSessionReference) => void
+  onNotebookChanged?: (event: NotebookChangedEvent) => void
 }
 
 type NotebookKernelStatusPersistenceFailure = {
@@ -881,8 +882,14 @@ class NotebookSessionLifecycleOwner {
     this.options.callbacks?.onNotebookAvailable?.(this.options.toSessionReference(session))
   }
 
-  notifyChanged(session: RuntimeSession): void {
-    this.options.callbacks?.onNotebookChanged?.(this.options.toSessionReference(session))
+  notifyChanged(
+    session: RuntimeSession,
+    change?: Pick<NotebookChangedEvent, 'codeAppendOnly'>
+  ): void {
+    this.options.callbacks?.onNotebookChanged?.({
+      ...this.options.toSessionReference(session),
+      ...change
+    })
   }
 
   async persistKernelStatus(
