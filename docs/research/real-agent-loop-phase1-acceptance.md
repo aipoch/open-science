@@ -5,6 +5,67 @@ and [the original Chinese implementation note](real-agent-loop-implementation-pl
 [spec #54](https://github.com/guch96/open-science/issues/54). An installed package, an Agent
 turn, a Notebook dispatch, and verified files are separate observations.
 
+## Installed cold startup and external Agent handoff: November 21, 2026
+
+The actual macOS and Linux arm64 npm installations from `10186febe` passed npm resolution,
+native loading, and service startup without Electron. Both CLI tarballs had SHA-256
+`04a40fed8bf8bd5276ba62777e6b1639c1dbc98e49b8ab6bec06fa62373ceb9f`; the macOS and Linux
+native tarball digests were `09783c70914325bf1c03ebbf831c628be3bbd3bbcffc379fbd2ace8b4a6a10b8`
+and `420d87781d7369dcd8e7c7362bfc17eea0f83adbaf62979cc64292770625fa59`.
+
+- The earlier `a5146a817` macOS install reproduced `EADDRINUSE` when a fresh MCP profile tried
+  to start on the occupied default loopback port. Its first `doctor` call also probed before
+  startup settled. The fix binds a free loopback port for a new MCP profile, waits for its
+  startup on readiness calls, and reuses the daemon for the same profile. With port 44100 still
+  occupied, real installed stdio connected to a fresh profile on port 55188. It returned
+  `service: ready`, no selected runtime, unprepared Python and R, and an empty Project list.
+  Reconnecting retained the same PID and port. The 226 CLI, MCP and runtime regression tests
+  and all 2,992 architecture checks passed.
+- OpenCode `1.19.5` received the README quote with only its URL changed to the matching fork
+  commit. It started the new macOS profile through MCP, read the guide and catalog, checked
+  both languages, and made no setup writes or research submissions. In a separate run on
+  `a5146a817`, OpenCode selected the built-in Agent, saved and activated an ordinary local
+  custom API Provider, then installed R through MCP without preparing Python. It reported
+  `notebook_memory_pressure` separately from the prepared language. Stopping the local test
+  model relieved host pressure without changing product memory policy.
+- Direct MCP stdio from `a5146a817` used a deterministic Provider with the real macOS service
+  and managed R kernel. Request `83c431d2-f887-49ff-bd64-c182b1a0fb1c` was admitted as Run
+  `bfa48358-4706-4c3a-81e2-5cb352f3bb24`. Notebook `notebook-run-1795251910182-1` dispatched
+  and the adapter verified its report and table (`7c524acf-53b3-4bf9-8ae0-038d1bbc1b3b` and
+  `914e5e9a-bcd9-441b-8e37-1673a2cf4742`). Export `0aa98ff5-c76d-4cb4-b823-ff869d0aa105`
+  produced `greenhouse-study.science` (61,928 bytes, SHA-256
+  `7b131b33fff79c3fbcabd384f3cab383d15eb5c23f418bb47ff10b82b0038736`). All 19 inventory
+  records matched the archive. A service restart preserved the original request, Run and
+  Notebook identity. Independent calculation verified counts of 4, group means of 13 and 17 cm,
+  and a 4 cm difference.
+- An independent Debian 13 arm64 container received only that package as research state. It
+  used its own Secret Service, no host directory mounts, and the `a5146a817` Linux build. Real
+  OpenCode did not import from the short prompt with the package. It imported on a separate
+  request (`1bc608e0-e504-4ed3-8085-9f9279f1a155`), inspected the read-only Session and historical
+  outputs, and waited for the operator's explicit decision to Fork
+  (`ef6ded58-4331-4c29-8440-f824d2c67440`). A separately configured, live keyless Provider
+  ran request `greenhouse-followup-001`, Run `234a4da1-92d0-48a6-b557-0bed48579d77`. Before
+  the operator relayed approval, the R runtime review showed `kernelDispatched: false`. The
+  operator later declined an unrelated shell write; the same Run used an authorized path and
+  completed Notebook `notebook-run-1795252421928-3`. OpenCode verified both new local Artifacts
+  and export `1a5e9404-403c-4dc8-b67e-f8771ddab368` through MCP. `greenhouse-followup.science`
+  was 139,744 bytes with 27 matching inventory records and SHA-256
+  `68f55be6c2374305c83b6aa0a9cc64b12cc38b3cd3244ffdb9fa2eb491703f11`. Independent
+  recomputation confirmed sample variance `20/3` cm² and range `6` cm in both groups.
+- OpenCode's binary attachment preview could not read the archive as text. No import occurred
+  during setup. The separate import request supplied the same local file by path, which MCP
+  read normally. A host that cannot attach `.science` files can use this local-path workflow.
+- The Linux service restart recovered the same accepted request, Run, Notebook and verified
+  report/table. The original export operation was `unconfirmed` after restart even though
+  the file still matched its pre-restart digest. The Agent queried the original operation and
+  did not resubmit or re-export. The original import stayed read-only throughout.
+
+WorkBuddy 5.9.4 saved a separate connector for the new install; all three old Open-Science
+entries and their enabled states were preserved. The desktop bridge lost its window before
+first-use Trust, so no MCP call or research submission is attributed to that connector. The
+Linux replay above used the direct MCP fixture package, not a WorkBuddy-produced archive.
+Tickets #80 and #81 therefore remain open. No package was published to npm.
+
 ## Task setup preview: Linux arm64, November 21, 2026
 
 The npm build from `ee0edc803` includes [#77](https://github.com/guch96/open-science/issues/77)
