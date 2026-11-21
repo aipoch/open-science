@@ -548,14 +548,15 @@ const verifyRuntimeApproval = async (context, prompt) =>
     return `Runtime ${language} ${continued ? 'continued' : 'first'} cell verified: ${continued ? '42' : '41'}.`
   })
 
-const executeControlCode = async (sessionId, code) =>
+const executeControlCode = async (sessionId, code, options) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) =>
     toolResult(
       'repl_execute',
       await client.callTool({
         name: 'repl_execute',
         arguments: { code, timeoutMs: 120_000 }
-      })
+      }),
+      options
     )
   )
 
@@ -3410,10 +3411,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`
+            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`,
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unsupported delegation was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('Requested Specialist is unknown')
+          ) {
+            throw new Error(`Unexpected Specialist rejection result: ${JSON.stringify(delegated)}`)
           }
           reply = 'Subagents are unavailable for this session configuration.'
         } else if (prompt.includes(DELEGATION_INHERITED_SPECIALIST_PROMPT)) {
@@ -3552,10 +3557,16 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(SUBAGENT_MODEL_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })'
+            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })',
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unavailable Subagent model was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('configured Subagent model is unavailable')
+          ) {
+            throw new Error(
+              `Unexpected Subagent model rejection result: ${JSON.stringify(delegated)}`
+            )
           }
           reply = 'Unavailable Subagent model rejected the whole batch.'
         } else if (prompt.includes(SUBAGENT_MODEL_INHERITED_PROMPT)) {
