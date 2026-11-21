@@ -969,6 +969,7 @@ describe('preload bridge — public surface inventory', () => {
       'update.recheck',
       'update.recover',
       'update.revealInstaller',
+      'update.setAutomaticDownloads',
       'uploads.abortTransfer',
       'uploads.appendTransfer',
       'uploads.beginTransfer',

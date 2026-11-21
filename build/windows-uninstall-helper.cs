@@ -32,6 +32,12 @@ public static class UninstallHelper {
         case "update-handoff": UpdateHandoff(Required(options, "install-path")); break;
         case "notebook-sandbox": NotebookSandbox(Required(options, "sandbox-root")); break;
         case "runtime-cache": RuntimeCache(); break;
+        case "prepared-updates":
+          // Published payloads can contain node_modules paths beyond the Framework legacy limit.
+          AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
+          AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
+          RemovePreparedUpdates(Required(options, "cache"), Required(options, "executable"));
+          break;
         case "program-data-paths":
           ProgramDataPaths(
             Required(options, "install-path"),
@@ -374,10 +380,16 @@ public static class UninstallHelper {
   // Remove-Item -Recurse -Force without ever following a link: a reparse point is removed itself.
   static void RemoveTree(string path) {
     var attributes = File.GetAttributes(path);
+    if ((attributes & FileAttributes.ReparsePoint) != 0) {
+      if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(path, false);
+      else File.Delete(path);
+      return;
+    }
     if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
     if ((attributes & FileAttributes.Directory) == 0) { File.Delete(path); return; }
-    if ((attributes & FileAttributes.ReparsePoint) == 0)
+    using (InstallDirectory.HoldForProgramCleanup(path)) {
       foreach (var child in Directory.GetFileSystemEntries(path)) RemoveTree(child);
+    }
     Directory.Delete(path, false);
   }
 
@@ -399,6 +411,49 @@ public static class UninstallHelper {
   static string UserIdentity() {
     return string.Join("\\", new[] { Variable("USERDOMAIN"), Variable("USERNAME") }
       .Where(part => !string.IsNullOrWhiteSpace(part)));
+  }
+
+  // A true uninstall can precede the first launch of the successor. The updater cache is
+  // per user and may also contain packages for another installation of the same product.
+  static void RemovePreparedUpdates(string cache, string executable) {
+    var root = Path.Combine(cache, "open-science-prepared");
+    if (!Directory.Exists(root) || !NoReparsePointInPath(root) || !TrustedAcl(root)) return;
+    var installed = InstallDirectory.CanonicalPath(executable);
+    root = root.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + root.Substring(2) : @"\\?\" + root;
+    bool failed = false;
+    using (InstallDirectory.HoldForProgramCleanup(cache))
+    using (InstallDirectory.HoldForProgramCleanup(root)) {
+      foreach (var stage in Directory.GetDirectories(root)) {
+        if (!Regex.IsMatch(Path.GetFileName(stage), @"\A[a-f0-9]{32}\z") || IsReparsePoint(stage)) continue;
+        try {
+          using (InstallDirectory.HoldForProgramCleanup(stage)) {
+            if (!TrustedAcl(stage)) continue;
+            var marker = new[] { "ready.json", "installing.json", "scan-timed-out.json" }
+              .Select(name => Path.Combine(stage, name)).FirstOrDefault(File.Exists);
+            if (marker == null || IsReparsePoint(marker) || !TrustedAcl(marker)) continue;
+            var receipt = ReadJsonObject(marker, 64 * 1024);
+            if (!TextEquals(Field(receipt, "executable"), installed)) continue;
+            var sha512 = Field(receipt, "sha512") as string;
+            if (sha512 == null || !Regex.IsMatch(sha512, @"\A[A-Za-z0-9+/]{86}==\z")) continue;
+            // The canonical executable in the receipt identifies the installation; the digest
+            // identifies the installer. Never consume or delete the SDK's own pending files.
+            var payload = Path.Combine(stage, "payload");
+            if (Directory.Exists(payload)) RemoveTree(payload);
+            foreach (var file in Directory.GetFiles(stage)) {
+              if (Regex.IsMatch(Path.GetFileName(file), @"\A(?:occupant-\d+-\d+|accepted-[a-f0-9-]{36})\z"))
+                File.Delete(file);
+            }
+            File.Delete(marker);
+          }
+          if (!Directory.EnumerateFileSystemEntries(stage).Any()) Directory.Delete(stage);
+        } catch (Exception error) {
+          Console.Error.WriteLine("Retained prepared update at " + stage + ": " + error.Message);
+          failed = true;
+        }
+      }
+    }
+    if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+    if (failed) Exit(1);
   }
 
   // ---- runtime-cache: owned micromamba caches --------------------------------------------

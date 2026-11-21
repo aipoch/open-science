@@ -41,6 +41,9 @@ export type UpdateApplyOptions = {
 export type UpdateStatus = {
   state: UpdateState
   current: string
+  // Present on desktops that support conditional background downloads.
+  automaticDownloads?: boolean
+  backgroundDownload?: boolean
   latest?: string
   notes?: string
   localizedNotes?: LocalizedReleaseNotes

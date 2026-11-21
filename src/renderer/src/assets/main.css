@@ -1312,7 +1312,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     place-items: center;
   }
 
-  .update-reminder:is([data-state='available'], [data-state='ready']) .update-reminder-mark > svg {
+  .update-reminder-attention ~ .update-reminder-mark > svg {
     transform-origin: center;
     animation: update-reminder-mark-wiggle 1.4s cubic-bezier(0.4, 0, 0.2, 1) both;
   }

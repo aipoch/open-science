@@ -66,8 +66,16 @@ import {
   type RuntimeDirectoryLease
 } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
+import {
+  canDownloadWindowsUpdate,
+  loadWindowsDownloadPreference
+} from './update/windows-background-download'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import { installationRootForEntry } from './update/installation-protection'
+import {
+  inspectInstallationAvailability,
+  installationRootForEntry
+} from './update/installation-protection'
+import { applyPreparedWindowsUpdate } from './update/windows-desktop-version'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -325,10 +333,32 @@ async function startDesktop(): Promise<void> {
     app.quit()
     return
   }
+  // The existing profile log also records why a cold-launch installer handoff was declined.
+  initLogger({ logDir: join(profilePath, 'desktop-logs') })
+  if (
+    process.platform === 'win32' &&
+    app.isPackaged &&
+    !headless &&
+    !initialRecoveryError &&
+    !preservedStartupOptions &&
+    (await applyPreparedWindowsUpdate({
+      current: app.getVersion(),
+      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
+      checkOccupancy: (signal) =>
+        inspectInstallationAvailability(
+          {
+            installationRoot: installationRootForEntry(initialBackendPaths.entry),
+            allowedProcessIds: allowedInstallationProcessIds
+          },
+          signal
+        )
+    }))
+  ) {
+    app.exit(0)
+    return
+  }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
-  // Configure the existing sink before credential preflight; full diagnostics start after ready.
-  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (!initialRecoveryError) {
     const bootstrapLease = acquireCredentialBootstrapLease({
       home: app.getPath('home'),
@@ -759,6 +789,7 @@ async function startDesktop(): Promise<void> {
     'cli:install',
     'cli:uninstall',
     'update:get-app-info',
+    'update:set-automatic-downloads',
     'update:get-status',
     'update:get-installer',
     'update:reveal-installer',
@@ -1797,7 +1828,12 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
+  const backgroundDownloads =
+    process.platform === 'win32' && app.isPackaged && !headless && !app.getVersion().includes('-')
+      ? loadWindowsDownloadPreference(profilePath)
+      : undefined
   const update = createUpdateStrategy(process.platform, {
+    downloadPreference: backgroundDownloads,
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
@@ -1834,7 +1870,28 @@ async function startDesktop(): Promise<void> {
       : {})
   })
   registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame)
-  const stopUpdates = startUpdateScheduler(update)
+  const stopUpdates = startUpdateScheduler(
+    update,
+    undefined,
+    backgroundDownloads
+      ? {
+          isInBackground: () => {
+            const activity = resourceActivityRelay.state()
+            return (
+              ready &&
+              !runtimeStopped &&
+              !updateCommitted &&
+              !activity.suspended &&
+              !activity.foreground
+            )
+          },
+          canDownload: (bytes) =>
+            process.env.LOCALAPPDATA
+              ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
+              : Promise.resolve(false)
+        }
+      : undefined
+  )
   app.once('will-quit', () => {
     stopUpdates()
     removeNativeBroadcast()

@@ -245,6 +245,18 @@ describe('useUpdateStore', () => {
     expect(useUpdateStore.getState().isDialogOpen).toBe(false)
   })
 
+  it('keeps a background transfer running when its dialog is dismissed', () => {
+    const cancel = vi.fn()
+    ;(window as unknown as { api: unknown }).api = { update: { cancel } }
+    useUpdateStore.setState({
+      status: { state: 'downloading', current: '1', latest: '2', backgroundDownload: true },
+      isDialogOpen: true
+    })
+    useUpdateStore.getState().closeDialog()
+    expect(cancel).not.toHaveBeenCalled()
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  })
+
   it('closeDialog cancels an in-flight download', async () => {
     const cancel = vi.fn(() =>
       Promise.resolve({ state: 'available', current: '0.2.0', latest: '0.3.0' })

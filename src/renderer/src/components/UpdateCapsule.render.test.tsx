@@ -31,6 +31,22 @@ afterEach(() => {
 })
 
 describe('UpdateCapsule', () => {
+  it('keeps automatic preparation quiet and exposes a static restart action once ready', () => {
+    const status = { current: '1', latest: '2', automaticDownloads: true }
+    useUpdateStore.setState({ status: { ...status, state: 'available' } })
+    act(() => root.render(<UpdateCapsule />))
+    expect(container.children).toHaveLength(0)
+    act(() =>
+      useUpdateStore.setState({
+        status: { ...status, state: 'downloading', backgroundDownload: true }
+      })
+    )
+    expect(container.children).toHaveLength(0)
+    act(() => useUpdateStore.setState({ status: { ...status, state: 'ready' } }))
+    expect(container.querySelector('button')?.textContent).toContain('Restart')
+    expect(container.querySelector('.update-reminder-attention')).toBeNull()
+  })
+
   it('renders nothing when there is no update', () => {
     act(() => {
       root.render(<UpdateCapsule />)

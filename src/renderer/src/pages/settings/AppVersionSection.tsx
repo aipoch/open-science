@@ -22,7 +22,7 @@ import {
   getDocumentationUrl,
   getInstallationDocumentationUrl
 } from '../../../../shared/app-config'
-import { SettingsRow } from './SettingsLayout'
+import { SettingsRow, SettingsToggle } from './SettingsLayout'
 import { SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE } from './settings-manual-update-guide'
 
 export type AppVersionSectionPreviewState =
@@ -54,6 +54,7 @@ const AppVersionSection = ({
   const status = useUpdateStore((state) => state.status)
   const check = useUpdateStore((state) => state.check)
   const openDialog = useUpdateStore((state) => state.openDialog)
+  const setAutomaticDownloads = useUpdateStore((state) => state.setAutomaticDownloads)
   const manual = useManualUpdate(true)
   const sectionRef = useRef<HTMLDivElement>(null)
   const { closeGuide, guideOpenRef } = manual
@@ -173,6 +174,16 @@ const AppVersionSection = ({
               ) : null}
             </div>
           </SettingsRow>
+
+          {status.automaticDownloads !== undefined && (
+            <SettingsRow label={t('Automatically download updates')}>
+              <SettingsToggle
+                aria-label={t('Automatically download updates')}
+                enabled={status.automaticDownloads}
+                onToggle={() => void setAutomaticDownloads(!status.automaticDownloads)}
+              />
+            </SettingsRow>
+          )}
 
           {manual.installer || manual.feedback ? (
             <div className="mb-6 pl-20">
