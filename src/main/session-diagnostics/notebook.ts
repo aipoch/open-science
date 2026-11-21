@@ -139,6 +139,18 @@ export function projectDiagnosticNotebook(
       }
     }
     const projected: RecordValue = {}
+    const capture = record(run.environmentCapture)
+    const environmentManifestChecksum =
+      (typeof run.environmentManifestChecksum === 'string' &&
+        identity(run.environmentManifestChecksum) &&
+        run.environmentManifestChecksum) ||
+      (capture?.state === 'available' || capture?.state === 'partial'
+        ? typeof capture.manifestChecksum === 'string' &&
+          identity(capture.manifestChecksum) &&
+          capture.manifestChecksum
+        : undefined)
+    if (environmentManifestChecksum)
+      projected.environmentManifestChecksum = environmentManifestChecksum
     if (includeExecutionCode) {
       if (typeof run.script !== 'string') {
         projected.scriptStatus = 'missing'

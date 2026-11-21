@@ -314,12 +314,49 @@ describe('session diagnostics isolated collector', () => {
     const input = await fixture()
     const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
     await mkdir(join(notebookRoot, 'frames/frame-1'), { recursive: true })
+    const environmentManifest = {
+      schemaVersion: 1,
+      captureKind: 'completed-run',
+      capturedAt: '2026-11-20T00:00:00.000Z',
+      installedInventory: {
+        capturedAt: '2026-11-20T00:00:00.000Z',
+        source: 'full-scan',
+        validation: 'full-scan'
+      },
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      runtimeSource: 'managed',
+      inventorySources: ['kernel-native'],
+      packages: [{ name: 'numpy', version: '2.0.0', versionStatus: 'known', ecosystem: 'python' }],
+      complete: true,
+      captureStatus: 'complete'
+    }
+    const serializedEnvironmentManifest = `${JSON.stringify(environmentManifest, null, 2)}\n`
+    const environmentManifestChecksum = createHash('sha256')
+      .update(serializedEnvironmentManifest)
+      .digest('hex')
+    await mkdir(join(input.dataRoot, 'runtime/provenance/environment-manifests'), {
+      recursive: true
+    })
+    await writeFile(
+      join(
+        input.dataRoot,
+        'runtime/provenance/environment-manifests',
+        `${environmentManifestChecksum}.json`
+      ),
+      serializedEnvironmentManifest
+    )
     const document = (runId: string): Record<string, unknown> => ({
       projectId: 'project',
       sessionId: 'session',
       runs: [
         ...Array.from({ length: 100 }, (_, index) => ({ runId: `older-${index}` })),
-        { runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }
+        {
+          runId,
+          script: 'SECRET_SCRIPT',
+          text: { stdout: 'SECRET_STDOUT' },
+          environmentCapture: { state: 'available', manifestChecksum: environmentManifestChecksum }
+        }
       ]
     })
     await writeFile(join(notebookRoot, 'run.json'), JSON.stringify(document('root-run')))
@@ -353,8 +390,20 @@ describe('session diagnostics isolated collector', () => {
     )
     expect(rootRun.runCounts).toEqual({ source: 101, retained: 100, omitted: 1 })
     expect(rootRun.runs.at(-1).runId).toBe('root-run')
+    expect(rootRun.runs.at(-1).environmentManifestChecksum).toBe(environmentManifestChecksum)
     expect(frameRun.runs.at(-1).runId).toBe('frame-run')
+    expect(frameRun.runs.at(-1).environmentManifestChecksum).toBe(environmentManifestChecksum)
     expect(environment.storedDefaults.frameworkId).toBe('codex')
+    expect(
+      await readFile(
+        join(
+          input.directory!,
+          'content/notebook/environment-manifests',
+          `${environmentManifestChecksum}.json`
+        ),
+        'utf8'
+      )
+    ).toBe(serializedEnvironmentManifest)
     const exported = JSON.stringify([rootRun, frameRun, environment])
     for (const secret of ['SECRET_SCRIPT', 'SECRET_STDOUT', 'SECRET_KEY'])
       expect(exported).not.toContain(secret)
@@ -410,6 +459,42 @@ describe('session diagnostics isolated collector', () => {
     expect(await readFile(join(input.directory!, 'content/session.json'), 'utf8')).not.toContain(
       'SECRET_SESSION'
     )
+  })
+  it('marks Notebook diagnostics partial when a referenced environment sidecar is unavailable', async () => {
+    const input = await fixture()
+    const checksum = 'a'.repeat(64)
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    await mkdir(notebookRoot, { recursive: true })
+    await writeFile(
+      join(notebookRoot, 'run.json'),
+      JSON.stringify({
+        projectId: 'project',
+        sessionId: 'session',
+        runs: [
+          {
+            runId: 'run-1',
+            environmentManifestChecksum: checksum
+          }
+        ]
+      })
+    )
+
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['notebook'] })
+
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(result.kind === 'archive' ? result.report : '').toContain(
+      'Notebook environment manifest unavailable'
+    )
+    expect(
+      await readFile(
+        join(
+          input.directory!,
+          'content/notebook/environment-manifests',
+          `${checksum}.json.metadata.json`
+        ),
+        'utf8'
+      )
+    ).toContain('source-unavailable-or-integrity-failure')
   })
   it('counts only delivered Notebook code when one selected file cannot be written', async () => {
     const input = await fixture()

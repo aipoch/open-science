@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { appendFile, lstat, mkdir, open, opendir, rm, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, open, opendir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import * as tar from 'tar'
 import type {
@@ -21,6 +21,10 @@ import { exportResourceJournal, inspectResourceJournal } from './resources'
 
 const FILE_LIMIT = 8 * 1024 * 1024
 const TOTAL_LIMIT = 32 * 1024 * 1024
+const ENVIRONMENT_MANIFEST_LIMIT = 32 * 1024 * 1024
+const ENVIRONMENT_MANIFEST_DIRECTORY = join('runtime', 'provenance', 'environment-manifests')
+const digestPattern = /^[a-f0-9]{64}$/
+const digest = (contents: string): string => createHash('sha256').update(contents).digest('hex')
 const SESSION_JOURNAL_READ_LIMIT = 32 * 1024 * 1024
 const BACKEND_LOG_TAIL_BYTES = 256 * 1024
 const safeSegment = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(value)
@@ -490,6 +494,21 @@ async function readBinarySource(source: Source): Promise<Buffer> {
   }
 }
 
+const environmentManifestChecksumForRun = (run: Record<string, unknown>): string | undefined => {
+  if (typeof run.environmentManifestChecksum === 'string') return run.environmentManifestChecksum
+  const capture = run.environmentCapture
+  if (!capture || typeof capture !== 'object' || Array.isArray(capture)) return undefined
+  const state = capture as Record<string, unknown>
+  return state.state === 'available' || state.state === 'partial'
+    ? typeof state.manifestChecksum === 'string'
+      ? state.manifestChecksum
+      : undefined
+    : undefined
+}
+
+const environmentManifestPath = (dataRoot: string, checksum: string): string =>
+  join(dataRoot, ENVIRONMENT_MANIFEST_DIRECTORY, `${checksum}.json`)
+
 export async function runSessionDiagnosticWorker(
   input: SessionDiagnosticWorkerInput
 ): Promise<SessionDiagnosticWorkerResult> {
@@ -563,6 +582,81 @@ export async function runSessionDiagnosticWorker(
         if (state) state.reason = reason
         record(`Diagnostic output ${name} failed: ${reason}`)
         return false
+      }
+    }
+    const exportedEnvironmentManifestChecksums = new Set<string>()
+    const exportEnvironmentManifests = async (
+      value: Record<string, unknown>,
+      state: { status: string; reason?: string }
+    ): Promise<void> => {
+      const runs = Array.isArray(value.runs) ? value.runs.slice(-100) : []
+      for (const entry of runs) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+        const checksum = environmentManifestChecksumForRun(entry as Record<string, unknown>)
+        if (!checksum || exportedEnvironmentManifestChecksums.has(checksum)) continue
+        exportedEnvironmentManifestChecksums.add(checksum)
+        if (!digestPattern.test(checksum)) {
+          partial = true
+          if (state.status === 'exported') state.status = 'partial'
+          state.reason = 'Environment manifest reference is invalid'
+          record('Notebook environment manifest reference is invalid')
+          continue
+        }
+        const path = environmentManifestPath(input.dataRoot, checksum)
+        const output = `notebook/environment-manifests/${checksum}.json`
+        try {
+          await checkPath(input.dataRoot, path)
+          const before = await lstat(path)
+          if (!before.isFile() || before.isSymbolicLink())
+            throw new DiagnosticCollectionError('Environment manifest is not a regular file')
+          if (before.size > ENVIRONMENT_MANIFEST_LIMIT)
+            throw new DiagnosticCollectionError('Environment manifest exceeds file limit')
+          const contents = await readFile(path, 'utf8')
+          const after = await lstat(path)
+          if (
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            digest(contents) !== checksum
+          )
+            throw new DiagnosticCollectionError('Environment manifest checksum mismatch')
+          const parsed = JSON.parse(contents) as Record<string, unknown>
+          if (
+            !parsed ||
+            Array.isArray(parsed) ||
+            parsed.schemaVersion !== 1 ||
+            parsed.captureKind !== 'completed-run' ||
+            !Array.isArray(parsed.packages)
+          )
+            throw new DiagnosticCollectionError('Environment manifest shape is invalid')
+          if (Buffer.byteLength(contents) > FILE_LIMIT) {
+            partial = true
+            if (state.status === 'exported') state.status = 'partial'
+            state.reason = 'Environment manifest exceeds diagnostic output limit'
+            record('Notebook environment manifest exceeds diagnostic output limit')
+            await writeBestEffort(
+              `${output}.metadata.json`,
+              () =>
+                encode({
+                  checksum,
+                  sizeBytes: Buffer.byteLength(contents),
+                  omissionReason: 'source-size-limit'
+                }),
+              state
+            )
+          } else {
+            await writeBestEffort(output, () => contents, state)
+          }
+        } catch (error) {
+          partial = true
+          if (state.status === 'exported') state.status = 'partial'
+          state.reason = diagnosticFailure(error)
+          record(`Notebook environment manifest unavailable: ${diagnosticFailure(error)}`)
+          await writeBestEffort(
+            `${output}.metadata.json`,
+            () => encode({ checksum, omissionReason: 'source-unavailable-or-integrity-failure' }),
+            state
+          )
+        }
       }
     }
     const selected = new Set(
@@ -837,6 +931,7 @@ export async function runSessionDiagnosticWorker(
                     } else {
                       state.status = 'partial'
                     }
+                    await exportEnvironmentManifests(parsed as Record<string, unknown>, state)
                   } catch {
                     await writeBestEffort(
                       `${source.output}.metadata.json`,
