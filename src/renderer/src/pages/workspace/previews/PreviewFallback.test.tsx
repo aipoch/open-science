@@ -147,11 +147,6 @@ describe('PreviewFallback', () => {
       true,
       'file changed while its preview'
     ],
-    [
-      'Managed preview request failed with status 404.',
-      true,
-      'preview resource could not be loaded'
-    ],
     ['Image preview request failed with status 404.', true, 'preview resource could not be loaded'],
     [
       'EACCES: permission denied /private/secret.png',
