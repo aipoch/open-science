@@ -652,7 +652,6 @@ const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_configuration') return 400
   if (
     error.code === 'session_busy' ||
-    error.code === 'interaction_revision_conflict' ||
     error.code === 'session_revision_conflict' ||
     error.code === 'project_conflict' ||
     error.code === 'session_archived' ||
