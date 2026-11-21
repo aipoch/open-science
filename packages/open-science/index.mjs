@@ -638,6 +638,15 @@ export class OpenScienceClient {
         { code: 'unsupported_capability' }
       )
     }
+    if (
+      request.notebookRuntime !== undefined &&
+      !bootstrap.taskCapabilities.includes('notebook-runtime-selection')
+    ) {
+      throw new OpenScienceApiError(
+        'This server does not support selecting a Notebook runtime for a Task on this connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
     return this.#putSubmission(
       'run-submissions',
       requestId,
@@ -733,7 +742,9 @@ export class OpenScienceClient {
     const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
     if (
       !options?.requestId &&
-      (request.permissionPrompts === 'none' || request.interactionMode === 'delegate')
+      (request.permissionPrompts === 'none' ||
+        request.interactionMode === 'delegate' ||
+        request.notebookRuntime !== undefined)
     ) {
       const bootstrap = await this.health(beforeDeadline(options, deadline))
       if (
@@ -751,6 +762,15 @@ export class OpenScienceClient {
       ) {
         throw new OpenScienceApiError(
           'This server does not support task delegation on this connection.',
+          { code: 'unsupported_capability' }
+        )
+      }
+      if (
+        request.notebookRuntime !== undefined &&
+        !bootstrap.taskCapabilities?.includes('notebook-runtime-selection')
+      ) {
+        throw new OpenScienceApiError(
+          'This server does not support selecting a Notebook runtime for a Task on this connection.',
           { code: 'unsupported_capability' }
         )
       }

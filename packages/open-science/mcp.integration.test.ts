@@ -453,6 +453,17 @@ it('discovers, registers and explicitly enables an existing Notebook interpreter
   expect((await agent.mcp('list_notebook_runtimes', { language: 'r' })).structuredContent).toEqual({
     result: [runtime]
   })
+  const withoutRuntimeId = {
+    requestId: 'incomplete-runtime-selection',
+    projectId: 'project-1',
+    prompt: 'Research',
+    notebookLanguage: 'r'
+  }
+  const invalid = await agent.cliError('start_run', withoutRuntimeId)
+  expect(invalid.error.code).toBe('invalid_request')
+  expect((await agent.mcp('start_run', withoutRuntimeId)).structuredContent).toEqual({
+    error: invalid.error
+  })
 })
 
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {

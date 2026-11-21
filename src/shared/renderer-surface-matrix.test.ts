@@ -341,6 +341,7 @@ describe('renderer surface compatibility matrix', () => {
       'enabledComputeHostIds',
       'interactionMode',
       'memoryEnabled',
+      'notebookRuntime',
       'permissionProfile',
       'permissionPrompts',
       'project',
