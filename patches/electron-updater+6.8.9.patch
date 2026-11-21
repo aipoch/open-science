@@ -1,3 +1,38 @@
+diff --git a/node_modules/electron-updater/out/AppImageUpdater.js b/node_modules/electron-updater/out/AppImageUpdater.js
+--- a/node_modules/electron-updater/out/AppImageUpdater.js
++++ b/node_modules/electron-updater/out/AppImageUpdater.js
+@@ -77,28 +77,14 @@
+         if (!path.isAbsolute(appImageFile) || appImageFile.includes("\0")) {
+             throw (0, builder_util_runtime_1.newError)(`APPIMAGE env is not a valid absolute path: "${appImageFile}"`, "ERR_UPDATER_OLD_FILE_NOT_FOUND");
+         }
+-        // https://stackoverflow.com/a/1712051/1910191
+-        (0, fs_1.unlinkSync)(appImageFile);
+-        let destination;
+-        const existingBaseName = path.basename(appImageFile);
++        const destination = appImageFile;
+         const installerPath = this.installerPath;
+         if (installerPath == null) {
+             this.dispatchError(new Error("No update filepath provided, can't quit and install"));
+             return false;
+         }
+-        // https://github.com/electron-userland/electron-builder/issues/2964
+-        // if no version in existing file name, it means that user wants to preserve current custom name
+-        if (path.basename(installerPath) === existingBaseName || !/\d+\.\d+\.\d+/.test(existingBaseName)) {
+-            // no version in the file name, overwrite existing
+-            destination = appImageFile;
+-        }
+-        else {
+-            destination = path.join(path.dirname(appImageFile), path.basename(installerPath));
+-        }
+-        (0, child_process_1.execFileSync)("mv", ["-f", installerPath, destination]);
+-        if (destination !== appImageFile) {
+-            this.emit("appimage-filename-updated", destination);
+-        }
++        // Keep existing desktop entries, MIME handlers and scripts pointing at the installed path.
++        (0, child_process_1.execFileSync)("/usr/bin/mv", ["-fT", "--", installerPath, destination]);
+         const env = {
+             ...process.env,
+             APPIMAGE_SILENT_INSTALL: "true",
 diff --git a/node_modules/electron-updater/out/NsisUpdater.js b/node_modules/electron-updater/out/NsisUpdater.js
 index 6fb70b4..17529a0 100644
 --- a/node_modules/electron-updater/out/NsisUpdater.js

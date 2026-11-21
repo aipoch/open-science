@@ -97,6 +97,8 @@ import {
   planMacUpdateOnQuit
 } from './update/mac-background-update'
 import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
+import { applyLinuxAppImageOnQuit } from './update/linux-appimage-quit'
+import { loadLinuxBackgroundDownloads } from './update/linux-background-download'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
@@ -124,7 +126,10 @@ import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
-import { BrowserImportLaunchRelay } from './session-package/browser-import-protocol'
+import {
+  BrowserImportLaunchRelay,
+  parseBrowserImportUrl
+} from './session-package/browser-import-protocol'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import {
   OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG,
@@ -448,7 +453,21 @@ async function startDesktop(): Promise<void> {
   app.on('before-quit', holdStartupQuit)
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
+  let quittingImageLaunch: { requested: boolean; args: Set<string> } | undefined
   app.on('second-instance', (_event, argv, cwd) => {
+    if (quittingImageLaunch) {
+      quittingImageLaunch.requested = true
+      for (const path of packagePathsFromArgv(argv, cwd)) quittingImageLaunch.args.add(path)
+      for (const url of argv.slice(1)) {
+        if (
+          url === 'open-science://open' ||
+          url === 'open-science://open/' ||
+          parseBrowserImportUrl(url)
+        )
+          quittingImageLaunch.args.add(url)
+      }
+      return
+    }
     browserImports.receiveArgv(argv)
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
     if (showMainWindow) showMainWindow()
@@ -1874,13 +1893,23 @@ async function startDesktop(): Promise<void> {
     }
   })
   const desktopStable = app.isPackaged && !headless && !app.getVersion().includes('-')
+  const linuxDownloads =
+    desktopStable && process.platform === 'linux'
+      ? loadLinuxBackgroundDownloads(
+          profilePath,
+          process.resourcesPath,
+          process.env.XDG_CACHE_HOME || join(app.getPath('home'), '.cache'),
+          process.env.APPIMAGE,
+          process.env.APPDIR
+        )
+      : undefined
   const backgroundDownloads = !desktopStable
     ? undefined
     : process.platform === 'win32'
       ? loadWindowsDownloadPreference(profilePath)
       : process.platform === 'darwin'
         ? Promise.resolve(profileDownloadPreference(profilePath))
-        : undefined
+        : linuxDownloads?.then((policy) => policy?.preference)
   const macBundle = dirname(dirname(dirname(process.execPath)))
   const macCache = join(app.getPath('home'), 'Library', 'Caches')
   const update = createUpdateStrategy(process.platform, {
@@ -1936,12 +1965,14 @@ async function startDesktop(): Promise<void> {
               !activity.foreground
             )
           },
-          canDownload: (bytes) =>
-            process.platform === 'darwin'
+          canDownload: async (bytes) => {
+            if (linuxDownloads) return (await linuxDownloads)?.canDownload(bytes) ?? false
+            return process.platform === 'darwin'
               ? canDownloadMacUpdate(macBundle, macCache, bytes)
               : process.env.LOCALAPPDATA
                 ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
-                : Promise.resolve(false)
+                : false
+          }
         }
       : undefined
   )
@@ -2038,6 +2069,17 @@ async function startDesktop(): Promise<void> {
     hasActiveReviewerWork: () => work?.reviewerActive ?? false,
     getActiveSettingsInstallId: () => work?.settingsInstallId,
     holdSettingsInstallAdmission: () => {
+      const offer = update.getStatus()
+      if (
+        process.platform === 'linux' &&
+        process.env.APPIMAGE &&
+        offer.automaticDownloads &&
+        offer.state === 'ready' &&
+        !offer.recovery &&
+        currentApplicationShutdownTrigger() === 'quit'
+      ) {
+        quittingImageLaunch = { requested: false, args: new Set() }
+      }
       recovery!.setClosing(true)
       if (
         !runtimeStopped &&
@@ -2049,6 +2091,14 @@ async function startDesktop(): Promise<void> {
       else admission = Promise.resolve()
       void admission.catch(() => undefined)
       return () => {
+        const deferred = quittingImageLaunch
+        quittingImageLaunch = undefined
+        if (deferred?.requested) {
+          for (const entry of deferred.args) {
+            if (!browserImports.receive(entry)) packageFiles.receive(entry)
+          }
+          showMainWindow?.()
+        }
         recovery!.setClosing(false)
         if (
           !runtimeStopped &&
@@ -2136,9 +2186,39 @@ async function startDesktop(): Promise<void> {
       visibility.dispose()
       relay?.uninstall()
     },
+    forwardPendingLaunchOnExit: () => {
+      if (quittingImageLaunch?.requested && process.env.APPIMAGE) {
+        app.relaunch({
+          execPath: process.env.APPIMAGE,
+          args: [...credentialArgs, ...quittingImageLaunch.args]
+        })
+      }
+    },
     beforeExit: async (cleanOrdinaryQuit) => {
       const { completeMacInstallationHandoff } = await import('./mac-installation')
       completeMacInstallationHandoff()
+      if (
+        process.platform === 'linux' &&
+        process.env.APPIMAGE &&
+        cleanOrdinaryQuit &&
+        quitStoppedService &&
+        !plannedRelaunch &&
+        !updateCommitted &&
+        !work?.preserveService
+      ) {
+        const image = process.env.APPIMAGE
+        return {
+          timeoutMs: 10_000,
+          run: async () => {
+            await applyLinuxAppImageOnQuit(
+              update,
+              image,
+              allowedInstallationProcessIds,
+              AbortSignal.timeout(9500)
+            )
+          }
+        }
+      }
       if (
         process.platform === 'darwin' &&
         cleanOrdinaryQuit &&

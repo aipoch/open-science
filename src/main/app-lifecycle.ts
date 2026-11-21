@@ -95,6 +95,7 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
+  forwardPendingLaunchOnExit?: () => void
   beforeExit?: (
     cleanOrdinaryQuit: boolean
   ) => void | Promise<void | { run: () => Promise<void>; timeoutMs: number }>
@@ -384,7 +385,12 @@ export const installAppLifecycle = (
     } catch (error) {
       deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
     } finally {
-      deps.app.exit(0)
+      try {
+        if (!systemShutdownRequested && shutdownTrigger() !== 'system')
+          deps.forwardPendingLaunchOnExit?.()
+      } finally {
+        deps.app.exit(0)
+      }
     }
   }
   let refreshedQuitBoundary = false
