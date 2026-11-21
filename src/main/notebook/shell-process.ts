@@ -991,6 +991,7 @@ const runShellCommand = (
         }
         const normalizedResult = {
           ...result,
+          ...(cleanupReason === 'timeout' ? { timedOut: true as const } : {}),
           stderr: sandboxed?.networkApprovalRetryRequired?.()
             ? `${stderr}\n${NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE}`
             : stderr

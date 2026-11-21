@@ -2037,6 +2037,7 @@ describe('notebook shell process behavior', () => {
       await expect(execute("printf 'before timeout' >&2; sleep 5", 50)).resolves.toEqual({
         stdout: '',
         stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
+        timedOut: true,
         exitCode: null
       })
     })

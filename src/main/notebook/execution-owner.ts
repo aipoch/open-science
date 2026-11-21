@@ -89,6 +89,8 @@ type NotebookControlResult = Pick<
   | 'truncated'
   | 'workingFiles'
   | 'fileEvidence'
+  | 'executionStarted'
+  | 'kernelDispatched'
   | 'recovery'
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
@@ -322,6 +324,8 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
   }
   return {
     status: run.status,
+    kernelDispatched: run.kernelDispatched,
+    executionStarted: run.executionStarted,
     stdout: run.text.stdout,
     stderr: run.text.stderr,
     traceback: run.text.traceback,
@@ -334,18 +338,19 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 }
 
 const publicShellResult = (
-  run: Pick<
-    NotebookRunRecord,
-    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode' | 'recovery'
-  >
+  run: NotebookRunRecord,
+  live?: Pick<NotebookShellResult, 'stdout' | 'stderr' | 'truncated'>
 ): NotebookShellResult => ({
-  stdout: run.text.stdout,
-  stderr: run.text.stderr,
+  stdout: live?.stdout ?? run.text.stdout,
+  stderr: live?.stderr ?? run.text.stderr,
   exitCode: run.exitCode ?? null,
+  ...(run.exitCode == null ? { status: run.status } : {}),
+  executionStarted: run.executionStarted,
+  kernelDispatched: run.kernelDispatched,
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
   ...(run.recovery ? { recovery: run.recovery } : {}),
-  ...(run.truncated ? { truncated: true } : {})
+  ...((live ? live.truncated : run.truncated) ? { truncated: true } : {})
 })
 
 type ShellQueueWaiter = {
@@ -1551,6 +1556,8 @@ class NotebookExecutionOwner {
 
     return {
       status: result.status,
+      executionStarted: result.executionStarted,
+      kernelDispatched: result.kernelDispatched,
       stdout: result.stdout,
       stderr: result.stderr,
       traceback: result.traceback,
@@ -1842,13 +1849,7 @@ class NotebookExecutionOwner {
             durableAdmission.run,
             new Error(SHELL_CANCELLED_MESSAGE)
           )
-          const result = {
-            stdout: cancelled.text.stdout,
-            stderr: cancelled.text.stderr,
-            exitCode: null,
-            ...(cancelled.truncated ? { truncated: true } : {})
-          }
-          return result
+          return publicShellResult(cancelled)
         }
         {
           const terminalized = await this.options.runTerminalization.runAdmitted({
@@ -1928,7 +1929,7 @@ class NotebookExecutionOwner {
                     ? 'failed'
                     : shellResult.exitCode === 0
                       ? 'completed'
-                      : shellResult.exitCode === null
+                      : shellResult.timedOut
                         ? 'timeout'
                         : 'failed'
               this.options.logger.info?.('shell execution completed', {
@@ -1940,16 +1941,16 @@ class NotebookExecutionOwner {
                 stage:
                   shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
                 status,
-                terminationReason:
-                  shellResult.errorCode === 'shell-cleanup-incomplete'
-                    ? 'cleanup-incomplete'
-                    : shellResult.cancelled
-                      ? 'cancel'
-                      : shellResult.exitCode === null
-                        ? 'timeout'
-                        : 'exit',
-                cleanupState:
-                  shellResult.errorCode === 'shell-cleanup-incomplete' ? 'incomplete' : 'complete',
+                terminationReason: !ownedTreeReaped
+                  ? 'cleanup-incomplete'
+                  : shellResult.cancelled
+                    ? 'cancel'
+                    : status === 'timeout'
+                      ? 'timeout'
+                      : shellResult.exitCode !== null
+                        ? 'exit'
+                        : undefined,
+                cleanupState: ownedTreeReaped ? 'complete' : 'incomplete',
                 exitCode: shellResult.exitCode,
                 stdoutByteCount: Buffer.byteLength(shellResult.stdout, 'utf8'),
                 stderrByteCount: Buffer.byteLength(shellResult.stderr, 'utf8'),
@@ -1988,19 +1989,7 @@ class NotebookExecutionOwner {
           // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
           // cleanup failures retain the existing result and recovery instructions for their caller.
           if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
-          const result = terminalized.result
-          if (!result) {
-            return publicShellResult(terminalized.run)
-          }
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
-            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-            ...(result.recovery ? { recovery: result.recovery } : {}),
-            ...(result.truncated ? { truncated: true } : {})
-          }
+          return publicShellResult(terminalized.run, terminalized.result)
         }
       } finally {
         try {

@@ -1124,28 +1124,35 @@ describe('notebook_execute tool', () => {
     })
     const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-    const results = [
-      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
-      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
-      {
-        receipt: {},
-        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
-      },
-      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
-    ]
-    const fetchRpc = vi
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    const query = { action: 'query', runId: 'run-1' }
+    const cases = [
+      ['notebook_execute', { code: 'raise' }, { status: 'failed' }, true],
+      ['notebook_execute', { language: 'r', code: 'x' }, { status: 'timeout' }, true],
+      ['repl_execute', { code: 'x' }, { status: 'failed' }, true],
+      ['bash_execute', { command: 'x' }, { status: 'timeout', exitCode: null }, true],
+      [
+        'bash_execute',
+        { command: 'x' },
+        { status: 'failed', exitCode: null, errorCode: 'shell-cleanup-incomplete' },
+        true
+      ],
+      ['background_run', query, { run: { status: 'failed' } }, true],
+      ['background_run', query, { run: { status: 'interrupted' } }, true],
+      ['background_run', query, { run: { status: 'timeout' } }, true],
+      ['background_run', query, { run: { status: 'completed', exitCode: 2 } }, true],
+      ['background_run', query, { run: { status: 'cancelled' } }, false],
+      ['notebook_execute', { code: 'ok' }, { status: 'completed' }, false],
+      ['repl_execute', { code: 'x', background: true }, { status: 'failed', runId: 'run-1' }, false]
+    ] as const
+    const fetchRpc = vi.spyOn(globalThis, 'fetch')
     try {
       await server.connect(serverTransport)
       await client.connect(clientTransport)
-      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
-        client.callTool({ name, arguments: args }).then((result) => result.isError)
-
-      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
-      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
+      for (const [name, args, result, failed] of cases) {
+        fetchRpc.mockResolvedValueOnce(new Response(JSON.stringify({ result })))
+        const response = await client.callTool({ name, arguments: args })
+        expect(response.isError === true, JSON.stringify({ name, result })).toBe(failed)
+      }
     } finally {
       fetchRpc.mockRestore()
       await client.close()
@@ -3161,13 +3168,19 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
-  it.each([false, true, undefined])(
-    'preserves dispatch evidence without inferring legacy state: %s',
-    (kernelDispatched) => {
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+    [undefined, undefined]
+  ])(
+    'preserves dispatch and execution evidence without inferring legacy state: %s, %s',
+    (kernelDispatched, executionStarted) => {
       const run = {
         runId: 'failed-run',
         status: 'timeout',
         kernelDispatched,
+        executionStarted,
         stderr: 'kernel stopped'
       }
       const foreground = compactNotebookExecutionResult(run)
@@ -3180,6 +3193,9 @@ describe('compactNotebookExecutionResult', () => {
         )
         if (kernelDispatched === undefined) expect(received).not.toHaveProperty('kernelDispatched')
         else expect(received.kernelDispatched).toBe(kernelDispatched)
+        if (run.executionStarted === undefined)
+          expect(received).not.toHaveProperty('executionStarted')
+        else expect(received.executionStarted).toBe(run.executionStarted)
         expect(received.runId).toBe('failed-run')
         expect(received.status).toBe('timeout')
       }
@@ -3193,7 +3209,9 @@ describe('compactNotebookExecutionResult', () => {
       status: 'failed',
       recovery,
       stdout: 'x'.repeat(100_000),
-      stderr: 'cleanup failed',
+      stderr: 'first diagnostic\n' + '\0'.repeat(12000) + '\nfinal cause',
+      errorCode: 'shell-cleanup-incomplete',
+      executionStarted: false,
       exitCode: null
     }
     const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
@@ -3203,7 +3221,14 @@ describe('compactNotebookExecutionResult', () => {
     expect(background.recovery).toEqual(foreground.recovery)
     for (const result of [foreground, background]) {
       const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+      expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      const parsed = JSON.parse(serialized)
+      expect(parsed).toMatchObject({
+        recovery: foreground.recovery,
+        errorCode: run.errorCode,
+        executionStarted: false
+      })
+      expect(parsed.stderr).toMatch(/^first diagnostic[\s\S]*final cause$/u)
     }
     expect(foreground.truncated).toBe(true)
   })
