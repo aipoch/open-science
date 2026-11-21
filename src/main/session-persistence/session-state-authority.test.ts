@@ -127,9 +127,16 @@ describe('Main Session state authority before and after transcript adoption', ()
     'creates an idle Session when the first renderer save submits %s',
     async (status) => {
       const h = harness()
-      const saved = await h.owner.saveSession(fixture({ ...historicalState, status }))
+      const saved = await h.owner.saveSession(
+        fixture({
+          ...historicalState,
+          status,
+          activeRun: { promptMessageId: 'prompt', startedAt: 2 }
+        })
+      )
 
       expect(saved.status).toBe('idle')
+      expect(saved.activeRun).toBeUndefined()
       expect(saved.error).toBeUndefined()
       expect(saved.failure).toBeUndefined()
       expect(saved.resumeRecovery).toBeUndefined()

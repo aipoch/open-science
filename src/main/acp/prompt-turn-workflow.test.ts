@@ -52,6 +52,7 @@ type Harness = {
   }
   finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
+    isCancellationAccepted: Mock<AcpSessionInteractionOwner['isCancellationAccepted']>
     current: Mock<AcpSessionInteractionOwner['current']>
     reservePrompt: Mock<AcpSessionInteractionOwner['reservePrompt']>
     activatePrompt: Mock<AcpSessionInteractionOwner['activatePrompt']>
@@ -194,6 +195,7 @@ const createHarness = (
     }
   }))
   const interactions: Harness['interactions'] = {
+    isCancellationAccepted: vi.fn(owner.isCancellationAccepted.bind(owner)),
     current: vi.fn((sessionId: string) => owner.current(sessionId)),
     reservePrompt: vi.fn((request: Parameters<typeof owner.reservePrompt>[0]) => {
       journal.push('reserve')

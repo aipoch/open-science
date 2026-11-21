@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import type { NotebookRunRecord } from '../../shared/notebook'
+import type { NotebookEnvironmentManifest, NotebookRunRecord } from '../../shared/notebook'
 import {
   NotebookRunRepository,
   NotebookRunSubmissionConflictError,
@@ -40,6 +41,41 @@ const admittedRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRec
   workingFiles: [],
   ...overrides
 })
+
+const completedEnvironmentManifest = (): {
+  manifest: NotebookEnvironmentManifest
+  checksum: string
+} => {
+  const manifest: NotebookEnvironmentManifest = {
+    schemaVersion: 1,
+    captureKind: 'completed-run',
+    capturedAt: '2026-11-20T00:00:00.000Z',
+    installedInventory: {
+      capturedAt: '2026-11-20T00:00:00.000Z',
+      source: 'full-scan',
+      validation: 'full-scan'
+    },
+    kernelKind: 'python',
+    environmentName: 'default-python',
+    runtimeSource: 'managed',
+    inventorySources: ['kernel-native'],
+    packages: [
+      {
+        name: 'numpy',
+        version: '2.0.0',
+        versionStatus: 'known',
+        ecosystem: 'python',
+        evidenceSources: ['python-importlib-metadata']
+      }
+    ],
+    complete: true,
+    captureStatus: 'complete'
+  }
+  const checksum = createHash('sha256')
+    .update(`${JSON.stringify(manifest, null, 2)}\n`)
+    .digest('hex')
+  return { manifest, checksum }
+}
 
 const createTerminalRecoveryFixture = async (
   kind: 'root' | 'frame' = 'root'
@@ -199,6 +235,86 @@ describe('notebook run repository', () => {
     expect(history.find((run) => run.runId === 'legacy-failure')).not.toHaveProperty(
       'executionStarted'
     )
+  })
+
+  it('persists environment manifests as checksum-addressed sidecars and hydrates targeted reads', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const { manifest, checksum } = completedEnvironmentManifest()
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({
+        status: 'completed',
+        endedAt: 2,
+        kernelKind: 'python',
+        environment: 'default-python',
+        environmentCapture: { state: 'available', manifestChecksum: checksum },
+        environmentManifest: manifest
+      })
+    })
+
+    const raw = JSON.parse(await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8'))
+    expect(raw.runs[0]).toMatchObject({
+      environmentCapture: { state: 'available', manifestChecksum: checksum }
+    })
+    expect(raw.runs[0]).not.toHaveProperty('environmentManifest')
+
+    const sidecarPath = join(
+      root,
+      'runtime',
+      'provenance',
+      'environment-manifests',
+      `${checksum}.json`
+    )
+    expect(JSON.parse(await readFile(sidecarPath, 'utf8'))).toEqual(manifest)
+
+    const cachedOrdinary = await repository.readSessionDocuments(projectId, sessionId)
+    expect(cachedOrdinary[0]?.runs[0]).not.toHaveProperty('environmentManifest')
+
+    const reopened = new NotebookRunRepository(root)
+    const ordinary = await reopened.readSessionDocuments(projectId, sessionId)
+    expect(ordinary[0]?.runs[0]).not.toHaveProperty('environmentManifest')
+    const targeted = await reopened.readSessionRunWindow(projectId, sessionId, 0, ['run-1'])
+    expect(targeted.runs[0]?.environmentManifest).toEqual(manifest)
+    const lightRuns = await reopened.readSessionRuns(projectId, sessionId)
+    expect(lightRuns[0]).not.toHaveProperty('environmentManifest')
+    const fullRuns = await reopened.readSessionRuns(projectId, sessionId, {
+      includeEnvironmentManifests: true
+    })
+    expect(fullRuns[0]?.environmentManifest).toEqual(manifest)
+    const found = await reopened.findRun(projectId, sessionId, lane, { runId: 'run-1' })
+    expect(found?.run.environmentManifest).toEqual(manifest)
+
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({
+        runId: 'legacy-inline',
+        status: 'completed',
+        endedAt: 3,
+        environmentManifest: manifest
+      })
+    })
+    const legacyWindow = await reopened.readSessionRunWindow(projectId, sessionId, 10)
+    expect(
+      legacyWindow.runs.find((run) => run.runId === 'legacy-inline')?.environmentManifest
+    ).toEqual(manifest)
+
+    await writeFile(sidecarPath, '{}')
+    const corrupt = await reopened.readSessionRunWindow(projectId, sessionId, 0, ['run-1'])
+    expect(corrupt.runs[0]).not.toHaveProperty('environmentManifest')
   })
 
   it('preserves valid history with more than 32 loaded helper modules', async () => {

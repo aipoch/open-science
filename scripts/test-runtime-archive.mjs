@@ -31,6 +31,7 @@ try {
     `
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { access } from 'node:fs/promises';
 import { locateBackend } from './backend/locate-backend.mjs';
 assert.ok(!process.versions.electron);
@@ -41,6 +42,15 @@ assert.equal(backend.command, process.execPath);
 const require = createRequire(backend.entry);
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native', '@prisma/client']) require(name);
 for (const path of Object.values(require('@aipoch/credential-identity-probe-native'))) await access(path);
+const { prepareFilmSessionApp } = await import(pathToFileURL(require.resolve('@aipoch/research-film')));
+const { zipSync, strToU8 } = require('fflate');
+const film = await prepareFilmSessionApp(zipSync({
+  'index.html': strToU8('<script type="module" src="./main.js"></script>'),
+  'main.js': strToU8('import "./feature.js"'),
+  'feature.js': strToU8('export const packedFilm = 42')
+}), 'packaging.zip', AbortSignal.timeout(30_000));
+assert.equal(film?.description.modules, 1);
+assert.match(film.code, /packedFilm/);
 console.log('PASS bundled Node and native dependencies');
 `
   )

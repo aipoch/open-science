@@ -556,6 +556,26 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Run ACP baseline coverage
+        id: acp_baseline
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=baseline
+      - name: Run ACP specialized coverage
+        id: acp_specialized
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=specialized
+      - name: Prepare representative ACP runtime
+        id: acp_runtime
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: node scripts/ci/prepare-acp-test-runtime.mjs
+      - name: Run representative ACP coverage
+        id: acp_representative
+        if: ${{ matrix.group == 'checks' && (steps.acp_runtime.outcome == 'success') }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=representative
       - name: Check Markdown formatting
         id: docs
         if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs')) }}
@@ -659,6 +679,10 @@ jobs:
         shell: bash
         env:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
+          ACP_BASELINE_OUTCOME: ${{ steps.acp_baseline.outcome }}
+          ACP_SPECIALIZED_OUTCOME: ${{ steps.acp_specialized.outcome }}
+          ACP_REPRESENTATIVE_OUTCOME: ${{ steps.acp_representative.outcome }}
+          ACP_RUNTIME_OUTCOME: ${{ steps.acp_runtime.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
@@ -677,6 +701,10 @@ jobs:
             fi
           }
           check actionlint "$ACTIONLINT_OUTCOME"
+          check acp_baseline "$ACP_BASELINE_OUTCOME"
+          check acp_specialized "$ACP_SPECIALIZED_OUTCOME"
+          check acp_runtime "$ACP_RUNTIME_OUTCOME"
+          check acp_representative "$ACP_REPRESENTATIVE_OUTCOME"
           check docs "$DOCS_OUTCOME"
           check format "$FORMAT_OUTCOME"
           check lint "$LINT_OUTCOME"

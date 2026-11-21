@@ -237,7 +237,10 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledWith(interruptedTurn)
     expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith(resumeSession)
     expect(dependencies.runtime.compactSession).toHaveBeenCalledWith(compactSession)
-    expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith(cancel)
+    expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith({
+      ...cancel,
+      userInitiated: true
+    })
     expect(dependencies.runtime.deleteSession).toHaveBeenCalledWith(deleteSession)
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledWith(permission)
     expect(dependencies.runtime.respondToElicitation).toHaveBeenCalledWith(elicitation)

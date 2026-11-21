@@ -107,6 +107,16 @@ describe('Responses result protocol adapter', () => {
     })
   })
 
+  it.each(['content_filter', 'length'])(
+    'keeps a %s choice incomplete when it has no message',
+    (finish_reason) => {
+      expect(completionToResponse({ choices: [{ finish_reason }] })).toMatchObject({
+        status: 'incomplete',
+        output: []
+      })
+    }
+  )
+
   it('surfaces a refusal as the visible answer', () => {
     expect(
       completionToResponse({
@@ -165,6 +175,17 @@ describe('Responses result protocol adapter', () => {
       })
     ).toThrow(/Upstream image output is not supported/)
   })
+
+  it.each(['<html>PRIVATE_PAGE</html>', '{"prompt":"PRIVATE_PROMPT"}'])(
+    'keeps a nested gateway document out of an upstream error summary',
+    (message) => {
+      const body = JSON.stringify({ error: { message } })
+      expect(upstreamErrorMessage(body, 403)).toBe('Chat Completions upstream returned 403')
+      expect(() => completionToResponse(JSON.parse(body))).toThrow(
+        'The model service reported an error.'
+      )
+    }
+  )
 
   it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
     expect(

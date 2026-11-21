@@ -8,6 +8,10 @@ import { sha256 } from '../artifacts/provenance-canonical'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import {
+  environmentManifestChecksumForRun,
+  environmentManifestStorageKey
+} from '../notebook/repository'
 import { createPackageMaterializer } from './materialize'
 import { executionEvidenceKeys, hasComputeLogEvidence } from './execution-evidence'
 import { validatePackageLiterature } from './literature'
@@ -25,15 +29,18 @@ import { validatePackageWebEvidence } from './web-evidence'
 
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
+  const isEnvironmentManifest =
+    /^runtime\/provenance\/environment-manifests\/[a-f0-9]{64}\.json$/u.test(key)
   if (
-    ![
-      'artifacts',
-      'uploads',
-      'notebooks',
-      'execution-file-evidence',
-      'notebook-file-evidence',
-      'file-evidence'
-    ].includes(segments[0]) ||
+    (!isEnvironmentManifest &&
+      ![
+        'artifacts',
+        'uploads',
+        'notebooks',
+        'execution-file-evidence',
+        'notebook-file-evidence',
+        'file-evidence'
+      ].includes(segments[0])) ||
     segments.length < 4 ||
     segments.some(
       (segment) =>
@@ -203,6 +210,16 @@ export const validatePackageRecords = async (
     reportValidation(0.35)
     // File and reproducibility checks still apply to conversation-only packages. With no
     // native rows, there are no database relationships or provenance records to validate.
+    for (const document of notebooks) {
+      for (const run of document.runs) {
+        const checksum = environmentManifestChecksumForRun(run)
+        if (!checksum || run.environmentManifest) continue
+        const key = environmentManifestStorageKey(checksum)
+        const entry = files.get(key)
+        if (!entry || entry.checksum !== checksum)
+          throw new Error('Session package omits required environment manifest evidence.')
+      }
+    }
     if (Object.values(records.tables).every((rows) => rows.length === 0)) {
       if (records.imageTasks?.length) throw new Error('Image task source Version is missing.')
       return

@@ -31,6 +31,7 @@ type ProviderPromptExecutionInput = Readonly<{
   cwd: string
   frameworkId: AgentFrameworkId
   isCurrent: () => boolean
+  isUserStopped?: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: (response: PromptResponse) => boolean
   onDispatched?: () => void
@@ -298,12 +299,24 @@ class AcpProviderPromptExecutor {
           } catch (error) {
             reportBestEffort(input.reportBestEffortFailure, 'observe', error)
           }
+          const update = message.notification.update.sessionUpdate
+          if (
+            (update === 'agent_message_chunk' || update === 'agent_thought_chunk') &&
+            input.isUserStopped?.()
+          )
+            continue
           input.routeNotification(message.notification)
           continue
         }
         const providerError = adapter.getPromptError?.(message.response)
         if (providerError) throw providerError
-        if (!input.captureStop(message.response)) {
+        // A native terminal ends the wait. Only an accepted Stop of this prompt changes
+        // a normal finish to a local interruption. Provider errors and limits keep their outcome.
+        const terminal: PromptResponse =
+          message.response.stopReason === 'end_turn' && input.isUserStopped?.()
+            ? { ...message.response, stopReason: 'cancelled' }
+            : message.response
+        if (!input.captureStop(terminal)) {
           await cancelProbe()
           return Object.freeze({ kind: 'superseded', response: message.response })
         }
@@ -319,10 +332,10 @@ class AcpProviderPromptExecutor {
         // OpenCode v1 can return end_turn even when the model stopped at its output limit.
         const response: PromptResponse =
           this.options.recoverOutputTruncation &&
-          message.response.stopReason === 'end_turn' &&
+          terminal.stopReason === 'end_turn' &&
           facts.outputTruncated
             ? { ...message.response, stopReason: 'max_tokens' }
-            : message.response
+            : terminal
         return Object.freeze({
           kind: 'stopped',
           response,

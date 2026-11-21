@@ -168,6 +168,16 @@ describe('composer notice boundaries', () => {
   })
 })
 
+it('explains a reported stack overflow and offers a diagnostic export', () => {
+  const presentation = noticePresentation({
+    category: 'internal',
+    reason: 'internal/model-request-stack-overflow',
+    diagnostics: {}
+  })
+  expect(presentation.titleKey).toBe('Call stack limit reached during a model request')
+  expect(presentation.secondaryActions).toContain('export-diagnostics')
+})
+
 it('offers diagnostics and a fresh conversation for unknown effects, never a blind retry', () => {
   const presentation = noticePresentation({
     category: 'session',

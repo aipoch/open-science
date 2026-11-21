@@ -4,7 +4,7 @@ import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/comp
 import { Circle, CircleCheck, CircleX, Clock3, Loader2, TriangleAlert } from 'lucide-react'
 
 import type { JobSummary } from '../../../../shared/compute'
-import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import type { NotebookBackgroundTask, NotebookSessionReference } from '../../../../shared/notebook'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { backgroundActivityStatusLabel } from './background-activity-presentation'
@@ -15,7 +15,7 @@ type Props = {
   projectId: string
   /** Undefined until the session's Notebook exists; the Compute Jobs section renders without one. */
   notebook?: NotebookSessionReference
-  runs: NotebookRunRecord[]
+  runs: NotebookBackgroundTask[]
   jobs: JobSummary[]
   now: number
   onOpenNotebook: (notebook: NotebookSessionReference, runId?: string) => void
@@ -23,7 +23,7 @@ type Props = {
   onOpenJobList?: (sessionId: string) => void
 }
 
-const terminalStatuses = new Set<NotebookRunRecord['status']>([
+const terminalStatuses = new Set<NotebookBackgroundTask['status']>([
   'completed',
   'failed',
   'timeout',
@@ -31,21 +31,14 @@ const terminalStatuses = new Set<NotebookRunRecord['status']>([
   'cancelled'
 ])
 
-const elapsed = (run: NotebookRunRecord, now: number): string => {
+const elapsed = (run: NotebookBackgroundTask, now: number): string => {
   const seconds = Math.max(0, Math.floor(((run.endedAt ?? now) - run.startedAt) / 1_000))
   const minutes = Math.floor(seconds / 60)
   return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
 }
 
-const taskName = (run: NotebookRunRecord): string =>
-  run.script
-    .split(/\r?\n/u)
-    .find((line) => line.trim())
-    ?.trim()
-    .slice(0, 80) || run.runId
-
 const shellLaneLabel = (
-  run: NotebookRunRecord,
+  run: NotebookBackgroundTask,
   t: (key: string, values?: Record<string, number>) => string
 ): string | undefined => {
   if (run.kernelKind !== 'bash') return undefined
@@ -93,7 +86,7 @@ const SessionBackgroundActivityLedger = ({
   const columnClass =
     'grid min-w-[680px] grid-cols-[minmax(180px,1.4fr)_110px_110px_90px_140px] items-center gap-2'
 
-  const runStatus = (run: NotebookRunRecord): string => {
+  const runStatus = (run: NotebookBackgroundTask): string => {
     const status = cancelling.has(run.runId) ? 'cancelling' : run.status
     return backgroundActivityStatusLabel(status, undefined, t)
   }
@@ -110,7 +103,10 @@ const SessionBackgroundActivityLedger = ({
     return backgroundActivityStatusLabel(effectiveStatus, undefined, t)
   }
 
-  const runRow = (run: NotebookRunRecord, ref: NotebookSessionReference): React.JSX.Element => {
+  const runRow = (
+    run: NotebookBackgroundTask,
+    ref: NotebookSessionReference
+  ): React.JSX.Element => {
     const isActive = isRunActive(run)
     const isCancelling = cancelling.has(run.runId)
     const StatusIcon = isCancelling
@@ -127,8 +123,8 @@ const SessionBackgroundActivityLedger = ({
         key={run.runId}
         className={`${columnClass} min-h-10 border-t border-border-200 px-3 py-1.5 text-[11px]`}
       >
-        <span className="min-w-0 truncate font-medium" title={taskName(run)}>
-          {taskName(run)}
+        <span className="min-w-0 truncate font-medium" title={run.title}>
+          {run.title}
         </span>
         <span className="truncate text-text-100">
           {run.kernelKind === 'repl'

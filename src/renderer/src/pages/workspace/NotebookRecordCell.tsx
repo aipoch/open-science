@@ -23,7 +23,8 @@ export const NotebookRecordCell = ({
   code = run.script,
   showResult = true,
   allowFolderAccess = false,
-  children
+  children,
+  loadRun
 }: {
   run: NotebookRunRecord
   index: number
@@ -32,6 +33,7 @@ export const NotebookRecordCell = ({
   code?: string
   showResult?: boolean
   allowFolderAccess?: boolean
+  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
   children?: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -88,6 +90,7 @@ export const NotebookRecordCell = ({
             <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
             <NotebookRunEvidence
               run={run}
+              loadRun={loadRun}
               showEnvironmentCaptureWarning={showEnvironmentCaptureWarning}
             />
           </>

@@ -109,7 +109,7 @@ jobs:
             scripts/ci/npm-ci.mjs scripts/produce-native-components.mjs \
             scripts/native-components.mjs scripts/install-native-components.mjs \
             scripts/verify-native-component-signatures.ps1 scripts/prepare-shadcn-patch.mjs \
-            scripts/check-claude-acp-patch.mjs scripts/fix-electron-path.cjs \
+            scripts/check-managed-acp-patch.mjs scripts/fix-electron-path.cjs \
             packages/credential-identity-probe-native packages/safe-file-publisher-native
           git checkout --detach "$SOURCE_BASE"
       - name: Install dependencies

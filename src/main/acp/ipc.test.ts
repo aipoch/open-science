@@ -768,7 +768,7 @@ describe('installAcpIpcHandlers — Skill import cancellation lifecycle', () => 
     expect(onSessionUnavailable).toHaveBeenCalledOnce()
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
     expect(beforeSessionDelete).toHaveBeenCalledWith('session-2')
-    expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1', userInitiated: true })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
     expect(onSessionCancellationRequested.mock.invocationCallOrder[0]).toBeLessThan(
       cancelPrompt.mock.invocationCallOrder[0]

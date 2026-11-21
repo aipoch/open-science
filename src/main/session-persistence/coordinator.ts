@@ -1,3 +1,4 @@
+import { recoverDetachedIdleRun } from './turn-outcome-authority'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -118,6 +119,7 @@ export type PublishedSessionHandoff = {
 
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
+  shouldPreserveRuntimeState?(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession?(projectId: string, sessionId: string): boolean
   deleteRecoveryFile?(request: DeleteSessionRecoveryFileRequest): Promise<void>
   loadAllWithDiagnostics(options?: {
@@ -220,6 +222,14 @@ type SessionDeletionHandlers = {
   commit(sessionIds: string[]): Promise<void>
   reconcile(existingSessionIds: string[], archivedSessionIds: string[]): Promise<void>
 }
+
+const preservesRecoveryRuntime = (
+  repository: SessionMutationRepository,
+  { projectId, id }: PersistedChatSession
+): boolean =>
+  repository.shouldPreserveRuntimeState?.(projectId, id) ??
+  repository.hasLiveRuntimeSession?.(projectId, id) ??
+  false
 
 const emitRecoverableDiagnostic = (
   log: Logger,
@@ -974,19 +984,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
             throw new SessionRevisionConflictError(expectedRevision, actualRevision)
           // Normal reads preserve active runtime state. Never restart an owned run or preparation.
           if (
-            (loaded.session.activeRun && !isPreparedSessionRun(loaded.session)) ||
             this.stateOwner.ownsPromptPreparation(loaded.session) ||
-            this.repository.hasLiveRuntimeSession?.(projectId, sessionId)
+            preservesRecoveryRuntime(this.repository, loaded.session)
           )
             return loaded.session
           // Runtime ownership can change without a JSON revision. Replan from the validated read so
           // stale restore normalization cannot resurrect a released run or disturb a new owner.
-          const recovered = recoverInterruptedDelegatedWorkSession(loaded.session)
-          const session = recovered.interrupted.length
-            ? await (this.repository.saveRecoveredSession
-                ? this.repository.saveRecoveredSession(recovered.session, expectedRevision)
-                : saveSessionWithRevision(this.repository, recovered.session, expectedRevision))
-            : loaded.session
+          const detached = recoverDetachedIdleRun(loaded.session)
+          if (detached.activeRun && !isPreparedSessionRun(detached)) return loaded.session
+          const recovered = recoverInterruptedDelegatedWorkSession(detached)
+          const session =
+            recovered.session !== loaded.session
+              ? await (this.repository.saveRecoveredSession
+                  ? this.repository.saveRecoveredSession(recovered.session, expectedRevision)
+                  : saveSessionWithRevision(this.repository, recovered.session, expectedRevision))
+              : loaded.session
           const outcome = await this.reconciliationOwner.reconcileLoadedSessions({
             result: { sessions: [session], manifest: { version: 1 } },
             allowDestructiveCleanup: false,
@@ -1136,14 +1148,17 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           try {
             if (
               this.stateOwner.ownsPromptPreparation(sessions[index]) ||
-              this.repository.hasLiveRuntimeSession?.(sessions[index].projectId, sessions[index].id)
+              preservesRecoveryRuntime(this.repository, sessions[index])
             )
               continue
-            const recovery = recoverInterruptedDelegatedWorkSession(sessions[index])
-            if (recovery.interrupted.length === 0) continue
+            const recovery = recoverInterruptedDelegatedWorkSession(
+              recoverDetachedIdleRun(sessions[index])
+            )
+            if (recovery.session === sessions[index]) continue
             const persistedRecovery = await saveSessionWithRevision(
               this.repository,
-              recovery.session
+              recovery.session,
+              sessionRevision(sessions[index])
             )
             sessions = sessions.map((candidate, candidateIndex) =>
               candidateIndex === index ? persistedRecovery : candidate

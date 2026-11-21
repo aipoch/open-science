@@ -110,6 +110,7 @@ import type {
   NotebookRunRecord,
   NotebookRunSummary,
   NotebookSessionReference,
+  NotebookBackgroundTaskSnapshot,
   NotebookSessionRequest,
   NotebookSessionState,
   NotebookSessionStateRequest,
@@ -1961,11 +1962,16 @@ class NotebookRuntimeService {
           source,
           startedAt: Date.now()
         },
-        signal ? { signal, onAbort: () => this.sessionLifecycle.notifyChanged(session) } : undefined
+        signal
+          ? {
+              signal,
+              onAbort: () => this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
+            }
+          : undefined
       )
 
       this.sessionLifecycle.notifyAvailable(session, source)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
     })
@@ -1985,11 +1991,11 @@ class NotebookRuntimeService {
         assertNotebookCodeAppendWithinLimit(current.code, request.delta)
       } catch (error) {
         session.abortCellWrite(request.cellId, request.writeId)
-        this.sessionLifecycle.notifyChanged(session)
+        this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
         throw error
       }
       const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeAppendOnly: true })
 
       return {
         sessionId: session.sessionId,
@@ -2010,7 +2016,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.finishCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
@@ -2026,7 +2032,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.abortCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
   }
@@ -2814,6 +2820,36 @@ class NotebookRuntimeService {
     )
   }
 
+  private async sessionForHistoryRead(
+    request: NotebookSessionRequest,
+    projectId: string
+  ): Promise<RuntimeSession | undefined> {
+    if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId))
+      return undefined
+    const session = await this.sessionLifecycle.ensure(request)
+    // Project durable history only after the lane's binding commit settles, including reads
+    // that arrived just before shutdown closed session creation admission.
+    await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
+    await this.runTerminalization.reconcilePending(session)
+    return session
+  }
+
+  async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      async () => {
+        const projectId = resolveProjectId(request, resolveProjectId(this.options))
+        const session = await this.sessionForHistoryRead(request, projectId)
+        return this.sessionReadModel.backgroundTasks(
+          session?.projectId ?? projectId,
+          session?.sessionId ?? request.sessionId,
+          session
+        )
+      },
+      false
+    )
+  }
+
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
     request: NotebookSessionStateRequest
@@ -2843,7 +2879,8 @@ class NotebookRuntimeService {
         if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
           throw new Error('Notebook state history cursor is invalid.')
         const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+        const session = await this.sessionForHistoryRead(request, projectId)
+        if (!session) {
           return this.sessionReadModel.importedState(
             request,
             runIds,
@@ -2852,11 +2889,6 @@ class NotebookRuntimeService {
             historyLimit
           )
         }
-        const session = await this.sessionLifecycle.ensure(request)
-        // Project durable history only after the lane's binding commit settles, including reads
-        // that arrived just before shutdown closed session creation admission.
-        await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
-        await this.runTerminalization.reconcilePending(session)
         return this.sessionReadModel.state(
           session,
           runIds,

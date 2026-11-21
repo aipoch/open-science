@@ -10,7 +10,6 @@ import { randomUUID } from 'node:crypto'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
-  AcpCancelPromptRequest,
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
@@ -52,7 +51,7 @@ import {
   waitForSessionCreationCleanup
 } from './session-creation-cleanup'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import type { AcpRuntimeCallbacks } from './runtime-contract'
+import type { AcpRuntimeCallbacks, RuntimeCancelPromptRequest } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
 
 const log = createLogger('acp')
@@ -1995,7 +1994,7 @@ class AcpRuntimeCoordinator {
       : dispatch()
   }
 
-  async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpRuntimeState> {
+  async cancelPrompt(request: RuntimeCancelPromptRequest): Promise<AcpRuntimeState> {
     if (request.scope === 'subagents') {
       await this.delegatedWork?.stopActiveBranch?.(request.sessionId)
       return this.getState()

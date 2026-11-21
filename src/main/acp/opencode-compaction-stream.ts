@@ -10,6 +10,8 @@ type TrackedRequest = {
   sessionId?: string
   cwd?: string
   classificationFailed?: boolean
+  withheldAfterStop?: boolean
+  isUserStopped?: () => boolean
   cancellation?: AbortController
 }
 type PendingSummary = MessageIdentity & { owners: readonly TrackedRequest[] }
@@ -43,6 +45,7 @@ export function createOpenCodeCompactionStream(
   stream: Stream,
   options: {
     api: ResolvedAgentBackend['opencodeUsageApi']
+    captureUserStop?: (providerSessionId: string) => (() => boolean) | undefined
     resolveSessionCwd: (sessionId: string) => string
     signal: AbortSignal
     fetchImpl?: typeof fetch
@@ -72,7 +75,10 @@ export function createOpenCodeCompactionStream(
   const failRequests = (owners: readonly TrackedRequest[]): boolean => {
     const activeOwners = owners.filter((request) => requests.get(request.id) === request)
     if (activeOwners.length === 0) return false
-    for (const request of activeOwners) request.classificationFailed = true
+    for (const request of activeOwners) {
+      if (request.cancellation?.signal.aborted) request.withheldAfterStop = true
+      else request.classificationFailed = true
+    }
     return true
   }
   const readMetadata = async (url: URL, sessionId: string): Promise<unknown> => {
@@ -267,7 +273,12 @@ export function createOpenCodeCompactionStream(
           requests.set(message.id, {
             id: message.id,
             method: message.method,
-            ...(message.method === 'session/prompt' ? { cancellation: new AbortController() } : {}),
+            ...(message.method === 'session/prompt' && typeof message.params.sessionId === 'string'
+              ? {
+                  cancellation: new AbortController(),
+                  isUserStopped: options.captureUserStop?.(message.params.sessionId)
+                }
+              : {}),
             ...(typeof message.params.sessionId === 'string'
               ? { sessionId: message.params.sessionId }
               : {}),
@@ -312,16 +323,16 @@ export function createOpenCodeCompactionStream(
               }
             }
             requests.delete(message.id)
+            const reason =
+              'result' in message && isRecord(message.result)
+                ? message.result.stopReason
+                : undefined
+            // Protocol-only cancellation cannot excuse missing output. For a human Stop the
+            // prompt owner settles the native terminal after Notebook and Artifact cleanup.
+            const withheldFailure =
+              request?.withheldAfterStop && reason !== 'cancelled' && !request.isUserStopped?.()
             controller.enqueue(
-              request?.classificationFailed &&
-                // Do not turn an acknowledged Stop into a classification error. An ignored
-                // Stop that returns success after output was withheld must still fail.
-                !(
-                  request.cancellation?.signal.aborted &&
-                  'result' in message &&
-                  isRecord(message.result) &&
-                  message.result.stopReason === 'cancelled'
-                )
+              request?.classificationFailed || withheldFailure
                 ? {
                     jsonrpc: '2.0',
                     id: message.id,

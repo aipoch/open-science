@@ -75,7 +75,10 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { projectSessionActionability } from '@/stores/session-actionability'
+import {
+  isCurrentQuestionBranch,
+  projectSessionActionability
+} from '@/stores/session-actionability'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -528,6 +531,7 @@ const ConversationPanel = ({
       error: composerError,
       errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
+      attachmentNotice,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -858,12 +862,6 @@ const ConversationPanel = ({
     ? submissions.stopBySessionId.get(activeSession.id)
     : undefined
   const isStopping = activeStopSubmission?.pending === true
-  const stopError = activeStopSubmission?.error
-
-  const handleStop = (): void => submissions.submitStop(activeSession?.id, onCancelRun)
-
-  const handleStopSubagents = (): void => submissions.submitStop(activeSession?.id, onStopSubagents)
-
   // Unconditional hook: one shared data source for the background-task strip chip and
   // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
   const backgroundTasks = useSessionBackgroundTasks(
@@ -885,6 +883,56 @@ const ConversationPanel = ({
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
   const hasRunningSubagents = subagentSummary.runningCount > 0
+  const graph = activeSession?.conversationGraph
+  const rootBranchId = graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
+  const run = activeSession?.activeRun
+  const childTargets = subagentSummary.children.flatMap((child) =>
+    child.status === 'running' || child.status === 'awaiting_user'
+      ? [child.attemptId ?? child.frameId]
+      : []
+  )
+  // Main cancels only attempts admitted by this prompt. Detached work from older turns
+  // can outlive a confirmed root cancellation on the very same branch.
+  const runTargets = (activeSession?.runtimeContext?.delegatedWork?.records ?? []).flatMap(
+    (record) => {
+      const attempt = record.attempts.at(-1)
+      return run &&
+        attempt?.status === 'running' &&
+        attempt.initiatingTurnMessageId === run.promptMessageId
+        ? [attempt.id]
+        : []
+    }
+  )
+  const promptId =
+    run?.promptMessageId ?? activeSession?.messages.findLast(({ role }) => role === 'user')?.id
+  if (run) runTargets.push(JSON.stringify(['run', run.promptMessageId, run.startedAt]))
+  else if (
+    conversation.runtimeInteractionInFlight ||
+    activeSession?.status === 'running' ||
+    activeSession?.status.startsWith('waiting-')
+  )
+    runTargets.push(JSON.stringify(['pending', promptId]))
+  if (activeSession?.fixLoopActive) runTargets.push(JSON.stringify(['review', promptId]))
+  if (activeSession?.compacting) runTargets.push(JSON.stringify(['compaction', promptId]))
+  const remainingTargets = new Set([...runTargets, ...childTargets])
+  const stopScope = activeStopSubmission?.scope
+  const stopError =
+    stopScope &&
+    stopScope.branchId === rootBranchId &&
+    stopScope.targets.some((id) => remainingTargets.has(id))
+      ? activeStopSubmission?.error
+      : undefined
+  const handleStop = (): void =>
+    submissions.submitStop(activeSession?.id, onCancelRun, {
+      branchId: rootBranchId,
+      targets: runTargets
+    })
+  const handleStopSubagents = (): void =>
+    submissions.submitStop(activeSession?.id, onStopSubagents, {
+      branchId: rootBranchId,
+      subagentsOnly: true,
+      targets: childTargets
+    })
   const isSaveAsSkillDisabled = isSaveAsSkillDisabledFromParent || hasRunningSubagents
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
@@ -1072,19 +1120,21 @@ const ConversationPanel = ({
       },
       {
         id: 'action',
-        message: actionError,
+        message: attachmentNotice && actionError === composerError ? undefined : actionError,
         failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
         occurredAt: operationDiagnostic?.occurredAt
       },
       {
-        id: 'composer',
+        id: attachmentNotice ? 'attachment' : 'composer',
+        summary: attachmentNotice,
         message:
-          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+          (attachmentNotice || composerError !== actionError) &&
+          composerError !== DISCUSSION_DRAFT_CONFLICT
             ? composerError
             : undefined,
-        failure: composerFailure,
+        failure: attachmentNotice ? { category: 'internal', diagnostics: {} } : composerFailure,
         detail: composerErrorDetail
       },
       {
@@ -1102,7 +1152,13 @@ const ConversationPanel = ({
       {
         id: 'stop',
         message: stopError,
-        summary: stopError ? { title: stopError } : undefined,
+        summary: stopError
+          ? {
+              title: stopScope?.subagentsOnly
+                ? t('Could not confirm that all subagents stopped.')
+                : t('Could not confirm that the run stopped.')
+            }
+          : undefined,
         failure: { category: 'internal', diagnostics: {} }
       },
       {
@@ -1177,6 +1233,11 @@ const ConversationPanel = ({
   // with a question that is waiting for an answer. A projection without a live request is
   // actionable only when its durable context can reconstruct that request.
   const livePendingElicitationRequest = sessionPendingElicitations.find((request) => {
+    if (
+      !activeSession ||
+      !isCurrentQuestionBranch(activeSession, request.toolCallId, request.durable)
+    )
+      return false
     const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
       ?.elicitation?.state
     return state === undefined || state === 'pending'
@@ -1191,7 +1252,6 @@ const ConversationPanel = ({
   )
   const failedContinuation =
     pendingElicitationActivity?.elicitation?.continuationPending &&
-    !pendingElicitationActivity.elicitation.continuationRecovery &&
     continuationFailure?.requestId === pendingElicitationRequest?.requestId
       ? continuationFailure
       : undefined
@@ -1204,7 +1264,10 @@ const ConversationPanel = ({
           ...pendingElicitationActivity.elicitation,
           ...(failedContinuation
             ? {
-                continuationRecovery: { error: failedContinuation.error }
+                continuationRecovery: {
+                  ...pendingElicitationActivity.elicitation.continuationRecovery,
+                  error: failedContinuation.error
+                }
               }
             : {})
         }
@@ -1231,7 +1294,15 @@ const ConversationPanel = ({
           : pendingCredentialRequest
             ? 'waiting-for-user'
             : undefined,
-        elicitationPending: pendingElicitation ? true : undefined,
+        elicitationPending: pendingElicitation
+          ? true
+          : sessionPendingElicitations.length &&
+              sessionPendingElicitations.every(
+                (request) =>
+                  !isCurrentQuestionBranch(activeSession, request.toolCallId, request.durable)
+              )
+            ? false
+            : undefined,
         planPending:
           pendingPlan !== undefined
             ? true
@@ -2253,13 +2324,7 @@ const ConversationPanel = ({
                       ) : pendingElicitation?.continuationRecovery ? (
                         <WorkspaceElicitationRecovery
                           key={pendingElicitationRequest?.requestId}
-                          elicitation={{
-                            ...pendingElicitation,
-                            continuationRecovery: {
-                              ...pendingElicitation.continuationRecovery,
-                              error: actionError ?? pendingElicitation.continuationRecovery.error
-                            }
-                          }}
+                          elicitation={pendingElicitation}
                           request={pendingElicitationRequest}
                           onRespond={onRespondToElicitation}
                         />
@@ -2984,7 +3049,9 @@ const ConversationPanel = ({
                                             ? 'text-red-600'
                                             : 'text-text-300'
                                         }`}
-                                        title={transfer.errorDetail ?? statusLabel}
+                                        title={[statusLabel, transfer.errorDetail]
+                                          .filter(Boolean)
+                                          .join('\n')}
                                       >
                                         {statusLabel}
                                       </div>

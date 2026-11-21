@@ -1,3 +1,4 @@
+import { sessionReadIpcResult } from '../shared/session-history'
 import { ipcMain, type IpcMainEvent } from 'electron'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +7,10 @@ import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import {
+  isSessionReadChannel,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import type { ApplicationCallerLease } from './application-command-router'
 import { callerLeaseForEvent } from './caller-lifecycle'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
@@ -90,6 +94,7 @@ export function installDesktopRuntimeElectronAdapter(
       if (!rendererChannels.has(channel)) continue
       ipcMainHandle(channel, async (event, ...args) => {
         const invoke = (): Promise<unknown> => forward(event, channel, args)
+        if (isSessionReadChannel(channel)) return sessionReadIpcResult(invoke)
         if (!enveloped.has(channel)) return invoke()
         try {
           return { ok: true, result: await invoke() }

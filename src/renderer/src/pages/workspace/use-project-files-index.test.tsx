@@ -193,7 +193,7 @@ describe('useProjectFilesIndex', () => {
               : current.artifactsBySession['session-1'])!.items.map((file) => file.sourceFileId)
       const state = (): {
         isLoading: boolean
-        error?: string
+        error?: ProjectFilesIndexState['uploads']['error']
         totalCount: number
         nextCursor?: string
       } =>
@@ -225,7 +225,7 @@ describe('useProjectFilesIndex', () => {
         })
       )
       expect(state().isLoading).toBe(false)
-      expect(state().error).toBe('Refresh tail unavailable')
+      expect(state().error?.detail).toBe('Refresh tail unavailable')
       expect(read()).toEqual(previous)
       failTail = false
       query.mockClear()
@@ -518,7 +518,7 @@ describe('useProjectFilesIndex', () => {
     await act(async () => current.repairIndex())
 
     expect(current.overview.isIndexComplete).toBe(false)
-    expect(current.repairError).toBe('managed file is still unreadable')
+    expect(current.repairError?.detail).toBe('managed file is still unreadable')
     expect(current.isRepairing).toBe(false)
   })
 
@@ -644,7 +644,9 @@ describe('useProjectFilesIndex', () => {
       { sessionId: 'session-new', artifactCount: 1 },
       { sessionId: 'session-1', artifactCount: 2 }
     ])
-    expect(current.artifactsBySession['session-new']?.error).toBe('artifact page unavailable')
+    expect(current.artifactsBySession['session-new']?.error?.detail).toBe(
+      'artifact page unavailable'
+    )
   })
 
   it('keeps the authoritative group order when the session page resolves later', async () => {
@@ -709,7 +711,7 @@ describe('useProjectFilesIndex', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(current.groups.error).toBe('database busy')
+    expect(current.groups.error?.detail).toBe('database busy')
 
     listGroups.mockResolvedValueOnce({
       items: [{ sessionId: 'session-2', artifactCount: 1 }],
@@ -724,7 +726,7 @@ describe('useProjectFilesIndex', () => {
   it('retries a failed first upload page without requiring a cursor', async () => {
     vi.mocked(window.api.projectFiles.listFiles).mockRejectedValueOnce(new Error('database busy'))
     await renderHook()
-    expect(current.uploads.error).toBe('database busy')
+    expect(current.uploads.error?.detail).toBe('database busy')
 
     vi.mocked(window.api.projectFiles.listFiles).mockResolvedValueOnce({
       items: [upload('retry')],

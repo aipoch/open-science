@@ -49,6 +49,51 @@ const captureResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void =>
   event.currentTarget.setPointerCapture(event.pointerId)
 }
 
+const useNotebookOutputDragWidth = (
+  separatorRef: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean
+): void => {
+  useEffect(() => {
+    const separator = separatorRef.current
+    if (!separator || !enabled) return
+
+    let frozen: HTMLElement[] = []
+    const release = (): void => {
+      for (const output of frozen) output.style.removeProperty('--notebook-output-drag-width')
+      frozen = []
+    }
+    const sync = (): void => {
+      if (separator.dataset.separator !== 'active') {
+        release()
+        return
+      }
+
+      // Read all widths before writing any. The resize library also starts drags in the
+      // separator's extended hit area, so follow its actual active state.
+      const outputs = separator.parentElement?.querySelectorAll<HTMLElement>(
+        '#right-panel details[open] .notebook-large-text-output'
+      )
+      if (!outputs || frozen.length) return
+      const widths = Array.from(outputs, (output) => output.getBoundingClientRect().width)
+      outputs.forEach((output, index) => {
+        if (widths[index] <= 0) return
+        output.style.setProperty('--notebook-output-drag-width', `${widths[index]}px`)
+        frozen.push(output)
+      })
+    }
+    const observer = new MutationObserver(sync)
+    observer.observe(separator, { attributes: true, attributeFilter: ['data-separator'] })
+    window.addEventListener('blur', release)
+    window.addEventListener('pointercancel', release, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('blur', release)
+      window.removeEventListener('pointercancel', release, true)
+      release()
+    }
+  }, [enabled, separatorRef])
+}
+
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -601,6 +646,8 @@ const WorkspacePanelLayout = ({
     mobileSidebarDialogRef,
     sidebarOpenRequest
   )
+
+  useNotebookOutputDragWidth(preview.separatorRef, !isMobile && preview.state === 'open')
 
   return (
     <>

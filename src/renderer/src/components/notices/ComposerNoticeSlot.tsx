@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -95,22 +96,31 @@ const ComposerFailureNoticeSlot = ({
       ? notices.find(({ id }) => id === selected?.id)
       : undefined) ?? notices[0]
   if (!current) return null
-  const presentation = noticePresentation(current.failure)
+  const presentation = noticePresentation(current.failure, current.operation)
   const providerMessage = current.failure.diagnostics.protocol
     ? undefined
     : current.failure.responseMessage
+  const excerpt = providerErrorExcerpt(
+    current.failure.diagnostics.providerExcerpt ??
+      providerMessage ??
+      (current.failure.reason === 'input/context-overflow'
+        ? current.failure.diagnostics.raw
+        : undefined)
+  )
   const title =
     current.summary?.title ??
-    (providerMessage ? t('Model provider error') : t(presentation.titleKey))
+    (providerMessage && !excerpt ? t('Model provider error') : t(presentation.titleKey))
   const description = current.summary
     ? (current.summary.description ?? '')
-    : current.source === 'session' && current.failure.diagnostics.protocol
-      ? t('This turn was interrupted. Resume to continue.')
-      : providerMessage
-        ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
-          ? ''
-          : providerMessage
-        : t(presentation.descriptionKey)
+    : excerpt
+      ? `${t(presentation.descriptionKey)} ${excerpt}`
+      : current.source === 'session' && current.failure.diagnostics.protocol
+        ? t('This turn was interrupted. Resume to continue.')
+        : providerMessage
+          ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
+            ? ''
+            : providerMessage
+          : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
@@ -166,7 +176,7 @@ const ComposerFailureNoticeSlot = ({
     (showDiagnostics && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
   const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
-    const action = noticePresentation(notice.failure).primaryAction
+    const action = noticePresentation(notice.failure, notice.operation).primaryAction
     return notice.source === 'session' && available('resume', notice)
       ? 'resume'
       : action && available(action, notice)
@@ -274,7 +284,7 @@ const ComposerFailureNoticeSlot = ({
             {notices
               .filter(({ id }) => id !== current.id)
               .map((notice) => {
-                const item = noticePresentation(notice.failure)
+                const item = noticePresentation(notice.failure, notice.operation)
                 const Icon =
                   notice.failure.category === 'session'
                     ? PauseCircle
@@ -310,7 +320,9 @@ const ComposerFailureNoticeSlot = ({
                       <TruncatedText
                         text={
                           notice.summary?.title ??
-                          (notice.failure.responseMessage && !notice.failure.diagnostics.protocol
+                          (notice.failure.responseMessage &&
+                          !notice.failure.diagnostics.protocol &&
+                          !providerErrorExcerpt(notice.failure.responseMessage)
                             ? t('Model provider error')
                             : t(item.titleKey))
                         }
@@ -347,7 +359,9 @@ const ComposerFailureNoticeSlot = ({
           </div>
           {actionFailure?.id === current.id ? (
             <p role="alert" className="pt-1 text-sm text-destructive">
-              {t('The action could not be completed. See details and try again.')}
+              {primary === 'resume'
+                ? t('Could not resume the session.')
+                : t('The action could not be completed. See details and try again.')}
             </p>
           ) : null}
           {moreNotices}

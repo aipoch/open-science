@@ -138,25 +138,32 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
-  it('reports CodeBuddy upstream errors without disclosing vendor details or misclassifying ordinary refusals', async () => {
-    const fixture = setup([
-      stop({
-        stopReason: 'refusal',
-        _meta: { 'codebuddy.ai/errorMessage': 'Network error: 502 private vendor detail' }
-      }),
-      stop({ stopReason: 'refusal' })
-    ])
-    const input = { ...fixture.input, frameworkId: 'codebuddy' as const }
-    await expect(fixture.executor.execute(input)).rejects.toMatchObject({
-      message: 'CodeBuddy request failed (HTTP 502).',
-      status: 502
-    })
-    expect(fixture.captureStop).not.toHaveBeenCalled()
-    await expect(fixture.executor.execute(input)).resolves.toMatchObject({
-      kind: 'stopped',
-      response: { stopReason: 'refusal' }
-    })
-  })
+  it.each([false, true])(
+    'preserves CodeBuddy upstream errors and ordinary refusals (userStopped=%s)',
+    async (userStopped) => {
+      const fixture = setup([
+        stop({
+          stopReason: 'refusal',
+          _meta: { 'codebuddy.ai/errorMessage': 'Network error: 502 private vendor detail' }
+        }),
+        stop({ stopReason: 'refusal' })
+      ])
+      const input = {
+        ...fixture.input,
+        frameworkId: 'codebuddy' as const,
+        isUserStopped: () => userStopped
+      }
+      await expect(fixture.executor.execute(input)).rejects.toMatchObject({
+        message: 'CodeBuddy request failed (HTTP 502).',
+        status: 502
+      })
+      expect(fixture.captureStop).not.toHaveBeenCalled()
+      await expect(fixture.executor.execute(input)).resolves.toMatchObject({
+        kind: 'stopped',
+        response: { stopReason: 'refusal' }
+      })
+    }
+  )
 
   it('counts Pi model calls once per message while keeping only the latest input as context', async () => {
     const usage = (id: string, input: number): NextUpdate => {

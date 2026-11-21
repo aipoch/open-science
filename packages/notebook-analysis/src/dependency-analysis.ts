@@ -1546,6 +1546,12 @@ const boundedFileContext = (
   }
 }
 
+const environmentManifestChecksumForAnalysis = (run: NotebookRunRecord): unknown =>
+  run.environmentManifestChecksum ??
+  (run.environmentCapture?.state === 'available' || run.environmentCapture?.state === 'partial'
+    ? run.environmentCapture.manifestChecksum
+    : run.environmentManifest?.executionContext)
+
 const checksumFor = (run: NotebookRunRecord): string =>
   createHash('sha256')
     .update(
@@ -1561,6 +1567,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.cwdAfter,
         run.script,
         run.fileEvidence?.checksum,
+        environmentManifestChecksumForAnalysis(run),
         run.helperEvidenceStatus,
         run.helperModules?.map(
           ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
@@ -1730,7 +1737,7 @@ const projectionChecksumFor = ({ run, facts, fileAccess }: AnalyzedNotebookRun):
         run.kernelEpochId,
         run.status,
         run.kernelDispatched,
-        run.environmentManifest?.executionContext?.rPackages,
+        environmentManifestChecksumForAnalysis(run),
         facts,
         fileAccess,
         run.workingFiles.map(({ relativePath, generationId, checksum, change, createdByRunId }) => [
@@ -1776,7 +1783,11 @@ class NotebookDependencyAnalyzer {
     private readonly options: {
       cachePath: (projectId: string, sessionId: string) => string
       repository: {
-        readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]>
+        readSessionRuns(
+          projectId: string,
+          sessionId: string,
+          options?: { includeEnvironmentManifests?: boolean }
+        ): Promise<NotebookRunRecord[]>
       }
       /** Execution directory within the generation path namespace. Defaults to its root. */
       executionRelativeRoot?: string
@@ -1979,12 +1990,16 @@ class NotebookDependencyAnalyzer {
   private async sourceFileAccessContextExclusive(
     request: NotebookSourceFileAccessContextRequest
   ): Promise<NotebookSourceFileAccessContext | undefined> {
-    const [runs, initialSidecar] = await Promise.all([
+    const [initialRuns, initialSidecar] = await Promise.all([
       this.options.repository.readSessionRuns(request.projectId, request.sessionId),
       this.readSidecar(this.sidecarPath(request.projectId, request.sessionId))
     ])
+    let runs = initialRuns
     const sidecar = initialSidecar
     if (sourceFileAccessContextNeedsRefresh(runs, sidecar, request)) {
+      runs = await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      })
       await this.projectExclusive(
         { projectId: request.projectId, sessionId: request.sessionId },
         request.currentRunId,
@@ -2043,7 +2058,9 @@ class NotebookDependencyAnalyzer {
   ): Promise<NotebookDependencyProjection> {
     const runs =
       prepared?.runs ??
-      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId))
+      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      }))
     const boundaryRunId = analyzeBeforeRunId ?? request.throughRunId
     const boundaryIndex = boundaryRunId ? runs.findIndex((run) => run.runId === boundaryRunId) : -1
     const runsToAnalyze =

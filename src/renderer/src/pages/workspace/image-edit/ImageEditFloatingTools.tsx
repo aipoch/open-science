@@ -34,7 +34,12 @@ export function ImageEditFloatingTools({
       const image = viewport.querySelector('[data-image-edit-surface] img')
       if (!image) return
       const bounds = viewport.getBoundingClientRect()
-      imageRect = fitContainedImageRect(image.getBoundingClientRect(), { width, height })
+      // Use decoded dimensions when available so the outline follows the pixels actually painted.
+      const imageSize =
+        image instanceof HTMLImageElement && image.naturalWidth > 0 && image.naturalHeight > 0
+          ? { width: image.naturalWidth, height: image.naturalHeight }
+          : { width, height }
+      imageRect = fitContainedImageRect(image.getBoundingClientRect(), imageSize)
       if (!imageRect) return
       const rect = {
         ...imageRect,

@@ -376,10 +376,12 @@ const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-cent
 const SessionActionDropdown = ({
   session,
   mobileMode,
+  showShortcut,
   onOpenChange
 }: {
   session: ChatSession
   mobileMode: boolean
+  showShortcut: boolean
   onOpenChange?: (open: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -390,7 +392,11 @@ const SessionActionDropdown = ({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
+          className={cn(
+            sessionRowActionClassName,
+            mobileMode && 'opacity-100',
+            showShortcut && 'invisible'
+          )}
           aria-label={t('Open actions for {{title}}', { title: session.title })}
         >
           <span className="flex size-3.5 items-center justify-center" aria-hidden="true">
@@ -610,6 +616,7 @@ const SessionRow = memo(function SessionRow({
     packageBusy,
     archiveAvailable
   ])
+  const showShortcut = showSessionShortcuts && shortcutNumber !== undefined
   const openSessionButton = (
     <button
       type="button"
@@ -656,10 +663,10 @@ const SessionRow = memo(function SessionRow({
           />
         )}
       </span>
-      {showSessionShortcuts && shortcutNumber ? (
+      {showShortcut ? (
         <kbd
           aria-hidden="true"
-          className="relative z-[2] mr-5 shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
+          className="pointer-events-none absolute right-1.5 top-1/2 z-[3] -translate-y-1/2 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
         >
           {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
         </kbd>
@@ -671,7 +678,7 @@ const SessionRow = memo(function SessionRow({
           className={cn(
             'relative z-[2] inline-flex size-4 shrink-0 items-center justify-center text-text-200 transition-opacity motion-reduce:transition-none',
             mobileMode ? 'mr-5' : 'group-hover:opacity-0 group-focus-within:opacity-0',
-            !mobileMode && previewSuppressed && 'opacity-0'
+            ((!mobileMode && previewSuppressed) || showShortcut) && 'opacity-0'
           )}
         >
           <Lock className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
@@ -721,6 +728,7 @@ const SessionRow = memo(function SessionRow({
           <SessionActionDropdown
             session={session}
             mobileMode={mobileMode}
+            showShortcut={showShortcut}
             onOpenChange={(open) => actions.onSessionActionsOpenChange?.(session.id, open)}
           />
         </div>

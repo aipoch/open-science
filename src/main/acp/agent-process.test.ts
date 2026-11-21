@@ -31,6 +31,7 @@ import {
 } from './agent-process'
 
 const originalDebugAgent = process.env.OPEN_SCIENCE_DEBUG_AGENT
+const testAdapterEntryPath = '/fixture/claude-agent-acp/dist/index.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -195,6 +196,7 @@ describe('spawnClaudeAgentAcp', () => {
     expect(
       spawnClaudeAgentAcp({
         executablePath: '/bin/claude',
+        adapterEntryPath: testAdapterEntryPath,
         envOverrides: {
           CLAUDE_CONFIG_DIR: '/provider/config',
           ANTHROPIC_AUTH_TOKEN: 'secret'
@@ -226,6 +228,7 @@ describe('spawnClaudeAgentAcp', () => {
 
     spawnClaudeAgentAcp({
       executablePath: '/bin/claude',
+      adapterEntryPath: testAdapterEntryPath,
       envOverrides: { CLAUDE_CONFIG_DIR: '/provider/config' }
     })
 
@@ -242,6 +245,7 @@ it('prevents Claude physical launch when delegated ownership admission fails', (
   })
   const input = {
     executablePath: '/runtime/claude',
+    adapterEntryPath: testAdapterEntryPath,
     envOverrides: { CLAUDE_CONFIG_DIR: '/isolated/claude' },
     spawnProcess: ownedSpawn
   }
