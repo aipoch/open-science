@@ -698,6 +698,7 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     'packages/providers/src/protocols/messages/conversion.ts',
     'packages/providers/src/protocols/chat-completions/stream.ts',
     'packages/providers/src/protocols/messages/text.ts',
+    'packages/providers/src/protocols/error-text.ts',
     'packages/providers/src/protocols/chat-completions/text.ts',
     'packages/providers/src/protocols/responses/text.ts',
     'packages/providers/src/providers/definitions.ts',
