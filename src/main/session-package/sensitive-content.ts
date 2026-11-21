@@ -441,7 +441,7 @@ const findPackageTextMatch = (
       continue
     // A bare "tokens" member can also be a usage count. Accept that JSON
     // spelling only with an unquoted nonnegative safe integer.
-    if (text[match.index - 1] === '"' && /^tokens"\s*:\s*$/.test(match[0])) {
+    if (preceding === '"' && /^tokens"\s*:\s*$/.test(match[0])) {
       const count = /^(0|[1-9]\d{0,15})\s*(?=[,}]|$)/.exec(rest)
       if (
         count &&

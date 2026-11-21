@@ -666,6 +666,19 @@ it('keeps the complete metadata key when a file scan resumes inside its name', (
   }
 })
 
+it('preserves the tokens value type when the scan window starts at the key', () => {
+  for (const tokens of [123, 'opaque']) {
+    const text = JSON.stringify({ tokens, notes: 'x'.repeat(9000) })
+    const split = text.indexOf('tokens') + 8192
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    const expected = typeof tokens === 'string'
+    expect(Boolean(findSensitivePackageText(text))).toBe(expected)
+    expect(Boolean(scanner.finish())).toBe(expected)
+  }
+})
+
 it('distinguishes numeric search patterns from PAT assignments across export chunks', () => {
   for (const [code, sensitive] of [
     ['const pats = ["0.59", "−0.03", "278"];', false],
