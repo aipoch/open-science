@@ -3,7 +3,11 @@ import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { runtimeModuleSpecifiers } from '../../../../../test/module-boundary-assertions'
-import type { FailureCategory, FailureReason } from '../../../../shared/failure/contract'
+import type {
+  ClassifiedFailure,
+  FailureCategory,
+  FailureReason
+} from '../../../../shared/failure/contract'
 import {
   formatNoticeDiagnostics,
   noticeCatalog,
@@ -63,20 +67,43 @@ it('does not repeat the displayed description when an operation uses it as its r
   ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
 })
 
-it('keeps a diagnosed internal failure distinct from an HTTP or unattributed response', () => {
-  const raw = 'Internal error: adapter reconfiguration failed'
-  const text = formatNoticeDiagnostics(
+it.each<[ClassifiedFailure, string]>([
+  [
     {
-      id: 'reconfigure',
-      source: 'operation',
-      occurredAt: 0,
-      failure: { category: 'internal', reason: 'internal/reconfigure', diagnostics: { raw } }
+      category: 'internal',
+      reason: 'internal/reconfigure',
+      diagnostics: { raw: 'Internal error: adapter reconfiguration failed' }
     },
-    'Reconfiguration failed',
-    '',
-    'Info'
-  )
-  expect(text).toBe('Reconfiguration failed\n' + raw)
+    'Internal error: adapter reconfiguration failed'
+  ],
+  [
+    {
+      category: 'service',
+      reason: 'service/connection-failed',
+      diagnostics: { raw: 'Internal error: API Error: Unable to connect to API (ECONNREFUSED)' }
+    },
+    'Info\nAPI Error: Unable to connect to API (ECONNREFUSED)'
+  ],
+  [
+    {
+      category: 'service',
+      diagnostics: {
+        status: 400,
+        protocol: 'responses',
+        providerExcerpt: 'Maximum call stack size exceeded'
+      }
+    },
+    'status: 400\nprotocol: responses\nInfo\nMaximum call stack size exceeded'
+  ]
+])('shows the recorded diagnostic for %j', (failure, expected) => {
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Title',
+      '',
+      'Info'
+    )
+  ).toBe('Title\n' + expected)
 })
 
 describe('composer notice boundaries', () => {

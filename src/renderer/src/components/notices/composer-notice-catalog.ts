@@ -312,16 +312,15 @@ export const formatNoticeDiagnostics = (
   description: string,
   infoLabel: string
 ): string => {
-  const { raw, ...fields } = notice.failure.diagnostics
-  const response =
-    !fields.protocol && notice.failure.responseMessage
-      ? redactSensitiveText(notice.failure.responseMessage)
-      : undefined
+  const { raw, providerExcerpt, ...fields } = notice.failure.diagnostics
+  const reportedResponse = fields.protocol ? providerExcerpt : notice.failure.responseMessage
+  const response = reportedResponse && redactSensitiveText(reportedResponse)
   const showResponseInfo = Boolean(
     response ||
     fields.protocol ||
     fields.status !== undefined ||
-    notice.failure.reason === 'service/provider-error' ||
+    notice.failure.category === 'service' ||
+    (notice.failure.category !== 'internal' && rpcInternalPrefix.test(raw ?? '')) ||
     isUnattributedRequest(notice.failure)
   )
   const diagnostic =
