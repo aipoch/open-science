@@ -22,7 +22,8 @@ const boundary = vi.hoisted(() => ({
   fixtureTimeout: undefined as number | undefined,
   launch: vi.fn(),
   reap: vi.fn(),
-  processTree: vi.fn(),
+  mainEvaluate: vi.fn(),
+  terminateByIdentity: vi.fn(),
   processTable: vi.fn(),
   rendererFailure: vi.fn(),
   ready: vi.fn(),
@@ -48,10 +49,14 @@ vi.mock('@playwright/test', async (importOriginal) => {
 })
 vi.mock('playwright', () => ({ _electron: { launch: boundary.launch } }))
 vi.mock('../src/main/process-tree', () => ({ terminateProcessTree: boundary.reap }))
-vi.mock('./performance/process-snapshot', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./performance/process-snapshot')>()),
-  readProcessTree: boundary.processTree,
-  readProcessTable: boundary.processTable
+vi.mock('../src/main/windows-process-query', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/windows-process-query')>()),
+  listWindowsProcesses: boundary.processTable,
+  windowsProcessIsAlive: () => true
+}))
+vi.mock('../src/main/process-tree-windows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/process-tree-windows')>()),
+  terminateWindowsProcessesByIdentity: boundary.terminateByIdentity
 }))
 vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
   RendererFailureGate: class {
@@ -78,8 +83,7 @@ beforeEach(() => {
   boundary.settingsWait.mockResolvedValue(undefined)
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
-  boundary.processTree.mockResolvedValue({ complete: false, processes: [] })
-  boundary.processTable.mockResolvedValue({ complete: false, processes: [] })
+  boundary.processTable.mockReset()
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
     const logs = join(root, 'logs')
@@ -99,10 +103,11 @@ beforeEach(() => {
       }),
       reload: async () => undefined
     }
+    boundary.mainEvaluate.mockResolvedValue(logs)
     return {
       firstWindow: async () => page,
       browserWindow: async () => ({ evaluate: async () => 1 }),
-      evaluate: async () => logs,
+      evaluate: boundary.mainEvaluate,
       close,
       process: () => ({ pid: 12345 })
     }
@@ -375,6 +380,8 @@ it.each([true, false])(
   }
 )
 
+const capturedBirths = [[12346, '135411000000000000']] as const
+
 it.each(
   [
     { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
@@ -395,32 +402,32 @@ it.each(
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     Object.defineProperty(process, 'platform', { value: 'win32' })
     boundary.reap.mockResolvedValue({ reaped })
-    boundary.processTree.mockResolvedValue({
-      complete: true,
-      processes: [
-        { pid: 12345, parentPid: 1 },
-        { pid: 12346, parentPid: 12345 }
-      ]
-    })
-    boundary.processTable.mockResolvedValue({
-      complete,
-      processes: survivors.map(([pid, parentPid]) => ({ pid, parentPid }))
-    })
+    if (complete)
+      boundary.processTable.mockReturnValue(survivors.map(([pid, ppid]) => ({ pid, ppid })))
+    else
+      boundary.processTable.mockImplementation(() => {
+        throw new Error('process query failed')
+      })
     const operation = boundary.fixture(
       { windowMode: 'hidden' },
       async (app) => {
+        boundary.mainEvaluate.mockResolvedValueOnce(capturedBirths)
         await app.restartAfterCrash()
       },
       { status: succeeds ? 'passed' : 'failed', expectedStatus: 'passed', attach }
     )
     const assertion = succeeds
       ? expect(operation).resolves.toBeUndefined()
-      : expect(operation).rejects.toThrow('crash simulation did not reap')
+      : expect(operation).rejects.toThrow(complete ? 'still observes PIDs' : 'process query failed')
     // Startup creates real files before the mocked process query; allow hosted Windows I/O
     // to finish while keeping the simulated process-exit deadline at ten seconds.
     await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled(), { timeout: 10_000 })
     await vi.advanceTimersByTimeAsync(10_000)
     await assertion
+    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(
+      new Map(capturedBirths),
+      expect.any(Number)
+    )
     expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
   }
 )
@@ -431,20 +438,11 @@ it.each([true, false])(
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     Object.defineProperty(process, 'platform', { value: 'win32' })
     boundary.reap.mockResolvedValue({ reaped })
-    boundary.processTree.mockResolvedValue({
-      complete: true,
-      processes: [
-        { pid: 12345, parentPid: 1 },
-        { pid: 12346, parentPid: 12345 }
-      ]
-    })
-    boundary.processTable.mockResolvedValue({
-      complete: true,
-      processes: [{ pid: 12346, parentPid: 1 }]
-    })
+    boundary.processTable.mockReturnValue([{ pid: 12346, ppid: 1 }])
     const operation = boundary.fixture(
       { windowMode: 'hidden' },
       async (app) => {
+        boundary.mainEvaluate.mockResolvedValueOnce(capturedBirths)
         await app.restartAfterCrash()
       },
       { status: 'passed', expectedStatus: 'passed', attach }
@@ -455,7 +453,7 @@ it.each([true, false])(
     expect(boundary.launch).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(500)
     expect(boundary.launch).toHaveBeenCalledOnce()
-    boundary.processTable.mockResolvedValue({ complete: true, processes: [] })
+    boundary.processTable.mockReturnValue([])
     await vi.advanceTimersByTimeAsync(100)
     await operation
     expect(boundary.launch).toHaveBeenCalledTimes(2)
@@ -469,11 +467,12 @@ it('refuses a Windows crash restart without a complete pre-termination snapshot'
     boundary.fixture(
       { windowMode: 'hidden' },
       async (app) => {
+        boundary.mainEvaluate.mockRejectedValueOnce(new Error('process capture failed'))
         await app.restartAfterCrash()
       },
       { status: 'failed', expectedStatus: 'passed', attach }
     )
-  ).rejects.toThrow('crash simulation did not reap')
+  ).rejects.toThrow('process capture failed')
   expect(boundary.launch).toHaveBeenCalledOnce()
   expect(boundary.processTable).not.toHaveBeenCalled()
 })
