@@ -2221,8 +2221,11 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     const refreshedSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
       runs: Record<string, { checksum: string }>
     }
-    expect(repository.readSessionRuns).toHaveBeenCalledTimes(1)
-    expect(repository.readSessionRuns).toHaveBeenCalledWith('default-project', 'session-1')
+    expect(repository.readSessionRuns).toHaveBeenCalledTimes(2)
+    expect(repository.readSessionRuns).toHaveBeenNthCalledWith(1, 'default-project', 'session-1')
+    expect(repository.readSessionRuns).toHaveBeenNthCalledWith(2, 'default-project', 'session-1', {
+      includeEnvironmentManifests: true
+    })
     expect(refreshedSidecar.runs['run-1']?.checksum).not.toBe('stale-revision-checksum')
     expect(refreshedSidecar.runs['current-run']).toBeUndefined()
   })

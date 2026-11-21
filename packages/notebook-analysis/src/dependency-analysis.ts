@@ -1561,6 +1561,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.cwdAfter,
         run.script,
         run.fileEvidence?.checksum,
+        run.environmentManifest?.executionContext,
         run.helperEvidenceStatus,
         run.helperModules?.map(
           ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
@@ -1730,7 +1731,7 @@ const projectionChecksumFor = ({ run, facts, fileAccess }: AnalyzedNotebookRun):
         run.kernelEpochId,
         run.status,
         run.kernelDispatched,
-        run.environmentManifest?.executionContext?.rPackages,
+        run.environmentManifest?.executionContext,
         facts,
         fileAccess,
         run.workingFiles.map(({ relativePath, generationId, checksum, change, createdByRunId }) => [
@@ -1992,7 +1993,14 @@ class NotebookDependencyAnalyzer {
       await this.projectExclusive(
         { projectId: request.projectId, sessionId: request.sessionId },
         request.currentRunId,
-        { runs, sidecar }
+        {
+          runs: await this.options.repository.readSessionRuns(
+            request.projectId,
+            request.sessionId,
+            { includeEnvironmentManifests: true }
+          ),
+          sidecar
+        }
       )
     }
     let context = projectSourceFileAccessContext(runs, sidecar, request)
