@@ -12,7 +12,8 @@ import { describe, expect, it } from 'vitest'
 import {
   assertElectronHostDependencies,
   backendOnlyElectronDependencies,
-  electronHostDependencyGuard
+  electronHostDependencyGuard,
+  macBackendOnlyElectronDependencies
 } from './electron-host-dependencies.mjs'
 
 import {
@@ -84,6 +85,9 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
+      for (const name of macBackendOnlyElectronDependencies)
+        expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
+      expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
       await put('@fixture/desktop', {
         dependencies: { bridge: '1' },
         devDependencies: { 'styled-exceljs': '1' }

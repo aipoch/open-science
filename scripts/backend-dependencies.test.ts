@@ -211,6 +211,7 @@ describe('desktop-only dependency contents', () => {
     (separator) => {
       for (const [name, version, removed, retained] of [
         ['openchemlib', '9.25.0', 'dist/openchemlib.debug.js', 'dist/openchemlib.js'],
+        ['tesseract.js-core', '6.1.2', 'tesseract-core.wasm.js', 'tesseract-core.wasm'],
         ['web-tree-sitter', '0.26.13', 'debug/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.js', 'dist/cpexcel.js'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.map', 'xlsx.js'],
