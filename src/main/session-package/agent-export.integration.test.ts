@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, lstat, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { flushLogs, getLogFilePath, initLogger } from '@aipoch/diagnostics/node'
 import { create as createTar, extract as extractTar } from 'tar'
 import { expect, it, vi } from 'vitest'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -50,6 +51,28 @@ const content = (
 ): { result?: unknown; error?: unknown } => call.structuredContent ?? {}
 
 const report = '# Published research\n\nMean: 14.\n'
+type ExportReviewDecision = Extract<PackageOperationRequest, { action: 'respond-export-review' }>
+
+const approvalFor = (observed: unknown): Omit<ExportReviewDecision, 'action'> => {
+  const { operationId, sensitiveExportReview } = observed as {
+    operationId: string
+    sensitiveExportReview: {
+      destinationPath: string
+      expiresAt: number
+      fileDigest: { sizeBytes: number; checksum: string }
+    }
+  }
+  const { destinationPath, expiresAt, fileDigest } = sensitiveExportReview
+  return {
+    operationId,
+    destinationPath,
+    expiresAt,
+    sizeBytes: fileDigest.sizeBytes,
+    sha256: fileDigest.checksum,
+    source: 'user_relay',
+    decision: 'approved'
+  }
+}
 
 async function exportPublishedResearch(): Promise<Buffer> {
   const fixture = await createProvenanceTestFixture()
@@ -159,13 +182,19 @@ async function withPackageService(
     sdk: Client
     callCli: (name: string, args: object) => CliResult
     service: SessionPackageService
-    invokePackageRpc: (request: PackageOperationRequest) => Promise<Response>
+    invokePackageRpc: (
+      request: PackageOperationRequest,
+      auth?: 'bearer' | 'cookie' | 'browser-origin'
+    ) => Promise<Response>
+    restartPackageService: () => Promise<void>
     respondAsDesktop: (
       request: PackageOperationRequest
     ) => ReturnType<SessionPackageDesktop['respond']>
   }) => Promise<void>,
   options: {
     afterAdmission?: () => Promise<void>
+    afterDecision?: () => Promise<void>
+    captureLogs?: boolean
     sensitive?: boolean
     advertisePackageOperations?: boolean
     seedSource?: boolean
@@ -174,6 +203,7 @@ async function withPackageService(
 ): Promise<void> {
   const fixture = await createProvenanceTestFixture()
   const root = fixture.storageRoot
+  if (options.captureLogs) initLogger({ logDir: join(root, 'logs'), mirrorToConsole: false })
   const events = new ApplicationEventHub()
   initDataRoot(root)
   const sessions = new SessionRepository(root)
@@ -187,12 +217,14 @@ async function withPackageService(
     assertForkExecutionAllowed: (request) =>
       options.executionIntents?.current(request)?.assertExecutable()
   })
-  const owner = new SessionPackageDesktop({
-    service,
-    translate: englishNativeTranslator,
-    withDataRootWrite: (work) => work(),
-    afterImport: async () => undefined
-  })
+  const createOwner = (): SessionPackageDesktop =>
+    new SessionPackageDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: (work) => work(),
+      afterImport: async () => undefined
+    })
+  let owner = createOwner()
   const router = createApplicationCommandRouter()
   const command = dataContentApplicationCommands.sessionPackageOperation
   const installation = registerDataContentApplicationCommands(router.registrar, {
@@ -209,8 +241,9 @@ async function withPackageService(
         ...invocation,
         args: invocation.args as [PackageOperationRequest]
       })
-      if ((invocation.args[0] as PackageOperationRequest).action.startsWith('agent-'))
-        await options.afterAdmission?.()
+      const { action } = invocation.args[0] as PackageOperationRequest
+      if (action.startsWith('agent-')) await options.afterAdmission?.()
+      if (action === 'respond-export-review') await options.afterDecision?.()
       return response
     }
   }
@@ -243,7 +276,7 @@ async function withPackageService(
         updatedAt: 2
       })
     const token = 'synthetic-package-fixture-token'
-    server = await startWebHttpServer({
+    const serverOptions = {
       host: '127.0.0.1',
       port: 0,
       token,
@@ -287,11 +320,21 @@ async function withPackageService(
         platform: process.platform,
         versions: { electron: 'test', chrome: 'test', node: process.versions.node }
       }
-    })
-    await writeFile(
-      join(root, 'web-service.json'),
-      JSON.stringify({ pid: process.pid, port: server.port, startedAt: new Date().toISOString() })
-    )
+    } satisfies Parameters<typeof startWebHttpServer>[0]
+    const startAndAdvertise = async (): Promise<void> => {
+      server = await startWebHttpServer(serverOptions)
+      await writeFile(
+        join(root, 'web-service.json'),
+        JSON.stringify({ pid: process.pid, port: server.port, startedAt: new Date().toISOString() })
+      )
+    }
+    const restartPackageService = async (): Promise<void> => {
+      await server?.close()
+      await owner.close()
+      owner = createOwner()
+      await startAndAdvertise()
+    }
+    await startAndAdvertise()
     await writeFile(join(root, 'web-token'), token)
     await sdk.connect(
       new StdioClientTransport({
@@ -312,17 +355,34 @@ async function withPackageService(
       result.child.stdin?.end(JSON.stringify(args))
       return result
     }
-    const invokePackageRpc = (request: PackageOperationRequest): Promise<Response> =>
+    const invokePackageRpc = (
+      request: PackageOperationRequest,
+      auth: 'bearer' | 'cookie' | 'browser-origin' = 'bearer'
+    ): Promise<Response> =>
       fetch(`http://127.0.0.1:${server!.port}/rpc/sessions%3Apackage-operation`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(auth === 'cookie'
+            ? { cookie: `open_science_web_token=${token}` }
+            : { authorization: `Bearer ${token}` }),
+          ...(auth === 'browser-origin' ? { origin: `http://127.0.0.1:${server!.port}` } : {})
+        },
         body: JSON.stringify({ protocolVersion: 1, args: [request] })
       })
     const respondAsDesktop = (
       request: PackageOperationRequest
     ): ReturnType<SessionPackageDesktop['respond']> =>
       owner.respond(request, 'fixture-desktop-client')
-    await test({ root, sdk, callCli, service, invokePackageRpc, respondAsDesktop })
+    await test({
+      root,
+      sdk,
+      callCli,
+      service,
+      invokePackageRpc,
+      respondAsDesktop,
+      restartPackageService
+    })
   } finally {
     await sdk.close()
     await server?.close()
@@ -330,6 +390,7 @@ async function withPackageService(
     router.dispose()
     await owner.close()
     await service.close()
+    if (options.captureLogs) await flushLogs()
     await resetOwnership()
     initDataRoot(undefined)
     await fixture.dispose()
@@ -957,6 +1018,266 @@ it('refuses existing files, directories and symbolic links without altering the 
   })
 })
 
+it('relays a specific user export approval between CLI JSON and MCP stdio', async () => {
+  await withPackageService(
+    async ({ root, sdk, callCli, invokePackageRpc }) => {
+      const destinationPath = join(root, 'user-reviewed.science')
+      const attempt = await sdk.callTool({
+        name: 'export_session',
+        arguments: { ...source, destinationPath }
+      })
+      expect(attempt.isError).toBe(true)
+      const { operationId } = content(attempt).error as { operationId: string }
+      const observed = JSON.parse((await callCli('get_package_operation', { operationId })).stdout)
+      expect(observed.result).toMatchObject({
+        ...source,
+        operationId,
+        completionStatus: 'pending',
+        sensitiveExportReview: {
+          destinationPath,
+          expiresAt: expect.any(Number),
+          fileDigest: {
+            sizeBytes: expect.any(Number),
+            checksum: expect.stringMatching(/^[a-f0-9]{64}$/)
+          },
+          fileScope: { fileCount: 0, includesSessionHistory: true },
+          findings: [{ source: 'session_metadata', rule: expect.any(String) }],
+          actions: ['approved', 'rejected'],
+          responseCapability: 'respond_export_review'
+        }
+      })
+      expect(content(attempt).error).toMatchObject({
+        sensitiveExportReview: observed.result.sensitiveExportReview
+      })
+      expect(JSON.stringify([attempt, observed])).not.toContain('synthetic-private-value')
+      await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      const decision = approvalFor(observed.result)
+      const rpc = { ...decision, action: 'respond-export-review' } as const
+      for (const auth of ['cookie', 'browser-origin'] as const) {
+        expect((await invokePackageRpc(rpc, auth)).ok).toBe(false)
+      }
+      for (const change of [
+        { operationId: '00000000-0000-4000-8000-000000000001' },
+        { destinationPath: join(root, 'other.science') },
+        { sha256: 'a'.repeat(64) },
+        { sizeBytes: decision.sizeBytes + 1 },
+        { expiresAt: decision.expiresAt + 1 }
+      ]) {
+        const refused = await sdk.callTool({
+          name: 'respond_export_review',
+          arguments: { ...decision, ...change }
+        })
+        expect(content(refused).error).toMatchObject({ code: 'package_export_review_unavailable' })
+      }
+      for (const change of [{ source: 'delegated_agent' }, { force: true }]) {
+        const refused = await sdk.callTool({
+          name: 'respond_export_review',
+          arguments: { ...decision, ...change }
+        })
+        expect(content(refused).error).toMatchObject({ code: 'invalid_request' })
+      }
+      await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      const approved = JSON.parse((await callCli('respond_export_review', decision)).stdout)
+      expect(approved.result).toMatchObject({
+        operationId,
+        sensitiveExportDecision: { source: 'user_relay', decision: 'approved' }
+      })
+      const query = async (): Promise<unknown> =>
+        content(await sdk.callTool({ name: 'get_package_operation', arguments: { operationId } }))
+          .result
+      await expect.poll(query).toMatchObject({
+        operationId,
+        completionStatus: 'completed',
+        delivery: {
+          status: 'verified',
+          file: { path: destinationPath, sizeBytes: decision.sizeBytes, sha256: decision.sha256 }
+        },
+        sensitiveExportDecision: { source: 'user_relay', decision: 'approved' }
+      })
+      const original = await readFile(destinationPath)
+      expect(createHash('sha256').update(original).digest('hex')).toBe(decision.sha256)
+      const duplicate = await sdk.callTool({ name: 'respond_export_review', arguments: decision })
+      expect(content(duplicate).result).toEqual(await query())
+      const conflict = await sdk.callTool({
+        name: 'respond_export_review',
+        arguments: { ...decision, decision: 'rejected' }
+      })
+      expect(content(conflict).error).toMatchObject({
+        operationId,
+        code: 'package_export_review_conflict'
+      })
+      await unlink(destinationPath)
+      const afterRemoval = await sdk.callTool({
+        name: 'respond_export_review',
+        arguments: decision
+      })
+      expect(content(afterRemoval).result).toMatchObject({
+        operationId,
+        completionStatus: 'unconfirmed',
+        sensitiveExportDecision: { source: 'user_relay', decision: 'approved' }
+      })
+      await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await flushLogs()
+      const logs = await readFile(getLogFilePath()!, 'utf8')
+      expect(logs).toContain('session-package.export')
+      expect(logs).not.toContain('synthetic-private-value')
+    },
+    { sensitive: true, captureLogs: true }
+  )
+})
+
+it('recovers the original result after the relayed decision response is lost', async () => {
+  const decided = Promise.withResolvers<void>()
+  const unblock = Promise.withResolvers<void>()
+  await withPackageService(
+    async ({ root, sdk, callCli }) => {
+      const destinationPath = join(root, 'decision-response-lost.science')
+      const attempt = await sdk.callTool({
+        name: 'export_session',
+        arguments: { ...source, destinationPath }
+      })
+      const decision = approvalFor(content(attempt).error)
+      const controller = new AbortController()
+      const reply = sdk.callTool(
+        { name: 'respond_export_review', arguments: decision },
+        undefined,
+        { signal: controller.signal }
+      )
+      try {
+        await Promise.race([
+          decided.promise,
+          reply.then(() => {
+            throw new Error('Decision reply was not held.')
+          })
+        ])
+        controller.abort(new Error('Test client stopped observing the decision'))
+        await expect(reply).rejects.toThrow()
+        await expect
+          .poll(
+            async () =>
+              JSON.parse(
+                (await callCli('get_package_operation', { operationId: decision.operationId }))
+                  .stdout
+              ).result
+          )
+          .toMatchObject({
+            operationId: decision.operationId,
+            completionStatus: 'completed',
+            sensitiveExportDecision: { source: 'user_relay', decision: 'approved' },
+            delivery: {
+              status: 'verified',
+              file: { path: destinationPath, sha256: decision.sha256 }
+            }
+          })
+      } finally {
+        unblock.resolve()
+      }
+    },
+    {
+      sensitive: true,
+      afterDecision: () => {
+        decided.resolve()
+        return unblock.promise
+      }
+    }
+  )
+})
+
+it.each(['rejected', 'expired', 'changed', 'restarted'] as const)(
+  'does not publish a %s candidate in the external review flow',
+  async (scenario) => {
+    const expire = new AbortController()
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal)
+    const clock = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation((milliseconds) =>
+        milliseconds === 10 * 60_000 ? expire.signal : realTimeout(milliseconds)
+      )
+    try {
+      await withPackageService(
+        async ({ root, sdk, service, restartPackageService }) => {
+          let stagedPath: string | undefined
+          const exportTo = service.exportTo.bind(service)
+          vi.spyOn(service, 'exportTo').mockImplementation((request, path, options) => {
+            stagedPath = path
+            return exportTo(request, path, options)
+          })
+          const destinationPath = join(root, 'unpublished-candidate.science')
+          const attempt = await sdk.callTool({
+            name: 'export_session',
+            arguments: { ...source, destinationPath }
+          })
+          const approved = approvalFor(content(attempt).error)
+          const originalStage = stagedPath!
+          const decision = {
+            ...approved,
+            decision: scenario === 'rejected' ? 'rejected' : 'approved'
+          }
+          if (scenario === 'changed') {
+            const bytes = await readFile(stagedPath!)
+            bytes[bytes.length - 1] ^= 1
+            await writeFile(stagedPath!, bytes)
+          }
+          if (scenario === 'expired') expire.abort(new Error('Test review expired'))
+          if (scenario === 'restarted') {
+            await restartPackageService()
+            const replacement = await sdk.callTool({
+              name: 'export_session',
+              arguments: { ...source, destinationPath: join(root, 'other-candidate.science') }
+            })
+            expect(content(replacement).error).toMatchObject({ code: 'package_sensitive_content' })
+          }
+          const response = await sdk.callTool({
+            name: 'respond_export_review',
+            arguments: decision
+          })
+          if (scenario === 'expired' || scenario === 'restarted') {
+            expect(content(response).error).toMatchObject({
+              code: 'package_export_review_unavailable'
+            })
+          } else {
+            expect(content(response).result).toMatchObject({
+              sensitiveExportDecision: { source: 'user_relay', decision: decision.decision }
+            })
+          }
+
+          const query = async (): Promise<unknown> =>
+            content(
+              await sdk.callTool({
+                name: 'get_package_operation',
+                arguments: { operationId: approved.operationId }
+              })
+            ).result
+          await expect.poll(query).toMatchObject({
+            operationId: approved.operationId,
+            completionStatus:
+              scenario === 'changed'
+                ? 'failed'
+                : scenario === 'restarted'
+                  ? 'unconfirmed'
+                  : 'cancelled',
+            ...(scenario === 'expired' ? { code: 'package_export_review_expired' } : {}),
+            ...(scenario === 'changed' ? { code: 'package_sensitive_export_changed' } : {})
+          })
+          await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+          await expect(lstat(originalStage)).rejects.toMatchObject({ code: 'ENOENT' })
+          if (scenario === 'rejected') {
+            const duplicate = await sdk.callTool({
+              name: 'respond_export_review',
+              arguments: decision
+            })
+            expect(content(duplicate).result).toEqual(await query())
+          }
+        },
+        { sensitive: true }
+      )
+    } finally {
+      clock.mockRestore()
+    }
+  }
+)
+
 it('publishes the reviewed archive only after native confirmation and retains the original operation', async () => {
   await withPackageService(
     async ({ root, sdk, callCli, invokePackageRpc, respondAsDesktop }) => {
@@ -1018,6 +1339,13 @@ it('publishes the reviewed archive only after native confirmation and retains th
       )
       await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
       const nativeDetail = confirmNative.mock.calls[0]![0].detail as string
+      const responseDuringDialog = await sdk.callTool({
+        name: 'respond_export_review',
+        arguments: approvalFor(observed.result)
+      })
+      expect(content(responseDuringDialog).error).toMatchObject({
+        code: 'package_export_review_conflict'
+      })
       nativeReply.resolve({ response: 1 })
       await confirmation
       await expect
@@ -1033,7 +1361,8 @@ it('publishes the reviewed archive only after native confirmation and retains th
         .toMatchObject({
           operationId,
           completionStatus: 'completed',
-          delivery: { status: 'verified', file: { path: destinationPath } }
+          delivery: { status: 'verified', file: { path: destinationPath } },
+          sensitiveExportDecision: { source: 'desktop', decision: 'approved' }
         })
       expect(nativeDetail).toContain(
         createHash('sha256')

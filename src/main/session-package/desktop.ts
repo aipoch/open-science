@@ -19,6 +19,7 @@ import type {
   AgentPackageOperationReference,
   PackageFileDigest,
   SensitiveContentEvidence,
+  SensitiveExportDecision,
   SessionPackageExportResult,
   SessionPackageImportResult,
   SessionPackageRequest,
@@ -422,6 +423,7 @@ export class SessionPackageDesktop {
         () => this.operations.snapshot
       )
     }
+    if (request.action === 'respond-export-review') return this.respondToExportReview(request)
     if (request.action === 'export-with-sensitive-content') {
       if (!desktopCallerId)
         throw new ApplicationCommandError(
@@ -435,7 +437,8 @@ export class SessionPackageDesktop {
         pending?.operationId !== request.operationId ||
         snapshot.id !== request.operationId ||
         pending.signal.aborted ||
-        pending.confirming
+        pending.confirming ||
+        Date.now() >= snapshot.sensitiveExportReview.expiresAt
       )
         throw new Error('No pending sensitive export is available.')
       const { translate } = this.options
@@ -467,7 +470,12 @@ export class SessionPackageDesktop {
         )
         .then(({ response }) => {
           pending.signal.throwIfAborted()
-          pending.resolve(response === 1)
+          if (Date.now() >= snapshot.sensitiveExportReview!.expiresAt)
+            throw new Error('The sensitive export review expired.')
+          this.resolveSensitiveReview(pending, {
+            source: 'desktop',
+            decision: response === 1 ? 'approved' : 'rejected'
+          })
           return this.operations.snapshot
         })
         .catch((error: unknown) => {
@@ -594,6 +602,56 @@ export class SessionPackageDesktop {
     if (this.downloadDirectory) await rm(this.downloadDirectory, { recursive: true, force: true })
   }
 
+  private respondToExportReview(
+    request: Extract<PackageOperationRequest, { action: 'respond-export-review' }>
+  ): PackageOperationSnapshot {
+    const snapshot = this.operations.snapshot
+    const review = snapshot?.sensitiveExportReview
+    const recorded = snapshot?.sensitiveExportDecision
+    if (
+      snapshot?.id !== request.operationId ||
+      snapshot.kind !== 'export' ||
+      snapshot.agent?.destinationPath !== request.destinationPath ||
+      request.expiresAt !== (recorded?.expiresAt ?? review?.expiresAt) ||
+      request.sizeBytes !== (recorded?.sizeBytes ?? review?.fileDigest.sizeBytes) ||
+      request.sha256 !== (recorded?.sha256 ?? review?.fileDigest.checksum)
+    )
+      throw new ApplicationCommandError(
+        'session-package-review-unavailable',
+        'The sensitive export review no longer matches this operation, destination, and candidate. Check the original operation.'
+      )
+    if (recorded?.source === request.source && recorded.decision === request.decision)
+      return snapshot
+    const pending = this.sensitiveReview
+    if (recorded || pending?.confirming)
+      throw new ApplicationCommandError(
+        'session-package-operation-conflict',
+        'This export already has a decision or a native confirmation in progress. Check the original operation.'
+      )
+    if (
+      !review?.agentDetails ||
+      review.destination !== request.destinationPath ||
+      snapshot.state !== 'awaiting-selection' ||
+      pending?.operationId !== request.operationId ||
+      pending.signal.aborted ||
+      Date.now() >= review.expiresAt
+    )
+      throw new ApplicationCommandError(
+        'session-package-review-unavailable',
+        'This sensitive export review expired or is no longer pending. Check the original operation.'
+      )
+    this.resolveSensitiveReview(pending, { source: request.source, decision: request.decision })
+    return this.operations.snapshot!
+  }
+
+  private resolveSensitiveReview(
+    pending: NonNullable<SessionPackageDesktop['sensitiveReview']>,
+    decision: Pick<SensitiveExportDecision, 'source' | 'decision'>
+  ): void {
+    this.operations.finishSensitiveExportReview(decision)
+    pending.resolve(decision.decision === 'approved')
+  }
+
   private async waitForSensitiveReview(
     evidence: SensitiveContentEvidence[],
     review: Omit<NonNullable<PackageOperationSnapshot['sensitiveExportReview']>, 'expiresAt'>,
@@ -615,6 +673,7 @@ export class SessionPackageDesktop {
       if (!(await decision)) this.operations.cancel()
     } catch (error) {
       if (!timeout.aborted) throw error
+      this.operations.setAgentFailure('export-review-expired')
       this.operations.cancel()
     } finally {
       this.sensitiveReview = undefined
@@ -1141,7 +1200,7 @@ export class SessionPackageDesktop {
               let sessionTitle: string | undefined
               let sensitiveFinding: PackageSensitiveContentError | undefined
               const evidence: SensitiveContentEvidence[] = []
-              const { webOmissions } = await this.options.withDataRootWrite(() =>
+              const { webOmissions, fileCount } = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
                   this.options.service.exportTo(request, archive, {
                     onSensitiveContent: (finding) => {
@@ -1209,7 +1268,24 @@ export class SessionPackageDesktop {
                   evidence,
                   {
                     destination: orgCaseTarget?.name ?? (stage ? undefined : filePath),
-                    fileDigest: reviewedDigest
+                    fileDigest: reviewedDigest,
+                    ...(agent
+                      ? {
+                          agentDetails: {
+                            fileScope: { fileCount, includesSessionHistory: true },
+                            // Never send content snippets, storage keys or secret fingerprints to
+                            // the external Agent. They are not needed to decide about these bytes.
+                            findings: evidence.map(({ sourceStorageKey, location, rule }) => ({
+                              source: sourceStorageKey
+                                ? 'research_file'
+                                : location.startsWith('session.json')
+                                  ? 'session_metadata'
+                                  : 'package_metadata',
+                              rule
+                            }))
+                          }
+                        }
+                      : {})
                   },
                   signal
                 )
