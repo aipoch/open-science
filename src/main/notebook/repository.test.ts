@@ -292,6 +292,8 @@ describe('notebook run repository', () => {
       includeEnvironmentManifests: true
     })
     expect(fullRuns[0]?.environmentManifest).toEqual(manifest)
+    const found = await reopened.findRun(projectId, sessionId, lane, { runId: 'run-1' })
+    expect(found?.run.environmentManifest).toEqual(manifest)
 
     await writeFile(sidecarPath, '{}')
     const corrupt = await reopened.readSessionRunWindow(projectId, sessionId, 0, ['run-1'])

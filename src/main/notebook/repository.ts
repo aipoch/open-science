@@ -1054,7 +1054,9 @@ class NotebookRunRepository {
         ? candidate.runId === lookup.runId
         : candidate.submissionIdentity === lookup.submissionIdentity
     )
-    return run ? { document, run } : undefined
+    if (!run) return undefined
+    const hydrated = await this.withEnvironmentManifests(document, [run])
+    return { document, run: hydrated.runs[0]! }
   }
 
   // Resolves one caller-owned Run without making callers reconstruct the physical root/frame
