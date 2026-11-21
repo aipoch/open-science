@@ -43,7 +43,7 @@ module.exports = function registerDesktopEntry({image, root, env, chromium}) {
       await page.waitForFunction(async ({kind,expected})=>{
         try {
           if((await window.api.update.getStatus()).current!=='1.3.2')return false
-          const snapshot=await window.api.sessions.packageOperation({action:'snapshot'})
+          const snapshot=await window.api.packagePresentation.getState()
           return kind==='file'
             ? snapshot?.importFilename===expected || snapshot?.pendingImports?.some(p=>p.filename===expected)
             : snapshot?.browserTransfers?.some(t=>t.filename===expected && t.state!=='failed')

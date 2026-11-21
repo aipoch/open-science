@@ -28,8 +28,7 @@ async function main(){
  })
  const page=await desk.firstWindow()
  await page.waitForFunction(async()=>{try{return (await window.api.databaseStartup.getState()).phase==='ready'}catch{return false}},{},{timeout:90000})
- await page.evaluate(()=>window.api.settings.markOnboardingComplete())
- await page.reload({waitUntil:'domcontentloaded'})
+
  console.log('initial status',await page.evaluate(()=>window.api.update.getStatus()))
  await desk.evaluate(({app},url)=>{
    const sdk=process.mainModule.require('node:module').createRequire(app.getAppPath()+'/package.json')('electron-updater').autoUpdater
@@ -38,6 +37,7 @@ async function main(){
  console.log('offer', (await page.evaluate(()=>window.api.update.check())).state)
  const ready=await page.evaluate(()=>window.api.update.download())
  console.log('download',ready.state,ready.latest,ready.error,ready.automaticDownloads);assert.equal(ready.state,'ready')
+ console.log('ordinary quit entry', await desk.evaluate(({app})=>({version:app.getVersion(),image:process.env.APPIMAGE})))
  const oldPid=await desk.evaluate(()=>process.pid)
  await desk.evaluate(({app})=>{setTimeout(()=>app.quit(),5)})
  for(let i=0;fs.existsSync('/proc/'+oldPid)&&i<900;i++)await sleep(100)
