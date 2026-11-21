@@ -72,7 +72,7 @@ type NotebookSessionLifecycleOptions = {
   onActivityChanged?: (sessionId?: string) => void
   observeSession?: (sessionId: string) => () => void
   isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
-  admitSessionWork?: (projectId: string, sessionId: string) => () => void
+  admitSessionWork?: (projectId: string, sessionId: string, observation?: boolean) => () => void
   storageRoot: string
   defaultProjectId: string
   repository: NotebookRunRepository
@@ -341,15 +341,17 @@ class NotebookSessionLifecycleOwner {
     return createRootNotebookLane(projectId, sessionId, `root-frame-${sessionId}`)
   }
 
-  ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
+  ensure(request: NotebookSessionRequest, admissionHeld = false): Promise<RuntimeSession> {
     const idleTeardown = this.idleTeardowns.get(request.sessionId)
-    if (idleTeardown) return idleTeardown.then(() => this.ensure(request))
+    if (idleTeardown) return idleTeardown.then(() => this.ensure(request, admissionHeld))
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const lane = this.laneForRequest(request)
     let releaseAdmission: (() => void) | undefined
     try {
       this.assertScopeAvailable(projectId, request.sessionId)
-      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
+      // History reconciliation runs inside an admitted observation, including while export drains it.
+      if (!admissionHeld)
+        releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -498,7 +500,11 @@ class NotebookSessionLifecycleOwner {
     let releaseAdmission: (() => void) | undefined
     try {
       this.assertScopeAvailable(projectId, request.sessionId)
-      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
+      releaseAdmission = this.options.admitSessionWork?.(
+        projectId,
+        request.sessionId,
+        !trackActivity
+      )
     } catch (error) {
       return Promise.reject(error)
     }

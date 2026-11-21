@@ -18,8 +18,9 @@ export const capturePackageHistory = async (
     (run) => run.projectId === request.projectId && run.sessionId === request.sessionId
   )
   const jobs = await new ComputeJobRepository(getClient).findByOwner(request)
+  if (tasks.some((run) => run.status === 'running'))
+    throw new Error('Wait for the scheduled task to finish before exporting.')
   if (
-    tasks.some((run) => run.status === 'running') ||
     jobs.some(
       (job) =>
         job.raw_status ||
@@ -27,7 +28,7 @@ export const capturePackageHistory = async (
           job.cancellation_status !== 'cancelled')
     )
   )
-    throw new Error('Wait for Task and Compute work to finish before exporting.')
+    throw new Error('Wait for the compute job to finish before exporting.')
   return packageHistorySchema.parse({
     taskRuns: tasks.map((run) => ({
       id: run.id,
