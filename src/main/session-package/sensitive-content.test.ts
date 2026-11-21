@@ -621,6 +621,10 @@ it('checks export metadata values independently of their field names', () => {
     'credential_name',
     'hasCredentials',
     'no-api-key',
+    'hasDatabasePassword',
+    'reportPageToken',
+    'pipelineSecretKeyLabel',
+    'compassWord',
     'contextUsedTokens',
     'notes'
   ]) {
@@ -800,13 +804,22 @@ it.each([
   'api-secret',
   'API_SECRET',
   'ACME_SECRET_KEY',
-  'REPORT_SESSION_TOKEN'
+  'REPORT_SESSION_TOKEN',
+  'openai_api_key',
+  'db_password',
+  'warehouseAPIKey',
+  'service-client-secret',
+  'archive_private_key',
+  'tenantRefreshToken',
+  'worker_session_token',
+  'backupPassphrase'
 ])('recognizes %s as a credential position', (key) => {
   expect(isPrivatePackageField(key, 'opaque')).toBe(true)
   for (const text of [
     JSON.stringify({ [key]: 'opaque' }),
     `${key}=opaque`,
-    `https://example.org/?${key}=opaque`
+    `https://example.org/?${key}=opaque`,
+    `--${key} opaque`
   ]) {
     expect(findSensitivePackageText(text)).toBeDefined()
   }
