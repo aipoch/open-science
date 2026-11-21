@@ -480,11 +480,36 @@ const waitForInstalledApplicationsToExit = (installDirectory, env) =>
     { env: { ...env, OPEN_SCIENCE_SMOKE_INSTALL_DIR: installDirectory } }
   )
 
+// The isolated profile survives both shortcut launches. Keep only this launch's scan records,
+// including any that rotated while NSIS handed off to the new desktop.
+const readOccupancyScans = async (env, since) => {
+  const directory = join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs')
+  const scans = []
+  for (const name of await readdir(directory)) {
+    if (!/^main(?:\.\d+)?\.log$/.test(name)) continue
+    const lines = (await readFile(join(directory, name), 'utf8')).split('\n')
+    for (const line of lines) {
+      if (!line.includes('Windows installation occupancy inspected')) continue
+      const { t, scope, msg, data } = JSON.parse(line)
+      if (
+        scope === 'update' &&
+        msg === 'Windows installation occupancy inspected' &&
+        Date.parse(t) >= since
+      ) {
+        const { fileCount, resourceCount, enumMs, rmMs, durationMs } = data
+        scans.push({ t, fileCount, resourceCount, enumMs, rmMs, durationMs })
+      }
+    }
+  }
+  return scans.sort((a, b) => a.t.localeCompare(b.t))
+}
+
 // Launch the installer-created link itself. Its unchanged target and the version reported by
 // the healthy renderer distinguish activation from a harness that launched the staged exe.
 const probeInstalledShortcut = async (installDirectory, env, expectedVersion) => {
   const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
   await rm(portFile, { force: true })
+  const startedAt = Date.now()
   await runProcess(
     'powershell.exe',
     [
@@ -565,6 +590,7 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
   } finally {
     await browser.close()
   }
+  return readOccupancyScans(env, startedAt)
 }
 
 const runElectronUpdater = async ({
@@ -1215,11 +1241,17 @@ const main = async () => {
         'Read'
       )
       try {
-        await probeInstalledShortcut(installDirectory, env, previousVersion)
+        successor.shortcutOccupancyScans = {
+          held: await probeInstalledShortcut(installDirectory, env, previousVersion)
+        }
       } finally {
         await terminateProcessTree(child)
       }
-      await probeInstalledShortcut(installDirectory, env, currentVersion)
+      successor.shortcutOccupancyScans.released = await probeInstalledShortcut(
+        installDirectory,
+        env,
+        currentVersion
+      )
       successor.nextDeltaBasisSha512 = await verifyCachedInstaller(
         currentInstaller,
         cachedInstaller
