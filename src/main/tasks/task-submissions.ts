@@ -7,7 +7,13 @@ import {
   readDurableJsonFile,
   writeDurableJsonFile
 } from '@aipoch/durable-files'
-import type { StartTaskRunRequest, TaskRun, TaskSubmission } from '../../shared/task-api'
+import type {
+  StartTaskRunRequest,
+  TaskNotebookContinuation,
+  TaskNotebookContinuationRequest,
+  TaskRun,
+  TaskSubmission
+} from '../../shared/task-api'
 import { isAgentAuthenticationFailure } from '../acp/prompt-error'
 import type { TaskRunJournalEntry } from './task-run-journal'
 import { TaskRunnerError } from './task-runner'
@@ -15,6 +21,12 @@ import { TaskRunnerError } from './task-runner'
 const log = createLogger('task-submissions')
 
 const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
+const notebookContinuationSchema = z.object({
+  runId: z.string().min(1),
+  branchId: z.string().min(1),
+  refusalId: z.string().min(1),
+  source: z.literal('user_relay')
+}) satisfies z.ZodType<TaskNotebookContinuation>
 const receiptSchema = z
   .object({
     requestId: requestIdSchema,
@@ -22,6 +34,7 @@ const receiptSchema = z
     status: z.enum(['pending', 'accepted', 'failed', 'interrupted']),
     createdAt: z.number().finite(),
     runId: z.string().min(1).optional(),
+    notebookContinuation: notebookContinuationSchema.optional(),
     error: z.object({ code: z.string(), message: z.string() }).optional()
   })
   .passthrough()
@@ -57,6 +70,7 @@ const snapshot = (receipt: Receipt): TaskSubmission =>
     status: receipt.status,
     createdAt: receipt.createdAt,
     ...(receipt.runId ? { runId: receipt.runId } : {}),
+    ...(receipt.notebookContinuation ? { notebookContinuation: receipt.notebookContinuation } : {}),
     ...(receipt.error ? { error: receipt.error } : {})
   })
 
@@ -160,20 +174,41 @@ export class TaskSubmissions {
   }
 
   async submit(requestId: string, request: StartTaskRunRequest): Promise<TaskSubmission> {
+    if (!request || typeof request !== 'object' || Array.isArray(request))
+      throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
+    return this.submitPrepared(requestId, request, (prepared) =>
+      this.dependencies.startRun(prepared, requestId)
+    )
+  }
+
+  submitNotebookContinuation(
+    requestId: string,
+    request: TaskNotebookContinuationRequest,
+    start: (request: TaskNotebookContinuationRequest) => Promise<TaskRun>
+  ): Promise<TaskSubmission> {
+    const { runId, branchId, refusalId, source } = request
+    return this.submitPrepared(requestId, request, start, { runId, branchId, refusalId, source })
+  }
+
+  private async submitPrepared<Request extends object>(
+    requestId: string,
+    request: Request,
+    start: (prepared: Request) => Promise<TaskRun>,
+    notebookContinuation?: TaskNotebookContinuation
+  ): Promise<TaskSubmission> {
     if (!requestIdSchema.safeParse(requestId).success)
       throw new TaskRunnerError(
         'invalid_request',
         'Request ID must contain 1–128 letters, digits, underscores or hyphens.'
       )
-    if (!request || typeof request !== 'object' || Array.isArray(request))
-      throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
     const fingerprint = createHash('sha256')
+      .update(notebookContinuation ? 'notebook-continuation\0' : '')
       .update(JSON.stringify(canonicalRequest(request)))
       .digest('hex')
     return this.serialize(async () => {
-      const { entry, created } = await this.reserve(requestId, fingerprint)
+      const { entry, created } = await this.reserve(requestId, fingerprint, notebookContinuation)
       // Preparation is owned by the service, not by the lifetime of the HTTP response.
-      if (created) void this.prepare(entry, structuredClone(request))
+      if (created) void this.prepare(entry, () => start(structuredClone(request)))
       return snapshot(entry)
     })
   }
@@ -199,7 +234,8 @@ export class TaskSubmissions {
 
   private async reserve(
     requestId: string,
-    fingerprint: string
+    fingerprint: string,
+    notebookContinuation?: TaskNotebookContinuation
   ): Promise<{ entry: Receipt; created: boolean }> {
     if (this.stopped)
       throw new TaskRunnerError('submission_unavailable', 'The service is stopping.')
@@ -222,18 +258,19 @@ export class TaskSubmissions {
       requestId,
       fingerprint,
       status: 'pending',
-      createdAt: (this.dependencies.now ?? Date.now)()
+      createdAt: (this.dependencies.now ?? Date.now)(),
+      ...(notebookContinuation ? { notebookContinuation } : {})
     }
     this.entries.set(requestId, entry)
     await this.persist()
     return { entry, created: true }
   }
 
-  private async prepare(entry: Receipt, request: StartTaskRunRequest): Promise<void> {
+  private async prepare(entry: Receipt, start: () => Promise<TaskRun>): Promise<void> {
     let run: TaskRun | undefined
     let failure: unknown
     try {
-      run = await this.dependencies.startRun(request, entry.requestId)
+      run = await start()
     } catch (error) {
       failure = error
       log.error('Task submission preparation failed.', { requestId: entry.requestId, error })

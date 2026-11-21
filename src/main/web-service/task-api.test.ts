@@ -13,8 +13,9 @@ import {
   type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { TaskNotebookExecution } from '../../shared/task-api'
+import type { TaskNotebookContinuationRequest, TaskNotebookExecution } from '../../shared/task-api'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
+import { ApplicationEventHub } from '../application-events'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import {
   attachEnabledComputeHosts,
@@ -27,11 +28,12 @@ import {
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type { TaskAgentPort, TaskContinuationTracker, TaskSessionPort } from '../tasks/task-runner'
-import type { TaskRunJournalEntry } from '../tasks/task-run-journal'
+import { FileTaskRunJournal, type TaskRunJournalEntry } from '../tasks/task-run-journal'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { HeadlessTaskApi } from './task-api'
+import { startWebHttpServer } from './http-server'
 
 const project = {
   id: 'project-1',
@@ -362,6 +364,255 @@ describe('HeadlessTaskApi adapter', () => {
       expect(finished).toMatchObject(expected)
       await expect(api.getRun(run.id)).resolves.toMatchObject(expected)
     } finally {
+      await api.dispose()
+      await notebook.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('relays a current Notebook stop once and recovers its continuation after a service restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-notebook-continuation-'))
+    const journal = new FileTaskRunJournal(root)
+    const promptMessageId = 'stopped-prompt'
+    let session = materializeSessionConversationGraph({
+      id: 'stopped-session',
+      projectId: project.id,
+      cwd: root,
+      title: 'Notebook continuation',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: promptMessageId,
+          role: 'user',
+          content: 'Analyze the inputs.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const scope = { projectId: project.id, sessionId: session.id }
+    const branchId = session.conversationGraph.frames[0]!.activeBranchId
+    const originalRun = {
+      id: 'stopped-run',
+      ...scope,
+      cwd: root,
+      startedAt: 1,
+      completedAt: 2,
+      status: 'completed',
+      promptMessageId,
+      artifacts: [],
+      preferredComputeHostIds: []
+    } as const
+    const makeNotebook = (): NotebookRuntimeService =>
+      new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: project.id
+      })
+    const notebook = makeNotebook()
+    const intent = notebook.createExecutionIntent({
+      ...scope,
+      messageBranchId: branchId,
+      promptMessageId
+    })
+    notebook.rememberExecutionIntent(scope, promptMessageId, intent)
+    const refusalId = intent.block('pressured')
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    const agent = createAgent({
+      prompt: vi.fn(async (request, observer) => {
+        const context = await observer?.onPromptAdmitted?.()
+        if (request.notebookContinuation) {
+          intent.claimContinuation()
+          notebook.createExecutionIntent({
+            ...scope,
+            messageBranchId: context?.messageBranchId,
+            promptMessageId: request.promptMessageId,
+            continuedFromRefusalId: request.notebookContinuation.refusalId
+          })
+        }
+        observer?.onProviderPromptAccepted?.()
+      })
+    })
+    const commands = commandsFrom(async (channel, _callerContext, args) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [session] }
+      if (channel === 'sessions:save-session') {
+        session = materializeSessionConversationGraph(args[0] as PersistedChatSession)
+        return session
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const makeApi = (notebook: NotebookRuntimeService): HeadlessTaskApi =>
+      new HeadlessTaskApi(
+        { commands, agent, notebook },
+        { runJournal: journal, submissionRoot: root }
+      )
+    const api = makeApi(notebook)
+    const startServer = (tasks: HeadlessTaskApi): ReturnType<typeof startWebHttpServer> =>
+      startWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: root,
+        applicationCommands: {
+          localWeb: commands,
+          remoteWeb: { ...commands, rejectedCommandNames: () => [] }
+        },
+        applicationEvents: new ApplicationEventHub(),
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: 'test',
+          configRoot: root,
+          platform: 'test',
+          versions: { node: 'test' }
+        },
+        tasks
+      })
+    const request: TaskNotebookContinuationRequest = {
+      runId: originalRun.id,
+      branchId,
+      refusalId,
+      source: 'user_relay',
+      prompt: 'Continue this analysis.'
+    }
+    const server = await startServer(api)
+    const send = (
+      port: number,
+      requestId: string,
+      body: unknown,
+      headers: Record<string, string> = {
+        authorization: 'Bearer test-token'
+      }
+    ): Promise<Response> =>
+      fetch(`http://127.0.0.1:${port}/api/v1/notebook-continuations/${requestId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(body)
+      })
+    try {
+      await journal.replace([{ ...originalRun, artifacts: [], preferredComputeHostIds: [] }])
+      await api.initialize()
+      const base = `http://127.0.0.1:${server.port}`
+      const cookie = { cookie: 'open_science_web_token=test-token' }
+      const bootstrap = async (
+        headers: Record<string, string>
+      ): Promise<{ taskCapabilities: string[] }> =>
+        fetch(`${base}/api/bootstrap`, { headers }).then((response) => response.json())
+      expect((await bootstrap({ authorization: 'Bearer test-token' })).taskCapabilities).toContain(
+        'notebook-continuation'
+      )
+      expect((await bootstrap(cookie)).taskCapabilities).not.toContain('notebook-continuation')
+      expect((await send(server.port, 'browser', request, cookie)).status).toBe(403)
+      expect(
+        (await send(server.port, 'invalid-source', { ...request, source: 'delegated_agent' }))
+          .status
+      ).toBe(400)
+      await expect(api.continueNotebook('wrong-caller', request)).rejects.toMatchObject({
+        code: 'task_relay_required'
+      })
+      await api.runWithCallerContext(caller, async () => {
+        const runScope = { runId: originalRun.id }
+        const interactionId = `notebook-continuation:${refusalId}`
+        await expect(api.listInteractions(runScope)).resolves.toMatchObject([
+          {
+            id: interactionId,
+            kind: 'notebook-continuation',
+            branchId,
+            state: 'pending',
+            responseCapability: 'continue_notebook'
+          }
+        ])
+        await expect(api.getInteraction(interactionId, runScope)).resolves.toMatchObject({
+          refusalId,
+          reason: 'pressured'
+        })
+        await expect(api.getRun(originalRun.id)).resolves.toMatchObject({
+          execution: { refusalId, next: { action: 'continue_notebook' } }
+        })
+        await expect(
+          api.continueNotebook('wrong-branch', { ...request, branchId: 'old-branch' })
+        ).resolves.toMatchObject({ status: 'pending' })
+        await vi.waitFor(async () => {
+          await expect(api.getSubmission('wrong-branch')).resolves.toMatchObject({
+            status: 'failed',
+            error: { code: 'notebook_continuation_expired' }
+          })
+        })
+        expect(agent.prompt).not.toHaveBeenCalled()
+
+        const accepted = await send(server.port, 'continue-once', request)
+        expect(accepted.status).toBe(202)
+        expect(await accepted.json()).toMatchObject({ data: { status: 'pending' } })
+        await vi.waitFor(async () => {
+          await expect(api.getSubmission('continue-once')).resolves.toMatchObject({
+            status: 'accepted'
+          })
+        })
+        const receipt = await api.getSubmission('continue-once')
+        expect(receipt).toMatchObject({
+          notebookContinuation: { ...runScope, refusalId, branchId, source: 'user_relay' }
+        })
+        await expect(api.waitForRun(receipt.runId!)).resolves.toMatchObject({
+          ...scope,
+          status: 'completed'
+        })
+        await expect(api.getRun(receipt.runId!)).resolves.toMatchObject({
+          execution: { continuedFromRefusalId: refusalId }
+        })
+        await expect(api.continueNotebook('continue-once', request)).resolves.toEqual(receipt)
+        await expect(
+          api.continueNotebook('continue-once', { ...request, prompt: 'Another prompt' })
+        ).rejects.toMatchObject({ code: 'submission_conflict' })
+        expect(agent.prompt).toHaveBeenCalledTimes(1)
+        await expect(api.getRun(originalRun.id)).resolves.toMatchObject({
+          status: originalRun.status,
+          execution: { status: 'failed', refusalId }
+        })
+        notebook.bindExecutionIntent(scope, intent)
+        await expect(api.getInteraction(interactionId, runScope)).rejects.toMatchObject({
+          code: 'notebook_continuation_expired'
+        })
+        await api.continueNotebook('retry-consumed', request)
+        await vi.waitFor(async () => {
+          await expect(api.getSubmission('retry-consumed')).resolves.toMatchObject({
+            status: 'failed',
+            error: { code: 'notebook_continuation_expired' }
+          })
+        })
+        expect(agent.prompt).toHaveBeenCalledTimes(1)
+      })
+      await api.dispose()
+      const restartedNotebook = makeNotebook()
+      const restarted = makeApi(restartedNotebook)
+      const restartedServer = await startServer(restarted)
+      try {
+        await restarted.initialize()
+        await restarted.runWithCallerContext(caller, async () => {
+          const receipt = await restarted.getSubmission('continue-once')
+          expect(receipt).toMatchObject({ status: 'accepted', notebookContinuation: { refusalId } })
+          const repeated = await send(restartedServer.port, 'continue-once', request)
+          expect(repeated.status).toBe(202)
+          expect(await repeated.json()).toEqual({ data: receipt })
+          await restarted.continueNotebook('retry-expired', request)
+          await vi.waitFor(async () => {
+            await expect(restarted.getSubmission('retry-expired')).resolves.toMatchObject({
+              status: 'failed',
+              error: { code: 'notebook_continuation_expired' }
+            })
+          })
+          expect(agent.prompt).toHaveBeenCalledTimes(1)
+        })
+      } finally {
+        await restartedServer.close()
+        await restarted.dispose()
+        await restartedNotebook.dispose()
+      }
+    } finally {
+      await server.close()
       await api.dispose()
       await notebook.dispose()
       await rm(root, { recursive: true, force: true })
@@ -1391,6 +1642,7 @@ describe('HeadlessTaskApi adapter', () => {
     await restarted.runWithCallerContext(caller, async () => {
       await expect(restarted.listInteractions(scope)).resolves.toEqual([])
       const interaction = await restarted.getInteraction('plan:plan-version', scope)
+      if (interaction.kind !== 'plan') throw new Error('Expected the recorded Plan interaction.')
       expect(interaction).toMatchObject({
         state: 'responded',
         response: {

@@ -92,11 +92,21 @@ export type TaskDoctorReport = Readonly<{
 
 export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
+export type TaskNotebookContinuation = Readonly<{
+  runId: string
+  branchId: string
+  refusalId: string
+  source: 'user_relay'
+}>
+
+export type TaskNotebookContinuationRequest = TaskNotebookContinuation & { prompt: string }
+
 export type TaskSubmission = {
   requestId: string
   status: 'pending' | 'accepted' | 'failed' | 'interrupted'
   createdAt: number
   runId?: string
+  notebookContinuation?: TaskNotebookContinuation
   error?: { code: string; message: string }
 }
 
@@ -115,13 +125,17 @@ export type TaskNotebookExecution = {
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string
+  refusalReason?: string
   continuedFromRefusalId?: string
   owner?: 'user'
   requiresUser?: true
   retryable?: false
   next?: {
     action:
-      'continue_notebook_in_app' | 'review_notebook_code_in_app' | 'review_notebook_runtime_in_app'
+      | 'continue_notebook'
+      | 'continue_notebook_in_app'
+      | 'review_notebook_code_in_app'
+      | 'review_notebook_runtime_in_app'
     message: string
   }
 }
@@ -354,6 +368,7 @@ export type AcquiredTaskArtifact = {
 
 export type TaskApiErrorCode =
   | 'notebook_setup_failed'
+  | 'notebook_continuation_expired'
   | 'task_relay_required'
   | 'interaction_not_found'
   | 'notebook_environment_operation_conflict'
