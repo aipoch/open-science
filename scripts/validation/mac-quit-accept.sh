@@ -34,8 +34,18 @@ wait_status 's.state==="ready"'
 test "$(zip_requests)" = 1
 pid=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).details.pid)" "$D/last-status")
 probe quit
-for i in {1..1500}; do if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.03; done
-! kill -0 "$pid" 2>/dev/null
+python3 - "$pid" "$D/old-pid-exit" <<'WAIT_PID'
+import os,sys,time
+from pathlib import Path
+start=time.monotonic()
+while time.monotonic()-start<120:
+    try: os.kill(int(sys.argv[1]),0)
+    except ProcessLookupError:
+        Path(sys.argv[2]).write_text(str(time.time()))
+        break
+    time.sleep(0.025)
+else: raise RuntimeError('initial GUI still running; no cold open attempted')
+WAIT_PID
 date -u > "$D/immediate-reopen"
 if [[ "${INTENT:-document}" = link ]]; then
   export FIXTURE_LINK=1
