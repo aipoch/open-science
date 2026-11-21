@@ -151,7 +151,9 @@ async function bundleNpm(runtime) {
     }
     if (/\.[cm]?js$/.test(key) && !keepNpmScript.has(key)) continue
     await mkdir(dirname(join(output, key)), { recursive: true })
-    await copyFile(path, join(output, key))
+    // Both trees are in the same private staging directory. Moving retained files
+    // preserves their archive modes, including the POSIX npm and npx launchers.
+    await rename(path, join(output, key))
   }
   await writeFile(
     join(output, 'THIRD-PARTY-NOTICES.txt'),
@@ -359,7 +361,7 @@ export async function stageNodeRuntime({
   const temporary = await mkdtemp(join(dirname(output), '.node-runtime-'))
   try {
     await extractNodeRuntime(archive, temporary, platform, arch)
-    await bundleNpm(temporary)
+    await bundleNpm(resolve(temporary))
     const files = {}
     for (const name of await runtimeFiles(temporary, executable))
       files[name] = await fileDigest(join(temporary, name))

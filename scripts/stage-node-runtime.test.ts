@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { c as createTar } from 'tar'
 import { zipSync, strToU8 } from 'fflate'
 import { afterEach, expect, it } from 'vitest'
@@ -193,11 +194,20 @@ it.for(['darwin', 'win32'])(
         .digest('hex')
     }
     const output = join(directory, 'output')
-    const options = { platform, arch, cache: directory, output, reuse: true }
+    const options = {
+      platform,
+      arch,
+      cache: directory,
+      output: relative(process.cwd(), output),
+      reuse: true
+    }
     const marker = join(output, 'unchanged-output')
     const executable = join(output, platform === 'win32' ? 'node.exe' : 'node')
     try {
       await stageNodeRuntime(options)
+      if (platform !== 'win32') {
+        for (const launcher of ['npm', 'npx']) await access(join(output, launcher), constants.X_OK)
+      }
       await writeFile(marker, 'kept')
       await stageNodeRuntime(options)
       expect(await readFile(marker, 'utf8')).toBe('kept')
