@@ -787,6 +787,8 @@ export type NotebookAvailableEvent = NotebookSessionReference
 export type NotebookChangedEvent = NotebookSessionReference & {
   // A successful append changes only the draft cell code within an existing write lock.
   codeAppendOnly?: true
+  // A draft acquired or released its write lock without changing Run history.
+  codeWriteOnly?: true
 }
 
 // Extends a run record with workspace roots so the agent can decide what to do next.

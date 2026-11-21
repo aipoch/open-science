@@ -115,6 +115,7 @@ const useSessionBackgroundTasks = (
       window.api.notebook?.onChanged((event) => {
         if (
           !event.codeAppendOnly &&
+          !event.codeWriteOnly &&
           event.sessionId === sessionId &&
           event.projectId === projectId
         ) {

@@ -592,10 +592,17 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
   const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
   const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
-  const stateReloadQueued = useRef(false)
+  const lastFullStateScope = useRef<string | undefined>(undefined)
+  const queuedStateRead = useRef<'full' | 'write-lock' | undefined>(undefined)
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
   const lastRevealedRunRequest = useRef<string | undefined>(undefined)
-  const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
+  const rootFrameId =
+    session?.conversationGraph?.rootFrameId ?? `root-frame-${item.notebook.sessionId}`
+  const latestNotebookRequest = useRef({
+    request: notebookRequest,
+    key: notebookRequestKey,
+    rootFrameId
+  })
 
   useLayoutEffect(() => {
     historyGeneration.current += 1
@@ -608,8 +615,12 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
       lastRevealedRunRequest.current = undefined
       viewSelectionVersion.current += 1
     }
-    latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
-  }, [notebookRequest, notebookRequestKey])
+    latestNotebookRequest.current = {
+      request: notebookRequest,
+      key: notebookRequestKey,
+      rootFrameId
+    }
+  }, [notebookRequest, notebookRequestKey, rootFrameId])
 
   // Greys the pane while python is unavailable or an upgrade is running (spec §6.5).
   const envStatus = useNotebookEnvStore((s) => s.status)
@@ -634,6 +645,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
     const previousRuns = latestNotebookState.current?.runs ?? []
     const scope = JSON.stringify([latestNotebookRequest.current.key, getDesktopRuntimeEpoch()])
+    lastFullStateScope.current = scope
     setExtraHistory((previous) =>
       previous?.scope === scope
         ? {
@@ -654,57 +666,83 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   }, [])
 
   // Reads the latest notebook state from main, including its bounded recent run window.
-  const loadNotebookState = useCallback(async (): Promise<boolean> => {
-    if (!isActive) return false
-    if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
-      return false
-    if (stateLoadInFlight.current) {
-      stateReloadQueued.current = true
-      return stateLoadInFlight.current
-    }
-    const load = (async (): Promise<boolean> => {
-      let succeeded = false
-      setIsLoading(true)
-      try {
-        do {
-          stateReloadQueued.current = false
-          const requested = latestNotebookRequest.current
-          const epoch = getDesktopRuntimeEpoch()
-          try {
-            const nextState = await window.api.notebook.state(requested.request)
+  const loadNotebookState = useCallback(
+    async (read: 'full' | 'write-lock' = 'full'): Promise<boolean> => {
+      if (!isActive) return false
+      if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
+        return false
+      if (queuedStateRead.current !== 'full') queuedStateRead.current = read
+      if (stateLoadInFlight.current) {
+        return stateLoadInFlight.current
+      }
+      const load = (async (): Promise<boolean> => {
+        let succeeded = false
+        setIsLoading(true)
+        try {
+          do {
+            const nextRead = queuedStateRead.current
+            queuedStateRead.current = undefined
+            const requested = latestNotebookRequest.current
+            const epoch = getDesktopRuntimeEpoch()
+            const scope = JSON.stringify([requested.key, epoch])
+            const lockOnly =
+              nextRead === 'write-lock' &&
+              lastFullStateScope.current === scope &&
+              latestNotebookState.current !== undefined
+            try {
+              const nextState = await window.api.notebook.state(
+                lockOnly
+                  ? { ...requested.request, historySummaryFrameId: requested.rootFrameId }
+                  : requested.request
+              )
 
-            if (epoch !== getDesktopRuntimeEpoch()) continue
-            if (latestNotebookRequest.current.key === requested.key) {
-              applyNotebookState(nextState)
-              setActionError(null)
+              if (epoch !== getDesktopRuntimeEpoch()) continue
+              if (latestNotebookRequest.current.key !== requested.key) {
+                queuedStateRead.current = 'full'
+                continue
+              }
+              if (lockOnly) {
+                const current = latestNotebookState.current
+                if (!current || lastFullStateScope.current !== scope) {
+                  queuedStateRead.current = 'full'
+                  continue
+                }
+                // Sparse reads omit cells and history. Retain all previously loaded Run data.
+                const updated = { ...current, activeWrite: nextState.activeWrite }
+                latestNotebookState.current = updated
+                setNotebookState(updated)
+              } else {
+                applyNotebookState(nextState)
+                setActionError(null)
+              }
               succeeded = true
-            } else {
-              stateReloadQueued.current = true
-            }
-          } catch (error) {
-            if (epoch !== getDesktopRuntimeEpoch()) continue
-            if (latestNotebookRequest.current.key === requested.key) {
+            } catch (error) {
+              if (epoch !== getDesktopRuntimeEpoch()) continue
+              if (lockOnly || latestNotebookRequest.current.key !== requested.key) {
+                queuedStateRead.current = 'full'
+                continue
+              }
+              lastFullStateScope.current = undefined
               setActionError(getErrorMessage(error))
               succeeded = false
-            } else {
-              stateReloadQueued.current = true
             }
-          }
-        } while (stateReloadQueued.current)
-        return succeeded
+          } while (queuedStateRead.current)
+          return succeeded
+        } finally {
+          setIsLoading(false)
+        }
+      })()
+      stateLoadInFlight.current = load
+      try {
+        return await load
       } finally {
-        setIsLoading(false)
+        if (isCurrentInFlight(stateLoadInFlight.current, load)) {
+          stateLoadInFlight.current = undefined
+        }
       }
-    })()
-    stateLoadInFlight.current = load
-    try {
-      return await load
-    } finally {
-      if (isCurrentInFlight(stateLoadInFlight.current, load)) {
-        stateLoadInFlight.current = undefined
-      }
-    }
-  }, [applyNotebookState, isActive])
+    },
+    [applyNotebookState, isActive]
+  )
 
   useEffect(
     () =>
@@ -733,8 +771,12 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
     return window.api.notebook.onChanged((event) => {
-      if (!event.codeAppendOnly && event.sessionId === item.notebook.sessionId) {
-        void loadNotebookState()
+      if (
+        !event.codeAppendOnly &&
+        event.sessionId === item.notebook.sessionId &&
+        resolveProjectId(event) === latestNotebookRequest.current.request.projectId
+      ) {
+        void loadNotebookState(event.codeWriteOnly ? 'write-lock' : 'full')
       }
     })
   }, [item.notebook.sessionId, loadNotebookState])
@@ -1215,7 +1257,12 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   useEffect(() => {
     if (!showVariables && !terminalInputFocused) return
     return window.api.notebook.onChanged((event) => {
-      if (event.codeAppendOnly || event.sessionId !== item.notebook.sessionId) return
+      if (
+        event.codeAppendOnly ||
+        event.codeWriteOnly ||
+        event.sessionId !== item.notebook.sessionId
+      )
+        return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })
@@ -1368,7 +1415,11 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         cellId: write.cellId,
         writeId: write.writeId
       })
-      await loadNotebookState()
+      // The change notification normally owns the read. Recover if it has not arrived.
+      await stateLoadInFlight.current
+      if (latestNotebookState.current?.activeWrite?.writeId === write.writeId) {
+        await loadNotebookState('write-lock')
+      }
     } catch (error) {
       await loadNotebookState()
       setActionError(getErrorMessage(error))

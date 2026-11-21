@@ -155,6 +155,7 @@ describe('useSessionBackgroundTasks', () => {
     await mount('session-1', 'project-1', notebook)
     const notify = onChanged.mock.calls[0][0]
     await act(async () => notify({ ...notebook, codeAppendOnly: true }))
+    await act(async () => notify({ ...notebook, codeWriteOnly: true }))
     expect(state).toHaveBeenCalledTimes(1)
     await act(async () => notify(notebook))
     expect(state).toHaveBeenCalledTimes(2)

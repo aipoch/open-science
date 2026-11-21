@@ -1962,11 +1962,16 @@ class NotebookRuntimeService {
           source,
           startedAt: Date.now()
         },
-        signal ? { signal, onAbort: () => this.sessionLifecycle.notifyChanged(session) } : undefined
+        signal
+          ? {
+              signal,
+              onAbort: () => this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
+            }
+          : undefined
       )
 
       this.sessionLifecycle.notifyAvailable(session, source)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
     })
@@ -1986,7 +1991,7 @@ class NotebookRuntimeService {
         assertNotebookCodeAppendWithinLimit(current.code, request.delta)
       } catch (error) {
         session.abortCellWrite(request.cellId, request.writeId)
-        this.sessionLifecycle.notifyChanged(session)
+        this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
         throw error
       }
       const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
@@ -2011,7 +2016,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.finishCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
@@ -2027,7 +2032,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.abortCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
   }

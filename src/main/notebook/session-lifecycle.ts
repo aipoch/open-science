@@ -884,7 +884,7 @@ class NotebookSessionLifecycleOwner {
 
   notifyChanged(
     session: RuntimeSession,
-    change?: Pick<NotebookChangedEvent, 'codeAppendOnly'>
+    change?: Pick<NotebookChangedEvent, 'codeAppendOnly' | 'codeWriteOnly'>
   ): void {
     this.options.callbacks?.onNotebookChanged?.({
       ...this.options.toSessionReference(session),
