@@ -52,6 +52,7 @@ export const renderPreviewFile = ({
   imageEditPresentation,
   onPinImageSource,
   onImageEditorVersionChange,
+  onImageEditActionChange,
   presentation,
   readOnly,
   annotationVersionId,
@@ -102,6 +103,7 @@ export const renderPreviewFile = ({
           imageEditPresentation={imageEditPresentation}
           onPinImageSource={onPinImageSource}
           onImageEditorVersionChange={onImageEditorVersionChange}
+          onImageEditActionChange={onImageEditActionChange}
         />
       )
     case 'json':
