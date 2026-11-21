@@ -15,7 +15,8 @@ import {
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import {
   resolveActiveConversationActivities,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  type PersistedAgentFrame
 } from '../../shared/conversation-graph'
 import {
   resolveAgentUserChoiceQuestions,
@@ -93,7 +94,10 @@ import { taskPermissionOptions } from '../acp/permission-broker'
 import { restorableTaskPermission } from '../acp/permission-wait-owner'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
-import type { DelegatedQuestionRequest } from '../../shared/delegated-work-contract'
+import type {
+  DelegatedQuestionRequest,
+  DelegatedWorkAttemptRecord
+} from '../../shared/delegated-work-contract'
 import { DurableDelegatedWorkError } from '../delegation/durable-delegated-work-error'
 import {
   canRelayTaskInteraction,
@@ -300,7 +304,20 @@ const staleQuestion = (): TaskRunnerError =>
     'The question, prompt, or active Message Branch changed. Read the current interaction before answering.'
   )
 
-const delegatedAttempt = (session: PersistedChatSession, frameId: string, attemptId: string) => {
+const delegatedAttempt = (
+  session: PersistedChatSession,
+  frameId: string,
+  attemptId: string
+):
+  | {
+      attempt: DelegatedWorkAttemptRecord
+      frame: PersistedAgentFrame
+      promptMessageId: string
+      rootBranchId: string
+      active: boolean
+      latest: boolean
+    }
+  | undefined => {
   const graph = session.conversationGraph
   const frame = graph?.frames.find(({ id }) => id === frameId)
   const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)

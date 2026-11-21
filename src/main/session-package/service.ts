@@ -562,18 +562,15 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
-        ...(session.runtimeContext.delegatedWork?.questionRequests?.some(
-          ({ taskResponse }) => taskResponse
-        )
+        ...(session.runtimeContext.delegatedWork
           ? {
               delegatedWork: {
                 ...session.runtimeContext.delegatedWork,
-                questionRequests: session.runtimeContext.delegatedWork.questionRequests.map(
-                  ({ taskResponse, ...question }) => {
-                    void taskResponse
-                    return question
-                  }
-                )
+                questionRequests: session.runtimeContext.delegatedWork.questionRequests?.map(
+                  (question) => ({ ...question, taskResponse: undefined })
+                ),
+                // Quarantine may still contain local receipts that the codec could not verify.
+                questionRequestsQuarantine: undefined
               }
             }
           : {}),
@@ -633,10 +630,11 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   if (
     isRecord(runtimeContext) &&
     isRecord(runtimeContext.delegatedWork) &&
-    Array.isArray(runtimeContext.delegatedWork.questionRequests) &&
-    runtimeContext.delegatedWork.questionRequests.some(
-      (question) => isRecord(question) && Object.hasOwn(question, 'taskResponse')
-    )
+    (Object.hasOwn(runtimeContext.delegatedWork, 'questionRequestsQuarantine') ||
+      (Array.isArray(runtimeContext.delegatedWork.questionRequests) &&
+        runtimeContext.delegatedWork.questionRequests.some(
+          (question) => isRecord(question) && Object.hasOwn(question, 'taskResponse')
+        )))
   )
     return true
   if (

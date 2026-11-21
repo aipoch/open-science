@@ -2849,6 +2849,16 @@ describe('production delegated-work composition', () => {
         artifacts: [],
         preferredComputeHostIds: [],
         interactionPolicy: { mode: 'delegate', revision: 1 }
+      },
+      {
+        ...key,
+        id: 'unrelated-run',
+        cwd: root,
+        status: 'completed',
+        startedAt: 1,
+        promptMessageId: 'unrelated-prompt',
+        artifacts: [],
+        preferredComputeHostIds: []
       }
     ])
     const open = (rootControl: typeof harness.composition.root): HeadlessTaskApi =>
@@ -2919,6 +2929,27 @@ describe('production delegated-work composition', () => {
           expectedRevision: interaction.revision,
           optionId: 'allow'
         } as const
+        const relayed = { ...decision, source: 'user_relay' } as const
+        await expect(
+          api.respondPermission(interaction.id, { runId: 'unrelated-run' }, relayed)
+        ).rejects.toMatchObject({ code: 'interaction_not_found' })
+        const original = structuredClone(harness.durable())
+        harness.replaceDurable({
+          ...original,
+          messages: [],
+          activities: [],
+          conversationGraph: forkEditedConversationMessage(
+            original.conversationGraph!,
+            harness.caller.originMessageId,
+            'edited-root-branch',
+            50
+          )
+        })
+        await expect(api.respondPermission(interaction.id, scope, relayed)).rejects.toMatchObject({
+          code: 'interaction_revision_conflict'
+        })
+        expect(control.permissionResponses()).toEqual([])
+        harness.replaceDurable(original)
         await api.setRunInteractionMode(scope.runId, {
           expectedRevision: 1,
           interactionMode: 'relay'
@@ -2926,7 +2957,6 @@ describe('production delegated-work composition', () => {
         await expect(api.respondPermission(interaction.id, scope, decision)).rejects.toMatchObject({
           code: 'task_delegation_required'
         })
-        const relayed = { ...decision, source: 'user_relay' } as const
         await expect(api.respondPermission(interaction.id, scope, relayed)).resolves.toMatchObject({
           changed: true,
           interaction: {
@@ -2992,31 +3022,37 @@ describe('production delegated-work composition', () => {
     await expect.poll(() => harness.execution.controls()).toHaveLength(1)
     const control = harness.execution.controls()[0]
     control.accept()
-    await harness.composition.host.requestUserInput(
-      {
-        session: key,
-        frameId,
-        role: 'delegate',
-        attemptId,
-        originMessageId: harness
-          .durable()
-          .conversationGraph!.messages.find(
-            ({ agentFrameId, role }) => agentFrameId === frameId && role === 'user'
-          )!.id,
-        toolInvocationId: 'definition-question'
-      },
-      {
-        sessionId: key.sessionId,
-        questions: [
-          {
-            question: 'Which cohorts are in scope?',
-            kind: 'multi-select',
-            options: [{ label: 'Control' }, { label: 'Treatment' }]
-          }
-        ]
-      },
-      'child-question-1'
-    )
+    const originMessageId = harness
+      .durable()
+      .conversationGraph!.messages.find(
+        ({ agentFrameId, role }) => agentFrameId === frameId && role === 'user'
+      )!.id
+    for (const [questionId, question] of [
+      ['child-question-1', 'Which cohorts are in scope?'],
+      ['child-question-2', 'Which cohorts should get a separate plot?']
+    ]) {
+      await harness.composition.host.requestUserInput(
+        {
+          session: key,
+          frameId,
+          role: 'delegate',
+          attemptId,
+          originMessageId,
+          toolInvocationId: questionId
+        },
+        {
+          sessionId: key.sessionId,
+          questions: [
+            {
+              question,
+              kind: 'multi-select',
+              options: [{ label: 'Control' }, { label: 'Treatment' }]
+            }
+          ]
+        },
+        questionId
+      )
+    }
 
     // Startup fences the original process; the persisted question can outlive that Attempt.
     await harness.recoverStartup()
@@ -3042,7 +3078,7 @@ describe('production delegated-work composition', () => {
       await api.runWithCallerContext(
         createTaskCallerContext({ authenticatedLocalBearer: true }),
         async () => {
-          const [item] = await api.listInteractions(scope)
+          const [item, superseded] = await api.listInteractions(scope)
           expect(item).toMatchObject({
             kind: 'question',
             runId: scope.runId,
@@ -3077,6 +3113,17 @@ describe('production delegated-work composition', () => {
           const next = harness.execution.controls()[1]
           expect(next.input.attemptId).not.toBe(attemptId)
           expect(next.input.task).toContain('["Control","Treatment"]')
+          await expect(api.getInteraction(superseded.id, scope)).resolves.toMatchObject({
+            state: 'expired',
+            delegated: { attemptId }
+          })
+          await expect(
+            api.answerQuestion(superseded.id, scope, {
+              ...response,
+              expectedRevision: superseded.revision
+            })
+          ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+          expect(harness.execution.controls()).toHaveLength(2)
           await expect(api.answerQuestion(item.id, scope, response)).resolves.toMatchObject({
             changed: false,
             interaction: {

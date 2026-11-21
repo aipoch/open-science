@@ -4440,7 +4440,7 @@ it.each([
   }
 })
 
-it('excludes local Plan and AskUser receipts from the archive and the resulting Fork', async () => {
+it('excludes local Plan and root and child AskUser receipts from the archive and resulting Fork', async () => {
   const source = await createProvenanceTestFixture()
   const target = await createProvenanceTestFixture()
   fixtures.push(source, target)
@@ -4530,6 +4530,36 @@ it('excludes local Plan and AskUser receipts from the archive and the resulting 
     runtimeContext: {
       version: 1,
       revision: 1,
+      delegatedWork: {
+        records: [],
+        questionRequests: [
+          {
+            requestId: 'child-question',
+            canonicalDigest: 'b'.repeat(64),
+            sourceFrameId: 'child-frame',
+            sourceAttemptId: 'child-attempt',
+            sourceRuntimeSegmentId: 'child-runtime',
+            sourceMessageBranchId: 'child-branch',
+            rootOriginMessageId: 'plan-prompt',
+            rootBranchId: 'root-branch',
+            sourceName: 'Statistics',
+            questions: [
+              {
+                question: 'Which statistic?',
+                options: [{ label: 'Median' }, { label: 'Mean' }]
+              }
+            ],
+            askedAt: 1,
+            status: 'confirmed',
+            draftAnswers: [],
+            draftQuestionIndex: 0,
+            answers: [{ questionIndex: 0, value: 'Median' }],
+            respondedAt: 2,
+            continuationAttemptId: 'continued-child-attempt',
+            taskResponse: { source: 'known_context', reviewedRevision: 1, checksum: 'c'.repeat(64) }
+          }
+        ]
+      },
       plan: {
         artifactId: version.artifactId,
         artifactVersionId: version.versionId,
@@ -4549,11 +4579,10 @@ it('excludes local Plan and AskUser receipts from the archive and the resulting 
       }
     }
   })
-  expect(
-    (await sourceSessions.loadSession(scope.projectId, scope.sessionId))?.runtimeContext?.plan
-      ?.externalResponse
-  ).toMatchObject({
-    commandId: 'local-plan-receipt'
+  const saved = await sourceSessions.loadSession(scope.projectId, scope.sessionId)
+  expect(saved?.runtimeContext).toMatchObject({
+    plan: { externalResponse: { commandId: 'local-plan-receipt' } },
+    delegatedWork: { questionRequests: [{ taskResponse: { source: 'known_context' } }] }
   })
   const exporter = new SessionPackageService({
     storageRoot: source.storageRoot,
@@ -4573,6 +4602,8 @@ it('excludes local Plan and AskUser receipts from the archive and the resulting 
     expect(stored).not.toContain('externalResponse')
     expect(stored).not.toContain('local-question-id')
     expect(stored).not.toContain('taskResponse')
+    expect(stored).not.toContain('c'.repeat(64))
+    expect(stored).toContain('Which statistic?')
     const imported = await importer.importFrom(archive)
     const forked = await importer.fork(imported)
     const forkedSession = await new SessionRepository(target.storageRoot).loadSession(
@@ -4582,6 +4613,7 @@ it('excludes local Plan and AskUser receipts from the archive and the resulting 
     expect(forkedSession).toBeDefined()
     expect(JSON.stringify(forkedSession)).not.toContain('local-plan-receipt')
     expect(JSON.stringify(forkedSession)).not.toContain('local-question-id')
+    expect(JSON.stringify(forkedSession)).not.toContain('taskResponse')
     expect(forkedSession?.activities?.[0].elicitation?.answers).toEqual([
       { fieldId: 'method', value: 'Median' }
     ])
