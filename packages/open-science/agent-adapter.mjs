@@ -23,6 +23,8 @@ Notebook status includes Python and R. For a general setup request, report both 
 
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
 
+If a Run returns interaction attention, call list_interactions with the original Run ID, or with both Project and Session IDs. Use get_interaction to read its current details. For a pending Plan, present the current Plan to the user in this conversation and relay their approval, rejection, or revision feedback with respond_plan and source user_relay. Use the Artifact Version and revision they reviewed. If the response is lost, query the same interaction. A recorded Plan response does not mean the Notebook ran or files were delivered.
+
 Read the Run's Notebook execution separately from its outer status. When execution is waiting_for_user, follow its next action. For review_notebook_code_in_app, ask the user to decide the pending review in the original Session and branch in Open-Science on the same profile. Recheck the same Run after the user responds. The agent cannot make the decision or submit a replacement Run.
 For review_notebook_runtime_in_app, explain that the selected kernel and environment need the user's approval, even if the environment is installed. The review can be pending before a Notebook Run exists. Use execution.language when present to check the relevant language if needed. Offer to open Notebook settings if the user wants to check or change setup. Ask them to respond to Confirm Notebook kernel and environment in the original Session and branch in the Web or Desktop app on the same profile. Recheck the same Run after the user responds; do not make the decision or submit a replacement Run.
 
@@ -97,6 +99,31 @@ const policies = {
     'agent',
     'The operation conflicts with current state. Read the latest state and revision before retrying.',
     { action: 'inspect_state' }
+  ],
+  'stale-plan': [
+    'agent',
+    'The reviewed Plan is no longer active. Read the current interaction before asking the user again.',
+    { action: 'list_interactions' }
+  ],
+  'revision-conflict': [
+    'agent',
+    'The Plan revision changed. Read the current revision and present it before responding.',
+    { action: 'get_interaction' }
+  ],
+  'approval-already-decided': [
+    'agent',
+    'The Plan already has a different response. Query the original interaction before continuing.',
+    { action: 'get_interaction' }
+  ],
+  'interaction-mismatch': [
+    'agent',
+    'The interaction is no longer valid in this scope. Check the original task and active branch.',
+    { action: 'list_interactions' }
+  ],
+  interaction_not_found: [
+    'agent',
+    'This interaction does not belong to the supplied Run or Session. Check the original scope.',
+    { action: 'list_interactions' }
   ],
   project_not_found: [
     'agent',
@@ -208,6 +235,7 @@ const requestReferences = (error, args) => {
     'runId',
     'sessionId',
     'projectId',
+    'interactionId',
     'operationId',
     'correlationId'
   ]) {
@@ -303,6 +331,18 @@ export const agentErrorDetails = (
         : [{ action: 'get_run', runId: details.runId }]
     details.message =
       'The observation timed out. Query the original operation; it was not cancelled.'
+  }
+  if (capability === 'respond_plan' && details.completionStatus === 'unconfirmed') {
+    details.next = [
+      {
+        action: 'get_interaction',
+        ...(details.projectId ? { projectId: details.projectId } : {}),
+        ...(details.sessionId ? { sessionId: details.sessionId } : {}),
+        ...(safeId.safeParse(args.artifactVersionId).success
+          ? { interactionId: `plan:${args.artifactVersionId}` }
+          : {})
+      }
+    ]
   }
   return details
 }

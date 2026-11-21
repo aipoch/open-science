@@ -42,6 +42,7 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import type { TaskInteractionScope } from '../../shared/task-interaction'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
@@ -64,6 +65,7 @@ import type { ApplicationEventSource } from '../application-events'
 import {
   createTaskCallerContext,
   createWebCallerContext,
+  canRelayTaskInteraction,
   type CallerContext
 } from '../caller-context'
 import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
@@ -177,6 +179,8 @@ type WebServerOptions = {
         | 'getSubmission'
         | 'getSessionPlan'
         | 'respondSessionPlan'
+        | 'listInteractions'
+        | 'getInteraction'
         | 'resolveActiveRun'
         | 'getProjectSessionDefaults'
         | 'updateProjectSessionDefaults'
@@ -615,6 +619,7 @@ const readJsonBody = async (
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
+  if (error.code === 'task_relay_required') return 403
   if (error.code === 'notebook_setup_failed') return 503
   if (error.code === 'submission_unavailable') return 503
   if (
@@ -642,38 +647,67 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
     throw new TaskApiError('invalid_request', 'Plan response must be an object.')
   }
   const candidate = value as Record<string, unknown>
-  if ('feedback' in candidate) {
-    if (
-      typeof candidate.feedback !== 'string' ||
-      candidate.feedback.trim().length === 0 ||
-      'decision' in candidate ||
-      'artifactVersionId' in candidate ||
-      'expectedRevision' in candidate
-    ) {
-      throw new TaskApiError(
-        'invalid_request',
-        'Plan feedback must be a non-empty string without decision fields.'
-      )
-    }
-    return { feedback: candidate.feedback.trim() }
-  }
   if (
-    (candidate.decision !== 'approved' && candidate.decision !== 'rejected') ||
+    Object.keys(candidate).some(
+      (key) =>
+        ![
+          'projectId',
+          'artifactVersionId',
+          'expectedRevision',
+          'expectedBranchId',
+          'source',
+          'feedback',
+          'decision'
+        ].includes(key)
+    ) ||
+    (candidate.projectId !== undefined &&
+      (typeof candidate.projectId !== 'string' || !candidate.projectId.trim())) ||
+    candidate.source !== 'user_relay' ||
     typeof candidate.artifactVersionId !== 'string' ||
     candidate.artifactVersionId.trim().length === 0 ||
-    !Number.isInteger(candidate.expectedRevision) ||
+    typeof candidate.expectedBranchId !== 'string' ||
+    !candidate.expectedBranchId.trim() ||
+    !Number.isSafeInteger(candidate.expectedRevision) ||
     (candidate.expectedRevision as number) < 0
   ) {
     throw new TaskApiError(
       'invalid_request',
-      'Plan decision requires approved or rejected, a non-empty artifact version, and a non-negative integer revision.'
+      'Relay the user’s decision for the exact Plan Artifact Version and revision they reviewed.'
     )
   }
-  return {
-    decision: candidate.decision,
+  const reviewedPlan = {
+    source: candidate.source as 'user_relay',
+    ...(typeof candidate.projectId === 'string' ? { projectId: candidate.projectId.trim() } : {}),
     artifactVersionId: candidate.artifactVersionId.trim(),
+    expectedBranchId: candidate.expectedBranchId.trim(),
     expectedRevision: candidate.expectedRevision as number
   }
+  if (
+    (candidate.decision === 'approved' || candidate.decision === 'rejected') &&
+    !('feedback' in candidate)
+  ) {
+    return { ...reviewedPlan, decision: candidate.decision }
+  }
+  if (
+    typeof candidate.feedback === 'string' &&
+    candidate.feedback.trim() &&
+    !('decision' in candidate)
+  ) {
+    return { ...reviewedPlan, feedback: candidate.feedback.trim() }
+  }
+  throw new TaskApiError(
+    'invalid_request',
+    'Supply an approval, a rejection, or revision feedback.'
+  )
+}
+
+const parseTaskInteractionScope = (params: URLSearchParams): TaskInteractionScope => {
+  const runId = params.get('runId')?.trim()
+  const projectId = params.get('projectId')?.trim()
+  const sessionId = params.get('sessionId')?.trim()
+  if (runId && !params.has('projectId') && !params.has('sessionId')) return { runId }
+  if (!params.has('runId') && projectId && sessionId) return { projectId, sessionId }
+  throw new TaskApiError('invalid_request', 'Supply runId or both projectId and sessionId.')
 }
 
 class ExternalAuthorizationExpiredError extends Error {
@@ -1322,6 +1356,22 @@ const handleTaskApiRequest = async (
         reply(200, { data: await tasks.getRun(decodeURIComponent(runMatch[1])) })
         return true
       }
+      const interactionMatch = url.pathname.match(/^\/api\/v1\/interactions(?:\/([^/]+))?$/)
+      if (
+        interactionMatch &&
+        request.method === 'GET' &&
+        tasks.getInteraction &&
+        tasks.listInteractions
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const id = interactionMatch[1] ? decodeURIComponent(interactionMatch[1]) : undefined
+        const data = id
+          ? await tasks.getInteraction(id, scope)
+          : await tasks.listInteractions(scope)
+        reply(200, { data })
+        return true
+      }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
       if (cancelRunMatch && request.method === 'POST') {
         await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
@@ -1343,6 +1393,12 @@ const handleTaskApiRequest = async (
         /^\/api\/v1\/sessions\/([^/]+)\/plan\/respond$/
       )
       if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Plan responses require a local authenticated Task connection.'
+          )
+        }
         const body = parseTaskPlanResponseRequest(
           await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         )
@@ -1658,6 +1714,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
               ? [
                   'permission-prompts-none',
                   'task-artifacts',
+                  ...(auth.localBearer &&
+                  options.tasks.listInteractions &&
+                  options.tasks.getInteraction &&
+                  options.tasks.respondSessionPlan
+                    ? ['task-interactions']
+                    : []),
                   ...(options.tasks.doctor ? ['doctor'] : []),
                   ...(!externalAuthorization && options.tasks.bootstrap
                     ? ['runtime-bootstrap', 'agent-setup']
@@ -1741,7 +1803,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                     location: 'remote',
                     isAuthorizationCurrent: authorization.isCurrent
                   }
-                : {}
+                : {
+                    authenticatedLocalBearer: auth.localBearer,
+                    isAuthorizationCurrent: lease.isCurrent
+                  }
             )
             if (
               await handleTaskApiRequest(

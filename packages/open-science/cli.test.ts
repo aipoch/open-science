@@ -1054,7 +1054,7 @@ describe('task CLI', () => {
       expect.objectContaining({ returnOnAttention: true })
     )
     expect(log).toHaveBeenCalledWith(
-      'Run is waiting for Plan approval: open-science plan approve session-1 --artifact-version plan-version --revision 4'
+      'Run is waiting for Plan approval: open-science plan show session-1 --json'
     )
   })
 
@@ -1572,6 +1572,7 @@ describe('task CLI', () => {
         options: {
           ...outputOptions,
           artifactVersion: 'plan-version',
+          branchId: 'branch-1',
           revision: 2
         }
       },
@@ -1582,20 +1583,42 @@ describe('task CLI', () => {
         command: 'plan',
         subcommand: 'revise',
         positionals: ['session-1'],
-        options: { ...outputOptions, feedback: 'Split the validation step.' }
+        options: {
+          ...outputOptions,
+          artifactVersion: 'plan-version',
+          branchId: 'branch-1',
+          revision: 2,
+          feedback: 'Split the validation step.'
+        }
       },
       deps
     )
 
-    expect(client.getSessionPlan).toHaveBeenCalledWith('session-1')
-    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(1, 'session-1', {
-      decision: 'approved',
-      artifactVersionId: 'plan-version',
-      expectedRevision: 2
-    })
-    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(2, 'session-1', {
-      feedback: 'Split the validation step.'
-    })
+    expect(client.getSessionPlan).toHaveBeenCalledWith('session-1', expect.anything())
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(
+      1,
+      'session-1',
+      {
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 2,
+        expectedBranchId: 'branch-1',
+        source: 'user_relay'
+      },
+      expect.anything()
+    )
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(
+      2,
+      'session-1',
+      {
+        feedback: 'Split the validation step.',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 2,
+        expectedBranchId: 'branch-1',
+        source: 'user_relay'
+      },
+      expect.anything()
+    )
   })
 
   it('reads stdin, emits JSONL events, and sets a failed-run exit code', async () => {

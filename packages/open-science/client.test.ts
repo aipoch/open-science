@@ -208,6 +208,8 @@ describe('OpenScienceClient', () => {
         'getAgentRouting',
         'updateAgentRouting',
         'getSessionPlan',
+        'listInteractions',
+        'getInteraction',
         'respondSessionPlan',
         'submitRun',
         'getSubmission',
@@ -909,6 +911,9 @@ describe('OpenScienceClient', () => {
   it('covers project, session, artifact, and authenticated download operations', async () => {
     const fetch = vi.fn(async (input: string, init?: RequestInit) => {
       const path = new URL(input).pathname
+      if (path === '/api/bootstrap') {
+        return response(200, { taskCapabilities: ['task-interactions'] })
+      }
       if (path === '/api/v1/projects' && init?.method === 'POST') {
         return response(201, { data: { id: 'project-1', name: 'Created' } })
       }
@@ -954,7 +959,9 @@ describe('OpenScienceClient', () => {
     await client.respondSessionPlan('session/1', {
       decision: 'approved',
       artifactVersionId: 'plan-version',
-      expectedRevision: 2
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay'
     })
     await client.listArtifacts('session/1')
     expect(await (await client.downloadArtifact('artifact/1')).text()).toBe('file bytes')
@@ -977,6 +984,7 @@ describe('OpenScienceClient', () => {
       '/api/v1/sessions?project=project-1',
       '/api/v1/sessions/session%2F1',
       '/api/v1/sessions/session%2F1/plan',
+      '/api/bootstrap',
       '/api/v1/sessions/session%2F1/plan/respond',
       '/api/v1/sessions/session%2F1/artifacts',
       '/api/v1/artifacts/artifact%2F1/content'

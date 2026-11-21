@@ -27,6 +27,7 @@ import {
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type { TaskAgentPort, TaskSessionPort } from '../tasks/task-runner'
+import type { TaskRunJournalEntry } from '../tasks/task-run-journal'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
@@ -1190,70 +1191,158 @@ describe('HeadlessTaskApi adapter', () => {
     }
   )
 
-  it('reads and responds to a Session Plan through the Task command view', async () => {
-    const persisted: PersistedChatSession = {
+  it('finds a restored Plan in the original scope and looks up the recorded decision after reconnect', async () => {
+    const plan = {
+      artifactId: 'plan-artifact',
+      artifactVersionId: 'plan-version',
+      artifactChecksum: 'checksum',
+      originatingPromptMessageId: 'plan-prompt',
+      approval: 'pending' as const,
+      stepStatuses: {}
+    }
+    const persisted: PersistedChatSession = materializeSessionConversationGraph({
       id: 'session-plan',
       projectId: project.id,
       title: 'Plan session',
       cwd: '/workspace/plan',
       status: 'waiting-plan-approval',
-      messages: [],
+      runtimeContext: { version: 1, revision: 3, plan },
+      messages: [
+        {
+          id: 'plan-prompt',
+          role: 'user',
+          content: 'Compare groups.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
       createdAt: 1,
       updatedAt: 2
-    }
-    const projection = {
-      artifactId: 'plan-artifact',
-      artifactVersionId: 'plan-version',
-      artifactChecksum: 'checksum',
-      revision: 3,
-      approval: 'pending',
-      lifecycle: 'awaiting_approval'
-    } as never
+    })
     const commandInvoke = vi.fn(async (channel: string) => {
       if (channel === 'sessions:load-all') {
         return { sessions: [persisted], manifest: { version: 1 } }
       }
-      if (channel === 'acp:get-plan-projection') return projection
-      if (channel === 'acp:respond-plan') return { projection, changed: true }
+      if (channel === 'acp:get-plan-projection')
+        return {
+          ...persisted.runtimeContext!.plan!,
+          revision: persisted.runtimeContext!.revision,
+          lifecycle:
+            persisted.runtimeContext!.plan!.approval === 'pending'
+              ? 'awaiting_approval'
+              : 'approved'
+        }
+      if (channel === 'acp:respond-plan') {
+        persisted.runtimeContext = {
+          version: 1,
+          revision: 4,
+          plan: {
+            ...plan,
+            approval: 'approved',
+            externalResponse: {
+              source: 'user_relay',
+              reviewedRevision: 3,
+              action: 'approved',
+              commandId: 'continuation-1',
+              promptMessageId: 'plan-prompt',
+              handedOff: true
+            }
+          }
+        }
+        return { changed: true }
+      }
       throw new Error(`Unexpected Task command: ${channel}`)
     })
-    const agent = createAgent()
-    const api = new HeadlessTaskApi({
-      commands: commandsFrom(commandInvoke),
-      agent
-    })
-
-    await expect(api.getSessionPlan(persisted.id)).resolves.toBe(projection)
-    await expect(
-      api.respondSessionPlan(persisted.id, {
-        decision: 'approved',
-        artifactVersionId: 'plan-version',
-        expectedRevision: 3
-      })
-    ).resolves.toEqual({ projection, changed: true })
-
-    expect(commandInvoke).toHaveBeenCalledWith('acp:get-plan-projection', expect.anything(), [
-      project.id,
-      persisted.id
-    ])
-    expect(commandInvoke).toHaveBeenCalledWith('acp:respond-plan', expect.anything(), [
+    let journal: TaskRunJournalEntry[] = [
       {
+        id: 'plan-run',
         projectId: project.id,
         sessionId: persisted.id,
-        decision: 'approved',
-        artifactVersionId: 'plan-version',
-        expectedRevision: 3
-      }
-    ])
-    expect(agent.resumeSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: persisted.id,
-        projectId: project.id,
+        promptMessageId: 'plan-prompt',
         cwd: persisted.cwd,
-        permissionProfile: 'ask',
-        memoryEnabled: true
+        status: 'running',
+        startedAt: 1,
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    ]
+    const createApi = (): HeadlessTaskApi =>
+      new HeadlessTaskApi(
+        {
+          commands: commandsFrom(commandInvoke),
+          agent: createAgent()
+        },
+        {
+          runJournal: {
+            load: async () => structuredClone(journal),
+            replace: async (runs) => {
+              journal = structuredClone([...runs])
+            }
+          }
+        }
+      )
+    const api = createApi()
+    await api.initialize()
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    const scope = { projectId: project.id, sessionId: persisted.id }
+    const request = {
+      source: 'user_relay',
+      decision: 'approved',
+      artifactVersionId: plan.artifactVersionId,
+      expectedRevision: 3,
+      expectedBranchId: persisted.conversationGraph!.branches[0]!.id,
+      projectId: project.id
+    } as const
+    await expect(api.respondSessionPlan(persisted.id, request)).rejects.toMatchObject({
+      code: 'task_relay_required'
+    })
+    await api.runWithCallerContext(caller, async () => {
+      await expect(api.listInteractions(scope)).resolves.toMatchObject([
+        { id: 'plan:plan-version', state: 'pending', revision: 3, owner: 'user' }
+      ])
+      await expect(api.getRun('plan-run')).resolves.toMatchObject({
+        status: 'failed',
+        failureCode: 'process_restarted',
+        attention: { kind: 'interactions', interactions: [{ id: 'plan:plan-version' }] }
       })
-    )
+      await expect(
+        api.respondSessionPlan(persisted.id, { ...request, expectedRevision: 2 })
+      ).rejects.toMatchObject({ code: 'revision-conflict' })
+      await expect(
+        api.respondSessionPlan(persisted.id, { ...request, projectId: 'other' })
+      ).rejects.toMatchObject({ code: 'session_project_mismatch' })
+      await expect(
+        api.respondSessionPlan(persisted.id, { ...request, expectedBranchId: 'old-branch' })
+      ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+      await expect(api.respondSessionPlan(persisted.id, request)).resolves.toMatchObject({
+        changed: true
+      })
+    })
+    const restarted = createApi()
+    await restarted.initialize()
+    await restarted.runWithCallerContext(caller, async () => {
+      await expect(restarted.listInteractions(scope)).resolves.toEqual([])
+      await expect(restarted.getInteraction('plan:plan-version', scope)).resolves.toMatchObject({
+        state: 'responded',
+        response: {
+          source: 'user_relay',
+          action: 'approved',
+          continuation: { id: 'continuation-1', taskRunStatus: 'unconfirmed' }
+        }
+      })
+      await expect(restarted.respondSessionPlan(persisted.id, request)).resolves.toMatchObject({
+        changed: false
+      })
+      await expect(
+        restarted.respondSessionPlan(persisted.id, { ...request, decision: 'rejected' })
+      ).rejects.toMatchObject({ code: 'approval-already-decided' })
+      expect((await restarted.getRun('plan-run')).failureCode).toBe('process_restarted')
+    })
+    expect(
+      commandInvoke.mock.calls.filter(([channel]) => channel === 'acp:respond-plan')
+    ).toHaveLength(1)
     await api.dispose()
   })
   it('exposes Task Run progress through one subscription seam', async () => {

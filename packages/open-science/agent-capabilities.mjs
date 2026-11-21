@@ -145,7 +145,6 @@ const addCapability = (
     }
   })
 }
-const register = (...definition) => addCapability({ mcp: true }, ...definition)
 const registerResource = (...definition) => addCapability({ cli: true, mcp: true }, ...definition)
 
 registerResource(
@@ -394,7 +393,43 @@ registerResource(
   write,
   (client, args, options) => client.cancelRun(args.runId, options)
 )
-register(
+const interactionScope = {
+  runId: runId.optional(),
+  projectId: projectId.optional(),
+  sessionId: sessionId.optional()
+}
+
+const requireInteractionScope = ({ runId, projectId, sessionId }, context) => {
+  if (!(runId ? !projectId && !sessionId : projectId && sessionId)) {
+    context.addIssue({ code: 'custom', message: 'Supply runId or both projectId and sessionId.' })
+  }
+}
+
+registerResource(
+  'list_interactions',
+  'research',
+  'Find interactions needing attention in one Run or an explicit Project and Session. Query again after reconnect; no browser or host elicitation is required.',
+  interactionScope,
+  read,
+  (client, scope, options) => client.listInteractions(scope, options),
+  requireInteractionScope,
+  { serviceCapability: 'task-interactions' }
+)
+registerResource(
+  'get_interaction',
+  'research',
+  'Read the exact interaction, legal actions, current revision, or recorded decision in the scope returned by list_interactions.',
+  {
+    ...interactionScope,
+    interactionId: id('Interaction ID from list_interactions or Run attention.')
+  },
+  read,
+  (client, { interactionId, ...scope }, options) =>
+    client.getInteraction(interactionId, scope, options),
+  requireInteractionScope,
+  { serviceCapability: 'task-interactions' }
+)
+registerResource(
   'get_plan',
   'research',
   'Read the current session plan, artifact version and revision, or null when there is no plan.',
@@ -402,23 +437,29 @@ register(
   read,
   (client, args, options) => client.getSessionPlan(args.sessionId, options)
 )
-register(
+registerResource(
   'respond_plan',
   'research',
-  'Explicitly approve or reject the reviewed plan version, or request revision with feedback. Approval may resume execution and incur costs. Never approve without reviewing get_plan.',
+  'Relay the user’s approval, rejection, or requested changes for the exact Plan version and revision they reviewed. Approval may resume execution and incur costs. Do not submit a decision without asking the user.',
   {
     sessionId,
-    response: z.union([
-      z.strictObject({
-        decision: z.enum(['approved', 'rejected']),
-        artifactVersionId: id('Plan artifact version returned by get_plan.'),
-        expectedRevision
-      }),
-      z.strictObject({ feedback: id('Requested changes to the plan.') })
-    ])
+    projectId: projectId.optional(),
+    artifactVersionId: id('Plan Artifact Version from get_interaction or get_plan.'),
+    expectedRevision,
+    expectedBranchId: id('Branch ID from get_interaction or get_plan.'),
+    source: z.literal('user_relay').describe('Relay an explicit decision by the user.'),
+    decision: z.enum(['approved', 'rejected']).optional(),
+    feedback: id('Requested changes to the Plan.').optional()
   },
   write,
-  (client, args, options) => client.respondSessionPlan(args.sessionId, args.response, options)
+  (client, { sessionId, ...response }, options) =>
+    client.respondSessionPlan(sessionId, response, options),
+  ({ decision, feedback }, context) => {
+    if (Boolean(decision) === Boolean(feedback)) {
+      context.addIssue({ code: 'custom', message: 'Supply one decision or feedback.' })
+    }
+  },
+  { serviceCapability: 'task-interactions' }
 )
 registerResource(
   'search_literature',

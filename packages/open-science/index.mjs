@@ -498,7 +498,27 @@ export class OpenScienceClient {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`, options)
   }
 
-  respondSessionPlan(sessionId, response, options) {
+  listInteractions(scope, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(`/api/v1/interactions?${query}`, options)
+  }
+
+  getInteraction(interactionId, scope, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}?${query}`,
+      options
+    )
+  }
+
+  async respondSessionPlan(sessionId, response, options) {
+    const bootstrap = await this.health(options)
+    if (!bootstrap.taskCapabilities?.includes('task-interactions')) {
+      throw new OpenScienceApiError(
+        'Update the service to respond to Plan reviews through a local Task connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan/respond`, {
       ...options,
       method: 'POST',

@@ -532,6 +532,9 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
   promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
+  planHistoryProjections: session.planHistoryProjections?.map((plan) =>
+    plan.externalResponse ? { ...plan, externalResponse: undefined } : plan
+  ),
   runtimeContext: session.runtimeContext
     ? {
         ...session.runtimeContext,
@@ -540,6 +543,18 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
+        ...(session.runtimeContext.plan?.externalResponse
+          ? {
+              plan: {
+                ...session.runtimeContext.plan,
+                ...(session.runtimeContext.plan.delivery?.commandId ===
+                session.runtimeContext.plan.externalResponse.commandId
+                  ? { delivery: undefined }
+                  : {}),
+                externalResponse: undefined
+              }
+            }
+          : {}),
         // Local reading links are not part of a portable Session package.
         sessionContext: undefined
       }
@@ -564,6 +579,16 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
     return true
   if (JSON.stringify(session).includes('session-replay:')) return true
   const runtimeContext = session.runtimeContext
+  if (
+    (isRecord(runtimeContext) &&
+      isRecord(runtimeContext.plan) &&
+      Object.hasOwn(runtimeContext.plan, 'externalResponse')) ||
+    (Array.isArray(session.planHistoryProjections) &&
+      session.planHistoryProjections.some(
+        (plan) => isRecord(plan) && Object.hasOwn(plan, 'externalResponse')
+      ))
+  )
+    return true
   return (
     isRecord(runtimeContext) &&
     [
@@ -2313,7 +2338,11 @@ export class SessionPackageService {
               // Local reading links are not part of a portable Session package.
               sessionContext: undefined,
               plan: mappedSession.runtimeContext.plan
-                ? { ...mappedSession.runtimeContext.plan, delivery: undefined }
+                ? {
+                    ...mappedSession.runtimeContext.plan,
+                    delivery: undefined,
+                    externalResponse: undefined
+                  }
                 : undefined
             }
           : undefined,

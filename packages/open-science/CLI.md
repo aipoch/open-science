@@ -700,14 +700,19 @@ Inspect and respond to an active Plan with its exact version and revision:
 
 ```bash
 open-science plan show <session-id> --json
-open-science plan approve <session-id> --artifact-version <id> --revision <number> --json
-open-science plan reject <session-id> --artifact-version <id> --revision <number> --json
-open-science plan revise <session-id> --feedback "Split the validation step" --json
+open-science plan approve <session-id> --artifact-version <id> --revision <number> --branch <id> --json
+open-science plan reject <session-id> --artifact-version <id> --revision <number> --branch <id> --json
+open-science plan revise <session-id> --artifact-version <id> --revision <number> --branch <id> --feedback "Split the validation step" --json
 ```
 
-Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
-persists the exact decision and triggers a one-time Agent wakeup; feedback asks the live Plan
-interaction for a revision.
+Plan responses require the authenticated local Task connection. Use the version, revision and
+branch the user reviewed. `list_interactions` accepts a Run ID or an explicit Project and Session.
+`get_interaction` accepts the same scope plus the returned interaction ID. `respond_plan` accepts
+flat `sessionId`, `artifactVersionId`, `expectedRevision`, `expectedBranchId`, `source: "user_relay"`
+and either `decision` or `feedback`. Ask the user in the current conversation before calling it.
+If the response is lost, query the same interaction. A continuation ID identifies the Plan Owner's
+durable handoff; the original Run keeps its outcome, including any restart interruption. The
+handoff status does not establish Notebook execution or file delivery.
 
 ## Session configuration
 
@@ -1206,6 +1211,8 @@ service on the same machine with access to the input and delivery files.
 | `cancel_run`                        | Explicitly cancel a run without undoing previous effects |
 | `get_plan`                          | Read the plan and its version/revision                   |
 | `respond_plan`                      | Approve/reject a reviewed version or request changes     |
+| `list_interactions`                 | Find pending decisions in a Run or Project and Session   |
+| `get_interaction`                   | Read a scoped decision, Plan or continuation receipt     |
 | `list_artifacts`                    | List published Artifact versions and download IDs        |
 | `download_artifact`                 | Deliver one listed version to a new local file           |
 | `get_delivery_status`               | Check report and result table delivery for one Run       |

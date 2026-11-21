@@ -122,6 +122,71 @@ async function resourceAgents(
   }
 }
 
+it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
+  const interaction = {
+    id: 'plan:plan-version',
+    kind: 'plan',
+    state: 'pending',
+    runId: 'run-1',
+    projectId: 'p1',
+    sessionId: 's1',
+    revision: 3,
+    owner: 'user',
+    responseCapability: 'respond_plan',
+    actions: ['approved', 'rejected', 'revise']
+  }
+  const plan = {
+    artifactVersionId: 'plan-version',
+    revision: 3,
+    document: { task_summary: 'Compare irrigation groups.' }
+  }
+  const run = {
+    id: interaction.runId,
+    status: 'running',
+    attention: { kind: 'interactions', interactions: [interaction] }
+  }
+  const agent = await resourceAgents(
+    (request, response) => {
+      const url = new URL(request.url!, 'http://localhost')
+      if (url.pathname === '/api/v1/runs/run-1') {
+        response.end(JSON.stringify({ data: run }))
+      } else if (
+        url.pathname === '/api/v1/interactions' &&
+        url.searchParams.get('runId') === run.id
+      ) {
+        response.end(JSON.stringify({ data: [interaction] }))
+      } else if (
+        decodeURIComponent(url.pathname) === '/api/v1/interactions/plan:plan-version' &&
+        url.searchParams.get('projectId') === 'p1' &&
+        url.searchParams.get('sessionId') === 's1'
+      ) {
+        response.end(JSON.stringify({ data: { ...interaction, plan } }))
+      } else {
+        response.writeHead(404).end(JSON.stringify({ error: { code: 'not_found' } }))
+      }
+    },
+    ['task-interactions']
+  )
+
+  const both = async (
+    name: string,
+    args: Record<string, unknown>,
+    result: unknown
+  ): Promise<void> => {
+    expect(await agent.cli(name, args)).toEqual({ result })
+    const mcp = await agent.mcp(name, args)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual({ result })
+  }
+  await both('list_interactions', { runId: run.id }, [interaction])
+  await both('wait_run', { runId: run.id, timeoutMs: 4_000 }, { run, timeoutMs: 4_000 })
+  await both(
+    'get_interaction',
+    { projectId: 'p1', sessionId: 's1', interactionId: interaction.id },
+    { ...interaction, plan }
+  )
+})
+
 it('recovers the original study after the initial submission response is lost', async () => {
   const args = {
     requestId: 'study-request',

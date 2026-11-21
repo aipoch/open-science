@@ -4628,14 +4628,18 @@ describe('startWebHttpServer', () => {
       body: JSON.stringify({
         decision: 'approved',
         artifactVersionId: 'plan-version',
-        expectedRevision: 2
+        expectedRevision: 2,
+        expectedBranchId: 'branch-1',
+        source: 'user_relay'
       })
     })
     expect(await approvedPlan.json()).toEqual({ data: { changed: true } })
     expect(tasks.respondSessionPlan).toHaveBeenCalledWith('session/1', {
       decision: 'approved',
       artifactVersionId: 'plan-version',
-      expectedRevision: 2
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay'
     })
 
     tasks.respondSessionPlan.mockClear()

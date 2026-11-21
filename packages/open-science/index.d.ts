@@ -407,6 +407,7 @@ export type PlanLifecycle =
   'awaiting_approval' | 'approved' | 'in_progress' | 'blocked' | 'completed' | 'rejected'
 
 export type SessionPlan = {
+  branchId?: string
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
@@ -427,32 +428,42 @@ export type SessionPlan = {
   }
 }
 
-export type RunAttention = { kind: 'plan-approval'; plan: SessionPlan }
-
-export type PlanDecisionResponse = {
-  projection: SessionPlan
-  changed: boolean
+export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
+export type TaskInteractionReference = {
+  id: string
+  kind: string
+  state: 'pending' | 'responded' | 'expired' | 'unconfirmed'
+  projectId: string
+  sessionId: string
+  runId?: string
+  promptMessageId?: string
+  branchId?: string
+  revision: number
+  owner: 'user' | 'agent' | 'service'
+  responseCapability?: string
+  actions: readonly string[]
+  next?: string
 }
-
-export type PlanFeedbackResponse = {
-  kind: 'feedback'
-  routeToInteractionId: string
-  artifactVersionId: string
-  text: string
-  message: {
-    id: string
-    role: 'user'
-    content: string
-    status: 'complete'
-    responseToMessageId: string
-    eventIds: string[]
-    createdAt: number
-    updatedAt: number
+export type PlanInteraction = TaskInteractionReference & {
+  kind: 'plan'
+  plan?: SessionPlan
+  response?: {
+    source: 'user_relay' | 'delegated_agent'
+    action: 'approved' | 'rejected' | 'revise'
+    reviewedRevision: number
+    continuation: {
+      id: string
+      promptMessageId: string
+      status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
+      taskRunStatus: 'unconfirmed'
+    }
   }
-  planRevision: number
 }
+export type RunAttention =
+  | { kind: 'plan-approval'; plan: SessionPlan }
+  | { kind: 'interactions'; interactions: TaskInteractionReference[] }
 
-export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse
+export type PlanResponse = { interaction: PlanInteraction; changed: boolean }
 
 export type Run = {
   requestId?: string
@@ -794,15 +805,27 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<AgentRouting>
   getSessionPlan(sessionId: string, options?: RequestOptions): Promise<SessionPlan | null>
+  listInteractions(
+    scope: TaskInteractionScope,
+    options?: RequestOptions
+  ): Promise<TaskInteractionReference[]>
+  getInteraction(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    options?: RequestOptions
+  ): Promise<PlanInteraction>
   respondSessionPlan(
     sessionId: string,
-    response:
-      | {
-          decision: 'approved' | 'rejected'
-          artifactVersionId: string
-          expectedRevision: number
-        }
-      | { feedback: string },
+    response: {
+      projectId?: string
+      source: 'user_relay'
+      artifactVersionId: string
+      expectedRevision: number
+      expectedBranchId: string
+    } & (
+      | { decision: 'approved' | 'rejected'; feedback?: never }
+      | { feedback: string; decision?: never }
+    ),
     options?: RequestOptions
   ): Promise<PlanResponse>
   forkSession(

@@ -720,8 +720,11 @@ class AcpRuntime {
     return this.sessionPlanWorkflow.discardUnavailable(input)
   }
 
-  async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
-    const result = await this.sessionPlanWorkflow.respond(input)
+  async respondSessionPlan(
+    input: PlanResponseCommand,
+    isAuthorizationCurrent?: () => boolean
+  ): Promise<PlanResponseResult> {
+    const result = await this.sessionPlanWorkflow.respond(input, isAuthorizationCurrent)
     if (result.deliveryCommandId) this.planContinuations.schedule(input.projectId, input.sessionId)
     const response = { ...result }
     Reflect.deleteProperty(response, 'deliveryCommandId')

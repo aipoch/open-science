@@ -135,6 +135,9 @@ export const createForkSession = (
     contextUsage: undefined,
     pendingHistoryReplay: { kind: 'all' },
     branchContextResetRequired: true,
+    planHistoryProjections: copied.planHistoryProjections?.map((plan) =>
+      plan.externalResponse ? { ...plan, externalResponse: undefined } : plan
+    ),
     runtimeContext: copied.runtimeContext
       ? {
           ...copied.runtimeContext,
@@ -144,7 +147,7 @@ export const createForkSession = (
           sideChats: undefined,
           sideChatRelays: undefined,
           plan: copied.runtimeContext.plan
-            ? { ...copied.runtimeContext.plan, delivery: undefined }
+            ? { ...copied.runtimeContext.plan, delivery: undefined, externalResponse: undefined }
             : undefined
         }
       : undefined

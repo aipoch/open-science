@@ -1656,6 +1656,12 @@ class TaskRunner {
     return this.runs.get(runId)?.promptMessageId || undefined
   }
 
+  findRunIdForPrompt(sessionId: string, promptMessageId: string): string | undefined {
+    return [...this.runs.values()].findLast(
+      (run) => run.sessionId === sessionId && run.promptMessageId === promptMessageId
+    )?.id
+  }
+
   async waitForRun(runId: string): Promise<TaskRun> {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)

@@ -4440,6 +4440,125 @@ it.each([
   }
 })
 
+it('excludes external Plan response receipts from the archive and the resulting Fork', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  initDataRoot(target.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const scope = { projectId: 'project-1', sessionId: 'session-1' }
+  const sourceSessions = new SessionRepository(source.storageRoot)
+  const document = {
+    schema_version: 1 as const,
+    task_summary: 'Compare groups.',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Comparison',
+            steps: [{ title: 'Compare groups', description: 'Compute group means.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Group means'],
+    feasibility: { confidence: 'high' as const, rationale: 'The two groups are available.' }
+  }
+  const content = JSON.stringify(document, null, 2)
+  await source.compatibilityRepository.writePendingFile({
+    projectId: scope.projectId,
+    sessionId: 'artifact-session-1',
+    runId: 'artifact-run-1',
+    filename: 'plan.json',
+    mimeType: 'application/json',
+    source: { kind: 'inline', content, encoding: 'utf8' }
+  })
+  const version = await source.repository.createVersion(
+    createArtifactVersionRequest({
+      filename: 'plan.json',
+      contentType: 'application/json',
+      promptMessageId: 'plan-prompt'
+    })
+  )
+  await sourceSessions.saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Plan outcome',
+    cwd: '',
+    status: 'idle',
+    messages: [
+      {
+        id: 'plan-prompt',
+        role: 'user',
+        content: 'Compare groups.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 2,
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: version.artifactId,
+        artifactVersionId: version.versionId,
+        artifactChecksum: sha256(content),
+        document,
+        approval: 'approved',
+        originatingPromptMessageId: 'plan-prompt',
+        stepStatuses: {},
+        externalResponse: {
+          source: 'user_relay',
+          action: 'approved',
+          reviewedRevision: 0,
+          commandId: 'local-plan-receipt',
+          promptMessageId: 'plan-prompt',
+          handedOff: true
+        }
+      }
+    }
+  })
+  expect(
+    (await sourceSessions.loadSession(scope.projectId, scope.sessionId))?.runtimeContext?.plan
+      ?.externalResponse
+  ).toMatchObject({
+    commandId: 'local-plan-receipt'
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const archive = join(source.storageRoot, 'plan.science')
+  try {
+    await exporter.exportTo(scope, archive)
+    const expanded = join(source.storageRoot, 'plan-expanded')
+    await readPackageArchive(archive, expanded, new AbortController().signal)
+    const stored = await readFile(join(expanded, 'session.json'), 'utf8')
+    expect(stored).not.toContain('local-plan-receipt')
+    expect(stored).not.toContain('externalResponse')
+    const imported = await importer.importFrom(archive)
+    const forked = await importer.fork(imported)
+    const forkedSession = await new SessionRepository(target.storageRoot).loadSession(
+      forked.projectId,
+      forked.sessionId
+    )
+    expect(forkedSession).toBeDefined()
+    expect(JSON.stringify(forkedSession)).not.toContain('local-plan-receipt')
+  } finally {
+    await exporter.close()
+    await importer.close()
+  }
+})
+
 it('drops an undelivered Side Chat relay instead of blocking Session export', async () => {
   const source = await createProvenanceTestFixture()
   initDataRoot(source.storageRoot)

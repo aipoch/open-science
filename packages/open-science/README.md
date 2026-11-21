@@ -258,9 +258,12 @@ process-local. If the daemon restarted or the suffix was evicted, the iterator y
 `stream.resync-required` with reason `stream-changed` or `cursor-expired`; read the Run or Session
 through the HTTP API to restore authoritative state.
 
-Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
-attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun
-without returnOnAttention keeps the original terminal-only behavior.
+Plan First runs can opt into actionable waiting with `returnOnAttention`. When the Run has
+`attention.kind` equal to `interactions`, use `listInteractions` and `getInteraction` in its scope.
+Relay the user's response with `respondSessionPlan`, passing the version, revision and branch they
+reviewed and `source: 'user_relay'`. After reconnect, query the same interaction to check the
+recorded decision and continuation. `waitForRun` without `returnOnAttention` still waits for a
+terminal Run.
 
 Automatic review and Specialist binding reuse existing Session JSON fields. Delegation adds
 delegationPolicy with values allow or deny; an omitted historical value restores as allow.

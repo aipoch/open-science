@@ -434,9 +434,10 @@ class AcpRuntimeCoordinator {
   }
 
   respondSessionPlan(
-    input: Parameters<AcpRuntime['respondSessionPlan']>[0]
+    input: Parameters<AcpRuntime['respondSessionPlan']>[0],
+    isAuthorizationCurrent?: () => boolean
   ): ReturnType<AcpRuntime['respondSessionPlan']> {
-    return this.runtimeForSession(input.sessionId).respondSessionPlan(input)
+    return this.runtimeForSession(input.sessionId).respondSessionPlan(input, isAuthorizationCurrent)
   }
 
   getActivePromptSessions(): { projectId: string; sessionId: string }[] {

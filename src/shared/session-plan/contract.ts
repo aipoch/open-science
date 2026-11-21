@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { TaskInteractionDecisionSource } from '../task-interaction'
 
 function planSchemaInputType(input: unknown): string {
   if (input === undefined) return 'missing value'
@@ -128,6 +129,7 @@ export type ActivePlanProjection = Readonly<{
   revision: number
   /** Live review identity; receipt revisions do not create a new user interaction. */
   reviewRequestId?: string
+  externalResponse?: ExternalPlanResponse
   approval: SessionPlanApproval
   lifecycle: PlanLifecycle
   document: PlanDocumentV1
@@ -229,8 +231,9 @@ export type PlanResponseIdentity = Readonly<{
   expectedRevision: number
 }>
 
-export type PlanResponseCommand =
+export type PlanResponseCommand = (
   | (PlanResponseIdentity & Readonly<{ decision: 'approved' | 'rejected'; feedback?: never }>)
+  | (PlanResponseIdentity & Readonly<{ feedback: string; decision?: never }>)
   | Readonly<{
       projectId: string
       sessionId: string
@@ -239,6 +242,18 @@ export type PlanResponseCommand =
       artifactVersionId?: never
       expectedRevision?: never
     }>
+) &
+  Readonly<{ source?: TaskInteractionDecisionSource; expectedBranchId?: string }>
+
+export type ExternalPlanResponse = Readonly<{
+  source: TaskInteractionDecisionSource
+  reviewedRevision: number
+  action: 'approved' | 'rejected' | 'revise'
+  feedbackChecksum?: string
+  commandId: string
+  promptMessageId: string
+  handedOff?: true
+}>
 
 export class PlanCommandError extends Error {
   constructor(
@@ -491,6 +506,8 @@ export type SessionPlanRuntimeContext = Readonly<{
   // A persisted user Message that asks the Agent to revise or interpret this still-pending Plan.
   // It is neutral review input, not an approval decision.
   reviewFeedbackMessageId?: string
+  // Local receipt of the decision relayed for this exact Plan version.
+  externalResponse?: ExternalPlanResponse
   // One-shot approval or review-feedback handoff receipt. This is delivery state, not an execution
   // capability, and never determines whether the Plan is active or updateable.
   delivery?: SessionPlanDelivery

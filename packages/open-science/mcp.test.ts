@@ -65,18 +65,41 @@ const cases = [
     'respond_plan',
     {
       sessionId: 's/1',
-      response: { decision: 'approved', artifactVersionId: 'v1', expectedRevision: 3 }
+      decision: 'approved',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
     },
     '/api/v1/sessions/s%2F1/plan/respond',
     'POST',
-    { decision: 'approved', artifactVersionId: 'v1', expectedRevision: 3 }
+    {
+      decision: 'approved',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    }
   ],
   [
     'respond_plan',
-    { sessionId: 's/1', response: { feedback: 'Add controls' } },
+    {
+      sessionId: 's/1',
+      feedback: 'Add controls',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    },
     '/api/v1/sessions/s%2F1/plan/respond',
     'POST',
-    { feedback: 'Add controls' }
+    {
+      feedback: 'Add controls',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    }
   ],
   ['list_artifacts', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1/artifacts', 'GET', undefined]
 ] as const
@@ -182,8 +205,10 @@ describe('research MCP tools', () => {
 
   it.each(cases)('%s preserves the SDK HTTP contract', async (name, args, path, method, body) => {
     const artifactList = name === 'list_artifacts'
-    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
-      Response.json({ data: artifactList ? [{ id: 'version-1' }] : { example: 'result' } })
+    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async (url) =>
+      url.endsWith('/api/bootstrap')
+        ? Response.json({ taskCapabilities: ['task-interactions'] })
+        : Response.json({ data: artifactList ? [{ id: 'version-1' }] : { example: 'result' } })
     )
     const sdk = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',
@@ -200,7 +225,7 @@ describe('research MCP tools', () => {
     expect(response.content).toEqual([
       { type: 'text', text: JSON.stringify(response.structuredContent) }
     ])
-    const sentBody = fetch.mock.calls[0]?.[1]?.body
+    const sentBody = fetch.mock.calls.find(([url]) => url.endsWith(path))?.[1]?.body
     expect(sentBody === undefined ? undefined : JSON.parse(sentBody as string)).toEqual(body)
     expect(connect).toHaveBeenCalledWith({
       configRoot: '/test-profile',
@@ -329,17 +354,17 @@ describe('research MCP tools', () => {
     ['get_session', {}],
     ['get_session', { sessionId: 's1', arbitrary: true }],
     ['update_session_configuration', { sessionId: 's1', expectedRevision: -1 }],
-    ['respond_plan', { sessionId: 's1', response: { decision: 'approved' } }],
+    ['respond_plan', { sessionId: 's1', decision: 'approved' }],
     [
       'respond_plan',
       {
         sessionId: 's1',
-        response: {
-          decision: 'rejected',
-          artifactVersionId: 'v1',
-          expectedRevision: 2,
-          feedback: 'ambiguous'
-        }
+        decision: 'rejected',
+        artifactVersionId: 'v1',
+        expectedRevision: 2,
+        expectedBranchId: 'b1',
+        source: 'user_relay',
+        feedback: 'ambiguous'
       }
     ],
     ['start_run', { projectId: 'p1', prompt: ' ' }],

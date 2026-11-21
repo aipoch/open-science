@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
 import type { CliLauncherStatus } from '../../shared/cli'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
@@ -22,6 +23,13 @@ import type {
 } from '../../shared/session-configuration'
 import { latestOutcomePrompt, type PersistedChatSession } from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+import type {
+  TaskInteractionScope,
+  TaskInteraction,
+  TaskInteractionReference,
+  TaskPlanInteraction
+} from '../../shared/task-interaction'
 import type {
   AddCustomServerRequest,
   ConnectorDetailView,
@@ -56,9 +64,12 @@ import type {
 import { createApplicationCommandClient } from '../application-command-client'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
-import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import {
+  canRelayTaskInteraction,
+  createTaskCallerContext,
+  type CallerContext
+} from '../caller-context'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
-import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { TaskSubmissions } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
@@ -560,31 +571,209 @@ class HeadlessTaskApi {
     }
   }
 
-  async getSessionPlan(sessionId: string): Promise<ActivePlanProjection | null> {
-    const session = await this.runner.getSession(sessionId)
-    return this.invoke(
-      'acp:get-plan-projection',
-      session.projectId,
-      session.id
-    ) as Promise<ActivePlanProjection | null>
+  async getSessionPlan(
+    sessionId: string
+  ): Promise<(ActivePlanProjection & { branchId?: string }) | null> {
+    const session = await this.runner.findSession(sessionId)
+    const interaction = await this.planInteraction(session)
+    return interaction?.plan ? { ...interaction.plan, branchId: interaction.branchId } : null
+  }
+
+  private publicPlan({ externalResponse, ...plan }: ActivePlanProjection): ActivePlanProjection {
+    void externalResponse
+    return plan
+  }
+
+  private requireTaskRelay(): void {
+    if (!canRelayTaskInteraction(this.currentCallerContext())) {
+      throw new TaskRunnerError(
+        'task_relay_required',
+        'Task interactions require a local authenticated Task connection.'
+      )
+    }
+  }
+
+  private async interactionSession(scope: TaskInteractionScope): Promise<{
+    session: PersistedChatSession
+    run?: TaskRun
+  }> {
+    if ('runId' in scope) {
+      const run = this.runner.getRun(scope.runId)
+      return { session: await this.runner.findSession(run.sessionId, run.projectId), run }
+    }
+    return { session: await this.runner.findSession(scope.sessionId, scope.projectId) }
+  }
+
+  private async planInteraction(
+    session: PersistedChatSession,
+    run?: TaskRun,
+    interactionId?: string
+  ): Promise<TaskPlanInteraction | undefined> {
+    const active = session.runtimeContext?.plan
+    const graph = session.conversationGraph
+    const messages = graph ? resolveActiveConversationMessages(graph) : session.messages
+    const versionId = interactionId?.startsWith('plan:')
+      ? interactionId.slice('plan:'.length)
+      : undefined
+    if (interactionId && !versionId) return undefined
+    const historical =
+      versionId && active?.artifactVersionId !== versionId
+        ? session.planHistoryProjections?.find((plan) => plan.artifactVersionId === versionId)
+        : undefined
+    const record = historical ?? active
+    if (!record || (versionId !== undefined && versionId !== record.artifactVersionId))
+      return undefined
+    const promptMessageId = record.originatingPromptMessageId
+    if (!promptMessageId || !messages.some((message) => message.id === promptMessageId))
+      return undefined
+    if (run && this.runner.getRunPromptMessageId(run.id) !== promptMessageId) return undefined
+    const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
+    const branchId = graph?.frames.find(({ id }) => id === graph.activeFrameId)?.activeBranchId
+    const plan =
+      historical ??
+      ((await this.invoke(
+        'acp:get-plan-projection',
+        session.projectId,
+        session.id
+      )) as ActivePlanProjection | null)
+    if (!plan || plan.artifactVersionId !== record.artifactVersionId) return undefined
+    const receipt = record.externalResponse
+    const delivery =
+      !historical && receipt && active?.delivery?.commandId === receipt.commandId
+        ? active.delivery
+        : undefined
+    const expired = Boolean(
+      session.packageOrigin || historical || !branchId || run?.status === 'cancelled'
+    )
+    const state =
+      receipt || plan.approval !== 'pending' ? 'responded' : expired ? 'expired' : 'pending'
+    return {
+      id: `plan:${plan.artifactVersionId}`,
+      kind: 'plan',
+      state,
+      projectId: session.projectId,
+      sessionId: session.id,
+      ...(runId ? { runId } : {}),
+      promptMessageId,
+      ...(branchId ? { branchId } : {}),
+      revision: plan.revision,
+      owner: state === 'pending' ? 'user' : 'service',
+      actions: state === 'pending' ? ['approved', 'rejected', 'revise'] : [],
+      ...(state === 'pending' ? { responseCapability: 'respond_plan' } : {}),
+      ...(state === 'expired' ? { next: 'Read the current Session Plan before responding.' } : {}),
+      plan: this.publicPlan(plan),
+      ...(receipt
+        ? {
+            response: {
+              source: receipt.source,
+              action: receipt.action,
+              reviewedRevision: receipt.reviewedRevision,
+              continuation: {
+                id: receipt.commandId,
+                promptMessageId: receipt.promptMessageId,
+                taskRunStatus: 'unconfirmed',
+                status:
+                  delivery?.state === 'delivering'
+                    ? 'unconfirmed'
+                    : (delivery?.state ?? (receipt.handedOff ? 'accepted' : 'unconfirmed'))
+              }
+            }
+          }
+        : {})
+    }
+  }
+
+  async listInteractions(scope: TaskInteractionScope): Promise<TaskInteractionReference[]> {
+    this.requireTaskRelay()
+    const { session, run } = await this.interactionSession(scope)
+    const interaction = await this.planInteraction(session, run)
+    if (interaction?.state !== 'pending') return []
+    const { plan, ...reference } = interaction
+    void plan
+    return [reference]
+  }
+
+  async getInteraction(id: string, scope: TaskInteractionScope): Promise<TaskInteraction> {
+    this.requireTaskRelay()
+    const { session, run } = await this.interactionSession(scope)
+    const interaction = await this.planInteraction(session, run, id)
+    if (!interaction) {
+      throw new TaskRunnerError('interaction_not_found', 'No matching interaction in this scope.')
+    }
+    return interaction
   }
 
   async respondSessionPlan(
     sessionId: string,
     request: TaskPlanResponseRequest
-  ): Promise<PlanResponseResult> {
-    const session = await this.runner.ensureSessionAttached(sessionId)
-    const command: PlanResponseCommand =
-      'feedback' in request && typeof request.feedback === 'string'
-        ? { projectId: session.projectId, sessionId: session.id, feedback: request.feedback }
-        : {
-            projectId: session.projectId,
-            sessionId: session.id,
-            decision: request.decision,
-            artifactVersionId: request.artifactVersionId,
-            expectedRevision: request.expectedRevision
-          }
-    return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
+  ): Promise<{ changed: boolean; interaction: TaskPlanInteraction }> {
+    this.requireTaskRelay()
+    const session = await this.runner.findSession(sessionId, request.projectId)
+    if (session.packageOrigin) {
+      throw new TaskRunnerError('session_read_only', 'The imported Session is read-only.')
+    }
+    const interactionId = `plan:${request.artifactVersionId}`
+    const interaction = await this.planInteraction(session, undefined, interactionId)
+    if (!interaction)
+      throw new PlanCommandError('stale-plan', 'This Plan is no longer active in the Session.')
+    if (interaction.branchId !== request.expectedBranchId) {
+      throw new PlanCommandError(
+        'interaction-mismatch',
+        'The Plan belongs to a different active Message Branch.'
+      )
+    }
+    const action = request.decision ?? 'revise'
+    const record =
+      session.runtimeContext?.plan?.artifactVersionId === request.artifactVersionId
+        ? session.runtimeContext.plan
+        : session.planHistoryProjections?.find(
+            (plan) => plan.artifactVersionId === request.artifactVersionId
+          )
+    if (interaction.state === 'responded') {
+      const receipt = record?.externalResponse
+      const feedbackChecksum = request.feedback
+        ? createHash('sha256').update(request.feedback).digest('hex')
+        : undefined
+      if (
+        receipt?.reviewedRevision === request.expectedRevision &&
+        receipt.source === request.source &&
+        receipt.action === action &&
+        receipt.feedbackChecksum === feedbackChecksum
+      ) {
+        return { changed: false, interaction }
+      }
+      throw new PlanCommandError(
+        'approval-already-decided',
+        'This Plan already has a different response.'
+      )
+    }
+    if (interaction.state !== 'pending' || interaction.revision !== request.expectedRevision) {
+      throw new PlanCommandError(
+        'revision-conflict',
+        'Read the current Plan revision before responding.'
+      )
+    }
+    const { projectId } = interaction
+    const identity = {
+      projectId,
+      sessionId,
+      artifactVersionId: request.artifactVersionId,
+      expectedRevision: request.expectedRevision,
+      source: request.source,
+      expectedBranchId: request.expectedBranchId
+    }
+    const command: PlanResponseCommand = request.decision
+      ? { ...identity, decision: request.decision }
+      : { ...identity, feedback: request.feedback }
+    await this.runner.ensureSessionAttached(sessionId)
+    const result = (await this.invoke('acp:respond-plan', command)) as { changed?: boolean }
+    return {
+      changed: result.changed !== false,
+      interaction: (await this.getInteraction(interactionId, {
+        projectId,
+        sessionId
+      })) as TaskPlanInteraction
+    }
   }
 
   supportsSubmissions(): boolean {
@@ -611,7 +800,23 @@ class HeadlessTaskApi {
   }
 
   async getRun(runId: string): Promise<TaskRun> {
-    return this.withRunExecution(this.runner.getRun(runId))
+    const run = this.runner.getRun(runId)
+    if (
+      canRelayTaskInteraction(this.currentCallerContext()) &&
+      (run.attention?.kind === 'plan-approval' || run.failureCode === 'process_restarted')
+    ) {
+      try {
+        const interactions = await this.listInteractions({ runId })
+        return this.withRunExecution({
+          ...run,
+          attention: interactions.length ? { kind: 'interactions', interactions } : undefined
+        })
+      } catch (error) {
+        if (!(error instanceof TaskRunnerError && error.code === 'session_not_found')) throw error
+        return this.withRunExecution({ ...run, attention: undefined })
+      }
+    }
+    return this.withRunExecution(run)
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {

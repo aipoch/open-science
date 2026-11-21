@@ -79,9 +79,9 @@ Commands:
   settings agent-routing show
   settings agent-routing update [routing options]
   plan show <session-id>
-  plan approve <session-id> --artifact-version <id> --revision <number>
-  plan reject <session-id> --artifact-version <id> --revision <number>
-  plan revise <session-id> --feedback <text>
+  plan approve <session-id> --artifact-version <id> --revision <number> --branch <id>
+  plan reject <session-id> --artifact-version <id> --revision <number> --branch <id>
+  plan revise <session-id> --artifact-version <id> --revision <number> --branch <id> --feedback <text>
   artifacts list <session-id>
   artifacts download <download-id> --session <session-id> [--output <path>]
   literature search [query] [--project <id-or-name>] [--limit <n>] [--offset <n>]
@@ -190,6 +190,7 @@ const VALUE_OPTIONS = {
   '--specialist': 'specialist',
   '--delegation': 'delegation',
   '--artifact-version': 'artifactVersion',
+  '--branch': 'branchId',
   '--revision': 'revision',
   '--feedback': 'feedback',
   '--timeout-ms': 'timeoutMs',
@@ -734,6 +735,7 @@ export const parseCliArgs = (argv) => {
     !isSessionConfigUpdate &&
     (options.artifactVersion !== undefined ||
       (options.revision !== undefined && !isSessionConfigUpdate) ||
+      options.branchId !== undefined ||
       options.feedback !== undefined)
   ) {
     throw new CliUsageError('Plan response options require a plan command.')
@@ -1977,31 +1979,30 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
     if (subcommand === 'show') {
-      outputValue(await client.getSessionPlan(sessionId), options, deps)
+      outputValue(await call('get_plan', { sessionId }), options, deps)
       return
     }
-    if (subcommand === 'approve' || subcommand === 'reject') {
+    if (['approve', 'reject', 'revise'].includes(subcommand)) {
       if (!options.artifactVersion) {
         throw new CliUsageError('--artifact-version is required.')
       }
       if (options.revision === undefined) {
         throw new CliUsageError('--revision is required.')
       }
+      if (!options.branchId) throw new CliUsageError('--branch is required.')
+      if (subcommand === 'revise' && !options.feedback?.trim())
+        throw new CliUsageError('--feedback is required.')
       outputValue(
-        await client.respondSessionPlan(sessionId, {
-          decision: subcommand === 'approve' ? 'approved' : 'rejected',
+        await call('respond_plan', {
+          sessionId,
           artifactVersionId: options.artifactVersion,
-          expectedRevision: options.revision
+          expectedRevision: options.revision,
+          expectedBranchId: options.branchId,
+          source: 'user_relay',
+          ...(subcommand === 'revise'
+            ? { feedback: options.feedback.trim() }
+            : { decision: subcommand === 'approve' ? 'approved' : 'rejected' })
         }),
-        options,
-        deps
-      )
-      return
-    }
-    if (subcommand === 'revise') {
-      if (!options.feedback?.trim()) throw new CliUsageError('--feedback is required.')
-      outputValue(
-        await client.respondSessionPlan(sessionId, { feedback: options.feedback.trim() }),
         options,
         deps
       )
@@ -2383,15 +2384,19 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         options,
         deps
       )
-    else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
+    else if (result.attention?.kind === 'interactions') {
+      deps.log(
+        `Run needs a response: ${result.id}. To inspect it, pass ${JSON.stringify({ runId: result.id })} to open-science tools call list_interactions --json.`
+      )
+    } else if (result.status === 'completed')
+      deps.log(result.output || `Run completed: ${result.id}`)
     else if (result.status === 'failed') deps.log(`Run failed: ${result.error ?? result.id}`)
     else if (result.status === 'cancelled') deps.log(`Run cancelled: ${result.id}`)
     else if (result.execution?.status === 'waiting_for_user')
       deps.log(result.execution.next?.message ?? `Notebook execution needs the user: ${result.id}`)
     else if (result.attention?.kind === 'plan-approval') {
-      const plan = result.attention.plan
       deps.log(
-        `Run is waiting for Plan approval: open-science plan approve ${result.sessionId} --artifact-version ${plan.artifactVersionId} --revision ${plan.revision}`
+        `Run is waiting for Plan approval: open-science plan show ${result.sessionId} --json`
       )
     } else
       deps.log(

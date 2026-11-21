@@ -592,7 +592,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.discardUnavailableSessionPlan).toHaveBeenCalledTimes(1)
   })
 
-  it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {
+  it('routes Plan decisions from current humans and local Task relays, not declared caller identities', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -620,6 +620,13 @@ describe('ACP application commands', () => {
         acpCommands.respondPlan,
         invocation([request], createTaskCallerContext())
       )
+    ).rejects.toThrow('Plan responses require a current human caller')
+    const relay = { ...request, source: 'user_relay' as const, expectedBranchId: 'branch-1' }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([relay], createTaskCallerContext({ authenticatedLocalBearer: true }))
+      )
     ).resolves.toMatchObject({ changed: true })
     await expect(
       router.dispatcher.invoke(
@@ -631,13 +638,11 @@ describe('ACP application commands', () => {
       router.dispatcher.invoke(
         acpCommands.respondPlan,
         invocation(
-          [request],
+          [relay],
           createWebCallerContext('agent-origin', { actionOrigin: 'agent-session' })
         )
       )
-    ).rejects.toThrow(
-      'Only a current human or Task automation caller can respond to a Session Plan.'
-    )
+    ).rejects.toThrow('Plan responses require a current human caller')
   })
 
   it('preserves the Session size-limit code for Plan responses', async () => {

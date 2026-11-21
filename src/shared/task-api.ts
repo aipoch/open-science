@@ -13,6 +13,7 @@ import type {
 } from './session-configuration'
 import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
 import type { ActivePlanProjection } from './session-plan/contract'
+import type { TaskInteractionReference } from './task-interaction'
 import type {
   AgentFrameworkId,
   ProviderReadinessReason,
@@ -152,7 +153,9 @@ export type StartTaskRunRequest = {
   enabledComputeHostIds?: string[]
 }
 
-export type TaskRunAttention = { kind: 'plan-approval'; plan: ActivePlanProjection }
+export type TaskRunAttention =
+  | { kind: 'plan-approval'; plan: ActivePlanProjection }
+  | { kind: 'interactions'; interactions: TaskInteractionReference[] }
 
 export type TaskRunReview = {
   started: boolean
@@ -163,14 +166,19 @@ export type TaskRunReview = {
   errorMessage?: string
 }
 
-export type TaskPlanResponseRequest =
+export type TaskPlanResponseRequest = {
+  projectId?: string
+  artifactVersionId: string
+  expectedRevision: number
+  expectedBranchId: string
+  source: 'user_relay'
+} & (
   | {
       decision: 'approved' | 'rejected'
-      artifactVersionId: string
-      expectedRevision: number
       feedback?: never
     }
-  | { feedback: string; decision?: never; artifactVersionId?: never; expectedRevision?: never }
+  | { feedback: string; decision?: never }
+)
 
 export type TaskRun = {
   requestId?: string
@@ -327,6 +335,8 @@ export type AcquiredTaskArtifact = {
 
 export type TaskApiErrorCode =
   | 'notebook_setup_failed'
+  | 'task_relay_required'
+  | 'interaction_not_found'
   | 'submission_conflict'
   | 'submission_unavailable'
   | 'submission_not_found'
