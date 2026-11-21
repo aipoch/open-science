@@ -20,7 +20,12 @@ func trigger(_ key: CGKeyCode, target: NSRunningApplication) {
 func attribute(_ element: AXUIElement,_ name:String) -> CFTypeRef? {
     var v:CFTypeRef?; return AXUIElementCopyAttributeValue(element,name as CFString,&v) == .success ? v : nil
 }
-if operation == "quit" {
+if operation == "bookmark" {
+    let data = try URL(fileURLWithPath:bundle,isDirectory:true).bookmarkData(options:[],includingResourceValuesForKeys:nil,relativeTo:nil)
+    print(data.base64EncodedString())
+} else if operation == "terminate" {
+    guard let app=desktop.runningApplications.first(where:matches), app.terminate() else { fail("cannot request ordinary quit") }
+} else if operation == "quit" {
     guard let app = desktop.frontmostApplication, matches(app) else { fail("expected installed app in foreground") }
     trigger(12,target:app)
 } else if operation == "finder" {
@@ -46,6 +51,7 @@ if operation == "quit" {
             print("verified Dock click", "running", String(describing:attribute(hit,kAXIsApplicationRunningAttribute)), "target", actual.path)
             for kind:CGEventType in [.leftMouseDown,.leftMouseUp] {
                 guard let ev=CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,mouseButton:.left) else { fail("cannot create mouse event") }
+                ev.setIntegerValueField(.mouseEventClickState,value:1)
                 ev.post(tap:.cghidEventTap); usleep(100_000)
             }
             exit(0)
