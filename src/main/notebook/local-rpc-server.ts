@@ -164,6 +164,7 @@ type NotebookLocalRpcServerOptions = {
   resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
   transport?: LocalRpcListenOptions['transport']
   connectorService?: {
+    errorCategory?(error: unknown): string | undefined
     call(
       server: string,
       method: string,
@@ -3367,6 +3368,10 @@ class NotebookLocalRpcServer {
         closeRequestAfterResponse(request, response)
       }
 
+      const connectorErrorCode =
+        activeRequest.method === 'mcpCall'
+          ? this.connectorService?.errorCategory?.(error)
+          : undefined
       writeJson(
         response,
         error instanceof RpcHttpError
@@ -3384,7 +3389,11 @@ class NotebookLocalRpcServer {
                 : error instanceof PendingRequestLimitError
                   ? 429
                   : 500,
-        { error: serializedError, ...terminationMetadata() }
+        {
+          error: serializedError,
+          ...(connectorErrorCode && { code: connectorErrorCode }),
+          ...terminationMetadata()
+        }
       )
     } finally {
       removeProducerCancellation?.()

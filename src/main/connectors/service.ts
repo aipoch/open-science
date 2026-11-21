@@ -1,6 +1,6 @@
 import { isBundledConnectorEnabled } from './catalog'
 import { isSensitiveDiagnosticKey, redactSensitiveText } from '@aipoch/diagnostics'
-import { ConnectorHttpError, ParserEngine } from '@aipoch/connector-core'
+import { ConnectorArgumentsError, ConnectorHttpError, ParserEngine } from '@aipoch/connector-core'
 import type { ConnectorRegistry } from '@aipoch/connector-core'
 import {
   classifyCustomMcpFailure,
@@ -296,6 +296,12 @@ export class ConnectorService {
     if (this.unavailableCustomConnectors.delete(serverId)) {
       this.deps.onCustomServerAvailabilityChanged?.(serverId, undefined)
     }
+  }
+
+  errorCategory(error: unknown): string | undefined {
+    if (error instanceof ConnectorGateError) return error.category
+    if (error instanceof ConnectorArgumentsError) return 'invalid_arguments'
+    return undefined
   }
 
   async call(
