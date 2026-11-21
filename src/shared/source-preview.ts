@@ -19,12 +19,13 @@ type SourcePreviewLoadState =
   | (SourcePreviewLoadBase & { phase: 'loading' })
   | (SourcePreviewLoadBase & {
       phase: 'loaded'
-      httpStatusCode: number
-      httpStatusText: string
+      httpStatusCode?: number
+      httpStatusText?: string
     })
   | (SourcePreviewLoadBase & {
       phase: 'failed'
-      failure: 'blocked' | 'certificate' | 'http' | 'network'
+      failure:
+        'blocked' | 'certificate' | 'http' | 'network' | 'process-gone' | 'navigation-blocked'
       errorCode?: number
       errorDescription?: string
       httpStatusCode?: number
