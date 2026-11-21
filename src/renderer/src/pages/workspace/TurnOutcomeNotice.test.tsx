@@ -95,9 +95,9 @@ describe('turn outcome notice action ownership', () => {
     const details = container.querySelector('details')
     expect(details?.open).toBe(false)
     expect(details?.querySelector('pre')?.textContent).toContain('stream ended')
-    expect(details?.querySelector('pre')?.textContent).toContain('Info\n{"vendor_detail"')
+    expect(details?.querySelector('pre')?.textContent).toMatch(/^Info: \{"vendor_detail"/)
     expect(details?.querySelector('pre')?.textContent).not.toContain('Internal error')
-    expect(details?.querySelector('pre')?.textContent).toContain('-32603')
+    expect(details?.querySelector('pre')?.textContent).not.toContain('-32603')
     expect(container.textContent).not.toContain('private-value')
   })
 

@@ -61,10 +61,23 @@ it('does not repeat the displayed description when an operation uses it as its r
         }
       },
       'Optimize question',
-      description,
-      'Info'
+      description
     )
-  ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
+  ).toEqual({
+    details: `Optimize question\n${description}\nrequestId: request-id`,
+    fullText: `Optimize question\n${description}\nrequestId: request-id`
+  })
+})
+
+it('shows only the recorded code when the request has no diagnostic body', () => {
+  const failure: ClassifiedFailure = { category: 'internal', diagnostics: { code: '-32603' } }
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Request failed',
+      ''
+    ).details
+  ).toBe('code: -32603')
 })
 
 it.each<[ClassifiedFailure, string]>([
@@ -82,7 +95,7 @@ it.each<[ClassifiedFailure, string]>([
       reason: 'service/connection-failed',
       diagnostics: { raw: 'Internal error: API Error: Unable to connect to API (ECONNREFUSED)' }
     },
-    'Info\nAPI Error: Unable to connect to API (ECONNREFUSED)'
+    'Info: API Error: Unable to connect to API (ECONNREFUSED)'
   ],
   [
     {
@@ -93,16 +106,12 @@ it.each<[ClassifiedFailure, string]>([
         providerExcerpt: 'Maximum call stack size exceeded'
       }
     },
-    'status: 400\nprotocol: responses\nInfo\nMaximum call stack size exceeded'
+    'status: 400\nprotocol: responses\nInfo: Maximum call stack size exceeded'
   ]
 ])('shows the recorded diagnostic for %j', (failure, expected) => {
   expect(
-    formatNoticeDiagnostics(
-      { id: 'failure', source: 'turn', occurredAt: 0, failure },
-      'Title',
-      '',
-      'Info'
-    )
+    formatNoticeDiagnostics({ id: 'failure', source: 'turn', occurredAt: 0, failure }, 'Title', '')
+      .fullText
   ).toBe('Title\n' + expected)
 })
 

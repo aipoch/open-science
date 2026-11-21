@@ -1575,7 +1575,7 @@ const ConversationPanel = ({
       run: (notice) => {
         const copy = noticePresentation(notice.failure)
         openReportDialog(
-          formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey), t('Info'))
+          formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)).fullText
         )
       }
     }

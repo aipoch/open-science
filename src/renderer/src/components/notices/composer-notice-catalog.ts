@@ -309,9 +309,8 @@ export const noticePriority = (notice: ComposerNotice): number =>
 export const formatNoticeDiagnostics = (
   notice: ComposerNotice,
   title: string,
-  description: string,
-  infoLabel: string
-): string => {
+  description: string
+): { details: string; fullText: string } => {
   const { raw, providerExcerpt, ...fields } = notice.failure.diagnostics
   const reportedResponse = fields.protocol ? providerExcerpt : notice.failure.responseMessage
   const response = reportedResponse && redactSensitiveText(reportedResponse)
@@ -333,15 +332,14 @@ export const formatNoticeDiagnostics = (
   ]
     .filter(Boolean)
     .join('\n')
-  return [
-    title,
-    description,
-    ...Object.entries(fields)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => `${key}: ${value}`),
-    detail && showResponseInfo ? infoLabel : undefined,
-    detail
-  ]
-    .filter(Boolean)
-    .join('\n')
+  const responseDetail = detail && showResponseInfo ? `Info: ${detail}` : undefined
+  const metadata = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}: ${value}`)
+  const diagnosticText = [...metadata, responseDetail ?? detail].filter(Boolean).join('\n')
+  const fullText = [title, description, diagnosticText].filter(Boolean).join('\n')
+  // Local operations may use their recovery instructions as the entire diagnostic.
+  const localInstructions =
+    notice.source === 'operation' && !notice.summary && diagnostic === description
+  return { details: responseDetail ?? (localInstructions ? fullText : diagnosticText), fullText }
 }

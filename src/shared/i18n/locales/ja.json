@@ -7764,7 +7764,6 @@
     "The connection closed before the model finished replying. Retry the request.": "モデルが応答を完了する前に接続が切断されました。リクエストを再試行してください。",
     "The model response could not be parsed": "モデルの応答を解析できません",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "モデルプロバイダーから無効な応答が返されました。プロトコル設定を確認するか、再試行してください。",
-    "Info": "情報",
     "Request failed": "リクエストに失敗しました",
     "Model request failed": "モデルへのリクエストに失敗しました",
     "The model provider could not complete the request. Retry or check the model provider settings.": "モデルプロバイダーがリクエストを完了できませんでした。再試行するか、モデルプロバイダーの設定を確認してください。",

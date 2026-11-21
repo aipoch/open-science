@@ -7762,7 +7762,6 @@
     "The connection closed before the model finished replying. Retry the request.": "모델이 응답을 완료하기 전에 연결이 종료되었습니다. 요청을 다시 시도하세요.",
     "The model response could not be parsed": "모델 응답을 해석할 수 없습니다",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "모델 제공업체가 올바르지 않은 응답을 반환했습니다. 프로토콜 설정을 확인하거나 다시 시도하세요.",
-    "Info": "정보",
     "Request failed": "요청 실패",
     "Model request failed": "모델 요청에 실패했습니다",
     "The model provider could not complete the request. Retry or check the model provider settings.": "모델 제공업체가 요청을 완료하지 못했습니다. 다시 시도하거나 모델 제공업체 설정을 확인하세요.",

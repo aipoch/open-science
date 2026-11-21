@@ -10402,7 +10402,7 @@ it.each(['legacy', 'turn'] as const)(
     )
     if (surface === 'turn') {
       expect(history?.open).toBe(false)
-      expect(history?.querySelector('pre')?.textContent).toContain('Info\n' + response)
+      expect(history?.querySelector('pre')?.textContent).toBe('Info: ' + response)
       expect(history?.textContent).not.toContain('Internal error:')
       act(() => history?.querySelector('summary')?.click())
       expect(history?.open).toBe(true)
