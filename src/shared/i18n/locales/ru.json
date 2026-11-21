@@ -8255,6 +8255,7 @@
     "The connection closed before the model finished replying. Retry the request.": "Соединение закрылось до завершения ответа модели. Повторите запрос.",
     "The model response could not be parsed": "Не удалось разобрать ответ модели",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "Поставщик модели вернул некорректный ответ. Проверьте настройки протокола или повторите попытку.",
+    "Request failed": "Не удалось выполнить запрос",
     "Model request failed": "Запрос к модели не выполнен",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Поставщик модели не смог завершить запрос. Повторите попытку или проверьте настройки поставщика модели.",
     "The input is too long": "Введённые данные слишком длинные",

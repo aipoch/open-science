@@ -3,7 +3,11 @@ import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { runtimeModuleSpecifiers } from '../../../../../test/module-boundary-assertions'
-import type { FailureCategory, FailureReason } from '../../../../shared/failure/contract'
+import type {
+  ClassifiedFailure,
+  FailureCategory,
+  FailureReason
+} from '../../../../shared/failure/contract'
 import {
   formatNoticeDiagnostics,
   noticeCatalog,
@@ -59,7 +63,56 @@ it('does not repeat the displayed description when an operation uses it as its r
       'Optimize question',
       description
     )
-  ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
+  ).toEqual({
+    details: `Optimize question\n${description}\nrequestId: request-id`,
+    fullText: `Optimize question\n${description}\nrequestId: request-id`
+  })
+})
+
+it('shows only the recorded code when the request has no diagnostic body', () => {
+  const failure: ClassifiedFailure = { category: 'internal', diagnostics: { code: '-32603' } }
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Request failed',
+      ''
+    ).details
+  ).toBe('code: -32603')
+})
+
+it.each<[ClassifiedFailure, string]>([
+  [
+    {
+      category: 'internal',
+      reason: 'internal/reconfigure',
+      diagnostics: { raw: 'Internal error: adapter reconfiguration failed' }
+    },
+    'Internal error: adapter reconfiguration failed'
+  ],
+  [
+    {
+      category: 'service',
+      reason: 'service/connection-failed',
+      diagnostics: { raw: 'Internal error: API Error: Unable to connect to API (ECONNREFUSED)' }
+    },
+    'Info: API Error: Unable to connect to API (ECONNREFUSED)'
+  ],
+  [
+    {
+      category: 'service',
+      diagnostics: {
+        status: 400,
+        protocol: 'responses',
+        providerExcerpt: 'Maximum call stack size exceeded'
+      }
+    },
+    'status: 400\nprotocol: responses\nInfo: Maximum call stack size exceeded'
+  ]
+])('shows the recorded diagnostic for %j', (failure, expected) => {
+  expect(
+    formatNoticeDiagnostics({ id: 'failure', source: 'turn', occurredAt: 0, failure }, 'Title', '')
+      .fullText
+  ).toBe('Title\n' + expected)
 })
 
 describe('composer notice boundaries', () => {

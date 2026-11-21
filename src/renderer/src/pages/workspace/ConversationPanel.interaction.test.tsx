@@ -5825,6 +5825,27 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
+  it('keeps a restored Side chat error without source metadata in Details', () => {
+    const error = 'Upstream returned a private diagnostic'
+    renderSidePanel({
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          entries: [],
+          draft: '',
+          running: false,
+          error
+        }
+      }
+    })
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('h2')?.textContent).toBe('Request failed')
+    expect(notice?.querySelector('details pre')?.textContent).toContain(error)
+  })
+
   it.each([
     ['Invalid credentials', 'configuration/auth-failed', 'Model provider error', 401, undefined],
     [
@@ -10334,8 +10355,9 @@ describe('ConversationPanel unified failure notices', () => {
 it.each(['legacy', 'turn'] as const)(
   'keeps an imported %s failure out of the live error area',
   (surface) => {
-    const error =
-      'Internal error: stream disconnected before completion: Transport error: network error: error decoding response body'
+    const response =
+      'stream disconnected before completion: Transport error: network error: error decoding response body'
+    const error = 'Internal error: ' + response
     const activeSession: ChatSession = {
       id: 'imported-session',
       projectId: 'project-a',
@@ -10380,7 +10402,8 @@ it.each(['legacy', 'turn'] as const)(
     )
     if (surface === 'turn') {
       expect(history?.open).toBe(false)
-      expect(history?.textContent).toContain(error)
+      expect(history?.querySelector('pre')?.textContent).toBe('Info: ' + response)
+      expect(history?.textContent).not.toContain('Internal error:')
       act(() => history?.querySelector('summary')?.click())
       expect(history?.open).toBe(true)
     } else {

@@ -100,28 +100,19 @@ const ComposerFailureNoticeSlot = ({
   const providerMessage = current.failure.diagnostics.protocol
     ? undefined
     : current.failure.responseMessage
-  const excerpt = providerErrorExcerpt(
-    current.failure.diagnostics.providerExcerpt ??
-      providerMessage ??
-      (current.failure.reason === 'input/context-overflow'
-        ? current.failure.diagnostics.raw
-        : undefined)
-  )
-  const title =
-    current.summary?.title ??
-    (providerMessage && !excerpt ? t('Model provider error') : t(presentation.titleKey))
+  const excerpt =
+    current.failure.reason === 'input/context-overflow'
+      ? providerErrorExcerpt(current.failure.diagnostics.raw)
+      : undefined
+  const title = current.summary?.title ?? t(presentation.titleKey)
   const description = current.summary
     ? (current.summary.description ?? '')
     : excerpt
       ? `${t(presentation.descriptionKey)} ${excerpt}`
       : current.source === 'session' && current.failure.diagnostics.protocol
         ? t('This turn was interrupted. Resume to continue.')
-        : providerMessage
-          ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
-            ? ''
-            : providerMessage
-          : t(presentation.descriptionKey)
-  const diagnosticText = formatNoticeDiagnostics(current, title, description)
+        : t(presentation.descriptionKey)
+  const diagnostics = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
       value !== undefined &&
@@ -129,12 +120,10 @@ const ComposerFailureNoticeSlot = ({
         ? ['status', 'provider', 'model'].includes(key)
         : key !== 'raw')
   )
-  const showDiagnostics =
-    !current.summary ||
-    Object.entries(current.failure.diagnostics).some(
-      ([key, value]) =>
-        value !== undefined && (key !== 'raw' || (value !== title && value !== description))
-    )
+  const canCopyError = !current.summary || Boolean(diagnostics.details)
+  const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
+    .filter(Boolean)
+    .join('\n')
   const labels: Record<NoticeActionId, string> = {
     'export-diagnostics': t('Export diagnostics…'),
     'open-agent-settings': t('Agent settings'),
@@ -159,7 +148,7 @@ const ComposerFailureNoticeSlot = ({
     setCopiedId(undefined)
     try {
       if (action === 'copy-error') {
-        await navigator.clipboard.writeText(diagnosticText)
+        await navigator.clipboard.writeText(diagnostics.fullText)
         setCopiedId(notice.id)
       } else await handlers[action]?.run(notice)
     } catch (error) {
@@ -173,7 +162,7 @@ const ComposerFailureNoticeSlot = ({
     }
   }
   const available = (action: NoticeActionId, notice = current): boolean =>
-    (showDiagnostics && action === 'copy-error') ||
+    (canCopyError && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
   const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
     const action = noticePresentation(notice.failure, notice.operation).primaryAction
@@ -317,16 +306,7 @@ const ComposerFailureNoticeSlot = ({
                         setExpanded(false)
                       }}
                     >
-                      <TruncatedText
-                        text={
-                          notice.summary?.title ??
-                          (notice.failure.responseMessage &&
-                          !notice.failure.diagnostics.protocol &&
-                          !providerErrorExcerpt(notice.failure.responseMessage)
-                            ? t('Model provider error')
-                            : t(item.titleKey))
-                        }
-                      />
+                      <TruncatedText text={notice.summary?.title ?? t(item.titleKey)} />
                     </button>
                     {primaryAction(notice) ? actionButton(primaryAction(notice)!, notice) : null}
                   </li>
@@ -371,7 +351,7 @@ const ComposerFailureNoticeSlot = ({
   }
 
   const showFooter =
-    showDiagnostics ||
+    canCopyError ||
     primary ||
     presentation.secondaryActions.some((action) => available(action)) ||
     (presentation.feedback === 'link' && handlers.report)
@@ -438,10 +418,10 @@ const ComposerFailureNoticeSlot = ({
                 )
               ) : null}
             </div>
-            {showDiagnostics || actionFailure?.id === current.id ? (
+            {details ? (
               <NoticeDiagnostics
                 key={current.id}
-                errorCode={`${diagnosticText}${actionFailure?.id === current.id ? `\n${actionFailure.message}` : ''}`}
+                errorCode={details}
                 diagnosticsLabel={t('Details')}
                 summaryContent={
                   diagnosticFields.length > 0 ? (

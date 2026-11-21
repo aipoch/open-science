@@ -1194,6 +1194,10 @@ const ConversationPanel = ({
         blocksSend: true,
         ...(labSignInExpired
           ? {
+              summary: {
+                title: t('Model provider error'),
+                description: t('Lab sign-in expired. Sign in again.')
+              },
               failure: {
                 category: 'configuration' as const,
                 reason: 'configuration/auth-failed' as const,
@@ -1570,7 +1574,9 @@ const ConversationPanel = ({
     report: {
       run: (notice) => {
         const copy = noticePresentation(notice.failure)
-        openReportDialog(formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)))
+        openReportDialog(
+          formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)).fullText
+        )
       }
     }
   }
