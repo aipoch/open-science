@@ -245,6 +245,10 @@ export const isShippableDependencyPath = (relativePath) => {
   return parts[0] !== 'node_modules' && parts[0] !== '.git' && !parts.includes('obj.target')
 }
 
+export function usesPackedDesktopPdfJs(manifest) {
+  return manifest.name === 'pdfjs-dist' && manifest.version === '5.4.624'
+}
+
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
@@ -253,6 +257,7 @@ export function createDesktopDependencyFilter(manifest) {
     return (path) => includesPublishedFiles(manifest, path.split(/[\\/]/)[0])
   // These alternate distributions have no consumers in the packaged application. Keep the
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
+  const packedPdfJs = usesPackedDesktopPdfJs(manifest)
   const unusedDistributions = {
     'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
     // The Node OCR worker loads the paired .js and .wasm files for each kernel.
@@ -298,6 +303,13 @@ export function createDesktopDependencyFilter(manifest) {
     const path = parts.join('/')
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
+    if (
+      packedPdfJs &&
+      /^(?:cmaps\/[^/]+\.bcmap$|legacy\/(?:web\/|image_decoders\/|build\/pdf(?:\.worker)?\.min\.mjs$|build\/pdf\.sandbox(?:\.min)?\.mjs$))/.test(
+        path
+      )
+    )
+      return false
     if (unusedDistributions?.test(path)) return false
     // Zod's source condition is opt-in development only; its locale wildcard also matches
     // declarations. Neither is used by packaged Node's normal import/require resolution.

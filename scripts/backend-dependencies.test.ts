@@ -353,6 +353,8 @@ describe('desktop-only dependency contents', () => {
         'scripts/backend-dependencies.mjs',
         'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
+        'scripts/desktop-pdfjs.mjs',
+        'scripts/desktop-pdfjs-reader.mjs',
         'scripts/desktop-dependency-chains.mjs',
         'scripts/sync-file-evidence-codec.mjs',
         'src/main/artifacts/file-evidence-codec.mjs',
