@@ -77,6 +77,8 @@ async function runProbe(script: string): Promise<boolean> {
 export async function loadWindowsDownloadPreference(
   profile: string
 ): Promise<DownloadPreference | undefined> {
+  // The NSIS staging protocol and its signed upgrade smoke currently ship for APP_64 only.
+  if (process.arch !== 'x64') return undefined
   return (await runProbe(installationProbe)) ? windowsDownloadPreference(profile) : undefined
 }
 
