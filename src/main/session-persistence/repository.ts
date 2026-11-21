@@ -1072,10 +1072,15 @@ class SessionRepository {
         `session-file-${read.warning.kind}`,
         'Could not read the conversation file.'
       )
-    const quarantine = await this.hasQuarantinedSessionFile(safeProjectId, safeSessionId)
-    if (read.isComplete && quarantine.isComplete && !quarantine.exists)
-      throw new ApplicationCommandError('session-file-missing', 'Conversation file not found.')
-    return undefined
+    if (!read.isComplete) return undefined
+    const files = await this.listSessionFileNames(this.projectDir(safeProjectId), {
+      missingIsIncomplete: true
+    })
+    const fileName = `${safeSessionId}.json`
+    if (!files.isComplete || files.names.includes(fileName)) return undefined
+    if (files.quarantinedPrimaryFileNames.includes(fileName))
+      throw new ApplicationCommandError('session-file-corrupt', 'Conversation data is damaged.')
+    throw new ApplicationCommandError('session-file-missing', 'Conversation file not found.')
   }
 
   async loadSessionHistoryPage(
