@@ -1724,11 +1724,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async setMainWindowZoomFactor(factor: number): Promise<void> {
-    await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open-Science main window was not found.')
-      mainWindow.webContents.setZoomFactor(nextFactor)
-    }, factor)
+    const window = await this.runningApplication.browserWindow(this.page)
+    await window.evaluate((window, zoom) => window.webContents.setZoomFactor(zoom), factor)
   }
 
   async launchSecondInstance(): Promise<Page> {
@@ -1942,7 +1939,10 @@ class ElectronAppHarness implements ElectronApp {
               '@aipoch/process-tree-native'
             ) as typeof import('@aipoch/process-tree-native')
             // Capture the fixture app's live tree from inside its root before killing the launcher.
-            const members = () => [process.pid, ...binding.windowsCurrentProcessDescendants()]
+            const members = (): number[] => [
+              process.pid,
+              ...binding.windowsCurrentProcessDescendants()
+            ]
             const births = members().map(
               (pid) => [pid, binding.getWindowsProcessCreationTime(pid)] as const
             )
