@@ -8,7 +8,7 @@ import { NotebookSessionReadModel, type NotebookSessionReadSource } from './sess
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import { createFrameNotebookLane } from './lane-identity'
-import type { NotebookRunRecord } from '../../shared/notebook'
+import type { NotebookRunRecord, NotebookSessionState } from '../../shared/notebook'
 
 let root: string | undefined
 
@@ -612,6 +612,48 @@ describe('NotebookSessionReadModel', () => {
     })
   })
 })
+
+it.each(['live', 'imported'])(
+  'keeps a complete latest Run under a preview byte budget for %s history',
+  async (mode) => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot)
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      workspaceCwd: session.cwd
+    }
+    await repository.loadOrCreate({ ...request, lane: session.lane })
+    const runs = [
+      makeRun({ runId: 'older' }),
+      makeRun({
+        runId: 'latest',
+        startedAt: 2,
+        text: { stdout: 'x'.repeat(2048), stderr: '', traceback: '', plain: [] }
+      })
+    ]
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs,
+      total: 2,
+      latestRunEnvironments: {},
+      agentSummaries: []
+    })
+    const model = makeReadModel(storageRoot, session, repository)
+    const read = (bytes?: number): Promise<NotebookSessionState> =>
+      mode === 'live'
+        ? model.state(session, [], undefined, undefined, 100, bytes)
+        : model.importedState(request, [], undefined, undefined, 100, bytes)
+    expect((await read()).runs).toHaveLength(2)
+    const preview = await read(1024)
+    expect(preview.runs.map((run) => run.runId)).toEqual(['latest'])
+    expect(preview.runs[0].text.stdout).toBe(runs[1].text.stdout)
+    expect(preview.historyPage).toEqual({
+      hasEarlierRuns: true,
+      oldestCursor: { startedAt: 2, runId: 'latest' }
+    })
+  }
+)
 
 it.each(['live', 'imported'])(
   'pages large %s Notebook history without losing complete run outputs',

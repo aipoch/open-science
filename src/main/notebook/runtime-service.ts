@@ -215,6 +215,7 @@ import {
   deliversNotebookResultToAgent
 } from '../background-result-delivery/notebook-adapter'
 import {
+  NOTEBOOK_PREVIEW_HISTORY_BYTES,
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
 } from './content-limits'
@@ -2902,6 +2903,10 @@ class NotebookRuntimeService {
         throw new Error('Notebook history limit must be 1-100.')
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
+      const historyByteLimit =
+        request.previewHistory === true && request.historyBefore === undefined
+          ? NOTEBOOK_PREVIEW_HISTORY_BYTES
+          : undefined
       const session = await this.sessionForHistoryRead(request, projectId)
       if (!session) {
         return this.sessionReadModel.importedState(
@@ -2909,7 +2914,8 @@ class NotebookRuntimeService {
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
-          historyLimit
+          historyLimit,
+          historyByteLimit
         )
       }
       return this.sessionReadModel.state(
@@ -2917,7 +2923,8 @@ class NotebookRuntimeService {
         runIds,
         request.historySummaryFrameId,
         request.historyBefore,
-        historyLimit
+        historyLimit,
+        historyByteLimit
       )
     })
   }

@@ -696,7 +696,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
               const nextState = await window.api.notebook.state(
                 lockOnly
                   ? { ...requested.request, historySummaryFrameId: requested.rootFrameId }
-                  : requested.request
+                  : { ...requested.request, previewHistory: true }
               )
 
               if (epoch !== getDesktopRuntimeEpoch()) continue

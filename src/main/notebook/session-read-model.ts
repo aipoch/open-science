@@ -253,7 +253,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     includeRunIds: readonly string[] = [],
     historySummaryFrameId?: string,
     historyBefore?: NotebookRunCursor,
-    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT
+    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT,
+    historyByteLimit?: number
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.loadSessionDocument(session)
     const snapshot = session.snapshot()
@@ -272,7 +273,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const runWindow =
       targetedRunRead || summaryOnlyRead
         ? requestedWindow
-        : this.limitRunWindow(requestedWindow, !sparseRunRead)
+        : this.limitRunWindow(requestedWindow, !sparseRunRead, historyByteLimit)
     const dependencyProjection = await this.options.dependencyAnalyzer
       .project({ projectId: session.projectId, sessionId: session.sessionId })
       .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
@@ -338,7 +339,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     runIds: readonly string[],
     historySummaryFrameId: string | undefined,
     historyBefore: NotebookRunCursor | undefined,
-    historyLimit: number
+    historyLimit: number,
+    historyByteLimit?: number
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const requestedWindow = await this.options.repository.readSessionRunWindow(
@@ -352,7 +354,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const window =
       runIds.length > 0 || historySummaryFrameId !== undefined
         ? requestedWindow
-        : this.limitRunWindow(requestedWindow, true)
+        : this.limitRunWindow(requestedWindow, true, historyByteLimit)
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
     const runs = window.runs.map((run) => this.toPublicRunRecord(run, runIds.length > 0))
     return {
@@ -490,7 +492,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   private limitRunWindow(
     window: Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>>,
-    includeRecentRuns: boolean
+    includeRecentRuns: boolean,
+    byteLimit = 63 * 1024 * 1024
   ): Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>> {
     let bytes = 0
     let start = window.runs.length
@@ -499,7 +502,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       const projectedBytes =
         runBytes * (includeRecentRuns && index >= window.runs.length - 20 ? 2 : 1)
       // Always retain one complete run; byte transfer handles an individually large output.
-      if (start < window.runs.length && bytes + projectedBytes > 63 * 1024 * 1024) break
+      if (start < window.runs.length && bytes + projectedBytes > byteLimit) break
       bytes += projectedBytes
       start = index
     }

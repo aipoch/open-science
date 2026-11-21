@@ -621,7 +621,8 @@ describe('NotebookPreview per-kernel tabs', () => {
       expect(window.api.notebook.state).toHaveBeenCalledWith({
         projectId: 'proj',
         sessionId: 'session-1',
-        workspaceCwd: '/tmp/proj'
+        workspaceCwd: '/tmp/proj',
+        previewHistory: true
       })
     }
   )
