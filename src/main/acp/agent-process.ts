@@ -15,8 +15,8 @@ import { resolveClaudeExecutableForSpawn } from './claude-executable'
 const log = createLogger('agent')
 
 const packageName = '@agentclientprotocol/claude-agent-acp'
-// Bump the revision if the patch changes without an upstream version change.
-export const claudeAcpAdapterRevision = '0.70.0-1'
+// Bump the revision when the managed dependency lock or patch changes.
+export const claudeAcpAdapterRevision = '0.70.0-2'
 export const claudeAcpInstallationReceipt = '.open-science-claude-acp'
 export const claudeAcpAdapterPath = 'node_modules/' + packageName + '/dist'
 
