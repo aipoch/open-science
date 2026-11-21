@@ -1,8 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import {
-  fitContainedImageRect,
-  type ImageAnnotationRect
-} from '../annotations/image-annotation-geometry'
+import { fitContainedImageRect } from '../annotations/image-annotation-geometry'
 
 // Keep controls in screen coordinates so zooming never scales buttons or their hit targets.
 export function ImageEditFloatingTools({
@@ -17,34 +14,38 @@ export function ImageEditFloatingTools({
   children: ReactNode
 }): React.JSX.Element {
   const toolbar = useRef<HTMLDivElement>(null)
-  const [geometry, setGeometry] = useState<{
-    image: ImageAnnotationRect
-    left: number
-    top: number
-  }>()
+  const outline = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState(false)
   const [selected, setSelected] = useState(true)
   const width = naturalSize?.width
   const height = naturalSize?.height
   useLayoutEffect(() => {
-    if (!viewport || !toolbar.current || !width || !height || hidden) return
     const tools = toolbar.current
-    let imageRect: ImageAnnotationRect | undefined
+    const selection = outline.current
+    if (!viewport || !tools || !selection || !width || !height || hidden) return
+    const image = viewport.querySelector<HTMLImageElement>('[data-image-edit-surface] img')
+    if (!image) return
     const measure = (): void => {
-      const image = viewport.querySelector('[data-image-edit-surface] img')
-      if (!image) return
       const bounds = viewport.getBoundingClientRect()
+      const viewportWidth = viewport.clientWidth
+      const viewportHeight = viewport.clientHeight
+      if (!bounds.width || !bounds.height || !viewportWidth || !viewportHeight) return
       // Use decoded dimensions when available so the outline follows the pixels actually painted.
       const imageSize =
-        image instanceof HTMLImageElement && image.naturalWidth > 0 && image.naturalHeight > 0
+        image.naturalWidth > 0 && image.naturalHeight > 0
           ? { width: image.naturalWidth, height: image.naturalHeight }
           : { width, height }
-      imageRect = fitContainedImageRect(image.getBoundingClientRect(), imageSize)
+      const imageRect = fitContainedImageRect(image.getBoundingClientRect(), imageSize)
       if (!imageRect) return
+      // Screen bounds already include the dialog entrance scale. Remove it from CSS offsets
+      // and sizes because the dialog also transforms the outline and toolbar themselves.
+      const toLocalX = viewportWidth / bounds.width
+      const toLocalY = viewportHeight / bounds.height
       const rect = {
-        ...imageRect,
-        left: imageRect.left - bounds.left,
-        top: imageRect.top - bounds.top
+        left: (imageRect.left - bounds.left) * toLocalX,
+        top: (imageRect.top - bounds.top) * toLocalY,
+        width: imageRect.width * toLocalX,
+        height: imageRect.height * toLocalY
       }
       const gap = 12
       const toolHeight = tools.offsetHeight
@@ -55,30 +56,37 @@ export function ImageEditFloatingTools({
       const top =
         above >= gap
           ? above
-          : below + toolHeight <= bounds.height - gap
+          : below + toolHeight <= viewportHeight - gap
             ? below
-            : Math.min(bounds.height - toolHeight - 56, rect.top + rect.height - toolHeight - gap)
-      const next = {
-        image: rect,
-        left: Math.max(
-          gap,
-          Math.min(
-            bounds.width - tools.offsetWidth - gap,
-            rect.left + (rect.width - tools.offsetWidth) / 2
-          )
-        ),
-        top: Math.max(gap, Math.min(bounds.height - toolHeight - 56, top))
-      }
-      setGeometry((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next))
-    }
-    const inside = (event: PointerEvent): boolean =>
-      Boolean(
-        imageRect &&
-        event.clientX >= imageRect.left &&
-        event.clientX <= imageRect.left + imageRect.width &&
-        event.clientY >= imageRect.top &&
-        event.clientY <= imageRect.top + imageRect.height
+            : Math.min(viewportHeight - toolHeight - 56, rect.top + rect.height - toolHeight - gap)
+      const toolWidth = tools.offsetWidth
+      const left = Math.max(
+        gap,
+        Math.min(viewportWidth - toolWidth - gap, rect.left + (rect.width - toolWidth) / 2)
       )
+      // ResizeObserver runs before paint; apply the positions in that layout pass.
+      Object.assign(selection.style, {
+        left: `${rect.left}px`,
+        top: `${rect.top}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        visibility: 'visible'
+      })
+      Object.assign(tools.style, {
+        left: `${left}px`,
+        top: `${Math.max(gap, Math.min(viewportHeight - toolHeight - 56, top))}px`,
+        visibility: 'visible'
+      })
+    }
+    const inside = (event: PointerEvent): boolean => {
+      const rect = selection.getBoundingClientRect()
+      return (
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      )
+    }
     const move = (event: PointerEvent): void => setHovered(inside(event))
     const leave = (): void => setHovered(false)
     const select = (event: PointerEvent): void => {
@@ -96,9 +104,11 @@ export function ImageEditFloatingTools({
     const resize = new ResizeObserver(measure)
     resize.observe(viewport)
     resize.observe(tools)
+    resize.observe(image)
     const mutations = new MutationObserver(measure)
     const transform = viewport.querySelector('.react-transform-component')
     if (transform) mutations.observe(transform, { attributes: true, attributeFilter: ['style'] })
+    image.addEventListener('load', measure)
     viewport.addEventListener('pointermove', move)
     viewport.addEventListener('pointerleave', leave)
     viewport.addEventListener('pointerdown', select, true)
@@ -107,6 +117,9 @@ export function ImageEditFloatingTools({
     return () => {
       resize.disconnect()
       mutations.disconnect()
+      selection.style.visibility = ''
+      tools.style.visibility = ''
+      image.removeEventListener('load', measure)
       viewport.removeEventListener('pointermove', move)
       viewport.removeEventListener('pointerleave', leave)
       viewport.removeEventListener('pointerdown', select, true)
@@ -115,25 +128,20 @@ export function ImageEditFloatingTools({
   }, [viewport, width, height, hidden])
   return (
     <>
-      {geometry && !hidden ? (
+      {!hidden ? (
         <div
+          ref={outline}
           aria-hidden="true"
           data-testid="image-selection-outline"
           data-selected={selected}
           data-hovered={hovered}
-          className="image-edit-selection pointer-events-none absolute z-[5]"
-          style={geometry.image}
+          className="image-edit-selection pointer-events-none invisible absolute z-[5]"
         />
       ) : null}
       <div
         ref={toolbar}
         data-image-floating-tools
-        className="absolute z-20 max-w-[calc(100%-1.5rem)]"
-        style={{
-          left: geometry?.left,
-          top: geometry?.top,
-          visibility: hidden || !geometry ? 'hidden' : undefined
-        }}
+        className="invisible absolute z-20 max-w-[calc(100%-1.5rem)]"
       >
         {children}
       </div>

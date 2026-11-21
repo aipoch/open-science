@@ -1428,7 +1428,12 @@ function ActiveImageEditor({
               ? { width: image.width, height: image.height }
               : undefined
           }
-          hidden={showPending || comparing || image.status !== 'ready'}
+          hidden={
+            showPending ||
+            comparing ||
+            image.status !== 'ready' ||
+            decodeError === displayed.selectedVersionId
+          }
         >
           <TooltipProvider delayDuration={300} disableHoverableContent>
             <div
