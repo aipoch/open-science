@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { basename, dirname, join } from 'node:path'
 import { installationFs } from './installation-filesystem'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import { windowsProcessStartTicks } from '../windows-process-query'
 import { isNewer, UpdateLifecycleError, type UpdateStatus } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { load } from 'js-yaml'
@@ -251,16 +252,12 @@ export function startWindowsUpdateSupervisor(
   })
 }
 
-function launchInstaller(pending: string, receipt: Prepared): Promise<boolean> {
+function launchInstaller(pending: string, receipt: Prepared, stage: string): Promise<boolean> {
   // CommandLineToArgvW quoting. No user arguments are evaluated as shell source.
   const args = process.argv
     .slice(1)
     .map((arg) => '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"')
     .join(' ')
-  const stage = join(
-    preparedRoot(pending),
-    preparedWindowsUpdateId(receipt.executable, receipt.sha512)
-  )
   return startWindowsUpdateSupervisor(verifiedScript(install), stage, {
     ...installerEnv(pending, receipt),
     OPEN_SCIENCE_PREPARED_ID: basename(stage),
@@ -281,8 +278,10 @@ export async function reclaimInstalledWindowsUpdates(
     if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue
     const stage = join(root, entry.name)
     try {
-      const installing = join(stage, 'installing.json')
-      const marker = existsSync(installing) ? installing : join(stage, 'ready.json')
+      const marker = ['installing.json', 'scan-timed-out.json', 'ready.json']
+        .map((name) => join(stage, name))
+        .find(existsSync)
+      if (!marker) continue
       const receipt: Prepared = JSON.parse(await fs.readFile(marker, 'utf8'))
       if (
         sameExecutable(receipt.executable, executable) &&
@@ -297,10 +296,58 @@ export async function reclaimInstalledWindowsUpdates(
   }
 }
 
+const coldLaunchScanBudgetMs = 10_000
+
+/** A cached blocker can only defer installation. Its exit or PID reuse always requires a fresh scan. */
+export async function checkColdLaunchOccupancy(
+  stage: string,
+  check: (signal: AbortSignal) => Promise<void>
+): Promise<boolean> {
+  for (const name of await fs.readdir(stage)) {
+    const match = /^occupant-(\d+)-(\d+)$/.exec(name)
+    if (!match) continue
+    if (windowsProcessStartTicks(Number(match[1])) === match[2]) return false
+    await fs.rm(join(stage, name), { force: true })
+  }
+
+  const controller = new AbortController()
+  const timeout = Promise.withResolvers<never>()
+  const deadline = performance.now() + coldLaunchScanBudgetMs
+  // GetProcessTimes is exposed by windowsProcessStartTicks in .NET ticks since year 1.
+  const ticksAtScanStart = (BigInt(Date.now()) + 62_135_596_800_000n) * 10_000n
+  const timer = setTimeout(() => {
+    controller.abort()
+    timeout.reject(controller.signal.reason)
+  }, coldLaunchScanBudgetMs)
+  try {
+    // Only race the read-only inspection. A worker settling after cancellation cannot hand off
+    // to NSIS or hold the normal launch open while its process tree is reaped.
+    await Promise.race([check(controller.signal), timeout.promise])
+    if (!controller.signal.aborted && performance.now() < deadline) return true
+  } catch (error) {
+    if (!controller.signal.aborted && performance.now() < deadline) {
+      if (error instanceof UpdateLifecycleError && error.reason === 'installation-busy') {
+        for (const { pid } of error.recovery?.blockingProcesses ?? []) {
+          const ticks = windowsProcessStartTicks(pid)
+          // A PID reassigned since the snapshot must not pin an unrelated process to this package.
+          if (ticks && BigInt(ticks) <= ticksAtScanStart)
+            await fs.writeFile(join(stage, `occupant-${pid}-${ticks}`), '')
+        }
+      }
+      throw error
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+  await fs.rename(join(stage, 'ready.json'), join(stage, 'scan-timed-out.json'))
+  log.info('Cold-launch occupancy scan timed out; manual update remains available')
+  return false
+}
+
 export async function applyPreparedWindowsUpdate(options: {
   current: string
   enabled(): Promise<boolean>
-  checkOccupancy(): Promise<void>
+  checkOccupancy(signal: AbortSignal): Promise<void>
 }): Promise<boolean> {
   try {
     const pending = await pendingDirectory()
@@ -312,8 +359,12 @@ export async function applyPreparedWindowsUpdate(options: {
       log.info('Automatic installation is disabled or unavailable', { version: receipt.version })
       return false
     }
-    await options.checkOccupancy()
-    return await launchInstaller(pending, receipt)
+    const stage = join(
+      preparedRoot(pending),
+      preparedWindowsUpdateId(receipt.executable, receipt.sha512)
+    )
+    if (!(await checkColdLaunchOccupancy(stage, options.checkOccupancy))) return false
+    return await launchInstaller(pending, receipt, stage)
   } catch (error) {
     log.warn(
       'Prepared update deferred at startup',

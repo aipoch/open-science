@@ -1246,6 +1246,18 @@ const main = async () => {
         successor.shortcutOccupancyScans = {
           held: await probeInstalledShortcut(installDirectory, env, previousVersion)
         }
+        successor.shortcutOccupancyScans.stillHeld = await probeInstalledShortcut(
+          installDirectory,
+          env,
+          previousVersion
+        )
+        if (
+          !successor.shortcutOccupancyScans.held.length ||
+          successor.shortcutOccupancyScans.stillHeld.length
+        )
+          throw new Error(
+            'Expected one initial occupancy check and no rescan of the same live holder.'
+          )
       } finally {
         await terminateProcessTree(child)
       }
@@ -1254,6 +1266,8 @@ const main = async () => {
         env,
         currentVersion
       )
+      if (!successor.shortcutOccupancyScans.released.length)
+        throw new Error('The update must recheck occupancy after the holder exits.')
       successor.nextDeltaBasisSha512 = await verifyCachedInstaller(
         currentInstaller,
         cachedInstaller

@@ -344,11 +344,14 @@ async function startDesktop(): Promise<void> {
     (await applyPreparedWindowsUpdate({
       current: app.getVersion(),
       enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
-      checkOccupancy: () =>
-        inspectInstallationAvailability({
-          installationRoot: installationRootForEntry(initialBackendPaths.entry),
-          allowedProcessIds: allowedInstallationProcessIds
-        })
+      checkOccupancy: (signal) =>
+        inspectInstallationAvailability(
+          {
+            installationRoot: installationRootForEntry(initialBackendPaths.entry),
+            allowedProcessIds: allowedInstallationProcessIds
+          },
+          signal
+        )
     }))
   ) {
     app.exit(0)
