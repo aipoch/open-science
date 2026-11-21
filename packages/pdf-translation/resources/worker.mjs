@@ -111,6 +111,16 @@ const sourceMatches = (expected, actual, verifiedHyphens = false) => {
 // 5,6, A0), then its occurrence. A bare digit search can select an unrelated
 // measurement or the same reference in an earlier sentence.
 const inlineTargetOffset = (source, translation, label, offset, identifier = false) => {
+  if (label === '∼ −') {
+    const approximations = (text) => [
+      ...text.matchAll(/∼ −\d+(?:\.\d+)?(?!\d|\.\d|[Ee][+−-]?\d)/gu)
+    ]
+    const amount = approximations(source).find(({ index }) => index === offset)?.[0]
+    if (!amount) return -1
+    const from = approximations(source).filter((match) => match[0] === amount)
+    const to = approximations(translation).filter((match) => match[0] === amount)
+    return from.length === 1 && to.length === 1 ? to[0].index : -1
+  }
   // An approximation may become prose ("about") while a numeric range keeps
   // the same tilde. Match its complete, unique range before counting bare signs.
   if (label === '∼') {
@@ -4131,15 +4141,35 @@ async function generate({
               /^\u0338[∼∈]$/u.test(label) &&
               object.bounds[2] > object.bounds[0] &&
               object.bounds[3] > object.bounds[1],
+            // CMMI10 can expose a standalone rho glyph as a combining code point.
+            // Keep its original painter when the same function call survives.
+            legacyRhoArgument =
+              label === '\u033a' &&
+              sourceOffset !== undefined &&
+              /^(?:[A-Z]{6}\+)?CMMI10$/u.test(nativeFontName(object)) &&
+              object.bounds[2] > object.bounds[0] &&
+              object.bounds[3] > object.bounds[1] &&
+              !/[\p{L}\p{N}\p{M}]/u.test(unit.source[sourceOffset - 1] ?? '')
+                ? /^\s*\(([A-Za-z][A-Za-z0-9]*)\)/u.exec(
+                    unit.source.slice(sourceOffset + label.length)
+                  )?.[1]
+                : undefined,
             nativeSymbol =
+              Boolean(legacyRhoArgument) ||
               nativeNegatedRelation ||
+              // Some math fonts paint approximation and minus together in one
+              // text object. Keep that object with the same signed magnitude.
+              (label === '∼ −' &&
+                /^(?:[A-Z]{6}\+)?(?:CMSY(?:5|6|7|8|9|10|12)|Symbol(?:MT)?)$/u.test(
+                  nativeFontName(object)
+                )) ||
               nativeAlphabet ||
               mathematicalRun ||
               loweredIndexOperator ||
               nativeEncodedSymbol ||
               nativePrivateSymbol ||
               registeredMarks.has(object.i) ||
-              ((/^[\p{L}\p{Sm}\p{So}⟨⟩]$/u.test(label) ||
+              ((/^[\p{L}\p{Sm}\p{So}⟨⟩⌈⌉⌊⌋]$/u.test(label) ||
                 /^[\p{Sm}]\s*[A-Za-z\p{Script=Greek}]$/u.test(label)) &&
                 (!face.hasGlyphForCodePoint(label.codePointAt(0)) ||
                   // A raised standalone symbol keeps its original glyph even if
@@ -4194,6 +4224,7 @@ async function generate({
           if (
             targetOffset < 0 &&
             nativeSymbol &&
+            label !== '∼ −' &&
             !(label === '∼' && /\d%?\s*∼\s*\d/u.test(unit.source))
           ) {
             // Identical unsupported relation signs can occur in several formulas.
@@ -4218,6 +4249,15 @@ async function generate({
             const occurrence = from.findIndex((match) => match.index === sourceOffset)
             if (occurrence >= 0 && from.length === to.length) targetOffset = to[occurrence].index
           }
+          if (legacyRhoArgument)
+            check(
+              targetOffset >= 0 &&
+                !/[\p{L}\p{N}\p{M}]/u.test(unit.translation[targetOffset - 1] ?? '') &&
+                /^\s*[（(]([A-Za-z][A-Za-z0-9]*)[）)]/u.exec(
+                  unit.translation.slice(targetOffset + label.length)
+                )?.[1] === legacyRhoArgument,
+              'annotations'
+            )
           // Publisher-encoded glyphs require exact source identity. If the target
           // changes or ambiguously duplicates them, retain the verified paragraph.
           if (nativePrivateSymbol) {
@@ -4291,6 +4331,12 @@ async function generate({
             targetOffset,
             label: targetLabel,
             registeredBrand: registeredMarks.has(object.i),
+            needsInlineReflow:
+              /^[°◦]$/u.test(label) &&
+              marker?.scale < 0.9 &&
+              marker.rise > bodySize * 0.2 &&
+              /\d/u.test(unit.source[sourceOffset - 1] ?? '') &&
+              /\d/u.test(unit.translation[targetOffset - 1] ?? ''),
             nativeAlphabet
           })
         }
@@ -7315,10 +7361,101 @@ async function generate({
             if (p.FPDFPage_GetObject(page, index) === object) return index
           return -1
         }
+        // Earlier insertion can hide new lines behind the source's interleaved row backgrounds.
+        const backdropAnchor = (plan, first) => {
+          if (
+            plan.anchors.length ||
+            plan.lines.length < 2 ||
+            plan.selected.length < 2 ||
+            plan.sin !== 0
+          )
+            return
+          const selected = new Set(plan.selected.map(({ obj }) => obj))
+          if (
+            !selected.has(p.FPDFPage_GetObject(plan.page, first)) ||
+            selected.size !== plan.selected.length ||
+            plan.selected.some(({ obj }) => p.FPDFPageObj_GetType(obj) !== 1) ||
+            plan.lines.some(({ object }) => !object)
+          )
+            return
+          const ink = plan.lines.map(({ object }) => e.bounds(object))
+          const at = e.alloc(24)
+          try {
+            const count = p.FPDFPage_CountObjects(plan.page)
+            let last
+            const pending = new Set(selected)
+            pending.delete(p.FPDFPage_GetObject(plan.page, first))
+            for (let i = first + 1; i < count && (pending.size || last); i++) {
+              const obj = p.FPDFPage_GetObject(plan.page, i)
+              if (pending.delete(obj)) continue
+              if (!p.FPDFPageObj_GetBounds(obj, at, at + 4, at + 8, at + 12)) return
+              const [l, b, r, t] = e.m.HEAPF32.slice(at / 4, at / 4 + 4)
+              if (!ink.some(([x, y, right, top]) => x < r && right > l && y < t && top > b))
+                continue
+              if (
+                !pending.size ||
+                p.FPDFPageObj_GetType(obj) !== 2 ||
+                p.FPDFPath_CountSegments(obj) !== 5 ||
+                p.FPDFPageObj_HasTransparency(obj) ||
+                !p.FPDFPageObj_GetIsActive(obj, at) ||
+                !e.m.HEAP32[at / 4]
+              )
+                return
+              const clip = p.FPDFPageObj_GetClipPath(obj)
+              if (!clip || p.FPDFClipPath_CountPaths(clip) !== -1) return
+              if (
+                !p.FPDFPageObj_GetMatrix(obj, at) ||
+                ![1, 0, 0, 1, 0, 0].every((v, n) => e.m.HEAPF32[at / 4 + n] === v) ||
+                !p.FPDFPath_GetDrawMode(obj, at, at + 4) ||
+                e.m.HEAP32[at / 4] !== 1 ||
+                e.m.HEAP32[at / 4 + 1] !== 0 ||
+                !p.FPDFPageObj_GetFillColor(obj, at, at + 4, at + 8, at + 12) ||
+                !e.m.HEAPU32.slice(at / 4, at / 4 + 4).every((v) => v === 255)
+              )
+                return
+              const corners = [
+                [l, b],
+                [r, b],
+                [r, t],
+                [l, t],
+                [l, b]
+              ]
+              if (
+                !corners.every(([x, y], n) => {
+                  const segment = p.FPDFPath_GetPathSegment(obj, n)
+                  return (
+                    p.FPDFPathSegment_GetType(segment) === (n ? 0 : 2) &&
+                    p.FPDFPathSegment_GetClose(segment) === (n === 4) &&
+                    p.FPDFPathSegment_GetPoint(segment, at, at + 4) &&
+                    e.m.HEAPF32[at / 4] === x &&
+                    e.m.HEAPF32[at / 4 + 1] === y
+                  )
+                })
+              )
+                return
+              // Each rectangle is behind a selected source row and covers no earlier selected ink.
+              let supportsLaterText = false
+              for (const source of selected) {
+                const [x, y, right, top] = e.bounds(source)
+                if (pending.has(source)) {
+                  supportsLaterText ||= x >= l && y >= b && right <= r && top <= t
+                } else if (x < r && right > l && y < t && top > b) {
+                  return
+                }
+              }
+              if (!supportsLaterText) return
+              last = obj
+            }
+            return last
+          } finally {
+            e.free(at)
+          }
+        }
         for (const plan of replacements.filter((plan) => !plan.unchanged)) {
           pageNumber = plan.fragment.pageNumber
           const insertAt = objectIndex(plan.page, plan.selected[0].obj)
           check(insertAt >= 0)
+          const background = backdropAnchor(plan, insertAt)
           const reordered =
             plan.reflowed &&
             (plan.anchors.some((anchor) => anchor.generated) ||
@@ -7375,10 +7512,11 @@ async function generate({
           }
           const anchorPosition = (index) =>
             objectIndex(plan.page, plan.selected.find((selected) => selected.i === index)?.obj)
-          let insertion =
-            plan.anchors.length && !reordered
-              ? anchorPosition(plan.anchors[0].indices[0])
-              : insertAt
+          const backdropIndex = background ? objectIndex(plan.page, background) : undefined
+          check(backdropIndex === undefined || backdropIndex >= 0)
+          let insertion = backdropIndex === undefined ? insertAt : backdropIndex + 1
+          if (plan.anchors.length && !reordered)
+            insertion = anchorPosition(plan.anchors[0].indices[0])
           check(insertion >= 0)
           for (const line of plan.lines) {
             if (line.indices) {
