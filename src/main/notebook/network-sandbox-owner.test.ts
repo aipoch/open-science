@@ -285,6 +285,24 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it('reports an invalid CA before reporting explicit Windows standard mode', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-standard-ca-'))
+    fixtureDirectories.push(root)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      platform: 'win32',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      getCaBundlePath: async () => join(root, 'missing.pem'),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    expect(await owner.status()).toMatchObject({ kind: 'error', reason: 'trustBundleInvalid' })
+    await owner.dispose()
+  })
+
   it('does not ACL-preflight granted roots outside Windows', async () => {
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
@@ -3516,6 +3534,7 @@ it.each(['managed', 'external'] as const)(
           superviseProcessTree: true
         })
       )
+      expect(backend.getWindowsRuntimeAccess).not.toHaveBeenCalled()
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()
@@ -4389,6 +4408,16 @@ describe('R startup authorization admission', () => {
       revocation = owner.setWindowsRuntimeAccess(request.executable, false)
       expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledTimes(1)
       expect(() => prepared.beginSpawn?.()).toThrow('R runtime access changed before startup')
+      const python = await owner.wrap({
+        ...invocation,
+        runtime: 'python',
+        windowsRuntimeAccessRequired: false
+      })
+      try {
+        expect(() => python.beginSpawn?.()).not.toThrow()
+      } finally {
+        await python.cleanup('spawn-failed', { processesTerminated: true })
+      }
       const pending = await owner.wrap(invocation)
       try {
         expect(() => pending.beginSpawn?.()).toThrow('R runtime access changed before startup')

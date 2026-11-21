@@ -173,11 +173,33 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Turn off').click())
+    await act(async () => button('Uninstall').click())
 
     expect(remove).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('Status: Off')
     expect(container.textContent).toContain('standard execution')
+  })
+
+  it('selects standard execution with broken protection and keeps the installed components', async () => {
+    const setNotebookNetwork = vi.fn().mockResolvedValue({})
+    const removeNotebookNetwork = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'win32',
+      settings: {
+        getNotebookNetworkStatus: vi
+          .fn()
+          .mockResolvedValueOnce({ kind: 'error', reason: 'runtimeFailure' })
+          .mockResolvedValue({ kind: 'standard' }),
+        setNotebookNetwork,
+        removeNotebookNetwork
+      }
+    }
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await flush()
+    await act(async () => button('Use standard mode').click())
+    expect(setNotebookNetwork).toHaveBeenCalledWith({ selectWindowsProtection: false })
+    expect(removeNotebookNetwork).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Standard mode')
   })
 
   it('uses operation-neutral error copy when turning protection off fails', async () => {
@@ -193,7 +215,7 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Turn off').click())
+    await act(async () => button('Uninstall').click())
 
     expect(remove).toHaveBeenCalledOnce()
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
@@ -201,7 +223,7 @@ describe('NotebookNetworkDomainsForm', () => {
     )
     expect(container.textContent).not.toContain('Could not turn on protection.')
     expect(container.textContent).not.toContain('private backend details')
-    expect(button('Turn off').disabled).toBe(false)
+    expect(button('Uninstall').disabled).toBe(false)
   })
 
   it('does not expose backend error prose', async () => {
@@ -283,7 +305,7 @@ it('shows the download estimate, progress and cancellation without reporting suc
       'Cancelled. Downloads are kept.'
     )
     expect(button('Try again').disabled).toBe(false)
-    expect(button('Turn off').disabled).toBe(false)
+    expect(button('Uninstall').disabled).toBe(false)
   } finally {
     vi.useRealTimers()
   }

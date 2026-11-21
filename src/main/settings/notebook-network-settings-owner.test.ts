@@ -17,6 +17,23 @@ beforeEach(() => {
   lookup.mockResolvedValue([{ address: '10.32.0.7', family: 4 }])
 })
 
+it('preserves the Windows mode across stale rule edits and restores it after a failed switch', async () => {
+  const { owner } = createHarness()
+  const prior = await owner.get()
+  expect(prior.windowsProtectionEnabled).toBeUndefined()
+  await owner.selectWindowsProtection(false, async () => {})
+  await owner.set({ ...prior, allowedDomains: ['test.example.org'] })
+  await expect(
+    owner.selectWindowsProtection(true, async () => {
+      throw new Error('refresh failed')
+    })
+  ).rejects.toThrow('refresh failed')
+  expect(await owner.get()).toMatchObject({
+    windowsProtectionEnabled: false,
+    allowedDomains: ['test.example.org']
+  })
+})
+
 const createHarness = (
   initial: NotebookNetworkSettings = DEFAULT_NOTEBOOK_NETWORK_SETTINGS
 ): Readonly<{
