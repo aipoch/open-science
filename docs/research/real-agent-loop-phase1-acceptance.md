@@ -5,6 +5,23 @@ and [the original Chinese implementation note](real-agent-loop-implementation-pl
 [spec #54](https://github.com/guch96/open-science/issues/54). An installed package, an Agent
 turn, a Notebook dispatch, and verified files are separate observations.
 
+## Terminal API provider setup: November 21, 2026
+
+The macOS arm64 and headless Linux arm64 npm candidates passed the same installed-package
+journey. A standard MCP stdio client did discovery from an empty profile, selected the built-in
+Agent, and received an `enter_provider_credential` action for each of Messages, Chat Completions,
+and Responses. The test ran each returned command verbatim in a terminal. The profile path
+contained spaces and an apostrophe. For each protocol it observed cancellation and a rejected
+key without a saved Provider, hidden input on the successful save, a matching request at the
+fixture Provider endpoint, and a duplicate command rejected before accepting input. Reconnecting
+MCP found the same ID, model, and validation protocol. Explicit activation separately returned
+Agent readiness. The suite used synthetic keys, no browser, no model-key environment variables,
+and no host-specific form. The Linux test opted into existing file storage for the disposable profile.
+
+Service regression tests resolve the installed Anthropic and OpenAI model routes as Messages and
+Responses respectively, and reject a changed protocol or endpoint before sending a probe. The
+Windows PowerShell command is implemented; a Windows terminal run has not yet been exercised.
+
 ## Browser-free setup regression: November 21, 2026
 
 After the premature launch below, `d63e139d9` made the README prompt explicit, removed browser

@@ -339,6 +339,7 @@ class SettingsRepository {
     existingId?: string,
     configEdit?: {
       expectedFramework?: AgentFrameworkId
+      createOnly?: boolean
       expectedConfigRevision?: number
       catalogBaseline?: ProviderCatalogState
       validationMatches?: (merged: StoredProvider) => boolean
@@ -359,6 +360,7 @@ class SettingsRepository {
         throw new Error('Lab catalog changed. The stale catalog was not written.')
       }
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
+      if (configEdit?.createOnly && index >= 0) throw new BootstrapError('configuration_conflict')
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))

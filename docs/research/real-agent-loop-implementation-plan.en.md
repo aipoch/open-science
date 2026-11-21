@@ -46,10 +46,13 @@ cross-Agent model migration, and subscription reuse are outside this phase.
 - `doctor` and `get_setup_status` are read-only. List the available runtimes when a user has not
   selected one; the effective fallback does not count as a choice. `list_runtimes`, `select_runtime`,
   and `prepare_runtime` reuse runtime discovery, routing, and managed installers.
-- Reuse Settings to expose ordinary API Provider/model discovery, configuration, selection, and
-  validation. Credentials come from an explicitly selected stored reference or environment variable
-  available to the adapter process; secret values stay out of tool arguments, results, and logs.
-  The user completes OAuth consent. Web remains a fallback, not a missing part of a supported MCP flow.
+- Reuse Settings for API Provider/model discovery, configuration, selection, and validation. Reuse a
+  selected credential reference or environment variable when available. If a new key is needed,
+  `save_api_provider` returns a terminal command for the same profile. The command carries the
+  chosen custom API protocol or the resolved official model protocol and displays the exact endpoint
+  before reading the key without echo. It validates and saves without activating. The Agent rechecks
+  the exact provider ID, model, and protocol, and activates only with authorization. This path needs
+  no browser or host-specific UI. The user completes OAuth consent.
 - Report Python and R readiness separately from dependencies, isolation, and memory. A general
   check does not pick or install a language. When research needs a known language, check it with
   `get_setup_status` before submitting. If the environment is missing, the user can ask the Agent

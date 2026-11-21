@@ -2030,7 +2030,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   ...(!externalAuthorization && options.tasks.bootstrap
                     ? ['runtime-bootstrap', 'agent-setup']
                     : []),
-                  ...(auth.localBearer && options.tasks.bootstrap ? ['provider-setup'] : []),
+                  ...(auth.localBearer && options.tasks.bootstrap
+                    ? ['provider-setup', 'provider-terminal-setup']
+                    : []),
                   ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
                     ? ['notebook-setup']
                     : []),

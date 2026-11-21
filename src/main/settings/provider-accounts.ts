@@ -19,6 +19,7 @@ import {
   BootstrapError,
   type BootstrapRequest,
   type BootstrapResult,
+  type BootstrapProviderCredentialTarget,
   type BootstrapProviderOptions
 } from '../../shared/bootstrap'
 import {
@@ -109,7 +110,7 @@ import {
 import type { SettingsRepository } from './repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { StoredProvider, StoredSettings } from './types'
-import { validateProvider as validateProviderTarget } from './validate'
+import { buildValidationRequest, validateProvider as validateProviderTarget } from './validate'
 import type { XaiOAuthControllerPort } from './xai-oauth'
 import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 type ProviderAccountsModuleOptions = {
@@ -147,7 +148,14 @@ type PreparedProvider = {
 }
 type TaskProviderSetupRequest = Extract<
   BootstrapRequest,
-  { action: 'provider-options' | 'provider-save' | 'provider-activate' }
+  {
+    action:
+      'provider-options' | 'provider-save' | 'provider-activate' | 'provider-credential-target'
+  }
+>
+type TaskProviderDraft = Extract<
+  TaskProviderSetupRequest,
+  { action: 'provider-save' | 'provider-credential-target' }
 >
 
 const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
@@ -342,9 +350,15 @@ class ProviderAccountsModule {
       throw new BootstrapError('configuration_conflict')
 
     const { framework, model } = request
+    if (request.action === 'provider-credential-target') {
+      return {
+        ok: true,
+        providerCredentialTarget: this.taskCredentialTarget(request, settings)
+      }
+    }
     const providerId =
       request.action === 'provider-save'
-        ? await this.saveTaskProvider(request, credentials)
+        ? await this.saveTaskProvider(request, settings, credentials)
         : await this.activateTaskProvider(request, settings)
     return {
       ok: true,
@@ -391,6 +405,16 @@ class ProviderAccountsModule {
         name: provider.name,
         type: provider.type,
         models: this.toProviderView(provider).models.map((id) => modelOption(provider, id)),
+        ...(provider.lastValidatedAt &&
+        provider.lastValidatedTarget?.model &&
+        provider.lastValidatedTarget.endpoint
+          ? {
+              lastValidated: {
+                model: provider.lastValidatedTarget.model,
+                protocol: provider.lastValidatedTarget.endpoint
+              }
+            }
+          : {}),
         authentication:
           provider.type === 'official' || provider.type === 'custom'
             ? 'api'
@@ -426,31 +450,71 @@ class ProviderAccountsModule {
     }
   }
 
-  private async saveTaskProvider(
-    request: Extract<TaskProviderSetupRequest, { action: 'provider-save' }>,
-    credentials: DeviceCredentialStore
-  ): Promise<string> {
-    const {
-      providerType: type,
-      framework,
-      model,
-      baseUrl,
-      protocol,
-      vendorId,
-      region,
-      credentialRef
-    } = request
+  private taskProviderDraft(request: TaskProviderDraft): StoredProvider {
+    const { providerType: type, model, baseUrl, protocol, vendorId, region } = request
     const vendor = isOfficialVendorId(vendorId) ? getOfficialVendor(vendorId) : undefined
     if (
-      (request.key && credentialRef) ||
-      (type === 'official'
+      type === 'official'
         ? !vendor ||
           baseUrl ||
           protocol ||
           (region && !vendor.regions?.some(({ id }) => id === region))
-        : !baseUrl || !protocol || vendorId || region || getCustomProviderBaseUrlError(baseUrl))
+        : !baseUrl || !protocol || vendorId || region || getCustomProviderBaseUrlError(baseUrl)
     )
       throw new BootstrapError('invalid_request')
+    return {
+      id: request.providerId ?? this.createProviderId(),
+      type,
+      model,
+      name: request.name ?? vendor?.label ?? 'Custom API provider',
+      ...(vendor ? { vendorId: vendor.id, region } : { baseUrl, apiEndpoints: [protocol!] })
+    }
+  }
+
+  private taskCredentialTarget(
+    request: TaskProviderDraft,
+    settings: StoredSettings
+  ): BootstrapProviderCredentialTarget {
+    if (settings.providers.some(({ id }) => id === request.providerId))
+      throw new BootstrapError('configuration_conflict')
+    const resolved = this.taskModelTarget(
+      this.taskProviderDraft(request),
+      request.model,
+      request.framework
+    )
+    const { endpoint, url } = buildValidationRequest(
+      resolved,
+      false,
+      this.validationFrameworkEndpoints(resolved, settings)
+    )
+    if (!endpoint) throw new BootstrapError('provider_validation_failed', 'incompatible')
+    return { protocol: endpoint, endpoint: url }
+  }
+
+  private async saveTaskProvider(
+    request: Extract<TaskProviderSetupRequest, { action: 'provider-save' }>,
+    settings: StoredSettings,
+    credentials: DeviceCredentialStore
+  ): Promise<string> {
+    const {
+      credentialRef,
+      framework,
+      providerId: targetId,
+      expectedProtocol,
+      expectedEndpoint
+    } = request
+    const draft = this.taskProviderDraft(request)
+    if (
+      (request.key && credentialRef) ||
+      Boolean(targetId) !== Boolean(expectedProtocol) ||
+      Boolean(targetId) !== Boolean(expectedEndpoint)
+    )
+      throw new BootstrapError('invalid_request')
+    if (targetId) {
+      const target = this.taskCredentialTarget(request, settings)
+      if (target.protocol !== expectedProtocol || target.endpoint !== expectedEndpoint)
+        throw new BootstrapError('configuration_conflict')
+    }
 
     let key = request.key
     if (credentialRef) {
@@ -460,18 +524,13 @@ class ProviderAccountsModule {
         throw new BootstrapError('credential_invalid')
       }
     }
-    if (!key && !providerAllowsAnonymousAccess({ type, vendorId: vendor?.id, baseUrl, model }))
-      throw new BootstrapError('credential_invalid')
+    if (!key && !providerAllowsAnonymousAccess(draft))
+      throw new BootstrapError(credentialRef ? 'credential_invalid' : 'provider_credential_missing')
 
     const { validation, providerId } = await this.saveValidatedProvider(
-      {
-        type,
-        model,
-        name: request.name ?? vendor?.label ?? 'Custom API provider',
-        ...(vendor ? { vendorId: vendor.id, region } : { baseUrl, apiEndpoints: [protocol!] }),
-        ...(key ? { key } : {})
-      },
-      framework
+      { ...draft, ...(key ? { key } : {}) },
+      framework,
+      Boolean(targetId)
     )
     if (!providerId) throw new BootstrapError('provider_validation_failed', validation.category)
     return providerId
@@ -809,12 +868,14 @@ class ProviderAccountsModule {
 
   async saveValidatedProvider(
     request: UpsertProviderRequest,
-    expectedFramework?: AgentFrameworkId
+    expectedFramework?: AgentFrameworkId,
+    createOnly = false
   ): Promise<SaveValidatedProviderResult> {
     const prepared = await this.prepareProviderEdit(request)
     if (expectedFramework !== undefined && prepared.settings.agentFrameworkId !== expectedFramework)
       throw new BootstrapError('configuration_conflict')
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
+    if (createOnly && saved) throw new BootstrapError('configuration_conflict')
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
     const tested =
@@ -853,13 +914,16 @@ class ProviderAccountsModule {
       const current = await this.repository.getSettings()
       const exists = current.providers.some(({ id }) => id === provider.id)
       if (!prepared.requireExisting && exists)
-        throw new Error('Provider configuration changed. Your draft has not been saved.')
+        throw createOnly
+          ? new BootstrapError('configuration_conflict')
+          : new Error('Provider configuration changed. Your draft has not been saved.')
       assertProviderCapacity(current.providers.length, exists)
       await this.repository.upsertProvider(
         provider,
         prepared.requireExisting ? provider.id : undefined,
         {
           expectedFramework,
+          createOnly,
           catalogBaseline: prepared.catalogBaseline,
           expectedConfigRevision: prepared.expectedConfigRevision,
           expectedValidationState,

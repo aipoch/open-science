@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { artifactCapabilities } from './agent-artifacts.mjs'
@@ -6,7 +7,7 @@ import { existingMcpCapabilities } from './agent-capabilities.mjs'
 import { inspectAgentDeliveryDirectory } from './agent-delivery-directory.mjs'
 import { projectAgentNotebookReadiness, readinessActions } from './agent-notebook-readiness.mjs'
 import { getAgentPackageCapabilities } from './agent-package-capabilities.mjs'
-import { openBrowser, setupAction } from './agent-setup-action.mjs'
+import { openBrowser, providerTerminalAction, setupAction } from './agent-setup-action.mjs'
 import { connectToOpenScience } from './index.mjs'
 
 export const agentGuideUri = 'openscience://agent/guide'
@@ -20,7 +21,7 @@ Use the capability catalog and detail schemas to find the operations the install
 
 For the README setup request, install or connect MCP, discover capabilities, check readiness, and report what is missing and the next step. Keep the browser closed. If the user only asks where to act, give the page name or menu path. For requested setup changes, prefer the installed CLI or MCP capabilities. Use open_setup only when the user explicitly asks to open Web or when carrying out the chosen provider's sign-in flow requires a browser handoff.
 
-Use list_runtimes and list_providers to find the runtime, providers, and models supported by this version. Ask the user to choose when they have not made a selection. Select and prepare only an authorized runtime. Save and verify an API connection with save_api_provider, then use activate_provider for the provider and exact model the user chose, including an existing provider. Use configure_provider for the offered keyless option. Supply only a user-chosen stored credential reference or the name of a variable visible to this CLI or MCP process. Never ask for a secret in chat or pass its value as a tool argument. For OAuth, use the supported sign-in handoff for the same profile and let the user complete consent. Recheck the same profile afterward. Do not copy or print credentials or private setup URLs.
+Use list_runtimes and list_providers to find the runtime, providers, and models supported by this version. Ask the user to choose when they have not made a selection. Select and prepare only an authorized runtime. For a custom API provider, collect the base URL, model ID, and exact API protocol in this conversation; for an official provider, use the vendor and region from discovery. Save and verify with save_api_provider. If it returns enter_provider_credential, display its command verbatim for the user to run in a terminal on the Open-Science host. After the user finishes, follow verify, and match the returned provider ID, model and lastValidated protocol. Use activate_provider only for the user's authorized selection and with the active selection you observed before setup. Use configure_provider for the offered keyless option. Reuse a user-chosen credentialRef or apiKeyEnv when available. Never request a secret in chat or pass its value as a tool argument. For OAuth, use the supported sign-in handoff and let the user complete consent. Recheck the same profile afterward.
 
 Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Check the requested language before research. With authorization, prepare that language using prepare_notebook_environment. Generate and keep an operationId before submitting. After a timeout or disconnect, call get_notebook_environment_operation with the same language and ID. To cancel, use cancel_notebook_environment_operation with that same target and check the result. Use repair_notebook_environment only for a requested repair of the selected app-managed default environment. Recheck readiness after installation: environment setup, binding approval and Notebook execution are separate. System dependencies, isolation and memory can still block execution independently.
 
@@ -104,7 +105,7 @@ const policies = {
   ],
   provider_credential_missing: [
     'user',
-    'The specified environment variable is not available to this CLI or MCP process. Make it available to this host for the same profile or select an existing credential reference. Never put a key in a tool argument.',
+    'The provider needs an API key. Select an existing credential reference or a variable available to the installed CLI or MCP process. Never enter a key in chat or in a tool argument.',
     { action: 'list_providers' }
   ],
   provider_validation_failed: [
@@ -588,6 +589,18 @@ async function doctor({ language }, { getClient, configRoot, signal }) {
 
 const DEFAULT_RUNTIME_TIMEOUT_MS = 600_000
 const frameworkInput = z.enum(frameworks).describe('Agent runtime from list_runtimes; no default.')
+const providerProtocol = z.enum(['messages', 'chat-completions', 'responses'])
+const providerDraftSchema = z.strictObject({
+  providerType: z.enum(['official', 'custom']),
+  framework: frameworkInput,
+  model: z.string().trim().min(1).max(512),
+  name: z.string().trim().min(1).max(128).optional(),
+  vendorId: safeId.optional(),
+  region: safeId.optional(),
+  baseUrl: z.string().trim().min(1).max(2048).optional(),
+  protocol: providerProtocol.optional()
+})
+const providerTerminalSupport = 'provider-terminal-setup'
 const languageInput = z
   .enum(['python', 'r'])
   .describe('Notebook language required for the work; no default.')
@@ -626,15 +639,20 @@ async function bootstrapSetup(request, { timeoutMs }, context) {
   return { ...(await doctor({}, context)), timeoutMs }
 }
 
-async function providerSetup(request, context) {
-  const client = await setupClient(context, 'provider-setup')
+async function providerSetup(request, context, client = undefined) {
+  client ??= await setupClient(context, 'provider-setup')
   const result = await client.bootstrap(request, { signal: context.signal, timeoutMs: 60_000 })
   const data =
-    request.action === 'provider-options' ? result?.providerOptions : result?.providerSetup
+    request.action === 'provider-options'
+      ? result?.providerOptions
+      : request.action === 'provider-credential-target'
+        ? result?.providerCredentialTarget
+        : result?.providerSetup
   if (result?.ok && data) return data
   const code = [
     'configuration_conflict',
     'credential_invalid',
+    'provider_credential_missing',
     'invalid_request',
     'provider_validation_failed'
   ].includes(result?.code)
@@ -643,13 +661,86 @@ async function providerSetup(request, context) {
   const category = ['auth', ...providerReasons].includes(result?.category)
     ? result.category
     : undefined
-  const needsCredential = code === 'credential_invalid' || category === 'auth'
+  const needsCredential =
+    ['credential_invalid', 'provider_credential_missing'].includes(code) || category === 'auth'
   throw new AgentError(code, {
     requiresUser: needsCredential || code === 'configuration_conflict',
     ...(needsCredential ? { owner: 'user' } : {}),
     ...(code === 'configuration_conflict' ? { next: [{ action: 'list_providers' }] } : {}),
+    ...(category === 'auth' && request.action === 'provider-save'
+      ? {
+          message:
+            'The provider rejected the API key. No provider was saved. Check the key and try again.'
+        }
+      : {}),
     ...(category ? { category } : {})
   })
+}
+
+const credentialTarget = async (draft, providerId, context, client) => {
+  const result = await providerSetup(
+    { action: 'provider-credential-target', ...draft, providerId },
+    context,
+    client
+  )
+  const parsed = z.object({ protocol: providerProtocol, endpoint: z.url() }).safeParse(result)
+  if (!parsed.success) throw new AgentError('bootstrap_failed')
+  return parsed.data
+}
+
+export const saveProviderInTerminal = async (
+  { encodedDraft, providerId, protocol },
+  context,
+  readKey
+) => {
+  try {
+    const id = z.uuid().safeParse(providerId)
+    if (
+      !id.success ||
+      !providerProtocol.safeParse(protocol).success ||
+      !/^[A-Za-z0-9_-]{1,16384}$/.test(encodedDraft ?? '')
+    )
+      throw new AgentError('invalid_request')
+    let terminalDraft
+    try {
+      terminalDraft = providerDraftSchema
+        .extend({ expectedEndpoint: z.url().max(4096) })
+        .parse(JSON.parse(Buffer.from(encodedDraft, 'base64url').toString('utf8')))
+    } catch {
+      throw new AgentError('invalid_request')
+    }
+    const { expectedEndpoint, ...draft } = terminalDraft
+    const client = await setupClient(context, providerTerminalSupport)
+    const target = await credentialTarget(draft, providerId, context, client)
+    if (target.protocol !== protocol || target.endpoint !== expectedEndpoint)
+      throw new AgentError('configuration_conflict')
+    const key = await readKey({ ...draft, ...target, profile: client.configRoot })
+    if (key === undefined)
+      throw new AgentError('provider_setup_cancelled', {
+        owner: 'user',
+        message: 'Provider setup was cancelled. Nothing was saved.',
+        next: []
+      })
+    if (!key || Buffer.byteLength(key, 'utf8') > 8192)
+      throw new AgentError('credential_invalid', { requiresUser: true })
+    return await providerSetup(
+      {
+        action: 'provider-save',
+        ...draft,
+        key,
+        providerId,
+        expectedProtocol: protocol,
+        expectedEndpoint
+      },
+      context,
+      client
+    )
+  } catch (error) {
+    throw new AgentError(
+      'request_failed',
+      agentErrorDetails(error, { configRoot: context.configRoot })
+    )
+  }
 }
 
 const notebookOperationTarget = {
@@ -801,16 +892,8 @@ const definitions = [
     name: 'save_api_provider',
     group: 'setup',
     description:
-      'Validate and save a new API provider for the selected framework and exact model, without activating it. Official providers take a vendorId and optional region; custom providers take a baseUrl and protocol. Supply only a user-chosen apiKeyEnv or credentialRef when a key is required. Never pass a credential value.',
-    inputSchema: z.strictObject({
-      providerType: z.enum(['official', 'custom']),
-      framework: frameworkInput,
-      model: z.string().trim().min(1).max(512),
-      name: z.string().trim().min(1).max(128).optional(),
-      vendorId: safeId.optional(),
-      region: safeId.optional(),
-      baseUrl: z.string().trim().min(1).max(2048).optional(),
-      protocol: z.enum(['messages', 'chat-completions', 'responses']).optional(),
+      'Validate and save a new API provider for the selected framework and exact model without activating it. Official providers take a vendorId and optional region; custom providers take a baseUrl and the exact API protocol. Reuse an available credentialRef or apiKeyEnv if the user chose it. On enter_provider_credential, show the returned command to the user and then verify the exact provider ID, model and protocol. Never ask for a key in chat.',
+    inputSchema: providerDraftSchema.extend({
       apiKeyEnv: z
         .string()
         .regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)
@@ -820,20 +903,47 @@ const definitions = [
     annotations: { ...setupWrite, idempotentHint: false },
     exposure: { cli: true, mcp: true },
     serviceCapability: 'provider-setup',
-    handler: ({ apiKeyEnv, ...args }, context) => {
+    handler: async ({ apiKeyEnv, credentialRef, ...draft }, context) => {
       if (
-        (apiKeyEnv && args.credentialRef) ||
-        (args.providerType === 'official'
-          ? !args.vendorId || args.baseUrl || args.protocol
-          : !args.baseUrl || !args.protocol || args.vendorId || args.region)
+        (apiKeyEnv && credentialRef) ||
+        (draft.providerType === 'official'
+          ? !draft.vendorId || draft.baseUrl || draft.protocol
+          : !draft.baseUrl || !draft.protocol || draft.vendorId || draft.region)
       )
         throw new AgentError('invalid_request')
       const key = apiKeyEnv ? process.env[apiKeyEnv]?.trim() : undefined
-      if (apiKeyEnv && !key)
-        throw new AgentError('provider_credential_missing', { requiresUser: true })
       if (key && Buffer.byteLength(key, 'utf8') > 8192)
         throw new AgentError('credential_invalid', { requiresUser: true })
-      return providerSetup({ action: 'provider-save', ...args, ...(key ? { key } : {}) }, context)
+      const client = await setupClient(context, 'provider-setup')
+      try {
+        if (apiKeyEnv && !key)
+          throw new AgentError('provider_credential_missing', { requiresUser: true })
+        return await providerSetup(
+          { action: 'provider-save', ...draft, credentialRef, key },
+          context,
+          client
+        )
+      } catch (error) {
+        if (
+          key ||
+          credentialRef ||
+          !(error instanceof AgentError) ||
+          (error.details.code !== 'provider_credential_missing' &&
+            error.details.category !== 'auth')
+        )
+          throw error
+        const health = await client.health({ signal: context.signal })
+        if (!client.configRoot || !health?.taskCapabilities?.includes(providerTerminalSupport))
+          throw error
+        const providerId = randomUUID()
+        const target = await credentialTarget(draft, providerId, context, client)
+        throw new AgentError('provider_credential_missing', {
+          requiresUser: true,
+          message:
+            'Show the supplied terminal command to the user. They run it and enter the API key without echo. Afterward, check the exact target with the supplied verification action.',
+          next: [providerTerminalAction(client.configRoot, draft, providerId, target)]
+        })
+      }
     }
   },
   {

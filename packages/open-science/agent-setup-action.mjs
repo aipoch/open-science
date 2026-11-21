@@ -16,6 +16,37 @@ export const openBrowser = (url) => {
   })
 }
 
+export const providerTerminalAction = (profile, draft, providerId, { protocol, endpoint }) => {
+  const argv = [
+    cliPath,
+    'provider',
+    'setup',
+    providerId,
+    '--protocol',
+    protocol,
+    // The draft has no secrets. Encoding avoids shell interpretation of model names and URLs.
+    '--draft',
+    Buffer.from(JSON.stringify({ ...draft, expectedEndpoint: endpoint }), 'utf8').toString(
+      'base64url'
+    ),
+    '--profile',
+    profile
+  ]
+  const windows = process.platform === 'win32'
+  const quote = (arg) =>
+    `'${windows ? arg.replace(/['\u2018\u2019]/g, '$&$&') : arg.replaceAll("'", "'\\''")}'`
+  return {
+    action: 'enter_provider_credential',
+    owner: 'user',
+    executable: process.execPath,
+    argv,
+    shell: windows ? 'powershell' : 'posix',
+    command: `${windows ? '& ' : ''}${[process.execPath, ...argv].map(quote).join(' ')}`,
+    target: { profile, ...draft, providerId, protocol, endpoint },
+    verify: { action: 'list_providers', arguments: { framework: draft.framework } }
+  }
+}
+
 export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvailable) => {
   const runtime = code.startsWith('runtime_')
   const prepare = runtime && framework

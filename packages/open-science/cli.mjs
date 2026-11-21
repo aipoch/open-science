@@ -7,6 +7,8 @@ import { closeSync, existsSync, openSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, open, readFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { text as readStreamText } from 'node:stream/consumers'
+import { createInterface } from 'node:readline'
+import { Writable } from 'node:stream'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -54,6 +56,8 @@ Commands:
   runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
   provider add --type official --vendor openai --model <id> --api-key-env <ENV>
+  provider setup <id> --protocol <protocol> --draft <draft> --profile <path>
+                        Use the command from save_api_provider to enter a key in this terminal
   connector configure literature --openalex-key-env <ENV>
   cli install            Install the PATH launcher
   codex login [--force]
@@ -170,6 +174,8 @@ const VALUE_OPTIONS = {
   '--type': 'providerType',
   '--vendor': 'vendor',
   '--api-key-env': 'apiKeyEnv',
+  '--draft': 'providerDraft',
+  '--protocol': 'providerProtocol',
   '--openalex-key-env': 'openAlexKeyEnv',
   '--project': 'project',
   '--session': 'session',
@@ -258,6 +264,7 @@ const POSITIONAL_LIMITS = new Map([
   ['runtime list', 0],
   ['runtime install', 1],
   ['provider add', 0],
+  ['provider setup', 1],
   ['connector configure', 1],
   ['cli install', 0],
   ['connector list', 0],
@@ -619,6 +626,16 @@ export const parseCliArgs = (argv) => {
   }
   if (options.force && command !== 'stop' && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires stop or codex login.')
+  }
+  const isProviderSetup = command === 'provider' && subcommand === 'setup'
+  if (isProviderSetup && (!options.configRoot || options.apiKeyEnv !== undefined)) {
+    throw new CliUsageError('Use the provider setup command returned for this profile.')
+  }
+  if (
+    !isProviderSetup &&
+    (options.providerDraft !== undefined || options.providerProtocol !== undefined)
+  ) {
+    throw new CliUsageError('--draft and --protocol require provider setup.')
   }
   const isProjectCreate = command === 'project' && subcommand === 'create'
   const isProjectUpdate = command === 'project' && subcommand === 'update'
@@ -1615,10 +1632,56 @@ const runAgentCommand = async ({ command, subcommand, positionals = [], options 
   deps.log(JSON.stringify({ result: result ?? null }))
 }
 
+const readProviderKey = (target) =>
+  new Promise((resolve) => {
+    // Readline handles terminal editing and Ctrl+C. Its output, including the typed line, is discarded.
+    const output = new Writable({ write: (_chunk, _encoding, done) => done() })
+    const prompt = createInterface({ input: process.stdin, output, terminal: true, historySize: 0 })
+    let key
+    prompt.once('close', () => {
+      process.stderr.write('\n')
+      resolve(key)
+    })
+    prompt.once('SIGINT', () => prompt.close())
+    prompt.once('line', (line) => {
+      key = line.trim()
+      prompt.close()
+    })
+    process.stderr.write(
+      `Profile: ${JSON.stringify(target.profile)}\n` +
+        `Provider: ${JSON.stringify(target.name ?? target.vendorId ?? 'Custom API provider')}\n` +
+        `Model: ${JSON.stringify(target.model)} (${target.protocol})\n` +
+        `Endpoint: ${JSON.stringify(target.endpoint)}\n` +
+        'Enter API key (input hidden): '
+    )
+  })
+
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
   if (command === 'doctor' || command === 'tools') return runAgentCommand(parsed, deps)
+  if (command === 'provider' && subcommand === 'setup') {
+    if (!deps.stdinIsTTY || !process.stderr.isTTY)
+      throw new CliUsageError(
+        'Run provider setup in your interactive terminal so the key can be entered without echo.'
+      )
+    const { saveProviderInTerminal } = await import('./agent-adapter.mjs')
+    const result = await saveProviderInTerminal(
+      {
+        encodedDraft: options.providerDraft,
+        providerId: positionals[0],
+        protocol: options.providerProtocol
+      },
+      {
+        configRoot: options.configRoot,
+        getClient: () => deps.connect({ configRoot: options.configRoot })
+      },
+      readProviderKey
+    )
+    if (options.json) deps.log(JSON.stringify({ result }))
+    else deps.log('Provider saved and verified. Return to your Agent to check the active model.')
+    return
+  }
   const client = await deps.connect({ configRoot: options.configRoot })
   const call = async (name, input = {}, signal) => {
     const { invokeAgentCapability } = await import('./agent-adapter.mjs')

@@ -6,9 +6,28 @@ import type { ProviderType, ValidationCategory } from './settings-types'
 const framework = z.enum(AGENT_FRAMEWORK_ID_VALUES)
 const id = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 const model = z.string().trim().min(1).max(512)
+const protocol = z.enum(['messages', 'chat-completions', 'responses'])
+const apiProviderDraft = {
+  providerType: z.enum(['official', 'custom']),
+  framework,
+  model,
+  name: z.string().trim().min(1).max(128).optional(),
+  vendorId: id.optional(),
+  region: id.optional(),
+  baseUrl: z.string().trim().min(1).max(2048).optional(),
+  protocol: protocol.optional()
+}
+const providerCredentialTarget = z.strictObject({
+  action: z.literal('provider-credential-target'),
+  ...apiProviderDraft,
+  providerId: z.uuid()
+})
 
 export const isProviderSetupAction = (value: unknown): boolean =>
-  value === 'provider-options' || value === 'provider-save' || value === 'provider-activate'
+  value === 'provider-options' ||
+  value === 'provider-save' ||
+  value === 'provider-activate' ||
+  value === 'provider-credential-target'
 
 export const bootstrapRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }).strict(),
@@ -18,17 +37,14 @@ export const bootstrapRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('codex-prepare') }).strict(),
   z.object({ action: z.literal('codex-complete') }).strict(),
   z.strictObject({ action: z.literal('provider-options'), framework: framework.optional() }),
+  providerCredentialTarget,
   z.strictObject({
     action: z.literal('provider-save'),
-    providerType: z.enum(['official', 'custom']),
-    framework,
-    model,
-    name: z.string().trim().min(1).max(128).optional(),
-    vendorId: id.optional(),
-    region: id.optional(),
-    baseUrl: z.string().trim().min(1).max(2048).optional(),
-    protocol: z.enum(['messages', 'chat-completions', 'responses']).optional(),
+    ...apiProviderDraft,
     credentialRef: id.optional(),
+    providerId: z.uuid().optional(),
+    expectedProtocol: protocol.optional(),
+    expectedEndpoint: z.url().max(4096).optional(),
     // Internal loopback transport only. The public CLI/MCP schema accepts an environment name.
     key: z.string().trim().min(1).max(8192).optional()
   }),
@@ -68,6 +84,7 @@ export type BootstrapProviderOptions = {
     name: string
     type: ProviderType
     models: ProviderModelOption[]
+    lastValidated?: { model: string; protocol: ModelProtocol }
     authentication: 'api' | 'user-sign-in' | 'app-managed'
   }[]
   official: {
@@ -90,6 +107,8 @@ export type BootstrapProviderSetup = {
   active: boolean
 }
 
+export type BootstrapProviderCredentialTarget = { protocol: ModelProtocol; endpoint: string }
+
 export type BootstrapResult =
   | {
       ok: true
@@ -98,6 +117,7 @@ export type BootstrapResult =
       keylessKiloAvailable?: boolean
       providerOptions?: BootstrapProviderOptions
       providerSetup?: BootstrapProviderSetup
+      providerCredentialTarget?: BootstrapProviderCredentialTarget
       next?: { runtime?: string[]; provider?: string[] }
     }
   | {
@@ -107,6 +127,7 @@ export type BootstrapResult =
         | 'configuration_conflict'
         | 'runtime_unavailable'
         | 'credential_invalid'
+        | 'provider_credential_missing'
         | 'provider_validation_failed'
         | 'bootstrap_failed'
       category?: ValidationCategory

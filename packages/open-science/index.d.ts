@@ -1,19 +1,26 @@
+type BootstrapApiProviderDraft = {
+  framework: AgentFramework
+  model: string
+  name?: string
+} & (
+  | { providerType: 'official'; vendorId: string; region?: string }
+  | { providerType: 'custom'; baseUrl: string; protocol: ProviderProtocol }
+)
+
 export type BootstrapRequest =
   | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
   | { action: 'agent-runtime' | 'kilo-free'; framework: AgentFramework }
   | { action: 'provider-options'; framework?: AgentFramework }
-  | ({
+  | (BootstrapApiProviderDraft & { action: 'provider-credential-target'; providerId: string })
+  | (BootstrapApiProviderDraft & {
       action: 'provider-save'
-      framework: AgentFramework
-      model: string
-      name?: string
       credentialRef?: string
+      providerId?: string
+      expectedProtocol?: ProviderProtocol
+      expectedEndpoint?: string
       // SDK transport to the authenticated local service, not a CLI/MCP tool parameter.
       key?: string
-    } & (
-      | { providerType: 'official'; vendorId: string; region?: string }
-      | { providerType: 'custom'; baseUrl: string; protocol: ProviderProtocol }
-    ))
+    })
   | {
       action: 'provider-activate'
       framework: AgentFramework
@@ -41,6 +48,7 @@ export type BootstrapProviderOptions = {
     name: string
     type: string
     models: BootstrapProviderModelOption[]
+    lastValidated?: { model: string; protocol: ProviderProtocol }
     authentication: 'api' | 'user-sign-in' | 'app-managed'
   }[]
   official: {
@@ -69,6 +77,7 @@ export type BootstrapResult =
       keylessKiloAvailable?: boolean
       providerOptions?: BootstrapProviderOptions
       providerSetup?: BootstrapProviderSetup
+      providerCredentialTarget?: { protocol: ProviderProtocol; endpoint: string }
       next?: { runtime?: string[]; provider?: string[] }
     }
   | {
@@ -78,6 +87,7 @@ export type BootstrapResult =
         | 'configuration_conflict'
         | 'runtime_unavailable'
         | 'credential_invalid'
+        | 'provider_credential_missing'
         | 'provider_validation_failed'
         | 'bootstrap_failed'
       category?: 'ok' | 'auth' | Exclude<ProviderReadinessReason, 'credential_invalid'>

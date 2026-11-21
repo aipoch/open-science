@@ -1972,6 +1972,66 @@ it('discovers setup choices and prepares only the selected runtime, provider and
   ])
 })
 
+it.each(['messages', 'chat-completions', 'responses'])(
+  'returns a headless credential command for the selected %s protocol',
+  async (protocol) => {
+    const framework = 'open-science-agent'
+    const baseUrl = 'https://gateway.example/v1'
+    const endpoint = `${baseUrl}/${protocol === 'chat-completions' ? 'chat/completions' : protocol}`
+    const model = 'gateway-model'
+    const args = { providerType: 'custom', framework, baseUrl, model, protocol }
+    const agent = await resourceAgents(
+      async (req, res) => {
+        if (req.url !== '/api/v1/bootstrap') return void res.writeHead(404).end()
+        let text = ''
+        for await (const chunk of req) text += chunk
+        const input = JSON.parse(text)
+        expect(input.key).toBeUndefined()
+        if (input.action === 'provider-save') {
+          res.end(JSON.stringify({ data: { ok: false, code: 'provider_credential_missing' } }))
+        } else if (input.action === 'provider-credential-target') {
+          res.end(
+            JSON.stringify({ data: { ok: true, providerCredentialTarget: { protocol, endpoint } } })
+          )
+        } else res.writeHead(404).end()
+      },
+      ['provider-setup', 'provider-terminal-setup']
+    )
+    const check = (error: Record<string, unknown>): void => {
+      expect(error).toMatchObject({
+        code: 'provider_credential_missing',
+        owner: 'user',
+        requiresUser: true,
+        next: [
+          {
+            action: 'enter_provider_credential',
+            owner: 'user',
+            target: { profile: agent.profile, framework, model, protocol, baseUrl, endpoint },
+            argv: expect.arrayContaining(['provider', 'setup', '--protocol', protocol]),
+            verify: { action: 'list_providers', arguments: { framework } }
+          }
+        ]
+      })
+      const [next] = error.next as Array<{
+        command: string
+        target: { providerId: string }
+        argv: string[]
+      }>
+      expect(next.command).toContain(protocol)
+      expect(next.command).not.toContain('open_setup')
+      expect(next.target.providerId).toMatch(/^[a-f0-9-]{36}$/)
+    }
+    const mcp = await agent.mcp('save_api_provider', args)
+    expect(mcp.isError).toBe(true)
+    check(mcp.structuredContent!.error as Record<string, unknown>)
+    check((await agent.cliError('save_api_provider', args)).error)
+    const [handoff] = mcp.structuredContent!.error.next as Array<{ argv: string[] }>
+    const result = await cliError([...handoff.argv.slice(1), '--json'], 'not-a-terminal-key')
+    expect(result.error.message).toContain('interactive terminal')
+    expect(JSON.stringify(result)).not.toContain('not-a-terminal-key')
+  }
+)
+
 it('discovers, saves and explicitly activates an API provider through CLI and MCP', async () => {
   const key = 'synthetic-provider-secret'
   const framework = 'opencode'

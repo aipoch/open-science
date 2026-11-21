@@ -96,6 +96,7 @@ describe('SettingsService provider facade', () => {
       expect(probe).not.toHaveBeenCalled()
       expect(await setup({ ...draft, key })).toEqual({ ok: false, code: 'configuration_conflict' })
       await repository.setAgentFramework(framework)
+      expect(await setup(draft)).toEqual({ ok: false, code: 'provider_credential_missing' })
       expect(await setup({ ...draft, credentialRef: 'missing-ref' })).toEqual({
         ok: false,
         code: 'credential_invalid'
@@ -157,6 +158,105 @@ describe('SettingsService provider facade', () => {
         ok: true,
         providerOptions: { active: { providerId, model } }
       })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('resolves official wire protocols and saves only to the original terminal target', async () => {
+    const key = 'synthetic-terminal-key'
+    const framework = 'open-science-agent'
+    const providerId = '53a8ae2b-957e-452d-b127-2e0b867e5314'
+    const setup = (request: unknown): ReturnType<typeof service.bootstrap> =>
+      service.bootstrap(request, () => undefined)
+    const terminal = { action: 'provider-credential-target', framework, providerId }
+    await repository.setAgentFramework(framework)
+    for (const { vendorId, model, protocol } of [
+      { vendorId: 'anthropic', model: 'claude-haiku-4-5-20251001', protocol: 'messages' },
+      { vendorId: 'openai', model: 'gpt-5.4', protocol: 'responses' }
+    ]) {
+      expect(await setup({ ...terminal, providerType: 'official', vendorId, model })).toMatchObject(
+        {
+          ok: true,
+          providerCredentialTarget: {
+            protocol,
+            endpoint: expect.stringMatching(new RegExp(`/${protocol}$`))
+          }
+        }
+      )
+    }
+
+    const draft = {
+      ...terminal,
+      providerType: 'custom',
+      model: 'local-test-model',
+      baseUrl: 'http://127.0.0.1:43210',
+      protocol: 'chat-completions'
+    }
+    const probe = vi.fn(async (_url: string, init?: RequestInit) =>
+      new Headers(init?.headers).get('authorization') === `Bearer ${key}`
+        ? Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        : Response.json({ error: { message: 'Rejected key' } }, { status: 401 })
+    )
+    vi.stubGlobal('fetch', probe)
+    try {
+      expect(await setup(draft)).toEqual({
+        ok: true,
+        providerCredentialTarget: {
+          protocol: 'chat-completions',
+          endpoint: 'http://127.0.0.1:43210/v1/chat/completions'
+        }
+      })
+      const save = {
+        ...draft,
+        action: 'provider-save',
+        key,
+        expectedProtocol: 'chat-completions',
+        expectedEndpoint: 'http://127.0.0.1:43210/v1/chat/completions'
+      }
+      expect(await setup({ ...save, expectedProtocol: 'responses' })).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      expect(
+        await setup({ ...save, expectedEndpoint: 'http://127.0.0.1:9999/v1/chat/completions' })
+      ).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      expect(probe).not.toHaveBeenCalled()
+      expect(await setup({ ...save, key: 'wrong-key' })).toMatchObject({
+        ok: false,
+        category: 'auth'
+      })
+      expect(await setup({ action: 'provider-options' })).toMatchObject({
+        providerOptions: { providers: [] }
+      })
+      expect(await setup(save)).toMatchObject({
+        ok: true,
+        providerSetup: {
+          providerId,
+          model: draft.model,
+          saved: true,
+          validation: 'passed',
+          active: false
+        }
+      })
+      expect(await setup(draft)).toEqual({ ok: false, code: 'configuration_conflict' })
+      expect(await setup({ ...save, key: 'another-key' })).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      const options = await setup({ action: 'provider-options' })
+      expect(options).toMatchObject({
+        providerOptions: {
+          active: { providerId: null, model: null },
+          providers: [
+            { id: providerId, lastValidated: { model: draft.model, protocol: draft.protocol } }
+          ]
+        }
+      })
+      expect(JSON.stringify(options)).not.toContain(key)
     } finally {
       vi.unstubAllGlobals()
     }

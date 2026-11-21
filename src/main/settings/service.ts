@@ -1676,6 +1676,7 @@ class SettingsService {
       }
       if (
         request.action === 'provider-options' ||
+        request.action === 'provider-credential-target' ||
         request.action === 'provider-save' ||
         request.action === 'provider-activate'
       ) {

@@ -260,14 +260,23 @@ selecting it. Discovery does not select or prepare anything.
 
 For a new API provider, call `save_api_provider` with the chosen `framework` and exact `model`.
 Choose `providerType: "official"` and a `vendorId` (and `region` if needed), or choose
-`providerType: "custom"` and the `baseUrl` and `protocol`. `apiKeyEnv` names an environment
-variable visible to the CLI or MCP process; `credentialRef` instead selects a stored credential
-from `list_providers`. The service stores the key using the existing Provider credential store.
-Do not pass the key itself in tool input. A successful save has `validation: "passed"` and
-`active: false`. The same saved connection or an existing API provider can be tested and enabled
-with `activate_provider`. Supply the `expectedActiveProviderId` and `expectedActiveModel` from
-`list_providers`, including `null` for either absent value. Recheck after a timeout or conflict
-before repeating a write. An active Provider is only one part of the same profile's readiness.
+`providerType: "custom"` and the `baseUrl` and exact `protocol`: `messages`, `chat-completions`, or
+`responses`. For an official provider, Open-Science resolves the protocol from the vendor, model,
+and selected framework. Use an existing `credentialRef` or `apiKeyEnv` only if the user chooses one.
+
+When the service needs a new key, `save_api_provider` returns `provider_credential_missing` with
+`next[].action: "enter_provider_credential"`. Give the user `next[].command` as returned. It runs
+the installed CLI on the same profile and takes `--protocol` from the verified setup target; `--draft`
+encodes the non-secret setup fields so they survive shell quoting. In PowerShell or a POSIX terminal,
+the CLI displays the selected model, protocol, and endpoint, then reads the key without echo. It
+validates and saves through the existing Provider owner. The command needs an interactive terminal;
+the key does not belong in chat, command arguments, or input piped to the command. No GUI is needed.
+
+After the user finishes, follow `verify` and check the exact `target.providerId`, model and
+`lastValidated.protocol` in `list_providers`. A save does not activate the provider. If the user
+requested activation, call `activate_provider` with the active provider and model observed before
+setup, including `null` for either absent value. Recheck after a timeout or conflict before
+repeating a write. A changed active selection requires a fresh decision.
 
 `configure_provider` also offers the Kilo Gateway free route where supported. Use the installed
 CLI or MCP capabilities for requested setup. Call `open_setup` only when the user explicitly asks

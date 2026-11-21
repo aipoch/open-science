@@ -17,7 +17,7 @@ The user completes provider OAuth consent wherever the provider requires it.
 3. An agent can answer AskUser from information already supplied. It asks the user when a research choice, data, or preference is missing.
 4. Cover the main task, its child tasks, queries after a disconnect, and explicit recovery or expiry after a restart.
 5. A user can set delegation at submission, add it while a task is waiting, or revoke it. Delegation applies only to that task and its child tasks.
-6. Cover discovery, configuration, selection, and validation for existing API providers and models. Support an explicit credential reference or environment variable name.
+6. Cover discovery, configuration, selection, and validation for API providers and models. Support an existing credential reference or environment variable name, and a terminal handoff for new keys.
 7. Support managed and existing Python and R environments. Include progress, cancellation, and explicitly requested repair for managed environments.
 
 The existing requirements still apply: the local agent, MCP, and the service share a filesystem;
@@ -230,11 +230,16 @@ configuration, validation, and activation. Cover supported API providers, choosi
 configured provider, and using an agent other than Codex. No separate model catalog, credential
 store, or automatic reuse of the external agent's subscription is needed.
 
-Read a key from an explicitly selected existing credential reference or named environment variable
-visible to the adapter process. Never put the value in tool arguments, stdout, errors, or acceptance
-records. If the MCP process cannot read the chosen variable, report what is missing and how to fix
-it. Do not scan other processes, browsers, or applications for credentials. Report verification and
-activation independently from saving configuration.
+Reuse an explicitly selected existing credential reference or named environment variable. If the
+chosen API Provider needs a new key, `save_api_provider` exposes a user action with a shell command
+for the current profile and a specific provider ID. An ordinary Agent conversation can relay it.
+The CLI verifies the selected model, framework, and `messages`, `chat-completions`, or `responses`
+route and shows the resolved endpoint before accepting hidden terminal input. The setup request
+contains only non-secret fields; the key travels directly from the CLI to the existing local service.
+Saving uses the assigned Provider ID without creating a separate draft store, and cannot overwrite
+an existing record. Afterward check the exact provider ID, model, and validation protocol through
+MCP, then activate only under the original active-selection check. No browser or proprietary host
+input tool is required. Linux still uses the host's configured credential storage mode.
 
 An OAuth flow can expose start, status, and cancel actions. The user completes consent where the
 provider asks. Discover available operations from the installed version. Web remains a fallback;
@@ -316,7 +321,7 @@ for restart and races. Real agent acceptance starts at the README without a scri
 | Scenario                                                         | Required evidence                                                                                                                                                                                    |
 | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Short README prompt, with or without an attached `.science` file | Discover and check setup, then report readiness and next steps. The browser stays closed. Without a research, import, or Fork request, do not start one.                                             |
-| Setup location, explicit opening, and Provider handoff           | Give a page name or menu path when asked where. Use installed CLI or MCP capabilities for setup. Open Web only on request or when the chosen Provider requires browser sign-in.                      |
+| Setup location, explicit opening, and Provider handoff           | Give a page name or menu path when asked where. A new API key uses one protocol-specific command and hidden terminal input. The Agent checks the same provider after reconnect. OAuth can require a browser. |
 | Missing agent, provider, or language environment                 | Finish authorized installation and ordinary API configuration through CLI or MCP. There is no default choice of Codex or automatic Python install.                                                   |
 | Managed and existing Python or R                                 | Prepare or select only what the task requests. Register, check, enable, and bind an existing interpreter without changing unrelated languages or environments.                                       |
 | Setup fails, cancels, needs repair, or outlasts the wait         | Report actual progress and cause. The original operation remains queryable without duplicate preparation or false success.                                                                           |

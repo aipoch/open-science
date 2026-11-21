@@ -4461,12 +4461,21 @@ describe('startWebHttpServer', () => {
       body: JSON.stringify({ action: 'provider-options' })
     })
     expect(browserProviderSetup.status).toBe(403)
+    const browserCredentialTarget = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      headers: cookie,
+      body: JSON.stringify({ action: 'provider-credential-target' })
+    })
+    expect(browserCredentialTarget.status).toBe(403)
     expect(tasks.bootstrap).toHaveBeenCalledOnce()
     const browserDiscovery = await fetch(`${base}/api/bootstrap`, { headers: cookie })
     const browserCapabilities = (await browserDiscovery.json()).taskCapabilities
     expect(browserCapabilities).not.toContain('provider-setup')
+    expect(browserCapabilities).not.toContain('provider-terminal-setup')
     expect(browserCapabilities).not.toContain('task-questions')
-    expect((await sdk.health()).taskCapabilities).toContain('provider-setup')
+    expect((await sdk.health()).taskCapabilities).toEqual(
+      expect.arrayContaining(['provider-setup', 'provider-terminal-setup'])
+    )
     expect(await sdk.bootstrap({ action: 'provider-options' })).toEqual({ ok: true })
     expect(tasks.bootstrap).toHaveBeenLastCalledWith({ action: 'provider-options' })
 

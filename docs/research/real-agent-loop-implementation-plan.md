@@ -35,9 +35,11 @@
 
 - `doctor` / `get_setup_status` 只读。没有已选 runtime 时列举本版可用的选择；服务的有效默认值不能代替用户选择。
   `list_runtimes`、`select_runtime` 和 `prepare_runtime` 共用现有运行时清单、路由与托管安装。选择运行时与选择 provider 是两件事。
-- 复用现有 Settings 实现，补齐普通 API Provider 和模型的发现、配置、选择与验证。密钥使用用户指定的
-  凭据引用或适配器进程可见的环境变量名，原值不进入工具参数、返回或日志。OAuth 授权仍由用户完成；
-  Web 保留为备用配置入口，不能补齐声明已支持的 MCP 配置流程。
+- 复用现有 Settings 实现发现、配置、选择与验证 API Provider。支持已有凭据引用和环境变量名。需要新密钥时，
+  `save_api_provider` 返回可复制的同 profile 终端命令；Agent 在对话中传递非敏感配置，用户在终端无回显输入。
+  自定义网关使用明确的协议，官方模型按既有运行时规则解析。命令显示实际目标，验证成功后只保存。Agent 按原
+  Provider ID、模型和协议复查，按用户授权单独激活。API Key 配置不依赖 Web 或外部 Agent 的专有表单；
+  OAuth 同意仍由用户完成。
 - 分别报告 Python、R 与宿主依赖、隔离、内存。只检查环境时不推断语言或主动安装。已知研究所需语言时，
   在提交前调用 `get_setup_status` 检查该语言。环境缺失时，用户可让 Agent 用 `prepare_notebook_environment`
   代办。手工入口是「设置 → Runtimes」；用户明确要求打开时，使用 `open_setup` 的 `section: notebook`。
