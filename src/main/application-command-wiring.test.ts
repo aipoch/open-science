@@ -810,7 +810,14 @@ it('connects committed deletion to the same credential broker used by approval s
       hasActiveTransfer: vi.fn(() => true)
     },
     sessionPersistenceCoordinator: { sessionProjectId: vi.fn(async () => 'project') },
-    sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
+    sessionRepository: {
+      loadSession: vi.fn(async () => ({ memoryEnabled: false })),
+      loadSessionSummaries: vi.fn().mockRejectedValue(new Error('Session projection is not ready.'))
+    },
+    ensureSessionProjection: async () => ({
+      sessions: [{ id: 'readable', projectId: 'project', title: 'Readable session', updatedAt: 1 }]
+    }),
+    projectRepository: { list: async () => [{ id: 'project', name: 'Project' }] },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
     specialistDomain: {},
@@ -919,6 +926,11 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(result.applicationCommands.desktop).toBe(owners.desktop)
   expect(result.sessionDeletionCapability).toBe(owners.sessionPersistenceCoordinator)
   expect(result.archiveCapability).toBe(owners.archiveCoordinator)
+
+  await expect(result.listTrayNavigationSessions()).resolves.toMatchObject([
+    { id: 'readable', projectName: 'Project', title: 'Readable session' }
+  ])
+  expect(owners.sessionRepository.loadSessionSummaries).toHaveBeenCalledOnce()
 
   await result.commitClosePreference('quit')
   expect(setClosePreference).toHaveBeenCalledWith('quit')
