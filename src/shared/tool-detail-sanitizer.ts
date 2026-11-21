@@ -271,32 +271,42 @@ const sanitizeNotebookCodeReviewPayload = (value: unknown): unknown | undefined 
       typeof review[key] === 'string' ? [[key, review[key].slice(0, 1024)]] : []
     )
   )
-  return sanitizeRawToolPayload(
-    {
-      code: value.code,
-      notebookCodeRisk: {
-        ...metadata,
-        language: review.language,
-        ...(review.language === 'bash' &&
-        isRecord(review.shellRuntime) &&
-        review.shellRuntime.kind === 'powershell'
-          ? { shellRuntime: { kind: 'powershell' } }
-          : {}),
-        riskCount: Math.max(
-          review.risks.length,
-          Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
-            ? (review.riskCount as number)
-            : 0
-        ),
-        risks: review.risks.slice(0, 128).map((risk) => ({
-          operation: risk.operation.slice(0, 512),
-          source: risk.source.slice(0, 1024),
-          line: risk.line
-        }))
-      }
-    },
-    8 * 1024 * 1024
-  )
+  const payload = {
+    code: value.code,
+    notebookCodeRisk: {
+      ...metadata,
+      language: review.language,
+      ...(review.language === 'bash' &&
+      isRecord(review.shellRuntime) &&
+      review.shellRuntime.kind === 'powershell'
+        ? { shellRuntime: { kind: 'powershell' } }
+        : {}),
+      riskCount: Math.max(
+        review.risks.length,
+        Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
+          ? (review.riskCount as number)
+          : 0
+      ),
+      risks: review.risks.slice(0, 128).map((risk) => ({
+        operation: risk.operation.slice(0, 512),
+        source: risk.source.slice(0, 1024),
+        line: risk.line
+      }))
+    }
+  }
+  const maxChars = 8 * 1024 * 1024
+  if (payload.code.length >= MAX_TOOL_DETAIL_TEXT_CHARS && !isSensitiveDiagnosticKey('code')) {
+    try {
+      const code = redactToolPayloadText(payload.code)
+      // Each source code unit adds at most six JSON characters to the empty string.
+      // Clone only the findings when even that upper bound fits the existing budget.
+      const projected = sanitizeRawToolPayload({ ...payload, code: '' }, maxChars - 6 * code.length)
+      if (isRecord(projected)) return { ...projected, code }
+    } catch {
+      return undefined
+    }
+  }
+  return sanitizeRawToolPayload(payload, maxChars)
 }
 
 // Rebuilds a bounded JSON-safe projection while replacing sensitive fields at every nesting level.

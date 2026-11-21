@@ -427,6 +427,7 @@ type ElectronApp = {
   readFakeAgentPrompts: () => Promise<
     readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
   >
+  close: (gracefulTimeoutMs?: number) => Promise<void>
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
@@ -2294,8 +2295,8 @@ class ElectronAppHarness implements ElectronApp {
     return handoffPath
   }
 
-  private async close(): Promise<void> {
-    await this.closeForCleanup(true)
+  async close(gracefulTimeoutMs?: number): Promise<void> {
+    await this.closeForCleanup(true, gracefulTimeoutMs)
   }
 
   private async closeForCleanup(

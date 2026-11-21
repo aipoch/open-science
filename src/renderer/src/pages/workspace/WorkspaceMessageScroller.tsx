@@ -209,6 +209,7 @@ type SessionScopedNearViewportNotebookRunState = {
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
 const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
 const EMPTY_ANNOTATIONS: readonly Annotation[] = []
+const EMPTY_FILE_REFERENCES: MessageArtifact[] = []
 const EMPTY_TEXT_ANNOTATIONS: readonly TextAnnotation[] = []
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
@@ -2059,7 +2060,8 @@ const WorkspaceMessageScrollerImpl = ({
                           }
                         : undefined,
                     artifacts,
-                    fileReferences: fileReferencesByMessage.get(item.message.id) ?? [],
+                    fileReferences:
+                      fileReferencesByMessage.get(item.message.id) ?? EMPTY_FILE_REFERENCES,
                     reviewerCorrectionState: (() => {
                       const response = responseByPromptMessageId.get(item.message.id)
                       if (response?.status === 'complete') return 'completed'

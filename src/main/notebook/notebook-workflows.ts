@@ -28,6 +28,8 @@ import type {
   NotebookCell,
   NotebookBackgroundRunLookupRequest,
   NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceRequest,
+  NotebookRunEvidenceSnapshot,
   NotebookBackgroundRunResult,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
@@ -82,6 +84,7 @@ type NotebookCommandRuntime = {
   ) => Promise<NotebookProcessMonitorSnapshot>
   terminateMonitoredProcess?: (request: TerminateNotebookProcessRequest) => Promise<void>
   backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot>
+  runEvidence(request: NotebookRunEvidenceRequest): Promise<NotebookRunEvidenceSnapshot | null>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getMemoryPolicyState(
@@ -122,6 +125,7 @@ type NotebookCommandWorkflows = {
   ): Promise<NotebookResourceRelease>
   processMonitor(request?: NotebookProcessMonitorRequest): Promise<NotebookProcessMonitorSnapshot>
   terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void>
+  runEvidence(request: NotebookRunEvidenceRequest): Promise<NotebookRunEvidenceSnapshot | null>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot>
@@ -300,6 +304,7 @@ const createNotebookCommandWorkflows = (
     // These projections can initialize a previously unseen Notebook session and persist run.json,
     // so they share the same data-root admission as explicit mutation commands.
     runIndex: (request) => runtime.runIndex(request),
+    runEvidence: (request) => withDataRootWrite(() => runtime.runEvidence(request)),
     state: (request) => withDataRootWrite(() => runtime.state(request)),
     backgroundTasks: (request) => withDataRootWrite(() => runtime.backgroundTasks(request)),
     memoryPolicyState: (request) => runtime.getMemoryPolicyState(request),

@@ -330,6 +330,7 @@ describe('notebook IPC handlers', () => {
       'notebook:process-monitor',
       'notebook:terminate-monitored-process',
       'notebook:background-tasks',
+      'notebook:run-evidence',
       'notebook:run-index',
       'notebook:state',
       'notebook:memory-policy-state',

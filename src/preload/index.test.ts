@@ -509,6 +509,7 @@ describe('preload bridge — public surface inventory', () => {
       'notebook.restart',
       'notebook.retryResourceRelease',
       'notebook.runCell',
+      'notebook.runEvidence',
       'notebook.runIndex',
       'notebook.shutdown',
       'notebook.state',

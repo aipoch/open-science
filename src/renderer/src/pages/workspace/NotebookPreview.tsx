@@ -45,6 +45,7 @@ import type {
   NotebookNamespaceSnapshot,
   NotebookNamespaceVariable,
   NotebookRunRecord,
+  NotebookRunEvidenceSnapshot,
   NotebookRunPage,
   NotebookRunCursor,
   NotebookRunStaleness,
@@ -242,7 +243,7 @@ const NotebookRunCell = ({
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
-  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -747,14 +748,8 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   )
 
   const loadNotebookRunEvidence = useCallback(
-    async (runId: string): Promise<NotebookRunRecord | undefined> => {
-      const requested = latestNotebookRequest.current.request
-      const targetedState = await window.api.notebook.state({
-        ...requested,
-        runIds: [runId]
-      })
-      return targetedState.runs.find((run) => run.runId === runId)
-    },
+    (runId: string) =>
+      window.api.notebook.runEvidence({ ...latestNotebookRequest.current.request, runId }),
     []
   )
 

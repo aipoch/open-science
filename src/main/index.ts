@@ -816,6 +816,7 @@ async function startDesktop(): Promise<void> {
     'compute:jobs:list',
     'compute:list',
     'notebook:background-tasks',
+    'notebook:run-evidence',
     'notebook:state'
   ])
   const installRelay = (): void => {

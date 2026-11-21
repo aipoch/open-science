@@ -856,6 +856,18 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
   )
 }
 
+export type NotebookRunEvidenceRequest = NotebookSessionRequest & { runId: string }
+
+export type NotebookRunEvidenceSnapshot = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'kernelEpochId'
+  | 'environmentCapture'
+  | 'environmentManifestChecksum'
+  | 'environmentManifest'
+  | 'helperEvidenceStatus'
+>
+
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
   historySummaryFrameId?: string

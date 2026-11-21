@@ -21,6 +21,7 @@ export {
 
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { Socket } from 'node:net'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
@@ -289,6 +290,7 @@ export type SubmitFindingsHandler = (
 // The per-run reviewer MCP server: exposes submit_findings and starts/stops with the review.
 export class ReviewerMcpServer {
   private readonly httpServer: ReturnType<typeof createServer>
+  private readonly connections = new Set<Socket>()
   private readonly token: string
   private _endpoint: string | undefined
   private _socketPath: string | undefined
@@ -324,6 +326,10 @@ export class ReviewerMcpServer {
         }
       })
     })
+    this.httpServer.on('connection', (socket) => {
+      this.connections.add(socket)
+      socket.once('close', () => this.connections.delete(socket))
+    })
   }
 
   // Starts the MCP server on loopback TCP or a Windows named pipe.
@@ -351,7 +357,14 @@ export class ReviewerMcpServer {
     }
     this.transports.clear()
 
-    await new Promise<void>((resolve) => this.httpServer.close(() => resolve()))
+    await new Promise<void>((resolve) => {
+      this.httpServer.close(() => resolve())
+      // An HTTP client can preconnect after closing its SSE stream. Node can wait for the
+      // peer's idle timeout on these sockets. Let any request that sent bytes drain normally.
+      for (const socket of this.connections) {
+        if (socket.bytesRead === 0) socket.destroy()
+      }
+    })
 
     log.info('reviewer MCP server stopped', {
       ...connection,

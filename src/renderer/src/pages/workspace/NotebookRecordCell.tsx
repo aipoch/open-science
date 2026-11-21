@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../../shared/notebook'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
@@ -33,7 +33,7 @@ export const NotebookRecordCell = ({
   code?: string
   showResult?: boolean
   allowFolderAccess?: boolean
-  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
   children?: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()

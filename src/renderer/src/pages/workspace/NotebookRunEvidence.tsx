@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../../shared/notebook'
 
 // Show only evidence saved with this Run. Never substitute today's interpreter or package inventory.
 export const NotebookRunEvidence = ({
@@ -10,11 +10,13 @@ export const NotebookRunEvidence = ({
 }: {
   run: NotebookRunRecord
   showEnvironmentCaptureWarning?: boolean
-  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
-  const [evidenceRun, setEvidenceRun] = useState<NotebookRunRecord>()
+  const [evidenceRun, setEvidenceRun] = useState<
+    NotebookRunEvidenceSnapshot & Pick<NotebookRunRecord, 'frozenRuntimeTarget' | 'helperModules'>
+  >()
   const [isLoading, setIsLoading] = useState(false)
   const [loadFailed, setLoadFailed] = useState(false)
   const displayedRun = evidenceRun ?? run
