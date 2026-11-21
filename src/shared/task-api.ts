@@ -223,6 +223,13 @@ export type TaskPlanResponseRequest = {
 export type TaskRun = {
   requestId?: string
   continuedFromRunId?: string
+  /** Separate turns recorded under this Run. Follow a child Run for its own results and decisions. */
+  continuations?: {
+    runId: string
+    requestId: string
+    status: TaskRunStatus
+    failureCode?: TaskRunFailureCode
+  }[]
   id: string
   sessionId: string
   projectId: string

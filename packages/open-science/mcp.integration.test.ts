@@ -200,7 +200,18 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
 it.each(['permission', 'runtime', 'code', 'child'] as const)(
   'queries and relays the same %s decision through CLI JSON and MCP stdio',
   async (kind) => {
-    const scope = { runId: 'task-1' }
+    const scope = { runId: kind === 'runtime' ? 'settlement-run' : 'task-1' }
+    const originalRun =
+      kind === 'runtime'
+        ? {
+            id: 'task-1',
+            status: 'completed',
+            execution: { status: 'unconfirmed' },
+            continuations: [
+              { runId: scope.runId, requestId: 'settlement-request', status: 'running' }
+            ]
+          }
+        : undefined
     const notebookReview =
       kind === 'runtime' || kind === 'code' ? { kind, language: 'r' } : undefined
     const delegated =
@@ -258,9 +269,14 @@ it.each(['permission', 'runtime', 'code', 'child'] as const)(
         const json = (data: unknown): void => {
           response.end(JSON.stringify({ data }))
         }
-        if (url.pathname === '/api/v1/runs/task-1') {
+        if (originalRun && url.pathname === `/api/v1/runs/${originalRun.id}`) {
+          json(originalRun)
+        } else if (originalRun && url.pathname === '/api/v1/run-submissions/settlement-request') {
+          json({ requestId: 'settlement-request', runId: scope.runId, status: 'accepted' })
+        } else if (url.pathname === `/api/v1/runs/${scope.runId}`) {
           json({
-            id: 'task-1',
+            id: scope.runId,
+            ...(originalRun ? { continuedFromRunId: originalRun.id } : {}),
             status: released ? 'completed' : 'running',
             ...(!released
               ? {
@@ -280,11 +296,11 @@ it.each(['permission', 'runtime', 'code', 'child'] as const)(
           })
         } else if (
           url.pathname === '/api/v1/interactions' &&
-          url.searchParams.get('runId') === 'task-1'
+          url.searchParams.get('runId') === scope.runId
         ) {
           json(released ? [] : [interaction])
         } else if (
-          url.pathname === '/api/v1/runs/task-1/interaction-mode' &&
+          url.pathname === `/api/v1/runs/${scope.runId}/interaction-mode` &&
           request.method === 'PUT'
         ) {
           let body = ''
@@ -292,12 +308,12 @@ it.each(['permission', 'runtime', 'code', 'child'] as const)(
           expect(JSON.parse(body)).toEqual({ interactionMode: 'delegate', expectedRevision: 0 })
           json({ mode: 'delegate', revision: 1 })
         } else if (
-          url.searchParams.get('runId') === 'task-1' &&
+          url.searchParams.get('runId') === scope.runId &&
           decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}`
         ) {
           json(detail)
         } else if (
-          url.searchParams.get('runId') === 'task-1' &&
+          url.searchParams.get('runId') === scope.runId &&
           decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}/permission` &&
           request.method === 'POST'
         ) {
@@ -324,8 +340,19 @@ it.each(['permission', 'runtime', 'code', 'child'] as const)(
           response.writeHead(404).end()
         }
       },
-      ['task-interactions', 'task-permissions', 'task-delegation']
+      ['task-interactions', 'task-permissions', 'task-delegation', 'durable-submissions']
     )
+
+    if (originalRun) {
+      const readOriginal = { runId: originalRun.id }
+      const mcpRun = (await agent.mcp('get_run', readOriginal)).structuredContent
+      expect(mcpRun).toEqual({ result: originalRun })
+      expect(await agent.cli('get_run', readOriginal)).toEqual(mcpRun)
+      const [{ requestId }] = originalRun.continuations
+      const mcpSubmission = (await agent.mcp('get_submission', { requestId })).structuredContent
+      expect(mcpSubmission).toMatchObject({ result: { runId: scope.runId, status: 'accepted' } })
+      expect(await agent.cli('get_submission', { requestId })).toEqual(mcpSubmission)
+    }
 
     for (const [name, input] of [
       ['get_run', scope],

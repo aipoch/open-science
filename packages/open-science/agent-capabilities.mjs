@@ -375,7 +375,7 @@ registerResource(
 registerResource(
   'get_run',
   'research',
-  'Read outer Run status and separate Notebook execution evidence. A completed Run alone does not establish execution or delivery.',
+  'Read the Run status, its Notebook evidence and linked continuations. Follow a continuation runId for its own interactions and results.',
   { runId },
   read,
   (client, args, options) => client.getRun(args.runId, options)

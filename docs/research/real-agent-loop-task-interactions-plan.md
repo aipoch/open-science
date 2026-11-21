@@ -146,6 +146,10 @@ revision 和一次性选项；委托仍按当前任务 revision 检查。决定�
 在提交同一笔记录时关联新 Attempt。重新查询原待办查看 `delegated.continuation`，原 Run 和来源 Attempt 状态不覆盖。
 本机问答回执和任务授权不随 `.science` 或 Fork 转移。
 
+后台子任务结案如果触发新的主 Agent 回合，原调度器在实际派发前通过现有 Task tracker 登记新的 `requestId` 和 Run。
+从原 `get_run` 的 `continuations` 查询新回合；原 Run 状态保留，新 Run 继承同一逻辑任务的当前委托。
+同 prompt 的 Notebook 记录和停止待办按各 Run 的执行时间范围读取。服务重启时已登记的回合仍可查询，未结束的回合报告 `process_restarted`；原进程的实时审阅失效，不重放。
+
 #75 在本机 Bearer 连接上公布 `notebook-continuation` 能力。原 Run 的待办返回当前拒绝和分支；
 外部宿主得到本次明确同意后，以保留的 `requestId` 调用 `continue_notebook`。Notebook Owner 核对
 当前拒绝、归属分支和原 prompt，并创建新一轮执行意图。旧上下文及其工具调用仍被拒绝；新一轮按现有规则

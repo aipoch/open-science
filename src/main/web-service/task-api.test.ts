@@ -40,7 +40,8 @@ import {
   type SessionComputeHostAccessMutation
 } from '../compute/session-compute-host-access'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import type { TaskAgentPort, TaskContinuationTracker, TaskSessionPort } from '../tasks/task-runner'
+import type { TaskAgentPort, TaskSessionPort } from '../tasks/task-runner'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from '../tasks/task-run-journal'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'

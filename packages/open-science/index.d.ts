@@ -659,6 +659,13 @@ export type Run = {
   requestId?: string
   /** Original Task Run when a recorded interaction started a separate turn. */
   continuedFromRunId?: string
+  /** Separate turns recorded under this Run. Follow a child Run for its own results and decisions. */
+  continuations?: {
+    runId: string
+    requestId: string
+    status: RunStatus
+    failureCode?: RunFailureCode
+  }[]
   id: string
   sessionId: string
   projectId: string

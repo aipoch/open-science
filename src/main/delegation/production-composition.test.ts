@@ -68,6 +68,11 @@ import { AcpPermissionBroker } from '../acp/permission-broker'
 import type { AcpRuntime, AcpRuntimeCallbacks } from '../acp/runtime'
 import { createDelegationSettlementContinuationDispatch } from './settlement-continuation-dispatch'
 import { HeadlessTaskApi, type TaskApiPorts } from '../web-service/task-api'
+import { startWebHttpServer } from '../web-service/http-server'
+import { ApplicationEventHub } from '../application-events'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import type { TaskRun, TaskSubmission } from '../../shared/task-api'
+import type { TaskPermissionInteraction } from '../../shared/task-interaction'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import { createTaskCallerContext } from '../caller-context'
 
@@ -1496,171 +1501,272 @@ describe('production delegated-work composition', () => {
     ])
   })
 
-  it('reproduces a detached child wake hiding its Notebook review and attributing work to the old Run', async () => {
-    const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-task-settlement-wake-'))
-    root = dataRoot
-    const { promise: settled, resolve: settle } = Promise.withResolvers<string>()
-    const dispatch: { current?: (request: DelegationSettlementDispatch) => Promise<void> } = {}
-    const harness = await createCompositionHarness(dataRoot, 'codex', undefined, undefined, {
-      settlementContinuations: { dispatch: (request) => dispatch.current!(request) }
-    })
-    const { session: scope, originMessageId: promptMessageId, frameId } = harness.caller
-    const branchId = harness.durable().conversationGraph!.frames[0].activeBranchId
-    const broker = new AcpPermissionBroker(() => undefined)
-    const repository = new NotebookRunRepository(dataRoot)
-    const notebook = new NotebookRuntimeService({
-      configRoot: dataRoot,
-      dataRoot,
-      projectId: scope.projectId,
-      repository,
-      memoryPolicy: healthyNotebookMemoryPolicy()
-    })
-    notebook.setExecutionApproval(
-      (request) => broker.requestAppApproval(request),
-      (sessionId) => broker.pendingNotebookReviews(sessionId)
-    )
-    const lane = createFrameNotebookLane(scope.projectId, scope.sessionId, frameId)
-    await repository.loadOrCreate({ ...scope, lane, workspaceCwd: dataRoot })
-    const runScope = { runId: 'settled-parent-run' }
-    const journal = new FileTaskRunJournal(dataRoot)
-    await journal.replace([
-      {
-        ...scope,
-        id: runScope.runId,
-        cwd: dataRoot,
-        status: 'completed',
-        startedAt: 1,
-        completedAt: 2,
-        promptMessageId,
-        output: 'I delegated a background check.',
-        artifacts: [],
-        preferredComputeHostIds: []
-      }
-    ])
-    const api = new HeadlessTaskApi(
-      {
-        commands: {
-          commandNames: () => ['sessions:load-all'],
-          invoke: async () => ({ sessions: [harness.durable()] })
-        },
-        notebook,
-        agent: {
-          delegateInteractions: harness.composition.root.taskInteractions,
-          getTaskPermissions: (sessionId, origin) =>
-            broker.getTaskPermissions(sessionId, origin, {
-              projectId: scope.projectId,
-              messageBranchId: branchId
-            })
-        } as TaskApiPorts['agent']
-      },
-      { runJournal: journal, submissionRoot: dataRoot }
-    )
-    dispatch.current = createDelegationSettlementContinuationDispatch({
-      async sendAppContinuationObserved(request, onProviderPromptAccepted) {
-        const origin = request.provenanceContext!.promptMessageId!
-        onProviderPromptAccepted()
-        const allowed = await broker.requestAppApproval({
-          sessionId: request.sessionId,
-          title: 'Confirm Notebook kernel and environment',
-          rawInput: {
-            notebookRuntimeSelection: {
-              projectId: scope.projectId,
-              messageBranchId: branchId,
-              promptMessageId: origin,
-              language: 'r',
-              runtimeId: 'test-r',
-              label: 'Test R'
-            }
-          }
-        })
-        if (!allowed) return
-        await repository.appendRun({
+  it.each(['completed', 'interrupted'] as const)(
+    'tracks a detached child wake and its Notebook review through Task HTTP (%s)',
+    async (outcome) => {
+      const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-task-settlement-wake-'))
+      root = dataRoot
+      const { promise: settled, resolve: settle } = Promise.withResolvers<string>()
+      const dispatch: { current?: (request: DelegationSettlementDispatch) => Promise<void> } = {}
+      const harness = await createCompositionHarness(dataRoot, 'codex', undefined, undefined, {
+        settlementContinuations: { dispatch: (request) => dispatch.current!(request) }
+      })
+      const { session: scope, originMessageId: promptMessageId, frameId } = harness.caller
+      const branchId = harness.durable().conversationGraph!.frames[0].activeBranchId
+      let broker = new AcpPermissionBroker(() => undefined)
+      const repository = new NotebookRunRepository(dataRoot)
+      const notebook = new NotebookRuntimeService({
+        configRoot: dataRoot,
+        dataRoot,
+        projectId: scope.projectId,
+        repository,
+        memoryPolicy: healthyNotebookMemoryPolicy()
+      })
+      notebook.setExecutionApproval(
+        (request) => broker.requestAppApproval(request),
+        (sessionId) => broker.pendingNotebookReviews(sessionId)
+      )
+      const lane = createFrameNotebookLane(scope.projectId, scope.sessionId, frameId)
+      await repository.loadOrCreate({ ...scope, lane, workspaceCwd: dataRoot })
+      const runScope = { runId: 'settled-parent-run' }
+      let now = 100
+      let trackContinuation!: TaskContinuationTracker
+      const journal = new FileTaskRunJournal(dataRoot)
+      await journal.replace([
+        {
           ...scope,
-          lane,
-          run: {
-            runId: 'settlement-r-cell',
-            cellId: 'cell-1',
-            source: 'agent',
-            kernelKind: 'r',
-            script: 'mean(c(2, 4))',
-            status: 'completed',
-            kernelDispatched: true,
-            startedAt: Date.now(),
-            messageBranchId: branchId,
-            promptMessageId: origin,
-            text: { stdout: '3', stderr: '', traceback: '', plain: [] },
-            outputs: [],
-            workingFiles: []
+          id: runScope.runId,
+          cwd: dataRoot,
+          status: 'completed',
+          startedAt: 1,
+          completedAt: 2,
+          promptMessageId,
+          output: 'I delegated a background check.',
+          artifacts: [],
+          preferredComputeHostIds: []
+        }
+      ])
+      const openApi = (): HeadlessTaskApi =>
+        new HeadlessTaskApi(
+          {
+            commands: {
+              commandNames: () => ['sessions:load-all'],
+              invoke: async () => ({ sessions: [harness.durable()] })
+            },
+            notebook,
+            agent: {
+              delegateInteractions: harness.composition.root.taskInteractions,
+              withSessionAvailable: async (_project, _session, operation) => operation(),
+              setContinuationTracker(tracker) {
+                trackContinuation = tracker
+                return () => undefined
+              },
+              getTaskPermissions: (sessionId, origin) =>
+                broker.getTaskPermissions(sessionId, origin, {
+                  projectId: scope.projectId,
+                  messageBranchId: branchId
+                }),
+              respondTaskPermission: (sessionId, origin, id, option, decision) =>
+                broker.respondTaskPermission(sessionId, origin, id, option, decision, {
+                  projectId: scope.projectId,
+                  messageBranchId: branchId
+                })
+            } as TaskApiPorts['agent']
+          },
+          { runJournal: journal, submissionRoot: dataRoot, now: () => now }
+        )
+      const send = vi.fn(
+        async (request: AcpPromptRequest, onProviderPromptAccepted: () => void) => {
+          const origin = request.provenanceContext!.promptMessageId!
+          onProviderPromptAccepted()
+          const allowed = await broker.requestAppApproval({
+            sessionId: request.sessionId,
+            title: 'Confirm Notebook kernel and environment',
+            rawInput: {
+              notebookRuntimeSelection: {
+                projectId: scope.projectId,
+                messageBranchId: branchId,
+                promptMessageId: origin,
+                language: 'r',
+                runtimeId: 'test-r',
+                label: 'Test R'
+              }
+            }
+          })
+          if (allowed) {
+            await repository.appendRun({
+              ...scope,
+              lane,
+              run: {
+                runId: 'settlement-r-cell',
+                cellId: 'cell-1',
+                source: 'agent',
+                kernelKind: 'r',
+                script: 'mean(c(2, 4))',
+                status: 'completed',
+                kernelDispatched: true,
+                startedAt: ++now,
+                messageBranchId: branchId,
+                promptMessageId: origin,
+                text: { stdout: '3', stderr: '', traceback: '', plain: [] },
+                outputs: [],
+                workingFiles: []
+              }
+            })
           }
-        })
-      },
-      async onPromptEnded(sessionId, wakeId) {
-        await harness.composition.root.settlementPromptEnded?.(sessionId, wakeId)
-        settle(wakeId)
-      }
-    })
-    try {
-      await api.initialize()
-      await api.runWithCallerContext(
-        createTaskCallerContext({ authenticatedLocalBearer: true }),
-        async () => {
-          await expect(api.getRun(runScope.runId)).resolves.toMatchObject({
-            status: 'completed',
-            execution: { status: 'unconfirmed' }
-          })
-          const turn = { sessionId: scope.sessionId, originatingPromptId: promptMessageId }
-          const leaseId = await harness.composition.root.rootTurnStarted!(turn)
-          await harness.composition.host.delegate(
-            harness.caller,
-            { task: 'Review cohort totals', name: 'Cohort check' },
-            { wait: false }
-          )
-          await expect.poll(() => harness.execution.controls()).toHaveLength(1)
-          const [child] = harness.execution.controls()
-          child.accept()
-          await harness.composition.root.rootTurnEnded!({ ...turn, clean: true, leaseId })
-          child.complete('Cohort totals checked.')
-
-          await expect.poll(() => broker.getPendingRequests()).toHaveLength(1)
-          const [review] = broker.getPendingRequests()
-          await expect(api.getRun(runScope.runId)).resolves.toMatchObject({
-            status: 'completed',
-            attention: undefined,
-            execution: {
-              status: 'waiting_for_user',
-              reasonCode: 'notebook_runtime_review_required',
-              next: { action: 'review_notebook_runtime_in_app' }
-            }
-          })
-          await expect(api.listInteractions(runScope)).resolves.toEqual([])
-          await expect(api.listInteractions(scope)).resolves.toEqual([])
-          // Drive the standard in-app decision to see where the subsequent evidence lands.
-          await broker.respond({
-            requestId: review.requestId,
-            optionId: review.options[0].optionId
-          })
-          const wakeId = await settled
-          await expect(api.getRun(wakeId)).rejects.toMatchObject({ code: 'run_not_found' })
-          await expect(api.getRun(runScope.runId)).resolves.toMatchObject({
-            status: 'completed',
-            output: 'I delegated a background check.',
-            execution: {
-              status: 'completed',
-              notebookRunId: 'settlement-r-cell',
-              kernelDispatched: true
-            }
-          })
+          now++
+          return { stopReason: 'end_turn' as const }
         }
       )
-    } finally {
-      for (const review of broker.getPendingRequests()) {
-        await broker.respond({ requestId: review.requestId, cancelled: true })
+      let wake!: DelegationSettlementDispatch
+      dispatch.current = createDelegationSettlementContinuationDispatch({
+        sendAppContinuationObserved: send,
+        trackTaskContinuation: (identity, providerSend) =>
+          trackContinuation(identity, providerSend),
+        async onPromptEnded(sessionId, wakeId) {
+          await harness.composition.root.settlementPromptEnded?.(sessionId, wakeId)
+          settle(wakeId)
+        }
+      })
+      const sendWake = dispatch.current
+      dispatch.current = (request) => {
+        wake = request
+        return sendWake(request)
       }
-      await api.dispose()
-      await notebook.dispose()
-      await harness.composition.root.shutdown()
+      const commands = { commandNames: () => [], invoke: async () => undefined }
+      const openHttp = (tasks: HeadlessTaskApi): ReturnType<typeof startWebHttpServer> =>
+        startWebHttpServer({
+          host: '127.0.0.1',
+          port: 0,
+          token: 'test-task-token',
+          staticRoot: dataRoot,
+          tasks,
+          applicationCommands: {
+            localWeb: commands,
+            remoteWeb: { ...commands, rejectedCommandNames: () => [] }
+          },
+          applicationEvents: new ApplicationEventHub(),
+          bootstrap: {
+            appName: 'Open-Science',
+            appVersion: '0.0.0',
+            configRoot: dataRoot,
+            platform: 'test',
+            versions: { electron: '1', chrome: '1', node: '1' }
+          }
+        })
+      let api = openApi()
+      let http = await openHttp(api)
+      const task = async <Result>(path: string, input?: RequestInit): Promise<Result> => {
+        const response = await fetch(`http://127.0.0.1:${http.port}/api/v1/${path}`, {
+          ...input,
+          headers: { authorization: 'Bearer test-task-token', 'content-type': 'application/json' }
+        })
+        const envelope = await response.json()
+        expect(response.status, JSON.stringify(envelope)).toBe(200)
+        return envelope.data as Result
+      }
+      try {
+        await api.initialize()
+        const original = `runs/${runScope.runId}`
+        const turn = { sessionId: scope.sessionId, originatingPromptId: promptMessageId }
+        const leaseId = await harness.composition.root.rootTurnStarted!(turn)
+        await harness.composition.host.delegate(
+          harness.caller,
+          { task: 'Review cohort totals', name: 'Cohort check' },
+          { wait: false }
+        )
+        await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+        const [child] = harness.execution.controls()
+        child.accept()
+        await harness.composition.root.rootTurnEnded!({ ...turn, clean: true, leaseId })
+        child.complete('Cohort totals checked.')
+
+        await expect.poll(() => broker.getPendingRequests()).toHaveLength(1)
+        const parent = await task<TaskRun>(original)
+        expect(parent).toMatchObject({
+          status: 'completed',
+          execution: { status: 'unconfirmed' },
+          continuations: [
+            { runId: expect.any(String), requestId: expect.any(String), status: 'running' }
+          ]
+        })
+        const [{ runId, requestId }] = parent.continuations!
+        await expect(task<TaskSubmission>(`run-submissions/${requestId}`)).resolves.toMatchObject({
+          requestId,
+          runId,
+          status: 'accepted'
+        })
+        await task(`${original}/interaction-mode`, {
+          method: 'PUT',
+          body: JSON.stringify({ expectedRevision: 0, interactionMode: 'delegate' })
+        })
+        await expect(task<TaskRun>(`runs/${runId}`)).resolves.toMatchObject({
+          continuedFromRunId: runScope.runId,
+          execution: { status: 'waiting_for_user', next: { action: 'respond_permission' } },
+          attention: { kind: 'interactions', interactions: [{ runId, owner: 'agent' }] }
+        })
+        await expect(task(`interactions?runId=${runScope.runId}`)).resolves.toEqual([])
+        const [review] = await task<TaskPermissionInteraction[]>(`interactions?runId=${runId}`)
+        expect(review).toMatchObject({ notebookReview: { kind: 'runtime', language: 'r' } })
+        if (outcome === 'completed') {
+          await task(`interactions/${encodeURIComponent(review.id)}/permission?runId=${runId}`, {
+            method: 'POST',
+            body: JSON.stringify({
+              expectedBranchId: review.branchId,
+              expectedRevision: review.revision,
+              optionId: review.actions[0],
+              expectedLanguage: 'r',
+              expectedModeRevision: 1,
+              source: 'delegated_agent'
+            })
+          })
+          await settled
+        }
+        await http.close()
+        await api.dispose()
+        // Process-only Broker waits disappear at restart; the journal retains the observed review.
+        broker = new AcpPermissionBroker(() => undefined)
+        api = openApi()
+        await api.initialize()
+        http = await openHttp(api)
+        await sendWake(wake)
+        expect(send).toHaveBeenCalledOnce()
+        const state =
+          outcome === 'completed'
+            ? { status: 'completed' }
+            : { status: 'failed', failureCode: 'process_restarted' }
+        await expect(task<TaskRun>(original)).resolves.toMatchObject({
+          status: 'completed',
+          output: 'I delegated a background check.',
+          execution: { status: 'unconfirmed' },
+          continuations: [{ runId, requestId, ...state }]
+        })
+        await expect(
+          task<TaskPermissionInteraction>(
+            `interactions/${encodeURIComponent(review.id)}?runId=${runId}`
+          )
+        ).resolves.toMatchObject({
+          state: outcome === 'completed' ? 'responded' : 'expired'
+        })
+        await expect(task<TaskRun>(`runs/${runId}`)).resolves.toMatchObject({
+          ...state,
+          continuedFromRunId: runScope.runId,
+          execution:
+            outcome === 'completed'
+              ? { status: 'completed', notebookRunId: 'settlement-r-cell', kernelDispatched: true }
+              : { status: 'unconfirmed' }
+        })
+      } finally {
+        for (const review of broker.getPendingRequests()) {
+          await broker.respond({ requestId: review.requestId, cancelled: true })
+        }
+        await http.close()
+        await api.dispose()
+        await notebook.dispose()
+        await harness.composition.root.shutdown()
+      }
     }
-  })
+  )
 
   it.each(['branch', 'project', 'stopAll', 'shutdown'] as const)(
     'cancels a pending settlement wake on %s invalidation',

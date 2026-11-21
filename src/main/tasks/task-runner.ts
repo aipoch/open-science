@@ -80,7 +80,6 @@ import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
-  TaskApiErrorCode,
   TaskProject,
   TaskProjectSessionDefaults,
   TaskRun,
@@ -106,7 +105,8 @@ import type {
   TaskRunJournalEntry,
   TaskRunPermissionRecord
 } from './task-run-journal'
-import type { TaskContinuationIdentity } from './task-submissions'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import { TaskRunnerError } from './task-runner-error'
 
 const log = createLogger('task-runner')
 
@@ -218,11 +218,6 @@ type TaskAgentPromptObserver = {
   onPromptAdmitted?: () => Promise<AgentTurnProvenanceContext | undefined>
   onProviderPromptAccepted?: () => void
 }
-
-type TaskContinuationTracker = <Result extends { stopReason: string }>(
-  identity: TaskContinuationIdentity & { originalPromptMessageId: string; promptMessageId: string },
-  send: (onProviderDispatched: () => void) => Promise<Result>
-) => Promise<Result>
 
 type TaskAgentPort = {
   delegateInteractions?: import('../delegation/durable-delegated-work-contract').TaskDelegateInteractions
@@ -777,16 +772,6 @@ const applyProjectDefaultsPatch = (
     else next[key] = value
   }
   return projectSessionDefaultsSchema.parse(next)
-}
-
-class TaskRunnerError extends Error {
-  constructor(
-    readonly code: TaskApiErrorCode,
-    message: string
-  ) {
-    super(message)
-    this.name = 'TaskRunnerError'
-  }
 }
 
 const isMissingPathError = (error: unknown): boolean =>
@@ -1725,6 +1710,23 @@ class TaskRunner {
       snapshot.status = 'running'
       snapshot.completedAt = undefined
     }
+    const continuations: NonNullable<TaskRun['continuations']> = []
+    for (const entry of this.runs.values()) {
+      if (
+        entry.continuedFromRunId !== run.id ||
+        entry.projectId !== run.projectId ||
+        entry.sessionId !== run.sessionId ||
+        !entry.requestId
+      )
+        continue
+      continuations.push({
+        runId: entry.id,
+        requestId: entry.requestId,
+        status: this.activeRunBySession.get(entry.sessionId) === entry.id ? 'running' : entry.status,
+        ...(entry.failureCode ? { failureCode: entry.failureCode } : {})
+      })
+    }
+    if (continuations.length) snapshot.continuations = continuations
     return snapshot
   }
 
@@ -3409,7 +3411,6 @@ export { summarizeSession, TaskRunner, TaskRunnerError }
 export type {
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
-  TaskContinuationTracker,
   TaskAgentPromptObserver,
   TaskAgentPromptRequest,
   TaskAgentResumeSessionRequest,

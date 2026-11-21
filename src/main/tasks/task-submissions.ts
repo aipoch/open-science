@@ -16,7 +16,8 @@ import type {
 } from '../../shared/task-api'
 import { isAgentAuthenticationFailure } from '../acp/prompt-error'
 import type { TaskRunJournalEntry } from './task-run-journal'
-import { TaskRunnerError } from './task-runner'
+import type { TaskContinuationIdentity } from '../../shared/task-continuation'
+import { TaskRunnerError } from './task-runner-error'
 
 const log = createLogger('task-submissions')
 
@@ -44,13 +45,6 @@ const receiptSchema = z
   })
 const documentSchema = z.object({ version: z.literal(1), submissions: z.array(receiptSchema) })
 type Receipt = z.infer<typeof receiptSchema>
-
-export type TaskContinuationIdentity = Readonly<{
-  kind: 'plan' | 'permission' | 'question'
-  projectId: string
-  sessionId: string
-  attemptId: string
-}>
 
 // JSON object property order is not request identity; array order remains significant.
 const canonicalRequest = (value: unknown): unknown => {

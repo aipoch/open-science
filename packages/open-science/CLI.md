@@ -773,6 +773,12 @@ the same interaction again. After confirmation, query it for `delegated.continua
 and status. The child Attempt ID is separate from Task Run IDs. Live child permissions cannot
 survive a service restart; an observed request without a recorded decision becomes `expired`.
 
+When a background child settles and the main Agent starts a separate turn, `get_run` on the original
+Run includes the new Run and submission in `continuations`. Follow the new `runId` with
+`get_run`, `wait_run` or `list_interactions`; Notebook evidence belongs to the Run that executed it.
+Use the linked `requestId` after reconnect. A Run interrupted by restart stays failed, and a live
+review that disappeared is `expired`. Do not repeat the original research or decision to wake it.
+
 ## Session configuration
 
 Read the persisted and effective configuration, including referenced provider, model, Specialist,

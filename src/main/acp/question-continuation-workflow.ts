@@ -22,7 +22,7 @@ import type { AcpDurableContinuationContextOwner } from './durable-continuation-
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import type { TaskContinuationTracker } from '../tasks/task-runner'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 
 type QuestionContinuationDependencies = Readonly<{
   hasActiveSession: (sessionId: string) => boolean

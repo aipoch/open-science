@@ -111,11 +111,7 @@ import {
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { containsSecretBearingMaterial } from '../permission-grants/capability'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
-import {
-  TaskSubmissions,
-  taskContinuationRequestId,
-  type TaskContinuationIdentity
-} from '../tasks/task-submissions'
+import { TaskSubmissions, taskContinuationRequestId } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
@@ -125,7 +121,10 @@ import {
   type TaskComputePreferencePort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
-import type { TaskContinuationTracker } from '../tasks/task-runner'
+import type {
+  TaskContinuationIdentity,
+  TaskContinuationTracker
+} from '../../shared/task-continuation'
 import { readTaskNotebookReadiness } from './task-notebook-readiness'
 import { taskQuestionAnswer, taskQuestionRevision } from '../acp/elicitation-owner'
 
@@ -515,6 +514,20 @@ class HeadlessTaskApi {
 
   private trackContinuation: TaskContinuationTracker = async (identity, send) => {
     await this.initialize()
+    const settlement = identity.kind === 'delegation_settlement'
+    if (settlement && this.submissions) {
+      const existing = await this.submissions
+        .get(taskContinuationRequestId(identity))
+        .catch((error: unknown) => {
+          if (!(error instanceof TaskRunnerError && error.code === 'submission_not_found'))
+            throw error
+        })
+      if (existing)
+        throw new TaskRunnerError(
+          'submission_conflict',
+          'This continuation was already recorded; the provider was not called again.'
+        )
+    }
     const originRunId = this.runner.findRunIdForPrompt(
       identity.sessionId,
       identity.originalPromptMessageId
@@ -549,8 +562,36 @@ class HeadlessTaskApi {
           'submission_conflict',
           'This continuation was already recorded; the provider was not called again.'
         )
-      const { onProviderDispatched } = tracking.active
-      result = await this.callerContexts.run(TASK_CALLER_CONTEXT, () => send(onProviderDispatched))
+      if (settlement) {
+        const session = await this.runner.findSession(identity.sessionId, identity.projectId)
+        const graph = session.conversationGraph
+        const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+        const origin =
+          graph &&
+          resolveActiveConversationMessages({
+            ...graph,
+            activeFrameId: graph.rootFrameId
+          }).findLast(({ role }) => role === 'user')
+        const run = this.runner.getRun(originRunId)
+        if (
+          session.packageOrigin ||
+          session.archivedAt !== undefined ||
+          !identity.branchId ||
+          root?.activeBranchId !== identity.branchId ||
+          origin?.introducedOnBranchId !== identity.branchId ||
+          origin.id !== identity.originalPromptMessageId ||
+          run.status === 'cancelled' ||
+          run.cancelRequestedAt !== undefined
+        )
+          throw new TaskRunnerError(
+            'interaction_revision_conflict',
+            'The originating Task or Message Branch is no longer current.'
+          )
+      }
+      const { onProviderDispatched, run } = tracking.active
+      result = await this.callerContexts.run(TASK_CALLER_CONTEXT, () =>
+        send(onProviderDispatched, run.id)
+      )
     } catch (error) {
       await tracking.active?.settle({ error })
       throw error
@@ -2120,12 +2161,14 @@ class HeadlessTaskApi {
     if (!branchId || !graph) return
     const runPromptId = run ? this.runner.getRunPromptMessageId(run.id) : undefined
     if (run && !runPromptId) return
-    const execution = await this.ports.notebook.inspectTaskExecution({
-      projectId: session.projectId,
-      sessionId: session.id,
-      promptMessageId: runPromptId,
-      ...(run ? {} : { includeSessionRefusal: true })
-    })
+    const execution = run
+      ? (await this.withRunExecution(run)).execution
+      : await this.ports.notebook.inspectTaskExecution({
+          projectId: session.projectId,
+          sessionId: session.id,
+          includeSessionRefusal: true
+        })
+    if (!execution) return
     const { refusalId, promptMessageId, refusalReason } = execution
     if (
       execution.status !== 'waiting_for_user' ||

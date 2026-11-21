@@ -36,6 +36,7 @@ import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared
 import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
@@ -167,21 +168,16 @@ type PromptAdmissionGuard = <Result>(
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
-  private continuationTracker?: import('../tasks/task-runner').TaskContinuationTracker
+  private continuationTracker?: TaskContinuationTracker
 
-  setContinuationTracker(
-    tracker: import('../tasks/task-runner').TaskContinuationTracker
-  ): () => void {
+  setContinuationTracker(tracker: TaskContinuationTracker): () => void {
     this.continuationTracker = tracker
     return () => {
       if (this.continuationTracker === tracker) this.continuationTracker = undefined
     }
   }
 
-  trackTaskContinuation: import('../tasks/task-runner').TaskContinuationTracker = (
-    identity,
-    send
-  ) => {
+  trackTaskContinuation: TaskContinuationTracker = (identity, send) => {
     if (this.continuationTracker) return this.continuationTracker(identity, send)
     if (identity.kind === 'permission')
       return Promise.reject(new Error('Task continuation tracking is unavailable.'))
