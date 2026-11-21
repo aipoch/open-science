@@ -21,15 +21,15 @@ const credentialKeyPatterns = [
   /^(?:apiSecret|api_secret|api-secret|API_SECRET)$/,
   /^(?:auth|authentication|authorization|bearer|cookies?|credentials?|passwords?|passphrases?|passwd|pat|secrets?|tokens?)$/i,
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|client[_-]?secret)$/i,
-  /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?token$/i,
+  /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?tokens?$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
-  /^(?:gh|github|hf)[_-]?token$/i
+  /^(?:gh|github|hf)[_-]?tokens?$/i
 ]
 
 // Qualified names need a credential-specific ending. Bare "token" and "secret"
 // also end ordinary business names such as pagination cursors.
 const qualifiedCredentialSuffix =
-  /_(?:passwords?|passwd|passphrases?|(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key|(?:api|client)_?secrets?|(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security|session)_?token)$/
+  /_(?:passwords?|passwd|passphrases?|(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key|(?:api|client)_?secrets?|(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security|session)_?tokens?)$/
 
 const isCredentialKey = (key: string): boolean => {
   if (credentialKeyPatterns.some((rule) => rule.test(key))) return true

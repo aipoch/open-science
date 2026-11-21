@@ -610,6 +610,7 @@ it('checks export metadata values independently of their field names', () => {
   for (const key of [
     'page_token',
     'next_page_token',
+    'next_page_tokens',
     'authMan',
     'tokenizer_token_index',
     'authPanelTitle',
@@ -844,6 +845,8 @@ it.each([
   'service-client-secret',
   'archive_private_key',
   'tenantRefreshToken',
+  'tenantRefreshTokens',
+  'accessTokens',
   'githubToken',
   'hf_token',
   'worker_session_token',
