@@ -53,18 +53,18 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.3.2 — Novedades
+### 💡 AIPOCH Open-Science v1.3.3 — Novedades
 
-_19 de noviembre de 2026_
+_21 de noviembre de 2026_
 
-- **Conversaciones largas más ligeras**: Las respuestas transmitidas dejan de acumular entradas ocultas, y los cuerpos de las conversaciones que no está viendo se liberan una vez guardados de forma segura; las sesiones grandes siguen siendo ágiles sin perder su lugar.
-- **Kilo Gateway**: Añada Kilo como proveedor oficial con o sin clave de API; una actualización anónima del catálogo muestra los modelos gratuitos a los que su conexión tiene acceso, y el proceso de incorporación puede omitir el paso del proveedor para decidirlo más tarde.
-- **Catálogos de modelos de imagen**: Actualice la lista de modelos integrada de los servicios oficiales de imagen de OpenAI, MiniMax, Bailian y Volcengine Ark antes de guardar, conservando su modelo activo cuando siga disponible.
-- **Primeros mensajes del agente más fiables**: Las conversaciones nuevas con el Agente predeterminado, Claude Code y Codex ya no fallan antes de su primera solicitud al modelo, y el Agente integrado inicia las sesiones programadas con su mensaje previsto.
-- **La traducción de PDF conserva el diseño**: Los títulos, pies, definiciones y enunciados matemáticos con salto de línea se recuperan en orden de lectura, y las fórmulas, enlaces y gráficos permanecen en su lugar original.
-- **Fallos de descarga más claros**: La pantalla de inicio indica el motivo específico de un fallo de descarga de un caso de uso: un manifiesto que falta, un paquete no disponible, un tiempo de espera agotado, un problema de red, del servidor, de verificación, de disco lleno o de almacenamiento.
+- **Actualizaciones automáticas**: En macOS, una actualización elegible puede instalarse al salir de la aplicación; en Windows y Linux, puede prepararse una actualización para el próximo inicio mientras trabaja; las descargas en segundo plano requieren una red sin restricciones y espacio de almacenamiento, y la vía manual sigue disponible.
+- **Agente integrado de forma predeterminada**: Los proyectos y sesiones nuevos comienzan con el Agente integrado de Open-Science en todas partes, incluidas las instalaciones limpias del CLI y del SDK; los entornos de ejecución de agentes externos se instalan bajo demanda solo cuando usted los elige.
+- **Una aplicación más ligera**: La versión instalada del escritorio es más pequeña en macOS y Windows, y el entorno de ejecución de npm sin conexión incluido está compilado para Node 22 en lugar de incluir más de mil archivos sueltos de paquetes.
+- **Edición de imágenes unificada**: Las instrucciones de edición viven en el compositor de la conversación, y las acciones al pasar el cursor o con el teclado permiten editar desde cualquier vista previa con navegación de versiones en todo momento.
+- **Los fallos se explican solos**: Los fallos de solicitud, carga, importación y Notebook ahora indican lo que ocurrió realmente, y las ejecuciones detenidas se distinguen del trabajo que nunca respondió.
+- **Atajos de Ajustes restaurados**: Los Skills, Specialists y Connectors vuelven a Ajustes, cada uno abre su categoría y regresa al punto donde estaba.
 
-[Notas completas v1.3.2](https://github.com/aipoch/open-science/releases/tag/v1.3.2)
+[Notas completas v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 
