@@ -4381,6 +4381,8 @@ describe('startWebHttpServer', () => {
         lifecycle: 'awaiting_approval'
       }),
       respondSessionPlan: vi.fn().mockResolvedValue({ changed: true }),
+      supportsTaskQuestions: () => true,
+      answerQuestion: vi.fn().mockResolvedValue({ changed: true }),
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -4461,7 +4463,9 @@ describe('startWebHttpServer', () => {
     expect(browserProviderSetup.status).toBe(403)
     expect(tasks.bootstrap).toHaveBeenCalledOnce()
     const browserDiscovery = await fetch(`${base}/api/bootstrap`, { headers: cookie })
-    expect((await browserDiscovery.json()).taskCapabilities).not.toContain('provider-setup')
+    const browserCapabilities = (await browserDiscovery.json()).taskCapabilities
+    expect(browserCapabilities).not.toContain('provider-setup')
+    expect(browserCapabilities).not.toContain('task-questions')
     expect((await sdk.health()).taskCapabilities).toContain('provider-setup')
     expect(await sdk.bootstrap({ action: 'provider-options' })).toEqual({ ok: true })
     expect(tasks.bootstrap).toHaveBeenLastCalledWith({ action: 'provider-options' })
@@ -4679,6 +4683,40 @@ describe('startWebHttpServer', () => {
       })
     }
     expect(tasks.respondSessionPlan).not.toHaveBeenCalled()
+
+    expect((await sdk.health()).taskCapabilities).toContain('task-questions')
+    const answerUrl = `${base}/api/v1/interactions/question%3Aquestion-1/answer?runId=run-1`
+    const answer = {
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay',
+      action: 'accept',
+      answers: [{ fieldId: 'group', value: 'Control' }]
+    }
+    const unauthorizedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(answer)
+    })
+    expect(unauthorizedAnswer.status).toBe(403)
+    const forgedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...answer, fields: [] })
+    })
+    expect(forgedAnswer.status).toBe(400)
+    expect(tasks.answerQuestion).not.toHaveBeenCalled()
+    const acceptedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(answer)
+    })
+    expect(await acceptedAnswer.json()).toEqual({ data: { changed: true } })
+    expect(tasks.answerQuestion).toHaveBeenCalledExactlyOnceWith(
+      'question:question-1',
+      { runId: 'run-1' },
+      answer
+    )
 
     const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
     expect(await artifacts.json()).toEqual({

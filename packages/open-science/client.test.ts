@@ -214,6 +214,7 @@ describe('OpenScienceClient', () => {
         'listInteractions',
         'getInteraction',
         'answerQuestion',
+        'continueNotebook',
         'respondSessionPlan',
         'submitRun',
         'getSubmission',

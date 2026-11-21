@@ -2071,7 +2071,12 @@ class AcpRuntime {
   }
 
   respondToTaskQuestion(input: TaskQuestionOwnerResponse): Promise<void> {
-    return this.questionContinuations.respondToTask(input)
+    return this.questionContinuations.respondToTask(input, (request, onProviderDispatched) =>
+      this.sendDurableAppContinuation(request, {
+        promptAttemptId: input.receipt.continuationId,
+        onProviderDispatched
+      })
+    )
   }
 
   requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {

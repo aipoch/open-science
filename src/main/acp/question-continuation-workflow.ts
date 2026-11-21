@@ -16,7 +16,7 @@ import {
   USER_CHOICE_SKIP_GUIDANCE,
   type AcpElicitationOwner
 } from './elicitation-owner'
-import type { AcpAppContinuationOwner } from './app-continuation-owner'
+import type { AcpAppContinuation, AcpAppContinuationOwner } from './app-continuation-owner'
 import type { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
@@ -89,7 +89,10 @@ class AcpQuestionContinuationWorkflow {
     }>
   >()
   constructor(private readonly deps: QuestionContinuationDependencies) {}
-  async respondToTask(input: TaskQuestionOwnerResponse): Promise<void> {
+  async respondToTask(
+    input: TaskQuestionOwnerResponse,
+    send?: AcpAppContinuation['send']
+  ): Promise<void> {
     const { request, action, answers, receipt } = input
     const response = { requestId: request.requestId, action, answers }
     if (input.waitsForProvider) {
@@ -131,18 +134,20 @@ class AcpQuestionContinuationWorkflow {
       prepared.memoryEnabled,
       prepared.referencedSessions
     )
-    if (continuation) this.scheduleTaskContinuation(continuation, input)
+    if (continuation) this.scheduleTaskContinuation(continuation, input, send)
     this.deps.context.clearContextReset(request.sessionId)
     this.deps.publication.emitState()
   }
 
   private scheduleTaskContinuation(
     continuation: AcpPromptRequest,
-    input: TaskQuestionOwnerResponse
+    input: TaskQuestionOwnerResponse,
+    send?: AcpAppContinuation['send']
   ): void {
     this.deps.continuations.set(input.request.sessionId, {
       request: continuation,
       condition: 'always',
+      send,
       settle: async (outcome) => {
         if (outcome.phase === 'dispatched') return
         const promptMessageId = continuation.provenanceContext?.promptMessageId

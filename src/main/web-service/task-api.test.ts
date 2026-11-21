@@ -103,7 +103,18 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
   ...overrides
 })
 
-const taskQuestionHarness = (status: 'running' | 'waiting-for-user') => {
+type TaskQuestionHarness = {
+  scope: { projectId: string; sessionId: string }
+  provenance: ReturnType<typeof getActiveConversationContext>
+  interactions: AcpSessionInteractionOwner
+  continuations: AcpAppContinuationOwner
+  schedule: ReturnType<typeof vi.fn>
+  newOwner: () => AcpElicitationOwner
+  createApi: (owner: AcpElicitationOwner, restored: boolean) => HeadlessTaskApi
+  restart: () => void
+}
+
+const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuestionHarness => {
   const promptMessageId = 'question-prompt'
   let session: PersistedChatSession = materializeSessionConversationGraph({
     id: 'question-session',
@@ -150,7 +161,7 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user') => {
       return structuredClone(session)
     }
   })
-  const newOwner = () =>
+  const newOwner = (): AcpElicitationOwner =>
     new AcpElicitationOwner({
       createRequestId: () => 'root-question',
       onProjection: (request, elicitation) => {
@@ -175,7 +186,7 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user') => {
         )
       }
     })
-  const createApi = (elicitation: AcpElicitationOwner, restored: boolean) => {
+  const createApi = (elicitation: AcpElicitationOwner, restored: boolean): HeadlessTaskApi => {
     const workflow = new AcpQuestionContinuationWorkflow({
       hasActiveSession: () => true,
       projectId: () => project.id,
@@ -224,9 +235,6 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user') => {
     createApi,
     restart: () => {
       session = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
-    },
-    setStatus: (status: PersistedChatSession['status']) => {
-      session.status = status
     }
   }
 }
