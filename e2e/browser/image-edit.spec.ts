@@ -8,10 +8,11 @@ type Fixture = {
   }
 }
 
-const imageSelectionAlignmentError = (page: Page): Promise<number> =>
-  page.evaluate(() => {
-    const image = document.querySelector<HTMLImageElement>('[data-image-edit-surface] img')
-    const outline = document.querySelector<HTMLElement>('[data-testid="image-selection-outline"]')
+const imageSelectionAlignmentError = (page: Page, inDialog = false): Promise<number> =>
+  page.evaluate((inDialog) => {
+    const root = inDialog ? document.querySelector('[role="dialog"]') : document
+    const image = root?.querySelector<HTMLImageElement>('[data-image-edit-surface] img')
+    const outline = root?.querySelector<HTMLElement>('[data-testid="image-selection-outline"]')
     if (!image || !outline || !image.naturalWidth || !image.naturalHeight) return Infinity
     const imageRect = image.getBoundingClientRect()
     const outlineRect = outline.getBoundingClientRect()
@@ -31,7 +32,7 @@ const imageSelectionAlignmentError = (page: Page): Promise<number> =>
       Math.abs(outlineRect.width - content.width),
       Math.abs(outlineRect.height - content.height)
     )
-  })
+  }, inDialog)
 
 for (const width of [420, 1000]) {
   test(`image edit keeps its canvas and draft while generating at ${width}px`, async ({ page }) => {
@@ -406,12 +407,37 @@ test('expanding the workbench moves an active composer with its draft', async ({
   const instruction = { name: 'Image editing instruction' }
   await expect(page.getByTestId('preview-edit-image')).toBeVisible()
   await page.screenshot({ path: 'test-results/image-edit-workbench-toolbar.png' })
+  await page.waitForFunction(
+    () =>
+      document.querySelector<HTMLImageElement>('[data-image-annotation-surface] img')?.naturalWidth
+  )
+  const fullImageAcquires = await page.evaluateHandle(() => {
+    const acquire = window.api.previewResources.acquire
+    const requests: string[] = []
+    window.api.previewResources.acquire = (request) => {
+      if (request.imagePreview === true) requests.push(request.source)
+      return acquire(request)
+    }
+    return requests
+  })
   await page.getByTestId('preview-edit-image').click()
+  await page.waitForFunction(
+    () => document.querySelector<HTMLImageElement>('[data-image-edit-surface] img')?.naturalWidth
+  )
+  expect.soft(await fullImageAcquires.jsonValue()).toEqual([])
+  await fullImageAcquires.dispose()
   await left.getByRole('textbox', instruction).fill('Keep these instructions')
+  const pauseDialogAnimation = await page.addStyleTag({
+    content: '[role="dialog"] { animation-play-state: paused !important; }'
+  })
   await page.getByRole('button', { name: /Open full screen preview of/i }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
   await expect(left.getByRole('textbox', instruction)).toHaveCount(0)
+  await expect.poll(() => imageSelectionAlignmentError(page, true)).toBeLessThanOrEqual(2)
+  await pauseDialogAnimation.evaluate((style) => style.remove())
+  await dialog.evaluate((node) => Promise.all(node.getAnimations().map(({ finished }) => finished)))
+  await expect.poll(() => imageSelectionAlignmentError(page, true)).toBeLessThanOrEqual(2)
   await page.screenshot({ path: 'test-results/image-edit-expanded-workbench.png' })
   await page.keyboard.press('Escape')
   await expect(left.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
