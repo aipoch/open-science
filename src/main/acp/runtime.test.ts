@@ -33764,7 +33764,15 @@ it('connects the optional built-in harness through the host runtime and releases
   }
 })
 
-it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-origin'] as const)(
+it.each([
+  'new',
+  'resume',
+  'task',
+  'task-relay',
+  'task-invalid-runtime',
+  'schedule',
+  'schedule-without-origin'
+] as const)(
   'keeps Notebook %s bootstrap read-only until an authorized prompt creates execution authority',
   async (entry) => {
     const root = await mkdtemp(join(tmpdir(), 'acp-notebook-bootstrap-'))
@@ -33791,6 +33799,7 @@ it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-or
       configRoot: root,
       dataRoot: root,
       projectId: scope.projectId,
+      ...(entry === 'task-invalid-runtime' ? { discoverRuntimes: async () => [] } : {}),
       memoryPolicy: {
         getState: async (request) => {
           if (request?.signal) forcedChecks.push(request.force === true)
@@ -33853,6 +33862,7 @@ it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-or
         rememberExecutionIntent: (value, origin, intent) =>
           service.rememberExecutionIntent(value, origin, intent),
         resolveExecutionIntent: (value, origin) => service.resolveExecutionIntent(value, origin),
+        bindTaskRuntime: (request, signal) => service.bindTaskRuntime(request, signal),
         registerSessionAlias: (alias, sessionId) => rpc.registerSessionAlias(alias, sessionId),
         releaseSessionCapabilities: (sessionId, tokens) =>
           rpc.releaseSessionCapabilitiesIfOwned(sessionId, tokens),
@@ -33924,7 +33934,7 @@ it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-or
         expect(service.currentExecutionIntent(scope)).toBe(accepted)
         expect(execute).toHaveBeenCalledOnce()
         return
-      } else if (entry === 'task' || entry === 'task-relay') {
+      } else if (entry === 'task' || entry === 'task-relay' || entry === 'task-invalid-runtime') {
         const task = createAcpTaskAgentPort(
           {
             captureNotebookTaskIntent: (request) => runtime.captureNotebookTaskIntent(request),
@@ -33950,6 +33960,36 @@ it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-or
             promptMessageId: 'accepted-task-root'
           },
           text: 'Execute the current Notebook.'
+        }
+        if (entry === 'task-invalid-runtime') {
+          const { promptMessageId, messageBranchId } = acceptedTask.provenanceContext
+          const prompt = task.prompt(
+            { ...acceptedTask, notebookRuntime: { language: 'r', runtimeId: 'default-r' } },
+            { onPromptAdmitted: async () => acceptedTask.provenanceContext }
+          )
+          const failure = await prompt.catch((error: unknown) => error)
+          expect(failure).toBeInstanceOf(Error)
+          expect(agent.prompts).toHaveLength(0)
+          expect(execute).not.toHaveBeenCalled()
+          const execution = await service.inspectTaskExecution({ ...scope, promptMessageId })
+          expect(execution).toMatchObject({
+            ...scope,
+            promptMessageId,
+            messageBranchId,
+            status: 'failed',
+            reasonCode: 'notebook_pre_dispatch_failed',
+            kernelDispatched: false,
+            retryable: false
+          })
+          expect(execution).not.toHaveProperty('refusalId')
+          expect(execution).not.toHaveProperty('next')
+          expect(execution).not.toHaveProperty('notebookRunId')
+          expect(failure).toMatchObject({
+            message: expect.stringContaining('Use the exact runtimeId from list_notebook_runtimes')
+          })
+          const stopped = service.currentExecutionIntent(scope)!
+          expect(() => stopped.assertExecutable()).toThrow('Execution was not started')
+          return
         }
         await task.prompt(acceptedTask)
         expect(agent.prompts).toHaveLength(1)

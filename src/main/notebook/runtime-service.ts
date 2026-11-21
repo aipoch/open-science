@@ -25,6 +25,7 @@ import {
   type NotebookExecutionAdmission
 } from './execution-admission'
 import {
+  ABANDONED_NOTEBOOK_PREPARATION,
   NotebookExecutionIntentOwner,
   notebookExecutionIntent,
   notebookUserOperation,
@@ -1630,6 +1631,15 @@ class NotebookRuntimeService {
         : {})
     }
     const currentRefusal = observedIntent?.refusalId && inTaskWindow(observedIntent.refusalAt)
+    if (currentRefusal && observedIntent.refusalReason === ABANDONED_NOTEBOOK_PREPARATION) {
+      return {
+        ...origin,
+        status: 'failed',
+        reasonCode: 'notebook_pre_dispatch_failed',
+        kernelDispatched: false,
+        retryable: false
+      }
+    }
     if (currentRefusal && observedIntent.hasClaimedContinuation) {
       return {
         ...origin,

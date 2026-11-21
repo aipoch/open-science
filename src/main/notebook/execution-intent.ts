@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { NotebookExecutionAdmissionError } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
 
+export const ABANDONED_NOTEBOOK_PREPARATION = 'user-execution-preparation-not-committed'
+
 export type NotebookExecutionIntentScope = Readonly<{
   projectId: string
   sessionId: string
@@ -93,7 +95,7 @@ export class NotebookExecutionIntent {
     this.userMemoryRecheck = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
-    this.block('user-execution-preparation-not-committed')
+    this.block(ABANDONED_NOTEBOOK_PREPARATION)
   }
 
   assertExecutable(): void {
