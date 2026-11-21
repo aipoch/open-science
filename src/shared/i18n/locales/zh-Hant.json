@@ -231,6 +231,8 @@
     "Wait for the application handoff to finish before transferring research.": "請等待應用程式交接完成後再傳輸研究內容。"
   },
   "renderer": {
+    "The update did not finish. Reopen your file or link after updating.": "更新未完成。請在更新後重新開啟檔案或連結。",
+    "View updates": "查看更新",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "尚未安裝 Claude ACP。請在設定中安裝 Claude Agent 以使用 Claude Code。",
     "Automatically download updates": "自動下載更新",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（預留 {{min}}–{{max}} 分鐘）",

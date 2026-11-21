@@ -67,11 +67,12 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'launch-failed',
   'integrity-failure'
 ])
-const loadRenderer = (window: BrowserWindow): Promise<void> => {
+const loadRenderer = (window: BrowserWindow, openInterrupted: boolean): Promise<void> => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     return window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   }
 
+  if (openInterrupted) return window.loadFile(rendererEntry, { hash: 'update-open-interrupted' })
   return window.loadFile(rendererEntry)
 }
 
@@ -300,7 +301,8 @@ const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions
 
 const createMainWindow = (
   opts?: MainWindowCloseOptions,
-  translate: NativeTranslator = englishNativeTranslator
+  translate: NativeTranslator = englishNativeTranslator,
+  updateOpenInterrupted = false
 ): BrowserWindow => {
   const size = resolveMainWindowSize()
   const window = createAppWindow({
@@ -374,8 +376,9 @@ const createMainWindow = (
         pendingRendererLoadsByNavigationGeneration.delete(ownedNavigationGeneration)
       }
     }
-    void loadRenderer(window).then(
+    void loadRenderer(window, updateOpenInterrupted).then(
       () => {
+        updateOpenInterrupted = false
         releasePendingLoad()
       },
       (error) => {
