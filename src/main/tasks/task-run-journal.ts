@@ -32,7 +32,7 @@ export type TaskRunJournalEntry = TaskRun & {
 
 export type TaskRunPermissionRecord = Pick<
   TaskPermissionInteraction,
-  'id' | 'revision' | 'branchId' | 'response'
+  'id' | 'revision' | 'branchId' | 'response' | 'delegated'
 >
 
 type TaskRunJournalDocument = {
@@ -151,6 +151,14 @@ const nestedRunSchema = z.object({
         id: identity,
         revision: count,
         branchId: identity.optional(),
+        delegated: z
+          .object({
+            frameId: identity,
+            attemptId: identity,
+            branchId: identity,
+            attemptStatus: z.enum(['running', 'completed', 'cancelled', 'error'])
+          })
+          .optional(),
         response: z
           .object({
             source: z.enum(['user_relay', 'delegated_agent']),

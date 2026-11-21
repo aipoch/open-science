@@ -225,6 +225,7 @@ type TaskContinuationTracker = <Result extends { stopReason: string }>(
 ) => Promise<Result>
 
 type TaskAgentPort = {
+  delegateInteractions?: import('../delegation/durable-delegated-work-contract').TaskDelegateInteractions
   questions?: {
     list(sessionId: string): import('../acp/elicitation-owner').LiveTaskQuestion[]
     respond(
@@ -1979,9 +1980,16 @@ class TaskRunner {
     )
   }
 
-  findRunIdForPrompt(sessionId: string, promptMessageId: string): string | undefined {
+  findRunIdForPrompt(
+    sessionId: string,
+    promptMessageId: string,
+    admittedAt?: number
+  ): string | undefined {
     return [...this.runs.values()].findLast(
-      (run) => run.sessionId === sessionId && run.promptMessageId === promptMessageId
+      (run) =>
+        run.sessionId === sessionId &&
+        run.promptMessageId === promptMessageId &&
+        (admittedAt === undefined || run.startedAt <= admittedAt)
     )?.id
   }
 

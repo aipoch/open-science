@@ -197,10 +197,21 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
   )
 })
 
-it('queries and relays the same task permission through CLI JSON and MCP stdio', async () => {
+it.each([
+  { id: 'permission:review-1', delegated: undefined },
+  {
+    id: 'child-permission:delegated:p1:s1:child-frame:source-attempt:review-1',
+    delegated: {
+      frameId: 'child-frame',
+      attemptId: 'source-attempt',
+      branchId: 'child-branch',
+      attemptStatus: 'running'
+    }
+  }
+])('queries and relays $id through CLI JSON and MCP stdio', async ({ id, delegated }) => {
   const scope = { runId: 'task-1' }
   const interaction = {
-    id: 'permission:review-1',
+    id,
     kind: 'permission',
     state: 'pending',
     owner: 'user',
@@ -210,6 +221,7 @@ it('queries and relays the same task permission through CLI JSON and MCP stdio',
     branchId: 'branch-1',
     revision: 0,
     interactionPolicy: { mode: 'relay', revision: 0 },
+    ...(delegated ? { delegated } : {}),
     actions: ['allow-once', 'reject-once'],
     responseCapability: 'respond_permission'
   }
@@ -252,13 +264,12 @@ it('queries and relays the same task permission through CLI JSON and MCP stdio',
         json({ mode: 'delegate', revision: 1 })
       } else if (
         url.searchParams.get('runId') === 'task-1' &&
-        decodeURIComponent(url.pathname) === '/api/v1/interactions/permission:review-1'
+        decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}`
       ) {
         json(detail)
       } else if (
         url.searchParams.get('runId') === 'task-1' &&
-        decodeURIComponent(url.pathname) ===
-          '/api/v1/interactions/permission:review-1/permission' &&
+        decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}/permission` &&
         request.method === 'POST'
       ) {
         let body = ''
@@ -320,49 +331,66 @@ it('queries and relays the same task permission through CLI JSON and MCP stdio',
   expect(await agent.cli('list_interactions', scope)).toEqual({ result: [] })
 })
 
-it('answers the same scoped AskUser question through CLI JSON and MCP stdio', async () => {
-  const scope = { runId: 'run-1' }
-  const interactionId = 'question:question-1'
-  const response = {
-    expectedRevision: 2,
-    expectedBranchId: 'branch-1',
-    action: 'accept',
-    source: 'known_context',
-    answers: [
-      { fieldId: 'groups', value: ['Control', 'Treatment'] },
-      { fieldId: 'units_custom', value: 'millimeters', status: 'answered' }
-    ]
+it.each([
+  { interactionId: 'question:question-1', delegated: undefined },
+  {
+    interactionId: 'child-question:question-1',
+    delegated: {
+      frameId: 'child-frame',
+      attemptId: 'source-attempt',
+      branchId: 'child-branch',
+      attemptStatus: 'completed',
+      continuation: { attemptId: 'continuation-attempt', status: 'running' }
+    }
   }
-  let changed = true
-  const agent = await resourceAgents(
-    async (request, reply) => {
-      const url = new URL(request.url!, 'http://localhost')
-      expect(decodeURIComponent(url.pathname)).toBe(`/api/v1/interactions/${interactionId}/answer`)
-      expect(request.method).toBe('POST')
-      expect(url.searchParams.get('runId')).toBe(scope.runId)
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(chunk)
-      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(response)
-      reply.end(
-        JSON.stringify({
-          data: { changed, interaction: { id: interactionId, state: 'responded' } }
-        })
-      )
-      changed = false
-    },
-    ['task-questions']
-  )
+])(
+  'answers $interactionId through CLI JSON and MCP stdio',
+  async ({ interactionId, delegated }) => {
+    const scope = { runId: 'run-1' }
+    const settled = { id: interactionId, state: 'responded', ...(delegated ? { delegated } : {}) }
+    const response = {
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      action: 'accept',
+      source: 'known_context',
+      answers: [
+        { fieldId: 'groups', value: ['Control', 'Treatment'] },
+        { fieldId: 'units_custom', value: 'millimeters', status: 'answered' }
+      ]
+    }
+    let changed = true
+    const agent = await resourceAgents(
+      async (request, reply) => {
+        const url = new URL(request.url!, 'http://localhost')
+        expect(decodeURIComponent(url.pathname)).toBe(
+          `/api/v1/interactions/${interactionId}/answer`
+        )
+        expect(request.method).toBe('POST')
+        expect(url.searchParams.get('runId')).toBe(scope.runId)
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(chunk)
+        expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(response)
+        reply.end(
+          JSON.stringify({
+            data: { changed, interaction: settled }
+          })
+        )
+        changed = false
+      },
+      ['task-questions']
+    )
 
-  const input = { ...scope, interactionId, ...response }
-  expect(await agent.cli('answer_question', input)).toEqual({
-    result: { changed: true, interaction: { id: interactionId, state: 'responded' } }
-  })
-  const mcp = await agent.mcp('answer_question', input)
-  expect(mcp.isError).not.toBe(true)
-  expect(mcp.structuredContent).toEqual({
-    result: { changed: false, interaction: { id: interactionId, state: 'responded' } }
-  })
-})
+    const input = { ...scope, interactionId, ...response }
+    expect(await agent.cli('answer_question', input)).toEqual({
+      result: { changed: true, interaction: settled }
+    })
+    const mcp = await agent.mcp('answer_question', input)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual({
+      result: { changed: false, interaction: settled }
+    })
+  }
+)
 
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
   const target = { language: 'r', operationId: 'prepare-r' }

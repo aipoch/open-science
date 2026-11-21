@@ -35,6 +35,7 @@ type AcpTaskAgentRuntime = {
   getTaskPermissions?: TaskAgentPort['getTaskPermissions']
   respondTaskPermission?: TaskAgentPort['respondTaskPermission']
   restoreTaskPermission?: TaskAgentPort['restoreTaskPermission']
+  delegateInteractions?: TaskAgentPort['delegateInteractions']
 }
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -157,6 +158,7 @@ const createAcpTaskAgentPort = (
     }
   },
   cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined),
+  ...(runtime.delegateInteractions ? { delegateInteractions: runtime.delegateInteractions } : {}),
   ...(runtime.respondSessionPlan
     ? { respondDelegatedPlan: runtime.respondSessionPlan.bind(runtime) }
     : {}),

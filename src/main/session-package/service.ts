@@ -562,6 +562,21 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
+        ...(session.runtimeContext.delegatedWork?.questionRequests?.some(
+          ({ taskResponse }) => taskResponse
+        )
+          ? {
+              delegatedWork: {
+                ...session.runtimeContext.delegatedWork,
+                questionRequests: session.runtimeContext.delegatedWork.questionRequests.map(
+                  ({ taskResponse, ...question }) => {
+                    void taskResponse
+                    return question
+                  }
+                )
+              }
+            }
+          : {}),
         ...(session.runtimeContext.plan?.externalResponse
           ? {
               plan: {
@@ -615,6 +630,15 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   )
     return true
   const runtimeContext = session.runtimeContext
+  if (
+    isRecord(runtimeContext) &&
+    isRecord(runtimeContext.delegatedWork) &&
+    Array.isArray(runtimeContext.delegatedWork.questionRequests) &&
+    runtimeContext.delegatedWork.questionRequests.some(
+      (question) => isRecord(question) && Object.hasOwn(question, 'taskResponse')
+    )
+  )
+    return true
   if (
     (isRecord(runtimeContext) &&
       isRecord(runtimeContext.plan) &&

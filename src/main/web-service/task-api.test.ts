@@ -87,10 +87,13 @@ type TaskAgentMock = {
   [
     Method in Exclude<
       keyof TaskAgentPort,
-      'withSessionAvailable' | 'setContinuationTracker' | 'questions'
+      'withSessionAvailable' | 'setContinuationTracker' | 'questions' | 'delegateInteractions'
     >
   ]: MockedFunction<NonNullable<TaskAgentPort[Method]>>
-} & Pick<TaskAgentPort, 'withSessionAvailable' | 'setContinuationTracker' | 'questions'>
+} & Pick<
+  TaskAgentPort,
+  'withSessionAvailable' | 'setContinuationTracker' | 'questions' | 'delegateInteractions'
+>
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
   withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),

@@ -134,6 +134,12 @@ Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Pl
 
 原 Run 尚未停稳时，待办提示重新查询；普通 ACP 表单直接解除原 Provider 等待。Provider 已结束的持久问题原子保存规范答案，再由既有 Question Owner 接续。接续先登记持久 `requestId` 和新 Run，随后才允许发送。用原交互查询该回执，并用 `get_run` 检查新 Run 的真实执行。若重启时答案已记录、接续仍无登记，查询返回 `unconfirmed`；重复提交已记录的回答不会再次发送。原 Run 若因重启中断，仍保持中断。只有活跃进程能回答的表单在重启后失效。本机回答回执不进入 `.science` 或其 Fork。
 
+#73 把直接子任务的普通权限和 AskUser 放在父 Run 的待办中；`delegated` 标注子 Frame、Attempt 和分支。
+响应使用已读待办的顶层分支、revision 和父 Run，普通权限继续由活跃子 Broker 接收一次性决定，受父任务当前委托约束。
+子权限只在原 Attempt 的进程内可处理；重启后已观察的未决权限返回 `expired`。持久子问题沿用原题和规范答案，
+在提交同一笔记录时关联新 Attempt。重新查询原待办查看 `delegated.continuation`，原 Run 和来源 Attempt 状态不覆盖。
+本机问答回执和任务授权不随 `.science` 或 Fork 转移。
+
 #75 在本机 Bearer 连接上公布 `notebook-continuation` 能力。原 Run 的待办返回当前拒绝和分支；
 外部宿主得到本次明确同意后，以保留的 `requestId` 调用 `continue_notebook`。Notebook Owner 核对
 当前拒绝、归属分支和原 prompt，并创建新一轮执行意图。旧上下文及其工具调用仍被拒绝；新一轮按现有规则

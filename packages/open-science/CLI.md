@@ -760,6 +760,15 @@ turn, `response.continuation.id` identifies the original handoff and `taskRunSta
 includes the new `requestId` and `runId`. Query that submission or Run and check Notebook
 execution and delivered files separately. `pending` or `unconfirmed` does not prove execution.
 
+Child permissions and AskUser questions appear on the parent Run, even after its provider turn
+ends. An interaction with `delegated` identifies the child Frame, branch, and Attempt. Use the
+parent `runId` and top-level `branchId` when responding. Only the offered one-time permission
+options are available, subject to the parent's current interaction mode. A child AskUser question
+uses `answer_question` with a complete answer for each question. If the child is settling, query
+the same interaction again. After confirmation, query it for `delegated.continuation.attemptId`
+and status. The child Attempt ID is separate from Task Run IDs. Live child permissions cannot
+survive a service restart; an observed request without a recorded decision becomes `expired`.
+
 ## Session configuration
 
 Read the persisted and effective configuration, including referenced provider, model, Specialist,

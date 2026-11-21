@@ -525,6 +525,16 @@ export type TaskInteractionPolicy = { mode: TaskInteractionMode; revision: numbe
 export type TaskInteractionDecision =
   | { source: 'user_relay'; expectedModeRevision?: never }
   | { source: 'delegated_agent'; expectedModeRevision: number }
+export type TaskDelegatedInteraction = {
+  frameId: string
+  attemptId: string
+  branchId: string
+  attemptStatus: 'running' | 'completed' | 'cancelled' | 'error'
+  continuation?: {
+    attemptId: string
+    status: TaskDelegatedInteraction['attemptStatus'] | 'unconfirmed'
+  }
+}
 export type TaskInteractionReference = {
   id: string
   kind: string
@@ -536,6 +546,7 @@ export type TaskInteractionReference = {
   branchId?: string
   revision: number
   interactionPolicy?: TaskInteractionPolicy
+  delegated?: TaskDelegatedInteraction
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]

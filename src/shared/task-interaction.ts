@@ -11,6 +11,17 @@ export type SetTaskInteractionModeRequest = {
   interactionMode: TaskInteractionMode
 }
 
+export type TaskDelegatedInteraction = {
+  frameId: string
+  attemptId: string
+  branchId: string
+  attemptStatus: 'running' | 'completed' | 'cancelled' | 'error'
+  continuation?: {
+    attemptId: string
+    status: TaskDelegatedInteraction['attemptStatus'] | 'unconfirmed'
+  }
+}
+
 export type TaskInteractionReference = {
   id: string
   kind: string
@@ -22,6 +33,7 @@ export type TaskInteractionReference = {
   branchId?: string
   revision: number
   interactionPolicy?: TaskInteractionPolicy
+  delegated?: TaskDelegatedInteraction
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]

@@ -20,6 +20,7 @@ import type {
   DurableResolvedAgent
 } from './delegated-work-record-types'
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import type { ConfirmTaskDelegateQuestion } from './durable-delegated-work-contract'
 import { terminalizeUnsuccessfulAttempt } from './attempt-runtime-transcript'
 import type { DelegateCapacityReservation } from './execution-port'
 import type { SessionKey } from './session-records'
@@ -33,6 +34,7 @@ type UpdateQuestionDraftInput = Readonly<{
 type ConfirmQuestionInput = Readonly<{
   requestId: string
   answers: readonly DelegatedQuestionAnswer[]
+  task?: ConfirmTaskDelegateQuestion['task']
 }>
 
 type DelegatedUserQuestionOwnerOptions = Readonly<{
@@ -231,6 +233,19 @@ class DelegatedUserQuestionOwner {
     if (!request || request.status !== 'pending') {
       throw new DurableDelegatedWorkError('conflict', 'delegated question is no longer pending')
     }
+    input.task?.assertCurrent()
+    if (
+      input.task &&
+      (input.task.frameId !== request.sourceFrameId ||
+        input.task.attemptId !== request.sourceAttemptId ||
+        input.task.branchId !== request.sourceMessageBranchId ||
+        input.task.rootBranchId !== request.rootBranchId ||
+        input.task.canonicalDigest !== request.canonicalDigest)
+    )
+      throw new DurableDelegatedWorkError(
+        'conflict',
+        'The reviewed child question is no longer current.'
+      )
     if (
       snapshot.rootBranchId !== request.rootBranchId ||
       !snapshot.originMessageIds.includes(request.rootOriginMessageId)
@@ -297,7 +312,10 @@ class DelegatedUserQuestionOwner {
           resolvedAgent,
           executionModel,
           startedAt: this.options.now(),
-          initiatingTurnMessageId: request.rootOriginMessageId
+          initiatingTurnMessageId: request.rootOriginMessageId,
+          ...(input.task
+            ? { taskResponse: input.task.response, assertTaskCurrent: input.task.assertCurrent }
+            : {})
         })
       )
       committed = true
