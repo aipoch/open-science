@@ -60,4 +60,11 @@ export type TaskQuestionInteraction = TaskInteractionReference & {
   }
 }
 
-export type TaskInteraction = TaskPlanInteraction | TaskQuestionInteraction
+export type TaskNotebookStopInteraction = TaskInteractionReference & {
+  kind: 'notebook-continuation'
+  refusalId: string
+  reason?: string
+}
+
+export type TaskInteraction =
+  TaskPlanInteraction | TaskQuestionInteraction | TaskNotebookStopInteraction

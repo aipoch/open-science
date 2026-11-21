@@ -5,6 +5,29 @@ and [the original Chinese implementation note](real-agent-loop-implementation-pl
 [spec #54](https://github.com/guch96/open-science/issues/54). An installed package, an Agent
 turn, a Notebook dispatch, and verified files are separate observations.
 
+## Task setup preview: Linux arm64, November 21, 2026
+
+The npm build from `ee0edc803` includes [#77](https://github.com/guch96/open-science/issues/77)
+and [#78](https://github.com/guch96/open-science/issues/78). Its installed-package test passed
+real npm resolution and native loading without Electron. The CLI tarball SHA-256 was
+`d09788df64e9fbb1eef63923224daf21c9c4949f01efdfa481c5926db218b415`; the Linux native tarball
+SHA-256 was `d5afcea87f63454ab2e75bab6fca476cce1fb19fd292c101eca3a098cc3571a6`.
+
+In a fresh Debian 13 arm64 container (no source mounts, Node `24.22.3`, own Secret Service),
+the installed MCP server's read-only check found no selected runtime, no configured provider,
+and neither language installed. Separate MCP calls selected `open-science-agent`, validated and
+saved a custom API provider for a real local Qwen3-4B model, then activated the exact selection.
+The model server had no access to either profile. The model URL used a loopback relay inside
+the container after the existing URL policy rejected HTTP for a non-loopback hostname. The
+fixture supplied a synthetic environment value; there was no credential handoff.
+
+The MCP client initiated managed R operation `a878e181-6896-46bd-8ec3-43b52d85ba6e` with a
+1 ms observation budget, closed the transport while setup was pending, and queried the same
+operation over a new transport until it completed. MCP status and CLI JSON agreed that Agent
+and R were ready, and Python was still absent. Project lists remained empty. This is installed
+setup and disconnect evidence only. No WorkBuddy conversation, research, Notebook dispatch or
+file delivery was part of this run.
+
 ## WorkBuddy setup revision: macOS arm64, November 21, 2026
 
 - Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local

@@ -30,6 +30,7 @@ import {
   getActiveConversationContext
 } from '../../shared/conversation-graph'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import type { NotebookTaskContinuationOperation } from '../notebook/execution-intent'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import {
@@ -195,6 +196,7 @@ type TaskAgentPromptRequest = {
   promptMessageId: string
   provenanceContext: AgentTurnProvenanceContext
   text: string
+  notebookContinuation?: NotebookTaskContinuationOperation
   turnIntent?: 'plan-first'
   skillIds?: string[]
   historyPreamble?: string
@@ -1292,7 +1294,11 @@ class TaskRunner {
       )
   }
 
-  async startRun(request: StartTaskRunRequest, requestId?: string): Promise<TaskRun> {
+  async startRun(
+    request: StartTaskRunRequest,
+    requestId?: string,
+    notebookContinuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'>
+  ): Promise<TaskRun> {
     this.assertAcceptingRuns()
     await this.initialize()
     this.assertAcceptingRuns()
@@ -1638,7 +1644,8 @@ class TaskRunner {
       prepared.historyPreamble,
       prepared.contextReset,
       prepared.resumeFallback,
-      prepared.persistOnPromptAdmission
+      prepared.persistOnPromptAdmission,
+      notebookContinuation
     ).finally(() => {
       this.releaseSession(session.id, runId)
       if (run.status !== 'running') this.publishProgress(run, run.status)
@@ -2095,7 +2102,8 @@ class TaskRunner {
     historyPreamble?: string,
     contextReset?: boolean,
     resumeFallback?: TaskAgentPromptRequest['resumeFallback'],
-    persistOnPromptAdmission = false
+    persistOnPromptAdmission = false,
+    notebookContinuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'>
   ): Promise<void> {
     let promptError: unknown
     let admissionPersistenceError: unknown
@@ -2116,6 +2124,21 @@ class TaskRunner {
           promptMessageId,
           provenanceContext,
           text: prompt,
+          ...(notebookContinuation
+            ? {
+                notebookContinuation: {
+                  ...notebookContinuation,
+                  assertCurrent: () => {
+                    if (
+                      this.disposed ||
+                      this.activeRunBySession.get(session.id) !== run.id ||
+                      run.cancelRequestedAt !== undefined
+                    )
+                      throw new Error('This Notebook continuation Run is no longer active.')
+                  }
+                }
+              }
+            : {}),
           ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
           ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),

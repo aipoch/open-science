@@ -22,7 +22,7 @@ Use list_runtimes and list_providers to find the runtime, providers, and models 
 
 Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Check the requested language before research. With authorization, prepare that language using prepare_notebook_environment. Generate and keep an operationId before submitting. After a timeout or disconnect, call get_notebook_environment_operation with the same language and ID. To cancel, use cancel_notebook_environment_operation with that same target and check the result. Use repair_notebook_environment only for a requested repair of the selected app-managed default environment. Recheck readiness after installation: environment setup, binding approval and Notebook execution are separate. System dependencies, isolation and memory can still block execution independently.
 
-Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
+Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. The user owns provider consent, each decision to continue a stopped Notebook, and sensitive export confirmation.
 
 If a Run returns interaction attention, call list_interactions with the original Run ID, or with both Project and Session IDs. Use get_interaction to read its current details. For a pending Plan, present the current Plan to the user in this conversation and relay their approval, rejection, or revision feedback with respond_plan and source user_relay. Use the Artifact Version and revision they reviewed. If the response is lost, query the same interaction. A recorded Plan response does not mean the Notebook ran or files were delivered.
 
@@ -31,7 +31,9 @@ For a pending AskUser question, use get_interaction to read the required fields,
 Read the Run's Notebook execution separately from its outer status. When execution is waiting_for_user, follow its next action. For review_notebook_code_in_app, ask the user to decide the pending review in the original Session and branch in Open-Science on the same profile. Recheck the same Run after the user responds. The agent cannot make the decision or submit a replacement Run.
 For review_notebook_runtime_in_app, explain that the selected kernel and environment need the user's approval, even if the environment is installed. The review can be pending before a Notebook Run exists. Use execution.language when present to check the relevant language if needed. Offer to open Notebook settings if the user wants to check or change setup. Ask them to respond to Confirm Notebook kernel and environment in the original Session and branch in the Web or Desktop app on the same profile. Recheck the same Run after the user responds; do not make the decision or submit a replacement Run.
 
-For continue_notebook_in_app, keep the refusal ID. Once the cause is resolved, ask the user to open the original Session and branch in the Open-Science desktop app connected to this service and choose Continue Notebook work in Compute. Web can show the handoff but cannot continue the stopped intent. Do not resubmit, change execution context, or delegate stopped work. Recheck that same Session and match continuedFromRefusalId to observe the new user-authorized turn.
+For continue_notebook, read the current stop with get_interaction. Help resolve the reported cause, then ask the user whether to continue this specific stop. Relay their decision with source user_relay, the original runId, branchId and refusalId, a continuation prompt, and a requestId you save before sending. Use get_submission or wait_submission with that ID; an accepted receipt points to a new Run in the same Session. Read that Run for execution and delivery. If the stop has expired, inspect the original Run and ask the user before starting any new work. Never retry a stopped cell or repeat the decision with a fresh ID.
+
+For continue_notebook_in_app, ask the user to open the original Session and branch in the Open-Science desktop app connected to this service and choose Continue Notebook work in Compute after resolving the cause. Recheck the same Session and match continuedFromRefusalId to observe the new user-authorized turn.
 
 Notebook working files are not delivered Artifacts. List the Artifacts for the accepted research runId, download the report and results table, and call get_delivery_status with the downloaded paths. Report execution.status and delivery.status separately. Say the handoff is complete only when handoffStatus is complete. If files verify but a Notebook cell failed, report both facts.
 
@@ -112,6 +114,11 @@ const policies = {
     'agent',
     'This operation ID belongs to another request, or this language already has a setup operation in progress. Check setup before requesting another write.',
     { action: 'get_setup_status' }
+  ],
+  notebook_continuation_expired: [
+    'agent',
+    'This Notebook stop is no longer current. Inspect the original Run and ask the user before starting any new work.',
+    { action: 'get_run' }
   ],
   browser_unavailable: [
     'agent',

@@ -94,7 +94,7 @@ CLI 与 MCP 从同一 Agent Adapter 定义生成 Schema、默认值、描述、�
 | `respond_permission`        | `interactionId`、`expectedRevision`、`optionId`、决定来源                                      | 普通权限、Notebook 绑定和代码审阅复用原 Broker；仅接受实际提供的选项  |
 | `answer_question`           | `interactionId`、`expectedRevision`、`expectedBranchId`、`source`、`action` 和结构化 `answers` | 复用题目类型、必填、选项和多选校验；路由普通或 delegated 问题处理逻辑 |
 | `get_plan` / `respond_plan` | Session、Plan 版本、revision、分支、来源、决定或反馈                                           | 复用 Plan 服务；批准、拒绝和请求修改都针对已读的版本                  |
-| `continue_notebook`         | 原待办、refusal/branch 引用、明确的用户决定、新提交 `requestId`                                | 创建可追踪的新继续意图，复查环境与内存，不重放已停止的旧回调          |
+| `continue_notebook`         | 原 Run/branch/refusal、`user_relay`、`prompt`、`requestId`                                     | 创建可追踪的新继续意图，复查环境与内存，不重放已停止的旧回调          |
 | `respond_export_review`     | 原 `operationId`、候选摘要/目标、明确的用户决定                                                | 批准或拒绝当前候选包；发布前再次检查内容                              |
 
 查询范围、参数互斥和必填条件在 Schema 中明确，不默认选择最近 Session。每个待办都包含足以定位其
@@ -122,6 +122,12 @@ Project、Session、Run、分支、prompt 或 delegated attempt 的服务端引�
 回执随本地 Plan 记录保留，归档导出和 Fork 不带本机响应记录。
 
 #72 的主任务 AskUser 用 `answer_question` 对已读的唯一题目提交 `accept` 或 `decline`。每个答案包含 `fieldId` 和字面 `value`，允许跳过的字段由 `skipFieldIds` 明示，可提交 `{ fieldId, status: "skipped" }`。`known_context` 只用于用户已提供的信息；跳过或拒绝需要 `user_relay`。提交不会授予权限。运行仍在停稳时，待办提示重新查询；普通 ACP 表单直接解除原 Provider 等待。Provider 已结束的持久问题原子保存规范答案，通过既有 Question Owner 接续。若原 Run 已因重启中断，它仍保持中断；后续执行与答复回执分开查询。没有持久记录的表单在重启后失效。回执不进入 `.science` 或其 Fork。
+
+#75 在本机 Bearer 连接上公布 `notebook-continuation` 能力。原 Run 的待办返回当前拒绝和分支；
+外部宿主得到本次明确同意后，以保留的 `requestId` 调用 `continue_notebook`。Notebook Owner 核对
+当前拒绝、归属分支和原 prompt，并创建新一轮执行意图。旧上下文及其工具调用仍被拒绝；新一轮按现有规则
+重新检查运行时和内存。`get_submission` 可跨服务重启恢复该提交回执；其 `runId` 指向新 Run，
+`notebookContinuation.runId` 指向原 Run。拒绝本身不持久化，未处理的旧拒绝重启后报告失效，不能重放。
 
 ## 配置与环境准备
 
