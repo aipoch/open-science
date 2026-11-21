@@ -3,7 +3,11 @@ import type {
   PersistedChatSession,
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
-import { ArchiveAvailabilityError } from './availability-error'
+import {
+  ArchiveAvailabilityError,
+  SessionExportBlockedError,
+  type SessionExportBlocker
+} from './availability-error'
 
 type ProjectArchiveRepository = {
   get(id: string): Promise<Project | null>
@@ -26,7 +30,10 @@ type SessionArchivePersistence = {
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean | Promise<boolean>
   isSessionLocallyBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
-  isSessionExportBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
+  getSessionExportBlocker?(
+    projectId: string,
+    sessionId: string
+  ): Promise<SessionExportBlocker | undefined>
   isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
 }
@@ -58,25 +65,49 @@ class ArchiveCoordinator {
   private readonly importingProjects = new Set<string>()
   private readonly pendingDispatches = new Map<
     string,
-    { projectId: string; count: number; userPrompts: number }
+    {
+      projectId: string
+      count: number
+      userPrompts: number
+      observations: number
+      observationChange?: AbortController
+    }
   >()
 
   // Independent execution owners hold this synchronous admission through their asynchronous
   // startup/cleanup. Export observes both pending work and already-published runtime activity.
-  admitSessionWork(projectId: string, sessionId: string, userPrompt = false): () => void {
+  admitSessionWork(
+    projectId: string,
+    sessionId: string,
+    kind: 'work' | 'user-prompt' | 'observation' = 'work'
+  ): () => void {
     this.assertProjectDeletionAvailable(projectId)
     this.assertExportAvailable(sessionId)
-    const pending = this.pendingDispatches.get(sessionId) ?? { projectId, count: 0, userPrompts: 0 }
+    const pending = this.pendingDispatches.get(sessionId) ?? {
+      projectId,
+      count: 0,
+      userPrompts: 0,
+      observations: 0
+    }
     pending.count += 1
-    if (userPrompt) pending.userPrompts += 1
+    if (kind === 'user-prompt') pending.userPrompts += 1
+    if (kind === 'observation') pending.observations += 1
+    else if (pending.observationChange) {
+      pending.observationChange.abort()
+      pending.observationChange = undefined
+    }
     this.pendingDispatches.set(sessionId, pending)
     let released = false
     return () => {
       if (released) return
       released = true
       pending.count -= 1
-      if (userPrompt) pending.userPrompts -= 1
-      if (!pending.count) this.pendingDispatches.delete(sessionId)
+      if (kind === 'user-prompt') pending.userPrompts -= 1
+      if (kind === 'observation') pending.observations -= 1
+      if (!pending.count) {
+        this.pendingDispatches.delete(sessionId)
+        pending.observationChange?.abort()
+      }
     }
   }
 
@@ -123,28 +154,42 @@ class ArchiveCoordinator {
     )
   }
 
-  reserveSessionExport(
+  async reserveSessionExport(
     projectId: string,
     sessionId: string,
     assertIdle: () => Promise<void>,
     signal?: AbortSignal
   ): Promise<() => void> {
-    return this.enqueue(
+    const reservation = await this.enqueue(
       projectId,
       async () => {
         await this.activeProject(projectId)
         this.assertExportAvailable(sessionId)
-        if (this.pendingDispatches.has(sessionId))
-          throw new Error('Wait for the Session to become idle before exporting.')
+        const assertRuntimeIdle = async (): Promise<void> => {
+          const blocker = this.runtime.getSessionExportBlocker
+            ? await this.runtime.getSessionExportBlocker(projectId, sessionId)
+            : (await this.runtime.isSessionBusy(projectId, sessionId))
+              ? 'pending'
+              : undefined
+          if (blocker) throw new SessionExportBlockedError(blocker)
+        }
+        if (this.pendingDispatches.has(sessionId)) await assertRuntimeIdle()
+        const pending = this.pendingDispatches.get(sessionId)
+        if (pending) {
+          if (pending.count === pending.observations) {
+            // Even a history read can reconcile durable state. Let it finish outside the
+            // project queue, then repeat admission in case real work started meanwhile.
+            pending.observationChange ??= new AbortController()
+            return pending.observationChange.signal
+          }
+          throw new SessionExportBlockedError(pending.userPrompts ? 'agent' : 'pending')
+        }
         // Fence new work before awaiting the runtime's database-backed activity check.
         this.exportingSessions.set(sessionId, projectId)
         try {
-          const isExportBusy = this.runtime.isSessionExportBusy ?? this.runtime.isSessionBusy
-          if (await isExportBusy(projectId, sessionId))
-            throw new Error('Wait for the Session to become idle before exporting.')
+          await assertRuntimeIdle()
           await assertIdle()
-          if (await isExportBusy(projectId, sessionId))
-            throw new Error('The Session is still active.')
+          await assertRuntimeIdle()
           return () => {
             this.exportingSessions.delete(sessionId)
           }
@@ -155,6 +200,14 @@ class ArchiveCoordinator {
       },
       signal
     )
+    if (typeof reservation === 'function') return reservation
+    const changed = signal ? AbortSignal.any([reservation, signal]) : reservation
+    if (!changed.aborted)
+      await new Promise<void>((resolve) =>
+        changed.addEventListener('abort', () => resolve(), { once: true })
+      )
+    signal?.throwIfAborted()
+    return this.reserveSessionExport(projectId, sessionId, assertIdle, signal)
   }
 
   private assertExportAvailable(sessionId: string): void {
@@ -422,7 +475,11 @@ class ArchiveCoordinator {
         // New user work and archive must agree on one active state, including asynchronous startup.
         // Application continuations retain deletion-only admission so existing cleanup can finish.
         if (requireAvailable) await this.assertSessionAvailableByIdNow(sessionId, projectId)
-        const release = this.admitSessionWork(projectId, sessionId, requireAvailable)
+        const release = this.admitSessionWork(
+          projectId,
+          sessionId,
+          requireAvailable ? 'user-prompt' : 'work'
+        )
         const result = Promise.resolve().then(operation).finally(release)
         return { result }
       })

@@ -293,7 +293,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   memoryPolicy?: NotebookMemoryPolicyPort
   isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
   isSessionExporting?: (projectId: string, sessionId: string) => boolean
-  admitSessionWork?: (projectId: string, sessionId: string) => () => void
+  admitSessionWork?: (projectId: string, sessionId: string, observation?: boolean) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
@@ -2826,7 +2826,7 @@ class NotebookRuntimeService {
   ): Promise<RuntimeSession | undefined> {
     if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId))
       return undefined
-    const session = await this.sessionLifecycle.ensure(request)
+    const session = await this.sessionLifecycle.ensure(request, true)
     // Project durable history only after the lane's binding commit settles, including reads
     // that arrived just before shutdown closed session creation admission.
     await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))

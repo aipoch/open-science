@@ -368,7 +368,7 @@ it.each([
       ).rejects.toThrow('busy')
       await expect(
         archive.reserveSessionExport(scope.projectId, scope.sessionId, async () => undefined)
-      ).rejects.toThrow('idle')
+      ).rejects.toMatchObject({ reason: 'pending' })
       if (policy === 'expiry') {
         await sweep()
         now += NOTEBOOK_SESSION_IDLE_MS - 1

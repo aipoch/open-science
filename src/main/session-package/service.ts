@@ -1454,7 +1454,10 @@ export class SessionPackageService {
     let publicRecords = projectWebRecords(records, webProjection)
     let recordsJson = JSON.stringify(publicRecords)
     const fixedMetadataBytes = Buffer.byteLength(sessionJson) + Buffer.byteLength(PACKAGE_README)
-    diagnostic.phase('select-files')
+    diagnostic.phase('select-files', {
+      selectableFiles: selectable.length,
+      retainedFiles: retainedFiles.length
+    })
     const plannedFiles = markRequiredPackageFiles(records, selectable, [
       ...retainedFiles,
       ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({

@@ -353,7 +353,11 @@ it.each([
     })
     try {
       const failure = await desktop.export(request).catch((error: unknown) => error)
-      if (reason) expect(causeMessages(failure)).toEqual([packageFailureMessage, reason])
+      const exportMessage =
+        reason === 'Session or Notebook references missing file evidence.'
+          ? 'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.'
+          : 'Could not export this session. Try again. If the problem persists, export a diagnostic package from the session menu.'
+      if (reason) expect(causeMessages(failure)).toEqual([exportMessage, reason])
       else {
         expect(failure).toBeInstanceOf(Error)
         expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
@@ -362,7 +366,7 @@ it.each([
       expect(desktop.operations.snapshot).toMatchObject({
         state: 'failed',
         progress: { phase: 'preparing' },
-        error: packageFailureMessage
+        error: exportMessage
       })
       expect(desktop.operations.active).toBe(false)
       expect(release).toHaveBeenCalledOnce()
@@ -1137,7 +1141,10 @@ it.each([
           : desktop.import(undefined, undefined, { projectId: 'source' })
       if (failure === 'cancel')
         await expect(pending).resolves.toEqual(kind === 'export' ? { saved: false } : null)
-      else await expect(pending).rejects.toThrow('Could not complete')
+      else
+        await expect(pending).rejects.toThrow(
+          kind === 'export' ? 'not enough space' : 'Could not complete'
+        )
       expect(cancelled).toBe(true)
       expect(release).toHaveBeenCalledOnce()
       expect(openAtRelease).toEqual([0])
