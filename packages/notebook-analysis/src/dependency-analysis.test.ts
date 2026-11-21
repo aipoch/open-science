@@ -2222,9 +2222,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       runs: Record<string, { checksum: string }>
     }
     expect(repository.readSessionRuns).toHaveBeenCalledTimes(1)
-    expect(repository.readSessionRuns).toHaveBeenCalledWith('default-project', 'session-1', {
-      includeEnvironmentManifests: true
-    })
+    expect(repository.readSessionRuns).toHaveBeenCalledWith('default-project', 'session-1')
     expect(refreshedSidecar.runs['run-1']?.checksum).not.toBe('stale-revision-checksum')
     expect(refreshedSidecar.runs['current-run']).toBeUndefined()
   })
