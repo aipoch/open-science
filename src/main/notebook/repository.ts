@@ -51,7 +51,7 @@ import { ensureNotebookInputRoot } from './input-staging'
 
 const RECORDS_DIRECTORY = '.run-records'
 const INLINE_BYTES = 64 * 1024
-const ENVIRONMENT_MANIFEST_DIRECTORY = join('runtime', 'provenance', 'environment-manifests')
+const ENVIRONMENT_MANIFEST_DIRECTORY = 'runtime/provenance/environment-manifests'
 const MAX_ENVIRONMENT_MANIFEST_BYTES = 32 * 1024 * 1024
 const digestPattern = /^[a-f0-9]{64}$/
 
@@ -84,6 +84,9 @@ const environmentManifestChecksumForRun = (run: NotebookRunRecord): string | und
   (run.environmentCapture?.state === 'available' || run.environmentCapture?.state === 'partial'
     ? run.environmentCapture.manifestChecksum
     : undefined)
+
+const environmentManifestStorageKey = (checksum: string): string =>
+  `${ENVIRONMENT_MANIFEST_DIRECTORY}/${checksum}.json`
 
 const withoutEnvironmentManifest = (run: NotebookRunRecord): NotebookRunRecord => {
   if (!run.environmentManifest) return run
@@ -2016,6 +2019,8 @@ class NotebookRunRepository {
 export {
   NotebookRunRepository,
   NotebookRunSubmissionConflictError,
+  environmentManifestChecksumForRun,
+  environmentManifestStorageKey,
   getNotebookDataRoot,
   getNotebookFileEvidenceLocation,
   getNotebookRunJsonPath,
