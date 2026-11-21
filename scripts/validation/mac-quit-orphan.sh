@@ -7,7 +7,7 @@ mkdir -p "$D/Applications"
 ditto -x -k "$A" "$D/Applications"
 probe(){ node "$PROBE" "$1" "$D" "$FEED" "$ARCH"; }
 probe serve >"$D/server.log" & fp=$!
-trap 'kill "$fp" || true' EXIT
+trap 'kill "$fp" || true; launchctl list com.aipoch.open-science.ShipIt >"$D/job.txt" || true; cp "$HOME/Library/Caches/com.aipoch.open-science.ShipIt/ShipIt_stderr.log" "$D/shipit.txt" || true' EXIT
 probe launch
 for i in {1..45}; do if probe status >"$D/status" 2>/dev/null; then break; fi; sleep 1; done
 probe configure

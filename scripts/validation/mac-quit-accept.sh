@@ -70,7 +70,8 @@ for i in {1..1500}; do if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.
 ! kill -0 "$pid" 2>/dev/null
 date -u > "$D/immediate-reopen"
 probe launch
-for i in {1..90}; do
+cutoff=$((SECONDS+125))
+while ((SECONDS<cutoff)); do
   if probe status > "$D/first-workspace" 2>"$D/first-workspace-error"; then break; fi
   sleep 0.25
 done
@@ -79,6 +80,12 @@ test "$(version)" = '1.3.2'
 codesign --verify --strict --deep "$app"
 codesign -dv --verbose=4 "$app" 2>"$D/signature-B.txt"
 probe identity > "$D/cold-identity"
+cutoff=$((SECONDS+150))
+while ((SECONDS<cutoff)); do
+  if probe workspace >"$D/workspace-ready" 2>"$D/last-error"; then break; fi
+  sleep 1
+done
+node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1])).details;if(s.version!=='1.3.2'||s.data.version!=='1.3.2')process.exit(1)" "$D/workspace-ready"
 test "$(zip_requests)" = 1
 echo SIGNED_RAPID_REOPEN_PASSED
 probe quit
