@@ -33656,13 +33656,14 @@ it('connects the optional built-in harness through the host runtime and releases
   }
 })
 
-it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as const)(
+it.each(['new', 'resume', 'task', 'task-relay', 'schedule', 'schedule-without-origin'] as const)(
   'keeps Notebook %s bootstrap read-only until an authorized prompt creates execution authority',
   async (entry) => {
     const root = await mkdtemp(join(tmpdir(), 'acp-notebook-bootstrap-'))
     const child = new FakeAgentProcess()
     const scope = { projectId: 'project', sessionId: 'restored-notebook-provider' }
     let pressured = false
+    const forcedChecks: boolean[] = []
     const observeMemory = (): import('../notebook/memory-policy').MemoryPolicyObservation => ({
       status: pressured ? 'pressured' : 'healthy',
       reason: { code: pressured ? 'low-memory' : 'healthy' },
@@ -33682,7 +33683,13 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
       configRoot: root,
       dataRoot: root,
       projectId: scope.projectId,
-      memoryPolicy: { getState: async () => observeMemory(), currentState: observeMemory },
+      memoryPolicy: {
+        getState: async (request) => {
+          if (request?.signal) forcedChecks.push(request.force === true)
+          return observeMemory()
+        },
+        currentState: observeMemory
+      },
       executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
     })
     const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
@@ -33809,7 +33816,7 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
         expect(service.currentExecutionIntent(scope)).toBe(accepted)
         expect(execute).toHaveBeenCalledOnce()
         return
-      } else if (entry === 'task') {
+      } else if (entry === 'task' || entry === 'task-relay') {
         const task = createAcpTaskAgentPort(
           {
             captureNotebookTaskIntent: (request) => runtime.captureNotebookTaskIntent(request),
@@ -33818,7 +33825,8 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
             setPermissionProfile: (request) => runtime.setPermissionProfile(request),
             setMemoryEnabled: (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
             sendPrompt: (request) => runtime.sendPrompt(request),
-            sendPromptObserved: (request) => runtime.sendPrompt(request),
+            sendPromptObserved: (request, _accepted, admitted, owner) =>
+              runtime.sendPrompt(request, undefined, admitted, owner),
             cancelPrompt: (request) => runtime.cancelPrompt(request)
           },
           { create: vi.fn() }
@@ -33857,6 +33865,65 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
           retryable: false,
           requiresUser: true
         })
+        if (entry === 'task-relay') {
+          const relay = (
+            requestId: string,
+            refusal: { refusalId?: string },
+            originMessageId: string,
+            admittedBranch = 'task-branch'
+          ): Promise<void> => {
+            const provenance = {
+              ...acceptedTask.provenanceContext,
+              messageBranchId: admittedBranch,
+              promptMessageId: requestId,
+              messageAncestry: ['accepted-task-root', originMessageId, requestId]
+            }
+            return task.prompt(
+              {
+                ...acceptedTask,
+                promptMessageId: requestId,
+                text: 'Continue the authorized Notebook work.',
+                notebookContinuation: {
+                  projectId: scope.projectId,
+                  refusalId: refusal.refusalId!,
+                  task: { branchId: 'task-branch', promptMessageId: originMessageId },
+                  assertCurrent: () => undefined
+                }
+              },
+              { onPromptAdmitted: async () => provenance }
+            )
+          }
+          const previousPrompts = agent.prompts.length
+          await expect(
+            relay('wrong-branch', stopped, 'accepted-task-root', 'other')
+          ).rejects.toThrow('Notebook refusal changed')
+          await expect(relay('wrong-origin', stopped, 'another-task')).rejects.toThrow(
+            'original Notebook stop'
+          )
+          expect(agent.prompts).toHaveLength(previousPrompts)
+          expect(service.currentExecutionIntent(scope)).toBe(stopped)
+          pressured = true
+          await relay('still-pressured', stopped, 'accepted-task-root')
+          expect(promptResult).toContain('NOTEBOOK_MEMORY_PRESSURE')
+          expect(forcedChecks.at(-1)).toBe(true)
+          expect(execute).toHaveBeenCalledOnce()
+          const freshStop = service.currentExecutionIntent(scope)!
+          expect(freshStop.refusalId).not.toBe(stopped.refusalId)
+          expect(freshStop.scope.continuedFromRefusalId).toBe(stopped.refusalId)
+          pressured = false
+          await relay('healthy-continuation', freshStop, 'still-pressured')
+          expect(promptResult).toContain('"status":"completed"')
+          expect(execute).toHaveBeenCalledTimes(2)
+          expect(service.currentExecutionIntent(scope)!.scope.continuedFromRefusalId).toBe(
+            freshStop.refusalId
+          )
+          service.bindExecutionIntent(scope, stopped)
+          await expect(relay('replayed-refusal', stopped, 'accepted-task-root')).rejects.toThrow(
+            'Notebook refusal changed'
+          )
+          expect(execute).toHaveBeenCalledTimes(2)
+          return
+        }
         await expect(
           runtime.sendPrompt(
             withNotebookUserOperation(

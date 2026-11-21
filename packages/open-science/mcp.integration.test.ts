@@ -552,6 +552,68 @@ it('returns the stopped Notebook and user action without waiting for the outer R
   )
 })
 
+it('recovers the same Notebook continuation receipt after losing the first response', async () => {
+  const input = {
+    requestId: 'continue-1',
+    runId: 'original-run',
+    branchId: 'original-branch',
+    refusalId: 'original-refusal',
+    source: 'user_relay',
+    prompt: 'Continue the stopped Notebook analysis.'
+  }
+  const continuation = {
+    runId: input.runId,
+    branchId: input.branchId,
+    refusalId: input.refusalId,
+    source: 'user_relay'
+  }
+  const receipt = {
+    requestId: input.requestId,
+    status: 'accepted',
+    createdAt: 900,
+    runId: 'continuation-run',
+    notebookContinuation: continuation
+  }
+  let writes = 0
+  const agent = await resourceAgents(
+    async (request, response) => {
+      if (request.method === 'PUT' && request.url === '/api/v1/notebook-continuations/continue-1') {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(chunk)
+        const { requestId: _requestId, ...body } = input
+        void _requestId
+        expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(body)
+        if (++writes === 1) request.socket.destroy()
+        else response.end(JSON.stringify({ data: receipt }))
+      } else if (request.method === 'GET' && request.url === '/api/v1/run-submissions/continue-1') {
+        response.end(JSON.stringify({ data: receipt }))
+      } else response.writeHead(404).end()
+    },
+    ['durable-submissions', 'notebook-continuation']
+  )
+
+  const wrongSource = { ...input, source: 'delegated_agent' }
+  expect((await agent.mcp('continue_notebook', wrongSource)).structuredContent).toMatchObject({
+    error: { code: 'invalid_request' }
+  })
+  expect(await agent.cliError('continue_notebook', wrongSource)).toMatchObject({
+    error: { code: 'invalid_request' }
+  })
+  expect(writes).toBe(0)
+  expect((await agent.mcp('continue_notebook', input)).structuredContent).toMatchObject({
+    error: {
+      completionStatus: 'submission-unconfirmed',
+      requestId: input.requestId,
+      next: [{ action: 'get_submission', requestId: input.requestId }]
+    }
+  })
+  const expected = { result: receipt }
+  const identity = { requestId: input.requestId }
+  expect(await agent.cli('get_submission', identity)).toEqual(expected)
+  expect((await agent.mcp('get_submission', identity)).structuredContent).toEqual(expected)
+  expect(await agent.cli('continue_notebook', input)).toEqual(expected)
+})
+
 it.each(['code', 'runtime'] as const)(
   'returns the live Notebook %s review handoff on both external surfaces',
   async (kind) => {

@@ -402,11 +402,19 @@ export type RequestOptions = {
   /** Per-request deadline in milliseconds, including response-body consumption. */
   timeoutMs?: number
 }
+export type NotebookContinuation = {
+  runId: string
+  branchId: string
+  refusalId: string
+  source: 'user_relay'
+}
+export type NotebookContinuationRequest = NotebookContinuation & { prompt: string }
 export type Submission = {
   requestId: string
   status: 'pending' | 'accepted' | 'failed' | 'interrupted'
   createdAt: number
   runId?: string
+  notebookContinuation?: NotebookContinuation
   error?: { code: string; message: string }
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
@@ -422,13 +430,17 @@ export type NotebookExecution = {
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string
+  refusalReason?: string
   continuedFromRefusalId?: string
   owner?: 'user'
   requiresUser?: true
   retryable?: false
   next?: {
     action:
-      'continue_notebook_in_app' | 'review_notebook_code_in_app' | 'review_notebook_runtime_in_app'
+      | 'continue_notebook'
+      | 'continue_notebook_in_app'
+      | 'review_notebook_code_in_app'
+      | 'review_notebook_runtime_in_app'
     message: string
   }
 }
@@ -537,6 +549,11 @@ export type PlanInteraction = TaskInteractionReference & {
       taskRunStatus: 'unconfirmed'
     }
   }
+}
+export type NotebookStopInteraction = TaskInteractionReference & {
+  kind: 'notebook-continuation'
+  refusalId: string
+  reason?: string
 }
 export type RunAttention =
   | { kind: 'plan-approval'; plan: SessionPlan }
@@ -904,7 +921,7 @@ export class OpenScienceClient {
     interactionId: string,
     scope: TaskInteractionScope,
     options?: RequestOptions
-  ): Promise<PlanInteraction>
+  ): Promise<PlanInteraction | NotebookStopInteraction>
   respondSessionPlan(
     sessionId: string,
     response: {
@@ -959,6 +976,11 @@ export class OpenScienceClient {
   submitRun(
     requestId: string,
     request: Parameters<OpenScienceClient['startRun']>[0],
+    options?: RequestOptions
+  ): Promise<Submission>
+  continueNotebook(
+    requestId: string,
+    request: NotebookContinuationRequest,
     options?: RequestOptions
   ): Promise<Submission>
   getSubmission(requestId: string, options?: RequestOptions): Promise<Submission>

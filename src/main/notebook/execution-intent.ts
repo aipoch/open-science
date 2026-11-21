@@ -20,6 +20,7 @@ export type NotebookExecutionIntentDeletion =
 export class NotebookExecutionIntent {
   declare readonly [notebookExecutionIntentReference]: true
   private refusal?: Readonly<{ id: string; reason: string }>
+  private continuationClaimed = false
   private userPreparationPending = false
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
@@ -31,6 +32,18 @@ export class NotebookExecutionIntent {
 
   get refusalId(): string | undefined {
     return this.refusal?.id
+  }
+
+  get refusalReason(): string | undefined {
+    return this.refusal?.reason
+  }
+
+  get hasClaimedContinuation(): boolean {
+    return this.continuationClaimed
+  }
+
+  claimContinuation(): void {
+    this.continuationClaimed = true
   }
 
   // A missing origin can inherit only when its admitted conversation contains this grant.
@@ -158,9 +171,17 @@ export const markNotebookExecutionIntent = (
 export const notebookExecutionCredential = (request: object): string | undefined =>
   (request as { [credentialKey]?: string })[credentialKey]
 
+export type NotebookTaskContinuationOperation = Readonly<{
+  projectId: string
+  refusalId: string
+  task: { branchId: string; promptMessageId: string }
+  assertCurrent(): void
+}>
+
 type NotebookUserOperation = Readonly<{
   refusalId?: string
   projectId?: string
+  task?: NotebookTaskContinuationOperation['task']
   assertCurrent(): void
 }>
 const userOperationKey = Symbol('Trusted Notebook user operation')

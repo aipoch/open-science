@@ -6,7 +6,7 @@ import type {
 } from '../../shared/acp'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
-import { notebookExecutionIntent } from '../notebook/execution-intent'
+import { notebookExecutionIntent, withNotebookUserOperation } from '../notebook/execution-intent'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import {
   toSessionAgentConfiguration,
@@ -116,7 +116,9 @@ const createAcpTaskAgentPort = (
     const prompt = toAcpPromptRequest(request)
     // TaskRunner owns this boundary after reserving the Session and accepting its exact root
     // prompt. Freeze authority before notifications, admission or Provider preparation can yield.
-    const acpRequest = runtime.captureNotebookTaskIntent?.(prompt) ?? prompt
+    const acpRequest = request.notebookContinuation
+      ? withNotebookUserOperation(prompt, request.notebookContinuation)
+      : (runtime.captureNotebookTaskIntent?.(prompt) ?? prompt)
     let tracked: ReturnType<TaskPromptNotifications['trackPrompt']> | undefined
     try {
       tracked = notifications?.trackPrompt(acpRequest)

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
 import type { CliLauncherStatus } from '../../shared/cli'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -28,6 +29,7 @@ import type {
   TaskInteractionScope,
   TaskInteraction,
   TaskInteractionReference,
+  TaskNotebookStopInteraction,
   TaskPlanInteraction
 } from '../../shared/task-interaction'
 import type {
@@ -50,6 +52,7 @@ import type {
   TaskAgentRouting,
   TaskAgentRuntime,
   TaskDoctorReport,
+  TaskNotebookContinuationRequest,
   TaskNotebookEnvironmentOperation,
   TaskNotebookEnvironmentRequest,
   TaskNotebookEnvironmentTarget,
@@ -59,6 +62,7 @@ import type {
   TaskRun,
   TaskRunProgressEvent,
   TaskRunReview,
+  TaskSubmission,
   TaskSessionConfiguration,
   TaskSessionSummary,
   UpdateTaskAgentRoutingRequest,
@@ -92,6 +96,20 @@ import { readTaskNotebookReadiness } from './task-notebook-readiness'
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
 const log = createLogger('web-service:task-api')
+const notebookStopPrefix = 'notebook-continuation:'
+const notebookContinuationRequest = z.strictObject({
+  runId: z.string().trim().min(1),
+  branchId: z.string().trim().min(1),
+  refusalId: z.string().trim().min(1),
+  source: z.literal('user_relay'),
+  prompt: z.string().trim().min(1)
+}) satisfies z.ZodType<TaskNotebookContinuationRequest>
+
+const notebookStopExpired = (): TaskRunnerError =>
+  new TaskRunnerError(
+    'notebook_continuation_expired',
+    'The Notebook stop is no longer current in this branch, or cannot be recovered after restart. Inspect the original Run and ask the user before starting any new work.'
+  )
 
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
@@ -731,20 +749,81 @@ class HeadlessTaskApi {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
     const interaction = await this.planInteraction(session, run)
-    if (interaction?.state !== 'pending') return []
-    const { plan, ...reference } = interaction
-    void plan
-    return [reference]
+    const stop = await this.notebookStopInteraction(session, run)
+    const references: TaskInteractionReference[] = stop ? [stop] : []
+    if (interaction?.state === 'pending') {
+      const { plan, ...reference } = interaction
+      void plan
+      references.push(reference)
+    }
+    return references
   }
 
   async getInteraction(id: string, scope: TaskInteractionScope): Promise<TaskInteraction> {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
+    if (id.startsWith(notebookStopPrefix)) {
+      const stop = await this.notebookStopInteraction(session, run)
+      if (stop?.id !== id) throw notebookStopExpired()
+      return stop
+    }
     const interaction = await this.planInteraction(session, run, id)
     if (!interaction) {
       throw new TaskRunnerError('interaction_not_found', 'No matching interaction in this scope.')
     }
     return interaction
+  }
+
+  private async notebookStopInteraction(
+    session: PersistedChatSession,
+    run?: TaskRun
+  ): Promise<TaskNotebookStopInteraction | undefined> {
+    if (
+      !this.submissions ||
+      !this.ports.notebook ||
+      session.packageOrigin ||
+      session.archivedAt !== undefined
+    )
+      return
+    const graph = session.conversationGraph
+    const branchId = graph?.frames.find(({ id }) => id === graph.activeFrameId)?.activeBranchId
+    if (!branchId || !graph) return
+    const runPromptId = run ? this.runner.getRunPromptMessageId(run.id) : undefined
+    if (run && !runPromptId) return
+    const execution = await this.ports.notebook.inspectTaskExecution({
+      projectId: session.projectId,
+      sessionId: session.id,
+      promptMessageId: runPromptId,
+      ...(run ? {} : { includeSessionRefusal: true })
+    })
+    const { refusalId, promptMessageId, refusalReason } = execution
+    if (
+      execution.status !== 'waiting_for_user' ||
+      !refusalId ||
+      !promptMessageId ||
+      execution.messageBranchId !== branchId ||
+      !resolveActiveConversationMessages(graph).some(({ id }) => id === promptMessageId)
+    )
+      return
+    const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
+    if (!runId) return
+    return {
+      id: `${notebookStopPrefix}${refusalId}`,
+      kind: 'notebook-continuation',
+      state: 'pending',
+      projectId: session.projectId,
+      sessionId: session.id,
+      runId,
+      branchId,
+      promptMessageId,
+      revision: 0, // The refusal ID is immutable and changes with each new stop.
+      owner: 'user',
+      actions: ['continue'],
+      responseCapability: 'continue_notebook',
+      refusalId,
+      ...(refusalReason ? { reason: refusalReason } : {}),
+      next: 'Resolve the reported cause and ask the user whether to continue this specific stop.'
+    }
   }
 
   async respondSessionPlan(
@@ -824,6 +903,44 @@ class HeadlessTaskApi {
     return this.submissions !== undefined
   }
 
+  supportsNotebookContinuation(): boolean {
+    return this.submissions !== undefined && this.ports.notebook !== undefined
+  }
+
+  async continueNotebook(requestId: string, request: unknown): Promise<TaskSubmission> {
+    this.requireTaskRelay()
+    if (!this.submissions || !this.ports.notebook)
+      throw new TaskRunnerError('submission_unavailable', 'Notebook continuation is unavailable.')
+    const parsed = notebookContinuationRequest.safeParse(request)
+    if (!parsed.success) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Supply the original runId, branchId and refusalId, the user_relay source, and a continuation prompt.'
+      )
+    }
+    return this.submissions.submitNotebookContinuation(requestId, parsed.data, (input) =>
+      this.callerContexts.run(TASK_CALLER_CONTEXT, async () => {
+        const { run, session } = await this.interactionSession({ runId: input.runId })
+        const stop = await this.notebookStopInteraction(session, run)
+        if (
+          stop?.refusalId !== input.refusalId ||
+          stop.branchId !== input.branchId ||
+          !stop.promptMessageId
+        )
+          throw notebookStopExpired()
+        return this.runner.startRun(
+          { project: stop.projectId, sessionId: stop.sessionId, prompt: input.prompt },
+          requestId,
+          {
+            projectId: stop.projectId,
+            refusalId: stop.refusalId,
+            task: { branchId: input.branchId, promptMessageId: stop.promptMessageId }
+          }
+        )
+      })
+    )
+  }
+
   submitRun(
     requestId: string,
     request: StartTaskRunRequest
@@ -844,23 +961,35 @@ class HeadlessTaskApi {
   }
 
   async getRun(runId: string): Promise<TaskRun> {
-    const run = this.runner.getRun(runId)
+    const run = await this.withRunExecution(this.runner.getRun(runId))
     if (
       canRelayTaskInteraction(this.currentCallerContext()) &&
-      (run.attention?.kind === 'plan-approval' || run.failureCode === 'process_restarted')
+      (run.attention?.kind === 'plan-approval' ||
+        run.failureCode === 'process_restarted' ||
+        run.execution?.refusalId)
     ) {
       try {
         const interactions = await this.listInteractions({ runId })
-        return this.withRunExecution({
+        if (
+          run.execution?.refusalId &&
+          interactions.some(({ kind }) => kind === 'notebook-continuation')
+        ) {
+          run.execution.next = {
+            action: 'continue_notebook',
+            message:
+              'Resolve the reported cause and ask the user whether to continue this stop. Use the original Run and the branch and refusal IDs in the interaction. Do not replay the stopped cell.'
+          }
+        }
+        return {
           ...run,
           attention: interactions.length ? { kind: 'interactions', interactions } : undefined
-        })
+        }
       } catch (error) {
         if (!(error instanceof TaskRunnerError && error.code === 'session_not_found')) throw error
-        return this.withRunExecution({ ...run, attention: undefined })
+        return { ...run, attention: undefined }
       }
     }
-    return this.withRunExecution(run)
+    return run
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {
