@@ -176,7 +176,8 @@ it('preserves a checksum-matching inline environment manifest', () => {
     },
     { projectId: 'p', sessionId: 's' }
   )
-  expect(result.runs[0]).toMatchObject({
+  const run = (result.runs as Record<string, unknown>[])[0]
+  expect(run).toMatchObject({
     environmentManifestChecksum: checksum,
     environmentManifest: manifest
   })
