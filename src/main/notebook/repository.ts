@@ -1508,7 +1508,7 @@ class NotebookRunRepository {
     const hydratedRuns = await Promise.all(
       runs.map(async (run) => {
         if (includeRunIds && !includeRunIds.has(run.runId)) {
-          return withoutEnvironmentManifest(run)
+          return environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
         }
         if (run.environmentManifest) return run
         const checksum = environmentManifestChecksumForRun(run)
