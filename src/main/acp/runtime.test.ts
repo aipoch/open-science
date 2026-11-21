@@ -27806,7 +27806,11 @@ describe('ACP runtime session management', () => {
                 case 'sessions:load-all':
                   return sessions.loadAllReadOnly()
                 case 'sessions:save-session':
-                  return sessions.saveSession(arg as PersistedChatSession)
+                  return sessions.saveSession(
+                    arg as PersistedChatSession,
+                    {},
+                    { taskRunCommit: invocation.callerContext.surface === 'task' }
+                  )
                 case 'sessions:stage-task-completion':
                   return sessions.stageTaskCompletion(
                     arg as Parameters<typeof sessions.stageTaskCompletion>[0]

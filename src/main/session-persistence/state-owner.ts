@@ -1700,8 +1700,10 @@ class SessionPersistenceStateOwner {
       resumeRecovery: stateAuthority?.resumeRecovery
     }
     // A delayed client snapshot must not reintroduce a run after Main has settled it.
-    // Legacy live turns can still publish their first run before transcript adoption.
+    // A new Task saves its first run before dispatching the provider prompt.
+    const creatingTaskSession = saveAuthority.taskRunCommit && !authority
     if (
+      !creatingTaskSession &&
       mainOwnedState.status === 'idle' &&
       rendererOwnedSession.activeRun &&
       !stateAuthority?.activeRun &&
