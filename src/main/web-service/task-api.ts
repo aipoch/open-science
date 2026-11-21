@@ -42,6 +42,9 @@ import type {
   TaskAgentRouting,
   TaskAgentRuntime,
   TaskDoctorReport,
+  TaskNotebookEnvironmentOperation,
+  TaskNotebookEnvironmentRequest,
+  TaskNotebookEnvironmentTarget,
   TaskPlanResponseRequest,
   TaskProject,
   TaskProjectSessionDefaults,
@@ -57,6 +60,10 @@ import { createApplicationCommandClient } from '../application-command-client'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import {
+  NotebookEnvironmentOperationConflictError,
+  type ManagedNotebookSetup
+} from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
@@ -79,6 +86,7 @@ type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
   notebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
+  notebookEnvironment?: ManagedNotebookSetup
   controls?: TaskControlPorts
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -277,6 +285,42 @@ class HeadlessTaskApi {
         'Could not prepare the Notebook environment. Check its current status and the service log.'
       )
     }
+  }
+
+  supportsNotebookEnvironmentOperations(): boolean {
+    return this.ports.notebookEnvironment !== undefined
+  }
+
+  startNotebookEnvironmentOperation(
+    request: TaskNotebookEnvironmentRequest
+  ): TaskNotebookEnvironmentOperation {
+    try {
+      return this.managedNotebookSetup().start(request)
+    } catch (error) {
+      if (error instanceof NotebookEnvironmentOperationConflictError)
+        throw new TaskRunnerError('notebook_environment_operation_conflict', error.message)
+      throw error
+    }
+  }
+
+  getNotebookEnvironmentOperation(
+    target: TaskNotebookEnvironmentTarget
+  ): TaskNotebookEnvironmentOperation {
+    return this.managedNotebookSetup().get(target)
+  }
+
+  cancelNotebookEnvironmentOperation(
+    target: TaskNotebookEnvironmentTarget
+  ): TaskNotebookEnvironmentOperation {
+    return this.managedNotebookSetup().cancel(target)
+  }
+
+  private managedNotebookSetup(): ManagedNotebookSetup {
+    if (this.currentCallerContext().location !== 'local')
+      throw new TaskRunnerError('invalid_request', 'Notebook setup requires a local connection.')
+    if (!this.ports.notebookEnvironment)
+      throw new TaskRunnerError('notebook_setup_failed', 'Notebook setup is unavailable.')
+    return this.ports.notebookEnvironment
   }
 
   async installCli(): Promise<CliLauncherStatus> {

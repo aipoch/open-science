@@ -7,6 +7,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandComposition } from '../application-command-composition-contract'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
+import type { ManagedNotebookSetup } from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot } from '../storage-root'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
@@ -83,6 +84,7 @@ const createWebServiceController = (
     permissionApprovalPresence,
     taskAgent,
     taskNotebook,
+    taskNotebookEnvironment,
     taskControls,
     computePreferences,
     detectActiveSessions
@@ -95,6 +97,7 @@ const createWebServiceController = (
     permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
     taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
+    taskNotebookEnvironment?: ManagedNotebookSetup
     taskControls?: TaskControlPorts
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -125,6 +128,7 @@ const createWebServiceController = (
       commands: applicationCommands.task,
       agent: taskAgent,
       notebook: taskNotebook,
+      notebookEnvironment: taskNotebookEnvironment,
       controls: taskControls,
       computePreferences,
       detectActiveSessions

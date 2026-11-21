@@ -122,6 +122,123 @@ async function resourceAgents(
   }
 }
 
+it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
+  const target = { language: 'r', operationId: 'prepare-r' }
+  const path = `/api/v1/notebook-environment/operations/${target.operationId}`
+  let accepted = false
+  let finished = false
+  let starts = 0
+  const agent = await resourceAgents(
+    (request, response) => {
+      if (request.url === path && request.method === 'PUT') {
+        accepted = true
+        starts++
+      } else if (request.url !== `${path}?language=r` || request.method !== 'GET') {
+        response.writeHead(404).end()
+        return
+      }
+      expect(accepted).toBe(true)
+      response.end(
+        JSON.stringify({
+          data: {
+            ...target,
+            action: 'prepare',
+            status: finished ? 'completed' : 'preparing',
+            progress: { phase: finished ? 'done' : 'fetch-r', fraction: finished ? 1 : 0.25 }
+          }
+        })
+      )
+    },
+    ['notebook-setup-operations']
+  )
+
+  expect(
+    await agent.cli('prepare_notebook_environment', { ...target, timeoutMs: 1 })
+  ).toMatchObject({
+    result: {
+      operation: { ...target, status: 'preparing', progress: { phase: 'fetch-r', fraction: 0.25 } },
+      timedOut: true,
+      next: [{ action: 'get_notebook_environment_operation', arguments: target }]
+    }
+  })
+  finished = true
+  const result = await agent.mcp('get_notebook_environment_operation', target)
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    result: {
+      operation: { ...target, status: 'completed' },
+      next: [{ action: 'get_setup_status', arguments: { language: 'r' } }]
+    }
+  })
+  expect(result.structuredContent).toEqual(
+    await agent.cli('get_notebook_environment_operation', target)
+  )
+  expect(starts).toBe(1)
+})
+
+it('recovers a lost setup response and uses the same cancel and repair contract through CLI and MCP', async () => {
+  const rTarget = { language: 'r', operationId: 'r-lost-response' }
+  const pyTarget = { language: 'python', operationId: 'python-repair' }
+  let rStatus = 'unconfirmed'
+  const agent = await resourceAgents(
+    async (request, response) => {
+      const url = new URL(request.url!, 'http://localhost')
+      const operationId = url.pathname.split('/').at(-1)
+      const reply = (data: unknown): void => {
+        response.end(JSON.stringify({ data }))
+      }
+      if (operationId === rTarget.operationId) {
+        if (request.method === 'PUT') {
+          rStatus = 'preparing'
+          response.destroy()
+          return
+        }
+        if (request.method === 'DELETE') rStatus = 'cancelled'
+        return reply({ ...rTarget, status: rStatus })
+      }
+      if (operationId === pyTarget.operationId && request.method === 'PUT') {
+        let payload = ''
+        for await (const chunk of request) payload += chunk
+        if (JSON.parse(payload).action === 'repair')
+          return reply({
+            ...pyTarget,
+            action: 'repair',
+            status: 'failed',
+            reason: 'notebook_environment_recovery_required'
+          })
+      }
+      response.writeHead(404).end()
+    },
+    ['notebook-setup-operations']
+  )
+
+  const lost = await agent.mcp('prepare_notebook_environment', rTarget)
+  expect(lost.isError).toBe(true)
+  expect(lost.structuredContent).toMatchObject({
+    error: {
+      operationId: rTarget.operationId,
+      completionStatus: 'unconfirmed',
+      next: [{ action: 'get_notebook_environment_operation', arguments: rTarget }]
+    }
+  })
+  const reconnected = await connectMcp(agent.profile)
+  expect(
+    (await reconnected.callTool({ name: 'get_notebook_environment_operation', arguments: rTarget }))
+      .structuredContent
+  ).toMatchObject({
+    result: { operation: { ...rTarget, status: 'preparing' } }
+  })
+  for (const [name, target, status] of [
+    ['cancel_notebook_environment_operation', rTarget, 'cancelled'],
+    ['repair_notebook_environment', pyTarget, 'failed']
+  ] as const) {
+    const mcp = await agent.mcp(name, target)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual(await agent.cli(name, target))
+    expect(mcp.structuredContent).toMatchObject({ result: { operation: { ...target, status } } })
+  }
+})
+
 it('recovers the original study after the initial submission response is lost', async () => {
   const args = {
     requestId: 'study-request',
@@ -1156,14 +1273,19 @@ it('discovers setup choices and prepares only the selected runtime, provider and
         case '/api/v1/settings/agent-routing':
           selected = args.framework
           return respond({ configured: { framework: selected } })
-        case '/api/v1/notebook-environment':
+        case '/api/v1/notebook-environment/operations/prepare-r':
+        case '/api/v1/notebook-environment/operations/prepare-python':
           installed.add(args.language)
-          return respond({})
+          return respond({
+            operationId: `prepare-${args.language}`,
+            ...args,
+            status: 'completed'
+          })
         default:
           res.writeHead(404).end()
       }
     },
-    ['doctor', 'agent-setup', 'notebook-setup', 'list-runtimes']
+    ['doctor', 'agent-setup', 'notebook-setup-operations', 'list-runtimes']
   )
   const both = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const mcp = await agent.mcp(name, args)
@@ -1206,7 +1328,12 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     readiness: { agent: 'ready' },
     checks: { runtime: { framework, selectedFramework: framework } }
   })
-  expect(await both('prepare_notebook_environment', { language: 'r' })).toMatchObject({
+  expect(
+    await both('prepare_notebook_environment', { language: 'r', operationId: 'prepare-r' })
+  ).toMatchObject({
+    operation: { language: 'r', status: 'completed' }
+  })
+  expect(await both('get_setup_status', { language: 'r' })).toMatchObject({
     readiness: { notebook: 'ready' },
     checks: { notebook: { environment: { python: { status: 'blocked' }, r: { status: 'ready' } } } }
   })
@@ -1223,7 +1350,15 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     ])
   })
   installed.delete('r')
-  expect(await both('prepare_notebook_environment', { language: 'python' })).toMatchObject({
+  expect(
+    await both('prepare_notebook_environment', {
+      language: 'python',
+      operationId: 'prepare-python'
+    })
+  ).toMatchObject({
+    operation: { language: 'python', status: 'completed' }
+  })
+  expect(await both('get_setup_status', { language: 'python' })).toMatchObject({
     readiness: { notebook: 'ready' },
     checks: { notebook: { environment: { python: { status: 'ready' }, r: { status: 'blocked' } } } }
   })
@@ -1231,10 +1366,8 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     ...Array(2).fill({ framework }),
     ...Array(2).fill({ action: 'agent-runtime', framework }),
     ...Array(2).fill({ action: 'kilo-free', framework }),
-    { language: 'r' },
-    { language: 'r' },
-    { language: 'python' },
-    { language: 'python' }
+    ...Array(2).fill({ language: 'r', action: 'prepare' }),
+    ...Array(2).fill({ language: 'python', action: 'prepare' })
   ])
 })
 

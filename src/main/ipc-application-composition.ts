@@ -186,6 +186,7 @@ export type ApplicationRuntimeInterfaces = {
     import('./notebook/runtime-service').NotebookRuntimeService,
     'inspectTaskExecution'
   >
+  taskNotebookEnvironment: import('./notebook/environment-lifecycle-workflows').ManagedNotebookSetup
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
@@ -1069,6 +1070,7 @@ export const createApplicationModules = async (
     },
     taskAgent: agentWorkflows.taskAgent,
     taskNotebook: notebookRuntime.notebookService,
+    taskNotebookEnvironment: notebookSurfaces.notebookEnvironmentLifecycle.managedSetup,
     taskControls: {
       specialists: {
         resolve: (reference) =>

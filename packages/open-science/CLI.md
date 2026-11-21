@@ -262,8 +262,19 @@ Before submitting research that needs Python or R, use `get_setup_status` with t
 A setup check installs nothing. If the requested environment is missing, `next` offers
 `prepare_notebook_environment` for that language and `open_setup` with `{"section":"notebook"}`
 for the same profile's Web Settings → Runtimes. The user can do the setup there or ask the Agent
-to handle it. Recheck the requested language after setup. Installation requests wait up to 600,000 ms
-by default; after a timeout, check the same profile and language before repeating.
+to handle it. Generate and retain a unique `operationId` (for example a UUID) before using
+`prepare_notebook_environment` with `language` and `operationId`. The tool observes for 1,000 ms by
+default; set `timeoutMs` to `0` to return immediately, or up to `30000` to wait longer. After a timeout
+or disconnect, call `get_notebook_environment_operation` with the original language and ID. The
+service keeps recent results in memory; `unconfirmed` means it cannot prove that operation's outcome.
+Recheck the selected language before requesting a new write.
+
+Use `cancel_notebook_environment_operation` with the same language and ID, then check the outcome.
+Use `repair_notebook_environment` with a new ID only when the user authorizes rebuilding the selected
+managed default environment. The service applies its existing recovery checks. Once a repair has
+started preparing to replace the environment, it must finish. After completion, use
+`get_setup_status` to verify language readiness. Setup, binding approval, and actual Notebook execution
+are separate checks.
 These tools are also available from `open-science tools call <name> --json` with JSON on stdin.
 
 ## First-run setup
@@ -1188,7 +1199,10 @@ service on the same machine with access to the input and delivery files.
 | `list_runtimes`                     | List available and detected Agent runtimes               |
 | `select_runtime`, `prepare_runtime` | Select or prepare an explicitly chosen runtime           |
 | `configure_provider`, `open_setup`  | Set up the keyless provider or open same-profile Web     |
-| `prepare_notebook_environment`      | Install the explicitly requested Python or R environment |
+| `prepare_notebook_environment`      | Start installation of the selected managed environment   |
+| `get_notebook_environment_operation` | Read original setup or repair progress by ID |
+| `cancel_notebook_environment_operation` | Request cancellation of the exact operation |
+| `repair_notebook_environment`       | Request a repair of the selected managed default        |
 | `list_projects`                     | List projects and IDs                                    |
 | `create_project`                    | Create a persistent project                              |
 | `update_project`                    | Update project metadata and Agent Context                |
