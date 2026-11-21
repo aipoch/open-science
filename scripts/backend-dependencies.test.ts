@@ -13,6 +13,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { externalAcpAvailable } from '../test/acp-agent-runtime'
@@ -357,6 +358,11 @@ describe('desktop-only dependency contents', () => {
         'resources/claude-acp/@agentclientprotocol+claude-agent-acp+0.70.0.patch'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
+      // These helpers take explicit staging roots and resolve their build tools from the checkout.
+      for (const name of ['pack-web-assets', 'desktop-film-compiler']) {
+        const helper = pathToFileURL(join(process.cwd(), 'scripts', name + '.mjs')).href
+        await put(`scripts/${name}.mjs`, `export * from ${JSON.stringify(helper)}`)
+      }
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
       await put('out/backend/dependencies.json', '[]')
@@ -412,6 +418,7 @@ describe('desktop-only dependency contents', () => {
         'out/pi-bootstrap/permission-guard.mjs',
         'out/pi-bootstrap/package-lock.json',
         'out/web/index.html',
+        'out/web/assets/module.js',
         'LICENSE',
         'packages/open-science/README.md',
         'packages/open-science/CLI.md',

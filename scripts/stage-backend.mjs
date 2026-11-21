@@ -19,6 +19,8 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { bundleDesktopFilmCompiler } from './desktop-film-compiler.mjs'
+import { packWebAssets } from './pack-web-assets.mjs'
 import { syncFileEvidenceCodec } from './sync-file-evidence-codec.mjs'
 import {
   assertPrivateDependencyChain,
@@ -81,7 +83,8 @@ await cp(backend, join(stage, 'out/backend'), {
 })
 // Pi dependencies are downloaded only after an explicit runtime install.
 await cp(join(root, 'out/pi-bootstrap'), join(stage, 'out/pi-bootstrap'), { recursive: true })
-await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
+if (values.desktop) await packWebAssets(join(root, 'out/web'), join(stage, 'out/web'))
+else await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) =>
@@ -126,6 +129,7 @@ await cp(join(root, 'packages/open-science/README.md'), join(stage, 'README.md')
 await cp(join(root, 'packages/open-science/CLI.md'), join(stage, 'CLI.md'))
 
 const installed = new Map()
+const packageEdges = new Map()
 const privateDependencies = new Set()
 async function packageDirectory(name, from) {
   let directory = from
@@ -154,8 +158,11 @@ async function copyDependency(name, from, destinationParent = stage) {
   const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
   let destination = join(destinationParent, 'node_modules', name)
   const atRoot = installed.get(join(stage, 'node_modules', name))
-  if (atRoot === pkg.version) return
-  if (!atRoot) destination = join(stage, 'node_modules', name)
+  if (!atRoot || atRoot === pkg.version) destination = join(stage, 'node_modules', name)
+  if (values.desktop) {
+    if (!packageEdges.has(destinationParent)) packageEdges.set(destinationParent, new Map())
+    packageEdges.get(destinationParent).set(name, destination)
+  }
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
   const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
@@ -230,6 +237,7 @@ if (!bundledDependencies.has('undici')) {
   await copyDependency('undici', root)
   dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
 }
+if (values.desktop) await bundleDesktopFilmCompiler(stage, packageEdges)
 // Fail if a new peer edge reintroduces development tooling into a shipped dependency closure.
 for (const name of ['prisma', '@prisma/engines', 'typescript']) {
   if ([...installed.keys()].some((path) => path.endsWith(join('node_modules', name))))
