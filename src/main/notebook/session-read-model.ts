@@ -5,6 +5,7 @@ import {
   type NotebookDependencyProjection
 } from '@aipoch/notebook-analysis'
 import type {
+  NotebookBackgroundTaskSnapshot,
   NotebookCell,
   NotebookEnvironmentStatus,
   NotebookKernelInstanceIdentity,
@@ -18,6 +19,7 @@ import type {
   NotebookSessionRequest,
   NotebookSessionState
 } from '../../shared/notebook'
+import { NOTEBOOK_STATE_HISTORY_PAGE_LIMIT } from '../../shared/notebook'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { resolveProjectId } from '../../shared/project-scope'
@@ -161,6 +163,52 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
+  private loadSessionDocument(session: Session): Promise<NotebookRunDocument> {
+    return this.options.repository.loadOrCreate({
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      workspaceCwd: session.cwd,
+      lane: session.lane
+    })
+  }
+
+  async backgroundTasks(
+    projectId: string,
+    sessionId: string,
+    session?: Session
+  ): Promise<NotebookBackgroundTaskSnapshot> {
+    // Live reads keep the same durable validation and initialization as Notebook state.
+    if (session) await this.loadSessionDocument(session)
+    const window = await this.options.repository.readSessionRunWindow(
+      projectId,
+      sessionId,
+      NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+    )
+    // Applying the byte cap can only remove candidates. An empty selection is already final.
+    if (!window.runs.some((run) => run.executionMode === 'background')) return { runs: [] }
+    return {
+      runs: this.limitRunWindow(window, true)
+        .runs.filter((run) => run.executionMode === 'background')
+        .map((run) => ({
+          runId: run.runId,
+          agentFrameId: run.agentFrameId,
+          title:
+            run.script
+              .split(/\r?\n/u)
+              .find((line) => line.trim())
+              ?.trim()
+              .slice(0, 80) || run.runId,
+          status: run.status,
+          kernelKind: run.kernelKind,
+          environment: run.environment,
+          startedAt: run.startedAt,
+          endedAt: run.endedAt,
+          cancellationRequestedAt: run.cancellationRequestedAt,
+          shellConcurrency: run.shellConcurrency
+        }))
+    }
+  }
+
   async state(
     session: Session,
     includeRunIds: readonly string[] = [],
@@ -168,12 +216,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historyBefore?: NotebookRunCursor,
     historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const document = await this.options.repository.loadOrCreate({
-      projectId: session.projectId,
-      sessionId: session.sessionId,
-      workspaceCwd: session.cwd,
-      lane: session.lane
-    })
+    const document = await this.loadSessionDocument(session)
     const snapshot = session.snapshot()
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead

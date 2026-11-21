@@ -34,6 +34,7 @@ const createRuntime = (
   retryResourceRelease: unavailable('retryResourceRelease'),
   runIndex: unavailable('runIndex'),
   state: unavailable('state'),
+  backgroundTasks: unavailable('backgroundTasks'),
   getMemoryPolicyState: unavailable('getMemoryPolicyState'),
   getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),
@@ -191,35 +192,6 @@ describe('Notebook command workflows', () => {
       memory
     )
     expect(getMemoryPolicyState).toHaveBeenCalledWith({ executionScope: 'darwin:host' })
-  })
-
-  it('projects only background task display and cancellation fields from the current window', async () => {
-    const task = {
-      runId: 'worker',
-      agentFrameId: 'child',
-      status: 'running',
-      kernelKind: 'bash',
-      startedAt: 12,
-      shellConcurrency: { limit: 2, slot: 1 },
-      cancellationRequestedAt: 18
-    }
-    const state = vi.fn<NotebookCommandRuntime['state']>().mockResolvedValue({
-      runs: [
-        { ...task, executionMode: 'foreground' },
-        {
-          ...task,
-          executionMode: 'background',
-          script: '\r\n   ' + 'x'.repeat(100) + '\nother',
-          text: { stdout: 'large output' }
-        }
-      ]
-    } as never)
-    const workflows = createNotebookCommandWorkflows(createRuntime({ state }))
-    const request = { projectId: 'project', sessionId: 'session', workspaceCwd: '/workspace' }
-    await expect(workflows.backgroundTasks(request)).resolves.toEqual({
-      runs: [{ ...task, title: 'x'.repeat(80) }]
-    })
-    expect(state).toHaveBeenCalledWith(request)
   })
 
   it('waits for missing-root acceptance before state inspection can create a session', async () => {

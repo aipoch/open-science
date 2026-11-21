@@ -110,6 +110,7 @@ import type {
   NotebookRunRecord,
   NotebookRunSummary,
   NotebookSessionReference,
+  NotebookBackgroundTaskSnapshot,
   NotebookSessionRequest,
   NotebookSessionState,
   NotebookSessionStateRequest,
@@ -2814,6 +2815,36 @@ class NotebookRuntimeService {
     )
   }
 
+  private async sessionForHistoryRead(
+    request: NotebookSessionRequest,
+    projectId: string
+  ): Promise<RuntimeSession | undefined> {
+    if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId))
+      return undefined
+    const session = await this.sessionLifecycle.ensure(request)
+    // Project durable history only after the lane's binding commit settles, including reads
+    // that arrived just before shutdown closed session creation admission.
+    await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
+    await this.runTerminalization.reconcilePending(session)
+    return session
+  }
+
+  async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      async () => {
+        const projectId = resolveProjectId(request, resolveProjectId(this.options))
+        const session = await this.sessionForHistoryRead(request, projectId)
+        return this.sessionReadModel.backgroundTasks(
+          session?.projectId ?? projectId,
+          session?.sessionId ?? request.sessionId,
+          session
+        )
+      },
+      false
+    )
+  }
+
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
     request: NotebookSessionStateRequest
@@ -2843,7 +2874,8 @@ class NotebookRuntimeService {
         if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
           throw new Error('Notebook state history cursor is invalid.')
         const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+        const session = await this.sessionForHistoryRead(request, projectId)
+        if (!session) {
           return this.sessionReadModel.importedState(
             request,
             runIds,
@@ -2852,11 +2884,6 @@ class NotebookRuntimeService {
             historyLimit
           )
         }
-        const session = await this.sessionLifecycle.ensure(request)
-        // Project durable history only after the lane's binding commit settles, including reads
-        // that arrived just before shutdown closed session creation admission.
-        await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
-        await this.runTerminalization.reconcilePending(session)
         return this.sessionReadModel.state(
           session,
           runIds,
