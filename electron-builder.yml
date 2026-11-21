@@ -150,6 +150,15 @@ nsis:
   license: LICENSE
   include: build/installer-license.nsh
 mac:
+  # The backend and bundled renderer own these copies; the Electron host guard checks macOS consumers.
+  files:
+    - '!node_modules/@babel/{code-frame,compat-data,core,generator,helper-compilation-targets,helper-globals}{,/**/*}'
+    - '!node_modules/@babel/{helper-module-imports,helper-module-transforms,helper-plugin-utils,helper-string-parser,helper-validator-identifier,helper-validator-option}{,/**/*}'
+    - '!node_modules/@babel/{helpers,parser,plugin-transform-modules-commonjs,template,traverse,types}{,/**/*}'
+    - '!node_modules/@jridgewell/{gen-mapping,remapping,resolve-uri,sourcemap-codec,trace-mapping}{,/**/*}'
+    - '!node_modules/{baseline-browser-mapping,browserslist,caniuse-lite,convert-source-map,diff,electron-to-chromium}{,/**/*}'
+    - '!node_modules/{entities,escalade,gensync,js-tokens,jsesc,json5}{,/**/*}'
+    - '!node_modules/{node-releases,parse5,picocolors,update-browserslist-db,zlibjs}{,/**/*}'
   extraResources:
     - from: out/desktop-service-launcher
       to: backend/desktop-service-launcher
