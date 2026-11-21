@@ -219,6 +219,12 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'
   },
+  'internal/model-request-stack-overflow': {
+    ...noticeCatalog.internal,
+    titleKey: 'Call stack limit reached during a model request',
+    descriptionKey:
+      'This turn stopped. Export diagnostics to help identify where the call stack limit was reached.'
+  },
   'internal/reconfigure': {
     ...noticeCatalog.internal,
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']

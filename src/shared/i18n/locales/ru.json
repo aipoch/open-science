@@ -8207,6 +8207,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "Сократите контекст диалога или удалите неподдерживаемые вложения перед повторной попыткой.",
     "The conversation was interrupted": "Диалог был прерван",
     "Resume the conversation to reconnect and continue.": "Возобновите диалог, чтобы восстановить соединение и продолжить.",
+    "Call stack limit reached during a model request": "При запросе к модели достигнут предел стека вызовов",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "Этот ход прерван. Экспортируйте диагностические данные, чтобы определить, где был превышен предел стека вызовов.",
     "An unexpected application error occurred": "Произошла непредвиденная ошибка приложения",
     "Report this error with its diagnostics to help us investigate.": "Сообщите об этой ошибке вместе с диагностическими данными, чтобы помочь нам разобраться.",
     "Remove attachments": "Удалить вложения",

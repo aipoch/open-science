@@ -504,6 +504,71 @@ describe('compatibility bridge upstream status preservation', () => {
     )
     expect(collectPromptFailureFacts(error).status).toBe(400)
   })
+  it('carries the safe explanation from a relayed provider error into the user notice', () => {
+    const safe = "Unsupported parameter: 'temperature'"
+    const body = JSON.stringify({
+      error: {
+        type: 'upstream_error',
+        message: safe + '. PRIVATE_PROMPT user@example.test',
+        status: 400
+      }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError('Internal error: ' + body, { message: body }))
+    )
+    expect(failure.responseMessage).toBe(safe)
+    expect(failure.reason).toBe('configuration/request-invalid')
+    expect(failure.diagnostics.status).toBe(400)
+    expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_PROMPT|user@example.test/)
+  })
+
+  it('attributes a confirmed upstream stack error to the model service', () => {
+    const body = JSON.stringify({
+      error: { type: 'upstream_error', message: 'Maximum call stack size exceeded', status: 400 }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError('Internal error: ' + body, { message: body }))
+    )
+    expect(failure).toMatchObject({
+      reason: 'service/provider-error',
+      responseMessage: 'Maximum call stack size exceeded'
+    })
+  })
+
+  it('recognizes the bridge response-format error relayed without an HTTP status', () => {
+    const body = JSON.stringify({
+      error: {
+        type: 'invalid_upstream_response',
+        message: 'The model service returned invalid JSON.'
+      }
+    })
+    const error = agentError('Internal error: ' + body, { message: body })
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.reason).toBe('service/response-invalid')
+    expect(failure.diagnostics.status).toBeUndefined()
+    expect(failure.responseMessage).toBeUndefined()
+  })
+
+  it('distinguishes a malformed upstream response from service downtime at the ACP boundary', () => {
+    const payload = JSON.stringify({
+      error: {
+        type: 'invalid_upstream_response',
+        message: 'The model service returned invalid JSON.'
+      }
+    })
+    const error = RequestError.internalError(
+      { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } } },
+      '502 Bad Gateway: ' + payload
+    )
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.responseMessage).toBeUndefined()
+    expect(failure).toMatchObject({
+      category: 'service',
+      reason: 'service/response-invalid',
+      diagnostics: { status: 502, code: 'invalid_upstream_response' }
+    })
+  })
+
   it('does not turn an unowned ACP payload into a provider error', () => {
     const error = RequestError.resourceNotFound('file:///missing')
     expect(classifyFailure(collectPromptFailureFacts(error)).category).toBe('internal')

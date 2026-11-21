@@ -195,8 +195,10 @@ describe('legacy failure migration', () => {
       { adapterCode: 'protocol', phase: 'missing-done' },
       { adapterCode: 'protocol', phase: 'missing-done' }
     ],
+    [{ providerExcerpt: 'Too many requests' }, { providerExcerpt: 'Too many requests' }],
+    [{ providerExcerpt: 'Too many requests. PRIVATE_PROMPT' }, {}],
     [{ adapterCode: 'arbitrary detail', phase: 'arbitrary detail' }, {}]
-  ])('restores only recognized harness adapter codes and phases', (input, expected) => {
+  ])('restores only recognized harness diagnostics', (input, expected) => {
     expect(
       sanitizeTurnOutcome({
         kind: 'failed',
@@ -208,6 +210,22 @@ describe('legacy failure migration', () => {
       settledAt: 1,
       failure: { category: 'service', diagnostics: { protocol: 'responses', ...expected } }
     })
+  })
+  it('restores a known provider explanation without its old echoed request', () => {
+    const raw = "Unsupported parameter: 'temperature'. PRIVATE_PROMPT"
+    const outcome = sanitizeTurnOutcome({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category: 'configuration',
+        responseMessage: raw,
+        diagnostics: { raw: 'Internal error: ' + raw }
+      }
+    })
+    expect(outcome).toMatchObject({
+      failure: { responseMessage: "Unsupported parameter: 'temperature'" }
+    })
+    expect(JSON.stringify(outcome)).not.toContain('PRIVATE_PROMPT')
   })
   it('drops a misplaced provider response from an internal failure', () => {
     const diagnostics = { code: '-32603', raw: 'Example adapter failure' }

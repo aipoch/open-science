@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -12,6 +13,7 @@ import type {
   AcpTurnTokenUsage
 } from '../../shared/acp-usage-contract'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { classifyFailure } from '../../shared/failure/classify'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
@@ -345,11 +347,28 @@ export class AcpPromptOutcomeFinalizer {
       const capturedContext = context?.captureTerminal()
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
-      safeLog('error', 'prompt failed', errorLogFields(error))
-      const failure = classifyFailure(collectPromptFailureFacts(error, handles))
+      const facts = collectPromptFailureFacts(error, handles)
+      const failure = classifyFailure(facts)
+      const excerpt = facts.providerExcerpt ?? providerErrorExcerpt(facts.responseMessage)
+      safeLog('error', 'prompt failed', {
+        ...(facts.origin === 'provider'
+          ? {
+              error: { ...(excerpt ? { message: excerpt } : {}), status: facts.status },
+              ...readHarnessErrorDiagnostics({ code: facts.code, requestId: facts.requestId }),
+              model: facts.model
+            }
+          : errorLogFields(error)),
+        ...eventIdentity,
+        phase: 'prompt',
+        reason: failure.reason
+      })
       if (failure.diagnostics.protocol)
         safeLog('error', 'model request failed', { reason: failure.reason, ...failure.diagnostics })
-      const text = failure.responseMessage ?? describePromptError(error, { model: handles.model })
+      const text =
+        (failure.reason === 'internal/model-request-stack-overflow'
+          ? failure.diagnostics.raw
+          : (failure.responseMessage ?? excerpt)) ??
+        describePromptError(error, { model: handles.model })
       const recoverable =
         failure.category === 'session'
           ? 'session-lost'

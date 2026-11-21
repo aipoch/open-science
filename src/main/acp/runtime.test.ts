@@ -27282,6 +27282,30 @@ describe('ACP runtime session management', () => {
     expect(errorEvent?.category).toBe('internal')
   })
 
+  it('keeps unrecognized provider wording out of the prompt failure log', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const message = 'Private account private@example.test echoed PRIVATE_PROMPT'
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw acp.RequestError.internalError({ service: 'provider', status: 503 }, message)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+    const calls = errorLogSpy.mock.calls.filter(([event]) => event === 'prompt failed')
+    expect(calls).toHaveLength(1)
+    expect(JSON.stringify(calls)).not.toMatch(/private@example|PRIVATE_PROMPT/)
+    expect(calls[0]?.[1]).toMatchObject({ reason: 'service/unavailable', error: { status: 503 } })
+  })
+
   it('logs the provider rejection reason (message/code/data) when a prompt fails', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'], {

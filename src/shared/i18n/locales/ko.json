@@ -7730,6 +7730,8 @@
     "Reduce the conversation context or remove unsupported attachments before trying again.": "대화 컨텍스트를 줄이거나 지원하지 않는 첨부 파일을 제거한 후 다시 시도하세요.",
     "The conversation was interrupted": "대화가 중단되었습니다",
     "Resume the conversation to reconnect and continue.": "대화를 재개하여 다시 연결하고 계속하세요.",
+    "Call stack limit reached during a model request": "모델 요청 중 호출 스택 한도에 도달했습니다",
+    "This turn stopped. Export diagnostics to help identify where the call stack limit was reached.": "이번 턴이 중단되었습니다. 호출 스택이 한도에 도달한 위치를 찾을 수 있도록 진단 정보를 내보내세요.",
     "An unexpected application error occurred": "예기치 않은 애플리케이션 오류가 발생했습니다",
     "Report this error with its diagnostics to help us investigate.": "조사에 도움이 되도록 진단 정보와 함께 이 오류를 신고하세요.",
     "Remove attachments": "첨부 파일 제거",

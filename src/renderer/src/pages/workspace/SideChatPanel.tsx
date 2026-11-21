@@ -267,7 +267,9 @@ const SideChatPanel = ({
       source: 'operation',
       occurredAt: 0,
       failure,
-      ...(failure.responseMessage ? {} : { summary: { title: view.error } })
+      ...(failure.responseMessage || failure.diagnostics.providerExcerpt
+        ? {}
+        : { summary: { title: view.error } })
     })
   }
   if (view.persistenceError)

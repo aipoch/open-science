@@ -1,6 +1,8 @@
+import { providerErrorExcerpt } from '../protocols/error-text'
 import { randomBytes } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
+  throwIfUpstreamError,
   responseEnvelope,
   responseFunctionIdentity,
   chatUsageToResponsesUsage,
@@ -67,6 +69,7 @@ export function createResponseStreamState(
     return item
   }
   const consume = (chunk: JsonObject): void => {
+    throwIfUpstreamError(chunk.error)
     usage = chatUsageToResponsesUsage(chunk.usage) ?? usage
     const finishReason = chunk.choices?.[0]?.finish_reason
     if (typeof finishReason === 'string' && finishReason.length > 0) {
@@ -189,7 +192,23 @@ export function createResponseStreamState(
       }
       const terminalResponse = { ...response, usage: usage ?? null }
       if (streamError instanceof ResponsesProtocolError) {
-        log.warn('bridge unsupported upstream output', { model, type: streamError.type })
+        if (streamError.type === 'upstream_error') {
+          const excerpt = providerErrorExcerpt(streamError.message)
+          log.warn('upstream reported a stream error', {
+            ...(excerpt ? { error: { message: excerpt } } : {}),
+            model,
+            phase: 'stream',
+            ...(streamError.message === 'Maximum call stack size exceeded'
+              ? { reason: 'stack-overflow' }
+              : {})
+          })
+        } else {
+          log.warn('bridge upstream protocol error', {
+            model,
+            phase: 'stream',
+            reason: streamError.type
+          })
+        }
         emit('response.failed', sequence++, {
           response: {
             ...response,
@@ -246,7 +265,9 @@ export function createResponseStreamState(
       }
 
       const toolCalls = output.filter((item) => item.type === 'function_call')
-      log.info('bridge turn completed (stream)', {
+      const status = events.at(-1)?.response?.status
+      log.info(status === 'completed' ? 'bridge turn completed (stream)' : 'bridge stream ended', {
+        status,
         model,
         textItems: output.filter((item) => item.type === 'message').length,
         toolCalls: toolCalls.length,

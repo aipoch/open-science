@@ -1,3 +1,5 @@
+export const CALL_STACK_LIMIT_MESSAGE = 'Maximum call stack size exceeded'
+
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
 
 export { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../claude-runtime'

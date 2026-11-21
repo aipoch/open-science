@@ -267,3 +267,82 @@ it('emits exactly one protocol failure for an unknown upstream finish reason', a
     adapter.dispose()
   }
 })
+
+it('reports an upstream stack overflow before DONE as a failed stream', async () => {
+  const adapter = createResponsesAdapter()
+  try {
+    const error = { type: 'invalid_request_error', message: 'Maximum call stack size exceeded' }
+    const partial = {
+      choices: [
+        {
+          delta: {
+            reasoning_content: 'unfinished reasoning',
+            tool_calls: [{ index: 0, id: 'call', function: { name: 'lookup', arguments: '{}' } }]
+          }
+        }
+      ]
+    }
+    const upstream = new Response(
+      [partial, { error }].map((chunk) => 'data: ' + JSON.stringify(chunk) + '\n\n').join('') +
+        'data: [DONE]\n\n'
+    )
+    const response = await adapter
+      .prepare({ scope: 'a', body: { input: 'hello', stream: true } })
+      .convert(upstream)
+    const events = (await response.text())
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)))
+    expect(
+      events.filter((event) =>
+        ['response.completed', 'response.failed', 'response.incomplete'].includes(event.type)
+      )
+    ).toEqual([
+      expect.objectContaining({
+        type: 'response.failed',
+        response: expect.objectContaining({
+          status: 'failed',
+          error: { type: 'upstream_error', message: error.message }
+        })
+      })
+    ])
+    expect(
+      adapter.prepare({ scope: 'a', body: { input: history } }).request.messages[0]
+        .reasoning_content
+    ).toBeUndefined()
+  } finally {
+    adapter.dispose()
+  }
+})
+
+it.each([
+  ['<private gateway details>', 'The model service returned invalid JSON.'],
+  ['[]', 'The model service returned a JSON value where an object was expected.']
+])(
+  'distinguishes malformed upstream event data (%s) from an interrupted connection',
+  async (data, message) => {
+    const adapter = createResponsesAdapter()
+    try {
+      const turn = adapter.prepare({ body: { input: 'hello', stream: true } })
+      const response = await turn.convert(new Response('data: ' + data + '\n\ndata: [DONE]\n\n'))
+      const text = await response.text()
+      const terminal = text
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => JSON.parse(line.slice(6)))
+        .at(-1)
+      expect(terminal).toMatchObject({
+        type: 'response.failed',
+        response: {
+          error: {
+            type: 'invalid_upstream_response',
+            message
+          }
+        }
+      })
+      expect(text).not.toContain('private gateway details')
+    } finally {
+      adapter.dispose()
+    }
+  }
+)
