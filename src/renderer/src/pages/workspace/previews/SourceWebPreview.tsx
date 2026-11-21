@@ -130,6 +130,7 @@ const SourceWebPreviewContent = ({
   const closeLabel = t('Close preview of {{title}}', { title: item.title })
   const [nativeView] = useState(() => Boolean(window.api?.getRuntimeVersions?.().electron))
   const webviewRef = useRef<WebviewTag | null>(null)
+  const [guestStartUrl, setGuestStartUrl] = useState(sourceUrl.href)
   const [frameAttempt, setFrameAttempt] = useState(0)
   const [progressRun, setProgressRun] = useState(0)
   const [loadState, setLoadState] = useState<SourcePreviewLoadState>({
@@ -201,6 +202,11 @@ const SourceWebPreviewContent = ({
     finishProgress()
   }
 
+  const displayedUrl =
+    'currentUrl' in loadState
+      ? (parseHttpsSourceUrl(loadState.currentUrl)?.href ?? sourceUrl.href)
+      : sourceUrl.href
+
   const retry = (): void => {
     setLoadState((current) => ({ ...current, phase: 'loading' }))
     setProgress(INITIAL_PROGRESS)
@@ -209,15 +215,12 @@ const SourceWebPreviewContent = ({
     if (nativeView && !(loadState.phase === 'failed' && loadState.failure === 'process-gone'))
       webviewRef.current?.reload()
     else {
+      if (nativeView) setGuestStartUrl(displayedUrl)
       webviewRef.current = null
       setFrameAttempt((current) => current + 1)
     }
   }
 
-  const displayedUrl =
-    'currentUrl' in loadState
-      ? (parseHttpsSourceUrl(loadState.currentUrl)?.href ?? sourceUrl.href)
-      : sourceUrl.href
   const restoreSourceFocus = useCallback(
     (restoreDefault: () => void): void => {
       if (!nativeView) {
@@ -333,7 +336,7 @@ const SourceWebPreviewContent = ({
             <PreviewActionMenuAdapterProvider targetId={`source-content:${item.id}`}>
               <SourceWebview
                 key={frameAttempt}
-                sourceUrl={sourceUrl.href}
+                sourceUrl={guestStartUrl}
                 title={t('Source preview: {{title}}', { title: item.title })}
                 webviewRef={webviewRef}
                 onState={handleState}

@@ -96,14 +96,14 @@ const createOfficePreviewRequestId = (hostId: string): string => {
   return `${hostId}:${uniquePart ?? `${Date.now()}-${fallbackOfficePreviewRequestSequence}`}`
 }
 
-const OfficeDownloadFallback = ({
+const OfficeFileFallback = ({
   item,
   source,
   title,
   message
 }: {
   item: PreviewFileItem
-  source: OfficePreviewSource
+  source?: OfficePreviewSource
   title: string
   message: string
 }): React.JSX.Element => {
@@ -116,43 +116,45 @@ const OfficeDownloadFallback = ({
       title={title}
       message={message}
       action={
-        <ManagedFileDownloadButton
-          source={source}
-          path={item.path}
-          projectId={item.projectId}
-          fileId={item.managedFileId}
-          versionId={item.selectedVersionId}
-          versionNumber={runtime?.downloadVersionContext?.versionNumber}
-          latestVersionId={runtime?.downloadVersionContext?.latestVersionId}
-          latestVersionNumber={runtime?.downloadVersionContext?.latestVersionNumber}
-          suggestedName={item.name}
-          appearance="primary"
-          wrapperClassName="mt-3"
-        />
+        source && (
+          <ManagedFileDownloadButton
+            source={source}
+            path={item.path}
+            projectId={item.projectId}
+            fileId={item.managedFileId}
+            versionId={item.selectedVersionId}
+            versionNumber={runtime?.downloadVersionContext?.versionNumber}
+            latestVersionId={runtime?.downloadVersionContext?.latestVersionId}
+            latestVersionNumber={runtime?.downloadVersionContext?.latestVersionNumber}
+            suggestedName={item.name}
+            appearance="primary"
+            wrapperClassName="mt-3"
+          />
+        )
       }
     />
   )
 }
 
-const getOfficeDownloadMessage = (
+const getOfficeFileFailureMessage = (
   error: OfficePreviewErrorCode | undefined,
   t: ReturnType<typeof useTranslation>['t']
 ): string | undefined => {
   switch (error) {
     case 'ENCRYPTED_PACKAGE':
-      return t('This file contains encrypted content. Open it in your Office app.')
+      return t('This file contains encrypted content.')
     case 'EXTERNAL_RESOURCES':
-      return t(
-        'This file uses external content that the preview cannot load. Open it in your Office app.'
-      )
+      return t('This file uses external content that the preview cannot load.')
     case 'UNSUPPORTED_FORMAT':
-      return t('This Office format cannot be previewed. Open the file in your Office app.')
+      return t('This Office format cannot be previewed.')
     case 'PREVIEW_PROCESS_NOT_ISOLATED':
-      return t('The secure Office preview could not start. Open the file in your Office app.')
+      return t('The secure Office preview could not start.')
     case 'INVALID_PACKAGE':
-      return t('This Office file is damaged or unsupported. Download it to view.')
+      return t('This Office file is damaged or unsupported.')
     case 'RESOURCE_LIMIT_EXCEEDED':
-      return t('This Office file exceeds the safe preview limits. Download it to view.')
+      return t('This Office file exceeds the safe preview limits.')
+    default:
+      return undefined
   }
 }
 
@@ -472,11 +474,11 @@ const RemoteOfficePreviewContent = ({
 
   if (visibleState.kind === 'too-large') {
     return (
-      <OfficeDownloadFallback
+      <OfficeFileFallback
         item={item}
-        source={source}
+        source={staged ? undefined : source}
         title={t('File too large to preview')}
-        message={t('This file is larger than 40 MB. Download it to view.')}
+        message={t('This file is larger than 40 MB.')}
       />
     )
   }
@@ -490,12 +492,12 @@ const RemoteOfficePreviewContent = ({
         />
       )
     }
-    const downloadMessage = getOfficeDownloadMessage(visibleState.error, t)
+    const downloadMessage = getOfficeFileFailureMessage(visibleState.error, t)
     if (downloadMessage) {
       return (
-        <OfficeDownloadFallback
+        <OfficeFileFallback
           item={item}
-          source={source}
+          source={staged ? undefined : source}
           title={t('Preview unavailable')}
           message={downloadMessage}
         />
@@ -575,13 +577,11 @@ export const OfficePreviewContent = ({
   }
   if (!window.api.officePreview) {
     return (
-      <OfficeDownloadFallback
+      <OfficeFileFallback
         item={item}
-        source={source}
+        source={staged ? undefined : source}
         title={t('Preview unavailable')}
-        message={t(
-          'Office preview is only available in the desktop app. Download this file to view it.'
-        )}
+        message={t('Office preview is only available in the desktop app.')}
       />
     )
   }

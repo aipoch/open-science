@@ -179,6 +179,14 @@ describe('source webview lifetime', () => {
   it('replaces a terminated guest on retry', async () => {
     await render()
     const guest = container.querySelector('webview')!
+    const currentUrl = 'https://example.com/supplement'
+    await act(async () =>
+      fire(guest, 'did-frame-navigate', {
+        isMainFrame: true,
+        url: currentUrl,
+        httpResponseCode: 200
+      })
+    )
     await act(async () => fire(guest, 'render-process-gone', {}))
     expect(container.textContent).toContain('The page preview stopped unexpectedly.')
     const retry = [...container.querySelectorAll('button')].find(
@@ -186,7 +194,7 @@ describe('source webview lifetime', () => {
     )!
     await act(async () => retry.click())
     expect(guest.isConnected).toBe(false)
-    expect(container.querySelector('webview')?.getAttribute('src')).toBe(item.url)
+    expect(container.querySelector('webview')?.getAttribute('src')).toBe(currentUrl)
   })
   it('ignores aborted and child-frame failures and retains HTTP errors through hash changes', async () => {
     await render()
