@@ -2,6 +2,11 @@ name: Linux ordinary quit acceptance
 on:
   workflow_dispatch:
     inputs:
+      desktop:
+        description: Run the test in an Ubuntu Docker container or on the native runner
+        type: choice
+        options: [native, docker]
+        default: native
       candidate_run:
         description: Reuse the native candidate artifacts from this same diagnostic workflow
         required: false
@@ -65,6 +70,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FEED: ${{ matrix.feed }}
           ARCH: ${{ matrix.arch }}
+          DESKTOP: ${{ inputs.desktop }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -76,5 +82,13 @@ jobs:
           chmod u+x dist/*.AppImage
           for kind in ordinary file link; do
             if [[ "$kind" = ordinary ]]; then unset QA_OPEN_KIND; else export QA_OPEN_KIND="$kind"; fi
-            xvfb-run -a dbus-run-session -- sh scripts/ci/probe-quit-session.sh scripts/ci/probe-ordinary-quit.cjs "$PWD"/dist/*.AppImage "$dir" "$FEED"
+            test=(xvfb-run -a dbus-run-session -- sh scripts/ci/probe-quit-session.sh scripts/ci/probe-ordinary-quit.cjs "$PWD"/dist/*.AppImage "$dir" "$FEED")
+            if [[ "$DESKTOP" = docker ]]; then
+              if [[ "$kind" = ordinary ]]; then docker build -t quit-ubuntu:acceptance - < scripts/ci/probe-quit.Dockerfile; fi
+              docker run --init --rm --user "$(id -u):$(id -g)" --cap-drop ALL --shm-size=512m \
+                -e APPIMAGE_EXTRACT_AND_RUN=1 -e QA_REPO="$PWD" -e QA_OPEN_KIND \
+                -v "$PWD:$PWD:ro" -v "$dir:$dir:ro" -w "$PWD" quit-ubuntu:acceptance "${test[@]}"
+            else
+              "${test[@]}"
+            fi
           done
