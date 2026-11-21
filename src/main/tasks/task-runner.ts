@@ -225,6 +225,12 @@ type TaskContinuationTracker = <Result extends { stopReason: string }>(
 ) => Promise<Result>
 
 type TaskAgentPort = {
+  questions?: {
+    list(sessionId: string): import('../acp/elicitation-owner').LiveTaskQuestion[]
+    respond(
+      input: import('../acp/question-continuation-workflow').TaskQuestionOwnerResponse
+    ): Promise<void>
+  }
   setContinuationTracker?(tracker: TaskContinuationTracker): () => void
   withSessionAvailable<Result>(
     projectId: string,

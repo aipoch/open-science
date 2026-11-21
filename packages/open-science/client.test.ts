@@ -215,6 +215,7 @@ describe('OpenScienceClient', () => {
         'getInteraction',
         'setRunInteractionMode',
         'respondPermission',
+        'answerQuestion',
         'respondSessionPlan',
         'submitRun',
         'getSubmission',

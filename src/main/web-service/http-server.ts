@@ -26,6 +26,7 @@ export type {
 } from './external-access-contract'
 
 import { WebSocket, WebSocketServer } from 'ws'
+import { z } from 'zod'
 
 import {
   createLogger,
@@ -43,7 +44,11 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { TaskInteractionScope, TaskPermissionResponse } from '../../shared/task-interaction'
+import type {
+  TaskInteractionScope,
+  TaskPermissionResponse,
+  TaskQuestionResponse
+} from '../../shared/task-interaction'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
@@ -186,6 +191,8 @@ type WebServerOptions = {
         | 'getInteraction'
         | 'respondPermission'
         | 'setRunInteractionMode'
+        | 'supportsTaskQuestions'
+        | 'answerQuestion'
         | 'resolveActiveRun'
         | 'getProjectSessionDefaults'
         | 'updateProjectSessionDefaults'
@@ -633,6 +640,8 @@ const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'submission_unavailable') return 503
   if (
     error.code === 'submission_conflict' ||
+    error.code === 'interaction_revision_conflict' ||
+    error.code === 'question_already_answered' ||
     error.code === 'notebook_environment_operation_conflict' ||
     error.code === 'notebook_continuation_expired' ||
     error.code === 'session_read_only' ||
@@ -729,6 +738,35 @@ const parseTaskInteractionScope = (params: URLSearchParams): TaskInteractionScop
   if (!params.has('runId') && projectId && sessionId) return { projectId, sessionId }
   throw new TaskApiError('invalid_request', 'Supply runId or both projectId and sessionId.')
 }
+
+const questionAnswer = z
+  .strictObject({
+    expectedRevision: z.number().int().nonnegative(),
+    expectedBranchId: z.string().trim().min(1).max(1000),
+    source: z.enum(['user_relay', 'known_context']),
+    action: z.enum(['accept', 'decline']),
+    answers: z
+      .array(
+        z.union([
+          z.strictObject({ fieldId: z.string().min(1).max(1000), status: z.literal('skipped') }),
+          z.strictObject({
+            fieldId: z.string().min(1).max(1000),
+            status: z.literal('answered').optional(),
+            value: z.union([
+              z.string().max(4000),
+              z.number(),
+              z.boolean(),
+              z.array(z.string().max(1000)).max(64)
+            ])
+          })
+        ])
+      )
+      .max(16)
+      .optional()
+  })
+  .refine(
+    (body) => body.action === 'accept' || !body.answers?.length
+  ) satisfies z.ZodType<TaskQuestionResponse>
 
 class ExternalAuthorizationExpiredError extends Error {
   constructor() {
@@ -1574,6 +1612,31 @@ const handleTaskApiRequest = async (
         reply(200, { data })
         return true
       }
+      const questionAnswerMatch = url.pathname.match(/^\/api\/v1\/interactions\/([^/]+)\/answer$/)
+      if (questionAnswerMatch && request.method === 'POST' && tasks.answerQuestion) {
+        if (!canRelayTaskInteraction(callerContext))
+          throw new TaskApiError(
+            'task_relay_required',
+            'Question responses require a local authenticated Task connection.'
+          )
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const result = questionAnswer.safeParse(
+          await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
+        )
+        if (!result.success)
+          throw new TaskApiError(
+            'invalid_request',
+            'Specify the reviewed question revision, active branch, and a valid answer or decline decision.'
+          )
+        reply(200, {
+          data: await tasks.answerQuestion(
+            decodeURIComponent(questionAnswerMatch[1]),
+            scope,
+            result.data
+          )
+        })
+        return true
+      }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
       if (cancelRunMatch && request.method === 'POST') {
         await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
@@ -1927,6 +1990,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                     : []),
                   ...(auth.localBearer && options.tasks.respondPermission
                     ? ['task-permissions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsTaskQuestions?.()
+                    ? ['task-questions']
                     : []),
                   ...(auth.localBearer && options.tasks.supportsNotebookContinuation?.()
                     ? ['notebook-continuation']

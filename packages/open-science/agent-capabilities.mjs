@@ -508,6 +508,52 @@ registerResource(
   { serviceCapability: 'task-delegation' }
 )
 registerResource(
+  'answer_question',
+  'research',
+  'Answer the exact AskUser question read through get_interaction. Use known_context only for information the user already supplied; otherwise ask the user and relay their answer. If the answer is unknown, leave the question pending. An answer does not authorize tools or grant permissions.',
+  {
+    ...interactionScope,
+    interactionId: id('AskUser interaction ID from get_interaction.'),
+    expectedRevision,
+    expectedBranchId: id('Branch ID from the reviewed interaction.'),
+    source: z.enum(['user_relay', 'known_context']),
+    action: z.enum(['accept', 'decline']),
+    answers: z
+      .array(
+        z.union([
+          z.strictObject({ fieldId: id('Field ID.'), status: z.literal('skipped') }),
+          z.strictObject({
+            fieldId: id('Field ID.'),
+            status: z.literal('answered').optional(),
+            value: z.union([
+              z.string().max(4000),
+              z.number(),
+              z.boolean(),
+              z.array(z.string().max(1000)).max(64)
+            ])
+          })
+        ])
+      )
+      .max(16)
+      .optional()
+  },
+  write,
+  (client, { runId, projectId, sessionId, interactionId, ...response }, options) =>
+    client.answerQuestion(
+      interactionId,
+      runId ? { runId } : { projectId, sessionId },
+      response,
+      options
+    ),
+  (input, context) => {
+    requireInteractionScope(input, context)
+    if (input.action === 'decline' && input.answers?.length) {
+      context.addIssue({ code: 'custom', message: 'Declining does not take field answers.' })
+    }
+  },
+  { serviceCapability: 'task-questions' }
+)
+registerResource(
   'get_plan',
   'research',
   'Read the current session plan, artifact version and revision, or null when there is no plan.',

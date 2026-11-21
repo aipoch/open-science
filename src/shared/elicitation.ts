@@ -81,6 +81,19 @@ export type ElicitationProjection = {
   // Recovery belongs to this question, not the Session's latest operation error. Main alone
   // grants retry permission after checking both the cause and delivery acceptance.
   continuationRecovery?: { error: string; retryable?: true }
+  // Local Task routing and answer receipt. Excluded from Session packages and Forks.
+  taskRequestId?: string
+  taskResponse?: TaskQuestionReceipt
+}
+
+export type TaskQuestionSource = 'user_relay' | 'known_context'
+
+export type TaskQuestionReceipt = {
+  source: TaskQuestionSource
+  action: 'accept' | 'decline'
+  reviewedRevision: number
+  checksum: string
+  continuationId?: string
 }
 
 export type PendingElicitationRequest = {
@@ -795,12 +808,38 @@ export const sanitizeElicitationProjection = (
   const recoveryError = isRecord(value.continuationRecovery)
     ? cappedString(value.continuationRecovery.error, MAX_ELICITATION_MESSAGE_CHARS)
     : undefined
+  const taskRequestId = boundedString(value.taskRequestId, MAX_ELICITATION_LABEL_CHARS)
+  const receipt = isRecord(value.taskResponse) ? value.taskResponse : undefined
+  const recordedAction = state === 'answered' ? 'accept' : 'decline'
+  const taskResponse: TaskQuestionReceipt | undefined =
+    (state === 'answered' || state === 'declined') &&
+    receipt &&
+    (receipt.source === 'user_relay' || receipt.source === 'known_context') &&
+    receipt.action === recordedAction &&
+    typeof receipt.reviewedRevision === 'number' &&
+    Number.isSafeInteger(receipt.reviewedRevision) &&
+    receipt.reviewedRevision >= 0 &&
+    typeof receipt.checksum === 'string' &&
+    /^[a-f0-9]{64}$/.test(receipt.checksum)
+      ? {
+          source: receipt.source,
+          action: recordedAction,
+          reviewedRevision: receipt.reviewedRevision,
+          checksum: receipt.checksum,
+          ...(typeof receipt.continuationId === 'string' &&
+          /^askuser_[a-f0-9]{64}$/.test(receipt.continuationId)
+            ? { continuationId: receipt.continuationId }
+            : {})
+        }
+      : undefined
 
   return {
     message,
     fields,
     state,
     ...(durable ? { durable } : {}),
+    ...(taskRequestId ? { taskRequestId } : {}),
+    ...(taskResponse && (taskRequestId || durable) ? { taskResponse } : {}),
     ...(state === 'pending' && draftAnswers && draftAnswers.length > 0
       ? { draftAnswers: normalizeAgentUserChoiceAnswers(fields, draftAnswers) }
       : {}),

@@ -88,6 +88,7 @@ import type {
 import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpElicitationOwner } from './elicitation-owner'
+import type { TaskQuestionOwnerResponse } from './question-continuation-workflow'
 import type { AcpGenerationActivityOwner } from './generation-activity-owner'
 import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
@@ -2174,6 +2175,22 @@ class AcpRuntime {
     continuePrepared = false
   ): Promise<AcpStateSnapshot> {
     return this.questionContinuations.respond(response, continuePrepared)
+  }
+
+  listTaskQuestions(sessionId: string): ReturnType<AcpElicitationOwner['listTaskQuestions']> {
+    return this.elicitationOwner.listTaskQuestions(sessionId)
+  }
+
+  respondToTaskQuestion(input: TaskQuestionOwnerResponse): Promise<void> {
+    return this.questionContinuations.respondToTask(
+      input,
+      (request, promptAttemptId, onProviderDispatched) =>
+        this.sendDurableAppContinuation(request, {
+          promptAttemptId,
+          onProviderDispatched
+        }),
+      this.options.trackTaskContinuation
+    )
   }
 
   requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {

@@ -549,6 +549,14 @@ export class OpenScienceClient {
     const query = new URLSearchParams(scope)
     return this.request(
       `/api/v1/interactions/${encodeURIComponent(interactionId)}/permission?${query}`,
+      { ...options, method: 'POST', body: response }
+    )
+  }
+
+  answerQuestion(interactionId, scope, response, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}/answer?${query}`,
       {
         ...options,
         method: 'POST',

@@ -381,6 +381,7 @@ export type TaskApiErrorCode =
   | 'interaction_not_found'
   | 'interaction_revision_conflict'
   | 'task_delegation_required'
+  | 'question_already_answered'
   | 'notebook_environment_operation_conflict'
   | 'submission_conflict'
   | 'submission_unavailable'

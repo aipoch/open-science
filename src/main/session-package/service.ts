@@ -518,15 +518,34 @@ const portableMessage = <T extends PersistedChatSession['messages'][number]>(mes
 // in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
 // A similarly named key inside research evidence must still be inspected and rejected when
 // sensitive, never silently removed from the evidence.
+const portableActivity = <T extends NonNullable<PersistedChatSession['activities']>[number]>(
+  activity: T
+): T =>
+  activity.elicitation && (activity.elicitation.taskResponse || activity.elicitation.taskRequestId)
+    ? {
+        ...activity,
+        elicitation: {
+          ...activity.elicitation,
+          taskRequestId: undefined,
+          taskResponse: undefined,
+          durable: undefined,
+          continuationPending: undefined,
+          continuationRecovery: undefined
+        }
+      }
+    : activity
+
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
   parentSessionId: undefined,
   deletedDiscussionSourceId: undefined,
   messages: session.messages.map(portableMessage),
+  activities: session.activities?.map(portableActivity),
   conversationGraph: session.conversationGraph
     ? {
         ...session.conversationGraph,
-        messages: session.conversationGraph.messages.map(portableMessage)
+        messages: session.conversationGraph.messages.map(portableMessage),
+        activities: session.conversationGraph.activities.map(portableActivity)
       }
     : undefined,
   promptPreparation: undefined,
@@ -578,6 +597,23 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   )
     return true
   if (JSON.stringify(session).includes('session-replay:')) return true
+  if (
+    [
+      session.activities,
+      isRecord(session.conversationGraph) ? session.conversationGraph.activities : undefined
+    ].some(
+      (activities) =>
+        Array.isArray(activities) &&
+        activities.some(
+          (activity) =>
+            isRecord(activity) &&
+            isRecord(activity.elicitation) &&
+            (Object.hasOwn(activity.elicitation, 'taskRequestId') ||
+              Object.hasOwn(activity.elicitation, 'taskResponse'))
+        )
+    )
+  )
+    return true
   const runtimeContext = session.runtimeContext
   if (
     (isRecord(runtimeContext) &&
