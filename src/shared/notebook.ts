@@ -622,6 +622,22 @@ export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
   acceptedAt: number
 }
 
+// Display fields for the Session background-task list. Large code and output stay in Notebook.
+export type NotebookBackgroundTask = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'agentFrameId'
+  | 'status'
+  | 'kernelKind'
+  | 'environment'
+  | 'startedAt'
+  | 'endedAt'
+  | 'cancellationRequestedAt'
+  | 'shellConcurrency'
+> & { title: string }
+
+export type NotebookBackgroundTaskSnapshot = { runs: NotebookBackgroundTask[] }
+
 export type NotebookProjectActivityRequest = ProjectIdScope
 
 export type NotebookProjectActivity = Readonly<{

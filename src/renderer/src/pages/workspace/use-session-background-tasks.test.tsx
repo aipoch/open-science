@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
-import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import type { NotebookBackgroundTask, NotebookSessionReference } from '../../../../shared/notebook'
 import {
   useSessionBackgroundTasks,
   type SessionBackgroundTasks
@@ -23,21 +23,13 @@ const notebook: NotebookSessionReference = {
   runJsonPath: '/notebook/run.json'
 }
 
-const run = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
+const run = (overrides: Partial<NotebookBackgroundTask> = {}): NotebookBackgroundTask => ({
   runId: 'run-1',
   agentFrameId: 'frame-1',
-  executionMode: 'background',
-  cellId: 'cell-1',
-  source: 'agent',
   kernelKind: 'python',
-  script: 'donor_level_qc()',
+  title: 'donor_level_qc()',
   status: 'running',
   startedAt: Date.now() - 5_000,
-  text: { stdout: '', stderr: '', traceback: '', plain: [] },
-  outputs: [],
-  artifacts: [],
-  workingFiles: [],
-  inputFiles: [],
   environment: 'Python 3.12',
   ...overrides
 })
@@ -161,7 +153,7 @@ describe('useSessionBackgroundTasks', () => {
     const state = vi.fn().mockResolvedValue({ runs: [run()] })
     stubApi({
       backgroundResultDelivery: emptyDeliveryApi(),
-      notebook: { state, onChanged: vi.fn(() => () => undefined) }
+      notebook: { backgroundTasks: state, onChanged: vi.fn(() => () => undefined) }
     })
     await mount('session-1', 'project-1', notebook)
     expect(state).toHaveBeenCalledTimes(1)
@@ -196,11 +188,8 @@ describe('useSessionBackgroundTasks', () => {
     stubApi({
       backgroundResultDelivery: emptyDeliveryApi(),
       notebook: {
-        state: vi.fn().mockResolvedValue({
-          runs: [
-            run({ startedAt: runStart }),
-            run({ runId: 'foreground', executionMode: 'foreground' })
-          ]
+        backgroundTasks: vi.fn().mockResolvedValue({
+          runs: [run({ startedAt: runStart })]
         }),
         onChanged: vi.fn(() => () => undefined),
         cancelBackgroundRun: vi.fn()
@@ -237,7 +226,7 @@ describe('useSessionBackgroundTasks', () => {
         onChanged: vi.fn(() => () => undefined)
       },
       notebook: {
-        state: vi.fn().mockResolvedValue({ runs: [run({ status: 'completed' })] }),
+        backgroundTasks: vi.fn().mockResolvedValue({ runs: [run({ status: 'completed' })] }),
         onChanged: vi.fn(() => () => undefined)
       },
       compute: {
@@ -259,7 +248,11 @@ describe('useSessionBackgroundTasks', () => {
           .mockResolvedValue({ active: [], awaitingAgent: [jobDelivery()] }),
         onChanged: vi.fn(() => () => undefined)
       },
-      notebook: { state, onChanged: vi.fn(() => () => undefined), cancelBackgroundRun: vi.fn() },
+      notebook: {
+        backgroundTasks: state,
+        onChanged: vi.fn(() => () => undefined),
+        cancelBackgroundRun: vi.fn()
+      },
       compute: {
         jobsList: vi
           .fn()
@@ -285,7 +278,7 @@ describe('useSessionBackgroundTasks', () => {
         onChanged: vi.fn(() => () => undefined)
       },
       notebook: {
-        state: vi.fn().mockResolvedValue({
+        backgroundTasks: vi.fn().mockResolvedValue({
           runs: [
             run({ status: 'completed', endedAt: Date.now() }),
             run({ runId: 'live-run', startedAt: Date.now() - 1_000 })
@@ -306,7 +299,7 @@ describe('useSessionBackgroundTasks', () => {
     stubApi({
       backgroundResultDelivery: emptyDeliveryApi(),
       notebook: {
-        state: vi.fn().mockResolvedValue({
+        backgroundTasks: vi.fn().mockResolvedValue({
           runs: [run({ status: 'completed', endedAt: Date.now() })]
         }),
         onChanged: vi.fn(() => () => undefined),
@@ -327,7 +320,7 @@ describe('useSessionBackgroundTasks', () => {
     stubApi({
       backgroundResultDelivery: emptyDeliveryApi(),
       notebook: {
-        state: vi.fn().mockResolvedValue({
+        backgroundTasks: vi.fn().mockResolvedValue({
           runs: [run({ status: 'completed', endedAt: Date.now() })]
         }),
         onChanged: vi.fn(() => () => undefined),
@@ -355,7 +348,7 @@ describe('useSessionBackgroundTasks', () => {
     stubApi({
       backgroundResultDelivery: emptyDeliveryApi(),
       notebook: {
-        state: vi.fn().mockResolvedValue({ runs: [run()] }),
+        backgroundTasks: vi.fn().mockResolvedValue({ runs: [run()] }),
         onChanged: vi.fn(() => () => undefined),
         cancelBackgroundRun: vi.fn()
       },
@@ -392,7 +385,7 @@ describe('useSessionBackgroundTasks', () => {
     stubApi({
       backgroundResultDelivery: { getSessionActivity, onChanged },
       notebook: {
-        state: vi.fn().mockResolvedValue({ runs: [] }),
+        backgroundTasks: vi.fn().mockResolvedValue({ runs: [] }),
         onChanged: vi.fn(() => () => undefined),
         cancelBackgroundRun: vi.fn()
       }
@@ -412,9 +405,9 @@ describe('useSessionBackgroundTasks', () => {
     'coalesces events and polling during an in-flight read, then handles %s',
     async (outcome) => {
       vi.useFakeTimers()
-      let resolve!: (value: { runs: NotebookRunRecord[] }) => void
+      let resolve!: (value: { runs: NotebookBackgroundTask[] }) => void
       let reject!: (error: Error) => void
-      const pending = new Promise<{ runs: NotebookRunRecord[] }>((done, fail) => {
+      const pending = new Promise<{ runs: NotebookBackgroundTask[] }>((done, fail) => {
         resolve = done
         reject = fail
       })
@@ -434,7 +427,7 @@ describe('useSessionBackgroundTasks', () => {
       })
       stubApi({
         notebook: {
-          state,
+          backgroundTasks: state,
           onChanged: (callback: typeof changed) => {
             changed = callback
             return stopNotebook

@@ -26,6 +26,7 @@ import type {
   FinishNotebookCodeCellRequest,
   NotebookAvailableEvent,
   NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundTaskSnapshot,
   NotebookBackgroundRunResult,
   NotebookChangedEvent,
   NotebookNamespaceRequest,
@@ -97,6 +98,9 @@ export const contracts = {
   'notebook.execute': callable<
     (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   >()('notebook', ['notebook:execute']),
+  'notebook.backgroundTasks': callable<
+    (request: NotebookSessionRequest) => Promise<NotebookBackgroundTaskSnapshot>
+  >()('notebook', ['notebook:background-tasks']),
   'notebook.getBackgroundRun': callable<
     (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
   >()('notebook', ['notebook:background-run']),

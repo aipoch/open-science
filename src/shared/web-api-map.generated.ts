@@ -167,6 +167,7 @@ export const WEB_INVOKE_CHANNELS = {
   'memory.updateEntry': 'memory:update-entry',
   'notebook.abortCodeCell': 'notebook:abort-code-cell',
   'notebook.appendCodeCell': 'notebook:append-code-cell',
+  'notebook.backgroundTasks': 'notebook:background-tasks',
   'notebook.beginCodeCell': 'notebook:begin-code-cell',
   'notebook.cancelBackgroundRun': 'notebook:cancel-background-run',
   'notebook.execute': 'notebook:execute',

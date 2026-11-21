@@ -27,6 +27,7 @@ import type {
   FinishNotebookCodeCellRequest,
   NotebookCell,
   NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundTaskSnapshot,
   NotebookBackgroundRunResult,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
@@ -122,6 +123,7 @@ type NotebookCommandWorkflows = {
   terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+  backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot>
   memoryPolicyState(request: NotebookMemoryPolicyStateRequest): Promise<NotebookMemoryPolicyState>
   projectActivity(request: NotebookProjectActivityRequest): Promise<NotebookProjectActivity>
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
@@ -298,6 +300,30 @@ const createNotebookCommandWorkflows = (
     // so they share the same data-root admission as explicit mutation commands.
     runIndex: (request) => runtime.runIndex(request),
     state: (request) => withDataRootWrite(() => runtime.state(request)),
+    backgroundTasks: async (request) => {
+      const state = await withDataRootWrite(() => runtime.state(request))
+      return {
+        runs: state.runs
+          .filter((run) => run.executionMode === 'background')
+          .map((run) => ({
+            runId: run.runId,
+            agentFrameId: run.agentFrameId,
+            title:
+              run.script
+                .split(/\r?\n/u)
+                .find((line) => line.trim())
+                ?.trim()
+                .slice(0, 80) || run.runId,
+            status: run.status,
+            kernelKind: run.kernelKind,
+            environment: run.environment,
+            startedAt: run.startedAt,
+            endedAt: run.endedAt,
+            cancellationRequestedAt: run.cancellationRequestedAt,
+            shellConcurrency: run.shellConcurrency
+          }))
+      }
+    },
     memoryPolicyState: (request) => runtime.getMemoryPolicyState(request),
     projectActivity: async (request) => runtime.getProjectActivity(request),
     inspectNamespace: (request) =>

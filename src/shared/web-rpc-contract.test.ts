@@ -168,6 +168,7 @@ describe('Web RPC contract', () => {
     expect(invokePaths.filter((path) => path.startsWith('notebook.'))).toEqual([
       'notebook.abortCodeCell',
       'notebook.appendCodeCell',
+      'notebook.backgroundTasks',
       'notebook.beginCodeCell',
       'notebook.cancelBackgroundRun',
       'notebook.execute',
