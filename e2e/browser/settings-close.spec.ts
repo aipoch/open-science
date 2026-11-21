@@ -129,3 +129,26 @@ for (const mobile of [false, true]) {
     await expect(center.getByRole('region', { name: 'Use Cases' })).toBeVisible()
   })
 }
+
+test('resource shortcuts return to the originating Settings page', async ({ page }, testInfo) => {
+  await page.goto('/?search-shortcuts')
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('navigation', { name: 'Settings', exact: true })
+  const appearance = settings.getByRole('button', { name: 'Appearance', exact: true })
+  await appearance.click()
+  await page.screenshot({ path: testInfo.outputPath('settings-resource-shortcuts.png') })
+  for (const name of ['Connectors', 'Skills', 'Specialists']) {
+    await settings.getByRole('button', { name, exact: true }).click()
+    const resources = page.getByRole('navigation', { name: 'Resource center', exact: true })
+    await expect(resources.getByRole('button', { name, exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    const back = page.getByRole('button', { name: 'Back to settings', exact: true })
+    await expect(back).toBeVisible()
+    if (name === 'Connectors')
+      await page.screenshot({ path: testInfo.outputPath('connectors-return.png') })
+    await back.click()
+    await expect(appearance).toHaveAttribute('aria-current', 'page')
+  }
+})
