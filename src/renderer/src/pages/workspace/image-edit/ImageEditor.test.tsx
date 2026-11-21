@@ -291,6 +291,15 @@ it('reads the original generated image prompt without an editing task', async ()
   expect(document.body.textContent).not.toContain('response_format')
 })
 
+it('keeps the generation session scope when loading the selected image', async () => {
+  await render()
+  await click('Edit image')
+
+  expect(readImage).toHaveBeenCalledWith(
+    expect.objectContaining({ selectedVersionId: 'v1', imageGenerationSessionId: 's' })
+  )
+})
+
 it.each(['toolbar', 'thumbnail'])(
   'shows native upload info from the %s without querying provenance',
   async (surface) => {
