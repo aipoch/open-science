@@ -744,7 +744,7 @@ describe('HeadlessTaskApi adapter', () => {
         })
         await expect(api.waitForRun(started.id)).resolves.toMatchObject({
           id: started.id,
-          execution: { status: 'failed', kernelDispatched: false }
+          execution: { status: 'failed', language: 'r', kernelDispatched: false }
         })
         const restarted = new HeadlessTaskApi(
           { commands, agent: createAgent() },
@@ -1186,6 +1186,7 @@ describe('HeadlessTaskApi adapter', () => {
       await appendCompletedRun('original')
       await expect(inspect()).resolves.toMatchObject({
         status: 'completed',
+        language: 'python',
         notebookRunId: 'notebook-original',
         kernelDispatched: true
       })
