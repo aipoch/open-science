@@ -335,28 +335,6 @@ async function startDesktop(): Promise<void> {
   }
   // The existing profile log also records why a cold-launch installer handoff was declined.
   initLogger({ logDir: join(profilePath, 'desktop-logs') })
-  if (
-    process.platform === 'win32' &&
-    app.isPackaged &&
-    !headless &&
-    !initialRecoveryError &&
-    !preservedStartupOptions &&
-    (await applyPreparedWindowsUpdate({
-      current: app.getVersion(),
-      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
-      checkOccupancy: (signal) =>
-        inspectInstallationAvailability(
-          {
-            installationRoot: installationRootForEntry(initialBackendPaths.entry),
-            allowedProcessIds: allowedInstallationProcessIds
-          },
-          signal
-        )
-    }))
-  ) {
-    app.exit(0)
-    return
-  }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
   if (!initialRecoveryError) {
@@ -387,6 +365,29 @@ async function startDesktop(): Promise<void> {
     } finally {
       bootstrapLease.release()
     }
+  }
+  // Checking the installer cache yields to Chromium, which may then load Local State.
+  if (
+    process.platform === 'win32' &&
+    app.isPackaged &&
+    !headless &&
+    !initialRecoveryError &&
+    !preservedStartupOptions &&
+    (await applyPreparedWindowsUpdate({
+      current: app.getVersion(),
+      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
+      checkOccupancy: (signal) =>
+        inspectInstallationAvailability(
+          {
+            installationRoot: installationRootForEntry(initialBackendPaths.entry),
+            allowedProcessIds: allowedInstallationProcessIds
+          },
+          signal
+        )
+    }))
+  ) {
+    app.exit(0)
+    return
   }
   const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
