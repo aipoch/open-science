@@ -5825,6 +5825,27 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
+  it('keeps a restored Side chat error without source metadata in Details', () => {
+    const error = 'Upstream returned a private diagnostic'
+    renderSidePanel({
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          entries: [],
+          draft: '',
+          running: false,
+          error
+        }
+      }
+    })
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('h2')?.textContent).toBe('Request failed')
+    expect(notice?.querySelector('details pre')?.textContent).toContain(error)
+  })
+
   it.each([
     ['Invalid credentials', 'configuration/auth-failed', 'Model provider error', 401, undefined],
     [

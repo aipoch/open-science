@@ -1,3 +1,4 @@
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -44,7 +45,10 @@ const TurnOutcomeNotice = ({
           }
         ]}
         handlers={{
-          report: { run: () => actions.onReportError(actions.resolveError(outcome.error)) },
+          report: {
+            run: () =>
+              actions.onReportError(redactSensitiveText(actions.resolveError(outcome.error)))
+          },
           ...(outcome.recovery === 'retry-artifact-publication'
             ? {
                 retry: {

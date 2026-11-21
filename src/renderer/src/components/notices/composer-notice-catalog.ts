@@ -232,11 +232,6 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-// Older saved outcomes may only have the outer JSON-RPC code. It identifies a failed
-// request, but says nothing about which service produced its diagnostic text.
-export const isUnclassifiedRequestFailure = (failure: ClassifiedFailure): boolean =>
-  failure.category === 'internal' && !failure.reason && failure.diagnostics.code === '-32603'
-
 export const noticePresentation = (
   failure: ClassifiedFailure,
   operation?: string
@@ -250,7 +245,8 @@ export const noticePresentation = (
       secondaryActions: [],
       feedback: 'none'
     }
-  if (isUnclassifiedRequestFailure(failure))
+  // Older outcomes can identify a failed RPC request without identifying its source.
+  if (failure.category === 'internal' && !failure.reason && failure.diagnostics.code === '-32603')
     return {
       ...noticeCatalog.internal,
       titleKey: 'Request failed',
@@ -304,19 +300,24 @@ export const formatNoticeDiagnostics = (
   notice: ComposerNotice,
   title: string,
   description: string
-): string =>
-  [
+): string => {
+  const { raw, ...fields } = notice.failure.diagnostics
+  const diagnostic = raw && redactSensitiveText(raw)
+  const response =
+    !fields.protocol && notice.failure.responseMessage
+      ? redactSensitiveText(notice.failure.responseMessage)
+      : undefined
+  return [
     title,
-    ...(description ? [description] : []),
-    ...Object.entries({
-      ...notice.failure.diagnostics,
-      raw: notice.failure.diagnostics.raw ?? notice.failure.responseMessage
-    })
-      .filter(
-        ([key, value]) =>
-          value !== undefined && (key !== 'raw' || (value !== title && value !== description))
-      )
-      .map(([key, value]) =>
-        key === 'raw' ? redactSensitiveText(String(value)) : `${key}: ${value}`
-      )
-  ].join('\n')
+    description,
+    ...Object.entries(fields)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}: ${value}`),
+    diagnostic !== title && diagnostic !== description ? diagnostic : undefined,
+    response !== title && response !== description && response && !diagnostic?.includes(response)
+      ? response
+      : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
+}

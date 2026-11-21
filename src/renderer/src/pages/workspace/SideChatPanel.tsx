@@ -9,10 +9,7 @@ import { annotationValidationMessage } from './annotations/annotation-validation
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
-import {
-  isUnclassifiedRequestFailure,
-  type ComposerNotice
-} from '@/components/notices/composer-notice-catalog'
+import type { ComposerNotice } from '@/components/notices/composer-notice-catalog'
 import { useSettingsStore } from '@/stores/settings-store'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
@@ -261,20 +258,17 @@ const SideChatPanel = ({
   const sideNotice = view.notice || view.error === t('Side chat prompt cancelled.')
   const notices: ComposerNotice[] = []
   if (view.error && !sideNotice && presentationBarrierIndex < 0) {
-    const failure =
-      view.errorDetails?.message === view.error
-        ? view.errorDetails.failure
-        : classifyFailure({ origin: 'operation', text: view.error })
+    const recordedFailure =
+      view.errorDetails?.message === view.error ? view.errorDetails.failure : undefined
+    const failure = recordedFailure ?? classifyFailure({ origin: 'operation', text: view.error })
     notices.push({
       id: `side-chat-${view.generation}-${view.error}`,
       source: 'operation',
       occurredAt: 0,
       failure,
-      ...(failure.responseMessage ||
-      failure.diagnostics.providerExcerpt ||
-      isUnclassifiedRequestFailure(failure)
-        ? {}
-        : { summary: { title: view.error } })
+      ...(!recordedFailure && failure.category === 'internal' && !failure.reason
+        ? { summary: { title: t('Request failed') } }
+        : {})
     })
   }
   if (view.persistenceError)
