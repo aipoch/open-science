@@ -161,6 +161,31 @@ jobs:
       expect(checkCiIntegrityChanges(noOpResolver).violations).toContainEqual(
         expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
       )
+      const resolverText = readFileSync(resolver, 'utf8')
+      const scriptOffset = resolverText.indexOf('          script: |')
+      const inertMarkerResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText:
+                resolverText.slice(0, scriptOffset) +
+                `          script: |
+            // run.repository.id !== repo.id; run.event !== 'pull_request'; run.path !== '.github/workflows/pr-automation-signal.yml'
+            // run.status !== 'completed'; run.conclusion !== 'success'; run.display_title; run.head_repository
+            // job.name === 'Signal PR automation'; pr.state !== 'open'; pr.base.ref !== repo.default_branch
+            // pr.head.sha !== run.head_sha; listJobsForWorkflowRunAttempt; run.pull_requests; run.run_attempt
+            core.setOutput('number', '')
+            core.setOutput('head_sha', '')
+            core.setOutput('base_sha', '')
+            core.setOutput('action', '')
+            core.setOutput('title', '')
+`
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(inertMarkerResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
+      )
       const skippedResolver = validFiles.map((file) =>
         file.path === resolver
           ? {

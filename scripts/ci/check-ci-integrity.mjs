@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { load } from 'js-yaml'
+import * as ts from 'typescript'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
 import { checkDerivedConsumerRevisions } from './module-graph/index.mjs'
@@ -251,6 +252,72 @@ function reservedCheckViolations(path, document, workflowChanged) {
   return violations
 }
 
+function resolverScriptHasTrustedContract(script) {
+  const source = ts.createSourceFile(
+    'resolve-pr-signal.js',
+    script,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS
+  )
+  if (source.parseDiagnostics.length > 0) return false
+
+  const normalize = (text) => text.replace(/\s+/g, ' ')
+  const guardConditions = []
+  const binaryExpressions = []
+  const propertyAccesses = []
+  const outputNames = new Set()
+  let hasJobsAttemptLookup = false
+
+  function visit(node, functionDepth = 0) {
+    if (functionDepth === 0 && ts.isIfStatement(node)) {
+      const branch = node.thenStatement.getText(source)
+      if (/\b(?:return|throw)\b/.test(branch)) {
+        guardConditions.push(normalize(node.expression.getText(source)))
+      }
+    }
+    if (functionDepth === 0 && ts.isBinaryExpression(node)) {
+      binaryExpressions.push(normalize(node.getText(source)))
+    }
+    if (functionDepth === 0 && ts.isPropertyAccessExpression(node)) {
+      const access = normalize(node.getText(source))
+      propertyAccesses.push(access)
+      if (access.endsWith('listJobsForWorkflowRunAttempt')) hasJobsAttemptLookup = true
+    }
+    if (functionDepth === 0 && ts.isCallExpression(node)) {
+      const callee = normalize(node.expression.getText(source))
+      if (callee.endsWith('listJobsForWorkflowRunAttempt')) hasJobsAttemptLookup = true
+      if (
+        callee === 'core.setOutput' &&
+        node.arguments.length > 0 &&
+        ts.isStringLiteral(node.arguments[0])
+      ) {
+        outputNames.add(node.arguments[0].text)
+      }
+    }
+    const nextDepth = ts.isFunctionLike(node) ? functionDepth + 1 : functionDepth
+    ts.forEachChild(node, (child) => visit(child, nextDepth))
+  }
+
+  visit(source)
+  const hasBinary = (parts) =>
+    binaryExpressions.some((expression) => parts.every((part) => expression.includes(part)))
+  const hasGuard = (parts) =>
+    guardConditions.some((condition) => parts.every((part) => condition.includes(part)))
+  return (
+    hasGuard(['run.repository.id', 'run.event', 'run.path', 'run.status', 'run.conclusion']) &&
+    propertyAccesses.some((access) => access.includes('run.display_title')) &&
+    hasGuard(['run.head_repository']) &&
+    hasGuard(['job.name', 'Signal PR automation']) &&
+    hasGuard(['pr.state', 'pr.base.ref', 'pr.head.sha', 'run.head_sha']) &&
+    hasBinary(['pr.created_at', 'run.created_at']) &&
+    propertyAccesses.some((access) => access.includes('run.pull_requests')) &&
+    propertyAccesses.some((access) => access.includes('run.run_attempt')) &&
+    hasJobsAttemptLookup &&
+    ['number', 'head_sha', 'base_sha', 'action', 'title'].every((name) => outputNames.has(name))
+  )
+}
+
 export function checkCiIntegrityChanges(files) {
   const violations = []
 
@@ -404,22 +471,6 @@ function prAutomationSupportViolations(files) {
       resolverCall?.outputs?.[name]?.value === `\${{ jobs.resolve.outputs.${name} }}` &&
       resolverJob?.outputs?.[name] === `\${{ steps.resolve.outputs.${name} }}`
   )
-  const resolverContractMarkers = [
-    'run.repository.id !== repo.id',
-    "run.event !== 'pull_request'",
-    "run.path !== '.github/workflows/pr-automation-signal.yml'",
-    "run.status !== 'completed'",
-    "run.conclusion !== 'success'",
-    'listJobsForWorkflowRunAttempt',
-    "job.name === 'Signal PR automation'",
-    'head_repository.id',
-    "pr.state !== 'open'",
-    'pr.base.ref !== repo.default_branch',
-    'pr.head.sha !== run.head_sha',
-    "core.setOutput('number'",
-    "core.setOutput('head_sha'",
-    "core.setOutput('base_sha'"
-  ]
   const validResolver =
     resolverCall?.inputs?.run_id?.required === true &&
     resolverJob &&
@@ -429,9 +480,10 @@ function prAutomationSupportViolations(files) {
     resolverJob.permissions?.['pull-requests'] === 'read' &&
     resolverJob.steps?.length === 1 &&
     resolverStep &&
+    resolverStep.uses === 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3' &&
     !Object.hasOwn(resolverStep, 'if') &&
     resolverOutputWiring &&
-    resolverContractMarkers.every((marker) => resolverScript.includes(marker))
+    resolverScriptHasTrustedContract(resolverScript)
   const integrityJob = workflowJobs(integrity).integrity
   const integrityJobText = JSON.stringify(integrityJob ?? '')
   const integrityResolverJob = workflowJobs(integrity).resolve
