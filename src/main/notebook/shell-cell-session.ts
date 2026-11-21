@@ -59,6 +59,13 @@ const cancelledResult = (): NotebookShellResult => ({
   cancelled: true
 })
 
+// The process owner receives one lifetime signal across all cells in this interpreter.
+export class ShellCellTimeout extends Error {
+  constructor(timeoutMs: number) {
+    super(`Shell command timed out after ${timeoutMs}ms; interpreter state was reset.`)
+  }
+}
+
 // One real interpreter per Notebook lane. Transport state lives only in memory; requests are
 // serialized and never replayed. The existing process adapter still owns native tree cleanup.
 export class ShellCellSession {
@@ -312,7 +319,8 @@ export class ShellCellSession {
     }
     cell.buffers[stream] = ''
     cell.ended[stream] = true
-    if (cell.ended.stdout && cell.ended.stderr)
+    // Once termination starts, only the process owner's cleanup result can settle the cell.
+    if (cell.ended.stdout && cell.ended.stderr && !this.lifetime.signal.aborted)
       cell.resolve({
         stdout: cell.stdout,
         stderr: cell.stderr,
@@ -323,7 +331,18 @@ export class ShellCellSession {
   }
 
   private async run(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
-    if (!(await this.verifyCleanup())) return this.processResult!
+    if (!(await this.verifyCleanup()))
+      return {
+        stdout: '',
+        stderr:
+          'SHELL_CLEANUP_INCOMPLETE: Shell command did not start because previous shell cleanup is incomplete.',
+        exitCode: null,
+        kernelDispatched: false,
+        executionStarted: false,
+        ownedTreeReaped: false,
+        errorCode: 'shell-cleanup-incomplete',
+        recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+      }
     if (this.closed || request.signal?.aborted) return cancelledResult()
     const hostAdmission = request.executionAdmission
     if (this.executionPolicy && request.executionAdmission?.withExecutionDomain)
@@ -382,7 +401,6 @@ export class ShellCellSession {
     let endExecution: (() => void | Promise<boolean | void>) | undefined
     let timer: ExecutionDeadline | undefined
     let connectionTimer: ReturnType<typeof setTimeout> | undefined
-    let timedOut = false
     let waitingForNetwork = false
     if (!this.child) this.lifetime = new AbortController()
     const abort = (): void => {
@@ -455,8 +473,8 @@ export class ShellCellSession {
               stderr:
                 cell.stderr +
                 cell.buffers.stderr +
-                (timedOut && exit.cancelled && !exit.errorCode ? '' : exit.stderr) +
-                (this.launchedProcess
+                exit.stderr +
+                (this.launchedProcess && !(this.lifetime.signal.reason instanceof ShellCellTimeout)
                   ? '\nShell interpreter exited; interpreter state was reset.'
                   : ''),
               ...(cell.truncated ? { truncated: true } : {})
@@ -505,8 +523,7 @@ export class ShellCellSession {
         request.signal?.throwIfAborted()
         const timeoutMs = request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
         timer = new ExecutionDeadline(timeoutMs, () => {
-          timedOut = true
-          abort()
+          this.lifetime.abort(new ShellCellTimeout(timeoutMs))
         })
         timer.setPaused(waitingForNetwork)
         const input = powershell && !this.nativeControl ? this.controlSocket! : this.child.stdin
@@ -522,24 +539,29 @@ export class ShellCellSession {
       endExecution = undefined
       completed.stderr =
         this.annotateStderr?.(completed.stderr, completed.stdout) ?? completed.stderr
-      if (request.signal?.aborted || this.closed)
+      if (
+        (request.signal?.aborted || this.closed) &&
+        !(this.lifetime.signal.reason instanceof ShellCellTimeout)
+      ) {
+        // Cancellation can arrive after both output markers, while an approval is settling.
+        const stopped = await this.completion
+        if (stopped?.errorCode && !completed.errorCode)
+          return {
+            ...stopped,
+            stdout: completed.stdout,
+            stderr: [completed.stderr, stopped.stderr].filter(Boolean).join('\n'),
+            cancelled: true,
+            exitCode: null
+          }
         return { ...completed, cancelled: true, exitCode: null }
+      }
       if (retryRequired && !completed.stderr.includes('NETWORK_APPROVAL_RETRY_REQUIRED'))
         completed.stderr += `\n${NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE}`
       if (completed.cwd) this.cwd = completed.cwd
       if (reset)
         completed.stderr =
           'Shell launch context changed; interpreter state was reset.\n' + completed.stderr
-      return timedOut
-        ? {
-            ...completed,
-            cancelled: undefined,
-            exitCode: null,
-            stderr:
-              completed.stderr +
-              `\nShell command timed out after ${request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS}ms; interpreter state was reset.`
-          }
-        : { ...completed, cwdBefore: request.cwd }
+      return { ...completed, cwdBefore: request.cwd }
     } catch (error) {
       // A trusted refusal happens before stdin.write. Preserve the persistent namespace.
       if (error instanceof NotebookExecutionAdmissionError) {

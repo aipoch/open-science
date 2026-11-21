@@ -7,7 +7,7 @@ import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
-import { ShellCellSession } from './shell-cell-session'
+import { ShellCellSession, ShellCellTimeout } from './shell-cell-session'
 import { createWslExecutionMemoryPolicy } from './memory-policy-wsl'
 import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
@@ -659,6 +659,7 @@ const runShellCommand = (
     const cleanupCompleted = (result: NotebookSandboxCleanupResult): boolean =>
       result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
     let sandboxCleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    let cleanupEvidence: NotebookSandboxCleanupResult | undefined
     const cleanupSandbox = async (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
@@ -674,10 +675,12 @@ const runShellCommand = (
       }
       try {
         const result = await sandboxCleanupPromise
+        cleanupEvidence = result
         if (!cleanupCompleted(result)) sandboxCleanupPromise = undefined
         return result
       } catch (error) {
         sandboxCleanupPromise = undefined
+        cleanupEvidence = undefined
         throw error
       }
     }
@@ -696,7 +699,13 @@ const runShellCommand = (
       ...result,
       stderr:
         result.stderr +
-        `${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${SHELL_CLEANUP_INCOMPLETE_MESSAGE}`,
+        `${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${SHELL_CLEANUP_INCOMPLETE_MESSAGE}` +
+        (execution === 'may-have-run' &&
+        cleanupEvidence?.processesTerminated &&
+        cleanupEvidence.networkClosed &&
+        !cleanupEvidence.temporaryResourcesRemoved
+          ? ' Managed processes stopped and the network closed. Temporary resources could not be removed.'
+          : ''),
       exitCode: null,
       errorCode: 'shell-cleanup-incomplete',
       recovery: { execution, retryAfter: 'cleanup-verified' }
@@ -1030,18 +1039,20 @@ const runShellCommand = (
 
       const abort = (): void => {
         if (settled || timedOut || cancelled || exited || failed) return
-        cancelled = true
+        const reason = options.signal?.reason
+        timedOut = reason instanceof ShellCellTimeout
+        cancelled = !timedOut
         timeoutTimer.cancel()
         terminateAndFinish(
           {
             stdout,
             stderr:
               stderr +
-              `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
+              `${stderr && !stderr.endsWith('\n') ? '\n' : ''}${timedOut ? reason.message : 'Shell command was cancelled.'}`,
             exitCode: null,
-            cancelled: true
+            ...(cancelled ? { cancelled: true } : {})
           },
-          'cancel'
+          timedOut ? 'timeout' : 'cancel'
         )
       }
 

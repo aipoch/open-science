@@ -5200,11 +5200,13 @@ describe('notebook runtime service', () => {
         }
         try {
           let runId: string | undefined
+          // This produces the same frozen context and fingerprint as the historical default.
+          const original = { ...request, timeoutMs: 120_000 }
           if (background) {
-            const receipt = await service.executeShellBackground(request)
+            const receipt = await service.executeShellBackground(original)
             runId = receipt.runId
             await service.waitForBackgroundRun(runId)
-          } else expect(await service.executeShell(request)).toEqual(result)
+          } else expect(await service.executeShell(original)).toEqual(result)
           prepareEnvironment.mockRejectedValue(
             new ShellPreparationError({
               stdout: '',
@@ -5224,6 +5226,12 @@ describe('notebook runtime service', () => {
           expect(prepareEnvironment).toHaveBeenCalledOnce()
           expect(execute).toHaveBeenCalledOnce()
           const changed = { ...request, command: 'Write-Output different' }
+          const changedTimeout = { ...request, timeoutMs: 300_000 }
+          await expect(
+            background
+              ? service.executeShellBackground(changedTimeout)
+              : service.executeShell(changedTimeout)
+          ).rejects.toThrow('NOTEBOOK_RUN_SUBMISSION_CONFLICT')
           await expect(
             background ? service.executeShellBackground(changed) : service.executeShell(changed)
           ).rejects.toThrow('NOTEBOOK_RUN_SUBMISSION_CONFLICT')
@@ -5858,6 +5866,7 @@ describe('notebook runtime service', () => {
       })
       expect(execute).toHaveBeenCalledOnce()
 
+      expect(execute.mock.calls[0][0].timeoutMs).toBe(300_000)
       await expect(
         service.executeShell({ ...request, command: 'different-command' })
       ).rejects.toMatchObject({

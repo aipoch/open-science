@@ -32,6 +32,7 @@ import {
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
@@ -1584,7 +1585,7 @@ class NotebookExecutionOwner {
       inputRoot,
       protectedDirs,
       environment: {},
-      timeoutMs: request.timeoutMs ?? 120_000,
+      timeoutMs: request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
       platform
     }
     const replayExisting = (existing: NotebookRunRecord): NotebookShellResult => {
@@ -1593,7 +1594,14 @@ class NotebookExecutionOwner {
       const fingerprint = shellRunFingerprint(
         session,
         request,
-        { ...frozenShellContext, environment: existing.frozenShellContext?.environment ?? {} },
+        {
+          ...frozenShellContext,
+          // Runs admitted with the previous default froze 120 seconds in the submission hash.
+          ...(request.timeoutMs === undefined && existing.frozenShellContext?.timeoutMs === 120_000
+            ? { timeoutMs: 120_000 }
+            : {}),
+          environment: existing.frozenShellContext?.environment ?? {}
+        },
         runtimeBinding
       )
       if (existing.submissionFingerprint !== fingerprint) {
