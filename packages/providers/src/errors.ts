@@ -1,4 +1,4 @@
-export { providerErrorDetails, providerErrorExcerpt } from './protocols/error-text'
+export { providerErrorDetails, providerErrorExcerpt } from './transport/body'
 
 /** Portable provider failure classification and bounded redaction. */
 export type ProviderTextGenerationFailure = Readonly<{

@@ -1,4 +1,4 @@
-import { providerErrorExcerpt } from '../protocols/error-text'
+import { providerErrorExcerpt } from '../transport/body'
 import { randomBytes } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {

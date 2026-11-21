@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import { providerErrorDetails, providerErrorExcerpt } from '../protocols/error-text'
+import { providerErrorDetails, providerErrorExcerpt } from '../transport/body'
 import type { ResponsesNamespacedTool } from './types'
 
 // Upstream protocol payloads are open-ended and validated at this response seam.
