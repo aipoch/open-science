@@ -20,20 +20,25 @@ export const NotebookRunEvidence = ({
   const displayedRun = evidenceRun ?? run
   const target = displayedRun.frozenRuntimeTarget
   const capture = displayedRun.environmentCapture
+  const environmentManifestChecksum =
+    displayedRun.environmentManifestChecksum ??
+    (capture?.state === 'available' || capture?.state === 'partial'
+      ? capture.manifestChecksum
+      : undefined)
   const loadEvidence = async (): Promise<void> => {
     if (
       evidenceRun ||
       isLoading ||
       !loadRun ||
       displayedRun.environmentManifest ||
-      !displayedRun.environmentManifestChecksum
+      !environmentManifestChecksum
     )
       return
     setIsLoading(true)
     setLoadFailed(false)
     try {
       const loaded = await loadRun(displayedRun.runId)
-      if (loaded) setEvidenceRun(loaded)
+      if (loaded?.environmentManifest) setEvidenceRun(loaded)
       else setLoadFailed(true)
     } catch {
       setLoadFailed(true)
@@ -63,8 +68,8 @@ export const NotebookRunEvidence = ({
           {target.interpreterPath ? ` · ${target.interpreterPath}` : ''}
         </code>
       ) : null}
-      {displayedRun.environmentManifestChecksum ? (
-        <code className="block break-all">{displayedRun.environmentManifestChecksum}</code>
+      {environmentManifestChecksum ? (
+        <code className="block break-all">{environmentManifestChecksum}</code>
       ) : null}
       {showEnvironmentCaptureWarning && (!capture || capture.state !== 'available') ? (
         <p>

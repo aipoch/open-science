@@ -110,3 +110,32 @@ it('loads the package manifest only after the evidence disclosure opens', async 
   await waitFor(() => expect(screen.getByText('numpy · 1.0')).toBeTruthy())
   expect(loadRun).toHaveBeenCalledWith('lazy-run')
 })
+
+it('uses the capture checksum fallback and reports an unavailable sidecar', async () => {
+  const run: NotebookRunRecord = {
+    runId: 'legacy-run',
+    cellId: 'cell',
+    source: 'agent',
+    kernelKind: 'python',
+    script: '',
+    status: 'completed',
+    startedAt: 0,
+    outputs: [],
+    text: { stdout: '', stderr: '', traceback: '', plain: [] },
+    workingFiles: [],
+    environment: 'default',
+    environmentCapture: { state: 'available', manifestChecksum: 'legacy-checksum' }
+  }
+  const loadRun = vi.fn().mockResolvedValue(run)
+
+  render(<NotebookRunEvidence run={run} loadRun={loadRun} />)
+  expect(screen.getByTestId('notebook-run-evidence').textContent).toContain('legacy-checksum')
+
+  fireEvent.click(screen.getByText('Execution evidence'))
+  await waitFor(() =>
+    expect(screen.getByTestId('notebook-run-evidence').textContent).toContain(
+      'Environment evidence is incomplete or unavailable.'
+    )
+  )
+  expect(loadRun).toHaveBeenCalledWith('legacy-run')
+})
