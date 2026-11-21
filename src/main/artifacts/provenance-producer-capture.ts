@@ -164,7 +164,8 @@ type PreparedArtifactVersionPersistence = {
 }
 type ArtifactProvenanceProducerCaptureOptions = {
   inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
-  notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
+  notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'> &
+    Partial<Pick<NotebookRunRepository, 'readSessionRun'>>
   storageRoot: string
   createId: () => string
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
@@ -383,11 +384,13 @@ class ArtifactProvenanceProducerCapture {
     if (!document || !producerRun || producerRunIndex < 0) {
       throw new Error(`Notebook producer run not found: ${producerRunId}`)
     }
-    const hydratedProducerRun = await this.options.notebookRepository.readSessionRun(
-      request.projectId,
-      request.notebookSessionId,
-      producerRunId
-    )
+    const hydratedProducerRun = this.options.notebookRepository.readSessionRun
+      ? await this.options.notebookRepository.readSessionRun(
+          request.projectId,
+          request.notebookSessionId,
+          producerRunId
+        )
+      : undefined
     if (hydratedProducerRun) {
       document = {
         ...document,
