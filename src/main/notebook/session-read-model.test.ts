@@ -144,7 +144,7 @@ describe('NotebookSessionReadModel', () => {
     await repository.appendRun({ projectId: 'project', sessionId: 'session', lane, run })
     const window = vi.spyOn(repository, 'readSessionRunWindow')
     const evidence = await readModel.runEvidence('project', 'session', run.runId)
-    expect(window).toHaveBeenCalledWith('project', 'session', 0, [run.runId])
+    expect(window).toHaveBeenCalledWith('project', 'session', 0, [run.runId], undefined, undefined)
     expect(evidence).toEqual({ runId: run.runId, kernelEpochId: 'epoch' })
     await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
   })

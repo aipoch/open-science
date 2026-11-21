@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { readNotebookFileGenerations } from './analysis-file-evidence'
-import { getNotebookSessionRoot, getRuntimeRoot } from './repository'
+import { getNotebookSessionRoot, getRuntimeRoot, type NotebookRunRepository } from './repository'
 import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from '@aipoch/environment'
 
 type Options = ConstructorParameters<typeof NotebookDependencyAnalyzer>[0]
@@ -12,11 +12,15 @@ export const createNotebookDependencyAnalyzer = (
     Options,
     'cachePath' | 'managedInterpreter' | 'readFileGenerations' | 'executionRelativeRoot'
   > & {
+    repository: Options['repository'] & Partial<Pick<NotebookRunRepository, 'readAnalysisRuns'>>
     storageRoot: string
   }
 ): NotebookDependencyAnalyzer =>
   new NotebookDependencyAnalyzer({
     ...options,
+    repository: options.repository.readAnalysisRuns
+      ? { readSessionRuns: options.repository.readAnalysisRuns.bind(options.repository) }
+      : options.repository,
     executionRelativeRoot: 'data',
     cachePath: (projectId, sessionId) =>
       join(

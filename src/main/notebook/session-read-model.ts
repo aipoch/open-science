@@ -31,10 +31,12 @@ import {
   getNotebookRunJsonPath,
   getNotebookSessionRoot,
   getRuntimeRoot,
-  NotebookRunRepository
+  NotebookRunRepository,
+  type NotebookHistorySnapshot
 } from './repository'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 
+const DEFAULT_HISTORY_BYTES = 63 * 1024 * 1024
 const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
 
 const kernelInstanceProcessKey = (instance: NotebookKernelInstanceIdentity): string =>
@@ -173,17 +175,56 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     })
   }
 
+  private async historyWindow(
+    projectId: string,
+    sessionId: string,
+    limit: number,
+    runIds: readonly string[],
+    frameId?: string,
+    before?: NotebookRunCursor,
+    session?: Session,
+    budget?: { bytes: number; includeRecent: boolean }
+  ): Promise<NotebookHistorySnapshot> {
+    const trim = budget && !runIds.length && frameId === undefined ? budget : undefined
+    const cached = await this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
+      limit,
+      runIds,
+      frameId,
+      before,
+      lane: session?.lane,
+      retain: trim && this.runBudget(trim.includeRecent, trim.bytes)
+    })
+    if (cached) return cached
+    const kernel = session ? (await this.loadSessionDocument(session)).kernel : undefined
+    const window = await this.options.repository.readSessionRunWindow(
+      projectId,
+      sessionId,
+      limit,
+      runIds,
+      frameId,
+      before
+    )
+    return {
+      kernel,
+      window: trim ? this.limitRunWindow(window, trim.includeRecent, trim.bytes) : window
+    }
+  }
+
   async runEvidence(
     projectId: string,
     sessionId: string,
     runId: string,
     session?: Session
   ): Promise<NotebookRunEvidenceSnapshot | null> {
-    if (session) await this.loadSessionDocument(session)
-    // The same targeted window as state keeps lane selection and legacy inline evidence identical.
-    const window = await this.options.repository.readSessionRunWindow(projectId, sessionId, 0, [
-      runId
-    ])
+    const { window } = await this.historyWindow(
+      projectId,
+      sessionId,
+      0,
+      [runId],
+      undefined,
+      undefined,
+      session
+    )
     const run = window.runs.find((item) => item.runId === runId)
     if (!run) return null
     const {
@@ -256,35 +297,33 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT,
     historyByteLimit?: number
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const document = await this.loadSessionDocument(session)
-    const snapshot = session.snapshot()
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
     const pagedHistoryRead = historyBefore !== undefined
     const sparseRunRead = targetedRunRead || summaryOnlyRead || pagedHistoryRead
-    const requestedWindow = await this.options.repository.readSessionRunWindow(
+    const { window: runWindow, kernel } = await this.historyWindow(
       session.projectId,
       session.sessionId,
       targetedRunRead || summaryOnlyRead ? 0 : historyLimit,
       includeRunIds,
       historySummaryFrameId,
-      historyBefore
+      historyBefore,
+      session,
+      { bytes: historyByteLimit ?? DEFAULT_HISTORY_BYTES, includeRecent: !sparseRunRead }
     )
-    const runWindow =
-      targetedRunRead || summaryOnlyRead
-        ? requestedWindow
-        : this.limitRunWindow(requestedWindow, !sparseRunRead, historyByteLimit)
+    if (!kernel) throw new Error('Missing live Notebook kernel metadata.')
+    const snapshot = session.snapshot()
     const dependencyProjection = await this.options.dependencyAnalyzer
       .project({ projectId: session.projectId, sessionId: session.sessionId })
       .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
-    const terminatedKernelInstances = document.kernel.terminatedKernelInstances
+    const terminatedKernelInstances = kernel.terminatedKernelInstances
     const defaultKernelTerminated = terminatedKernelInstances?.some(
       (instance) => kernelInstanceProcessKey(instance) === DEFAULT_KERNEL_PROCESS_KEY
     )
     const legacyUnknownKernelTerminated =
-      document.kernel.lastKnownStatus === 'terminated' && terminatedKernelInstances === undefined
+      kernel.lastKnownStatus === 'terminated' && terminatedKernelInstances === undefined
     const onlyNonDefaultKernelTerminated =
-      document.kernel.lastKnownStatus === 'terminated' &&
+      kernel.lastKnownStatus === 'terminated' &&
       terminatedKernelInstances !== undefined &&
       !defaultKernelTerminated
     const liveDefaultKernelStatus = session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY)
@@ -296,7 +335,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
-      pythonPath: document.kernel.pythonPath,
+      pythonPath: kernel.pythonPath,
       // Backward-compatible coarse status represents only the default Python environment. Exact
       // named-environment/R/REPL terminations are projected through `environments` instead. Legacy
       // coarse terminations have unknown ownership and remain visible until an explicit restart.
@@ -306,7 +345,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
           ? 'terminated'
           : onlyNonDefaultKernelTerminated
             ? 'idle'
-            : document.kernel.lastKnownStatus),
+            : kernel.lastKnownStatus),
       runJsonPath: session.runJsonPath,
       cells: sparseRunRead
         ? []
@@ -343,18 +382,16 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historyByteLimit?: number
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
-    const requestedWindow = await this.options.repository.readSessionRunWindow(
+    const { window } = await this.historyWindow(
       projectId,
       request.sessionId,
       historyLimit,
       runIds,
       historySummaryFrameId,
-      historyBefore
+      historyBefore,
+      undefined,
+      { bytes: historyByteLimit ?? DEFAULT_HISTORY_BYTES, includeRecent: true }
     )
-    const window =
-      runIds.length > 0 || historySummaryFrameId !== undefined
-        ? requestedWindow
-        : this.limitRunWindow(requestedWindow, true, historyByteLimit)
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
     const runs = window.runs.map((run) => this.toPublicRunRecord(run, runIds.length > 0))
     return {
@@ -490,20 +527,24 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     })
   }
 
+  private runBudget(includeRecent: boolean, limit: number) {
+    let bytes = 0
+    return (run: NotebookRunRecord, index: number, count: number) => {
+      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(run)))
+      bytes += runBytes * (includeRecent && index >= count - 20 ? 2 : 1)
+      return index === count - 1 || bytes <= limit
+    }
+  }
+
   private limitRunWindow(
     window: Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>>,
     includeRecentRuns: boolean,
-    byteLimit = 63 * 1024 * 1024
+    byteLimit = DEFAULT_HISTORY_BYTES
   ): Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>> {
-    let bytes = 0
+    const retain = this.runBudget(includeRecentRuns, byteLimit)
     let start = window.runs.length
     for (let index = window.runs.length - 1; index >= 0; index--) {
-      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(window.runs[index])))
-      const projectedBytes =
-        runBytes * (includeRecentRuns && index >= window.runs.length - 20 ? 2 : 1)
-      // Always retain one complete run; byte transfer handles an individually large output.
-      if (start < window.runs.length && bytes + projectedBytes > byteLimit) break
-      bytes += projectedBytes
+      if (!retain(window.runs[index], index, window.runs.length)) break
       start = index
     }
     if (start === 0) return window

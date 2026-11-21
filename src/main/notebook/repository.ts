@@ -126,10 +126,13 @@ type RecordReadScope = {
   records?: Map<string, { info: DocumentFileIdentity; run: NotebookRunRecord }>
 }
 
+type LaneHistory = Pick<NotebookRunDocument, 'notebookSessionRoot' | 'kernel' | 'runs'>
+
 type LaneSummary = {
   notebookSessionRoot: string
   workspaceCwd: string
   hasBackgroundRuns: boolean
+  history?: LaneHistory
   rows?: ReplayRunIndex[]
 }
 
@@ -905,6 +908,116 @@ const normalizeDocument = (
   }
 }
 
+type HistoryWindow = {
+  runs: NotebookRunRecord[]
+  total: number
+  latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  historySummary?: NotebookRunHistorySummary
+  agentSummaries: NotebookAgentSummary[]
+  historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
+}
+
+export type NotebookHistorySnapshot = { window: HistoryWindow; kernel?: NotebookKernelMetadata }
+
+function selectRunWindow(
+  documents: ReadonlyArray<Pick<NotebookRunDocument, 'runs'>>,
+  sessionId: string,
+  limit: number,
+  requestedRunIds: ReadonlySet<string>,
+  historySummaryFrameId?: string,
+  historyBefore?: NotebookRunCursor
+): HistoryWindow {
+  const runs: NotebookRunRecord[] = []
+  const requestedRuns = new Map<string, NotebookRunRecord>()
+  const latestEnvironmentRuns = new Map<'python' | 'r', NotebookRunRecord>()
+  const historySummary: NotebookRunHistorySummary | undefined = historySummaryFrameId
+    ? {
+        agentFrameId: historySummaryFrameId,
+        runCount: 0,
+        kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
+      }
+    : undefined
+  const matchesSummaryFrame = historySummary
+    ? createNotebookFrameRunFilter(
+        sessionId,
+        historySummary.agentFrameId,
+        documents.flatMap((document) => document.runs)
+      )
+    : undefined
+  let latestSummaryDataRun: NotebookRunRecord | undefined
+  let total = 0
+  let eligibleTotal = 0
+  const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
+    left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
+
+  for (const document of documents) {
+    for (const run of document.runs) {
+      total += 1
+      if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
+      if (historySummary && matchesSummaryFrame?.(run)) {
+        historySummary.runCount += 1
+        historySummary.kernelCounts[run.kernelKind] += 1
+        if (
+          (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+          (!latestSummaryDataRun || compareRuns(latestSummaryDataRun, run) < 0)
+        ) {
+          latestSummaryDataRun = run
+          historySummary.latestDataKernel = run.kernelKind
+        }
+      }
+      if (
+        (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+        run.environment &&
+        (!latestEnvironmentRuns.has(run.kernelKind) ||
+          compareRuns(latestEnvironmentRuns.get(run.kernelKind)!, run) < 0)
+      ) {
+        latestEnvironmentRuns.set(run.kernelKind, run)
+      }
+      if (limit <= 0) continue
+      if (
+        historyBefore &&
+        (run.startedAt > historyBefore.startedAt ||
+          (run.startedAt === historyBefore.startedAt &&
+            run.runId.localeCompare(historyBefore.runId) >= 0))
+      ) {
+        continue
+      }
+      eligibleTotal += 1
+      let low = 0
+      let high = runs.length
+      while (low < high) {
+        const middle = (low + high) >>> 1
+        if (compareRuns(runs[middle], run) <= 0) low = middle + 1
+        else high = middle
+      }
+      runs.splice(low, 0, run)
+      if (runs.length > limit) runs.shift()
+    }
+  }
+
+  const pageRuns = [...runs]
+  const mergedRuns = new Map(pageRuns.map((run) => [run.runId, run]))
+  for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
+  return {
+    runs: [...mergedRuns.values()].sort(compareRuns),
+    total,
+    agentSummaries: summarizeNotebookHistory(
+      sessionId,
+      documents.flatMap((document) => document.runs)
+    ),
+    latestRunEnvironments: Object.fromEntries(
+      [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
+    ),
+    historyPage: {
+      hasEarlierRuns: eligibleTotal > pageRuns.length,
+      ...(pageRuns[0]
+        ? { oldestCursor: { startedAt: pageRuns[0].startedAt, runId: pageRuns[0].runId } }
+        : {})
+    },
+    ...(historySummary ? { historySummary } : {})
+  }
+}
+
 // Owns durable run.json persistence for one app storage root.
 class NotebookRunRepository {
   private readonly records = new NotebookRunRecordStorage()
@@ -919,6 +1032,13 @@ class NotebookRunRepository {
   private readonly laneSummaries = new Map<
     string,
     { identity: DocumentFileIdentity; summary: LaneSummary }
+  >()
+  private readonly historyBodies = new WeakMap<
+    NotebookRunRecord,
+    {
+      root: string
+      ref: RunReference
+    }
   >()
   private readonly runIndexes = new WeakMap<
     NotebookRunDocument,
@@ -982,6 +1102,116 @@ class NotebookRunRepository {
       summaries.push(summary)
     }
     return summaries
+  }
+
+  private async cachedHistory(
+    projectId: string,
+    sessionId: string
+  ): Promise<{ summaries: LaneSummary[]; documents: LaneHistory[] } | undefined> {
+    const root = getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
+    const framesRoot = join(root, 'frames')
+    if (
+      !Array.from(this.laneSummaries.values()).some(
+        ({ summary }) =>
+          summary.history &&
+          (summary.notebookSessionRoot === root ||
+            dirname(summary.notebookSessionRoot) === framesRoot)
+      )
+    )
+      return undefined
+    const summaries = await this.cachedSessionSummaries(projectId, sessionId)
+    if (!summaries?.length) return undefined
+    const documents = []
+    for (const summary of summaries) {
+      if (summary.history) {
+        documents.push(summary.history)
+        continue
+      }
+      // Small sibling lanes can use the repository's existing full-document cache.
+      const path = join(summary.notebookSessionRoot, 'run.json')
+      const full = this.documentCache.get(path)
+      const cached = this.laneSummaries.get(path)
+      if (!full || cached?.summary !== summary || !sameDocumentFileIdentity(cached.identity, full))
+        return undefined
+      documents.push({
+        ...full.document,
+        runs: this.historyRuns(full.document, projectId, sessionId)
+      })
+    }
+    return { summaries, documents }
+  }
+
+  /** Validated metadata selects the same window as full history. Hydration stops as soon as the next record exceeds the byte budget. */
+  async readCachedHistoryWindow(
+    projectId: string,
+    sessionId: string,
+    query: {
+      limit: number
+      runIds: readonly string[]
+      frameId?: string
+      before?: NotebookRunCursor
+      lane?: NotebookLaneIdentity
+      retain?: (run: NotebookRunRecord, index: number, count: number) => boolean
+    }
+  ): Promise<NotebookHistorySnapshot | undefined> {
+    const { limit, runIds, frameId, before, lane, retain } = query
+    const cached = await this.cachedHistory(projectId, sessionId)
+    if (!cached) return undefined
+    const path = lane && getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const kernel = path
+      ? cached.documents.find((doc) => doc.notebookSessionRoot === dirname(path))?.kernel
+      : undefined
+    if (path) {
+      if (!kernel || (await this.hasRecoveryCandidate(path))) return undefined
+      await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
+    }
+    const requested = new Set(runIds)
+    const window = selectRunWindow(cached.documents, sessionId, limit, requested, frameId, before)
+    const runs: NotebookRunRecord[] = []
+    for (let index = window.runs.length - 1; index >= 0; index--) {
+      const row = window.runs[index]
+      const body = this.historyBodies.get(row)
+      let run = row
+      if (body) {
+        try {
+          const [raw] = await this.records.read(body.root, [body.ref])
+          run = { ...row, text: raw.text ?? emptyText(), outputs: raw.outputs ?? [] }
+        } catch {
+          // Re-enter normal lane validation so live and imported corruption policies apply.
+          return undefined
+        }
+      }
+      run = await this.withRunEnvironmentManifest(run, requested)
+      if (retain && !retain(run, index, window.runs.length) && runs.length > 0) {
+        const { runId, startedAt } = runs[runs.length - 1]
+        window.historyPage = { hasEarlierRuns: true, oldestCursor: { runId, startedAt } }
+        break
+      }
+      runs.push(run)
+    }
+    const latest = await this.cachedSessionSummaries(projectId, sessionId)
+    if (
+      latest?.length !== cached.summaries.length ||
+      !latest.every((s, i) => s === cached.summaries[i])
+    )
+      return undefined
+    return { kernel, window: { ...window, runs: runs.reverse() } }
+  }
+
+  // Dependency analysis consumes source, runtime and file evidence; it never consumes output.
+  async readAnalysisRuns(
+    projectId: string,
+    sessionId: string,
+    options: ReadSessionRunsOptions = {}
+  ): Promise<NotebookRunRecord[]> {
+    const cached = await this.cachedHistory(projectId, sessionId)
+    if (!cached) return this.readSessionRuns(projectId, sessionId, options)
+    const runs = cached.documents
+      .flatMap((document) => document.runs)
+      .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+    return options.includeEnvironmentManifests
+      ? Promise.all(runs.map((run) => this.withRunEnvironmentManifest(run)))
+      : runs
   }
 
   async hasCachedForegroundOnlyHistory(
@@ -1647,18 +1877,23 @@ class NotebookRunRepository {
     includeRunIds?: ReadonlySet<string>
   ): Promise<NotebookRunDocument> {
     const hydratedRuns = await Promise.all(
-      runs.map(async (run) => {
-        if (includeRunIds && !includeRunIds.has(run.runId)) {
-          return environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
-        }
-        if (run.environmentManifest) return run
-        const checksum = environmentManifestChecksumForRun(run)
-        if (!checksum) return run
-        const manifest = await readEnvironmentManifest(this.storageRoot, checksum)
-        return manifest ? { ...run, environmentManifest: manifest } : run
-      })
+      runs.map((run) => this.withRunEnvironmentManifest(run, includeRunIds))
     )
     return { ...document, runs: hydratedRuns }
+  }
+
+  private async withRunEnvironmentManifest(
+    run: NotebookRunRecord,
+    includeRunIds?: ReadonlySet<string>
+  ): Promise<NotebookRunRecord> {
+    if (includeRunIds && !includeRunIds.has(run.runId)) {
+      return environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
+    }
+    if (run.environmentManifest) return run
+    const checksum = environmentManifestChecksumForRun(run)
+    if (!checksum) return run
+    const manifest = await readEnvironmentManifest(this.storageRoot, checksum)
+    return manifest ? { ...run, environmentManifest: manifest } : run
   }
 
   // History views may infer a missing root identity from the physical root document. Its path
@@ -1704,14 +1939,7 @@ class NotebookRunRepository {
     includeRunIds: readonly string[] = [],
     historySummaryFrameId?: string,
     historyBefore?: NotebookRunCursor
-  ): Promise<{
-    runs: NotebookRunRecord[]
-    total: number
-    latestRunEnvironments: Partial<Record<'python' | 'r', string>>
-    historySummary?: NotebookRunHistorySummary
-    agentSummaries: NotebookAgentSummary[]
-    historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
-  }> {
+  ): Promise<HistoryWindow> {
     const rawDocuments = await this.readSessionDocuments(projectId, sessionId)
     const requestedRunIds = new Set(includeRunIds)
     const documents = await Promise.all(
@@ -1726,95 +1954,14 @@ class NotebookRunRepository {
         ).runs
       }))
     )
-    const runs: NotebookRunRecord[] = []
-    const requestedRuns = new Map<string, NotebookRunRecord>()
-    const latestEnvironmentRuns = new Map<'python' | 'r', NotebookRunRecord>()
-    const historySummary: NotebookRunHistorySummary | undefined = historySummaryFrameId
-      ? {
-          agentFrameId: historySummaryFrameId,
-          runCount: 0,
-          kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
-        }
-      : undefined
-    const matchesSummaryFrame = historySummary
-      ? createNotebookFrameRunFilter(
-          sessionId,
-          historySummary.agentFrameId,
-          documents.flatMap((document) => document.runs)
-        )
-      : undefined
-    let latestSummaryDataRun: NotebookRunRecord | undefined
-    let total = 0
-    let eligibleTotal = 0
-    const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
-      left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
-
-    for (const document of documents) {
-      for (const run of document.runs) {
-        total += 1
-        if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
-        if (historySummary && matchesSummaryFrame?.(run)) {
-          historySummary.runCount += 1
-          historySummary.kernelCounts[run.kernelKind] += 1
-          if (
-            (run.kernelKind === 'python' || run.kernelKind === 'r') &&
-            (!latestSummaryDataRun || compareRuns(latestSummaryDataRun, run) < 0)
-          ) {
-            latestSummaryDataRun = run
-            historySummary.latestDataKernel = run.kernelKind
-          }
-        }
-        if (
-          (run.kernelKind === 'python' || run.kernelKind === 'r') &&
-          run.environment &&
-          (!latestEnvironmentRuns.has(run.kernelKind) ||
-            compareRuns(latestEnvironmentRuns.get(run.kernelKind)!, run) < 0)
-        ) {
-          latestEnvironmentRuns.set(run.kernelKind, run)
-        }
-        if (limit <= 0) continue
-        if (
-          historyBefore &&
-          (run.startedAt > historyBefore.startedAt ||
-            (run.startedAt === historyBefore.startedAt &&
-              run.runId.localeCompare(historyBefore.runId) >= 0))
-        ) {
-          continue
-        }
-        eligibleTotal += 1
-        let low = 0
-        let high = runs.length
-        while (low < high) {
-          const middle = (low + high) >>> 1
-          if (compareRuns(runs[middle], run) <= 0) low = middle + 1
-          else high = middle
-        }
-        runs.splice(low, 0, run)
-        if (runs.length > limit) runs.shift()
-      }
-    }
-
-    const pageRuns = [...runs]
-    const mergedRuns = new Map(pageRuns.map((run) => [run.runId, run]))
-    for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
-    return {
-      runs: [...mergedRuns.values()].sort(compareRuns),
-      total,
-      agentSummaries: summarizeNotebookHistory(
-        sessionId,
-        documents.flatMap((document) => document.runs)
-      ),
-      latestRunEnvironments: Object.fromEntries(
-        [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
-      ),
-      historyPage: {
-        hasEarlierRuns: eligibleTotal > pageRuns.length,
-        ...(pageRuns[0]
-          ? { oldestCursor: { startedAt: pageRuns[0].startedAt, runId: pageRuns[0].runId } }
-          : {})
-      },
-      ...(historySummary ? { historySummary } : {})
-    }
+    return selectRunWindow(
+      documents,
+      sessionId,
+      limit,
+      requestedRunIds,
+      historySummaryFrameId,
+      historyBefore
+    )
   }
 
   // Loads a history document that must already exist for mutating operations.
@@ -1878,18 +2025,25 @@ class NotebookRunRepository {
         if (attempt + 1 < MAX_DOCUMENT_READ_ATTEMPTS) continue
         return normalized
       }
-      this.rememberLaneSummary(filePath, currentInfo, normalized, true)
+      const weight =
+        currentInfo.size +
+        read.value.runs.reduce(
+          (bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0),
+          0
+        )
+      this.rememberLaneSummary(
+        filePath,
+        currentInfo,
+        normalized,
+        true,
+        weight > MAX_DOCUMENT_CACHE_BYTES ? read.value.runs : undefined
+      )
       this.rememberDocument(filePath, {
         mtimeMs: currentInfo.mtimeMs,
         ctimeMs: currentInfo.ctimeMs,
         size: currentInfo.size,
         ino: currentInfo.ino,
-        weight:
-          currentInfo.size +
-          read.value.runs.reduce(
-            (bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0),
-            0
-          ),
+        weight,
         document: normalized
       })
       return normalized
@@ -2043,7 +2197,8 @@ class NotebookRunRepository {
     filePath: string,
     identity: DocumentFileIdentity,
     document: NotebookRunDocument,
-    includeIndex: boolean
+    includeIndex: boolean,
+    oversizedRecords?: StoredNotebookRun[]
   ): void {
     const previous = this.laneSummaries.get(filePath)
     if (
@@ -2068,6 +2223,33 @@ class NotebookRunRepository {
         rows.push(row)
       }
       if (rows.length === document.runs.length) summary.rows = rows
+    }
+    // Only large, externalized lanes need a second representation. Inline records share
+    // their validated objects, and all retained metadata counts against the lane budget.
+    if (oversizedRecords?.some(isNotebookRunReference)) {
+      const history = {
+        notebookSessionRoot: document.notebookSessionRoot,
+        kernel: document.kernel,
+        runs: [] as NotebookRunRecord[]
+      }
+      bytes = estimateReplayBytes(summary) + estimateReplayBytes(history)
+      const runs = this.historyRuns(document, document.projectId, document.sessionId)
+      for (const [index, run] of runs.entries()) {
+        const ref = oversizedRecords[index]
+        const entry = isNotebookRunReference(ref) ? { ...run, text: emptyText(), outputs: [] } : run
+        bytes +=
+          estimateReplayBytes(entry) +
+          (isNotebookRunReference(ref) ? estimateReplayBytes(ref) + 128 : 0)
+        if (bytes > MAX_LANE_SUMMARY_BYTES) break
+        if (isNotebookRunReference(ref)) {
+          this.historyBodies.set(entry, {
+            root: document.notebookSessionRoot,
+            ref
+          })
+        }
+        history.runs.push(entry)
+      }
+      if (history.runs.length === runs.length) summary.history = history
     }
     this.laneSummaries.delete(filePath)
     if (this.laneSummaries.size >= MAX_DOCUMENT_CACHE_ENTRIES) {

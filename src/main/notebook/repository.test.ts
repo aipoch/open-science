@@ -2594,6 +2594,27 @@ it('counts external record bytes against the document cache budget and upgrades 
   expect(await reader.hasCachedForegroundOnlyHistory(scope.projectId, scope.sessionId, lane)).toBe(
     true
   )
+  const target = { limit: 0, runIds: ['run-1'], lane }
+  expect(
+    await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
+  ).toBeUndefined()
+  // Selection preserves the last matching frame, even if an unrelated body is gone.
+  const child = createFrameNotebookLane(scope.projectId, scope.sessionId, 'child')
+  await repository.loadOrCreate({ ...scope, lane: child, workspaceCwd: root })
+  await repository.appendRun({ ...scope, lane: child, run: admittedRun({ agentFrameId: 'child' }) })
+  expect(
+    await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
+  ).toBeUndefined()
+  await reader.findExisting(scope.projectId, scope.sessionId, child)
+  const selected = await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
+  expect(selected?.window).toMatchObject({
+    total: 2,
+    runs: [{ runId: 'run-1', agentFrameId: 'child' }]
+  })
+  await repository.updateKernelStatus({ ...scope, lane: child, status: 'idle' })
+  expect(
+    await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
+  ).toBeUndefined()
   await expect(reader.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
     'corrupt'
   )
