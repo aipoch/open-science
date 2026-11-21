@@ -29,6 +29,8 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ReviewRepository } from '../reviewer/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { createRootNotebookLane } from '../notebook/lane-identity'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
@@ -160,6 +162,118 @@ it('round-trips a compaction activity and its conversation through a science pac
       }
     ])
     expect(session?.conversationGraph?.activities).toHaveLength(1)
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
+it('round-trips Notebook environment manifest sidecars through a science package', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Notebook evidence',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const lane = createRootNotebookLane('project-1', 'session-1', 'root-frame-session-1')
+  await source.notebookRepository.loadOrCreate({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  const manifest: NotebookEnvironmentManifest = {
+    schemaVersion: 1,
+    captureKind: 'completed-run',
+    capturedAt: '2026-09-02T00:00:00.000Z',
+    installedInventory: {
+      capturedAt: '2026-09-02T00:00:00.000Z',
+      source: 'full-scan',
+      validation: 'full-scan'
+    },
+    kernelKind: 'python',
+    environmentName: 'default-python',
+    runtimeSource: 'managed',
+    inventorySources: ['kernel-native'],
+    packages: [],
+    complete: true,
+    captureStatus: 'complete'
+  }
+  const checksum = sha256(`${JSON.stringify(manifest, null, 2)}\n`)
+  await source.notebookRepository.appendRun({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    lane,
+    run: {
+      runId: 'run-1',
+      cellId: 'cell-1',
+      source: 'user',
+      kernelKind: 'python',
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      script: 'print(1)',
+      text: { stdout: '1', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      workingFiles: [],
+      environmentCapture: { state: 'available', manifestChecksum: checksum },
+      environmentManifestChecksum: checksum,
+      environmentManifest: manifest
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'notebook-evidence.science')
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    initDataRoot(target.storageRoot)
+    const imported = await importer.importFrom(archive)
+    const targetRaw = JSON.parse(
+      await readFile(
+        join(target.storageRoot, 'notebooks', imported.projectId, imported.sessionId, 'run.json'),
+        'utf8'
+      )
+    )
+    expect(targetRaw.runs[0].environmentManifestChecksum).toBe(checksum)
+    expect(
+      await readFile(
+        join(target.storageRoot, 'runtime/provenance/environment-manifests', `${checksum}.json`),
+        'utf8'
+      )
+    ).toBe(`${JSON.stringify(manifest, null, 2)}\n`)
+    const hydratedRuns = await target.notebookRepository.readSessionRuns(
+      imported.projectId,
+      imported.sessionId,
+      { includeEnvironmentManifests: true }
+    )
+    expect(hydratedRuns[0]?.environmentManifest).toEqual(manifest)
+    const selected = await target.notebookRepository.readSessionRunWindow(
+      imported.projectId,
+      imported.sessionId,
+      0,
+      [hydratedRuns[0]!.runId]
+    )
+    expect(selected.runs[0]?.environmentManifest).toEqual(manifest)
+    expect(
+      await readFile(
+        join(target.storageRoot, 'runtime/provenance/environment-manifests', `${checksum}.json`),
+        'utf8'
+      )
+    ).toBe(`${JSON.stringify(manifest, null, 2)}\n`)
   } finally {
     await Promise.all([exporter.close(), importer.close()])
   }

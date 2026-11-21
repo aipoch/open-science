@@ -31,6 +31,10 @@ export type NotebookAnalysisRun = {
       before: { pythonRandomState?: { state: 'available' | 'unavailable' } }
     }
   }
+  environmentCapture?:
+    | { state: 'available' | 'partial'; manifestChecksum: string }
+    | { state: 'unavailable'; reason: string }
+  environmentManifestChecksum?: string
   fileEvidence?: {
     state: 'available' | 'partial' | 'unavailable'
     checksum?: string

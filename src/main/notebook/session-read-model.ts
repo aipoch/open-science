@@ -284,10 +284,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(!targetedRunRead && !summaryOnlyRead && runWindow.historyPage
         ? { historyPage: runWindow.historyPage }
         : {}),
-      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
+      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run, targetedRunRead)),
       recentRuns: sparseRunRead
         ? []
-        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run, false)),
       runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
@@ -315,7 +315,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
         ? requestedWindow
         : this.limitRunWindow(requestedWindow, true)
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
-    const runs = window.runs.map((run) => this.toPublicRunRecord(run))
+    const runs = window.runs.map((run) => this.toPublicRunRecord(run, runIds.length > 0))
     return {
       id: request.sessionId,
       sessionId: request.sessionId,
@@ -391,7 +391,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
@@ -416,7 +416,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
@@ -474,7 +474,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
+  private toPublicRunRecord(
+    run: NotebookRunRecord,
+    includeEnvironmentManifest = false
+  ): NotebookRunRecord {
     const publicRun = { ...run } as Partial<NotebookRunRecord>
     delete publicRun.runtimeId
     delete publicRun.helperModules
@@ -483,6 +486,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     delete publicRun.admittedAt
     delete publicRun.frozenRuntimeTarget
     delete publicRun.frozenPermissionScope
+    const environmentManifestChecksum =
+      publicRun.environmentManifestChecksum ??
+      (publicRun.environmentCapture?.state === 'available' ||
+      publicRun.environmentCapture?.state === 'partial'
+        ? publicRun.environmentCapture.manifestChecksum
+        : undefined)
+    if (!includeEnvironmentManifest && environmentManifestChecksum)
+      delete publicRun.environmentManifest
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey

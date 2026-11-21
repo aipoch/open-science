@@ -234,13 +234,15 @@ const NotebookRunCell = ({
   index,
   staleness,
   causedByRunIndex,
-  allowFolderAccess
+  allowFolderAccess,
+  loadRun
 }: {
   run: NotebookRunRecord
   index: number
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
+  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -295,7 +297,7 @@ const NotebookRunCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
-      <NotebookRunEvidence run={run} />
+      <NotebookRunEvidence run={run} loadRun={loadRun} />
     </div>
   )
 }
@@ -742,6 +744,18 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
       }
     },
     [applyNotebookState, isActive]
+  )
+
+  const loadNotebookRunEvidence = useCallback(
+    async (runId: string): Promise<NotebookRunRecord | undefined> => {
+      const requested = latestNotebookRequest.current.request
+      const targetedState = await window.api.notebook.state({
+        ...requested,
+        runIds: [runId]
+      })
+      return targetedState.runs.find((run) => run.runId === runId)
+    },
+    []
   )
 
   useEffect(
@@ -1492,6 +1506,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
                   session && session.contentLoaded !== false && !session.packageOrigin
                 )}
                 index={index}
+                loadRun={loadNotebookRunEvidence}
                 staleness={staleness}
                 causedByRunIndex={
                   staleness?.state === 'stale'

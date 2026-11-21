@@ -2105,9 +2105,12 @@ describe('notebook runtime service', () => {
       complete: true,
       captureStatus: 'complete'
     }
+    const environmentManifestChecksum = createHash('sha256')
+      .update(`${JSON.stringify(environmentManifest, null, 2)}\n`)
+      .digest('hex')
     const captureCompletedRun = vi.fn().mockResolvedValue({
       manifest: environmentManifest,
-      checksum: 'a'.repeat(64),
+      checksum: environmentManifestChecksum,
       storagePath: join(root, 'environment-manifest.json')
     })
     const service = new NotebookRuntimeService({
@@ -2236,10 +2239,10 @@ describe('notebook runtime service', () => {
       ],
       environmentCapture: {
         state: 'available',
-        manifestChecksum: 'a'.repeat(64)
+        manifestChecksum: environmentManifestChecksum
       },
       environmentManifest,
-      environmentManifestChecksum: 'a'.repeat(64)
+      environmentManifestChecksum
     })
     expect(executions[0]).toMatchObject({
       code: "print('hello')",
@@ -2278,16 +2281,31 @@ describe('notebook runtime service', () => {
 
     expect(rawRunJson).toContain(`"script": "print('hello')"`)
     expect(JSON.parse(rawRunJson).runs).toHaveLength(1)
-    expect(JSON.parse(rawRunJson).runs[0]).toMatchObject({
+    const persistedRun = JSON.parse(rawRunJson).runs[0]
+    expect(persistedRun).toMatchObject({
       status: 'completed',
       kernelEpochId: expect.any(String),
       environmentCapture: {
         state: 'available',
-        manifestChecksum: 'a'.repeat(64)
+        manifestChecksum: environmentManifestChecksum
       },
-      environmentManifest,
-      environmentManifestChecksum: 'a'.repeat(64)
+      environmentManifestChecksum
     })
+    expect(persistedRun).not.toHaveProperty('environmentManifest')
+    expect(
+      JSON.parse(
+        await readFile(
+          join(
+            root,
+            'runtime',
+            'provenance',
+            'environment-manifests',
+            `${environmentManifestChecksum}.json`
+          ),
+          'utf8'
+        )
+      )
+    ).toEqual(environmentManifest)
     expect(rawRunJson).toContain('"relativePath": "data/result.csv"')
   })
 

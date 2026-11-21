@@ -460,14 +460,21 @@ describe('NotebookSessionReadModel', () => {
       lane: session.lane,
       workspaceCwd: session.cwd
     })
+    const run = makeRun({
+      runId: 'run-old',
+      startedAt: 1,
+      environmentManifestChecksum: 'manifest-checksum',
+      environmentManifest: { packages: [] } as never
+    })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
       agentSummaries: [],
-      runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
+      runs: [run],
       total: 125,
       latestRunEnvironments: {}
     })
 
-    const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
+    const model = makeReadModel(storageRoot, session, repository)
+    const state = await model.state(session, ['run-old'])
 
     expect(readWindow).toHaveBeenCalledWith(
       session.projectId,
@@ -481,6 +488,10 @@ describe('NotebookSessionReadModel', () => {
     expect(state.recentRuns).toEqual([])
     expect(state.cells).toEqual([])
     expect(state.runCount).toBe(125)
+    expect(state.runs[0]).toHaveProperty('environmentManifest')
+
+    const normalState = await model.state(session)
+    expect(normalState.runs[0]).not.toHaveProperty('environmentManifest')
   })
 
   it('prefers a live reference and otherwise falls back to normalized durable roots', async () => {
