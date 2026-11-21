@@ -359,7 +359,9 @@ const ComposerFailureNoticeSlot = ({
           </div>
           {actionFailure?.id === current.id ? (
             <p role="alert" className="pt-1 text-sm text-destructive">
-              {t('The action could not be completed. See details and try again.')}
+              {primary === 'resume'
+                ? t('Could not resume the session.')
+                : t('The action could not be completed. See details and try again.')}
             </p>
           ) : null}
           {moreNotices}

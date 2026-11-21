@@ -233,6 +233,12 @@
     "Wait for the application handoff to finish before transferring research.": "Espere a que finalice la transferencia de la aplicación antes de transferir datos de investigación."
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "No se pudo confirmar que todos los subagentes se hayan detenido.",
+    "Could not confirm that the run stopped.": "No se pudo confirmar que la ejecución se haya detenido.",
+    "Could not confirm that your response was submitted.": "No se pudo confirmar el envío de su respuesta.",
+    "Could not end this wait.": "No se pudo finalizar la espera.",
+    "Your response was saved.": "Se guardó su respuesta.",
+    "Could not resume the session.": "No se pudo reanudar la sesión.",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP no está instalado. Para usar Claude Code, instale Claude Agent en Configuración.",
     "Automatically download updates": "Descargar actualizaciones automáticamente",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prever {{min}}–{{max}} min)",
@@ -2650,7 +2656,6 @@
     "Resolved": "Resuelto",
     "Resolving…": "Resolviendo…",
     "Resources": "Recursos",
-    "Response submission failed": "Error al enviar la respuesta",
     "Restart": "Reiniciar",
     "Restart R kernel": "Reiniciar el kernel R",
     "Restart now": "Reiniciar ahora",
@@ -7921,7 +7926,6 @@
     "{{count}} previous messages_many": "{{count}} mensajes anteriores",
     "{{count}} previous messages_other": "{{count}} mensajes anteriores",
     "Could not continue the task": "No se pudo continuar la tarea",
-    "Your conversation is preserved. End this wait to return to the conversation.": "La conversación se conserva. Finalice esta espera para volver a la conversación.",
     "End this wait": "Finalizar esta espera",
     "Retry continuation": "Reintentar la continuación",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "No se pudo eliminar este marcador. Se han conservado los repositorios guardados.",

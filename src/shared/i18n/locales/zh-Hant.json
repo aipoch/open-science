@@ -231,6 +231,12 @@
     "Wait for the application handoff to finish before transferring research.": "請等待應用程式交接完成後再傳輸研究內容。"
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "無法確認所有子智能體都已停止。",
+    "Could not confirm that the run stopped.": "無法確認執行已停止。",
+    "Could not confirm that your response was submitted.": "無法確認你的回答是否已送出。",
+    "Could not end this wait.": "無法結束這次等待。",
+    "Your response was saved.": "你的回答已儲存。",
+    "Could not resume the session.": "無法恢復工作階段。",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "尚未安裝 Claude ACP。請在設定中安裝 Claude Agent 以使用 Claude Code。",
     "Automatically download updates": "自動下載更新",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（預留 {{min}}–{{max}} 分鐘）",
@@ -2657,7 +2663,6 @@
     "Resolved": "已解決",
     "Resolving…": "解析中…",
     "Resources": "資源",
-    "Response submission failed": "提交回應失敗",
     "Restart": "重新啟動",
     "Restart R kernel": "重新啟動 R 核心",
     "Restart now": "立即重新啟動",
@@ -7593,7 +7598,6 @@
     "Switch Mode": "切換模式",
     "{{count}} previous messages_other": "先前的 {{count}} 則訊息",
     "Could not continue the task": "無法繼續任務",
-    "Your conversation is preserved. End this wait to return to the conversation.": "對話內容已保留。結束本次等待即可返回對話。",
     "End this wait": "結束本次等待",
     "Retry continuation": "重試繼續",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "無法移除此書籤，已儲存的儲存庫已保留。",

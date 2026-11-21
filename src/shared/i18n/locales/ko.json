@@ -231,6 +231,12 @@
     "Wait for the application handoff to finish before transferring research.": "연구 데이터를 전송하기 전에 애플리케이션 인계가 완료될 때까지 기다려 주세요."
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "모든 서브에이전트가 중지되었는지 확인할 수 없습니다.",
+    "Could not confirm that the run stopped.": "실행이 중지되었는지 확인할 수 없습니다.",
+    "Could not confirm that your response was submitted.": "응답이 제출되었는지 확인할 수 없습니다.",
+    "Could not end this wait.": "대기를 종료할 수 없습니다.",
+    "Your response was saved.": "응답이 저장되었습니다.",
+    "Could not resume the session.": "세션을 재개할 수 없습니다.",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP가 설치되어 있지 않습니다. Claude Code를 사용하려면 설정에서 Claude Agent를 설치하세요.",
     "Automatically download updates": "업데이트 자동 다운로드",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (예상 소요 시간: {{min}}–{{max}}분)",
@@ -2576,7 +2582,6 @@
     "Resolved": "해결됨",
     "Resolving…": "해결 중…",
     "Resources": "리소스",
-    "Response submission failed": "응답 제출 실패",
     "Restart": "다시 시작",
     "Restart R kernel": "R 커널 다시 시작",
     "Restart now": "지금 다시 시작",
@@ -7591,7 +7596,6 @@
     "Switch Mode": "모드 전환",
     "{{count}} previous messages_other": "이전 메시지 {{count}}개",
     "Could not continue the task": "작업을 계속할 수 없습니다",
-    "Your conversation is preserved. End this wait to return to the conversation.": "대화가 보존되었습니다. 이 대기를 종료하면 대화로 돌아갑니다.",
     "End this wait": "이 대기 종료",
     "Retry continuation": "계속하기 재시도",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "이 북마크를 삭제하지 못했습니다. 저장된 저장소는 유지됩니다.",
