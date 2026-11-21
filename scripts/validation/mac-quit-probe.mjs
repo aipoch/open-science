@@ -21,7 +21,7 @@ if(action==='serve'){
   server.listen(0,'127.0.0.1',()=>writeFileSync(join(dir,'feed-url'),'http://127.0.0.1:'+server.address().port)); 
 }else if(action==='launch'){
   for(const p of [config,profile,data])mkdirSync(p,{recursive:true})
-  if(!existsSync(join(config,'settings.json'))) writeFileSync(join(config,'settings.json'),JSON.stringify({version:2,providers:[],onboardingCompletedAt:Date.now(),pathsNormalizedAt:Date.now(),dataRoot:data,localePreference:'en',notificationsEnabled:false}))
+  if(!existsSync(join(config,'settings.json'))) writeFileSync(join(config,'settings.json'),JSON.stringify({version:2,providers:[],onboardingCompletedAt:Date.now(),pathsNormalizedAt:Date.now(),dataRoot:data,localePreference:process.env.NOTICE_LOCALE||'en',notificationsEnabled:false}))
   const env={OPEN_SCIENCE_CONFIG_ROOT:config,OPEN_SCIENCE_USER_DATA:profile}
   execFileSync('open',['-n','--stdout',join(dir,'stdout'),'--stderr',join(dir,'stderr'),'-a',app,...Object.entries(env).flatMap(([k,v])=>['--env',k+'='+v]),...(process.env.FIXTURE_FILE?[process.env.FIXTURE_FILE]:process.env.FIXTURE_LINK
     ?['open-science://import?'+new URLSearchParams({version:'1',origin:'http://127.0.0.1:65533',port:'65533',name:'handoff-url.science',size:'5',secret:'ab'.repeat(32)})]:[]),'--args','--inspect=127.0.0.1:19365','--lang=en-US'])
@@ -39,6 +39,30 @@ if(action==='serve'){
       await renderer('window.api.update.check()'); record('check',await renderer('window.api.update.check()')); assert.ok(readFileSync(join(dir,'server.log'),'utf8').includes('/latest-mac.yml'),'test feed was not contacted')
     }else if(action==='status')record('status',await run("return {pid:process.pid,version:app.getVersion(),focused:!!BrowserWindow.getFocusedWindow(),win:BrowserWindow.getAllWindows().map(x=>x.webContents.getURL()),status:await render('window.api.update.getStatus()')}"))
     else if(action==='workspace')record(action,await run(`if(!w||!w.isVisible())throw Error('no visible workspace'); const data=await render("Promise.all([window.api.runtimeStartup.getState(),window.api.update.getStatus()]).then(([runtime,status])=>({runtime:runtime.phase,version:status.current,text:document.body.innerText.includes('New project')}))");if(!data.text||data.runtime!=='ready')throw Error(JSON.stringify(data)); const projects=await render('window.api.projects.list().then(rows=>rows.length)'); if(!Number.isInteger(projects))throw Error('project list unavailable'); return {data,projects,pid:process.pid,version:app.getVersion(),exe:process.execPath}`))
+    else if(action==='socket') {
+      const socket=await run("const id=req('crypto').createHash('sha256').update(process.execPath).update('\\0').update(app.getVersion()).digest('hex').slice(0,20);return req('path').join(req('os').tmpdir(),'os-update-'+process.getuid(),id+'.sock')")
+      writeFileSync(join(dir,'fixture-socket'),socket)
+    } else if(action.startsWith('notice-')) {
+      const button="Array.from(document.querySelectorAll('[role=status] button')).find(b=>['查看更新','View updates'].includes(b.textContent.trim()))"
+      const home=await renderer("!!document.querySelector('main') && /新建项目|创建项目|New project/.test(document.body.innerText)")
+      const shown=await renderer('!!('+button+')')
+      if(action==='notice-absent'){assert.ok(home);assert.equal(shown,false);record(action,{home,shown})}
+      else if(action==='notice-settings'){assert.ok(await renderer("!!document.querySelector('[data-settings-anchor=\"general.about\"]')"));record(action,{reachedVersionSettings:true})}
+      else {
+        assert.ok(home);assert.ok(shown)
+        const clean=await run("return !process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED && !process.argv.some(s=>s.endsWith('.science')||s.startsWith('open-science:'))")
+        assert.ok(clean)
+        assert.equal(await renderer("!!document.querySelector('[role=dialog]')"),false)
+        assert.equal(await renderer("window.api.packagePresentation.getState().then(s=>!!s?.browserTransfers?.length)"),false)
+        const png=await run("return (await w.webContents.capturePage()).toPNG().toString('base64')")
+        writeFileSync(join(dir,'interrupted-open.png'),Buffer.from(png,'base64'))
+        if(action==='notice-dismiss')await renderer('('+button+').parentElement.querySelector("button[aria-label]").click()')
+        else await renderer('('+button+').click()')
+        assert.equal(await renderer('!!('+button+')'),false)
+        assert.equal(await renderer("location.hash"),'')
+        record(action,{home,shown,clean,dismissed:true})
+      }
+    }
     else if(action==='document')record(action,await run(`const observed=await render("Array.from(document.querySelectorAll('[role=dialog]')).map(n=>n.innerText).some(t=>t.includes('Import Session package'))");return {observed,version:app.getVersion(),pid:process.pid,argvHasDocument:process.argv.some(v=>v.endsWith('.science'))}`))
     else if(action==='link')record(action,await run(`const state=await render("window.api.packagePresentation.getState()");const matches=state?.browserTransfers?.filter(t=>t.filename==='handoff-url.science')??[];return {observed:matches.length===1,count:matches.length,version:app.getVersion(),pid:process.pid,argvHasUrl:process.argv.some(v=>v.startsWith('open-science:'))}`))
     else if(action==='identity')record('identity',await run('return {version:app.getVersion(),pid:process.pid,exe:process.execPath}'))

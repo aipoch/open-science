@@ -1,4 +1,4 @@
-name: Verify document opening during signed macOS handoff
+name: Verify signed macOS open failure feedback and upgrade
 on:
   push:
     branches: [test/macos-background-updates-open-document]
@@ -37,10 +37,20 @@ jobs:
           mkdir -p feed source
           gh release download v1.3.2 --repo aipoch/open-science -p "aipoch-open-science-1.3.2-mac-$ARCH.zip" -p latest-mac.yml -D feed
           for i in {1..70}; do
-            if gh api repos/aipoch/open-science/actions/runs/44896190264/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
+            if gh api repos/aipoch/open-science/actions/runs/44905917171/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
             sleep 30
           done
-          gh run download 44896190264 --repo aipoch/open-science -n "macos-$ARCH" -D source
+          gh run download 44905917171 --repo aipoch/open-science -n "macos-$ARCH" -D source
+      - name: Exercise a failed replacement in the signed application
+        env:
+          ARCH: ${{ matrix.arch }}
+          INTENT: ${{ matrix.intent }}
+        run: |
+          set -euo pipefail
+          export D="$RUNNER_TEMP/notice-acceptance"
+          export A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip"
+          export FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
+          bash scripts/validation/mac-notice-accept.sh
       - name: Exercise signed A to B
         if: matrix.scenario == 'reopen'
         env:
@@ -59,6 +69,10 @@ jobs:
           name: mac-intent-${{ matrix.arch }}-${{ matrix.intent }}
           retention-days: 7
           path: |
+            ${{ runner.temp }}/notice-acceptance/interrupted-open.png
+            ${{ runner.temp }}/notice-acceptance/acceptance.jsonl
+            ${{ runner.temp }}/notice-acceptance/last-error
+            ${{ runner.temp }}/notice-acceptance/signature-A.txt
             ${{ runner.temp }}/quit-acceptance/document-*
             ${{ runner.temp }}/quit-trash/result.json
             ${{ runner.temp }}/quit-trash/shipit.txt
