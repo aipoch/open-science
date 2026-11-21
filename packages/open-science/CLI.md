@@ -617,8 +617,9 @@ CLI wait and returns exit code `1`; it does not cancel the run, which can still 
 `open-science run status <run-id>`. Add `--cancel-on-timeout` to explicitly cancel the server run after
 the timeout; the command still reports the original timeout and returns exit code `1`. Explicit
 cancellation waits for provider work and application finalization to drain, and preserves partial
-output and successfully finalized artifacts. When the `ask` approval profile needs permission,
-human-readable output directs the user to approve the request in Open-Science Desktop or the Web UI.
+output and successfully finalized artifacts. If a Run needs a decision, use its attention state to
+find the matching interaction. The user can decide in the external Agent conversation or in
+Open-Science.
 
 Pass an existing session ID to continue a conversation. Approval profiles are `ask`, `auto`, and
 `full`; `--skill` is repeatable:
@@ -690,10 +691,10 @@ open-science run \
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
   does not cancel, hide, or prevent collection/messaging of children admitted earlier.
 
-`--wait` returns a still-running Run when a Plan needs approval, a Notebook environment or cell
-needs review, or Notebook work is stopped pending human continuation. `--return-on-attention` is
-accepted for older scripts and has the same behavior. Other permission and delegated-question
-events do not cause an attention return.
+`--wait` returns a still-running Run when it needs attention, such as a permission, AskUser
+question, Plan approval, Notebook review, or Notebook continuation decision. Use
+`list_interactions` to find the pending items, including those from delegated children.
+`--return-on-attention` is accepted for older scripts and has the same behavior.
 
 `get_run` and `wait_run` report Notebook `execution` independently from the outer Run. Execution
 describes the latest Python or R Notebook Run attributed to the exact research prompt: `preparing`,
@@ -1280,11 +1281,17 @@ service on the same machine with access to the input and delivery files.
 | `doctor`                                | Check Agent and Python/R Notebook readiness               |
 | `list_runtimes`                         | List available and detected Agent runtimes                |
 | `select_runtime`, `prepare_runtime`     | Select or prepare an explicitly chosen runtime            |
+| `list_providers`                        | Inspect compatible Providers and their models             |
+| `save_api_provider`                     | Validate and save an API Provider connection              |
+| `activate_provider`                     | Select a saved API Provider and model                     |
 | `configure_provider`, `open_setup`      | Set up the keyless provider or open same-profile Web      |
 | `prepare_notebook_environment`          | Start installation of the selected managed environment    |
 | `get_notebook_environment_operation`    | Read original setup or repair progress by ID              |
 | `cancel_notebook_environment_operation` | Request cancellation of the exact operation               |
 | `repair_notebook_environment`           | Request a repair of the selected managed default          |
+| `list_notebook_runtimes`                | List interpreter IDs, sources, and readiness by language  |
+| `register_notebook_interpreter`         | Probe an existing interpreter selected by the user        |
+| `enable_notebook_runtime`               | Enable a specific runnable interpreter                    |
 | `list_projects`                         | List projects and IDs                                     |
 | `create_project`                        | Create a persistent project                               |
 | `update_project`                        | Update project metadata and Agent Context                 |
@@ -1304,6 +1311,9 @@ service on the same machine with access to the input and delivery files.
 | `respond_plan`                          | Approve/reject a reviewed version or request changes      |
 | `list_interactions`                     | Find pending decisions in a Run or Project and Session    |
 | `get_interaction`                       | Read a scoped decision, Plan or continuation receipt      |
+| `respond_permission`                    | Relay or decide one scoped permission or Notebook review  |
+| `answer_question`                       | Answer AskUser using user input or known context          |
+| `set_run_interaction_mode`              | Add or withdraw routine delegation for one task           |
 | `continue_notebook`                     | Relay a user's decision to continue a specific stop       |
 | `list_artifacts`                        | List published Artifact versions and download IDs         |
 | `download_artifact`                     | Deliver one listed version to a new local file            |
@@ -1392,8 +1402,10 @@ inspected but cannot be configured or resumed. A writable Fork reports `forkOrig
 
 Runs use the service's configured framework and authorization defaults. `start_run` accepts an
 existing Session, flat model fields, skills, a Specialist, Compute Hosts, Memory, and plan-first
-options. It accepts no permission overrides. A Run can require human action in Open-Science.
-Plan approval or rejection requires the version and revision from `get_plan`.
+options. Its task interaction mode defaults to `relay`. Use `delegate` only when the user has
+delegated routine decisions for that task. Use the Run's attention state and the scoped response
+tools above to handle pending decisions. Plan approval or rejection requires the reviewed Plan
+version and revision. Notebook continuation and sensitive export each need a specific user decision.
 
 `search_literature` defaults to 20 records per page and accepts a `limit` from 1 to 100.
 `format_references` defaults to `en-US`. `get_reference_metadata` and `create_literature_item` contact external registries
@@ -1406,10 +1418,9 @@ records permanently: `set_literature_lifecycle` with `deleted` moves them to the
 MCP access grants the listed operations for the selected profile under its existing permissions.
 The adapter is not a separate sandbox or a read-only view. Project/configuration changes, plan
 responses, Literature changes and research runs persist through existing business owners and may
-write files or incur model costs. No new database schema, historical-data migration, business
-status enum, credential store or background service is introduced. There is no arbitrary
-shell/RPC tool, credential-management tool, file-path import/export/download tool or remote HTTP
-MCP endpoint.
+write files or incur model costs. Local delivery and Session package tools use the shared filesystem
+and require the authenticated local Task connection. MCP does not expose arbitrary shell or RPC
+access, raw credential values, or a remote HTTP MCP endpoint.
 
 Standard output carries only MCP protocol messages. Closing stdin or sending SIGINT/SIGTERM
 closes the adapter and its pending network requests; it neither stops the service nor cancels
