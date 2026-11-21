@@ -21,18 +21,19 @@ const credentialKeyPatterns = [
   /^(?:apiSecret|api_secret|api-secret|API_SECRET)$/,
   /^(?:auth|authentication|authorization|bearer|cookies?|credentials?|passwords?|passphrases?|passwd|pat|secrets?|tokens?)$/i,
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|(?:client|jwt|signing)[_-]?secrets?)$/i,
-  /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?tokens?$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
-  /^(?:gh|github|hf)[_-]?tokens?$/i
+  /^(?:gh|github|hf|session)[_-]?tokens?$/i
 ]
 
 // Business names can end in "token", "session token" or "secret". Only a
 // credential-specific suffix supplies enough evidence to flag an opaque value.
+const credentialToken =
+  /(?:^|[_-])(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|secret|security)[_-]?tokens?$/i
 const qualifiedCredentialSuffixes = [
   /_(?:passwords?|passwd|passphrases?)$/,
   /_(?:(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key)$/,
   /_(?:api|client|jwt|signing)_?secrets?$/,
-  /_(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security)_?tokens?$/,
+  /_rpc_?tokens?$/,
   /(?:^|_)headers?_(?:authorization|proxy_authorization|cookies?|set_cookie)$/,
   /(?:^|_)(?:aws|auth|authentication|oauth|oidc)_session_?tokens?$/
 ]
@@ -66,7 +67,11 @@ const isCredentialKey = (key: string): boolean => {
     )
   )
     return true
-  return qualifiedCredentialSuffixes.some((rule) => rule.test(words))
+  return (
+    credentialToken.test(key) ||
+    credentialToken.test(words) ||
+    qualifiedCredentialSuffixes.some((rule) => rule.test(words))
+  )
 }
 
 export const isPrivatePackageField = (key: string, value: string): boolean =>
