@@ -1984,23 +1984,20 @@ class NotebookDependencyAnalyzer {
   private async sourceFileAccessContextExclusive(
     request: NotebookSourceFileAccessContextRequest
   ): Promise<NotebookSourceFileAccessContext | undefined> {
-    const [runs, initialSidecar] = await Promise.all([
+    const [initialRuns, initialSidecar] = await Promise.all([
       this.options.repository.readSessionRuns(request.projectId, request.sessionId),
       this.readSidecar(this.sidecarPath(request.projectId, request.sessionId))
     ])
+    let runs = initialRuns
     const sidecar = initialSidecar
     if (sourceFileAccessContextNeedsRefresh(runs, sidecar, request)) {
+      runs = await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      })
       await this.projectExclusive(
         { projectId: request.projectId, sessionId: request.sessionId },
         request.currentRunId,
-        {
-          runs: await this.options.repository.readSessionRuns(
-            request.projectId,
-            request.sessionId,
-            { includeEnvironmentManifests: true }
-          ),
-          sidecar
-        }
+        { runs, sidecar }
       )
     }
     let context = projectSourceFileAccessContext(runs, sidecar, request)
