@@ -638,6 +638,7 @@ test('receives a package from cold launch arguments and a subsequent file-open e
   await expect(dialog.getByText('Could not complete', { exact: false })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('file-open-cold.png') })
   await dialog.getByRole('button', { name: 'Hide progress' }).click()
+  await expect(dialog).toHaveCount(0)
   await app.emitPackageFileOpen(archive)
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText(/^Waiting packages/)).toHaveCount(0)

@@ -324,8 +324,12 @@ export async function verifyCitationDesktopLayout(
   await expect(actions).toHaveCount(0)
   await onListSelection?.()
   const body = inspector.locator('[data-citation-inspector]')
+  // Locator.click scrolls a sticky footer's normal-flow box into view before mousedown.
+  // Click its visible position so the page-load assertion measures a real pointer interaction.
+  await expect(more).toBeInViewport({ ratio: 1 })
+  const button = await bounds(more)
   const scroll = await body.evaluate((element) => element.scrollTop)
-  await more.click()
+  await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2)
   await expect(node(page, 1139)).toHaveCount(1)
   await expect(body).toHaveJSProperty('scrollTop', scroll)
   await expect(listedPaper).toHaveAttribute('aria-pressed', 'true')

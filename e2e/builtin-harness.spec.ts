@@ -1875,7 +1875,13 @@ test('built-in harness reaps a crashed running child before explicit continuatio
     host.page = await app.restartAfterCrash({ force: true })
     recovering = true
     await openProjectSession(host.page, 'Harness running child crash', prompt)
-    await host.page.getByRole('button', { name: 'Resume session', exact: true }).click()
+    await expect(
+      host.page.getByRole('button', { name: 'Resume session', exact: true })
+    ).toBeVisible()
+    await submitPromptViaUi(
+      host.page,
+      'Use the Notebook to continue the cancelled Cold child and collect its result.'
+    )
     await expect(host.page.getByText('COLD_PARENT_COMPLETE', { exact: true })).toBeVisible({
       timeout: 90000
     })
