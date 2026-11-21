@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultController,
-  KernelProcessLifecycleOwner
+  KernelProcessLifecycleOwner,
+  type KernelProcessSpawnIntent
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 import {
@@ -509,7 +510,7 @@ describe('KernelProcessLifecycleOwner', () => {
     }
     previous.recordSpawned(previous.beginSpawn(scope), { pid: 4242 })
     const host = 'a'.repeat(64)
-    const recover = (hostHash?: string, boot = bootA) => {
+    const recover = (hostHash?: string, boot = bootA): Promise<KernelProcessSpawnIntent> => {
       const owner = new KernelProcessLifecycleOwner({
         ...options,
         readWindowsBootObservation: async () =>
