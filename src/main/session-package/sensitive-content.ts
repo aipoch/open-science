@@ -23,7 +23,7 @@ const credentialKeyPatterns = [
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|client[_-]?secret)$/i,
   /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?token$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
-  /^(?:GH|GITHUB|HF)_TOKEN$/
+  /^(?:gh|github|hf)[_-]?token$/i
 ]
 
 // Qualified names need a credential-specific ending. Bare "token" and "secret"
@@ -47,6 +47,11 @@ const isCredentialKey = (key: string): boolean => {
 
 export const isPrivatePackageField = (key: string, value: string): boolean =>
   isCredentialKey(key) && isPrivatePackageValue(value)
+
+const jsonStringMembers = /("(?:\\.|[^"\\])*")(?:\s*:\s*("(?:\\.|[^"\\])*"))?/g
+// A quote after a backslash cannot open a string in a JSON document. A scan
+// window starting inside a string can otherwise read escaped quotes as new members.
+const structuredStringMembers = new RegExp('(?<!\\\\)' + jsonStringMembers.source, 'g')
 
 export type PackageSensitiveContentSource = {
   storageKey: string
@@ -299,7 +304,7 @@ const findPackageTextMatch = (
     }
   }
   // Inspect decoded JSON strings in both object fields and array elements.
-  for (const match of text.matchAll(/("(?:\\.|[^"\\])*")(?:\s*:\s*("(?:\\.|[^"\\])*"))?/g)) {
+  for (const match of text.matchAll(jsonMetadata ? structuredStringMembers : jsonStringMembers)) {
     const literal = match[2] ?? match[1]
     if (!match[2] && !literal.includes('\\')) continue
     try {
@@ -568,6 +573,23 @@ export const findSensitivePackageText = (
 
 type TextFinding = { text: string; match: PackageTextMatch; offset: number }
 
+const retainedWindowStart = (text: string): number => {
+  // Keep short identifiers whole so a business key's suffix cannot become a credential.
+  const cut = Math.max(0, text.length - 8192)
+  const prefix = text.slice(Math.max(0, cut - 512), cut).match(/[\w%\\-]+$/)?.[0] ?? ''
+  return cut - prefix.length
+}
+
+// Every JSON escape represents one UTF-16 code unit. Translate only offsets
+// that we retain or report so evidence always refers to the original file.
+const jsonStringSourceOffset = (source: string, offset: number): number => {
+  for (const escape of source.matchAll(/\\(?:u[0-9a-fA-F]{4}|.)/g)) {
+    if (escape.index >= offset) break
+    offset += escape[0].length - 1
+  }
+  return offset
+}
+
 // Keep validation, overlap and both candidate policies under one stream owner.
 // Typed metadata exemptions apply only after the entire file validates.
 export class PackageTextScanner {
@@ -577,9 +599,51 @@ export class PackageTextScanner {
   private offset = 0
   private original?: TextFinding
   private structured?: TextFinding
+  private stringTail = ''
+  private encoded?: TextFinding
+
+  private inspectString(
+    source: string,
+    offset: number,
+    closed: boolean,
+    pendingEscape: number
+  ): void {
+    // Complete literals within one read are covered by the ordinary text scan.
+    if (this.encoded || (closed && !this.stringTail)) return
+    const raw = this.stringTail + source
+    offset -= this.stringTail.length
+    const safe = raw.slice(0, raw.length - pendingEscape)
+    const escaped = safe.includes('\\')
+    const value: string = escaped ? JSON.parse('"' + safe + '"') : safe
+    const cut = closed ? value.length : retainedWindowStart(value)
+    if (escaped && cut > 0) {
+      const match = scanPackageText(value, closed, false)
+      if (match && match.offset < cut) {
+        const start = jsonStringSourceOffset(safe, match.offset)
+        const valueStart = match.valueOffset ?? match.offset
+        const valueOffset = jsonStringSourceOffset(safe, valueStart)
+        this.encoded = {
+          text: safe,
+          offset,
+          match: {
+            ...match,
+            offset: start,
+            length: jsonStringSourceOffset(safe, match.offset + match.length) - start,
+            valueOffset,
+            valueLength:
+              jsonStringSourceOffset(safe, valueStart + (match.valueLength ?? match.length)) -
+              valueOffset
+          }
+        }
+      }
+    }
+    this.stringTail = closed ? '' : raw.slice(escaped ? jsonStringSourceOffset(safe, cut) : cut)
+  }
 
   write(decoded: string, complete = false): void {
-    this.syntax.write(decoded)
+    this.syntax.write(decoded, (start, end, closed, pendingEscape) =>
+      this.inspectString(decoded.slice(start, end), this.offset + start, closed, pendingEscape)
+    )
     const text = this.tail + decoded
     const inspect = (jsonMetadata: boolean): TextFinding | undefined => {
       const match = findPackageTextMatch(text, complete, jsonMetadata, this.beforeTail)
@@ -588,18 +652,14 @@ export class PackageTextScanner {
     this.original ??= inspect(false)
     if (this.original) this.structured ??= inspect(true)
     this.offset += decoded.length
-    // Keep short identifiers (including CLI dashes and serialized line breaks)
-    // whole so the next window cannot reinterpret a business key's suffix.
-    const cut = Math.max(0, text.length - 8192)
-    const prefix = text.slice(Math.max(0, cut - 512), cut).match(/[\w%\\-]+$/)?.[0] ?? ''
-    const start = cut - prefix.length
+    const start = retainedWindowStart(text)
     if (start > 0) this.beforeTail = (this.beforeTail + text.slice(0, start)).slice(-512)
     this.tail = text.slice(start)
   }
 
   finish(): TextFinding | undefined {
     this.write('', true)
-    return this.syntax.finish() ? this.structured : this.original
+    return (this.syntax.finish() ? this.structured : this.original) ?? this.encoded
   }
 }
 

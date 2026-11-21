@@ -685,6 +685,39 @@ it('preserves the tokens value type when the scan window starts at the key', () 
   }
 })
 
+it('checks escapes in a long JSON string and reports the original source span', () => {
+  const chunk = 64 * 1024
+  const prefix = '{"notes":"'.padEnd(2 * chunk - 7, 'x') + '😀 '
+  const token = String.raw`\u0067hp_syntheticprivatevalue`
+  for (const escaped of [token, '\\' + token, String.raw`Bearer\u0020[redacted]`]) {
+    const text = prefix + escaped + ' ' + 'x'.repeat(chunk) + '"}'
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += chunk) scanner.write(text.slice(i, i + chunk))
+    const finding = scanner.finish()
+    expect(Boolean(finding)).toBe(escaped === token)
+    if (finding) {
+      const { match, offset } = finding
+      expect(offset + match.valueOffset!).toBe(prefix.length)
+      expect(match.valueLength).toBe(token.length)
+      expect(buildSensitiveContentEvidence(finding.text, match, 'data.json').context).not.toContain(
+        'syntheticprivatevalue'
+      )
+    }
+  }
+})
+
+it('recognizes the value type inside JSON quoted in a long string', () => {
+  const chunk = 64 * 1024
+  for (const tokens of [123, 'opaque']) {
+    const text = JSON.stringify({
+      notes: 'x'.repeat(125000) + ' ' + JSON.stringify({ tokens }) + ' ' + 'y'.repeat(chunk) + '\n'
+    })
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += chunk) scanner.write(text.slice(i, i + chunk))
+    expect(Boolean(scanner.finish())).toBe(typeof tokens === 'string')
+  }
+})
+
 it('distinguishes numeric search patterns from PAT assignments across export chunks', () => {
   for (const [code, sensitive] of [
     ['const pats = ["0.59", "−0.03", "278"];', false],
@@ -811,10 +844,16 @@ it.each([
   'service-client-secret',
   'archive_private_key',
   'tenantRefreshToken',
+  'githubToken',
+  'hf_token',
   'worker_session_token',
   'backupPassphrase'
 ])('recognizes %s as a credential position', (key) => {
   expect(isPrivatePackageField(key, 'opaque')).toBe(true)
+  const scanner = new PackageTextScanner()
+  scanner.write(`{"${key}`)
+  scanner.write('":"opaque"}')
+  expect(scanner.finish()).toBeDefined()
   for (const text of [
     JSON.stringify({ [key]: 'opaque' }),
     `${key}=opaque`,
