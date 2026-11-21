@@ -5,6 +5,117 @@ and [the original Chinese implementation note](real-agent-loop-implementation-pl
 [spec #54](https://github.com/guch96/open-science/issues/54). An installed package, an Agent
 turn, a Notebook dispatch, and verified files are separate observations.
 
+## Browser-free setup regression: November 21, 2026
+
+After the premature launch below, `d63e139d9` made the README prompt explicit, removed browser
+launch actions from ordinary readiness results, and documented when a selected Provider needs
+a browser handoff. The actual macOS npm installation passed npm resolution, native loading,
+and Electron-free startup. Its CLI tarball SHA-256 was
+`896f0ff52c18251f0fb4e41e8e3ddc61ebd5a74f05c8648d3fd926b797140e8e`; the unchanged macOS native
+tarball SHA-256 was `d6a225a1fc17aca50c0f5cb3bd9cf17c8c7dea22a6927e74661818ab27a341a9`.
+
+WorkBuddy cached the earlier command after an on-disk configuration edit. The connection panel
+was used to load and trust the verified local preview. A new WorkBuddy task then received the
+exact revised README prompt, changing only the link to the fork commit. The fresh profile's
+trace recorded seven discovery and readiness requests, including both languages, and no opens,
+research, or package writes. An independent "where are the R settings?" turn returned
+Settings > Runtimes > Notebook without a tool call. A third, explicitly authorized turn selected
+the built-in Agent, activated the keyless Kilo Provider, and completed managed R preparation
+under operation `e7d1eace-25c9-4de8-b307-70d8d5d839e4`. The operator did not open setup or
+install Python. CLI JSON and WorkBuddy MCP agreed that Agent was ready, R was prepared, and
+Python was absent. The Notebook execution readiness check separately reported host memory
+pressure. The three turns had zero `open_setup` calls and zero research or package writes.
+
+## WorkBuddy research and delivery: November 21, 2026
+
+WorkBuddy 5.9.4 (Hy4 flash) connected to the actual `89010daee` macOS arm64 npm build using a
+fresh profile and local MCP stdio. The exact short README prompt differed only in the URL for the
+fork build. It discovered supported capabilities and found zero Projects and Sessions. It also
+called `open_setup` (trace sequence 14, `launch_requested`); this confirms the browser launch was
+requested, not that the page loaded. The setup prompt's request for directions should not result
+in opening a browser. The separate configuration turn used MCP to select `open-science-agent`,
+activate the keyless Kilo Provider, and prepare managed R 4.4.3 with operation
+`f2b476d0-edd2-4e57-9654-3d6e1770a11a`. MCP and CLI JSON agreed on Agent and R readiness. Python
+remained unprepared. That turn did not call `open_setup`.
+
+WorkBuddy created Project `cmwq88zmp0000jgachtswc1hh` only after the separate study request.
+Request `81be68a4-face-4f27-a748-d5190cb13dba` admitted Run
+`7f0e2068-a9d1-403a-bf9c-d5e87cd637b9` in Session `69ba13a2-8c7d-4141-a34b-05771baaa930`.
+The runtime and code review showed `kernelDispatched: false` before the synthetic test operator
+relayed one-time decisions in WorkBuddy. The sandbox refused a copy from the external delivery
+directory. A root AskUser response authorized relaying the known CSV content, producing linked
+Run `3f79ec71-0cd4-4aea-a003-05c0c3a9f31e`. That Run acknowledged the choice; the next request
+supplied the exact input rows to the same Session. Request `986122da-9dad-466c-97e9-f284ba95ea5c`
+admitted Run `ec80009c-a38e-478f-9b8f-c8f593fad146`. After declining the separate permission to
+install `dplyr`, the same Run completed real base R Notebook `notebook-run-1795254976121-9`
+with `kernelDispatched: true`. WorkBuddy recovered its bounded wait timeouts by querying the
+existing Run. None of these decisions or business operations required an Open-Science Web UI.
+
+| WorkBuddy delivery         | MCP download or operation ID           |   Bytes | SHA-256                                                            |
+| -------------------------- | -------------------------------------- | ------: | ------------------------------------------------------------------ |
+| `greenhouse_report.md`     | `effeca1f-89dd-42c1-ac5a-d7086aab38cf` |     761 | `05f57e7b80fb01c3e9c905d17dd734b61352b201bd0b6e407b3853e3e8ad9f1c` |
+| `greenhouse_results.csv`   | `6411463c-9b7a-4b2b-8fb9-79a7f96aafbd` |      61 | `81fff5f2a1d733a530e83e7b1479b4334d3003ed84dee0dd065454a322665838` |
+| `greenhouse-study.science` | `88342a49-b8cd-4414-b39f-7600b4b71482` | 133,849 | `6f64a81e0b3e9d9230cc26e2017db401e7879b6bd6fef2f061214bb04dc9d91b` |
+
+MCP reported `handoffStatus: complete` for the research and `delivery.status: verified` for
+the export. Both downloads matched the MCP receipts. The archive contained the exact input
+(`133bd5847fe8ede80adc34e1274442466931914adb50f196cafeb63eefc42abc`) and both delivered files;
+all 19 inventory records (14 unique entries) matched their bytes. Independent recomputation
+gave counts of 4 in both groups, means 13 and 17 cm, and treatment minus control 4 cm. This
+synthetic package did not trigger sensitive export review. Only this archive was handed to
+the independent receiving environment.
+
+In a separate Plan First Run `8494bc30-c256-47ef-8b01-80237a390133`, WorkBuddy allowed plan
+generation, presented version `f5c8da47-c54c-4996-9d49-27ec8a29bf29` at revision 3, and waited.
+The operator added and withdrew delegation in separate turns. The same Run returned to `relay`
+at revision 2 with the plan still pending. WorkBuddy then relayed explicit approval of the read
+version. It presented a new AskUser question, which the service identified as a main-task
+question. After an actual service interruption, WorkBuddy rediscovered and answered that
+pending question on the same Run. The linked Run
+`70740fd9-21f0-4205-a412-d6106a3056de` encountered Notebook stop
+`1ccdd20a-7ede-4b9e-991f-532a32105179`. The test operator explicitly chose to continue that
+stop in the conversation. MCP returned new request `60255eed-2a0c-4b32-bafb-a328b13ee184`
+and Run `eab67021-edd9-47ca-b6a7-e1a6bddd58e8`, which completed. The stopped cell was not
+replayed or reported as a confirmed Notebook dispatch.
+
+## Independent receiving Agent: WorkBuddy package
+
+OpenCode 1.19.5 with a live Hy4 model received the WorkBuddy archive in a fresh Debian 13
+arm64 container running the matching `89010daee` Linux npm build. This container had its own
+profile and Secret Service, no host mounts, and working Bubblewrap with host cgroup visibility.
+No source database, working directory, or credential crossed. The source package matched its
+digest and size in the receiver. The first turn used the short README prompt and the binary
+attachment and performed only discovery and readiness. The host's text pre-read failed on the
+binary attachment; MCP imported the same file by local path only after a separate request.
+
+Import operation `c9ddc321-f8d5-45c4-9afc-0f06b7641d13` yielded read-only Session
+`import-b336ad27-cd8c-4766-95b1-c44747ef8ec9`. Its two historical Artifacts matched the original
+downloads; inspection ran no Notebook. The receiver selected the built-in Agent and keyless
+Kilo Provider and prepared R independently. Explicit Fork consent created writable Session
+`5aeff623-4c58-4ca8-9969-51b71d70b58b` through operation
+`b1fad4d1-317c-4782-869b-02352367aec9`. The source Session stayed read-only.
+
+The separately requested study used new request `30ff2107-e652-4b54-80a8-15d8dac175ff`,
+Run `478e5704-e8a0-4d83-91dc-28c6ff00647d` and default `relay`. OpenCode treated the
+requested managed R interpreter as the user's approval of that binding in the same turn.
+It later waited for an explicit decision on a proposed shell write, relayed the operator's
+refusal, and queried the original Run after a bounded timeout. Managed R Notebook
+`notebook-run-1795255522069-7` completed with `kernelDispatched: true`. Independent
+recomputation verified sample variance `20/3` cm² and range `6` cm in both groups.
+
+| Receiving delivery            | MCP download or operation ID           |   Bytes | SHA-256                                                            |
+| ----------------------------- | -------------------------------------- | ------: | ------------------------------------------------------------------ |
+| `greenhouse_followup.md`      | `37ce3b87-0a4c-4305-8538-c3878f72db5c` |   2,019 | `04a8c037e0bf246e83cfe9d01b0bae5396b0c91ec2b86435900d4910a19457de` |
+| `greenhouse_variance.csv`     | `e1db1866-3134-48ee-9ad5-5da3bc79fea3` |     101 | `92e7e8dcac04a52f3b8ac201fdab4efc985a9f0d2d5da896ccfbc19ac2dec59a` |
+| `greenhouse-followup.science` | `6a217375-dc7b-4d92-abb8-76d4df7cb5d7` | 300,363 | `4d9a5e5191bb125a1d004c801b5b808b2d0279f7400cb5a9327bcedf1499241c` |
+
+MCP verified both new downloads and the export. All 30 archive inventory records matched,
+including both historical Artifacts, both new Artifacts, and the unchanged input. After an
+actual service restart the same OpenCode conversation recovered the original request, Run,
+Notebook and verified delivery, without another submission. The export lookup returned
+`unconfirmed` after restart while the saved bytes still matched the original digest. The trace
+contains one import, one Fork, one research submission, and one export.
+
 ## Installed cold startup and external Agent handoff: November 21, 2026
 
 The actual macOS and Linux arm64 npm installations from `10186febe` passed npm resolution,
@@ -792,14 +903,12 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 
 ## Remaining gates
 
-The original pre-release README runs are recorded in #66 and #67. They preceded the revised short
-prompt and setup capabilities. The installed direct MCP preview now completes real R dispatch,
-delivery, and migration in an independent Linux container with a deterministic Provider. The
-latest WorkBuddy conversation from the short prompt and a receiving Agent's migration of that
-conversation's package are still the separate #80 and #81 gates. The new WorkBuddy connector
-requires first-use Trust. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
-supersedes [#4519](https://github.com/aipoch/open-science/pull/4519) to follow the upstream branch
-naming rule. It requires the upstream checks and CI owner review of the Windows routing
+The original pre-release README runs (#66 and #67) preceded the revised short prompt and setup
+capabilities. The current WorkBuddy run completed research and file delivery, and the actual
+WorkBuddy package passed the independent receiving run in [#81](https://github.com/guch96/open-science/issues/81).
+The WorkBuddy interaction gate [#80](https://github.com/guch96/open-science/issues/80) still needs
+the background continuation follow-up. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+remains Draft and requires the upstream checks and CI owner review of the Windows routing
 registration before merge.
 Registry verification ([#68](https://github.com/guch96/open-science/issues/68)) is blocked until an
 official npm release contains Phase 1. Both README paths must then be repeated from that published
