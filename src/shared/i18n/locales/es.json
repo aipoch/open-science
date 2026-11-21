@@ -233,6 +233,8 @@
     "Wait for the application handoff to finish before transferring research.": "Espere a que finalice la transferencia de la aplicación antes de transferir datos de investigación."
   },
   "renderer": {
+    "The update did not finish. Reopen your file or link after updating.": "La actualización no se completó. Vuelva a abrir el archivo o el enlace después de actualizar.",
+    "View updates": "Ver actualizaciones",
     "Could not confirm that all subagents stopped.": "No se pudo confirmar que todos los subagentes se hayan detenido.",
     "Could not confirm that the run stopped.": "No se pudo confirmar que la ejecución se haya detenido.",
     "Could not confirm that your response was submitted.": "No se pudo confirmar el envío de su respuesta.",
