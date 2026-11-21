@@ -2,6 +2,9 @@ name: Qualify signed macOS background update
 on:
   push:
     branches: [test/macos-background-updates-acceptance]
+concurrency:
+  group: mac-quit-acceptance-runners
+  cancel-in-progress: true
 permissions:
   contents: read
   actions: read
@@ -53,5 +56,7 @@ jobs:
             ${{ runner.temp }}/quit-acceptance/*.png
             ${{ runner.temp }}/quit-acceptance/signature-*.txt
             ${{ runner.temp }}/quit-acceptance/last-*
+            ${{ runner.temp }}/quit-acceptance/stderr
+            ${{ runner.temp }}/quit-acceptance/stdout
             ${{ runner.temp }}/quit-acceptance/cold-identity
             ${{ runner.temp }}/quit-acceptance/profile/desktop-logs/*update*.log

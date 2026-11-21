@@ -52,6 +52,11 @@ codesign --verify --strict --deep "$app"
 wait_status 's.state==="ready"'
 test "$(zip_requests)" = 1
 probe identity
+cp "$D/settings.png" "$D/settings-before-download.png"
+open -a "$app"
+sleep 2
+probe settings
+cp "$D/settings.png" "$D/settings-ready.png"
 open -a "$app"
 sleep 2
 probe status
