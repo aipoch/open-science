@@ -10355,8 +10355,9 @@ describe('ConversationPanel unified failure notices', () => {
 it.each(['legacy', 'turn'] as const)(
   'keeps an imported %s failure out of the live error area',
   (surface) => {
-    const error =
-      'Internal error: stream disconnected before completion: Transport error: network error: error decoding response body'
+    const response =
+      'stream disconnected before completion: Transport error: network error: error decoding response body'
+    const error = 'Internal error: ' + response
     const activeSession: ChatSession = {
       id: 'imported-session',
       projectId: 'project-a',
@@ -10401,7 +10402,8 @@ it.each(['legacy', 'turn'] as const)(
     )
     if (surface === 'turn') {
       expect(history?.open).toBe(false)
-      expect(history?.textContent).toContain(error)
+      expect(history?.querySelector('pre')?.textContent).toContain('Info\n' + response)
+      expect(history?.textContent).not.toContain('Internal error:')
       act(() => history?.querySelector('summary')?.click())
       expect(history?.open).toBe(true)
     } else {
