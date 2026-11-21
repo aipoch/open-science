@@ -41,8 +41,10 @@ type HookHarnessProps = {
   isReady: boolean
 }
 
+const openRuntimeSettings = (): void => useSettingsStore.getState().openSettingsToPanel('runtimes')
+
 const HookHarness = ({ isHydrated, isReady }: HookHarnessProps): null => {
-  useDeepLinkNavigation({ isHydrated, isReady })
+  useDeepLinkNavigation({ isHydrated, isReady }, openRuntimeSettings)
 
   return null
 }
@@ -85,7 +87,7 @@ const renderHook = async (
 
 describe('deep-link navigation', () => {
   it('opens Notebook runtimes without waiting for a Project or Session', async () => {
-    window.history.replaceState({}, '', '/?settings=runtimes')
+    window.history.replaceState({}, '', '/?settings=runtimes&other=value#target')
 
     await renderHook({ isHydrated: false, isReady: false })
 
@@ -93,7 +95,8 @@ describe('deep-link navigation', () => {
       isSettingsOpen: true,
       pendingSettingsIntent: { route: { panel: 'runtimes' } }
     })
-    expect(window.location.search).toBe('')
+    expect(window.location.search).toBe('?other=value')
+    expect(window.location.hash).toBe('#target')
   })
 
   it('restores the selected Session URL when returning from Library', async () => {
