@@ -1090,8 +1090,8 @@ export const createApplicationModules = async (
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
             throw error
-          await sessionProjection.ensureSessionProjection()
-          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
+          // Recovery can return readable sessions while the projection is still incomplete.
+          summaries = (await sessionProjection.ensureSessionProjection()).sessions
         }
         const projects = await sessionPackages.projectRepository.list()
         const projectsById = new Map(
