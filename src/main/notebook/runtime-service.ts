@@ -1714,7 +1714,10 @@ class NotebookRuntimeService {
         }
       }
     }
-    const lastRun = runs.findLast((run) => run.kernelKind === 'python' || run.kernelKind === 'r')
+    const lastRun = runs.findLast(
+      (run): run is typeof run & { kernelKind: NotebookLanguage } =>
+        run.kernelKind === 'python' || run.kernelKind === 'r'
+    )
     if (!lastRun) {
       return {
         ...origin,
@@ -1727,6 +1730,7 @@ class NotebookRuntimeService {
       ...origin,
       ...(lastRun.messageBranchId ? { messageBranchId: lastRun.messageBranchId } : {}),
       notebookRunId: lastRun.runId,
+      language: lastRun.kernelKind,
       ...(lastRun.kernelDispatched === undefined
         ? {}
         : { kernelDispatched: lastRun.kernelDispatched })
