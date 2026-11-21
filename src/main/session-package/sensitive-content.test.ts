@@ -614,6 +614,8 @@ it('checks export metadata values independently of their field names', () => {
     'tokenizer_token_index',
     'authPanelTitle',
     'secretName',
+    'apiSecretName',
+    'API_SECRET',
     'credential_name',
     'hasCredentials',
     'no-api-key',
@@ -776,3 +778,17 @@ it('distinguishes authentication metadata from credential positions', () => {
   for (const key of ['api_key', 'clientSecret', 'OPENAI_API_KEY', 'accessToken', 'password'])
     expect(isPrivatePackageField(key, 'opaque-value')).toBe(true)
 })
+
+it.each(['apiSecret', 'api_secret', 'api-secret'])(
+  'recognizes the exact %s credential key',
+  (key) => {
+    expect(isPrivatePackageField(key, 'opaque')).toBe(true)
+    for (const text of [
+      JSON.stringify({ [key]: 'opaque' }),
+      `${key}=opaque`,
+      `https://example.org/?${key}=opaque`
+    ]) {
+      expect(findSensitivePackageText(text)).toBeDefined()
+    }
+  }
+)

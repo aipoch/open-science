@@ -18,6 +18,7 @@ export const isPrivatePackageValue = (value: string): boolean => {
 // Export blocks on a credential position. Diagnostic logs also redact business
 // names containing sensitive words, which is deliberately a broader policy.
 const credentialKeyPatterns = [
+  /^(?:apiSecret|api_secret|api-secret)$/,
   /^(?:auth|authentication|authorization|bearer|cookies?|credentials?|passwords?|passphrases?|passwd|pat|secrets?|tokens?)$/i,
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|client[_-]?secret)$/i,
   /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?token$/i,
