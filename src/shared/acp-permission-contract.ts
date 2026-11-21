@@ -51,9 +51,25 @@ export type AcpPermissionRequest = {
   }>
 }
 
-export function isAppOwnedNotebookCodeReview(
-  value: unknown
-): value is { appOwned: true; rawInput: { notebookCodeRisk: { runId?: unknown } } } {
+type NotebookReviewTarget = {
+  language?: unknown
+  projectId?: unknown
+  promptMessageId?: unknown
+  messageBranchId?: unknown
+  runtimeId?: unknown
+}
+
+export function isAppOwnedNotebookCodeReview(value: unknown): value is {
+  appOwned: true
+  rawInput: {
+    code?: unknown
+    notebookCodeRisk: NotebookReviewTarget & {
+      runId?: unknown
+      environment?: unknown
+      risks?: unknown
+    }
+  }
+} {
   if (
     value === null ||
     typeof value !== 'object' ||
@@ -70,11 +86,11 @@ export function isAppOwnedNotebookCodeReview(
 export function isAppOwnedNotebookRuntimeReview(value: unknown): value is {
   appOwned: true
   rawInput: {
-    notebookRuntimeSelection: {
-      language?: unknown
-      projectId?: unknown
-      promptMessageId?: unknown
-      messageBranchId?: unknown
+    notebookRuntimeSelection: NotebookReviewTarget & {
+      label?: unknown
+      interpreterPath?: unknown
+      previousRuntimeId?: unknown
+      previousLabel?: unknown
     }
   }
 } {

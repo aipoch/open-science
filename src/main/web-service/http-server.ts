@@ -1584,7 +1584,8 @@ const handleTaskApiRequest = async (
                 'source',
                 'expectedRevision',
                 'expectedModeRevision',
-                'expectedBranchId'
+                'expectedBranchId',
+                'expectedLanguage'
               ].includes(key)
           ) ||
           !('optionId' in input) ||
@@ -1593,6 +1594,10 @@ const handleTaskApiRequest = async (
           !('expectedBranchId' in input) ||
           typeof input.expectedBranchId !== 'string' ||
           !input.expectedBranchId.trim() ||
+          ('expectedLanguage' in input &&
+            !['python', 'r', 'repl', 'bash'].some(
+              (language) => language === input.expectedLanguage
+            )) ||
           !('expectedRevision' in input) ||
           typeof input.expectedRevision !== 'number' ||
           !Number.isSafeInteger(input.expectedRevision) ||

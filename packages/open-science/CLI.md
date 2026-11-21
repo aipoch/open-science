@@ -656,7 +656,7 @@ The CLI checks host support before starting an unattended Run. An older daemon w
 `permission-prompts-none` capability returns `unsupported_capability`; update the host rather than
 silently running a task that might wait for a person. With prompts enabled, `wait_run` and
 `--return-on-attention` return supported pending interactions. Use `list_interactions`,
-`get_interaction` and `respond_permission` for ordinary Task permissions.
+`get_interaction` and `respond_permission` for ordinary Task permissions and Notebook reviews.
 
 ### Execution controls
 
@@ -702,15 +702,18 @@ Notebook success. A missing `kernelDispatched` is unknown. Check output delivery
 If the model reaches its turn or output budget, the Run fails with an explanation and retains
 any partial output. Check the model settings for that Session before trying another research turn.
 
-For `review_notebook_runtime_in_app`, the user responds to **Confirm Notebook kernel and
-environment** in the original Session and branch. The selected language is reported when known.
-An installed environment may still need this approval before the first Notebook Run is created.
-Use `get_setup_status` to check the language and open Notebook settings if the user wants to
-configure it. For `review_notebook_code_in_app`, the user reviews
-the pending cell there. Recheck the same research Run after either decision. CLI and MCP
-provide the handoff; the Web or Desktop app presents the decision. Public `permission.requested`
-notices for these reviews identify the Run and reason without carrying decision options,
-interpreter paths, or code risk details.
+For `execution.next.action: "respond_permission"`, read the pending Notebook review with
+`get_interaction`. `notebookReview.kind` distinguishes a runtime selection from code risk;
+its detail shows the selected environment or the cell's bounded risk evidence. Code can be
+omitted if it is too large or contains sensitive material. Copy `notebookReview.language` into
+`expectedLanguage` and relay the chosen one-time option, branch, and revision. The same
+`relay` and `delegate` policy applies to both reviews. Follow the original Run after a decision.
+`kernelDispatched: false` means the pending cell has not started. An already installed environment
+may still require a binding review. Use `get_setup_status` for installation readiness.
+
+For `review_notebook_runtime_in_app` or `review_notebook_code_in_app`, the review is available
+in the original Session and branch in Open-Science. Public `permission.requested` events
+signal attention; use the scoped detail query for the current options and review evidence.
 
 For `next.action: "continue_notebook"`, find the current stop with `list_interactions` and read it
 with `get_interaction`. Once the cause has been resolved, ask the user whether to continue this

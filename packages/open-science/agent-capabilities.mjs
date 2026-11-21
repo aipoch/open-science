@@ -503,13 +503,14 @@ registerResource(
 registerResource(
   'respond_permission',
   'research',
-  'Select one allowed action for an exact pending permission. Use user_relay for a user decision, or delegated_agent with the current Run interaction policy revision. This does not remember a grant.',
+  'Select a one-time option for the exact pending permission, including Notebook environment and code reviews. For a Notebook review, copy notebookReview.language into expectedLanguage. Use user_relay for a user decision, or delegated_agent with the current Run interaction policy revision.',
   {
     ...interactionScope,
     interactionId: id('Permission interaction ID from get_interaction.'),
     optionId: id('One of the options in the current interaction.'),
     expectedRevision,
     expectedBranchId: id('Branch ID from get_interaction.'),
+    expectedLanguage: z.enum(['python', 'r', 'repl', 'bash']).optional(),
     ...decisionSource
   },
   write,

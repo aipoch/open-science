@@ -11,6 +11,8 @@ export type SetTaskInteractionModeRequest = {
   interactionMode: TaskInteractionMode
 }
 
+export type TaskNotebookReviewLanguage = 'python' | 'r' | 'repl' | 'bash'
+
 export type TaskInteractionReference = {
   id: string
   kind: string
@@ -22,6 +24,7 @@ export type TaskInteractionReference = {
   branchId?: string
   revision: number
   interactionPolicy?: TaskInteractionPolicy
+  notebookReview?: { kind: 'runtime' | 'code'; language: TaskNotebookReviewLanguage }
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]
@@ -50,6 +53,7 @@ export type TaskPermissionResponse = {
   expectedRevision: number
   expectedBranchId: string
   expectedModeRevision?: number
+  expectedLanguage?: TaskNotebookReviewLanguage
   optionId: string
   source: TaskInteractionDecisionSource
 }
