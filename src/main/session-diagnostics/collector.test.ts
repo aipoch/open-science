@@ -408,6 +408,38 @@ describe('session diagnostics isolated collector', () => {
     for (const secret of ['SECRET_SCRIPT', 'SECRET_STDOUT', 'SECRET_KEY'])
       expect(exported).not.toContain(secret)
   })
+  it('exports a valid inline environment manifest when its sidecar is unavailable', async () => {
+    const input = await fixture()
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    await mkdir(notebookRoot, { recursive: true })
+    const manifest = {
+      schemaVersion: 1,
+      captureKind: 'completed-run',
+      packages: []
+    }
+    const contents = `${JSON.stringify(manifest, null, 2)}\n`
+    const checksum = createHash('sha256').update(contents).digest('hex')
+    await writeFile(
+      join(notebookRoot, 'run.json'),
+      JSON.stringify({
+        projectId: 'project',
+        sessionId: 'session',
+        runs: [
+          { runId: 'run-1', environmentManifestChecksum: checksum, environmentManifest: manifest }
+        ]
+      })
+    )
+
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['notebook'] })
+
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    await expect(
+      readFile(
+        join(input.directory!, 'content/notebook/environment-manifests', `${checksum}.json`),
+        'utf8'
+      )
+    ).resolves.toBe(contents)
+  })
   it('exports opted-in scripts only in selected Notebook runs and records coverage', async () => {
     const input = await fixture()
     const notebookRoot = join(input.dataRoot, 'notebooks/project/session')

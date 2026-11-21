@@ -621,9 +621,41 @@ export async function runSessionDiagnosticWorker(
           record('Notebook environment manifest reference is invalid')
           continue
         }
+        const inlineManifest =
+          entry.environmentManifest &&
+          typeof entry.environmentManifest === 'object' &&
+          !Array.isArray(entry.environmentManifest)
+            ? (entry.environmentManifest as Record<string, unknown>)
+            : undefined
+        const inlineContents =
+          inlineManifest &&
+          inlineManifest.schemaVersion === 1 &&
+          inlineManifest.captureKind === 'completed-run' &&
+          Array.isArray(inlineManifest.packages)
+            ? `${JSON.stringify(inlineManifest, null, 2)}\n`
+            : undefined
         const path = environmentManifestPath(input.dataRoot, checksum)
         const output = `notebook/environment-manifests/${checksum}.json`
         try {
+          if (inlineContents && digest(inlineContents) === checksum) {
+            if (Buffer.byteLength(inlineContents) > FILE_LIMIT) {
+              partial = true
+              if (state.status === 'exported') state.status = 'partial'
+              state.reason = 'Environment manifest exceeds diagnostic output limit'
+              record('Notebook environment manifest exceeds diagnostic output limit')
+              await writeBestEffort(
+                `${output}.metadata.json`,
+                () =>
+                  encode({
+                    checksum,
+                    sizeBytes: Buffer.byteLength(inlineContents),
+                    omissionReason: 'source-size-limit'
+                  }),
+                state
+              )
+            } else await writeBestEffort(output, () => inlineContents, state)
+            continue
+          }
           await checkPath(input.dataRoot, path)
           const before = await lstat(path)
           if (!before.isFile() || before.isSymbolicLink())
