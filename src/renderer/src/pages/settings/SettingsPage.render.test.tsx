@@ -4433,6 +4433,30 @@ describe('SettingsPage uninstall confirmation', () => {
   })
 })
 
+it('removes the Pi update action when the installed runtime becomes ready', async () => {
+  const settings = window.api.settings
+  const snapshot = await settings.getSettings()
+  vi.mocked(settings.getSettings).mockResolvedValue({
+    ...snapshot,
+    agentFrameworks: [{ id: 'pi', displayName: 'Pi', supportsSkills: true }]
+  })
+  const preflight = {
+    ...(await settings.getPreflight()),
+    piRuntimePath: '/data/pi-managed/adapter/dist/bin.js',
+    piReady: false
+  }
+  vi.mocked(settings.getPreflight).mockResolvedValue(preflight)
+  await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+  await openAgentPanel()
+  expect(document.body.querySelector('[aria-label="Update Pi"]')).not.toBeNull()
+
+  vi.mocked(settings.getPreflight).mockResolvedValue({ ...preflight, piReady: true })
+  await act(async () => useSettingsStore.getState().refreshPreflight())
+  const readyCard = document.body.querySelector('[aria-label="Use Pi"]')
+  expect(readyCard?.textContent).toContain('Uninstall')
+  expect(readyCard?.querySelector('[aria-label="Update Pi"]')).toBeNull()
+})
+
 describe('SettingsPage Codex framework', () => {
   const frameworks = [
     { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },

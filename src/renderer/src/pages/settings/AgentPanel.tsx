@@ -314,7 +314,6 @@ const AgentPanel = ({
     version?: string
     versionDetail?: string
     updateAvailable?: boolean
-    canUpdate?: boolean
     updateHint?: string
     path?: string
     sourceLabel: string
@@ -511,7 +510,6 @@ const AgentPanel = ({
       installed: Boolean(preflight.piRuntimePath),
       updateRequired: Boolean(preflight.piRuntimePath) && !preflight.piReady,
       version: preflight.piReady ? PI_SDK_VERSION : undefined,
-      canUpdate: true,
       path: preflight.piRuntimePath,
       sourceLabel: 'earendil-works/pi',
       sourceUrl: 'https://github.com/earendil-works/pi',
@@ -694,7 +692,6 @@ const AgentPanel = ({
       version={card.version}
       versionDetail={card.versionDetail}
       updateAvailable={card.updateAvailable}
-      canUpdate={card.canUpdate}
       updateHint={card.updateHint}
       path={card.path}
       sourceLabel={card.sourceLabel}
