@@ -46,7 +46,9 @@ const normalizeFieldName = (key: string): string =>
 
 const isCredentialKey = (key: string): boolean => {
   if (!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(key)) return false
-  key = key.replaceAll('.', '_')
+  // A value wrapper inherits the underlying field's meaning. Strip one complete
+  // word, preserving spelling for the exact credential rules below.
+  key = key.replace(/(?:[._-](?:[Vv]alues?|VALUES?)|Values?)$/, '').replaceAll('.', '_')
   if (credentialKeyPatterns.some((rule) => rule.test(key))) return true
   const words = normalizeFieldName(key)
   // Both predicates and token quantities can follow a business namespace.
@@ -56,6 +58,14 @@ const isCredentialKey = (key: string): boolean => {
     /(?:^|_)(?:min|max|count|total|remaining|limit|budget)_/.test(words)
   )
     return false
+  // These protocol headers carry credentials, including when qualified by a
+  // namespace. A header name, label or template ends in a different word.
+  if (
+    /(?:^|_)(?:authorization|cookies?|api_key|x_auth_token|x_amz_security_token)_header$/.test(
+      words
+    )
+  )
+    return true
   return qualifiedCredentialSuffixes.some((rule) => rule.test(words))
 }
 
