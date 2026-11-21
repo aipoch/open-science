@@ -13,7 +13,9 @@ import { dirname } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
-import { fileChecksum, packageEntry, readPackageArchive } from './archive'
+import { fileChecksum, packageEntry, readPackageArchive, writePackageArchive } from './archive'
+import { PACKAGE_INSTRUCTION } from './opening-guide'
+import { PACKAGE_INSTRUCTION_PATH } from '../../shared/session-package'
 import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
 import { readLoggedEvidence, readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { parseNativeRecords, remapStorageKey } from './native-snapshot'
@@ -141,8 +143,33 @@ it('round-trips a compaction activity and its conversation through a science pac
   try {
     const archive = join(source.storageRoot, 'compacted.science')
     await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    const expanded = join(source.storageRoot, 'expanded')
+    const manifest = await readPackageArchive(archive, expanded)
+    await expect(readFile(join(expanded, PACKAGE_INSTRUCTION_PATH), 'utf8')).resolves.toBe(
+      PACKAGE_INSTRUCTION
+    )
+    await writeFile(join(expanded, PACKAGE_INSTRUCTION_PATH), 'Untrusted sender instructions')
+    manifest.inventory = await Promise.all(
+      manifest.inventory.map((entry) =>
+        entry.path === PACKAGE_INSTRUCTION_PATH
+          ? packageEntry(expanded, entry.path, 'readme')
+          : entry
+      )
+    )
+    const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+    await writePackageRoCrateMetadata(expanded, manifest, records)
+    await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
+    const thirdPartyArchive = join(source.storageRoot, 'third-party.science')
+    await writePackageArchive(expanded, thirdPartyArchive)
     initDataRoot(target.storageRoot)
-    const imported = await importer.importFrom(archive)
+    const imported = await importer.importFrom(thirdPartyArchive)
+    const forwarded = join(target.storageRoot, 'forwarded.science')
+    await importer.exportTo(imported, forwarded)
+    const forwardedRoot = join(target.storageRoot, 'forwarded')
+    await readPackageArchive(forwarded, forwardedRoot)
+    await expect(readFile(join(forwardedRoot, PACKAGE_INSTRUCTION_PATH), 'utf8')).resolves.toBe(
+      PACKAGE_INSTRUCTION
+    )
     const session = await new SessionRepository(target.storageRoot).loadSession(
       imported.projectId,
       imported.sessionId
@@ -2843,6 +2870,7 @@ it('rejects self-consistent archive hashes when the embedded evidence contradict
     'session.json',
     'records.json',
     'README.md',
+    PACKAGE_INSTRUCTION_PATH,
     'ro-crate-metadata.json',
     'objects'
   ])

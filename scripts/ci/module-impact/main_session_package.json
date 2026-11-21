@@ -30,6 +30,7 @@
     "src/main/session-package/literature.ts",
     "src/main/session-package/native-snapshot.test.ts",
     "src/main/session-package/native-snapshot.ts",
+    "src/main/session-package/opening-guide.ts",
     "src/main/session-package/operation.test.ts",
     "src/main/session-package/operation.ts",
     "src/main/session-package/portability.test.ts",
