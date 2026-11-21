@@ -80,7 +80,7 @@ jobs:
           mkdir -p "$dir"
           gh release download v1.3.2 -p "aipoch-open-science-1.3.2-linux-$ARCH.AppImage" -p "$FEED" -D "$dir"
           chmod u+x dist/*.AppImage
-          for kind in ordinary file link; do
+          for kind in ordinary file link during-file during-link; do
             if [[ "$kind" = ordinary ]]; then unset QA_OPEN_KIND; else export QA_OPEN_KIND="$kind"; fi
             test=(xvfb-run -a dbus-run-session -- sh scripts/ci/probe-quit-session.sh scripts/ci/probe-ordinary-quit.cjs "$PWD"/dist/*.AppImage "$dir" "$FEED")
             if [[ "$DESKTOP" = docker ]]; then

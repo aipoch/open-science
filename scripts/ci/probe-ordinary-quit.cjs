@@ -54,14 +54,36 @@ async function main(){
  console.log('download',ready.state,ready.latest,ready.error,ready.automaticDownloads);assert.equal(ready.state,'ready')
  console.log('ordinary quit entry', await desk.evaluate(({app})=>({version:app.getVersion(),image:process.env.APPIMAGE})))
  const oldPid=await desk.evaluate(()=>process.pid)
- await desk.evaluate(({app})=>{setTimeout(()=>app.quit(),5)})
+ const overlap=process.env.QA_OPEN_KIND?.startsWith('during-')
+ const kind=process.env.QA_OPEN_KIND?.replace(/^during-/,'')
+ if(overlap) {
+   // Keep the real renderer active briefly so a second desktop invocation can reach the old PID.
+   // Actual save requests, acknowledgements and the normal quit code remain untouched.
+   await page.evaluate(()=>setTimeout(()=>{const end=performance.now()+1100;while(performance.now()<end){}},20))
+ }
+ await desk.evaluate(({app},root)=>{
+   const fs=process.mainModule.require('node:fs')
+   app.once('before-quit',()=>fs.writeFileSync(root+'/quitting','1'))
+   app.once('second-instance',()=>fs.writeFileSync(root+'/relayed','1'))
+   setTimeout(()=>app.quit(),5)
+ },root)
+ if(overlap) {
+   for(let i=0;i<500&&!fs.existsSync(root+'/quitting');i++)await sleep(10)
+   assert.ok(fs.existsSync(root+'/quitting') && fs.existsSync('/proc/'+oldPid))
+   entry.open(kind)
+   console.log('Desktop association requested during ordinary quit:',kind)
+ }
  for(let i=0;fs.existsSync('/proc/'+oldPid)&&i<900;i++)await sleep(100)
  assert.ok(!fs.existsSync('/proc/'+oldPid),'ordinary quit timed out')
  console.log('old PID exited',oldPid)
- if(process.env.QA_OPEN_KIND) {
-   const kind=process.env.QA_OPEN_KIND
-   entry.open(kind)
-   await entry.verify(kind)
+ if(kind) {
+   if(overlap) {
+     console.log('Old process received second-instance:',fs.existsSync(root+'/relayed'))
+     await entry.verifyService(kind)
+   } else {
+     entry.open(kind)
+     await entry.verify(kind)
+   }
    server.close()
    return
  }

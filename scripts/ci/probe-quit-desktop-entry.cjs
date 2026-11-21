@@ -28,6 +28,33 @@ module.exports = function registerDesktopEntry({image, root, env, chromium}) {
   const url='open-science://import?'+new URLSearchParams({version:'1',origin:'https://research.example',secret:randomBytes(32).toString('hex'),port:'51433',name:linkName,size:'12'})
   return {
     open(kind) {run('gio','open',kind==='file'?document:url)},
+    async verifyService(kind) {
+      const dir=env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+      const expected=kind==='file'?path.basename(document):linkName
+      let observed='waiting for B'
+      for(let i=0;i<600;i++) {
+        try {
+          const state=JSON.parse(fs.readFileSync(path.join(dir,'web-service.json'),'utf8'))
+          observed='service version '+state.appVersion
+          if(state.appVersion=== '1.3.2') {
+            const token=fs.readFileSync(path.join(dir,'web-token'),'utf8').trim()
+            const result=await fetch('http://127.0.0.1:'+state.port+'/rpc/sessions%3Apackage-operation',{
+              method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','x-open-science-client':'quit-acceptance'},
+              body:JSON.stringify({protocolVersion:1,args:[{action:'snapshot'}]}),signal:AbortSignal.timeout(1000)
+            })
+            const body=await result.json()
+            const snapshot=body.result?.value ?? body.result
+            observed='version '+state.appVersion+' RPC '+result.status+' snapshot '+(snapshot?.state ?? 'none')
+            if(kind==='file' ? snapshot?.importFilename===expected || snapshot?.pendingImports?.some(v=>v.filename===expected) : snapshot?.browserTransfers?.some(v=>v.filename===expected && v.state!=='failed')) {
+              console.log('Overlapping desktop open handled by '+state.appVersion,kind,expected)
+              return
+            }
+          }
+        }catch{}
+        await sleep(150)
+      }
+      throw Error('Overlapping desktop open: '+observed)
+    },
     async verify(kind) {
       const start=Date.now()
       let browser,page
