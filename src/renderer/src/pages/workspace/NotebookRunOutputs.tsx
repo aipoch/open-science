@@ -13,6 +13,13 @@ import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
 
 export const notebookOutputTextClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
+// Large output panes already scroll at 16rem. Reserve that height offscreen so Chromium can
+// defer line wrapping until the pane approaches the viewport and remember its measured height.
+const outputTextClassName = (text: string): string =>
+  text.length >= 64 * 1024
+    ? `${notebookOutputTextClassName} [content-visibility:auto] [contain-intrinsic-block-size:auto_16rem]`
+    : notebookOutputTextClassName
+
 const figureImageClassName =
   'block h-auto max-h-[16rem] w-auto max-w-full rounded-lg border border-border-200 object-contain'
 
@@ -160,7 +167,7 @@ const NotebookDisplayTextOutput = ({
         <pre
           key={mime}
           data-testid="notebook-output-text"
-          className={`${notebookOutputTextClassName} text-text-200`}
+          className={`${outputTextClassName(payload)} text-text-200`}
         >
           {renderAnsi(payload)}
         </pre>
@@ -184,7 +191,7 @@ const renderTextOutput = (
       return (
         <pre
           key={index}
-          className={`${notebookOutputTextClassName} ${output.name === 'stderr' ? errorClassName : 'text-text-200'}`}
+          className={`${outputTextClassName(text)} ${output.name === 'stderr' ? errorClassName : 'text-text-200'}`}
         >
           {renderAnsi(text)}
         </pre>
@@ -196,17 +203,19 @@ const renderTextOutput = (
       if (text.trim().length === 0) return null
 
       return (
-        <pre key={index} className={`${notebookOutputTextClassName} text-text-200`}>
+        <pre key={index} className={`${outputTextClassName(text)} text-text-200`}>
           {renderAnsi(text)}
         </pre>
       )
     }
-    case 'json':
+    case 'json': {
+      const text = safeJson(output.data)
       return (
-        <pre key={index} className={`${notebookOutputTextClassName} text-text-200`}>
-          {renderAnsi(safeJson(output.data))}
+        <pre key={index} className={`${outputTextClassName(text)} text-text-200`}>
+          {renderAnsi(text)}
         </pre>
       )
+    }
     case 'error': {
       // The traceback already begins with the error type/message, so render it alone; only fall back
       // to name/message when there is no traceback. Prevents a doubled "Traceback …" header (the
@@ -220,7 +229,7 @@ const renderTextOutput = (
       if (body.trim().length === 0) return null
 
       return (
-        <pre key={index} className={`${notebookOutputTextClassName} ${errorClassName}`}>
+        <pre key={index} className={`${outputTextClassName(body)} ${errorClassName}`}>
           {renderAnsi(body)}
         </pre>
       )
@@ -244,11 +253,11 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
   return (
     <>
       {stdout.trim().length > 0 ? (
-        <pre className={`${notebookOutputTextClassName} text-text-200`}>{renderAnsi(stdout)}</pre>
+        <pre className={`${outputTextClassName(stdout)} text-text-200`}>{renderAnsi(stdout)}</pre>
       ) : null}
       {stderr.trim().length > 0 ? (
         <pre
-          className={`${notebookOutputTextClassName} ${run.status === 'failed' ? 'text-danger-000' : 'text-text-200'}`}
+          className={`${outputTextClassName(stderr)} ${run.status === 'failed' ? 'text-danger-000' : 'text-text-200'}`}
         >
           {renderAnsi(stderr)}
         </pre>
