@@ -4482,7 +4482,16 @@ it.each([0, 8])('keeps a terminal hanging bibliography on its native rows (shift
   assert.ok(units.filter((unit) => !bibliography.includes(unit)).every((unit) => !unit.sourceOnly))
 })
 
-it.each([3, 4])('joins a panel comparison below its own figure (figure=%s)', (figure) => {
+it.each([
+  { figure: 3, comparison: 'The fluctuating sensor shows many', joins: true },
+  { figure: 4, comparison: 'The fluctuating sensor shows many', joins: false },
+  {
+    figure: 3,
+    comparison: 'A second trace (top panel in Fig. 4). The sensor shows many',
+    joins: true
+  },
+  { figure: 3, comparison: 'shows many', joins: false }
+])('joins a panel comparison across pages (case $#)', ({ figure, comparison, joins }) => {
   const open = { hasEOL: false }
   const caption = { size: 9, fontName: 'caption' }
   const gap = { size: 0 }
@@ -4490,7 +4499,7 @@ it.each([3, 4])('joins a panel comparison below its own figure (figure=%s)', (fi
     item('Field notes on repeated sensor runs', 56, 682, 247, { fontName: 'title', size: 13 }),
     item('Independent measurements suggest the peak was reproducible.', 56, 191, 382),
     item('The steady sensor produced the same samples as the reference', 66, 162, 372),
-    item('run (top panel in Fig. 3). The fluctuating sensor shows many', 56, 150, 382),
+    item(`run (top panel in Fig. 3). ${comparison}`, 56, 150, 382),
     item('1', 244.5, 132, 5, open)
   ]
   const second = [
@@ -4527,8 +4536,8 @@ it.each([3, 4])('joins a panel comparison below its own figure (figure=%s)', (fi
     }))
   })
   const head = units.find((unit) => unit.items.includes('1:3'))
-  assert.equal(head?.items.includes('2:7'), figure === 3, JSON.stringify(units))
-  assert.equal(head?.fragments.length, figure === 3 ? 2 : 1)
+  assert.equal(head?.items.includes('2:7'), joins, JSON.stringify(units))
+  assert.equal(head?.fragments.length, joins ? 2 : 1)
   assert.deepEqual(units.find((unit) => unit.items.includes('2:2'))?.items, [
     '2:2',
     '2:3',

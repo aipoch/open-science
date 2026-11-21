@@ -34902,11 +34902,11 @@ function joinNativePanelComparisonAcrossPages(units: LayoutUnit[], pages: PdfLay
   const oldItems = before.items.filter((item) => item.str.trim())
   const newItems = after.items.filter((item) => item.str.trim())
   const [prior, last, folio] = oldItems.slice(-3)
-  const label =
-    /\(top panel in Fig\. ([1-9]\d*)\)\. .+\b(?:shows|includes|contains) (?:many|several|multiple)$/u.exec(
-      last?.str ?? ''
-    )?.[1]
-  if (!label || folio?.str !== '1' || newItems[0]?.str !== '2') return
+  const line = last?.str.split(/[\r\n\u2028\u2029]/u).at(-1) ?? ''
+  const comparison = /\b(?:shows|includes|contains) (?:many|several|multiple)$/u.exec(line)
+  if (!comparison || folio?.str !== '1' || newItems[0]?.str !== '2') return
+  const label = /\(top panel in Fig\. ([1-9]\d*)\)\. ./u.exec(line.slice(0, comparison.index))?.[1]
+  if (!label) return
 
   const head = units.find((u) => u.items.at(-1) === `1:${before.items.indexOf(last)}`)
   const capStart = newItems.find((item) => item.str === `Figure ${label}.`)
