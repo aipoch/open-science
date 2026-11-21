@@ -249,6 +249,8 @@ export const isShippableDependencyPath = (relativePath) => {
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
 export function createDesktopDependencyFilter(manifest) {
+  if (manifest.name === '@aipoch/research-film')
+    return (path) => includesPublishedFiles(manifest, path.split(/[\\/]/)[0])
   // These alternate distributions have no consumers in the packaged application. Keep the
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
   const unusedDistributions = {
@@ -515,6 +517,11 @@ export function backendDependencyIncludes(manifest, relativePath) {
     !top
   )
     return true
+  return includesPublishedFiles(manifest, top)
+}
+
+function includesPublishedFiles(manifest, top) {
+  if (!top) return true
   if (
     !Array.isArray(manifest.files) ||
     manifest.files.some((path) => !/^[a-zA-Z0-9_.-]+$/.test(path))

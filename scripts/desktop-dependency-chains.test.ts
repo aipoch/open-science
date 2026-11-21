@@ -12,9 +12,10 @@ import {
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { build } from 'esbuild'
 import { expect, it } from 'vitest'
+import { privateFilmDirectories } from './desktop-film-compiler.mjs'
 import {
   backendDependencyIncludes,
   createDesktopDependencyFilter
@@ -23,6 +24,30 @@ import {
   assertPrivateDependencyChain,
   stageDesktopDependencyChain
 } from './desktop-dependency-chains.mjs'
+
+it('compacts only compiler package instances private to the film worker', () => {
+  const stage = resolve('stage')
+  const modules = join(stage, 'node_modules')
+  const film = join(modules, '@aipoch/research-film')
+  const core = join(modules, '@babel/core')
+  const nested = join(core, 'node_modules/semver')
+  const other = join(modules, 'semver')
+  const edges = new Map([
+    [
+      stage,
+      new Map([
+        ['@aipoch/research-film', film],
+        ['semver', other]
+      ])
+    ],
+    [film, new Map([['@babel/core', core]])],
+    [core, new Map([['semver', nested]])]
+  ])
+  const inputs = [relative(stage, join(nested, 'index.js'))]
+  expect(privateFilmDirectories(stage, film, edges, inputs)).toEqual([core, nested])
+  edges.get(stage)!.set('semver', nested)
+  expect(privateFilmDirectories(stage, film, edges, inputs)).toBeUndefined()
+})
 
 it('rejects separate consumers of private state while allowing stateless compiler helpers', () => {
   const included = new Set(['tsyringe', '@swc/helpers', 'tslib'])

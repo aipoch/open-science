@@ -1,4 +1,5 @@
 import { projectSessionEventPayload } from '../session-event-payload'
+import { createPackedWebAssetReader } from './packed-web-assets'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
@@ -1429,7 +1430,8 @@ const serveStatic = async (
   request: IncomingMessage,
   response: ServerResponse,
   staticRoot: string,
-  pathname: string
+  pathname: string,
+  readPackedAsset: ReturnType<typeof createPackedWebAssetReader>
 ): Promise<void> => {
   const root = resolve(staticRoot)
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1))
@@ -1440,13 +1442,15 @@ const serveStatic = async (
   }
 
   try {
-    if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
-  } catch {
-    filePath = resolve(root, 'index.html')
-  }
-
-  try {
-    const content = await readFile(filePath)
+    const packed = await readPackedAsset(filePath)
+    if (packed === undefined) {
+      try {
+        if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
+      } catch {
+        filePath = resolve(root, 'index.html')
+      }
+    }
+    const content = packed ?? (await readFile(filePath))
     const extension = extname(filePath).toLowerCase()
     const canCompress =
       content.byteLength >= MIN_GZIP_BYTES && COMPRESSIBLE_EXTENSIONS.has(extension)
@@ -1474,6 +1478,7 @@ const serveStatic = async (
 }
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
+  const readPackedAsset = createPackedWebAssetReader(options.staticRoot)
   const sockets = new Set<WebSocket>()
   const outboundBudget = createWebSocketFrameBudget()
   const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
@@ -1890,7 +1895,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        await serveStatic(request, response, options.staticRoot, url.pathname)
+        await serveStatic(request, response, options.staticRoot, url.pathname, readPackedAsset)
         return
       }
 
