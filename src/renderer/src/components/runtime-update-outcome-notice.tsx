@@ -63,6 +63,7 @@ export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
   }
   return (
     <ActionToast
+      className="[&>span]:whitespace-normal"
       title={t('The update did not finish. Reopen your file or link after updating.')}
       actionLabel={t('View updates')}
       onAction={() => {
