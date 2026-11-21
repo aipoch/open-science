@@ -55,6 +55,12 @@ jobs:
   integrity:
     name: CI Integrity
     needs: [resolve]
+    if: \${{ needs.resolve.result == 'success' && needs.resolve.outputs.number != '' }}
+    env:
+      PR_NUMBER: \${{ needs.resolve.outputs.number }}
+      PR_HEAD_SHA: \${{ needs.resolve.outputs.head_sha }}
+      BASE_SHA: \${{ needs.resolve.outputs.base_sha }}
+      PR_TITLE: \${{ needs.resolve.outputs.title }}
 `
       }
     ])
@@ -92,6 +98,12 @@ jobs:
   integrity:
     name: CI Integrity
     needs: [resolve]
+    if: \${{ needs.resolve.result == 'success' && needs.resolve.outputs.number != '' }}
+    env:
+      PR_NUMBER: \${{ needs.resolve.outputs.number }}
+      PR_HEAD_SHA: \${{ needs.resolve.outputs.head_sha }}
+      BASE_SHA: \${{ needs.resolve.outputs.base_sha }}
+      PR_TITLE: \${{ needs.resolve.outputs.title }}
 `
       )
       git('add', '.')
@@ -127,6 +139,41 @@ jobs:
       ).toBe(true)
       const validFiles = files.map((file) =>
         file.path === signal ? { ...file, headText: readFileSync(signal, 'utf8') } : file
+      )
+      const noOpResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText: `on:
+  workflow_call:
+    inputs:
+      run_id:
+        required: true
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(noOpResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
+      )
+      const skippedResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText: file.headText.replace(
+                '  resolve:\n    runs-on:',
+                '  resolve:\n    if: false\n    runs-on:'
+              )
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(skippedResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
       )
       for (const needs of ['resolve', 'unrelated-resolve']) {
         const candidate = validFiles.map((file) =>

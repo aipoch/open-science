@@ -387,13 +387,65 @@ function prAutomationSupportViolations(files) {
     job.steps?.length === 1 &&
     job.steps[0]?.run === 'true' &&
     !Object.hasOwn(job.steps[0], 'if')
-  const needs = workflowJobs(integrity).integrity?.needs
+  const resolverJob = workflowJobs(resolver).resolve
+  const resolverStep = resolverJob?.steps?.find(
+    (step) =>
+      step &&
+      typeof step === 'object' &&
+      step.with &&
+      typeof step.with === 'object' &&
+      typeof step.with.script === 'string'
+  )
+  const resolverScript = resolverStep?.with?.script ?? ''
+  const resolverCall = workflowTriggers(resolver).workflow_call
+  const resolverOutputNames = ['number', 'head_sha', 'base_sha', 'action', 'title']
+  const resolverOutputWiring = resolverOutputNames.every(
+    (name) =>
+      resolverCall?.outputs?.[name]?.value === `\${{ jobs.resolve.outputs.${name} }}` &&
+      resolverJob?.outputs?.[name] === `\${{ steps.resolve.outputs.${name} }}`
+  )
+  const resolverContractMarkers = [
+    'run.repository.id !== repo.id',
+    "run.event !== 'pull_request'",
+    "run.path !== '.github/workflows/pr-automation-signal.yml'",
+    "run.status !== 'completed'",
+    "run.conclusion !== 'success'",
+    'listJobsForWorkflowRunAttempt',
+    "job.name === 'Signal PR automation'",
+    'head_repository.id',
+    "pr.state !== 'open'",
+    'pr.base.ref !== repo.default_branch',
+    'pr.head.sha !== run.head_sha',
+    "core.setOutput('number'",
+    "core.setOutput('head_sha'",
+    "core.setOutput('base_sha'"
+  ]
   const validResolver =
-    Object.hasOwn(workflowTriggers(resolver), 'workflow_call') &&
-    workflowJobs(resolver).resolve &&
-    !Object.hasOwn(workflowJobs(resolver).resolve, 'if') &&
-    workflowJobs(integrity).resolve?.uses === `./${resolverWorkflowPath}` &&
-    (Array.isArray(needs) ? needs : [needs]).includes('resolve')
+    resolverCall?.inputs?.run_id?.required === true &&
+    resolverJob &&
+    typeof resolverJob === 'object' &&
+    !Object.hasOwn(resolverJob, 'if') &&
+    resolverJob.permissions?.actions === 'read' &&
+    resolverJob.permissions?.['pull-requests'] === 'read' &&
+    resolverJob.steps?.length === 1 &&
+    resolverStep &&
+    !Object.hasOwn(resolverStep, 'if') &&
+    resolverOutputWiring &&
+    resolverContractMarkers.every((marker) => resolverScript.includes(marker))
+  const integrityJob = workflowJobs(integrity).integrity
+  const integrityJobText = JSON.stringify(integrityJob ?? '')
+  const integrityResolverJob = workflowJobs(integrity).resolve
+  const needs = integrityJob?.needs
+  const integrityConsumesResolver =
+    (Array.isArray(needs) ? needs : [needs]).includes('resolve') &&
+    [
+      'needs.resolve.outputs.number',
+      'needs.resolve.outputs.head_sha',
+      'needs.resolve.outputs.base_sha',
+      'needs.resolve.outputs.title'
+    ].every((reference) => integrityJobText.includes(reference))
+  const validIntegrityConsumer =
+    integrityResolverJob?.uses === `./${resolverWorkflowPath}` && integrityConsumesResolver
   return [
     ...(!validSignal
       ? [
@@ -405,13 +457,13 @@ function prAutomationSupportViolations(files) {
           }
         ]
       : []),
-    ...(!validResolver
+    ...(!validResolver || !validIntegrityConsumer
       ? [
           {
             path: resolverWorkflowPath,
             rule: 'pr-automation-support',
             message:
-              'CI Integrity must resolve the signal through the reusable PR resolver before inspection.'
+              'CI Integrity must execute the complete trusted PR resolver and consume its validated outputs before inspection.'
           }
         ]
       : [])
