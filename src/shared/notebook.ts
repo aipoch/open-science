@@ -27,7 +27,7 @@ export const NOTEBOOK_RUN_FILE = 'run.json'
 // Execution authorization canonicalizes omitted control/shell deadlines to the same defaults used
 // by the MCP schema and process owner. These are runtime constants, not persisted schema fields.
 export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
-export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
+export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 300_000
 
 export type ShellRuntimeBinding =
   | Readonly<{
