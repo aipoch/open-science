@@ -2,6 +2,7 @@ import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-director
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type {
+  AcpCancelPromptRequest,
   AcpPermissionSettlementState,
   AcpRuntimeEvent,
   AcpStateUpdate
@@ -476,3 +477,6 @@ export type AcpRuntimePlanOptions = {
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
+
+// Set by the host command entry point, never persisted or sent to the provider.
+export type RuntimeCancelPromptRequest = AcpCancelPromptRequest & { userInitiated?: boolean }

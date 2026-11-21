@@ -14084,6 +14084,53 @@ describe('ACP runtime session management', () => {
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
   })
 
+  it.each(listAgentFrameworks())(
+    'settles an accepted user Stop before late $id output and end_turn',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const release = createDeferred()
+      const dataHome = await mkdtemp(join(tmpdir(), 'acp-user-stop-'))
+      const agent = startFakeAgent(process, ['stop-session'], {
+        onPrompt: () => release.promise,
+        modes: createModes(['agent', 'read-only', 'agent-full-access']),
+        replyForPrompt: () => 'late assistant reply'
+      })
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        framework,
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/test-agent',
+          env: { XDG_DATA_HOME: dataHome },
+          ...(framework.id === 'opencode' ? { opencodeMajorVersion: 1 as const } : {})
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+      try {
+        const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+        const prompt = runtime.sendPrompt({ sessionId, text: 'hold this turn' })
+        const result = expect(prompt).resolves.toMatchObject({ stopReason: 'cancelled' })
+        await vi.waitFor(() => expect(agent.prompts).toHaveLength(1))
+        await runtime.cancelPrompt({ sessionId, userInitiated: true })
+        await vi.waitFor(() => expect(agent.cancelledSessions).toEqual([sessionId]))
+        expect(events.some((event) => event.kind === 'stop')).toBe(false)
+        release.resolve()
+        await result
+        expect(events.filter((event) => event.kind === 'stop')).toMatchObject([
+          { text: 'cancelled' }
+        ])
+        expect(events.some((event) => event.title === ACP_PROMPT_FAILED_EVENT_TITLE)).toBe(false)
+        expect(events.some((event) => event.text?.includes('late assistant reply'))).toBe(false)
+      } finally {
+        release.resolve()
+        await runtime.disconnect()
+        await rm(dataHome, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each(
     [opencodeFramework, codeBuddyFramework, claudeCodeFramework, codexFramework].flatMap(
       (framework) =>

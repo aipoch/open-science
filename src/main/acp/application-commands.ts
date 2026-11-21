@@ -450,7 +450,12 @@ const registerAcpCommands = (
         return stateCommand(dependencies.workflows.saveAsSkill(invocation.args[0]))
       },
       'acp:cancel': (invocation) =>
-        stateCommand(dependencies.runtime.cancelPrompt(invocation.args[0])),
+        stateCommand(
+          dependencies.runtime.cancelPrompt({
+            ...invocation.args[0],
+            userInitiated: canSatisfyHumanApproval(invocation.callerContext)
+          })
+        ),
       'acp:delete-session': (invocation) =>
         stateCommand(dependencies.runtime.deleteSession(invocation.args[0])),
       'acp:respond-permission': (invocation) => {
