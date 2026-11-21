@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { externalAcpAvailable } from '../test/acp-agent-runtime'
 import {
   assertBackendImports,
   backendDependencyIncludes,
@@ -523,8 +524,10 @@ describe('desktop-only dependency contents', () => {
     ).toEqual(['@anthropic-ai/sdk'])
   })
 
-  it('runs Claude transcript and SDK MCP behavior with API SDK loading forbidden', async () => {
-    const script = `
+  it.runIf(externalAcpAvailable('claude'))(
+    'runs Claude transcript and SDK MCP behavior with API SDK loading forbidden',
+    async () => {
+      const script = `
       import assert from 'node:assert/strict'
       import { registerHooks } from 'node:module'
       registerHooks({ resolve(specifier, context, next) {
@@ -533,8 +536,17 @@ describe('desktop-only dependency contents', () => {
         return next(specifier, context)
       } })
       await assert.rejects(import('@anthropic-ai/sdk'), /Type-only API SDK/)
-      const sdk = await import('@anthropic-ai/claude-agent-sdk')
-      const acp = await import('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')
+      const { createRequire } = await import('node:module')
+      const { pathToFileURL } = await import('node:url')
+      const require = createRequire(process.env.CLAUDE_ACP_PATH)
+      const sdk = await import(
+        pathToFileURL(require.resolve('@anthropic-ai/claude-agent-sdk')).href
+      )
+      const acp = await import(
+        pathToFileURL(
+          require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')
+        ).href
+      )
       assert.equal(typeof acp.ClaudeAcpAgent, 'function')
       const sessionId = '11111111-1111-4111-8111-111111111111'
       const messages = await sdk.getSessionMessages(sessionId, {
@@ -569,13 +581,15 @@ describe('desktop-only dependency contents', () => {
       }
       console.log('Claude runtime without API SDK: PASS')
     `
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      ['--input-type=module', '--eval', script],
-      { timeout: 15_000 }
-    )
-    expect(stdout).toContain('Claude runtime without API SDK: PASS')
-  }, 20_000)
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ['--input-type=module', '--eval', script],
+        { timeout: 15_000 }
+      )
+      expect(stdout).toContain('Claude runtime without API SDK: PASS')
+    },
+    20_000
+  )
 
   it('omits only audited renderer roots and keeps unclassified and dynamic runtime dependencies', () => {
     const dependencies = {

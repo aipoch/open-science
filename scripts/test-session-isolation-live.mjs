@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 // The integration files also participate in ordinary test discovery, where absent binaries skip
 // live tests. This release/upgrade entry point must never report success for a skipped matrix.
 const requiredPaths = [
+  'CLAUDE_ACP_PATH',
   'CLAUDE_NATIVE_PATH',
   'CODEX_ACP_PATH',
   'CODEX_NATIVE_PATH',

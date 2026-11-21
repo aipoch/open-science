@@ -47,12 +47,6 @@ export const resolveClaudeAgentAcpEntry = (configRoot?: string): string => {
     configRoot ?? (host ? resolveBootstrapConfigRoot(host.homePath, host.packaged) : undefined)
   const entry = root ? managedClaudeAcpEntryAt(managedClaudeAcpRoot(root)) : undefined
   if (entry) return entry
-  // The explicit compatibility suites can run the patched dev dependency in a plain Node host.
-  // The application host always configures runtime metadata, including in development.
-  if (!host) {
-    const fixture = join(process.cwd(), claudeAcpAdapterPath, 'index.js')
-    if (existsSync(fixture)) return fixture
-  }
   throw new Error(CLAUDE_ACP_MISSING_MESSAGE)
 }
 

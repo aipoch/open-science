@@ -1,9 +1,13 @@
-import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+import { dirname, resolve } from 'node:path'
 
 const packageName = '@agentclientprotocol/claude-agent-acp'
 const expectedVersion = '0.70.0'
-const require = createRequire(import.meta.url)
-const installedPackage = require(`${packageName}/package.json`)
+const entry = process.env.CLAUDE_ACP_PATH ?? process.argv[2]
+if (!entry) throw new Error('CLAUDE_ACP_PATH or an ACP adapter entry path is required.')
+const packageRoot = resolve(dirname(entry), '..')
+const installedPackage = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
 
 if (installedPackage.version !== expectedVersion) {
   throw new Error(
@@ -11,8 +15,8 @@ if (installedPackage.version !== expectedVersion) {
   )
 }
 
-const acpAgent = await import(`${packageName}/dist/acp-agent.js`)
-const launch = await import(`${packageName}/dist/open-science-launch.js`)
+const acpAgent = await import(pathToFileURL(resolve(packageRoot, 'dist/acp-agent.js')).href)
+const launch = await import(pathToFileURL(resolve(packageRoot, 'dist/open-science-launch.js')).href)
 
 if (
   typeof launch.needsFileConfiguration !== 'function' ||
