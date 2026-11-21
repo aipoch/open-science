@@ -137,6 +137,7 @@ test('resource shortcuts return to the originating Settings page', async ({ page
   const appearance = settings.getByRole('button', { name: 'Appearance', exact: true })
   await appearance.click()
   await expect(page.getByRole('combobox', { name: 'Interface language' })).toBeVisible()
+  await settings.getByText('Capabilities', { exact: true }).scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('settings-resource-shortcuts.png') })
   for (const name of ['Connectors', 'Skills', 'Specialists']) {
     await settings.getByRole('button', { name, exact: true }).click()
