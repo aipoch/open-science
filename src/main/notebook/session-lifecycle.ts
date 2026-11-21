@@ -341,15 +341,17 @@ class NotebookSessionLifecycleOwner {
     return createRootNotebookLane(projectId, sessionId, `root-frame-${sessionId}`)
   }
 
-  ensure(request: NotebookSessionRequest, observation = false): Promise<RuntimeSession> {
+  ensure(request: NotebookSessionRequest, admissionHeld = false): Promise<RuntimeSession> {
     const idleTeardown = this.idleTeardowns.get(request.sessionId)
-    if (idleTeardown) return idleTeardown.then(() => this.ensure(request, observation))
+    if (idleTeardown) return idleTeardown.then(() => this.ensure(request, admissionHeld))
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const lane = this.laneForRequest(request)
     let releaseAdmission: (() => void) | undefined
     try {
       this.assertScopeAvailable(projectId, request.sessionId)
-      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId, observation)
+      // History reconciliation runs inside an admitted observation, including while export drains it.
+      if (!admissionHeld)
+        releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }

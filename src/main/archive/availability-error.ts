@@ -36,7 +36,7 @@ export const sessionExportBlockerMessage = (
   switch (reason) {
     case 'agent':
       return translate(
-        'Wait for the current reply to finish, or stop it in the conversation, then export again.'
+        'The agent is still working in this conversation. Wait for it to finish, then export again.'
       )
     case 'delegated':
       return translate('Wait for the subagent to finish its task, then export again.')

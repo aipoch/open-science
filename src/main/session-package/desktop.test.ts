@@ -276,25 +276,31 @@ it('leaves the save-location wait while processing files after destination selec
 it.each([
   {
     name: 'unversioned reference',
+    exportMessage:
+      'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.',
     versionId: undefined,
     notebookJson: undefined,
     reason: 'Legacy file references must have immutable Versions before packaging.'
   },
   {
     name: 'missing version',
+    exportMessage:
+      'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.',
     versionId: 'missing-version',
     notebookJson: undefined,
     reason: 'Session or Notebook references missing file evidence.'
   },
   {
     name: 'unrecognized parser failure',
+    exportMessage:
+      'Could not export this session. Try again. If the problem persists, export a diagnostic package from the session menu.',
     versionId: undefined,
     notebookJson: 'private-study-canary private-research-canary',
     reason: undefined
   }
 ])(
   'retains safe preparation diagnostics for $name',
-  async ({ versionId, notebookJson, reason }) => {
+  async ({ versionId, notebookJson, reason, exportMessage }) => {
     const fixture = await createProvenanceTestFixture()
     fixtures.push(fixture)
     initDataRoot(fixture.storageRoot)
@@ -353,10 +359,6 @@ it.each([
     })
     try {
       const failure = await desktop.export(request).catch((error: unknown) => error)
-      const exportMessage =
-        reason === 'Session or Notebook references missing file evidence.'
-          ? 'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.'
-          : 'Could not export this session. Try again. If the problem persists, export a diagnostic package from the session menu.'
       if (reason) expect(causeMessages(failure)).toEqual([exportMessage, reason])
       else {
         expect(failure).toBeInstanceOf(Error)

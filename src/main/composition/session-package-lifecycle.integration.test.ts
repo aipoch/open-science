@@ -434,12 +434,10 @@ it.each(['export', 'fork'] as const)(
           filePath: destination
         })
         await reading
-        const expanded = join(f.fixture.storageRoot, 'verified-export')
-        await mkdir(expanded)
-        await readPackageArchive(destination, expanded, new AbortController().signal)
-        expect(JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8')).session.id).toBe(
-          request.sessionId
-        )
+        await expect(f.composed.sessionPackageService.inspect(destination)).resolves.toMatchObject({
+          title: 'Retained research',
+          messageCount: 1
+        })
       } else {
         const child = await sessionPackageDesktop.fork(request)
         expect(child?.sessionId).not.toBe(request.sessionId)

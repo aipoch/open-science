@@ -497,7 +497,13 @@ describe('ArchiveCoordinator', () => {
     // The Notebook panel can still be finishing a history refresh when export is clicked.
     const releaseRead = coordinator.admitSessionWork(project.id, session.id, 'observation')
     const exportAfterRead = coordinator.reserveSessionExport(project.id, session.id, async () => {})
-    setImmediate(releaseRead)
+    await vi.waitFor(() =>
+      expect(coordinator.isSessionExporting(project.id, session.id)).toBe(true)
+    )
+    expect(() => coordinator.admitSessionWork(project.id, session.id, 'observation')).toThrow(
+      'locked'
+    )
+    releaseRead()
     const release = await exportAfterRead
     release()
   })

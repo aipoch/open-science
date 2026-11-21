@@ -855,6 +855,12 @@ export class SessionPackageDesktop {
     if (request) {
       let message: string | undefined
       switch (detail) {
+        case 'Legacy file references must have immutable Versions before packaging.':
+        case 'Legacy attachments must have immutable Versions before packaging.':
+          message = translate(
+            'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.'
+          )
+          break
         case 'Session package references a missing immutable Version.':
         case 'Session or Notebook references missing file evidence.':
           message = translate(

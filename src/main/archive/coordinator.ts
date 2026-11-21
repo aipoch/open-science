@@ -70,7 +70,7 @@ class ArchiveCoordinator {
       count: number
       userPrompts: number
       observations: number
-      observationChange?: AbortController
+      drained?: AbortController
     }
   >()
 
@@ -92,10 +92,6 @@ class ArchiveCoordinator {
     pending.count += 1
     if (kind === 'user-prompt') pending.userPrompts += 1
     if (kind === 'observation') pending.observations += 1
-    else if (pending.observationChange) {
-      pending.observationChange.abort()
-      pending.observationChange = undefined
-    }
     this.pendingDispatches.set(sessionId, pending)
     let released = false
     return () => {
@@ -106,7 +102,7 @@ class ArchiveCoordinator {
       if (kind === 'observation') pending.observations -= 1
       if (!pending.count) {
         this.pendingDispatches.delete(sessionId)
-        pending.observationChange?.abort()
+        pending.drained?.abort()
       }
     }
   }
@@ -160,54 +156,64 @@ class ArchiveCoordinator {
     assertIdle: () => Promise<void>,
     signal?: AbortSignal
   ): Promise<() => void> {
-    const reservation = await this.enqueue(
-      projectId,
-      async () => {
-        await this.activeProject(projectId)
-        this.assertExportAvailable(sessionId)
-        const assertRuntimeIdle = async (): Promise<void> => {
-          const blocker = this.runtime.getSessionExportBlocker
-            ? await this.runtime.getSessionExportBlocker(projectId, sessionId)
-            : (await this.runtime.isSessionBusy(projectId, sessionId))
-              ? 'pending'
-              : undefined
-          if (blocker) throw new SessionExportBlockedError(blocker)
-        }
-        if (this.pendingDispatches.has(sessionId)) await assertRuntimeIdle()
-        const pending = this.pendingDispatches.get(sessionId)
-        if (pending) {
-          if (pending.count === pending.observations) {
-            // Even a history read can reconcile durable state. Let it finish outside the
-            // project queue, then repeat admission in case real work started meanwhile.
-            pending.observationChange ??= new AbortController()
-            return pending.observationChange.signal
+    const assertRuntimeIdle = async (): Promise<void> => {
+      const blocker = this.runtime.getSessionExportBlocker
+        ? await this.runtime.getSessionExportBlocker(projectId, sessionId)
+        : (await this.runtime.isSessionBusy(projectId, sessionId))
+          ? 'pending'
+          : undefined
+      if (blocker) throw new SessionExportBlockedError(blocker)
+    }
+    const prepare = async (): Promise<void> => {
+      await assertRuntimeIdle()
+      await assertIdle()
+      await assertRuntimeIdle()
+    }
+    let reserved = false
+    const release = (): void => {
+      if (reserved) this.exportingSessions.delete(sessionId)
+      reserved = false
+    }
+    try {
+      const drained = await this.enqueue(
+        projectId,
+        async () => {
+          await this.activeProject(projectId)
+          this.assertExportAvailable(sessionId)
+          const pending = this.pendingDispatches.get(sessionId)
+          if (pending && pending.count > pending.observations) {
+            await assertRuntimeIdle()
+            throw new SessionExportBlockedError(pending.userPrompts ? 'agent' : 'pending')
           }
-          throw new SessionExportBlockedError(pending.userPrompts ? 'agent' : 'pending')
-        }
-        // Fence new work before awaiting the runtime's database-backed activity check.
-        this.exportingSessions.set(sessionId, projectId)
-        try {
-          await assertRuntimeIdle()
-          await assertIdle()
-          await assertRuntimeIdle()
-          return () => {
-            this.exportingSessions.delete(sessionId)
+          // Fence new work and refreshes before yielding. An already-admitted history read
+          // can reconcile durable state and must finish before we freeze persistence.
+          this.exportingSessions.set(sessionId, projectId)
+          reserved = true
+          if (pending) {
+            pending.drained = new AbortController()
+            await assertRuntimeIdle()
+            return pending.drained.signal
           }
-        } catch (error) {
-          this.exportingSessions.delete(sessionId)
-          throw error
-        }
-      },
-      signal
-    )
-    if (typeof reservation === 'function') return reservation
-    const changed = signal ? AbortSignal.any([reservation, signal]) : reservation
-    if (!changed.aborted)
-      await new Promise<void>((resolve) =>
-        changed.addEventListener('abort', () => resolve(), { once: true })
+          await prepare()
+          return undefined
+        },
+        signal
       )
-    signal?.throwIfAborted()
-    return this.reserveSessionExport(projectId, sessionId, assertIdle, signal)
+      if (drained) {
+        // The reader can finish work that needs the project queue.
+        const changed = signal ? AbortSignal.any([drained, signal]) : drained
+        if (!changed.aborted)
+          await new Promise<void>((resolve) =>
+            changed.addEventListener('abort', () => resolve(), { once: true })
+          )
+        await this.enqueue(projectId, prepare, signal)
+      }
+      signal?.throwIfAborted()
+      return release
+    } catch (error) {
+      release()
+      throw error
+    }
   }
 
   private assertExportAvailable(sessionId: string): void {
