@@ -668,6 +668,11 @@ describe('OfficePreviewRenderer', () => {
   })
 
   it.each([
+    ['ENCRYPTED_PACKAGE', 'This file contains encrypted content. Open it in your Office app.'],
+    [
+      'EXTERNAL_RESOURCES',
+      'This file uses external content that the preview cannot load. Open it in your Office app.'
+    ],
     ['INVALID_PACKAGE', 'This Office file is damaged or unsupported. Download it to view.'],
     [
       'RESOURCE_LIMIT_EXCEEDED',
@@ -756,7 +761,9 @@ describe('OfficePreviewRenderer', () => {
       await flushMicrotasks()
     })
 
-    expect(container.textContent).toContain("This Office file couldn't be rendered for preview")
+    expect(container.textContent).toContain(
+      'The Office file could not be read. Try opening it again.'
+    )
     expect(container.textContent).not.toContain('exceeds the safe preview limits')
   })
 

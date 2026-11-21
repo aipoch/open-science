@@ -111,6 +111,8 @@ describe('PreviewFallback', () => {
   })
 
   it.each([
+    ['Managed preview request failed with status 401.', true, 'Reconnect to Open-Science'],
+    ['Managed preview request failed with status 503.', true, 'preview server returned an error'],
     ['ENOENT: no such file', true, 'Restore the file or reconnect its drive'],
     [
       'File is outside artifact storage.',
@@ -144,6 +146,11 @@ describe('PreviewFallback', () => {
       'Managed preview file changed after capability creation.',
       true,
       'file changed while its preview'
+    ],
+    [
+      'Managed preview request failed with status 404.',
+      true,
+      'preview resource could not be loaded'
     ],
     ['Image preview request failed with status 404.', true, 'preview resource could not be loaded'],
     [

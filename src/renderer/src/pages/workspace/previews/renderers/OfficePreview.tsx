@@ -26,7 +26,7 @@ import {
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
@@ -35,7 +35,7 @@ type OfficeHostState =
   | { kind: 'loading'; phase: OfficePreviewPhase | 'checking' }
   | { kind: 'ready' }
   | { kind: 'too-large' }
-  | { kind: 'error'; error?: OfficePreviewErrorCode }
+  | { kind: 'error'; error?: OfficePreviewErrorCode; cause?: unknown }
 
 const OFFICE_CHECKING_STATE: OfficeHostState = {
   kind: 'loading',
@@ -134,19 +134,26 @@ const OfficeDownloadFallback = ({
   )
 }
 
-// Returns the catalog key for errors that leave download as the only remedy, or undefined when the
-// error is a plain render failure that keeps the retryable card.
-const getDownloadOnlyErrorMessageKey = (
-  error: OfficePreviewErrorCode | undefined
-):
-  | 'This Office file is damaged or unsupported. Download it to view.'
-  | 'This Office file exceeds the safe preview limits. Download it to view.'
-  | undefined => {
-  if (error === 'INVALID_PACKAGE')
-    return 'This Office file is damaged or unsupported. Download it to view.'
-  if (error === 'RESOURCE_LIMIT_EXCEEDED')
-    return 'This Office file exceeds the safe preview limits. Download it to view.'
-  return undefined
+const getOfficeDownloadMessage = (
+  error: OfficePreviewErrorCode | undefined,
+  t: ReturnType<typeof useTranslation>['t']
+): string | undefined => {
+  switch (error) {
+    case 'ENCRYPTED_PACKAGE':
+      return t('This file contains encrypted content. Open it in your Office app.')
+    case 'EXTERNAL_RESOURCES':
+      return t(
+        'This file uses external content that the preview cannot load. Open it in your Office app.'
+      )
+    case 'UNSUPPORTED_FORMAT':
+      return t('This Office format cannot be previewed. Open the file in your Office app.')
+    case 'PREVIEW_PROCESS_NOT_ISOLATED':
+      return t('The secure Office preview could not start. Open the file in your Office app.')
+    case 'INVALID_PACKAGE':
+      return t('This Office file is damaged or unsupported. Download it to view.')
+    case 'RESOURCE_LIMIT_EXCEEDED':
+      return t('This Office file exceeds the safe preview limits. Download it to view.')
+  }
 }
 
 type OfficePreviewFrame = {
@@ -311,7 +318,7 @@ const RemoteOfficePreviewContent = ({
           applyRuntimeState(pendingState)
           pendingState = undefined
         } else {
-          setState({ kind: 'error', error: 'FILE_READ_FAILED' })
+          setState({ kind: 'error', error: 'FILE_READ_FAILED', cause: error })
         }
       })
 
@@ -474,14 +481,23 @@ const RemoteOfficePreviewContent = ({
     )
   }
   if (visibleState.kind === 'error') {
-    const downloadOnlyMessageKey = getDownloadOnlyErrorMessageKey(visibleState.error)
-    if (downloadOnlyMessageKey) {
+    if (visibleState.error === 'FILE_READ_FAILED') {
+      return (
+        <PreviewErrorCard
+          name={item.name}
+          error={visibleState.cause}
+          fallbackMessage={t('The Office file could not be read. Try opening it again.')}
+        />
+      )
+    }
+    const downloadMessage = getOfficeDownloadMessage(visibleState.error, t)
+    if (downloadMessage) {
       return (
         <OfficeDownloadFallback
           item={item}
           source={source}
           title={t('Preview unavailable')}
-          message={t(downloadOnlyMessageKey)}
+          message={downloadMessage}
         />
       )
     }
@@ -489,7 +505,13 @@ const RemoteOfficePreviewContent = ({
       <PreviewFallbackCard
         icon={FileWarning}
         name={item.name}
-        message={t("This Office file couldn't be rendered for preview")}
+        message={
+          visibleState.error === 'PREVIEW_TIMEOUT'
+            ? t('The Office preview timed out. Try opening it again.')
+            : visibleState.error === 'PREVIEW_PROCESS_CRASHED'
+              ? t('The Office preview stopped unexpectedly. Try opening it again.')
+              : t("This Office file couldn't be rendered for preview")
+        }
         retryable={isRetryableOfficeError(visibleState.error)}
       />
     )
