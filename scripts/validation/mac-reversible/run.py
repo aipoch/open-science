@@ -118,7 +118,14 @@ def case(mode):
                 cli('receipt')
                 note('open-request')
                 launch()
-            b=wait(ws,90)
+            # Keep the previous acceptance deadline as an explicit result. Further
+            # observation does not delay exit/open or grant the client a larger budget.
+            missed_cutoff=False
+            try:b=wait(ws,90)
+            except TimeoutError:
+                missed_cutoff=True
+                note('no-ready-workspace-at-original-cutoff',cutoffSeconds=90)
+                b=wait(ws,210)
             result_path=Path(p['directory'])/'result.json'
             if result_path.exists():note('result-time',resultMs=result_path.stat().st_mtime_ns//1000000)
             note('first-workspace',**b)
@@ -134,6 +141,7 @@ def case(mode):
             shutil.rmtree(stage);shutil.rmtree(executor)
             note('confirmed-backup-reclaimed',residualBytes=size(stage)+size(executor))
             probe('quit');wait(lambda:not alive(b['pid']))
+            if missed_cutoff:raise AssertionError('original 90-second observation failed; later result recorded')
         elif mode=='interrupt':
             proc=subprocess.Popen(['node',str(src/'cli.cjs'),'prepare',str(d)],env=env,start_new_session=True)
             prefix='.open-science-install-'
@@ -188,6 +196,12 @@ def case(mode):
         note('case-passed')
     finally:
         if monitor and monitor.poll() is None:monitor.terminate();monitor.wait()
+        for file in (d/'state').glob('*/executor-*/result.json'):
+            result=json.loads(file.read_text())
+            note('durable-result',outcome=result.get('outcome'),timeMs=file.stat().st_mtime_ns//1000000)
+        note('coordination-root-space',bytes=size(d/'state'))
+        run('codesign','--verify','--deep','--strict',seed)
+        note('other-signed-copy-verified',inode=identity(seed)[1])
         for f in ['stages.jsonl','last-workspace-error','stderr','stdout']:
             if (d/f).is_file():shutil.copyfile(d/f,out/(mode+'-'+f))
         assert [(identity(p),p.read_bytes()) for p in keep]==sentinels

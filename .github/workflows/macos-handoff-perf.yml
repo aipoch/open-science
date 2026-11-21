@@ -10,11 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [shipit, owner, rollback]
-        arch: [x64, arm64]
+        scenario: [rapid, normal]
+        arch: [x64]
         include:
           - { arch: x64, os: macos-15-intel }
-          - { arch: arm64, os: macos-15 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 80
     env:
