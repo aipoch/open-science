@@ -248,6 +248,8 @@ jobs:
           src/main/side-chat/runtime-owner.test.ts
           src/main/skills/registered-helper-catalog.test.ts
           src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
+          src/main/background-result-delivery/compute-cancellation.integration.test.ts
+          src/main/notebook/shell-process.test.ts
           src/main/notebook/shell-process-ownership.test.ts
           src/main/literature/batch-jobs.test.ts
           src/main/literature/catalog.test.ts

@@ -1218,14 +1218,20 @@ describe('notebook shell process behavior', () => {
     }
   })
 
-  it('settles a WSL launcher that closes its command pipe after signalling readiness', async () => {
+  it('settles a WSL launcher whose command pipe closes at dispatch', async () => {
     vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
     const cleanup = vi.fn(async () => ({
       processesTerminated: true,
       networkClosed: true,
       temporaryResourcesRemoved: true
     }))
-    const beginExecution = vi.fn(() => () => undefined)
+    let commandPipe: import('node:stream').Writable
+    const beginExecution = vi.fn(() => {
+      // Closing fd 0 in the child does not reliably break a Windows named pipe.
+      // End the parent stream before dispatch there to exercise the same async error handler.
+      if (process.platform === 'win32') commandPipe.end()
+      return () => undefined
+    })
     const result = await runShellCommand({
       executionAdmission: fixtureAdmission(),
       command: 'printf finished',
@@ -1242,7 +1248,11 @@ describe('notebook shell process behavior', () => {
         user: 'fixture-user'
       },
       previewAvailable,
-      timeoutMs: 1_000,
+      timeoutMs: 5_000,
+      claimProcess: (child) => {
+        commandPipe = child.stdin!
+        return () => undefined
+      },
       terminateTree: async (child) => {
         const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
         child.kill()
@@ -1267,7 +1277,7 @@ describe('notebook shell process behavior', () => {
     })
     expect(beginExecution).toHaveBeenCalledOnce()
     expect(result.exitCode).toBeNull()
-    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe/i)
+    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe|write after end/i)
     expect(result.stderr).not.toContain('Shell command timed out')
     expect(cleanup).toHaveBeenCalledExactlyOnceWith('spawn-failed', {
       processesTerminated: true,
