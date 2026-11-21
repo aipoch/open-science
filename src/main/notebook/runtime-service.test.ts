@@ -18,6 +18,7 @@ import type {
   NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
 import { NotebookProcessMonitor } from './process-monitor'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { NotebookSessionAggregate, type NotebookSessionExecutor } from './session-aggregate'
 import {
   NotebookRuntimeService,
@@ -12364,9 +12365,11 @@ describe('notebook runtime service', () => {
   describe('named environments (D1/D4/D5/D2)', () => {
     const recordingService = (
       root: string,
-      executions: NotebookExecutionRequest[]
+      executions: NotebookExecutionRequest[],
+      platform?: NodeJS.Platform
     ): NotebookRuntimeService =>
       new NotebookRuntimeService({
+        platform,
         memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
@@ -12387,6 +12390,45 @@ describe('notebook runtime service', () => {
           shutdown: async () => ({ reaped: true })
         })
       })
+
+    it.each([true, false])(
+      'admits default R with an unrelated Windows kernel receipt only when already ready (ready=%s)',
+      async (ready) => {
+        const root = await createStorageRoot()
+        const previous = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+        const intent = previous.beginSpawn({
+          laneKey: 'old-session',
+          processKey: 'python:default-python',
+          kernelEpochId: 'old-epoch'
+        })
+        const receipt = previous.recordSpawned(intent, { pid: 4242 })
+        const runtimeRoot = getRuntimeRoot(root)
+        const prefix = envPrefix(runtimeRoot, DEFAULT_R_ENV)
+        await mkdir(dirname(rBin(prefix)), { recursive: true })
+        await writeFile(rBin(prefix), '')
+        await writeFile(rScriptBin(prefix), '')
+        if (ready) writeRReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, 'now')
+
+        const service = recordingService(root, [], 'win32')
+        const provisionR = vi.fn()
+        service.setDefaultEnvProvisioner({ provisionPython: vi.fn(), provisionR })
+        try {
+          await service.recoverInterruptedOperations()
+          const run = await service.execute({
+            sessionId: 'new-session',
+            workspaceCwd: root,
+            code: '1',
+            language: 'r'
+          })
+          expect(run.status, run.text.traceback).toBe(ready ? 'completed' : 'failed')
+          if (!ready) expect(run.text.traceback).toContain('KERNEL_STARTUP_FENCE')
+          expect(provisionR).not.toHaveBeenCalled()
+          expect(existsSync(receipt.path)).toBe(true)
+        } finally {
+          await service.dispose()
+        }
+      }
+    )
 
     it('auto-provisions a missing default env on demand, but not a named env or an existing default', async () => {
       const root = await createStorageRoot()
