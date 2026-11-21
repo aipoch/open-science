@@ -296,7 +296,7 @@ describe('AppVersionSection', () => {
     ['ready', false]
   ] as const)('sets check availability while the update is %s', (state, disabled) => {
     useUpdateStore.setState({
-      status: { state, current: '0.2.0', latest: '0.3.0' }
+      status: { state, current: '0.2.0', latest: '0.3.0', applyKind: 'restart' }
     })
 
     act(() => {
@@ -307,6 +307,18 @@ describe('AppVersionSection', () => {
       /check now/i.test(element.textContent ?? '')
     )
     expect(checkButton?.disabled).toBe(disabled)
+    const resources = container.querySelector('[data-testid="about-resource-grid"]')!
+    expect(
+      checkButton!.compareDocumentPosition(resources) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    if (state === 'ready') {
+      const restart = Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Restart to update'
+      )!
+      expect(
+        resources.compareDocumentPosition(restart) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+    }
   })
 })
 
