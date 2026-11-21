@@ -91,6 +91,7 @@ tile={'tile-type':'file-tile','tile-data':{'file-data':{'_CFURLString':url,'_CFU
 xml=plistlib.dumps(tile).decode()
 subprocess.run(['defaults','write','com.apple.dock','persistent-apps','-array-add',xml],check=True)
 PIN
+defaults write com.apple.dock magnification -bool false
 defaults write com.apple.dock autohide -bool false
 killall Dock
 sleep 3
@@ -110,22 +111,14 @@ restore
 echo "$pid" > "$D/gui-same-process-restore"
 wait_name=gui-A-quit
 press_quit
-if [[ "$ARCH" == x64 ]]; then
-  "$gui" dock "$app"
-  check_window Dock
-else
-  open -R "$app"; sleep 1
-  "$gui" finder "$app"
-  check_window Finder
+"$gui" dock "$app" | tee "$D/gui-first-click"
+if check_window Dock; then
+  codesign --verify --strict --deep "$app"
+  exit 0
 fi
+version > "$D/gui-version-after-missed-click"
 codesign --verify --strict --deep "$app"
-wait_name=gui-B-quit
-press_quit
-if [[ "$ARCH" == x64 ]]; then
-  open -R "$app"; sleep 1
-  "$gui" finder "$app"
-  check_window Finder
-else
-  "$gui" dock "$app"
-  check_window Dock
-fi
+"$gui" dock "$app" | tee "$D/gui-control-click"
+check_window Dock-control
+echo 'Control click opened B; the initial click missed' >&2
+exit 1

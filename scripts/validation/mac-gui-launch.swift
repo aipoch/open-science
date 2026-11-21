@@ -37,7 +37,14 @@ if operation == "quit" {
             guard AXValueGetValue(pos as! AXValue,.cgPoint,&origin), AXValueGetValue(size as! AXValue,.cgSize,&extent) else { fail("invalid tile bounds") }
             let point=CGPoint(x:origin.x+extent.width/2,y:origin.y+extent.height/2)
             print("Dock tile",bundle,"center",point.x,point.y)
-            for kind:CGEventType in [.mouseMoved,.leftMouseDown,.leftMouseUp] {
+            CGEvent(mouseEventSource:nil,mouseType:.mouseMoved,mouseCursorPosition:point,mouseButton:.left)?.post(tap:.cghidEventTap)
+            usleep(150_000)
+            var hit:AXUIElement?
+            guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(),Float(point.x),Float(point.y),&hit) == .success,
+                  let hit, let actual=attribute(hit,kAXURLAttribute) as? URL,
+                  actual.resolvingSymlinksInPath().standardizedFileURL.path == bundle else { fail("hit at click position does not resolve to installed Dock item") }
+            print("verified Dock click", "running", String(describing:attribute(hit,kAXIsApplicationRunningAttribute)), "target", actual.path)
+            for kind:CGEventType in [.leftMouseDown,.leftMouseUp] {
                 guard let ev=CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,mouseButton:.left) else { fail("cannot create mouse event") }
                 ev.post(tap:.cghidEventTap); usleep(100_000)
             }
