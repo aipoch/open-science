@@ -220,7 +220,7 @@ describe('package text policy', () => {
     expect(findSensitivePackageText('Authorization: Bearer [redacted]', true)).toBeUndefined()
     expect(findSensitivePackageText('Authorization: Bearer actual-value\n', false)).toBeDefined()
   })
-  it.each(['cacheTokens', 'cachedReadTokens', 'cachedWriteTokens'])(
+  it.each(['cacheTokens', 'cachedReadTokens', 'cachedWriteTokens', 'contextUsedTokens'])(
     'limits the %s exception to exact JSON integer metrics',
     (key) => {
       for (const count of [0, 123456, Number.MAX_SAFE_INTEGER])
@@ -387,7 +387,7 @@ it('keeps matched values out of location errors', async () => {
 it.each([
   '{"estimatedTokens":71862,"difference":16335}',
   '{"tokens":88197,"estimated":true}',
-  '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0}',
+  '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0,"contextUsedTokens":42}',
   'Authorization: Bearer [redacted]',
   '--authorization Bearer [redacted]',
   'password="\\u005bredacted]"',
@@ -630,6 +630,38 @@ describe('noncredential syntax and metadata', () => {
       expect(scanner.finish(), `split ${split}`).toBeDefined()
     }
   })
+})
+
+it('recovers the entire metric name when the streaming overlap starts inside it', () => {
+  for (const key of ['contextUsedTokens', 'privateContextUsedTokens']) {
+    const text = JSON.stringify({ [key]: 42, padding: ' '.repeat(10000) })
+    const split = text.indexOf('UsedTokens') + 8192
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    expect(Boolean(scanner.finish())).toBe(key !== 'contextUsedTokens')
+  }
+})
+
+it('distinguishes numeric search patterns from PAT assignments across export chunks', () => {
+  for (const [code, sensitive] of [
+    ['const pats = ["0.59", "−0.03", "278"];', false],
+    ['const pats=[redacted]"0.59","-0.03"];', false],
+    ['const pats=["0.59","private-value"];', true],
+    ['const pats=[redacted]"0.59","private-value"];', true],
+    ['const pats=["0.59","278"', true],
+    ['const pats=["0.59","278"] + privateValue;', true],
+    ['const pats=["0.59","278"]; password="private-value"', true]
+  ] as const) {
+    for (const text of [code, JSON.stringify({ code })]) {
+      for (let split = 0; split <= text.length; split++) {
+        const scanner = new PackageTextScanner()
+        scanner.write(text.slice(0, split))
+        scanner.write(text.slice(split))
+        expect(Boolean(scanner.finish()), `${code} at ${split}`).toBe(sensitive)
+      }
+    }
+  }
 })
 
 it.each([

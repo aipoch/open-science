@@ -339,6 +339,27 @@ const findPackageTextMatch = (
       // Keep an incomplete next statement provisional only within the overlap.
       return !complete && tail.length <= 512 && /^[ \t]*(?:[\r\n]|\\+$)/.test(tail)
     }
+    let legacyPatternValue: RegExpExecArray | null = null
+    // Notebook searches sometimes call their list of numeric text patterns "pats".
+    // Older diagnostic copies replaced its opening bracket with the redaction marker.
+    if (/^pats[ \t]*=[ \t]*$/.test(match[0]) && /\bconst[ \t]+$/.test(precedingCode)) {
+      const preview = rest.slice(0, 512).replaceAll('\\"', '"')
+      const list = /^\[(?:redacted\])?([^;\]]+)\][ \t]*;/.exec(preview)
+      if (list) {
+        const items = list[1].split(',')
+        if (
+          items.length > 1 &&
+          items.every((item) => /^[ \t]*"[-−]?\d{1,3}(?:\.\d{1,2})?"[ \t]*$/.test(item))
+        )
+          continue
+      } else if (!complete && rest.length < 512 && rest.startsWith('[') && !rest.includes(';')) {
+        // Reinspect the complete declaration while it still fits in the streaming overlap.
+        continue
+      }
+      // In a decoded legacy record, stopping at the first quote would inspect only
+      // the marker and discard the unrecognized suffix.
+      legacyPatternValue = /^\[redacted\]"[^;\r\n]*/.exec(rest)
+    }
     // Comparisons and arrow syntax do not assign a credential value.
     const comparison = /^(?:={1,2}|>)[ \t]{0,512}[a-zA-Z_][a-zA-Z0-9_.]{0,127}/.exec(expression)
     if (
@@ -404,10 +425,11 @@ const findPackageTextMatch = (
       continue
     // Serialized context/model usage counts are numbers, not credentials. Keep this exception
     // limited to the exact JSON metric keys and integer values, never quoted secrets.
+    // A rescan can start inside the key; include the saved prefix to check its full name.
+    const fieldPrefix = match.index === 0 ? beforeText : text[match.index - 1]
     if (
-      text[match.index - 1] === '"' &&
-      /^(?:estimatedTokens|tokens|cacheTokens|cachedReadTokens|cachedWriteTokens)"\s*:\s*$/.test(
-        match[0]
+      /"(?:estimatedTokens|tokens|cacheTokens|cachedReadTokens|cachedWriteTokens|contextUsedTokens)"\s*:\s*$/.test(
+        fieldPrefix + match[0]
       )
     ) {
       const count = /^(0|[1-9]\d{0,15})\s*(?=[,}]|$)/.exec(rest)
@@ -423,6 +445,7 @@ const findPackageTextMatch = (
     const value =
       quoted ??
       partialQuoted ??
+      legacyPatternValue ??
       /^(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/i.exec(rest)
     if (!value) continue
     let content = quoted ? value[0].slice(1, -1) : partialQuoted ? value[0].slice(1) : value[0]
