@@ -238,18 +238,54 @@ it('publishes immutable added events before text and tool argument deltas', asyn
   }
 })
 
+it.each([false, true])(
+  'omits an echoed provider error from a 200 response (stream=%s)',
+  async (stream) => {
+    const adapter = createResponsesAdapter()
+    const error = { message: 'Request rejected for PRIVATE_PROMPT with opaque-private-value' }
+    const fallback = 'The model service reported an error.'
+    try {
+      const turn = adapter.prepare({ body: { input: 'hello', stream } })
+      if (stream) {
+        const upstream = new Response('data: ' + JSON.stringify({ error }) + '\n\ndata: [DONE]\n\n')
+        const body = await (await turn.convert(upstream)).text()
+        expect(body).toContain('response.failed')
+        expect(body).not.toContain('PRIVATE_PROMPT')
+        expect(body).toContain(fallback)
+      } else {
+        await expect(turn.convert(Response.json({ error }))).rejects.toHaveProperty(
+          'message',
+          fallback
+        )
+      }
+    } finally {
+      adapter.dispose()
+    }
+  }
+)
+
 it('emits exactly one protocol failure for an unknown upstream finish reason', async () => {
   const adapter = createResponsesAdapter()
   try {
     const upstream = new Response(
       'data: ' +
         JSON.stringify({
-          choices: [{ delta: { content: 'partial' }, finish_reason: 'unexpected' }]
+          choices: [
+            {
+              delta: {
+                reasoning_content: 'partial private reasoning',
+                tool_calls: [
+                  { index: 0, id: 'call', function: { name: 'lookup', arguments: '{}' } }
+                ]
+              },
+              finish_reason: 'unexpected'
+            }
+          ]
         }) +
         '\n\ndata: [DONE]\n\n'
     )
     const response = await adapter
-      .prepare({ body: { input: 'hello', stream: true } })
+      .prepare({ scope: 'a', body: { input: 'hello', stream: true } })
       .convert(upstream)
     const events = (await response.text())
       .split('\n')
@@ -263,6 +299,10 @@ it('emits exactly one protocol failure for an unknown upstream finish reason', a
       type: 'response.failed',
       response: { status: 'failed', error: { type: 'unsupported_upstream_output' } }
     })
+    expect(
+      adapter.prepare({ scope: 'a', body: { input: history } }).request.messages[0]
+        .reasoning_content
+    ).toBeUndefined()
   } finally {
     adapter.dispose()
   }

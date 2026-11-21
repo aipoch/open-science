@@ -55,7 +55,7 @@ export function throwIfUpstreamError(error: unknown): void {
   if (error == null) return
   const detail = typeof error === 'object' && 'message' in error ? error.message : error
   throw new ResponsesProtocolError(
-    displayUpstreamError(detail, 'The model service reported an error.'),
+    providerErrorExcerpt(detail) ?? 'The model service reported an error.',
     502,
     'upstream_error'
   )

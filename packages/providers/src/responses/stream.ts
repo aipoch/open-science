@@ -37,6 +37,6 @@ export async function* convertChatStream(
   signal?.throwIfAborted()
   const reply = state.finish(failure, sawDone)
   // Commit before publishing the terminal frame: consumers commonly stop reading there.
-  if (failure === undefined) onCompleted(reply)
+  if (reply) onCompleted(reply)
   yield* drain()
 }

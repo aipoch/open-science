@@ -26,7 +26,7 @@ export function createResponseStreamState(
   finish(
     error: unknown,
     sawDone: boolean
-  ): { reasoning: string; callIds: string[]; messageId?: string }
+  ): { reasoning: string; callIds: string[]; messageId?: string } | undefined
 } {
   let events: JsonObject[] = []
   const emit = (type: string, sequence: number, fields: JsonObject = {}): void => {
@@ -145,10 +145,7 @@ export function createResponseStreamState(
       if (finished) throw new Error('Response is already terminal')
       consume(chunk)
     },
-    finish(
-      streamError: unknown,
-      sawDone: boolean
-    ): { reasoning: string; callIds: string[]; messageId?: string } {
+    finish(streamError, sawDone) {
       if (finished) throw new Error('Response is already terminal')
       finished = true
       let terminal = chatTerminalDetails(undefined)
@@ -274,6 +271,7 @@ export function createResponseStreamState(
         toolNames: toolCalls.map((item) => item.name)
       })
 
+      if (status === 'failed') return undefined
       return {
         reasoning,
         callIds: toolCalls.map((item) => String(item.call_id)),
