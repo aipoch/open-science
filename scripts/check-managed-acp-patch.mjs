@@ -4,8 +4,8 @@ import { dirname, resolve } from 'node:path'
 
 const packageName = '@agentclientprotocol/claude-agent-acp'
 const expectedVersion = '0.70.0'
-const entry = process.env.CLAUDE_ACP_PATH ?? process.argv[2]
-if (!entry) throw new Error('CLAUDE_ACP_PATH or an ACP adapter entry path is required.')
+const entry = process.env.ACP_ADAPTER_PATH ?? process.argv[2]
+if (!entry) throw new Error('ACP_ADAPTER_PATH or an ACP adapter entry path is required.')
 const packageRoot = resolve(dirname(entry), '..')
 const installedPackage = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
 
