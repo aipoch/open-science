@@ -93,11 +93,11 @@ const withoutEnvironmentManifest = (run: NotebookRunRecord): NotebookRunRecord =
 }
 
 const readEnvironmentManifest = async (
-  dataRoot: string,
+  storageRoot: string,
   checksum: string
 ): Promise<NotebookEnvironmentManifest | undefined> => {
   if (!digestPattern.test(checksum)) return undefined
-  const path = environmentManifestPath(dataRoot, checksum)
+  const path = environmentManifestPath(storageRoot, checksum)
   try {
     const info = await lstat(path)
     if (!info.isFile() || info.isSymbolicLink()) return undefined
@@ -1508,7 +1508,7 @@ class NotebookRunRepository {
         if (run.environmentManifest) return run
         const checksum = environmentManifestChecksumForRun(run)
         if (!checksum) return run
-        const manifest = await readEnvironmentManifest(document.dataRoot, checksum)
+        const manifest = await readEnvironmentManifest(this.storageRoot, checksum)
         return manifest ? { ...run, environmentManifest: manifest } : run
       })
     )
@@ -1938,9 +1938,9 @@ class NotebookRunRepository {
         if (digest(serialized) !== checksum) {
           throw new Error(`Notebook Environment manifest checksum mismatch: ${checksum}`)
         }
-        const key = `${document.dataRoot}\0${checksum}`
+        const key = `${this.storageRoot}\0${checksum}`
         if (this.publishedEnvironmentManifests.has(key)) return
-        const path = environmentManifestPath(document.dataRoot, checksum)
+        const path = environmentManifestPath(this.storageRoot, checksum)
         try {
           const existing = await readFile(path, 'utf8')
           if (existing !== serialized) {

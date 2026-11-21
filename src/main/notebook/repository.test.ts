@@ -270,7 +270,7 @@ describe('notebook run repository', () => {
     expect(raw.runs[0]).not.toHaveProperty('environmentManifest')
 
     const sidecarPath = join(
-      document.dataRoot,
+      root,
       'runtime',
       'provenance',
       'environment-manifests',

@@ -2296,10 +2296,6 @@ describe('notebook runtime service', () => {
         await readFile(
           join(
             root,
-            'notebooks',
-            'default-project',
-            'session-1',
-            'data',
             'runtime',
             'provenance',
             'environment-manifests',
