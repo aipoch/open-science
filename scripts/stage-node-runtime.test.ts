@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -24,14 +25,18 @@ async function temporary(): Promise<string> {
 const npmFiles = {
   'package.json': '{"name":"npm","version":"10.9.9"}',
   LICENSE: 'npm-license',
-  'bin/npm-cli.js': 'npm-entry',
+  'bin/npm-cli.js': "console.log(require('../lib/cli/entry.js'))",
   'bin/npm': 'npm-shell',
   'bin/npx': 'npx-shell',
   'bin/npm.cmd': 'npm-cmd',
   'bin/npx.cmd': 'npx-cmd',
   'bin/npx-cli.js': 'npx-entry',
+  'bin/npm-prefix.js': '',
+  'lib/cli/entry.js': "module.exports = require('dependency')",
+  'node_modules/node-gyp/bin/node-gyp.js': '',
+  'node_modules/init-package-json/lib/default-input.js': '',
   'lib/cli.js': 'runtime-code',
-  'node_modules/dependency/index.js': 'dependency-code',
+  'node_modules/dependency/index.js': "module.exports = 'dependency-code'",
   'node_modules/dependency/LICENSE': 'dependency-license',
   'node_modules/dependency/README.md': 'omit-readme',
   'node_modules/dependency/CHANGELOG.md': 'omit-history',
@@ -114,7 +119,7 @@ it.skipIf(process.platform === 'win32')(
     // Launcher links must stay inside the runtime root: absolute targets dangle once the
     // archive moves off the staging machine, breaking the bundled npm fallback.
     for (const [name, entry] of [
-      ['npm', 'npm-entry'],
+      ['npm', npmFiles['bin/npm-cli.js']],
       ['npx', 'npx-entry']
     ]) {
       const target = await readlink(join(output, name))
@@ -199,7 +204,7 @@ it.for(['darwin', 'win32'])(
         executable,
         join(output, 'LICENSE'),
         join(output, 'node_modules/npm/bin/npx-cli.js'),
-        join(output, 'node_modules/npm/node_modules/dependency/index.js')
+        join(output, 'node_modules/npm/cli-bundle.cjs')
       ]) {
         await writeFile(target, 'corrupt')
         await stageNodeRuntime(options)
@@ -227,7 +232,16 @@ it.for(['darwin', 'win32'])(
       }
       await rm(join(output, 'node_modules/npm/bin/npx-cli.js'))
       await stageNodeRuntime(options)
-      await assertNpmFixture(output)
+      const npm = join(output, 'node_modules/npm')
+      expect(
+        execFileSync(process.execPath, [join(npm, 'bin/npm-cli.js')], { encoding: 'utf8' }).trim()
+      ).toBe('dependency-code')
+      await expect(readFile(join(npm, 'node_modules/dependency/index.js'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(await readFile(join(npm, 'THIRD-PARTY-NOTICES.txt'), 'utf8')).toContain(
+        'dependency-license'
+      )
       await rm(executable)
       await stageNodeRuntime(options)
       expect(await readFile(executable, 'utf8')).toBe('executable')
