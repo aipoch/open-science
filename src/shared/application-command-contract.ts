@@ -42,6 +42,9 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'csl-missing-sections'
 ] as const
 
+export const isSessionReadChannel = (channel: string): boolean =>
+  channel === 'sessions:load-one' || channel === 'sessions:load-history-page'
+
 export type ApplicationCommandErrorCode = (typeof APPLICATION_COMMAND_ERROR_CODES)[number]
 
 export type RuntimeCodec<Value> = Readonly<{

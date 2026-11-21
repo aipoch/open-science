@@ -1,7 +1,7 @@
-import { isSessionReadChannel } from '../shared/session-history'
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
 import {
   ApplicationCommandError,
+  isSessionReadChannel,
   toApplicationCommandErrorEnvelope,
   unwrapApplicationCommandOutcome
 } from '../shared/application-command-contract'

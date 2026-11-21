@@ -44,9 +44,6 @@ export class SessionHistoryCursorStaleError extends Error {
   }
 }
 
-export const isSessionReadChannel = (channel: string): boolean =>
-  channel === 'sessions:load-one' || channel === 'sessions:load-history-page'
-
 // Electron drops properties on rejected errors. Only wrap failures so successful reads
 // preserve the existing optional Session and history page contracts.
 export const sessionReadIpcResult = async <T>(

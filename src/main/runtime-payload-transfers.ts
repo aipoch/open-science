@@ -1,5 +1,7 @@
-import { isSessionReadChannel } from '../shared/session-history'
-import { ApplicationCommandError } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  isSessionReadChannel
+} from '../shared/application-command-contract'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdtemp, open, readdir, rm, rmdir, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
