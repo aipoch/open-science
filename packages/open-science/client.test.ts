@@ -207,6 +207,7 @@ describe('OpenScienceClient', () => {
         'startAgentPackageFork',
         'startAgentPackageImport',
         'getPackageOperation',
+        'respondExportReview',
         'importSessionPackage',
         'getAgentRouting',
         'updateAgentRouting',
