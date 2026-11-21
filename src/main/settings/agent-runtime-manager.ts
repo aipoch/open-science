@@ -235,10 +235,7 @@ const installManagedClaudeAcp = async ({
   const applicationPath = host?.applicationPath ?? process.cwd()
   const assets = join(applicationPath, 'resources', 'claude-acp')
   const stagedPatch = join(assets, claudeAcpPatchName)
-  const patch = await readFile(
-    existsSync(stagedPatch) ? stagedPatch : join(applicationPath, 'patches', claudeAcpPatchName),
-    'utf8'
-  )
+  const patch = await readFile(stagedPatch, 'utf8')
   const env = { ...augmentedPathEnv(process.env), ...nodeRuntimeEnvironment() }
   const npm = resolveNpm(env)
   const staging = await mkdtemp(join(configRoot, '.claude-acp-install-'))

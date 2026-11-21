@@ -89,8 +89,6 @@ await cp(join(root, 'resources'), join(stage, 'resources'), {
       .split(sep)
       .some((part) => ['bin', 'node_modules'].includes(part))
 })
-const claudeAcpPatch = '@agentclientprotocol+claude-agent-acp+0.70.0.patch'
-await cp(join(root, 'patches', claudeAcpPatch), join(stage, 'resources/claude-acp', claudeAcpPatch))
 await syncFileEvidenceCodec({
   root,
   target: join(stage, 'resources/notebook/file_evidence_codec.mjs')
