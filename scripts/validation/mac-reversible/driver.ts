@@ -78,7 +78,7 @@ export async function arm(d,electron,crashInstance) {
       await advanceInstallationUpdateAsync(loc,record.operationId,'stopping')
       await advanceInstallationUpdateAsync(loc,record.operationId,'stopped',true)
       await advanceInstallationUpdateAsync(loc,record.operationId,'handoff',false,{allowedProcessIds:ownedPids()})
-      await launchPreparedMacInstaller(loc,record.operationId,p,{desktopPid:process.pid,relaunch:false})
+      await launchPreparedMacInstaller(loc,record.operationId,p,{desktopPid:process.pid,relaunch:false,...(fs.existsSync(join(d,'rollback-trial'))?{fault:'after-old-rename'}:{})})
       fs.writeFileSync(join(d,'bound.json'),JSON.stringify(inspectInstallationUpdate(loc)),{flag:'wx',mode:0o600})
       note(d,'executor-armed')
     })().catch(error=>note(d,'handoff-refused',{error:String(error),reason:error.reason,blocking:error.recovery?.blockingProcesses})).finally(()=>original(status))
@@ -95,3 +95,10 @@ export function receipt(d) {
   note(d,'installed-verified',{outcome:result.outcome})
 }
 export { inspectInstallationAvailability } from '../../../src/main/update/installation-protection'
+export function rolledBack(d) {
+  const p=prepared(d)
+  const record=read(join(d,'bound.json'))
+  assert.equal(assertInstallationExecutorSettled(record),'rolled-back')
+  verify(location(d).installationRoot,p.req)
+  note(d,'rollback-lock-released')
+}

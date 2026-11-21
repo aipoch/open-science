@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [normal, rapid, lifecycle]
+        scenario: [shipit, owner, rollback]
         arch: [x64, arm64]
         include:
           - { arch: x64, os: macos-15-intel }

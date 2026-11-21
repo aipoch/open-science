@@ -66,18 +66,50 @@ def case(mode):
         note('stage-space',stageKB=size(Path(p['stagedBundle']))//1024,executorKB=size(Path(p['directory']))//1024)
         return p
     def cancel(p,reason):
-        cli('discard')
+        if monitor:
+            monitor.wait(timeout=30)
+            assert monitor.returncode==0
+        else:cli('discard')
+        assert not Path(p['directory']).exists() and not Path(p['stagedBundle']).parent.exists()
         note('reclaimed',reason=reason,stageBytes=size(Path(p['stagedBundle']).parent),executorBytes=size(Path(p['directory'])))
+    monitor=None
     try:
-        if mode in ('normal','rapid'):
+        if mode=='shipit':
+            launch()
+            a=wait(ws);assert a['version']=='1.3.1'
+            with (d/'server.log').open('w') as outlog:
+                server=subprocess.Popen(['node',env['PROBE'],'serve',str(d),str(root/'feed'),arch],env=env,stdout=outlog,stderr=subprocess.STDOUT)
+                try:
+                    wait(lambda:(d/'feed-url').exists())
+                    probe('configure')
+                    probe('manual-download')
+                    note('quit-request');probe('quit')
+                    wait(lambda:not alive(a['pid']),150);note('A-exited')
+                    note('open-request');launch()
+                    b=wait(ws);note('first-workspace',**b)
+                    assert Path(b['exe']).resolve()==(app/'Contents/MacOS/Open-Science').resolve()
+                    run('codesign','--verify','--deep','--strict',app)
+                    probe('quit');wait(lambda:not alive(b['pid']))
+                    assert b['version']=='1.3.2', 'first real workspace was '+b['version']
+                finally:server.terminate();server.wait()
+        elif mode in ('normal','rapid','rollback'):
             launch(True)
             a=wait(ws);assert a['version']=='1.3.1'
             p=prep()
+            if mode=='rollback':(d/'rollback-trial').touch()
             armed=probe('arm')
             note('armed',details=json.loads(armed.stdout.splitlines()[-1])['details'])
             (d/'request-quit').touch();note('quit-request')
             probe('quit')
             wait(lambda:not alive(a['pid']),150);note('A-exited')
+            if mode=='rollback':
+                wait(lambda:(Path(p['directory'])/'result.json').exists())
+                result=json.loads((Path(p['directory'])/'result.json').read_text())
+                assert result['outcome']=='rolled-back' and identity(app)==original
+                cli('rolledBack')
+                run('codesign','--verify','--deep','--strict',app)
+                note('rollback-verified',outcome=result['outcome'],originalInode=original[1])
+                return
             if mode=='rapid':
                 note('open-request')
                 launch()
@@ -87,6 +119,8 @@ def case(mode):
                 note('open-request')
                 launch()
             b=wait(ws,90)
+            result_path=Path(p['directory'])/'result.json'
+            if result_path.exists():note('result-time',resultMs=result_path.stat().st_mtime_ns//1000000)
             note('first-workspace',**b)
             assert b['pid']!=a['pid'] and b['version']==b['data']['version']=='1.3.2'
             assert Path(b['exe']).resolve()==(app/'Contents/MacOS/Open-Science').resolve()
@@ -121,6 +155,9 @@ def case(mode):
             if mode=='opt-out':
                 launch();a=wait(ws)
             p=prep()
+            if sys.argv[1]=='owner':
+                monitor=subprocess.Popen(['node',str(src/'owner.cjs'),str(d)],env=env)
+                wait(lambda:(d/'monitor-ready').exists(),10)
             if mode=='busy':
                 child=subprocess.Popen([str(app/'Contents/Resources/node-runtime/node'),'-e','setInterval(()=>{},1000)'])
                 try:
@@ -136,7 +173,7 @@ def case(mode):
                 old=root/'candidate'/f'aipoch-open-science-1.3.1-mac-{arch}.zip'
                 import base64
                 new_id=base64.b64encode(hashlib.sha512(old.read_bytes()).digest()).decode()
-                (d/'input.json').write_text(json.dumps({'archive':str(old),'sha512':new_id}))
+                (d/'next-input').write_text(json.dumps({'archive':str(old),'sha512':new_id}));(d/'next-input').replace(d/'input.json')
                 assert json.loads((d/'input.json').read_text())['sha512']!=p['sha512']
                 cancel(p,'different signed archive identity; no downgrade requested')
             elif mode in ('move','trash'):
@@ -150,6 +187,7 @@ def case(mode):
                 if mode=='trash':moved.rename(app)
         note('case-passed')
     finally:
+        if monitor and monitor.poll() is None:monitor.terminate();monitor.wait()
         for f in ['stages.jsonl','last-workspace-error','stderr','stdout']:
             if (d/f).is_file():shutil.copyfile(d/f,out/(mode+'-'+f))
         assert [(identity(p),p.read_bytes()) for p in keep]==sentinels
@@ -157,7 +195,7 @@ def case(mode):
         # Measure leftovers before runner disposal, including failed handoffs.
         note('end-space',privateStageBytes=sum(size(x) for x in apps.glob('.open-science-install-*')),executorBytes=sum(size(x) for x in (d/'state').glob('*/executor-*')),scratchStageBytes=sum(size(x) for x in scratch.glob('open-science-update-*')))
         # No generic sweep. Retain unexpected state for remaining diagnostics.
-cases=['opt-out','superseded','move','trash','interrupt','busy'] if sys.argv[1]=='lifecycle' else [sys.argv[1]]
+cases=['opt-out','superseded','move','trash','interrupt','busy'] if sys.argv[1]=='lifecycle' else ['opt-out','superseded','move','trash'] if sys.argv[1]=='owner' else [sys.argv[1]]
 failures=[]
 for mode in cases:
     try:case(mode)
