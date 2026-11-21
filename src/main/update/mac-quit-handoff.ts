@@ -13,6 +13,8 @@ function socketPath(version: string): string {
   return join(tmpdir(), `os-update-${process.getuid!()}`, `${id.slice(0, 20)}.sock`)
 }
 
+export const MAC_HANDOFF_ACK_TIMEOUT_MS = 2500
+
 export async function macQuitHandoff(
   mode: 'watch' | 'reopen',
   version: string,
@@ -55,7 +57,7 @@ export async function macQuitHandoff(
     const timer = setTimeout(() => {
       child.kill()
       finish(false)
-    }, 2500)
+    }, MAC_HANDOFF_ACK_TIMEOUT_MS)
     child.once('error', () => finish(false))
     child.once('exit', () => finish(false))
     child.once('message', async (message) => {

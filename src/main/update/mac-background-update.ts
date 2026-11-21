@@ -45,13 +45,15 @@ export async function canDownloadMacUpdate(
   }
 }
 
-export async function prepareMacUpdateOnQuit(
+export const MAC_NATIVE_PREPARATION_TIMEOUT_MS = 60_000
+
+export async function planMacUpdateOnQuit(
   strategy: UpdateStrategy,
   native: AutoUpdater,
   bundle: string,
   cache: string,
   checkOccupancy: () => Promise<void>
-): Promise<boolean> {
+): Promise<false | (() => Promise<void>)> {
   const ready = strategy.getStatus()
   if (
     !ready.automaticDownloads ||
@@ -86,18 +88,22 @@ export async function prepareMacUpdateOnQuit(
     native.getFeedURL() !== feed
   )
     return false
-  const cancellation = new AbortController()
-  const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(60_000)])
-  const refused = (): void => cancellation.abort(new Error('No staged macOS update'))
-  native.once('update-not-available', refused)
-  const prepared = once(native, 'update-downloaded', { signal })
-  try {
-    native.checkForUpdates()
-    await prepared
-    return true
-  } finally {
-    native.removeListener('update-not-available', refused)
-    cancellation.abort()
-    await prepared.catch(() => undefined)
+  return async () => {
+    const cancellation = new AbortController()
+    const signal = AbortSignal.any([
+      cancellation.signal,
+      AbortSignal.timeout(MAC_NATIVE_PREPARATION_TIMEOUT_MS)
+    ])
+    const refused = (): void => cancellation.abort(new Error('No staged macOS update'))
+    native.once('update-not-available', refused)
+    const prepared = once(native, 'update-downloaded', { signal })
+    try {
+      native.checkForUpdates()
+      await prepared
+    } finally {
+      native.removeListener('update-not-available', refused)
+      cancellation.abort()
+      await prepared.catch(() => undefined)
+    }
   }
 }

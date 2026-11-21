@@ -91,8 +91,12 @@ import { UpdateLifecycleError } from '../shared/update'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
-import { canDownloadMacUpdate, prepareMacUpdateOnQuit } from './update/mac-background-update'
-import { macQuitHandoff } from './update/mac-quit-handoff'
+import {
+  canDownloadMacUpdate,
+  MAC_NATIVE_PREPARATION_TIMEOUT_MS,
+  planMacUpdateOnQuit
+} from './update/mac-background-update'
+import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
@@ -2133,28 +2137,27 @@ async function startDesktop(): Promise<void> {
         !updateCommitted &&
         !work?.preserveService
       ) {
-        const prepared = await prepareMacUpdateOnQuit(
-          update,
-          nativeUpdater,
-          macBundle,
-          macCache,
-          () =>
-            inspectInstallationAvailability(
-              {
-                installationRoot: installationRootForEntry(backendPaths.entry),
-                allowedProcessIds: allowedInstallationProcessIds
-              },
-              AbortSignal.timeout(10_000)
-            )
+        const stage = await planMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
+          inspectInstallationAvailability(
+            {
+              installationRoot: installationRootForEntry(backendPaths.entry),
+              allowedProcessIds: allowedInstallationProcessIds
+            },
+            AbortSignal.timeout(10_000)
+          )
         )
-        if (
-          prepared &&
-          !(await macQuitHandoff('watch', app.getVersion(), [
-            macCache,
-            update.getStatus().latest ?? ''
-          ]))
-        )
-          bootstrapLog.warn('macOS update handoff observer unavailable')
+        if (stage) {
+          const targetVersion = update.getStatus().latest
+          if (!targetVersion) return
+          return {
+            timeoutMs: MAC_NATIVE_PREPARATION_TIMEOUT_MS + MAC_HANDOFF_ACK_TIMEOUT_MS,
+            run: async () => {
+              await stage()
+              if (!(await macQuitHandoff('watch', app.getVersion(), [macCache, targetVersion])))
+                bootstrapLog.warn('macOS update handoff observer unavailable')
+            }
+          }
+        }
       }
     }
   })
