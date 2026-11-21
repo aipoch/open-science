@@ -618,6 +618,7 @@ describe('application command composition', () => {
       'cli:install',
       'settings:get-preflight',
       'notebook-env:status',
+      'notebook-env:provision',
       'settings:get-notebook-network-status',
       'notebook:memory-policy-state',
       'settings:list-skills',
