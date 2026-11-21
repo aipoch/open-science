@@ -42,7 +42,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+import {
+  ClaudeProtocolFixtureRuntime as AcpRuntime,
+  shortenIdleReleaseWindow
+} from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -632,6 +635,13 @@ const createModes = (
 ): SessionModeState => ({
   currentModeId,
   availableModes: ids.map((id) => ({ id, name: id }))
+})
+
+it('uses Open Science Agent when the runtime has no framework selection', () => {
+  const options = { appVersion: '0.1.0', defaultCwd: '/workspace' }
+  expect(composeAcpRuntimeBaseOwners(options).backendGeneration.current.framework.id).toBe(
+    'open-science-agent'
+  )
 })
 
 const startPendingReviewerRace = async (

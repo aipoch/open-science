@@ -23,6 +23,7 @@ import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { createProjectHandlers } from '../projects/ipc'
@@ -437,7 +438,7 @@ describe('full-access subscriptions across runtime ownership', () => {
     emitLate: (allowed: boolean) => void
   }
   const target = {
-    frameworkId: 'codex',
+    frameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
     providerId: 'provider',
     model: 'old',
     reasoningEffort: 'high'
@@ -445,7 +446,11 @@ describe('full-access subscriptions across runtime ownership', () => {
   const setup = (): { coordinator: AcpRuntimeCoordinator; created: AuthorityRuntime[] } => {
     const created: AuthorityRuntime[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session'], callbacks })
+      const fake = createFakeRuntime({
+        frameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
+        sessionIds: ['session'],
+        callbacks
+      })
       let full = true
       const listeners = new Set<(allowed: boolean) => void>()
       const captured = new Set<(allowed: boolean) => void>()
@@ -1743,7 +1748,7 @@ describe('AcpRuntimeCoordinator', () => {
       const created: ReturnType<typeof createFakeRuntime>[] = []
       const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
         const fake = createFakeRuntime({
-          frameworkId: target?.frameworkId ?? 'claude-code',
+          frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           sessionIds: [`session-${created.length}`],
           callbacks
         })
@@ -1842,7 +1847,7 @@ describe('AcpRuntimeCoordinator', () => {
       const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
         targets.push(target)
         const fake = createFakeRuntime({
-          frameworkId: target?.frameworkId ?? 'claude-code',
+          frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           sessionIds: [`session-${created.length}`],
           callbacks
         })
@@ -1932,7 +1937,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })
@@ -1961,7 +1966,7 @@ describe('AcpRuntimeCoordinator', () => {
       const created: ReturnType<typeof createFakeRuntime>[] = []
       const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
         const fake = createFakeRuntime({
-          frameworkId: target?.frameworkId ?? 'claude-code',
+          frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           sessionIds: [],
           callbacks,
           beforeResume: () => adoption.promise
@@ -2016,7 +2021,7 @@ describe('AcpRuntimeCoordinator', () => {
     let call = 0
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [],
         callbacks
       })
@@ -2030,7 +2035,7 @@ describe('AcpRuntimeCoordinator', () => {
         return {
           sessionId: request.sessionId,
           cwd: '/workspace',
-          frameworkId: target?.frameworkId ?? 'claude-code',
+          frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           contextReset: true
         }
       })
@@ -2071,7 +2076,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: ['new-session'],
         callbacks
       })
@@ -2106,7 +2111,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })
@@ -2137,7 +2142,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })
@@ -2165,7 +2170,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'codex',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })
@@ -2192,7 +2197,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'codex',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })
@@ -2340,7 +2345,7 @@ describe('AcpRuntimeCoordinator', () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'codex',
+        frameworkId: target?.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         sessionIds: [`session-${created.length}`],
         callbacks
       })

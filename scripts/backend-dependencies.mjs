@@ -141,8 +141,6 @@ const desktopExternalRoots = [
   '@napi-rs/canvas',
   '@aipoch/credential-identity-probe-native',
   '@prisma/client',
-  '@agentclientprotocol/claude-agent-acp',
-  '@anthropic-ai/claude-agent-sdk',
   '@aipoch/literature-citations',
   '@aipoch/pdf-translation',
   '@aipoch/pdf-structure',

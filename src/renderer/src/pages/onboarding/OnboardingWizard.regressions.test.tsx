@@ -13,7 +13,7 @@ import {
   clickButton,
   fillRequiredProviderFields,
   findButton,
-  readyClaudeState,
+  readyBuiltInState,
   resetOnboardingStores,
   selectOption,
   stubWindowApi
@@ -48,7 +48,7 @@ const section = (label: string): Element | null =>
   container.querySelector(`section[aria-label="${label}"]`)
 
 const goToProvider = async (): Promise<void> => {
-  readyClaudeState()
+  readyBuiltInState()
   await renderWizard()
   await clickButton(/^continue$/i)
   await clickButton(/^continue$/i)

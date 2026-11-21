@@ -1,20 +1,69 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
 import type { AgentProcessSpawner } from '../node-process-host'
 
 import { createLogger } from '@aipoch/diagnostics/node'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { resolveBootstrapConfigRoot } from '../storage/config-root'
+import { CLAUDE_ACP_MISSING_MESSAGE } from '../../shared/failure/messages'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { resolveClaudeExecutableForSpawn } from './claude-executable'
 
-const nodeRequire = createRequire(import.meta.url)
 const log = createLogger('agent')
 
-// Resolves the packaged Claude ACP agent entry through Node's module resolver. This is a JS entry
-// executed by Electron-as-Node, not the native claude binary, so it stays bundled with the app.
-const resolveClaudeAgentAcpEntry = (): string =>
-  nodeRequire.resolve('@agentclientprotocol/claude-agent-acp/dist/index.js')
+const packageName = '@agentclientprotocol/claude-agent-acp'
+// Bump the revision if the patch changes without an upstream version change.
+export const claudeAcpAdapterRevision = '0.70.0-1'
+export const claudeAcpInstallationReceipt = '.open-science-claude-acp'
+export const claudeAcpAdapterPath = 'node_modules/' + packageName + '/dist'
+
+// Only the explicitly installed product runtime lives here. Keep it separate from the native
+// CLI's transaction, which replaces its entire install directory during an update.
+export const managedClaudeAcpRoot = (configRoot: string): string =>
+  join(configRoot, 'claude-code-acp')
+
+export const managedClaudeAcpEntryAt = (root: string): string | undefined => {
+  const entry = join(root, claudeAcpAdapterPath, 'index.js')
+  try {
+    if (
+      readFileSync(join(root, claudeAcpInstallationReceipt), 'utf8') !== claudeAcpAdapterRevision ||
+      !existsSync(entry) ||
+      !existsSync(join(root, claudeAcpAdapterPath, 'open-science-launch.js')) ||
+      !existsSync(join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'))
+    )
+      return undefined
+    return entry
+  } catch {
+    return undefined
+  }
+}
+
+export const resolveClaudeAgentAcpEntry = (configRoot?: string): string => {
+  const host = runtimeMetadataIfConfigured()
+  const root =
+    configRoot ?? (host ? resolveBootstrapConfigRoot(host.homePath, host.packaged) : undefined)
+  const entry = root ? managedClaudeAcpEntryAt(managedClaudeAcpRoot(root)) : undefined
+  if (entry) return entry
+  // The explicit compatibility suites can run the patched dev dependency in a plain Node host.
+  // The application host always configures runtime metadata, including in development.
+  if (!host) {
+    const fixture = join(process.cwd(), claudeAcpAdapterPath, 'index.js')
+    if (existsSync(fixture)) return fixture
+  }
+  throw new Error(CLAUDE_ACP_MISSING_MESSAGE)
+}
+
+export const isClaudeAgentAcpAvailable = (configRoot: string): boolean => {
+  try {
+    resolveClaudeAgentAcpEntry(configRoot)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Converts Electron's asar virtual path to the real unpacked location for executable files.
 const toUnpackedAsarPath = (filePath: string): string =>
@@ -157,4 +206,4 @@ const spawnClaudeAgentAcp = ({
   return child
 }
 
-export { buildAgentSpawnEnv, resolveClaudeAgentAcpEntry, spawnClaudeAgentAcp, toUnpackedAsarPath }
+export { buildAgentSpawnEnv, spawnClaudeAgentAcp, toUnpackedAsarPath }

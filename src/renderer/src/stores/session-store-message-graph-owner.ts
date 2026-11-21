@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/agent-framework-id'
 import { discussionParentForFirstMessage } from '../../../shared/replay-reference'
 import type { StoreApi } from 'zustand'
 import {
@@ -113,7 +114,7 @@ export const createSessionMessageGraphOwner = <
               withProvider,
               withProvider.messages,
               now,
-              withProvider.agentFrameworkId ?? 'claude-code',
+              withProvider.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
               withProvider.agentBackendId,
               withProvider.agentModel,
               !isRetryingPreparedContext
@@ -167,7 +168,7 @@ export const createSessionMessageGraphOwner = <
           session,
           session.messages,
           now,
-          session.agentFrameworkId ?? 'claude-code',
+          session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           session.agentBackendId,
           session.agentModel,
           true
@@ -442,7 +443,7 @@ export const createSessionMessageGraphOwner = <
                   session,
                   nextMessages,
                   now,
-                  agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',
+                  agentFrameworkId ?? session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
                   normalizedAgentBackendId ?? session.agentBackendId,
                   normalizedAgentModel
                 ),
@@ -504,7 +505,7 @@ export const createSessionMessageGraphOwner = <
         newSession,
         newSession.messages,
         now,
-        agentFrameworkId ?? 'claude-code',
+        agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         normalizedAgentBackendId,
         normalizedAgentModel
       )
@@ -643,7 +644,7 @@ export const createSessionMessageGraphOwner = <
       newSession,
       messages,
       now,
-      normalizedFrameworkId ?? 'claude-code',
+      normalizedFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       normalizedAgentBackendId,
       normalizedAgentModel
     )
