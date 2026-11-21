@@ -7038,9 +7038,13 @@ describe('ConversationPanel interrupted Session recovery', () => {
     }
   })
 
-  it.each(['cancelled', 'connection-lost', 'app-restart'] as const)(
+  it.each([
+    ['cancelled', 'This turn was interrupted. Resume to continue.'],
+    ['connection-lost', 'Connection lost — Resume to reconnect and continue.'],
+    ['app-restart', 'Session was interrupted before the app closed.']
+  ] as const)(
     'retains the original Resume action after routed user messages and %s',
-    async (cause) => {
+    async (cause, expectedMessage) => {
       const onResumeSession = vi.fn().mockResolvedValue(undefined)
       const prompt = planOriginMessages()[0]
       const activeSession: ChatSession = {
@@ -7049,7 +7053,10 @@ describe('ConversationPanel interrupted Session recovery', () => {
         title: 'Interrupted session with steering',
         cwd: '/workspace',
         status: cause === 'cancelled' ? 'idle' : 'error',
-        error: cause === 'cancelled' ? 'Stale provider error' : undefined,
+        error:
+          cause === 'cancelled'
+            ? 'Stale provider error'
+            : 'This turn was interrupted. Resume to continue.',
         resumeRecovery: { kind: 'resume-required', promptMessageId: prompt.id, cause },
         messages: [
           {
@@ -7082,11 +7089,9 @@ describe('ConversationPanel interrupted Session recovery', () => {
       )
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
+      const banner = container.querySelector('[data-slot="session-recovery-notice"]')
+      expect(banner?.querySelector('[role="status"]')?.textContent).toBe(expectedMessage)
       if (cause === 'cancelled') {
-        const banner = container.querySelector('[data-slot="session-recovery-notice"]')
-        expect(banner?.querySelector('[role="status"]')?.textContent).toBe(
-          'This turn was interrupted. Resume to continue.'
-        )
         expect(banner?.querySelectorAll('button')).toHaveLength(1)
         expect(resumeButton?.textContent).toBe('Resume')
         expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
