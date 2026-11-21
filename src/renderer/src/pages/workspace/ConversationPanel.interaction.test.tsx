@@ -6340,7 +6340,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       }
       renderPanel({ view: { activeSession }, conversation: { actions: { resume } } })
       expect(container.querySelectorAll('[data-slot="session-recovery-notice"]')).toHaveLength(1)
-      expect(container.querySelectorAll('[data-testid="composer-notice-slot"] h2')).toHaveLength(0)
+      expect(container.querySelectorAll('[data-testid="composer-notice-slot"] h2')).toHaveLength(1)
       const button = container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')
       expect(button?.disabled).toBe(false)
       await act(async () => button?.click())
@@ -6949,6 +6949,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
         title: 'Interrupted session with steering',
         cwd: '/workspace',
         status: cause === 'cancelled' ? 'idle' : 'error',
+        error: cause === 'cancelled' ? 'Stale provider error' : undefined,
         resumeRecovery: { kind: 'resume-required', promptMessageId: prompt.id, cause },
         messages: [
           {
@@ -6982,8 +6983,12 @@ describe('ConversationPanel interrupted Session recovery', () => {
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
       if (cause === 'cancelled') {
-        expect(resumeButton?.textContent).toContain('Stopped')
-        expect(resumeButton?.textContent).toContain('Resume session')
+        const banner = container.querySelector('[data-slot="session-recovery-notice"]')
+        expect(banner?.querySelector('[role="status"]')?.textContent).toBe(
+          'This turn was interrupted. Resume to continue.'
+        )
+        expect(banner?.querySelectorAll('button')).toHaveLength(1)
+        expect(resumeButton?.textContent).toBe('Resume')
         expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
       }
       await act(async () => resumeButton?.click())

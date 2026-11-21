@@ -33,7 +33,8 @@ export const useComposerNotices = (input: {
   const prefix = input.sessionId ?? 'draft'
   const notices: ComposerNotice[] = []
   const { turn, recovery, legacy } = input
-  if (recovery)
+  if (recovery) {
+    const cancelled = recovery.cause === 'cancelled'
     notices.push({
       id: `${prefix}:session:${recovery.cause}:${recovery.error ?? ''}`,
       source: 'session',
@@ -41,10 +42,13 @@ export const useComposerNotices = (input: {
       occurredAt: turn?.outcome.settledAt ?? 0,
       blocksSend: true,
       failure:
-        turn?.outcome.kind === 'interrupted' && turn.outcome.failure?.diagnostics.protocol
+        !cancelled &&
+        turn?.outcome.kind === 'interrupted' &&
+        turn.outcome.failure?.diagnostics.protocol
           ? turn.outcome.failure
-          : classifyFailure({ origin: 'session', text: recovery.error })
+          : classifyFailure({ origin: 'session', text: cancelled ? undefined : recovery.error })
     })
+  }
   if (turn?.outcome.kind === 'failed')
     notices.push({
       id: `${prefix}:turn:${turn.promptMessageId}:${turn.outcome.settledAt}`,
