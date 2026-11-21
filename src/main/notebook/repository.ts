@@ -1,4 +1,5 @@
-import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
+import { estimateReplayBytes, indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
@@ -120,6 +121,18 @@ const readEnvironmentManifest = async (
   }
 }
 
+type RecordReadScope = {
+  root: string
+  records?: Map<string, { info: DocumentFileIdentity; run: NotebookRunRecord }>
+}
+
+type LaneSummary = {
+  notebookSessionRoot: string
+  workspaceCwd: string
+  hasBackgroundRuns: boolean
+  rows?: ReplayRunIndex[]
+}
+
 // Immutable records land before the manifest. Only startup, before admission, removes orphans.
 class NotebookRunRecordStorage {
   private readonly references = new WeakMap<
@@ -142,7 +155,26 @@ class NotebookRunRecordStorage {
     })
   }
 
+  private readonly reads = new AsyncLocalStorage<RecordReadScope>()
+
+  async withinHistoryRead<T>(root: string, read: () => Promise<T>): Promise<T> {
+    const scope: RecordReadScope = { root, records: new Map() }
+    return this.reads.run(scope, async () => {
+      try {
+        return await read()
+      } finally {
+        // Runtime initialization may start longer-lived async work in this context.
+        scope.records = undefined
+      }
+    })
+  }
+
   async read(root: string, runs: StoredNotebookRun[]): Promise<NotebookRunRecord[]> {
+    const scope = this.reads.getStore()
+    const records =
+      scope && (root === scope.root || dirname(root) === join(scope.root, 'frames'))
+        ? scope.records
+        : undefined
     const result: NotebookRunRecord[] = []
     let directory: string | undefined
     for (const entry of runs) {
@@ -155,10 +187,17 @@ class NotebookRunRecordStorage {
       const info = await lstat(path)
       if (!info.isFile() || info.isSymbolicLink() || info.size !== entry.bytes)
         throw new Error('Invalid Notebook record file.')
+      const cached = records?.get(path)
+      if (cached && sameDocumentFileIdentity(cached.info, info)) {
+        if (cached.run.runId !== entry.runId) throw new Error('Notebook record identity mismatch.')
+        result.push(cached.run)
+        continue
+      }
       const contents = await readFileWithinLimit(path, entry.bytes)
       if (digest(contents) !== entry.sha256) throw new Error('Notebook record checksum mismatch.')
       const run = JSON.parse(contents) as NotebookRunRecord
       if (run?.runId !== entry.runId) throw new Error('Notebook record identity mismatch.')
+      records?.set(path, { info, run })
       result.push(run)
     }
     return result
@@ -224,10 +263,11 @@ const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
 const RUN_TERMINAL_OUTBOX_DIR = '.run-terminal-outbox'
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
+const MAX_LANE_SUMMARY_BYTES = 256 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
 const log = createLogger('notebook:persistence')
 
-type DocumentFileIdentity = { mtimeMs: number; size: number; ino: number }
+type DocumentFileIdentity = { mtimeMs: number; ctimeMs: number; size: number; ino: number }
 
 type PersistedNotebookDocumentScope = {
   projectId?: unknown
@@ -238,7 +278,11 @@ type PersistedNotebookDocumentScope = {
 const sameDocumentFileIdentity = (
   left: DocumentFileIdentity,
   right: DocumentFileIdentity
-): boolean => left.mtimeMs === right.mtimeMs && left.size === right.size && left.ino === right.ino
+): boolean =>
+  left.mtimeMs === right.mtimeMs &&
+  left.ctimeMs === right.ctimeMs &&
+  left.size === right.size &&
+  left.ino === right.ino
 
 type LoadNotebookRunDocumentRequest = {
   projectId: string
@@ -868,11 +912,14 @@ class NotebookRunRepository {
   private readonly publishedEnvironmentManifests = new Set<string>()
   private readonly documentCache = new Map<
     string,
-    { mtimeMs: number; size: number; ino: number; weight: number; document: NotebookRunDocument }
+    DocumentFileIdentity & { weight: number; document: NotebookRunDocument }
   >()
   private documentCacheBytes = 0
-  // ponytail: reuse the bounded document cache; cold/oversized JSON still needs a full read.
-  // A durable per-run index is the next step if archives routinely exceed that cache budget.
+  // Keep metadata after an oversized document is released. Cap even unusual IDs or very long histories.
+  private readonly laneSummaries = new Map<
+    string,
+    { identity: DocumentFileIdentity; summary: LaneSummary }
+  >()
   private readonly runIndexes = new WeakMap<
     NotebookRunDocument,
     { rows: ReplayRunIndex[]; byId: Map<string, NotebookRunRecord> }
@@ -893,10 +940,77 @@ class NotebookRunRepository {
     return index
   }
 
+  private async cachedLaneSummary(filePath: string): Promise<LaneSummary | undefined> {
+    const cached = this.laneSummaries.get(filePath)
+    if (!cached) return undefined
+    try {
+      if (sameDocumentFileIdentity(cached.identity, await stat(filePath))) return cached.summary
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    return undefined
+  }
+
+  private async hasRecoveryCandidate(filePath: string): Promise<boolean> {
+    try {
+      const entries = await readdir(dirname(filePath), { withFileTypes: true })
+      return entries.some(
+        (entry) => entry.isFile() && isRecoverableDurableJsonTemporaryFile(filePath, entry.name)
+      )
+    } catch (error) {
+      if (isMissingFileError(error)) return false
+      throw error
+    }
+  }
+
+  private async cachedSessionSummaries(
+    projectId: string,
+    sessionId: string
+  ): Promise<LaneSummary[] | undefined> {
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId)
+    const root = await this.cachedLaneSummary(path)
+    const summaries: LaneSummary[] = []
+    if (root) summaries.push(root)
+    else if ((await this.pathExists(path)) || (await this.hasRecoveryCandidate(path)))
+      return undefined
+    for (const frameId of await this.frameIds(projectId, sessionId)) {
+      const lane = createFrameNotebookLane(projectId, sessionId, frameId)
+      const summary = await this.cachedLaneSummary(
+        getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      )
+      if (!summary) return undefined
+      summaries.push(summary)
+    }
+    return summaries
+  }
+
+  async hasCachedForegroundOnlyHistory(
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity
+  ): Promise<boolean> {
+    const summaries = await this.cachedSessionSummaries(projectId, sessionId)
+    if (!summaries?.length || summaries.some((summary) => summary.hasBackgroundRuns)) return false
+    if (lane) {
+      const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      if (!summaries.some((summary) => summary.notebookSessionRoot === dirname(path))) return false
+      // loadOrCreate normally checks for pending durable writes and repairs the input directory.
+      if (await this.hasRecoveryCandidate(path)) return false
+      await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
+    }
+    return true
+  }
+
   async readSessionRunIndex(projectId: string, sessionId: string): Promise<ReplayRunIndex[]> {
-    return (await this.readSessionDocuments(projectId, sessionId))
-      .flatMap((document) => this.runIndex(document).rows)
-      .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+    const lanes = await this.readSessionLaneValues(projectId, sessionId, async (lane) => {
+      const summary = await this.cachedLaneSummary(
+        getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      )
+      if (summary?.rows) return summary.rows
+      return this.runIndex(await this.loadExisting(projectId, sessionId, lane)).rows
+    })
+    const rows = lanes.flat()
+    return rows.sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
   }
 
   async readSessionRun(
@@ -914,6 +1028,13 @@ class NotebookRunRepository {
   }
 
   constructor(private readonly storageRoot: string) {}
+
+  withinHistoryRead<T>(projectId: string, sessionId: string, read: () => Promise<T>): Promise<T> {
+    return this.records.withinHistoryRead(
+      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
+      read
+    )
+  }
 
   private async hydrate(
     filePath: string,
@@ -1408,30 +1529,54 @@ class NotebookRunRepository {
   }
 
   async findAnyExisting(projectId: string, sessionId: string): Promise<NotebookRunDocument | null> {
-    const root = await this.findExisting(projectId, sessionId)
-    if (root) return root
+    return this.firstExistingLane(projectId, sessionId, (lane) =>
+      this.findExisting(projectId, sessionId, lane)
+    )
+  }
 
+  async findReferenceHeader(
+    projectId: string,
+    sessionId: string
+  ): Promise<Pick<LaneSummary, 'notebookSessionRoot' | 'workspaceCwd'> | null> {
+    return this.firstExistingLane(
+      projectId,
+      sessionId,
+      async (lane) =>
+        (await this.cachedLaneSummary(
+          getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+        )) ?? this.findExisting(projectId, sessionId, lane)
+    )
+  }
+
+  private async firstExistingLane<T>(
+    projectId: string,
+    sessionId: string,
+    read: (lane?: NotebookLaneIdentity) => Promise<T | null>
+  ): Promise<T | null> {
+    const root = await read()
+    if (root) return root
+    for (const frameId of await this.frameIds(projectId, sessionId)) {
+      const lane = createFrameNotebookLane(projectId, sessionId, frameId)
+      const child = await read(lane)
+      if (child) return child
+    }
+    return null
+  }
+
+  private async frameIds(projectId: string, sessionId: string): Promise<string[]> {
     const framesRoot = join(
       getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
       'frames'
     )
-    let entries
     try {
-      entries = await readdir(framesRoot, { withFileTypes: true })
+      return (await readdir(framesRoot, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((entry) => entry.name)
     } catch (error) {
-      if (isMissingFileError(error)) return null
+      if (isMissingFileError(error)) return []
       throw error
     }
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory()) continue
-      const lane = createFrameNotebookLane(projectId, sessionId, entry.name)
-      try {
-        return await this.loadExisting(projectId, sessionId, lane)
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error
-      }
-    }
-    return null
   }
 
   async readSessionDocuments(
@@ -1439,8 +1584,21 @@ class NotebookRunRepository {
     sessionId: string,
     options: ReadSessionDocumentsOptions = {}
   ): Promise<NotebookRunDocument[]> {
-    const documents: NotebookRunDocument[] = []
-    const legacy = await this.findExisting(projectId, sessionId).catch((error) => {
+    const documents = await this.readSessionLaneValues(projectId, sessionId, (lane) =>
+      this.loadExisting(projectId, sessionId, lane)
+    )
+    if (!options.includeEnvironmentManifests) return documents
+    return Promise.all(documents.map((document) => this.withEnvironmentManifests(document)))
+  }
+
+  private async readSessionLaneValues<T>(
+    projectId: string,
+    sessionId: string,
+    read: (lane?: NotebookLaneIdentity) => Promise<T>
+  ): Promise<T[]> {
+    const documents: T[] = []
+    const legacy = await read().catch((error) => {
+      if (isMissingFileError(error)) return null
       if (
         error instanceof CorruptNotebookDocumentError ||
         error instanceof UnsupportedNotebookDocumentVersionError
@@ -1458,25 +1616,9 @@ class NotebookRunRepository {
     })
     if (legacy) documents.push(legacy)
 
-    const framesRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
-      'frames'
-    )
-    let entries
-    try {
-      entries = await readdir(framesRoot, { withFileTypes: true })
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        return options.includeEnvironmentManifests
-          ? Promise.all(documents.map((document) => this.withEnvironmentManifests(document)))
-          : documents
-      }
-      throw error
-    }
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory()) continue
-      const lane = createFrameNotebookLane(projectId, sessionId, entry.name)
-      const document = await this.loadExisting(projectId, sessionId, lane).catch((error) => {
+    for (const frameId of await this.frameIds(projectId, sessionId)) {
+      const lane = createFrameNotebookLane(projectId, sessionId, frameId)
+      const document = await read(lane).catch((error) => {
         if (
           isMissingFileError(error) ||
           error instanceof CorruptNotebookDocumentError ||
@@ -1486,7 +1628,7 @@ class NotebookRunRepository {
             projectId,
             sessionId,
             lane: 'frame',
-            frameId: entry.name,
+            frameId,
             status:
               error instanceof UnsupportedNotebookDocumentVersionError ? 'unsupported' : 'corrupt'
           })
@@ -1496,8 +1638,7 @@ class NotebookRunRepository {
       })
       if (document) documents.push(document)
     }
-    if (!options.includeEnvironmentManifests) return documents
-    return Promise.all(documents.map((document) => this.withEnvironmentManifests(document)))
+    return documents
   }
 
   private async withEnvironmentManifests(
@@ -1737,8 +1878,10 @@ class NotebookRunRepository {
         if (attempt + 1 < MAX_DOCUMENT_READ_ATTEMPTS) continue
         return normalized
       }
+      this.rememberLaneSummary(filePath, currentInfo, normalized, true)
       this.rememberDocument(filePath, {
         mtimeMs: currentInfo.mtimeMs,
+        ctimeMs: currentInfo.ctimeMs,
         size: currentInfo.size,
         ino: currentInfo.ino,
         weight:
@@ -1896,14 +2039,57 @@ class NotebookRunRepository {
     await operation
   }
 
+  private rememberLaneSummary(
+    filePath: string,
+    identity: DocumentFileIdentity,
+    document: NotebookRunDocument,
+    includeIndex: boolean
+  ): void {
+    const previous = this.laneSummaries.get(filePath)
+    if (
+      previous &&
+      sameDocumentFileIdentity(previous.identity, identity) &&
+      (!includeIndex || previous.summary.rows)
+    )
+      return
+    const summary: LaneSummary = {
+      notebookSessionRoot: document.notebookSessionRoot,
+      workspaceCwd: document.workspaceCwd,
+      hasBackgroundRuns: document.runs.some((run) => run.executionMode === 'background')
+    }
+    let bytes = estimateReplayBytes(summary)
+    if (bytes > MAX_LANE_SUMMARY_BYTES) return
+    if (includeIndex) {
+      const rows: ReplayRunIndex[] = []
+      for (const run of document.runs) {
+        const row = indexReplayRun(run)
+        bytes += estimateReplayBytes(row)
+        if (bytes > MAX_LANE_SUMMARY_BYTES) break
+        rows.push(row)
+      }
+      if (rows.length === document.runs.length) summary.rows = rows
+    }
+    this.laneSummaries.delete(filePath)
+    if (this.laneSummaries.size >= MAX_DOCUMENT_CACHE_ENTRIES) {
+      const oldest = this.laneSummaries.keys().next().value
+      if (oldest !== undefined) this.laneSummaries.delete(oldest)
+    }
+    this.laneSummaries.set(filePath, {
+      identity: {
+        mtimeMs: identity.mtimeMs,
+        ctimeMs: identity.ctimeMs,
+        ino: identity.ino,
+        size: identity.size
+      },
+      summary
+    })
+  }
+
   // Retains only a small working set. Large or numerous histories remain readable but are parsed
   // again instead of pinning complete text and image payloads for the process lifetime.
   private rememberDocument(
     filePath: string,
-    entry: {
-      mtimeMs: number
-      size: number
-      ino: number
+    entry: DocumentFileIdentity & {
       weight: number
       document: NotebookRunDocument
     }
@@ -2004,8 +2190,10 @@ class NotebookRunRepository {
         environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
       )
     }
+    this.rememberLaneSummary(filePath, fileInfo, cachedDocument, false)
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
+      ctimeMs: fileInfo.ctimeMs,
       size: fileInfo.size,
       ino: fileInfo.ino,
       weight:

@@ -2839,90 +2839,87 @@ class NotebookRuntimeService {
     return session
   }
 
-  async runEvidence(
-    request: NotebookRunEvidenceRequest
-  ): Promise<NotebookRunEvidenceSnapshot | null> {
+  private readHistory<T>(
+    request: NotebookSessionRequest,
+    read: (projectId: string) => Promise<T>
+  ): Promise<T> {
+    const projectId = resolveProjectId(request, resolveProjectId(this.options))
     return this.sessionLifecycle.runProjectOperation(
       request,
-      async () => {
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        return this.sessionReadModel.runEvidence(
-          session?.projectId ?? projectId,
-          session?.sessionId ?? request.sessionId,
-          request.runId,
-          session
-        )
-      },
+      () => this.repository.withinHistoryRead(projectId, request.sessionId, () => read(projectId)),
       false
     )
   }
 
+  async runEvidence(
+    request: NotebookRunEvidenceRequest
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.runEvidence(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        request.runId,
+        session
+      )
+    })
+  }
+
   async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
-    return this.sessionLifecycle.runProjectOperation(
-      request,
-      async () => {
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        return this.sessionReadModel.backgroundTasks(
-          session?.projectId ?? projectId,
-          session?.sessionId ?? request.sessionId,
-          session
-        )
-      },
-      false
-    )
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.backgroundTasks(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        session
+      )
+    })
   }
 
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    return this.sessionLifecycle.runProjectOperation(
-      request,
-      async () => {
-        const requestedRunIds = request.runIds ?? []
-        if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-          throw new Error(
-            `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
-          )
-        }
-        if (
-          request.historySummaryFrameId !== undefined &&
-          Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
-            NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
-        ) {
-          throw new Error(
-            `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
-          )
-        }
-        const runIds = [...new Set(requestedRunIds)]
-        const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
-        if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
-          throw new Error('Notebook history limit must be 1-100.')
-        if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
-          throw new Error('Notebook state history cursor is invalid.')
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        if (!session) {
-          return this.sessionReadModel.importedState(
-            request,
-            runIds,
-            request.historySummaryFrameId,
-            request.historyBefore,
-            historyLimit
-          )
-        }
-        return this.sessionReadModel.state(
-          session,
+    return this.readHistory(request, async (projectId) => {
+      const requestedRunIds = request.runIds ?? []
+      if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+        throw new Error(
+          `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+        )
+      }
+      if (
+        request.historySummaryFrameId !== undefined &&
+        Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+          NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+      ) {
+        throw new Error(
+          `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+        )
+      }
+      const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
+      const session = await this.sessionForHistoryRead(request, projectId)
+      if (!session) {
+        return this.sessionReadModel.importedState(
+          request,
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
           historyLimit
         )
-      },
-      false
-    )
+      }
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit
+      )
+    })
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {

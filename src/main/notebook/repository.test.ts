@@ -2504,24 +2504,50 @@ describe('large immutable Notebook records', () => {
         '.run-records',
         `${manifest.runs[0].sha256}.json`
       )
-      if (failure === 'missing') await rm(recordPath)
-      if (failure === 'corrupt')
-        await writeFile(recordPath, (await readFile(recordPath, 'utf8')).replace('xxx', 'yyy'))
-      if (failure === 'path') {
-        manifest.runs[0].sha256 = '../../outside'
-        await writeFile(manifestPath, JSON.stringify(manifest))
-      }
-      const bytes = await readFile(manifestPath, 'utf8')
       const reopened = new NotebookRunRepository(root)
-      await expect(reopened.findExisting(scope.projectId, scope.sessionId)).rejects.toThrow(
-        'corrupt'
-      )
-      await expect(reopened.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
-        'corrupt'
-      )
-      expect(await readFile(manifestPath, 'utf8')).toBe(bytes)
+      await reopened.withinHistoryRead(scope.projectId, scope.sessionId, async () => {
+        await reopened.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+        if (failure === 'missing') await rm(recordPath)
+        if (failure === 'corrupt')
+          await writeFile(recordPath, (await readFile(recordPath, 'utf8')).replace('xxx', 'yyy'))
+        if (failure === 'path') {
+          manifest.runs[0].sha256 = '../../outside'
+          await writeFile(manifestPath, JSON.stringify(manifest))
+        }
+        const bytes = await readFile(manifestPath, 'utf8')
+        await expect(reopened.findExisting(scope.projectId, scope.sessionId)).rejects.toThrow(
+          'corrupt'
+        )
+        await expect(reopened.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
+          'corrupt'
+        )
+        expect(await readFile(manifestPath, 'utf8')).toBe(bytes)
+      })
     }
   )
+})
+
+it('invalidates a foreground-only summary when another writer adds a background Run in a child Frame', async () => {
+  const root = await createStorageRoot()
+  const reader = new NotebookRunRepository(root)
+  const writer = new NotebookRunRepository(root)
+  const scope = { projectId: 'project', sessionId: 'session' }
+  const rootLane = createRootNotebookLane('project', 'session', 'root-frame-session')
+  const child = createFrameNotebookLane('project', 'session', 'child')
+  for (const lane of [rootLane, child]) {
+    await writer.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+  }
+  await reader.readSessionRunIndex('project', 'session')
+  expect(await reader.hasCachedForegroundOnlyHistory('project', 'session', rootLane)).toBe(true)
+  await writer.appendRun({
+    ...scope,
+    lane: child,
+    run: admittedRun({ agentFrameId: 'child', executionMode: 'background' })
+  })
+  expect(await reader.hasCachedForegroundOnlyHistory('project', 'session', rootLane)).toBe(false)
+  expect(await reader.readSessionRunIndex('project', 'session')).toMatchObject([
+    { runId: 'run-1', agentFrameId: 'child' }
+  ])
 })
 
 it('counts external record bytes against the document cache budget and upgrades legacy large output lazily', async () => {
@@ -2552,8 +2578,23 @@ it('counts external record bytes against the document cache budget and upgrades 
   }
   expect(cache.documentCacheBytes).toBe(0)
   expect(cache.documentCache.size).toBe(0)
+  const reader = new NotebookRunRepository(root)
   expect(
-    (await new NotebookRunRepository(root).findExisting(scope.projectId, scope.sessionId))?.runs[0]
-      .text.stdout.length
+    (await reader.findExisting(scope.projectId, scope.sessionId))?.runs[0].text.stdout.length
   ).toBe(33 * 1024 * 1024)
+  // Metadata remains usable if only an oversized record disappears. Opening the body still fails.
+  const manifest = JSON.parse(await readFile(path, 'utf8'))
+  await rm(join(document.notebookSessionRoot, '.run-records', manifest.runs[0].sha256 + '.json'))
+  expect(await reader.readSessionRunIndex(scope.projectId, scope.sessionId)).toMatchObject([
+    { runId: 'run-1' }
+  ])
+  expect(await reader.findReferenceHeader(scope.projectId, scope.sessionId)).toMatchObject({
+    workspaceCwd: root
+  })
+  expect(await reader.hasCachedForegroundOnlyHistory(scope.projectId, scope.sessionId, lane)).toBe(
+    true
+  )
+  await expect(reader.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
+    'corrupt'
+  )
 })

@@ -208,6 +208,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     sessionId: string,
     session?: Session
   ): Promise<NotebookBackgroundTaskSnapshot> {
+    if (
+      await this.options.repository.hasCachedForegroundOnlyHistory(
+        projectId,
+        sessionId,
+        session?.lane
+      )
+    )
+      return { runs: [] }
     // Live reads keep the same durable validation and initialization as Notebook state.
     if (session) await this.loadSessionDocument(session)
     const window = await this.options.repository.readSessionRunWindow(
@@ -378,10 +386,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return this.toSessionReference(live)
     }
 
-    const document = await this.options.repository.findAnyExisting(projectId, request.sessionId)
+    const document = await this.options.repository.findReferenceHeader(projectId, request.sessionId)
     if (!document) return null
 
-    const rootDocument = await this.options.repository.findExisting(projectId, request.sessionId)
     const notebookSessionRoot = getNotebookSessionRoot(
       this.options.storageRoot,
       projectId,
@@ -391,10 +398,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: request.sessionId,
       projectId,
-      workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
+      workspaceCwd:
+        document.notebookSessionRoot === notebookSessionRoot
+          ? (document.workspaceCwd ?? request.workspaceCwd)
+          : request.workspaceCwd,
       notebookSessionRoot,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
-      runtimeRoot: document.kernel.runtimeRoot,
+      runtimeRoot: getRuntimeRoot(this.options.storageRoot),
       runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId)
     }
   }
