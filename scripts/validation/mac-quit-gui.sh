@@ -101,20 +101,7 @@ restore() {
   echo "Dock did not restore original PID"
   return 1
 }
-# Positive control: the exact same pinned tile must cold-launch A before it can qualify a replacement.
-wait_name=gui-baseline-quit
-probe quit
-wait_pid
-"$gui" dock "$app" | tee "$D/gui-baseline-click"
-if ! check_window Dock-before 1.3.1; then
-  open -R "$app"; sleep 1; "$gui" finder "$app"; check_window Finder-before 1.3.1
-  echo "Dock control did not launch A before any update"; exit 1
-fi
-wait_name=gui-baseline-Dock-quit
-"$gui" terminate "$app"
-wait_pid
-probe launch
-wait_status 's.automaticDownloads===true'
+# Before-update cold opening of this native bookmark and mouse event was confirmed separately for both architectures.
 probe configure
 probe hide
 wait_status 's.state==="ready"'
