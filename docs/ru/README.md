@@ -90,6 +90,14 @@ _19 ноября 2026 г._
 
 Проверки перед установкой описаны в разделе [проверки загрузки](../../SECURITY.md#verifying-your-download).
 
+В Windows 10/11 x64 настольное приложение можно установить из [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) или с помощью WinGet в PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Доступная версия может различаться в зависимости от канала распространения. Подробнее см. в [руководстве по установке и обновлению](https://aipoch.com/docs/guides/installation/).
+
 Архивы автономного CLI для macOS, Linux и Windows включают Node.js и работают без Homebrew и npm.
 
 В macOS приложение также можно установить через [Homebrew](https://brew.sh):

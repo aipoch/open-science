@@ -90,6 +90,14 @@ _2026 年 11 月 19 日_
 
 安裝前的驗證方法見[驗證下載](../../SECURITY.md#verifying-your-download)。
 
+在 Windows 10/11 x64 上，可以從 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) 安裝桌面應用程式，也可以在 PowerShell 中使用 WinGet 安裝。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+各發行管道提供的版本可能不同。詳情請參閱[安裝與更新指南](https://aipoch.com/docs/guides/installation/)。
+
 macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
 
 ```bash
