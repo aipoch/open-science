@@ -1,6 +1,7 @@
 import { unwrapProvenanceRead } from '../../../../../shared/provenance-read-result'
 import { getImageModelPreset } from '../../../../../shared/image-model-presets'
 import type { ImageModelPresetId } from '../../../../../shared/image-model-settings'
+import { kernelKindLabel } from '../notebook-cell-utils'
 import { imageOptionLabels } from '../image-tool-presentation'
 import { ErrorNotice } from '@/components/error-notice'
 import { ChevronDown, Info } from 'lucide-react'
@@ -82,6 +83,7 @@ export function ImageEditDetails({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [details, setDetails] = useState<{
+    notebookKernel?: string
     model?: string
     prompt?: string
     parameters: Record<string, unknown>
@@ -125,6 +127,10 @@ export function ImageEditDetails({
         if (!active) return
         setDetailsError(false)
         const producer = value?.evidence.producer
+        if (producer?.state === 'available' && 'kernel_kind' in producer) {
+          setDetails({ notebookKernel: kernelKindLabel(producer.kernel_kind), parameters: {} })
+          return
+        }
         if (
           producer?.state !== 'available' ||
           !('kind' in producer) ||
@@ -207,86 +213,94 @@ export function ImageEditDetails({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="z-[80] w-80 max-w-[calc(100vw-2rem)] space-y-3 p-3"
+        className={`z-[80] ${details?.notebookKernel ? 'w-auto' : 'w-80'} max-w-[calc(100vw-2rem)] space-y-3 p-3`}
         onMouseEnter={enter}
         onMouseLeave={leave}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        {edit ? (
-          <div className="flex min-w-0 items-center gap-3 text-xs">
-            <span className="shrink-0 text-text-300">{t('Input')}</span>
-            <span className="min-w-0 truncate text-text-100" title={edit.source.name}>
-              {edit.source.name}
-            </span>
-            {sourceVersion?.id === edit.source.sourceVersionId ? (
-              <span className="shrink-0 text-text-100">v{sourceVersion.number}</span>
+        {details?.notebookKernel ? (
+          <div className="text-xs text-text-000">
+            {t('Notebook')} · {details.notebookKernel}
+          </div>
+        ) : (
+          <>
+            {edit ? (
+              <div className="flex min-w-0 items-center gap-3 text-xs">
+                <span className="shrink-0 text-text-300">{t('Input')}</span>
+                <span className="min-w-0 truncate text-text-100" title={edit.source.name}>
+                  {edit.source.name}
+                </span>
+                {sourceVersion?.id === edit.source.sourceVersionId ? (
+                  <span className="shrink-0 text-text-100">v{sourceVersion.number}</span>
+                ) : null}
+              </div>
             ) : null}
-          </div>
-        ) : null}
-        <div
-          ref={(node) => {
-            if (node && !expanded) setClipped(node.scrollHeight > node.clientHeight)
-          }}
-          className={`${expanded ? 'max-h-48 overflow-auto whitespace-pre-wrap' : 'line-clamp-2'} break-words text-xs leading-relaxed text-text-000`}
-        >
-          {[
-            prompt ?? details?.prompt,
-            ...(edit?.regions ?? []).map((r) => `${r.number}. ${r.instruction}`)
-          ]
-            .filter(Boolean)
-            .join('\n') || missingValue}
-        </div>
-        {clipped || expanded ? (
-          <button
-            type="button"
-            className="text-xs text-primary"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? t('Collapse') : t('Expand')}
-          </button>
-        ) : null}
-        <div className="border-t border-border-300/50 pt-2">
-          <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
-            <span className="shrink-0 text-text-300">{t('Model')}</span>
-            <span className="min-w-0 truncate font-medium" title={modelLabel}>
-              {modelLabel}
-            </span>
-          </div>
-          {detailsError ? (
-            <ErrorNotice inline title={t('Image results could not be verified.')} />
-          ) : null}
-          {details && Object.keys(details.parameters).length ? (
-            <>
-              <Button
+            <div
+              ref={(node) => {
+                if (node && !expanded) setClipped(node.scrollHeight > node.clientHeight)
+              }}
+              className={`${expanded ? 'max-h-48 overflow-auto whitespace-pre-wrap' : 'line-clamp-2'} break-words text-xs leading-relaxed text-text-000`}
+            >
+              {[
+                prompt ?? details?.prompt,
+                ...(edit?.regions ?? []).map((r) => `${r.number}. ${r.instruction}`)
+              ]
+                .filter(Boolean)
+                .join('\n') || missingValue}
+            </div>
+            {clipped || expanded ? (
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
-                aria-expanded={parametersOpen}
-                aria-controls={parametersId}
-                className="mt-2 w-full justify-between px-0 text-xs text-text-200"
-                onClick={() => setParametersOpen(!parametersOpen)}
+                className="text-xs text-primary"
+                onClick={() => setExpanded(!expanded)}
               >
-                {t('Output settings')}
-                <ChevronDown
-                  className={`size-3.5 transition-transform motion-reduce:transition-none ${parametersOpen ? 'rotate-180' : ''}`}
-                />
-              </Button>
-              <WorkspaceCollapsiblePanel isOpen={parametersOpen}>
-                <dl
-                  id={parametersId}
-                  className="flex flex-wrap gap-x-3 gap-y-1 pt-2 text-xs text-text-200"
-                >
-                  {Object.entries(details.parameters).map(([key, value]) => (
-                    <div className="flex min-w-0 gap-1" key={key}>
-                      <dt className="truncate">{labels[key] ?? key}:</dt>
-                      <dd className="max-w-36 truncate">{String(value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </WorkspaceCollapsiblePanel>
-            </>
-          ) : null}
-        </div>
+                {expanded ? t('Collapse') : t('Expand')}
+              </button>
+            ) : null}
+            <div className="border-t border-border-300/50 pt-2">
+              <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
+                <span className="shrink-0 text-text-300">{t('Model')}</span>
+                <span className="min-w-0 truncate font-medium" title={modelLabel}>
+                  {modelLabel}
+                </span>
+              </div>
+              {detailsError ? (
+                <ErrorNotice inline title={t('Image results could not be verified.')} />
+              ) : null}
+              {details && Object.keys(details.parameters).length ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={parametersOpen}
+                    aria-controls={parametersId}
+                    className="mt-2 w-full justify-between px-0 text-xs text-text-200"
+                    onClick={() => setParametersOpen(!parametersOpen)}
+                  >
+                    {t('Output settings')}
+                    <ChevronDown
+                      className={`size-3.5 transition-transform motion-reduce:transition-none ${parametersOpen ? 'rotate-180' : ''}`}
+                    />
+                  </Button>
+                  <WorkspaceCollapsiblePanel isOpen={parametersOpen}>
+                    <dl
+                      id={parametersId}
+                      className="flex flex-wrap gap-x-3 gap-y-1 pt-2 text-xs text-text-200"
+                    >
+                      {Object.entries(details.parameters).map(([key, value]) => (
+                        <div className="flex min-w-0 gap-1" key={key}>
+                          <dt className="truncate">{labels[key] ?? key}:</dt>
+                          <dd className="max-w-36 truncate">{String(value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </WorkspaceCollapsiblePanel>
+                </>
+              ) : null}
+            </div>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   )

@@ -875,7 +875,16 @@ const WorkspaceMessageScrollerImpl = ({
     )
     return [...new Set([...expandedRunIds, ...nearViewportNotebookRunIds])]
   }, [activityExpansionOverrides, nearViewportNotebookRunIds, notebookRunIdByActivityId])
-  const notebookRunsById = useNotebookRunsById(notebookReference, requestedNotebookRunIds)
+  // Only activity groups consume Notebook previews. A text-only transcript can open without
+  // transferring recent Run outputs, including when the Session has standalone Notebook cells.
+  const hasActivityGroup = useMemo(
+    () => conversationItems.some((item) => item.type === 'activity-group'),
+    [conversationItems]
+  )
+  const notebookRunsById = useNotebookRunsById(
+    hasActivityGroup ? notebookReference : undefined,
+    requestedNotebookRunIds
+  )
   const handleNotebookRunNearViewport = useCallback(
     (runId: string, isNearViewport: boolean): void => {
       if (!currentSessionId) return

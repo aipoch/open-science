@@ -8,7 +8,8 @@ import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit,
   limitNotebookTerminalContent,
-  limitUtf8
+  limitUtf8,
+  notebookDiagnosticPreview
 } from './content-limits'
 
 describe('notebook content limits', () => {
@@ -31,6 +32,10 @@ describe('notebook content limits', () => {
   it('clips UTF-8 only at a complete character boundary', () => {
     expect(limitUtf8('a😀b', 5)).toEqual({ text: 'a😀', truncated: true })
     expect(limitUtf8('�x', 3)).toEqual({ text: '�', truncated: true })
+  })
+
+  it('keeps whole characters at both ends of a clipped diagnostic', () => {
+    expect(notebookDiagnosticPreview('a😀xxxx😀z', 7)).toBe('a\n…\nz')
   })
 
   it('shares the 2 MiB text budget and marks the result truncated', () => {

@@ -326,7 +326,7 @@ describe('TaskRunner', () => {
         now,
         sessions: {
           list: async () => (await coordinator.loadAll()).sessions,
-          save: (candidate) => coordinator.saveSession(candidate),
+          save: (candidate) => coordinator.saveSession(candidate, {}, { taskRunCommit: true }),
           bindSession: (request) => coordinator.bindTaskSession(request),
           admitTurn: (request) => coordinator.admitTaskTurn(request),
           stageCompletion: (request) => coordinator.stageTaskCompletion(request),
@@ -580,7 +580,7 @@ describe('TaskRunner', () => {
               const latest = await coordinator.loadSessionForContinuation(project.id, candidate.id)
               await coordinator.saveSession({ ...latest, title: 'Title from Web' })
             }
-            return coordinator.saveSession(candidate)
+            return coordinator.saveSession(candidate, {}, { taskRunCommit: true })
           },
           bindSession: async (request) => {
             if (injectWebSave) {
@@ -7123,7 +7123,8 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
       },
       sessions: {
         list: async () => (await coordinator.loadAll()).sessions,
-        save: (session: PersistedChatSession) => coordinator.saveSession(session),
+        save: (session: PersistedChatSession) =>
+          coordinator.saveSession(session, {}, { taskRunCommit: true }),
         bindSession: (request) => coordinator.bindTaskSession(request),
         admitTurn: (request) => coordinator.admitTaskTurn(request),
         stageCompletion: (request) => coordinator.stageTaskCompletion(request),

@@ -1,3 +1,4 @@
+import { CALL_STACK_LIMIT_MESSAGE } from '../messages'
 import type { Recognizer } from '../contract'
 
 const MODEL_UNAVAILABLE =
@@ -21,8 +22,15 @@ export const recognizeProvider: Recognizer = ({
   protocol,
   phase,
   responseMessage,
+  providerExcerpt,
   text = ''
 }) => {
+  if (
+    origin === 'provider' &&
+    (status === undefined || status === 200 || status === 400 || status === 422) &&
+    (providerExcerpt ?? responseMessage) === CALL_STACK_LIMIT_MESSAGE
+  )
+    return { category: 'service', reason: 'service/provider-error', diagnostics: {} }
   if (origin === 'provider' && protocol) {
     // Built-in adapters discard upstream messages; classify by actual status, standard code, and phase.
     const reasons = {
@@ -87,6 +95,8 @@ export const recognizeProvider: Recognizer = ({
     return billingCode
       ? { category: 'configuration', reason: 'configuration/billing', diagnostics: {} }
       : { category: 'service', reason: 'service/rate-limited', diagnostics: {} }
+  if (structuredCode === 'invalid_upstream_response' && (status === undefined || status === 502))
+    return { category: 'service', reason: 'service/response-invalid', diagnostics: {} }
   if (status !== undefined && status >= 500 && status <= 599)
     return { category: 'service', reason: 'service/unavailable', diagnostics: {} }
 

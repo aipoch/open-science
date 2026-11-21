@@ -1,9 +1,19 @@
 import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../claude-runtime'
 import { CODEX_CLI_INCOMPATIBLE_MESSAGE, MINIMUM_CODEX_ACP_VERSION } from '../../codex-runtime'
-import { CLAUDE_ACP_MISSING_MESSAGE } from '../messages'
+import { CALL_STACK_LIMIT_MESSAGE, CLAUDE_ACP_MISSING_MESSAGE } from '../messages'
 import type { Recognizer } from '../contract'
 
 export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) => {
+  if (
+    origin === 'agent-runtime' &&
+    (code === 'invalid_request_error' || code === 'upstream_error') &&
+    text === CALL_STACK_LIMIT_MESSAGE
+  )
+    return {
+      category: 'internal',
+      reason: 'internal/model-request-stack-overflow',
+      diagnostics: {}
+    }
   if (text.includes('Built-in Agent tool outcome is unknown:'))
     return { category: 'session', reason: 'session/tool-outcome-unknown', diagnostics: {} }
   if (code === 'specialist-reconfigure-failed')

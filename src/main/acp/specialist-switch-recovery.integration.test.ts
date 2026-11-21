@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -27,6 +26,9 @@ import {
   SessionSpecialistReconfiguration,
   type PersistedSessionSpecialistBinding
 } from '../specialist/session-reconfiguration'
+
+const claudeAdapter = process.env.CLAUDE_ACP_PATH
+const claudeNative = process.env.CLAUDE_NATIVE_PATH
 
 it.runIf(Boolean(process.env.CODEX_ACP_PATH && process.env.CODEX_NATIVE_PATH)).each([
   ['codex-responses', 0],
@@ -155,13 +157,11 @@ it.for([
   async ({ framework, modelRoute }, context) => {
     const executablePath =
       framework.id === 'claude-code'
-        ? createRequire(import.meta.url).resolve(
-            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/${process.platform === 'win32' ? 'claude.exe' : 'claude'}`
-          )
+        ? claudeNative
         : framework.id === 'opencode'
           ? process.env.OPENCODE_ACP_PATH
           : process.env.CODEBUDDY_ACP_PATH
-    if (!executablePath) return context.skip()
+    if (!executablePath || (framework.id === 'claude-code' && !claudeAdapter)) return context.skip()
     const root = await mkdtemp(join(tmpdir(), 'specialist-unprompted-'))
     let disconnectRuntime = async (): Promise<void> => undefined
     onTestFinished(async () => {
@@ -226,14 +226,31 @@ it.for([
         })
       }
     }
+    const runtimeFramework =
+      framework.id === 'claude-code'
+        ? {
+            ...framework,
+            spawn: (input: Parameters<typeof framework.spawn>[0]) =>
+              spawn(process.execPath, [claudeAdapter!], {
+                cwd,
+                env: {
+                  ...env,
+                  ...input.env,
+                  CLAUDE_CODE_EXECUTABLE: input.executablePath,
+                  ELECTRON_RUN_AS_NODE: '1'
+                },
+                stdio: 'pipe'
+              })
+          }
+        : framework
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: cwd,
       resolveBackend: () => ({
         framework: {
-          ...framework,
+          ...runtimeFramework,
           spawn: (input) =>
-            framework.spawn({
+            runtimeFramework.spawn({
               ...input,
               spawnProcess: (command, args, options) =>
                 spawn(command, args, { ...options, env, cwd })
@@ -291,12 +308,9 @@ it.for([
 
 // Real runtime, ACP adapter and SDK processes; only model inference is deterministic.
 // A never-prompted Claude session has no transcript to resume after a Skill reload.
-it('recovers an approved Specialist handoff through real Claude lazy-session replacement', async () => {
-  // npm ci installs the SDK platform binary; never fall back to a personal CLI.
-  const require = createRequire(import.meta.url)
-  const executablePath = require.resolve(
-    `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/${process.platform === 'win32' ? 'claude.exe' : 'claude'}`
-  )
+it('recovers an approved Specialist handoff through real Claude lazy-session replacement', async (context) => {
+  if (!claudeAdapter || !claudeNative) return context.skip()
+  const executablePath = claudeNative
   const root = await mkdtemp(join(tmpdir(), 'specialist-claude-contract-'))
   const cwd = join(root, 'project')
   const requests: string[] = []
@@ -413,38 +427,34 @@ it('recovers an approved Specialist handoff through real Claude lazy-session rep
         resolveBackend: () => ({
           framework: {
             ...claudeCodeFramework,
-            spawn: (input) =>
-              claudeCodeFramework.spawn({
-                ...input,
-                spawnProcess: (command, args, options) => {
-                  processCount++
-                  // Preserve the production spawner, but allowlist environment to exclude host credentials.
-                  const child = spawn(command, args, {
-                    ...options,
-                    env: {
-                      ...env,
-                      CLAUDE_CODE_EXECUTABLE: executablePath,
-                      ELECTRON_RUN_AS_NODE: '1'
-                    }
-                  })
-                  let pending = ''
-                  const write = child.stdin.write.bind(child.stdin)
-                  child.stdin.write = ((chunk: string | Buffer, ...rest: unknown[]) => {
-                    pending +=
-                      typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
-                    let newline: number
-                    while ((newline = pending.indexOf('\n')) !== -1) {
-                      const line = pending.slice(0, newline)
-                      pending = pending.slice(newline + 1)
-                      if (line) {
-                        wireRequests.push(JSON.parse(line))
-                      }
-                    }
-                    return Reflect.apply(write, child.stdin, [chunk, ...rest])
-                  }) as typeof child.stdin.write
-                  return child
-                }
+            spawn: (input) => {
+              processCount++
+              const child = spawn(process.execPath, [claudeAdapter!], {
+                cwd,
+                env: {
+                  ...env,
+                  ...input.env,
+                  CLAUDE_CODE_EXECUTABLE: executablePath,
+                  ELECTRON_RUN_AS_NODE: '1'
+                },
+                stdio: 'pipe'
               })
+              let pending = ''
+              const write = child.stdin.write.bind(child.stdin)
+              child.stdin.write = ((chunk: string | Buffer, ...rest: unknown[]) => {
+                pending += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
+                let newline: number
+                while ((newline = pending.indexOf('\n')) !== -1) {
+                  const line = pending.slice(0, newline)
+                  pending = pending.slice(newline + 1)
+                  if (line) {
+                    wireRequests.push(JSON.parse(line))
+                  }
+                }
+                return Reflect.apply(write, child.stdin, [chunk, ...rest])
+              }) as typeof child.stdin.write
+              return child
+            }
           },
           executablePath,
           env,

@@ -228,6 +228,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     AcpSessionInteractionOwner,
     | 'activatePrompt'
     | 'cancellationCheckpoint'
+    | 'isCancellationAccepted'
     | 'captureTerminal'
     | 'current'
     | 'release'
@@ -765,6 +766,7 @@ class AcpPromptTurnWorkflow {
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
+          isUserStopped: () => interactions.isCancellationAccepted(interaction, 'user'),
           beforeDispatch: async () => {
             if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (publicationPrompt && artifact) {

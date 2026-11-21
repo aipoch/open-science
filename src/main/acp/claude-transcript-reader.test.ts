@@ -2,14 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import {
-  getSessionMessages,
-  type SessionKey,
-  type SessionStore
-} from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createClaudeTranscriptReader } from './claude-transcript-reader'
+import {
+  createClaudeTranscriptReader,
+  type GetSessionMessages,
+  type ClaudeSessionKey
+} from './claude-transcript-reader'
 
 const sessionId = '11111111-1111-4111-8111-111111111111'
 
@@ -25,16 +24,10 @@ describe('Claude transcript reader', () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-claude-transcript-'))
     const configDir = join(root, 'claude')
     const cwd = join(root, 'workspace')
-    let resolvedKey: SessionKey | undefined
-    const captureStore: SessionStore = {
-      append: async () => undefined,
-      load: async (key) => {
-        resolvedKey = key
-        return null
-      }
+    const resolvedKey: ClaudeSessionKey = {
+      projectKey: 'workspace-key',
+      sessionId
     }
-    await getSessionMessages(sessionId, { dir: cwd, sessionStore: captureStore })
-    if (!resolvedKey) throw new Error('Claude SDK did not resolve a Session key.')
 
     const projectDir = join(configDir, 'projects', resolvedKey.projectKey)
     await mkdir(projectDir, { recursive: true })
@@ -72,7 +65,12 @@ describe('Claude transcript reader', () => {
       'utf8'
     )
 
-    const messages = await createClaudeTranscriptReader(configDir)({
+    const getSessionMessages: GetSessionMessages = async (_providerSessionId, options) =>
+      (await options.sessionStore.load(resolvedKey)) ?? []
+    const messages = await createClaudeTranscriptReader(
+      configDir,
+      getSessionMessages
+    )({
       providerSessionId: sessionId,
       cwd
     })
@@ -91,8 +89,13 @@ describe('Claude transcript reader', () => {
   it('returns no messages when Claude has no transcript for the Session', async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-claude-transcript-'))
 
+    const getSessionMessages: GetSessionMessages = async (_providerSessionId, options) =>
+      (await options.sessionStore.load({ projectKey: 'missing', sessionId })) ?? []
     await expect(
-      createClaudeTranscriptReader(join(root, 'claude'))({
+      createClaudeTranscriptReader(
+        join(root, 'claude'),
+        getSessionMessages
+      )({
         providerSessionId: sessionId,
         cwd: join(root, 'workspace')
       })

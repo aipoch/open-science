@@ -1069,9 +1069,19 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
       }
     })
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error || 'host.mcp HTTP ' + res.status)
-  if (body.error) throw new Error('host.mcp error: ' + String(body.error))
+  const body = await res.json().catch((error) => {
+    if (error instanceof SyntaxError) {
+      throw new Error(`host.mcp received invalid JSON (HTTP ${res.status})`)
+    }
+    throw error
+  })
+  if (!res.ok || body?.error) {
+    const detail = body?.error?.message ?? body?.error
+    const message = res.ok ? 'host.mcp error: ' + detail : detail || 'host.mcp HTTP ' + res.status
+    const error = new Error(message)
+    if (typeof body?.code === 'string') error.code = body.code
+    throw error
+  }
   return body.result
 }
 

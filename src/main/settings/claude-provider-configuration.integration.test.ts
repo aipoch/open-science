@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -8,6 +7,7 @@ import type { BackendRoutePlan } from './backend-route-planner'
 import { MessagesBridge } from './messages-bridge'
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import { ProviderTransportOwner } from './provider-transport-owner'
+import { externalAcpAvailable, externalAcpFile } from '../../../test/acp-agent-runtime'
 
 const target: ProviderRuntimeTarget = {
   providerId: 'provider-a',
@@ -64,11 +64,7 @@ type ClaudeProviderConfiguration = NonNullable<
 const loadClaudeProviderEnvAdapter = (): ((
   config: ClaudeProviderConfiguration
 ) => Record<string, string>) => {
-  const require = createRequire(import.meta.url)
-  const source = readFileSync(
-    require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'),
-    'utf8'
-  )
+  const source = readFileSync(externalAcpFile('claude', 'acp-agent.js'), 'utf8')
   const start = source.indexOf('function createEnvForProvider(config)')
   const end = source.indexOf('\nfunction isValidBaseUrl', start)
   if (start < 0 || end < 0) throw new Error('Claude ACP provider environment adapter not found.')
@@ -77,7 +73,7 @@ const loadClaudeProviderEnvAdapter = (): ((
   ) => Record<string, string>
 }
 
-describe('Claude ACP provider configuration', () => {
+describe.runIf(externalAcpAvailable('claude'))('Claude ACP provider configuration', () => {
   it('preserves the loopback credential through the real Claude adapter and terminalizes upstream 401', async () => {
     const upstreamFetch = vi.fn(async () =>
       Response.json(

@@ -65,6 +65,7 @@ type SessionNotebookContentProps = {
   frameLabels?: Readonly<Record<string, string>>
   agentSummaries?: readonly NotebookAgentSummary[]
   onLoadEarlier?: () => void
+  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -90,6 +91,7 @@ const SessionNotebookContent = ({
   frameLabels = {},
   agentSummaries = [],
   onLoadEarlier,
+  loadRun,
   onClose,
   onExport,
   onExportAll
@@ -427,6 +429,7 @@ const SessionNotebookContent = ({
                       allowFolderAccess={allowFolderAccess}
                       index={index}
                       showInputData={Boolean(projectId)}
+                      loadRun={loadRun}
                     />
                   </div>
                 ))
@@ -640,6 +643,20 @@ const SessionNotebookDialog = ({
       })
   }, [dialogSession, historyPage, loadingEarlier, runs])
 
+  const loadRun = useCallback(
+    async (runId: string): Promise<NotebookRunRecord | undefined> => {
+      if (!dialogSession) return undefined
+      const state = await window.api.notebook.state({
+        sessionId: dialogSession.id,
+        projectId: dialogSession.projectId,
+        workspaceCwd: dialogSession.cwd ?? '',
+        runIds: [runId]
+      })
+      return state.runs.find((run) => run.runId === runId)
+    },
+    [dialogSession]
+  )
+
   useEffect(() => {
     if (!sessionId) return
 
@@ -725,6 +742,7 @@ const SessionNotebookDialog = ({
               frameLabels={notebookFrameLabels(dialogSession, t, frameRuns, agents)}
               agentSummaries={agents}
               onLoadEarlier={loadEarlier}
+              loadRun={loadRun}
               status={status}
               error={error}
               onClose={onClose}

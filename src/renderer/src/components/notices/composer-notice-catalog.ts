@@ -219,12 +219,30 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'
   },
+  'internal/model-request-stack-overflow': {
+    ...noticeCatalog.internal,
+    titleKey: 'Call stack limit reached during a model request',
+    descriptionKey:
+      'This turn stopped. Export diagnostics to help identify where the call stack limit was reached.'
+  },
   'internal/reconfigure': {
     ...noticeCatalog.internal,
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+export const noticePresentation = (
+  failure: ClassifiedFailure,
+  operation?: string
+): NoticePresentation => {
+  // Attachment recovery belongs to the transfer row or the editable draft.
+  if (operation === 'attachment' || operation === 'stop')
+    return {
+      ...noticeCatalog.internal,
+      level: 'warning',
+      primaryAction: undefined,
+      secondaryActions: [],
+      feedback: 'none'
+    }
   const presentation =
     (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
   return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation

@@ -317,7 +317,8 @@ describe('session persistence startup', () => {
     expect(loadOne).toHaveBeenCalledWith({
       projectId: persisted.projectId,
       sessionId: persisted.id,
-      recoverSessionDetails: true
+      recoverSessionDetails: true,
+      reportReadFailure: true
     })
   })
 
@@ -351,7 +352,8 @@ describe('session persistence startup', () => {
     expect(loadOne).toHaveBeenCalledWith({
       projectId: persisted.projectId,
       sessionId: persisted.id,
-      recoverSessionDetails: true
+      recoverSessionDetails: true,
+      reportReadFailure: true
     })
     expect(useSessionStore.getState().sessionDetailsRecoveryRequest).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].contentLoaded).not.toBe(false)
@@ -1332,7 +1334,8 @@ describe('session persistence startup', () => {
     expect(loadOne).toHaveBeenCalledOnce()
     expect(loadOne).toHaveBeenLastCalledWith({
       projectId: selected.projectId,
-      sessionId: selected.id
+      sessionId: selected.id,
+      reportReadFailure: true
     })
 
     await act(async () => {
@@ -1340,7 +1343,11 @@ describe('session persistence startup', () => {
       await Promise.resolve()
     })
     expect(loadOne).toHaveBeenCalledTimes(2)
-    expect(loadOne).toHaveBeenLastCalledWith({ projectId: lazy.projectId, sessionId: lazy.id })
+    expect(loadOne).toHaveBeenLastCalledWith({
+      projectId: lazy.projectId,
+      sessionId: lazy.id,
+      reportReadFailure: true
+    })
 
     await act(async () => {
       useSessionStore.getState().deleteSession(lazy.id)
@@ -2777,7 +2784,11 @@ describe('session persistence startup', () => {
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
     )
-    expect(loadOne).toHaveBeenCalledWith({ projectId: first.projectId, sessionId: first.id })
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: first.projectId,
+      sessionId: first.id,
+      reportReadFailure: true
+    })
     act(() => useSessionStore.getState().selectSession(second.id))
     await act(async () => release(first))
     expect(useSessionStore.getState().selectedSessionId).toBe(second.id)
@@ -2825,7 +2836,7 @@ describe('session persistence startup', () => {
       expect(sessionId).toBe(session.id)
       return loadOne.mock.calls.length === 1
         ? oldRequest
-        : Promise.reject(new Error('new retry error'))
+        : Promise.reject({ code: 'response-too-large', message: 'private diagnostic' })
     })
     window.api.sessions.loadOne = loadOne
 
@@ -2847,6 +2858,10 @@ describe('session persistence startup', () => {
     )
     expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
       `${session.projectId}\\u0000${session.id}`
+    )
+
+    expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
+      'The requested conversation history exceeds the transfer limit.'
     )
 
     await act(async () => resolveOldRequest(session))

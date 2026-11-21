@@ -1,5 +1,9 @@
 import { classifyFailure } from '../../shared/failure/classify'
-import { preserveMainTurnOutcomes, recordRestartTurnOutcome } from './turn-outcome-authority'
+import {
+  preserveMainTurnOutcomes,
+  recordRestartTurnOutcome,
+  recoverDetachedIdleRun
+} from './turn-outcome-authority'
 import {
   setTurnOutcome,
   legacySessionStateForOutcome,
@@ -110,6 +114,7 @@ type SessionStateRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
+  hasActiveRuntimePrompt?(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession?(projectId: string, sessionId: string): boolean
   retainRuntimeSessionState?(projectId: string, sessionId: string, retained: boolean): void
   saveSession(
@@ -892,9 +897,13 @@ class SessionPersistenceStateOwner {
   // Commit restore normalization before attachment makes reads preserve runtime state.
   // Parked/approved Plans also lose their stale run, without a resumeRecovery error.
   async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
-    const preserveRuntimeState =
+    const hasLiveRuntime = (): boolean =>
       this.runtimeTerminalFailures.has(scope.sessionId) ||
       (this.options.repository.hasLiveRuntimeSession?.(scope.projectId, scope.sessionId) ?? false)
+    const ownsIdleRun = (): boolean =>
+      hasLiveRuntime() ||
+      (this.options.repository.hasActiveRuntimePrompt?.(scope.projectId, scope.sessionId) ?? false)
+    const preserveRuntimeState = hasLiveRuntime()
     const restored = await this.options.repository.loadSessionWithDiagnostics(
       scope.projectId,
       scope.sessionId,
@@ -902,14 +911,18 @@ class SessionPersistenceStateOwner {
     )
     if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
     if (preserveRuntimeState || this.promptPreparations.ownsPreparation(restored.session)) return
-    if (restored.session.promptPreparation) {
+    // A prompt may be admitted before the provider Session becomes visible. The running
+    // snapshot recovery below also handles stale prompt registrations after provider loss.
+    if (restored.session.status === 'idle' && restored.session.activeRun && ownsIdleRun()) return
+    const recovered = recoverDetachedIdleRun(restored.session)
+    if (recovered.promptPreparation) {
       await this.mutateRuntimeSession(scope, (latest) =>
-        recordRestartTurnOutcome(restored.session, latest)
+        recordRestartTurnOutcome(recovered, latest)
       )
       return
     }
-    if (restored.session.resumeRecovery?.cause !== 'app-restart') {
-      if (restored.session.activeRun) return
+    if (recovered.resumeRecovery?.cause !== 'app-restart') {
+      if (recovered.activeRun) return
       const authority = await loadAuthority(
         this.options.repository,
         scope.projectId,
@@ -919,15 +932,17 @@ class SessionPersistenceStateOwner {
       // Persist the decoder's validated wait even when the old run marker is already absent.
       // Attached reads preserve runtime state, so the question must be waiting on disk first.
       const restoredQuestionWait =
-        restored.session.status === 'waiting-for-user' &&
-        authority.session.status !== 'waiting-for-user'
+        recovered.status === 'waiting-for-user' && authority.session.status !== 'waiting-for-user'
       if (!authority.session.activeRun && !restoredQuestionWait) return
     }
     await this.mutateRuntimeSession(scope, (latest) => {
-      if (sessionRevision(latest) !== sessionRevision(restored.session)) {
+      if (
+        sessionRevision(latest) !== sessionRevision(restored.session) ||
+        (recovered !== restored.session && ownsIdleRun())
+      ) {
         throw new Error('Session changed before restart recovery could be committed.')
       }
-      return recordRestartTurnOutcome(restored.session, latest)
+      return recordRestartTurnOutcome(recovered, latest)
     })
   }
 
@@ -1684,6 +1699,17 @@ class SessionPersistenceStateOwner {
       failure: stateAuthority?.failure,
       resumeRecovery: stateAuthority?.resumeRecovery
     }
+    // A delayed client snapshot must not reintroduce a run after Main has settled it.
+    // A new Task saves its first run before dispatching the provider prompt.
+    const creatingTaskSession = saveAuthority.taskRunCommit && !authority
+    if (
+      !creatingTaskSession &&
+      mainOwnedState.status === 'idle' &&
+      rendererOwnedSession.activeRun &&
+      !stateAuthority?.activeRun &&
+      !this.options.repository.hasActiveRuntimePrompt?.(projectId, sessionId)
+    )
+      delete rendererOwnedSession.activeRun
     // Once Main has durable Session-details ownership, a stale whole-Session renderer save may
     // continue the transcript but cannot roll back generated/manual copy or its attempt/usage
     // record. New and legacy Sessions can still establish their initial fallback on the first save;

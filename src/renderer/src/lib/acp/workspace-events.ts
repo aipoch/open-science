@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../../../shared/failure/classify'
 import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
@@ -1148,16 +1149,20 @@ const applyWorkspaceRuntimeEvent = async (
         !event.terminalCommitFailure
       ) {
         const error = getEventErrorText(event)
-        reportWorkspaceOperationError(event.sessionId, error)
         const question = failedQuestion ? failedQuestion.elicitation : undefined
         if (
           question?.durable &&
           question.continuationPending &&
-          !question.continuationRecovery &&
           (question.state === 'answered' || question.state === 'declined')
         ) {
           reportWorkspaceElicitationFailure(event.sessionId, question.durable.requestId, error)
-        }
+          // Credential recovery belongs to Settings even while the question owns the failure.
+          if (
+            classifyFailure({ origin: 'operation', text: error }).reason ===
+            'configuration/auth-failed'
+          )
+            reportWorkspaceOperationError(event.sessionId, error)
+        } else reportWorkspaceOperationError(event.sessionId, error)
       }
       return true
     }

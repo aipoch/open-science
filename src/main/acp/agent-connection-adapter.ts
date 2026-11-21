@@ -62,6 +62,7 @@ type AcpAgentConnectionHooks = Readonly<{
   requestPermission: (
     request: RequestPermissionRequest
   ) => RequestPermissionResponse | Promise<RequestPermissionResponse>
+  captureUserStop?: (providerSessionId: string) => (() => boolean) | undefined
   observeSessionUpdate: (notification: SessionNotification) => void
   observeClaudeSdkMessage: (message: Record<string, unknown>) => void
   toolLess?: boolean
@@ -395,6 +396,7 @@ class AcpAgentConnectionAdapter {
     if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 1) {
       stream = createOpenCodeCompactionStream(stream, {
         api: backend.opencodeUsageApi,
+        captureUserStop: hooks.captureUserStop,
         resolveSessionCwd: hooks.filesystem.resolveSessionCwd,
         signal: abort.signal
       })

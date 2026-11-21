@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import type { ImageTaskStart } from '../../src/shared/image-task'
 
 type Fixture = {
@@ -7,6 +7,31 @@ type Fixture = {
     requests: ImageTaskStart[]
   }
 }
+
+const imageSelectionAlignmentError = (page: Page): Promise<number> =>
+  page.evaluate(() => {
+    const image = document.querySelector<HTMLImageElement>('[data-image-edit-surface] img')
+    const outline = document.querySelector<HTMLElement>('[data-testid="image-selection-outline"]')
+    if (!image || !outline || !image.naturalWidth || !image.naturalHeight) return Infinity
+    const imageRect = image.getBoundingClientRect()
+    const outlineRect = outline.getBoundingClientRect()
+    const scale = Math.min(
+      imageRect.width / image.naturalWidth,
+      imageRect.height / image.naturalHeight
+    )
+    const content = {
+      left: imageRect.left + (imageRect.width - image.naturalWidth * scale) / 2,
+      top: imageRect.top + (imageRect.height - image.naturalHeight * scale) / 2,
+      width: image.naturalWidth * scale,
+      height: image.naturalHeight * scale
+    }
+    return Math.max(
+      Math.abs(outlineRect.left - content.left),
+      Math.abs(outlineRect.top - content.top),
+      Math.abs(outlineRect.width - content.width),
+      Math.abs(outlineRect.height - content.height)
+    )
+  })
 
 for (const width of [420, 1000]) {
   test(`image edit keeps its canvas and draft while generating at ${width}px`, async ({ page }) => {
@@ -196,7 +221,11 @@ test('floating tools follow the image and selection distinguishes hover from cli
   await expect(outline).toHaveAttribute('data-selected', 'true')
   await page.screenshot({ path: 'test-results/image-edit-floating-tools.png' })
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  await page.waitForTimeout(50)
+  const immediateAlignmentError = await imageSelectionAlignmentError(page)
+  expect(immediateAlignmentError).toBeLessThanOrEqual(2)
   await expect.poll(async () => (await outline.boundingBox())!.width).toBeGreaterThan(image!.width)
+  await expect.poll(() => imageSelectionAlignmentError(page)).toBeLessThanOrEqual(2)
   await expect(tools).toBeInViewport()
   await expect.poll(async () => (await tools.boundingBox())!.width).toBeCloseTo(bar!.width, 0)
   await page.setViewportSize({ width: 850, height: 650 })

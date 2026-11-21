@@ -1,0 +1,37 @@
+{
+  "baseline": [
+    "src/main/agent-framework/registry.test.ts",
+    "src/main/settings/backend-route-planner.test.ts",
+    "src/main/agent-framework/native-shell-policy.test.ts",
+    "src/main/acp/permission-broker.test.ts",
+    "src/main/acp/session-environment-policy.test.ts"
+  ],
+  "representative": {
+    "framework": "claude-code",
+    "runtime": {
+      "root": "resources/claude-acp",
+      "adapter": "@agentclientprotocol/claude-agent-acp/dist/index.js",
+      "nativeResolver": "@agentclientprotocol/claude-agent-acp/dist/acp-agent.js",
+      "nativeResolverExport": "claudeCliPath",
+      "adapterEnvironment": "CLAUDE_ACP_PATH",
+      "nativeEnvironment": "CLAUDE_NATIVE_PATH"
+    },
+    "files": [
+      "scripts/backend-dependencies.test.ts",
+      "src/main/acp/claude-agent-acp-patch.test.ts",
+      "src/main/acp/provider-session-notice.test.ts",
+      "src/main/agent-framework/claude-code-memory.integration.test.ts",
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts",
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
+      "src/main/settings/claude-provider-configuration.integration.test.ts"
+    ]
+  },
+  "specialized": {
+    "claude-code": ["src/main/agent-framework/claude-code.test.ts"],
+    "opencode": ["src/main/agent-framework/opencode.test.ts"],
+    "codex": ["src/main/agent-framework/codex.test.ts"],
+    "codebuddy": ["src/main/agent-framework/codebuddy.test.ts"],
+    "pi": ["src/main/agent-framework/pi-runtime.test.ts"],
+    "open-science-agent": ["src/main/agent-framework/harness.test.ts"]
+  }
+}

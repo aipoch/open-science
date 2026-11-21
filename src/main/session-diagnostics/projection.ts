@@ -1,3 +1,5 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
+import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
 import { AGENT_FRAMEWORK_ID_VALUES, isAgentFrameworkId } from '../../shared/agent-framework-id'
 import { credentialDiagnosticSchema } from '../credential-identity/diagnostic'
@@ -146,9 +148,17 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
       evidence.status <= 599
     )
       diagnostics.status = evidence.status
-    for (const key of ['code', 'provider', 'model', 'requestId', 'raw'])
+    for (const key of ['code', 'provider', 'model', 'requestId'])
       if (typeof evidence[key] === 'string')
-        diagnostics[key] = diagnosticText(evidence[key], options, key === 'raw' ? 4000 : 200)
+        diagnostics[key] = diagnosticText(evidence[key], options, 200)
+    const excerpt = readHarnessErrorDiagnostics(evidence).providerExcerpt
+    if (excerpt) diagnostics.providerExcerpt = excerpt
+    const raw =
+      typeof failure.responseMessage === 'string' &&
+      (failure.category === 'service' || failure.category === 'configuration')
+        ? providerErrorExcerpt(failure.responseMessage)
+        : evidence.raw
+    if (typeof raw === 'string') diagnostics.raw = diagnosticText(raw, options, 4000)
     result.failure = {
       category: failure.category,
       ...(typeof failure.reason === 'string'
@@ -395,6 +405,29 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (
+    source.scope === 'acp-bridge' &&
+    source.msg === 'bridge upstream error' &&
+    typeof data.status === 'number' &&
+    Number.isInteger(data.status) &&
+    data.status >= 200 &&
+    data.status <= 599
+  )
+    diagnostic.status = data.status
+  if (
+    source.scope === 'acp' &&
+    source.msg === 'model request failed' &&
+    ['chat-completions', 'responses', 'messages'].includes(data.protocol as string)
+  ) {
+    Object.assign(diagnostic, readHarnessErrorDiagnostics(data), { protocol: data.protocol })
+    if (
+      typeof data.status === 'number' &&
+      Number.isInteger(data.status) &&
+      data.status >= 100 &&
+      data.status <= 599
+    )
+      diagnostic.status = data.status
+  }
   if (source.scope === 'research-video') {
     if (identifier(data.invocationId))
       diagnostic.invocationId = diagnosticText(data.invocationId, options, 200)

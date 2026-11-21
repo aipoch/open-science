@@ -1,4 +1,5 @@
 import { readSseRecords } from '../transport/sse'
+import { parseUpstreamJson } from './response'
 import { createResponseStreamState } from './stream-state'
 import type { ResponsesNamespacedTool } from './types'
 export type ReplayReply = { reasoning: string; callIds: string[]; messageId?: string }
@@ -27,7 +28,7 @@ export async function* convertChatStream(
         .map((line) => line.slice(5).trim())
         .join('\n')
       if (data === '[DONE]') sawDone = true
-      else if (data) state.consume(JSON.parse(data))
+      else if (data) state.consume(parseUpstreamJson(data))
       yield* drain()
     }
   } catch (error) {
@@ -36,6 +37,6 @@ export async function* convertChatStream(
   signal?.throwIfAborted()
   const reply = state.finish(failure, sawDone)
   // Commit before publishing the terminal frame: consumers commonly stop reading there.
-  onCompleted(reply)
+  if (reply) onCompleted(reply)
   yield* drain()
 }

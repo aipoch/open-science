@@ -47,12 +47,6 @@ export const resolveClaudeAgentAcpEntry = (configRoot?: string): string => {
     configRoot ?? (host ? resolveBootstrapConfigRoot(host.homePath, host.packaged) : undefined)
   const entry = root ? managedClaudeAcpEntryAt(managedClaudeAcpRoot(root)) : undefined
   if (entry) return entry
-  // The explicit compatibility suites can run the patched dev dependency in a plain Node host.
-  // The application host always configures runtime metadata, including in development.
-  if (!host) {
-    const fixture = join(process.cwd(), claudeAcpAdapterPath, 'index.js')
-    if (existsSync(fixture)) return fixture
-  }
   throw new Error(CLAUDE_ACP_MISSING_MESSAGE)
 }
 
@@ -123,6 +117,7 @@ export type SpawnClaudeAgentAcpOptions = {
   spawnProcess?: AgentProcessSpawner
   envOverrides?: Record<string, string>
   executablePath?: string
+  adapterEntryPath?: string
 }
 
 // Starts the Claude ACP agent as a child process with pipe-based IO, injecting the active provider's
@@ -130,7 +125,8 @@ export type SpawnClaudeAgentAcpOptions = {
 const spawnClaudeAgentAcp = ({
   envOverrides = {},
   spawnProcess = spawn as AgentProcessSpawner,
-  executablePath
+  executablePath,
+  adapterEntryPath
 }: SpawnClaudeAgentAcpOptions = {}): ChildProcessWithoutNullStreams => {
   if (!executablePath) {
     throw new Error(
@@ -141,7 +137,7 @@ const spawnClaudeAgentAcp = ({
   // Electron is the Node runtime available after packaging; this keeps dev and packaged paths aligned.
   // PATH is augmented with common CLI locations so a Finder-launched (packaged) app — whose PATH omits
   // Homebrew/user bins — can still run claude and the tools it shells out to, instead of hanging.
-  const entryPath = resolveClaudeAgentAcpEntry()
+  const entryPath = adapterEntryPath ?? resolveClaudeAgentAcpEntry()
   // On Windows, a `claude.cmd` shim can't be spawned by the SDK without a shell (spawn EINVAL); resolve
   // it to the underlying cli.js so the SDK runs it via node. Native/Unix executables pass through.
   const resolvedExecutablePath = resolveClaudeExecutableForSpawn(executablePath)
