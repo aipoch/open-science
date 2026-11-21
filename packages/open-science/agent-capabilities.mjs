@@ -285,7 +285,7 @@ registerResource(
 registerResource(
   'start_run',
   'research',
-  'Submit research and return its durable receipt. Keep requestId before sending. Omit sessionId to create a Session. To continue an existing Session, pass requestId, projectId, sessionId, and prompt; omit provider, model, reasoning effort, memory, and enabled Compute Hosts so the existing configuration is used. Change those separately with update_session_configuration. A pending receipt has no runId yet: use wait_submission with requestId, then use the returned runId to observe the Run. Query get_submission after disconnect. Uses the configured permissions and can incur model charges.',
+  'Submit research and return its durable receipt. If the work needs a known Notebook language, check get_setup_status for that language before submitting. Keep requestId before sending. Omit sessionId to create a Session. To continue an existing Session, pass requestId, projectId, sessionId, and prompt; omit provider, model, reasoning effort, memory, and enabled Compute Hosts so the existing configuration is used. Change those separately with update_session_configuration. A pending receipt has no runId yet: use wait_submission with requestId, then use the returned runId to observe the Run. Query get_submission after disconnect. Uses the configured permissions and can incur model charges.',
   {
     requestId,
     projectId,
@@ -376,7 +376,7 @@ registerResource(
 registerResource(
   'wait_run',
   'research',
-  'Wait for a Run to finish or need attention, including Notebook code review or continuation. Timeout only stops observation.',
+  'Wait for a Run to finish or need attention, including Notebook environment review, code review, or continuation. Timeout only stops observation.',
   { runId, timeoutMs: waitTimeoutMs },
   read,
   async (client, { runId, timeoutMs }, options) => ({

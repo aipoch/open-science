@@ -1649,6 +1649,7 @@ class NotebookRuntimeService {
       return {
         ...origin,
         messageBranchId: runtimeReview.messageBranchId,
+        ...(runtimeReview.language ? { language: runtimeReview.language } : {}),
         kernelDispatched: false,
         status: 'waiting_for_user',
         reasonCode: 'notebook_runtime_review_required',
@@ -1658,7 +1659,7 @@ class NotebookRuntimeService {
         next: {
           action: 'review_notebook_runtime_in_app',
           message:
-            'Ask the user to open the original Session and branch in Open-Science on the same profile and respond to Confirm Notebook kernel and environment. Recheck this Run after the user responds.'
+            'The user needs to approve the selected Notebook environment. This review does not indicate a missing installation. Use get_setup_status to check the language and open_setup with section notebook if the user wants to open Notebook settings. Ask the user to respond to Confirm Notebook kernel and environment in the original Session and branch on the same profile, then recheck this Run.'
         }
       }
     }

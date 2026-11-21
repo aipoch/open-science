@@ -936,7 +936,7 @@ class AcpPermissionBroker {
         return typeof runId === 'string' ? [{ kind: 'code', runId }] : []
       }
       if (isAppOwnedNotebookRuntimeReview(request)) {
-        const { projectId, promptMessageId, messageBranchId } =
+        const { projectId, promptMessageId, messageBranchId, language } =
           request.rawInput.notebookRuntimeSelection
         if (
           typeof projectId === 'string' &&
@@ -946,7 +946,15 @@ class AcpPermissionBroker {
           typeof messageBranchId === 'string' &&
           messageBranchId
         )
-          return [{ kind: 'runtime', projectId, promptMessageId, messageBranchId }]
+          return [
+            {
+              kind: 'runtime',
+              projectId,
+              promptMessageId,
+              messageBranchId,
+              ...(language === 'python' || language === 'r' ? { language } : {})
+            }
+          ]
       }
       return []
     })

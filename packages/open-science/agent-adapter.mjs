@@ -19,12 +19,12 @@ Use the capability catalog and detail schemas to find the operations the install
 
 For setup, use list_runtimes and ask which Agent runtime and provider the user wants when there is no selection. An authorized runtime choice can be selected and prepared through MCP. Use configure_provider for the offered keyless provider, or use open_setup to open the same profile in the browser. Complete routine non-credential setup the user asked for; leave sign-in, consent and credential entry to the user. Recheck the same profile afterward. Do not request, copy or print credentials or private setup URLs.
 
-Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. For work that requires a known language, check that language and run prepare_notebook_environment if the user has asked you to prepare it. System dependencies, isolation and memory can still block Notebook execution independently.
+Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Before submitting research that needs a known language, call get_setup_status with that language. If its environment is missing, offer to prepare it through prepare_notebook_environment or open the same profile's Notebook settings through open_setup with section notebook. The user can set it up there, or you can do routine setup through MCP or the Web controls when asked. Recheck that language after setup. System dependencies, isolation and memory can still block Notebook execution independently.
 
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
 
 Read the Run's Notebook execution separately from its outer status. When execution is waiting_for_user, follow its next action. For review_notebook_code_in_app, ask the user to decide the pending review in the original Session and branch in Open-Science on the same profile. Recheck the same Run after the user responds. The agent cannot make the decision or submit a replacement Run.
-For review_notebook_runtime_in_app, ask the user to respond to Confirm Notebook kernel and environment in the original Session and branch in Open-Science on the same profile. This decision can be pending before a Notebook Run exists. Recheck the same Run after the user responds; do not make the decision or submit a replacement Run.
+For review_notebook_runtime_in_app, explain that the selected kernel and environment need the user's approval, even if the environment is installed. The review can be pending before a Notebook Run exists. Use execution.language when present to check the relevant language if needed. Offer to open Notebook settings if the user wants to check or change setup. Ask them to respond to Confirm Notebook kernel and environment in the original Session and branch in the Web or Desktop app on the same profile. Recheck the same Run after the user responds; do not make the decision or submit a replacement Run.
 
 For continue_notebook_in_app, keep the refusal ID. Once the cause is resolved, ask the user to open the original Session and branch in the Open-Science desktop app connected to this service and choose Continue Notebook work in Compute. Web can show the handoff but cannot continue the stopped intent. Do not resubmit, change execution context, or delegate stopped work. Recheck that same Session and match continuedFromRefusalId to observe the new user-authorized turn.
 
@@ -611,17 +611,18 @@ const definitions = [
     name: 'open_setup',
     group: 'setup',
     description:
-      'Open the authenticated local Open-Science Web setup or Settings for this profile in the default browser. Returns the profile and launch status without disclosing the private URL. The user completes sign-in and approval prompts.',
-    inputSchema: z.strictObject({}),
+      'Open the authenticated local Open-Science Web app for this profile in the default browser. Set section to notebook to open the Python and R environment settings. The private URL is not returned. The user completes sign-in and approval prompts.',
+    inputSchema: z.strictObject({ section: z.literal('notebook').optional() }),
     annotations: { ...setupWrite, idempotentHint: false },
     exposure: { cli: true, mcp: true },
     serviceCapability: 'doctor',
-    handler: async (_args, { getClient }) => {
+    handler: async ({ section }, { getClient }) => {
       const client = await getClient()
       const url = new URL(client.baseUrl)
       if (!client.configRoot || url.protocol !== 'http:' || url.hostname !== '127.0.0.1')
         throw new AgentError('browser_unavailable')
       url.searchParams.set('token', client.token)
+      if (section === 'notebook') url.searchParams.set('settings', 'runtimes')
       if (!(await openBrowser(url.href))) throw new AgentError('browser_unavailable')
       return { profile: client.configRoot, status: 'launch_requested' }
     }

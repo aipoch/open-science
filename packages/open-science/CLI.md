@@ -258,9 +258,12 @@ supported. The user can choose other providers through Open-Science Web. Use `op
 that profile in the browser without exposing its private URL. The agent may complete authorized
 setup steps; the user enters credentials and completes any sign-in. Recheck the same profile afterward.
 
-After the user requests a language, use `prepare_notebook_environment` with `language` set to
-`python` or `r`. Nothing is installed by a setup check. Installation requests wait up to 600,000 ms
-by default. After a timeout, check the same profile and requested language before repeating.
+Before submitting research that needs Python or R, use `get_setup_status` with that `language`.
+A setup check installs nothing. If the requested environment is missing, `next` offers
+`prepare_notebook_environment` for that language and `open_setup` with `{"section":"notebook"}`
+for the same profile's Web Settings → Runtimes. The user can do the setup there or ask the Agent
+to handle it. Recheck the requested language after setup. Installation requests wait up to 600,000 ms
+by default; after a timeout, check the same profile and language before repeating.
 These tools are also available from `open-science tools call <name> --json` with JSON on stdin.
 
 ## First-run setup
@@ -675,8 +678,10 @@ If the model reaches its turn or output budget, the Run fails with an explanatio
 any partial output. Check the model settings for that Session before trying another research turn.
 
 For `review_notebook_runtime_in_app`, the user responds to **Confirm Notebook kernel and
-environment** in the original Session and branch. A first binding can wait for this decision
-before a Notebook Run has been created. For `review_notebook_code_in_app`, the user reviews
+environment** in the original Session and branch. The selected language is reported when known.
+An installed environment may still need this approval before the first Notebook Run is created.
+Use `get_setup_status` to check the language and open Notebook settings if the user wants to
+configure it. For `review_notebook_code_in_app`, the user reviews
 the pending cell there. Recheck the same research Run after either decision. CLI and MCP
 provide the handoff; the Web or Desktop app presents the decision. Public `permission.requested`
 notices for these reviews identify the Run and reason without carrying decision options,

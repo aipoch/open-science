@@ -339,6 +339,7 @@ export type NotebookExecution = {
   notebookRunId?: string
   promptMessageId?: string
   messageBranchId?: string
+  language?: 'python' | 'r'
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string

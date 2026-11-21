@@ -1,4 +1,5 @@
 import type { ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
+import type { NotebookLanguage } from './notebook-language-contract'
 
 export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
 
@@ -70,6 +71,7 @@ export function isAppOwnedNotebookRuntimeReview(value: unknown): value is {
   appOwned: true
   rawInput: {
     notebookRuntimeSelection: {
+      language?: unknown
       projectId?: unknown
       promptMessageId?: unknown
       messageBranchId?: unknown
@@ -88,7 +90,13 @@ export function isAppOwnedNotebookRuntimeReview(value: unknown): value is {
 
 export type PendingNotebookReview =
   | { kind: 'code'; runId: string }
-  | { kind: 'runtime'; projectId: string; promptMessageId: string; messageBranchId: string }
+  | {
+      kind: 'runtime'
+      projectId: string
+      promptMessageId: string
+      messageBranchId: string
+      language?: NotebookLanguage
+    }
 
 // An Open-Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
 // `label`/`kind` are the display projection and `scope` reserves future project/global ownership.

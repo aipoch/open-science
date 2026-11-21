@@ -1460,7 +1460,7 @@ const emitRunEvent = (event, options, deps) => {
       notebook_code_review_required:
         'Notebook code review is pending. Review it in the original Session in Open-Science.',
       notebook_runtime_review_required:
-        'Respond to Confirm Notebook kernel and environment in the original Session in Open-Science.'
+        'Notebook environment approval is pending. This does not mean the environment is missing. Respond to Confirm Notebook kernel and environment in the original Session in Open-Science.'
     }[event.data?.reasonCode]
     deps.warn(
       notice ??

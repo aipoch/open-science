@@ -41,8 +41,11 @@ cross-Agent model migration, and subscription reuse are outside this phase.
   The Agent can handle authorized routine setup. The user handles credentials and consent. The browser
   receives the private URL directly, and MCP results and test evidence omit it.
 - Report Python and R readiness separately from dependencies, isolation, and memory. A general
-  check does not pick or install a language. `prepare_notebook_environment` requires an explicit
-  language. It neither starts a Notebook nor grants permission to resume a stopped one.
+  check does not pick or install a language. When research needs a known language, check it with
+  `get_setup_status` before submitting. If the environment is missing, the user can ask the Agent
+  to prepare that language through `prepare_notebook_environment` or use `open_setup` with
+  `section: notebook` to open the same profile's Web Settings → Runtimes. The user or authorized
+  Agent can operate the Web setup. Recheck the same language afterward.
 
 ## Ticket Dependencies and Verification
 
@@ -89,9 +92,10 @@ cross-Agent model migration, and subscription reuse are outside this phase.
    Packaged acceptance found two approval waits: a pending Notebook code review looked like
    active execution, and an initial Python binding in Ask mode waited before a Notebook Run
    existed. The permission broker now provides the matching scope for `waiting_for_user` with
-   `review_notebook_code_in_app` or `review_notebook_runtime_in_app`. The user decides in the
-   original Session, then the Agent rechecks the same Run. Both are separate from continuing a
-   stopped Notebook in Desktop. Session queries follow the active or latest prompt and do not
+   `review_notebook_code_in_app` or `review_notebook_runtime_in_app`. Runtime review identifies
+   the language when known; installation status comes from the separate readiness check. The user
+   decides in the original Session, then the Agent rechecks the same Run. Both are separate from
+   continuing a stopped Notebook in Desktop. Session queries follow the active or latest prompt and do not
    use a prior prompt's dispatch to describe the current turn.
    A provider stop for a turn or output budget fails the original Run with an explanation and
    preserves any partial output.

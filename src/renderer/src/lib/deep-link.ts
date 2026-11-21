@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 type DeepLinkParams = {
   projectId: string | undefined
@@ -56,6 +57,15 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   )
   const initialized = useRef(!isWebLocation())
   const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
+
+  useEffect(() => {
+    if (!isWebLocation()) return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('settings') !== 'runtimes') return
+    url.searchParams.delete('settings')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    useSettingsStore.getState().openSettingsToPanel('runtimes')
+  }, [])
 
   // While an initial target is deferred by partial recovery, an explicit in-app or notification
   // navigation takes control. Drop the stale target so later loading cannot override that choice.

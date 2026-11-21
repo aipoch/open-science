@@ -32,9 +32,10 @@
 - 用户选定免密钥的 Kilo Gateway 免费路由后，Agent 可用 `configure_provider` 配置并检查。其他 provider 可通过
   `open_setup` 打开同 profile 的 Web 配置；Agent 可处理已授权的非凭据步骤。OAuth 同意和凭据输入由用户完成。
   认证 URL 只交给浏览器，不进入 MCP 返回或验收记录。没有浏览器时说明宿主限制和同 profile 入口。
-- 分别报告 Python、R 与宿主依赖、隔离、内存。如果只检查环境，不推断语言或主动安装；明确需要时，
-  Agent 可用 `prepare_notebook_environment` 准备指定语言。缺 Python 不阻止仅需要 R 的工作，反之亦然。
-  该能力不运行 Notebook，也不改变 Notebook 的人工审阅、继续或敏感导出权限。
+- 分别报告 Python、R 与宿主依赖、隔离、内存。只检查环境时不推断语言或主动安装。已知研究所需语言时，
+  在提交前调用 `get_setup_status` 检查该语言。环境缺失时，用户可让 Agent 用 `prepare_notebook_environment`
+  代办，或用 `open_setup` 的 `section: notebook` 打开同 profile 的 Web「设置 → Runtimes」，由用户或获授权的
+  Agent 操作。设置后复查该语言；缺 Python 不阻止仅需要 R 的工作，反之亦然。
 
 ## 任务依赖与验证
 
@@ -66,8 +67,9 @@
    动作。续研默认使用原 Session 配置；需要换模型时先更新该 Session。
    实包验收发现两类等待没有正确显示：代码审阅被投影为 `running`，Ask 策略下首次绑定
    Python 则在 Notebook Run 创建前就等用户确认。现在从审批 Owner 匹配原 prompt 和分支，
-   返回 `waiting_for_user`、`kernelDispatched: false`，并区分环境确认和代码审阅。用户处理后
-   查询同一 Run。停止后的继续仍走 Desktop 的 Compute。Session 查询按活跃或最新的 prompt
+   返回 `waiting_for_user`、`kernelDispatched: false`，并区分环境确认和代码审阅。环境确认返回已知的语言，
+   提示用户确认选中的环境；安装与否由 readiness 单独判断。用户处理后查询同一 Run。停止后的继续仍走
+   Desktop 的 Compute。Session 查询按活跃或最新的 prompt
    读取执行证据，不会用上一轮的 Notebook 派发证明当前轮次。
    模型触发回合或输出预算上限时，原 Run 报告失败原因并保留已有输出。
 3. [#62–#65](https://github.com/guch96/open-science/issues/54) 接入包导出、导入、Fork、查询和敏感确认。

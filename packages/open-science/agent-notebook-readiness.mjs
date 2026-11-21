@@ -15,7 +15,7 @@ const actions = {
   notebook_environment_missing: [
     'agent',
     'prepare_notebook_environment',
-    'Prepare the requested Notebook language for this profile.'
+    'With user authorization, prepare the requested Notebook language or open Notebook settings on this profile.'
   ],
   notebook_language_required: [
     'user',
@@ -212,6 +212,9 @@ export const readinessActions = (checks, profile, language) =>
         message,
         ...(action === 'prepare_notebook_environment' && language
           ? { arguments: { language } }
+          : {}),
+        ...(action === 'prepare_notebook_environment' || action === 'review_notebook_environment'
+          ? { web: { capability: 'open_setup', arguments: { section: 'notebook' } } }
           : {}),
         ...(action === 'choose_notebook_language' ? { choices: ['python', 'r'] } : {}),
         requiresUser: owner === 'user' || owner === 'deployment',

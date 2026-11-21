@@ -1217,7 +1217,8 @@ it('discovers setup choices and prepares only the selected runtime, provider and
         action: 'prepare_notebook_environment',
         owner: 'agent',
         requiresUser: false,
-        arguments: { language: 'python' }
+        arguments: { language: 'python' },
+        web: { capability: 'open_setup', arguments: { section: 'notebook' } }
       })
     ])
   })

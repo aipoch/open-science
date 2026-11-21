@@ -326,6 +326,7 @@ describe('host-owned one-shot execution admission', () => {
           expect(execute).not.toHaveBeenCalled()
           expect(await service.inspectTaskExecution(scope)).toEqual({
             ...scope,
+            language: 'python',
             kernelDispatched: false,
             status: 'waiting_for_user',
             reasonCode: 'notebook_runtime_review_required',

@@ -1,4 +1,5 @@
 import type { ArtifactFile } from './artifacts'
+import type { NotebookLanguage } from './notebook-language-contract'
 import type { PermissionProfileId } from './permission-profiles'
 import type { CreateProjectRequest, Project, UpdateProjectRequest } from './projects'
 import type { ReviewLifecycle, ReviewOutcome, ReviewRunNotStartedReason } from './reviewer'
@@ -91,6 +92,7 @@ export type TaskNotebookExecution = {
   notebookRunId?: string
   promptMessageId?: string
   messageBranchId?: string
+  language?: NotebookLanguage
   kernelDispatched?: boolean
   reasonCode?: string
   refusalId?: string

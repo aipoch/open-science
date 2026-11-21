@@ -5751,8 +5751,13 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
       expect(await h.service.inspectTaskExecution(scope)).toMatchObject({
         status: 'waiting_for_user',
         reasonCode: 'notebook_runtime_review_required',
+        language,
         messageBranchId: 'branch',
-        kernelDispatched: false
+        kernelDispatched: false,
+        next: {
+          action: 'review_notebook_runtime_in_app',
+          message: expect.stringContaining('get_setup_status')
+        }
       })
       expect(
         (

@@ -425,7 +425,7 @@ export const getAgentPackageCapabilities = (AgentError) => [
     name: 'fork_session',
     group: 'delivery',
     description:
-      'Create a writable Fork of the specified Session. Inspect imported history and ask the user before calling. Does not run research or continue a stopped Notebook.',
+      'Create a writable Fork of the specified Session only after the user explicitly agrees to create a copy. A request to run an imported Session is not by itself consent to Fork. Does not run research or continue a stopped Notebook.',
     inputSchema: z.strictObject({
       projectId: id.describe('Source Project ID.'),
       sessionId: id.describe('Source Session ID.'),

@@ -46,6 +46,21 @@ turn, a Notebook dispatch, and verified files are separate observations.
   Node/Web type checks and the actual macOS npm install and native loading check. This test
   used local candidates and does not establish registry availability or coverage for every host.
 
+## Notebook environment handoff follow-up
+
+- WorkBuddy imported `open-science-test-study.science` only after the user asked. The Session
+  was read-only, and the delivered `stats_report.md` and `stats_results.csv` matched the source
+  sizes and SHA-256 checksums. A later request to run the import triggered a Fork without a
+  separate confirmation in the visible conversation. This did not meet the Fork consent gate.
+  Run `37c4f689-a77c-4dda-9885-0bd82cb9d619` returned `waiting_for_user` for runtime review, with
+  `kernelDispatched: false`, even though the same profile reported Python and R ready.
+- With the updated backend and Web build on macOS, real MCP stdio offered both setup paths in
+  a fresh profile. `open_setup` opened the Runtimes panel during onboarding. The browser's
+  Python setup button prepared Python, and MCP reported R still missing. Closing the panel
+  returned to the same onboarding step. `prepare_notebook_environment` then prepared R through
+  MCP directly. The browser launched on the same profile and the MCP response did not carry its
+  private URL. This verifies environment setup; the original WorkBuddy Run still awaited review.
+
 ## Live first research: macOS arm64, November 20, 2026
 
 - OpenCode `1.19.5` received the exact README quote with no attachment or research instructions.

@@ -11,6 +11,7 @@ import {
   useSessionStore,
   type ChatSession
 } from '../stores/session-store'
+import { useSettingsStore } from '../stores/settings-store'
 import { useDeepLinkNavigation } from './deep-link'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -50,6 +51,7 @@ let root: Root | undefined
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/')
+  useSettingsStore.getState().closeSettings()
   useNavigationStore.setState({
     view: 'home',
     activeProjectId: undefined,
@@ -82,6 +84,18 @@ const renderHook = async (
 }
 
 describe('deep-link navigation', () => {
+  it('opens Notebook runtimes without waiting for a Project or Session', async () => {
+    window.history.replaceState({}, '', '/?settings=runtimes')
+
+    await renderHook({ isHydrated: false, isReady: false })
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      isSettingsOpen: true,
+      pendingSettingsIntent: { route: { panel: 'runtimes' } }
+    })
+    expect(window.location.search).toBe('')
+  })
+
   it('restores the selected Session URL when returning from Library', async () => {
     useProjectStore.setState({ projects: [project], isLoaded: true })
     useSessionStore.setState({ sessions: [session, { ...session, id: 'newer', updatedAt: 2 }] })
