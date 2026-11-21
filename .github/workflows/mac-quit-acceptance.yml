@@ -1,9 +1,9 @@
 name: Qualify signed macOS background update
 on:
   push:
-    branches: [test/macos-background-updates-reopen-acceptance]
+    branches: [test/macos-background-updates-finder-dock]
 concurrency:
-  group: mac-rapid-reopen-runners
+  group: mac-native-gui-acceptance
   cancel-in-progress: true
 permissions:
   contents: read
@@ -14,8 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: arm64, os: macos-15, scenario: reopen }
-          - { arch: x64, os: macos-15-intel, scenario: reopen }
+          - { arch: arm64, os: macos-15, scenario: gui }
+          - { arch: x64, os: macos-15-intel, scenario: gui }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24
+      - name: Check GUI event access without requesting permissions
+        run: |
+          swiftc scripts/validation/mac-gui-launch.swift -o "$RUNNER_TEMP/gui-launch"
+          "$RUNNER_TEMP/gui-launch" permissions
       - name: Fetch signed upgrade endpoints
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,40 +43,12 @@ jobs:
             sleep 30
           done
           gh run download 44896190264 --repo aipoch/open-science -n "macos-$ARCH" -D source
-      - name: Exercise signed A to B
-        if: matrix.scenario == 'reopen'
+      - name: Exercise real Command-Q and native Finder and Dock controls
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          set -euo pipefail
-          export D="$RUNNER_TEMP/quit-acceptance"
-          export A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip"
-          export FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
-          mkdir -p "$D"
-          bash scripts/validation/mac-quit-accept.sh
-      - name: Verify read-only and manual fallback
-        if: success() && matrix.scenario == 'reopen'
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          export D="$RUNNER_TEMP/quit-fallbacks" A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip"
-          export DMG="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.dmg" FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
-          bash scripts/validation/mac-quit-fallbacks.sh
-      - name: Verify abandoned native stage on disposable runner
-        if: success() && matrix.scenario == 'reopen'
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          export D="$RUNNER_TEMP/quit-abort" A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip" FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
-          bash scripts/validation/mac-quit-orphan.sh
-      - name: Move the handed-off installation to Trash
-        if: matrix.scenario == 'trash'
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          export D="$RUNNER_TEMP/quit-trash" A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip"
-          export FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
-          bash scripts/validation/mac-quit-trash.sh
+          export D="$RUNNER_TEMP/quit-acceptance" A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip" FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
+          bash scripts/validation/mac-quit-gui.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
@@ -83,7 +59,7 @@ jobs:
             ${{ runner.temp }}/quit-trash/shipit.txt
             ${{ runner.temp }}/quit-trash/job.txt
             ${{ runner.temp }}/quit-trash/events.jsonl
-            ${{ runner.temp }}/quit-acceptance/old-pid-exit
+            ${{ runner.temp }}/quit-acceptance/gui-*
             ${{ runner.temp }}/quit-acceptance/workspace-ready
             ${{ runner.temp }}/quit-abort/job.txt
             ${{ runner.temp }}/quit-abort/shipit.txt
