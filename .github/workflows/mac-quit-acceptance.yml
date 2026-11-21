@@ -1,0 +1,65 @@
+name: Qualify signed macOS background update
+on:
+  push:
+    branches: [test/macos-background-updates-intel-timing]
+concurrency:
+  group: intel-native-prepare-measurement
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, os: macos-15-intel }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - name: Fetch signed upgrade endpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir -p feed source
+          gh release download v1.3.2 --repo aipoch/open-science -p "aipoch-open-science-1.3.2-mac-$ARCH.zip" -p latest-mac.yml -D feed
+          gh run download 44878418906 --repo aipoch/open-science -n "macos-$ARCH" -D source
+      - name: Exercise signed A to B
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export D="$RUNNER_TEMP/quit-acceptance"
+          export A="$RUNNER_TEMP/source/aipoch-open-science-1.3.1-mac-$ARCH.zip"
+          export FEED="$RUNNER_TEMP/feed" PROBE="$PWD/scripts/validation/mac-quit-probe.mjs"
+          mkdir -p "$D"
+          bash scripts/validation/mac-quit-accept.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: installed-upgrade-${{ matrix.arch }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/quit-fallbacks/*.jsonl
+            ${{ runner.temp }}/quit-fallbacks/readonly-windows
+            ${{ runner.temp }}/quit-fallbacks/manual-status
+            ${{ runner.temp }}/quit-acceptance/*.jsonl
+            ${{ runner.temp }}/quit-acceptance/*.png
+            ${{ runner.temp }}/quit-acceptance/signature-*.txt
+            ${{ runner.temp }}/quit-acceptance/last-*
+            ${{ runner.temp }}/quit-acceptance/stderr
+            ${{ runner.temp }}/quit-acceptance/stdout
+            ${{ runner.temp }}/quit-acceptance/native-time
+            ${{ runner.temp }}/quit-acceptance/cold-identity
+            ~/Library/Caches/com.aipoch.open-science.ShipIt/ShipIt_stderr.log
+            ${{ runner.temp }}/quit-acceptance/profile/desktop-logs/*update*.log
