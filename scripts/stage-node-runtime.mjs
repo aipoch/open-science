@@ -91,6 +91,8 @@ async function bundleNpm(runtime) {
     metafile: true,
     write: false
   }
+  // Each loader returns the module's exports. In particular, cli() returns npm's
+  // entry function; upstream validate-engines calls that function with process.
   const dispatch = Object.entries(bundledEntries)
     .map(([key, file]) => `exports.${key} = () => require(${JSON.stringify('./' + file)})`)
     .join('\n')
