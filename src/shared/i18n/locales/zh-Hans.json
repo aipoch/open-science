@@ -127,6 +127,8 @@
     "OK": "确定",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "请等待包操作完成，或在进度窗口中取消操作后再退出。",
     "An excluded file also exists in retained research evidence. Include that file to export this Session.": "排除的文件在保留的研究证据中也存在副本。请包含该文件后再导出此会话。",
+    "Restore the archived project, then export again.": "请先还原已归档的项目，然后重新导出。",
+    "Restore the archived session, then export again.": "请先还原已归档的会话，然后重新导出。",
     "The agent is still working in this conversation. Wait for it to finish, then export again.": "智能体仍在此对话中工作。请等待任务完成后重新导出。",
     "A historical file reference in this session has no immutable version. Use Export conversation to save the messages.": "此会话中的旧文件引用缺少固定版本。可使用“导出对话”保存消息。",
     "Wait for the subagent to finish its task, then export again.": "等待子智能体完成任务，然后重新导出。",

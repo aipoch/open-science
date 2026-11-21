@@ -1,4 +1,5 @@
 import {
+  ArchiveAvailabilityError,
   SessionExportBlockedError,
   sessionExportBlockerMessage
 } from '../archive/availability-error'
@@ -32,7 +33,7 @@ import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
 import { PackageImportRecoveryRequiredError, type SessionPackageService } from './service'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { copyFileWithinBudget } from '../bounded-file-io'
-import { SessionPackageOperation } from './operation'
+import { PackageExportBlockedError, SessionPackageOperation } from './operation'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { assertPackageCapacity, PackageCapacityError } from './capacity'
 import { withPackageTransfer } from './transfer'
@@ -714,8 +715,16 @@ export class SessionPackageDesktop {
       ...(safeFailureMessages.has(detail) ? { error: { message: detail } } : {})
     })
     const translate = this.options.translate
+    const blocked = (message: string): PackageExportBlockedError =>
+      new PackageExportBlockedError(message, { cause: error })
     if (error instanceof SessionExportBlockedError)
-      throw new Error(sessionExportBlockerMessage(error.reason, translate), { cause: error })
+      throw blocked(sessionExportBlockerMessage(error.reason, translate))
+    if (request && error instanceof ArchiveAvailabilityError)
+      throw blocked(
+        error.code === 'project-archived'
+          ? translate('Restore the archived project, then export again.')
+          : translate('Restore the archived session, then export again.')
+      )
     if (detail === PACKAGE_REQUIRES_UPDATE)
       throw new Error(
         translate(
@@ -814,11 +823,13 @@ export class SessionPackageDesktop {
           )
       }
     }
-    if (detail === 'Wait for the application handoff to finish before transferring research.')
-      throw new Error(
-        translate('Wait for the application handoff to finish before transferring research.'),
-        { cause: error }
+    if (detail === 'Wait for the application handoff to finish before transferring research.') {
+      const message = translate(
+        'Wait for the application handoff to finish before transferring research.'
       )
+      if (request) throw blocked(message)
+      throw new Error(message, { cause: error })
+    }
     if (detail.startsWith('An excluded file also exists'))
       throw new Error(
         translate(
@@ -857,47 +868,47 @@ export class SessionPackageDesktop {
       switch (detail) {
         case 'Legacy file references must have immutable Versions before packaging.':
         case 'Legacy attachments must have immutable Versions before packaging.':
-          message = translate(
-            'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.'
+          throw blocked(
+            translate(
+              'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.'
+            )
           )
-          break
         case 'Session package references a missing immutable Version.':
         case 'Session or Notebook references missing file evidence.':
-          message = translate(
-            'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.'
+          throw blocked(
+            translate(
+              'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.'
+            )
           )
-          break
         case 'Wait for the scheduled task to finish before exporting.':
-          message = translate('A scheduled task is running. Export again after it finishes.')
-          break
+          throw blocked(translate('A scheduled task is running. Export again after it finishes.'))
         case 'Wait for the compute job to finish before exporting.':
-          message = sessionExportBlockerMessage('compute', translate)
-          break
+          throw blocked(sessionExportBlockerMessage('compute', translate))
         case 'Wait for Notebook runs to finish before exporting.':
-          message = sessionExportBlockerMessage('notebook', translate)
-          break
+          throw blocked(sessionExportBlockerMessage('notebook', translate))
         case 'Wait for image tasks to finish before exporting this Session.':
-          message = sessionExportBlockerMessage('image', translate)
-          break
+          throw blocked(sessionExportBlockerMessage('image', translate))
         case 'Wait for file writes to finish before exporting.':
-          message = translate(
-            'A file is still being saved. Wait for the save to finish, then export again.'
+          throw blocked(
+            translate(
+              'A file is still being saved. Wait for the save to finish, then export again.'
+            )
           )
-          break
         case 'Wait for Reviews to finish before exporting.':
-          message = translate('A review is in progress. Export again after the review finishes.')
-          break
+          throw blocked(
+            translate('A review is in progress. Export again after the review finishes.')
+          )
         case 'The Session is still active.':
         case 'Wait for the Session to finish before exporting it.':
-          message = sessionExportBlockerMessage('pending', translate)
-          break
+          throw blocked(sessionExportBlockerMessage('pending', translate))
         case 'Session package exceeds the file count limit.':
         case 'Session package contains too many files.':
         case 'Execution file evidence exceeds the package limit.':
-          message = translate(
-            'This session exceeds the 10,000-file package limit. Use Export conversation to save a copy of the messages.'
+          throw blocked(
+            translate(
+              'This session exceeds the 10,000-file package limit. Use Export conversation to save a copy of the messages.'
+            )
           )
-          break
         case 'The Session changed during export. Try again.':
         case 'Research film changed during export.':
           message = translate(

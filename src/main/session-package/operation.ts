@@ -29,6 +29,8 @@ import type {
   SensitiveContentEvidence
 } from '../../shared/session-package'
 
+export class PackageExportBlockedError extends Error {}
+
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
 export class SessionPackageOperation {
   private diagnostic?: DiagnosticOperation
@@ -544,6 +546,11 @@ export class SessionPackageOperation {
             : error instanceof Error
               ? error.message
               : String(error),
+        ...(kind === 'export' &&
+        error instanceof PackageExportBlockedError &&
+        !controller.signal.aborted
+          ? { exportBlocked: true as const }
+          : {}),
         ...(sensitiveContent ? { sensitiveContent } : {})
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())

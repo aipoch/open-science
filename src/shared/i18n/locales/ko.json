@@ -127,6 +127,8 @@
     "OK": "확인",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "패키지 작업이 완료될 때까지 기다리거나 진행 상황 창에서 작업을 취소한 후 종료하세요.",
     "An excluded file also exists in retained research evidence. Include that file to export this Session.": "제외한 파일의 복사본이 보존되는 연구 증거에도 있습니다. 이 세션을 내보내려면 해당 파일을 포함하세요.",
+    "Restore the archived project, then export again.": "보관된 프로젝트를 복원한 뒤 다시 내보내세요.",
+    "Restore the archived session, then export again.": "보관된 세션을 복원한 뒤 다시 내보내세요.",
     "The agent is still working in this conversation. Wait for it to finish, then export again.": "이 대화에서 에이전트가 작업 중입니다. 작업이 끝난 뒤 다시 내보내세요.",
     "A historical file reference in this session has no immutable version. Use Export conversation to save the messages.": "이 세션의 이전 파일 참조에 변경 불가능한 버전이 없습니다. 메시지를 저장하려면 대화 내보내기를 사용하세요.",
     "Wait for the subagent to finish its task, then export again.": "서브에이전트의 작업이 끝나면 다시 내보내세요.",

@@ -127,6 +127,8 @@
     "OK": "OK",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "パッケージ操作が完了するまで待つか、進行状況ウィンドウでキャンセルしてから終了してください。",
     "An excluded file also exists in retained research evidence. Include that file to export this Session.": "除外したファイルの複製が保持する研究証拠にも存在します。このセッションをエクスポートするにはそのファイルを含めてください。",
+    "Restore the archived project, then export again.": "アーカイブしたプロジェクトを復元してから、もう一度エクスポートしてください。",
+    "Restore the archived session, then export again.": "アーカイブしたセッションを復元してから、もう一度エクスポートしてください。",
     "The agent is still working in this conversation. Wait for it to finish, then export again.": "この会話ではエージェントが作業中です。完了してからもう一度エクスポートしてください。",
     "A historical file reference in this session has no immutable version. Use Export conversation to save the messages.": "このセッションの古いファイル参照には固定バージョンがありません。メッセージを保存するには「会話をエクスポート」を使ってください。",
     "Wait for the subagent to finish its task, then export again.": "サブエージェントのタスクが完了してから、もう一度エクスポートしてください。",

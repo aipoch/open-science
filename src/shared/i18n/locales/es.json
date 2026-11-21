@@ -129,6 +129,8 @@
     "OK": "Aceptar",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Espere a que termine la operación o cancélela en la ventana de progreso antes de salir.",
     "An excluded file also exists in retained research evidence. Include that file to export this Session.": "Un archivo excluido también existe en la evidencia conservada. Inclúyalo para exportar esta sesión.",
+    "Restore the archived project, then export again.": "Restaure el proyecto archivado y vuelva a exportar.",
+    "Restore the archived session, then export again.": "Restaure la sesión archivada y vuelva a exportar.",
     "The agent is still working in this conversation. Wait for it to finish, then export again.": "El agente sigue trabajando en esta conversación. Espere a que termine y vuelva a exportar.",
     "A historical file reference in this session has no immutable version. Use Export conversation to save the messages.": "Una referencia de archivo antigua de esta sesión carece de una versión inmutable. Use «Exportar conversación» para guardar los mensajes.",
     "Wait for the subagent to finish its task, then export again.": "Espere a que el subagente termine su tarea y vuelva a exportar.",
