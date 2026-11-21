@@ -616,6 +616,8 @@ it('checks export metadata values independently of their field names', () => {
     'secretName',
     'apiSecretName',
     'API_SECRET',
+    'NEXT_PAGE_TOKEN',
+    'APP_SECRET_KEY_LABEL',
     'credential_name',
     'hasCredentials',
     'no-api-key',
@@ -792,8 +794,8 @@ it('distinguishes authentication metadata from credential positions', () => {
     expect(isPrivatePackageField(key, 'opaque-value')).toBe(true)
 })
 
-it.each(['apiSecret', 'api_secret', 'api-secret'])(
-  'recognizes the exact %s credential key',
+it.each(['apiSecret', 'api_secret', 'api-secret', 'ACME_SECRET_KEY', 'REPORT_SESSION_TOKEN'])(
+  'recognizes %s as a credential position',
   (key) => {
     expect(isPrivatePackageField(key, 'opaque')).toBe(true)
     for (const text of [

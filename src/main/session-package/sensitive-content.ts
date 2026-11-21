@@ -23,7 +23,7 @@ const credentialKeyPatterns = [
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|client[_-]?secret)$/i,
   /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?token$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
-  /^[A-Z][A-Z0-9_]*_(?:PASSWORD|API_KEY|ACCESS_KEY_ID|SECRET_ACCESS_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|OAUTH_TOKEN|RPC_TOKEN)$/,
+  /^[A-Z][A-Z0-9_]*_(?:PASSWORD|API_KEY|ACCESS_KEY_ID|SECRET_ACCESS_KEY|SECRET_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|OAUTH_TOKEN|RPC_TOKEN|SESSION_TOKEN)$/,
   /^(?:GH|GITHUB|HF)_TOKEN$/
 ]
 const isCredentialKey = (key: string): boolean =>
