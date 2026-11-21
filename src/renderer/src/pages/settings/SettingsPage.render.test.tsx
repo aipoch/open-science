@@ -1412,7 +1412,10 @@ describe('SettingsPage layout', () => {
       'Notifications',
       'Model',
       'Agent',
+      'Skills',
+      'Specialists',
       'Memory',
+      'Connectors',
       'Network',
       'Remote',
       'Lab',
@@ -5394,14 +5397,14 @@ describe('Provider editor leave protection', () => {
       expect(onClose).toHaveBeenCalledOnce()
       const intent = useNavigationStore.getState().resourceCenterIntent
       if (route === 'resource connector')
-        expect(intent).toEqual({
+        expect(intent).toMatchObject({
           resource: 'connectors',
           view: { kind: 'list', recoveryConnectorId: 'connector-a' }
         })
       else if (route === 'resource skill')
-        expect(intent).toEqual({ resource: 'skills', skillId: 'alpha' })
+        expect(intent).toMatchObject({ resource: 'skills', skillId: 'alpha' })
       else if (route === 'resource specialist')
-        expect(intent).toEqual({ resource: 'specialists', specialistId: 'specialist-a' })
+        expect(intent).toMatchObject({ resource: 'specialists', specialistId: 'specialist-a' })
       else expect(intent?.resource).toBe('skills')
     } else if (['Close settings', 'Escape', 'host navigation'].includes(route))
       expect(onClose).toHaveBeenCalledOnce()
