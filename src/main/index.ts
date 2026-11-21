@@ -97,6 +97,7 @@ import {
   planMacUpdateOnQuit
 } from './update/mac-background-update'
 import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
+import { loadLinuxBackgroundDownloads } from './update/linux-background-download'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
@@ -1874,13 +1875,23 @@ async function startDesktop(): Promise<void> {
     }
   })
   const desktopStable = app.isPackaged && !headless && !app.getVersion().includes('-')
+  const linuxDownloads =
+    desktopStable && process.platform === 'linux'
+      ? loadLinuxBackgroundDownloads(
+          profilePath,
+          process.resourcesPath,
+          process.env.XDG_CACHE_HOME || join(app.getPath('home'), '.cache'),
+          process.env.APPIMAGE,
+          process.env.APPDIR
+        )
+      : undefined
   const backgroundDownloads = !desktopStable
     ? undefined
     : process.platform === 'win32'
       ? loadWindowsDownloadPreference(profilePath)
       : process.platform === 'darwin'
         ? Promise.resolve(profileDownloadPreference(profilePath))
-        : undefined
+        : linuxDownloads?.then((policy) => policy?.preference)
   const macBundle = dirname(dirname(dirname(process.execPath)))
   const macCache = join(app.getPath('home'), 'Library', 'Caches')
   const update = createUpdateStrategy(process.platform, {
@@ -1936,12 +1947,14 @@ async function startDesktop(): Promise<void> {
               !activity.foreground
             )
           },
-          canDownload: (bytes) =>
-            process.platform === 'darwin'
+          canDownload: async (bytes) => {
+            if (linuxDownloads) return (await linuxDownloads)?.canDownload(bytes) ?? false
+            return process.platform === 'darwin'
               ? canDownloadMacUpdate(macBundle, macCache, bytes)
               : process.env.LOCALAPPDATA
                 ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
-                : Promise.resolve(false)
+                : false
+          }
         }
       : undefined
   )
