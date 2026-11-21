@@ -78,6 +78,57 @@ stop in the conversation. MCP returned new request `60255eed-2a0c-4b32-bafb-a328
 and Run `eab67021-edd9-47ca-b6a7-e1a6bddd58e8`, which completed. The stopped cell was not
 replayed or reported as a confirmed Notebook dispatch.
 
+## Delegated question recovery and parent settlement: November 21, 2026
+
+WorkBuddy 5.9.4 and a live model used the installed `8a3f8a4fd` macOS build. Original request
+`gr-review-replay-20261121-8c4f2a` completed Run `ef95d632-2927-4c03-a773-2ba8e5e5fe9e`.
+The operator chose `GROUP COUNTS` in the existing conversation. MCP recorded `user_relay` on
+the child question and linked completed Attempt `attempt-10e83dba-8eff-4415-af1f-f27299a98eb1`
+in Frame `frame-473dc6be-9c27-4133-bbf7-07fa832166d7`. The linked parent Run
+`dc45f740-43ee-4af5-b760-c8112d160c1d` dispatched to the Provider. It confused the child
+Attempt with a Notebook background Run, then passed the child handle to `host.agents.switch`.
+The malformed argument became a request to switch to Main Agent, which parked on an approval
+outside the Task interaction list. The parent's bounded waits timed out. An independent
+installed MCP client confirmed the child was complete and the parent was still running with no
+listed interactions. It cancelled only the stalled synthetic parent Run and observed `cancelled`.
+There was no replacement submission, service restart, or confirmed Notebook dispatch in that run.
+
+`daef8c104` supplies a non-blocking `host.collect` call in the settlement prompt and rejects
+malformed Specialist switch targets before creating an approval. Valid named targets and explicit
+`null` still use the existing approval. The macOS npm pair passed the installed-package check;
+the CLI and native tarball SHA-256 values were
+`896f0ff52c18251f0fb4e41e8e3ddc61ebd5a74f05c8648d3fd926b797140e8e` and
+`446d148b76510992907234ff5848118e8b744df8778c06a8558af7c3e10a6270`. Six suites (229 tests)
+passed, including real REPL validation. In the installed MCP replay with a scripted Provider,
+the parent completed after one settlement dispatch. MCP reconnected to the same service, relayed
+one answer to the child continuation, and reported `changed: false` for the duplicate answer.
+The child continuation completed after one Provider wake. This fixture does not establish the
+final WorkBuddy conversation result.
+
+On the same installed build in a fresh macOS profile, an MCP SDK client replayed the scope
+question with the live keyless Kilo Provider. Request `d5adba2d-2512-4605-abe4-4a92968ecbdb`
+admitted Run `8e8ddc8e-f7a9-479c-b253-32388deec7b6`. Linked parent Run
+`5df50bb4-848c-4f27-a8d2-504262943b12` called `host.collect` once and completed without a
+Specialist switch. It collected the original Attempt's waiting response and presented the
+question. The client relayed `GROUP COUNTS`; child continuation
+`attempt-feccbfa1-636d-4de9-acf9-a1ab69b2329a` completed and a duplicate answer returned
+`changed: false`. The parent reported the question before receiving the new Attempt's output.
+This shows the parent can finish without the unrelated approval and that the answer resumes the
+child. The test used no Python or R cell and made no file delivery claim. It did not use the
+WorkBuddy desktop client, whose window was unavailable while macOS was locked.
+
+### Installed sensitive export review
+
+An independent installed `8a3f8a4fd` MCP stdio run used a scripted loopback Provider and a
+synthetic credential pattern. The staged findings were redacted and the destination stayed
+absent before the decision. Rejecting operation `317393b9-6079-4adb-b6af-a00eee97fe3e` did not
+publish a file. Task delegation and a mismatched candidate digest could not approve operation
+`f33cff54-f21a-485d-8e8d-b2a6e2af7992`. A scoped `user_relay` approval of that operation moved
+from `pending` to verified delivery when queried by the same ID. The resulting 2,782 bytes
+matched the reviewed digest `51987a201976bb80f289fffa5be2ede838d34ab42c1e98ea59f492bf50d9eaeb`.
+The operator responses were simulated for this test. The greenhouse archive did not require
+sensitive review, and no live OAuth sign-in is claimed.
+
 ## Independent receiving Agent: WorkBuddy package
 
 OpenCode 1.19.5 with a live Hy4 model received the WorkBuddy archive in a fresh Debian 13
@@ -175,7 +226,8 @@ WorkBuddy 5.9.4 saved a separate connector for the new install; all three old Op
 entries and their enabled states were preserved. The desktop bridge lost its window before
 first-use Trust, so no MCP call or research submission is attributed to that connector. The
 Linux replay above used the direct MCP fixture package, not a WorkBuddy-produced archive.
-Tickets #80 and #81 therefore remain open. No package was published to npm.
+At this checkpoint, neither #80 nor #81 had passed. The later WorkBuddy-origin archive replay is
+recorded above. No package was published to npm.
 
 ### Installed AskUser recovery and live task delegation
 
@@ -907,7 +959,9 @@ The original pre-release README runs (#66 and #67) preceded the revised short pr
 capabilities. The current WorkBuddy run completed research and file delivery, and the actual
 WorkBuddy package passed the independent receiving run in [#81](https://github.com/guch96/open-science/issues/81).
 The WorkBuddy interaction gate [#80](https://github.com/guch96/open-science/issues/80) still needs
-the background continuation follow-up. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+the updated package's final desktop replay of the parent continuation. The original Run remained
+stalled until cancelled; the updated installed package completed the fixture and a live Kilo
+replay through MCP. The [upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
 remains Draft and requires the upstream checks and CI owner review of the Windows routing
 registration before merge.
 Registry verification ([#68](https://github.com/guch96/open-science/issues/68)) is blocked until an

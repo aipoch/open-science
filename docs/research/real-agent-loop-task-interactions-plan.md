@@ -189,6 +189,12 @@ the current logical task policy; the original Run remains unchanged. Notebook ex
 for a shared prompt are queried in each Run's execution window. A tracked Run interrupted by restart
 reports `process_restarted`; live waits expire and are not replayed.
 
+The settlement prompt gives the main agent the exact Frame and Attempt handles for a non-blocking
+`host.collect` read. A child waiting for input is reported as such so the main agent can end its
+turn; after the user answers, `host.children` identifies the current Attempt. These handles are
+not Notebook background Run IDs or Specialist switch targets. An invalid switch argument fails
+before any approval request is created.
+
 Root Plans and AskUser created on one of these Runs retain the actual Run ID, including when
 several Runs share a prompt or timestamp. Run-scoped lookups and question responses cannot use
 another Run's interaction. Plan decisions still identify the exact Session, branch, and Artifact
