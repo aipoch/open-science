@@ -1,6 +1,7 @@
 {
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
+    "src/renderer/src/pages/workspace/project-files-notices.tsx",
     "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
     "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
     "src/renderer/src/pages/workspace/project-files-query-model.ts",

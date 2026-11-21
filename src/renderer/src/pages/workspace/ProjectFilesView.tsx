@@ -45,6 +45,7 @@ import {
   useProjectFileInfiniteLoad,
   useProjectFilesQueryModel
 } from './project-files-query-model'
+import { PageLoadError, ProjectFilesIndexNotice } from './project-files-notices'
 import { FILE_PAGE_SIZE, type PageState } from './use-project-files-index'
 
 type FilePageLoadMode = 'manual' | 'scroll'
@@ -120,25 +121,6 @@ const SectionHeader = ({
   </button>
 )
 
-const PageLoadError = ({
-  message,
-  onRetry
-}: {
-  message: string
-  onRetry: () => void
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  return (
-    <div className="px-4 py-3">
-      <ErrorNotice
-        role="alert"
-        description={message}
-        primaryButton={{ label: t('Retry'), onClick: onRetry }}
-      />
-    </div>
-  )
-}
-
 // All mode uses a compact per-section button; category mode normally scroll-loads. Both modes share
 // the same terminal state so each upload/session section says No more independently.
 const FilePageFooter = ({
@@ -197,6 +179,7 @@ const ProjectArtifactGroupSection = ({
   title,
   timestamp,
   page,
+  searching,
   loadMode,
   manualVisibleItemLimit,
   isCollapsed,
@@ -213,6 +196,7 @@ const ProjectArtifactGroupSection = ({
   title: string
   timestamp: number | undefined
   page: PageState<ProjectFileItem> | undefined
+  searching: boolean
   loadMode: FilePageLoadMode
   manualVisibleItemLimit: number
   isCollapsed: boolean
@@ -269,7 +253,12 @@ const ProjectArtifactGroupSection = ({
             />
           ) : null}
           {page?.error ? (
-            <PageLoadError message={page.error} onRetry={() => void loadPage()} />
+            <PageLoadError
+              error={page.error}
+              failedCursor={page.failedCursor}
+              searching={searching}
+              onRetry={() => void loadPage()}
+            />
           ) : null}
           <FilePageFooter
             page={page}
@@ -573,7 +562,7 @@ const ProjectFilesViewContent = ({
             !sessionOptionsIndex.groups.isLoading &&
             !sessionOptionsIndex.groups.error
           }
-          optionsLoadError={sessionOptionsIndex.groups.error}
+          optionsLoadError={Boolean(sessionOptionsIndex.groups.error)}
           onLoadMoreOptions={() => void sessionOptionsIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
           onBrowseLocal={handleBrowseLocal}
@@ -704,30 +693,10 @@ const ProjectFilesViewContent = ({
         />
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
-          {!catalogIndex.overview.isIndexComplete ? (
-            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 px-3 py-2 text-[11px] text-text-200">
-              <span className="min-w-0 flex-1">
-                {catalogIndex.repairError ?? t('Some files could not be indexed yet.')}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                aria-label={t('Retry indexing project files')}
-                disabled={catalogIndex.isRepairing}
-                onClick={() => void catalogIndex.repairIndex()}
-              >
-                {t(catalogIndex.isRepairing ? 'Retrying...' : 'Retry')}
-              </Button>
-            </div>
-          ) : null}
-
-          {catalogIndex.overviewError ? (
-            <PageLoadError message={catalogIndex.overviewError} onRetry={catalogIndex.reload} />
-          ) : null}
+          <ProjectFilesIndexNotice catalogIndex={catalogIndex} />
 
           {isSearchActive && isAllFilter && index.overviewError ? (
-            <PageLoadError message={index.overviewError} onRetry={index.reload} />
+            <PageLoadError error={index.overviewError} searching onRetry={index.reloadOverview} />
           ) : null}
 
           {hasLoadedInitialPages &&
@@ -776,7 +745,9 @@ const ProjectFilesViewContent = ({
                   />
                   {index.uploads.error ? (
                     <PageLoadError
-                      message={index.uploads.error}
+                      error={index.uploads.error}
+                      searching={isSearchActive}
+                      failedCursor={index.uploads.failedCursor}
                       onRetry={() => void index.loadMoreUploads()}
                     />
                   ) : null}
@@ -803,7 +774,9 @@ const ProjectFilesViewContent = ({
 
           {isAllFilter && index.groups.error ? (
             <PageLoadError
-              message={index.groups.error}
+              error={index.groups.error}
+              searching={isSearchActive}
+              failedCursor={index.groups.failedCursor}
               onRetry={() => void index.loadMoreGroups()}
             />
           ) : null}
@@ -822,6 +795,7 @@ const ProjectFilesViewContent = ({
                   title={getArtifactGroupTitle(group)}
                   timestamp={sessionById.get(group.sessionId)?.updatedAt}
                   page={index.artifactsBySession[group.sessionId]}
+                  searching={isSearchActive}
                   loadMode={isAllFilter ? 'manual' : 'scroll'}
                   manualVisibleItemLimit={
                     allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
