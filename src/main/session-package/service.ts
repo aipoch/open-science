@@ -521,12 +521,17 @@ const portableMessage = <T extends PersistedChatSession['messages'][number]>(mes
 const portableActivity = <T extends NonNullable<PersistedChatSession['activities']>[number]>(
   activity: T
 ): T =>
-  activity.elicitation && (activity.elicitation.taskResponse || activity.elicitation.taskRequestId)
+  activity.elicitation &&
+  (activity.elicitation.taskResponse ||
+    activity.elicitation.taskRequestId ||
+    activity.elicitation.taskRunId ||
+    activity.elicitation.durable?.provenanceContext?.taskRunId)
     ? {
         ...activity,
         elicitation: {
           ...activity.elicitation,
           taskRequestId: undefined,
+          taskRunId: undefined,
           taskResponse: undefined,
           durable: undefined,
           continuationPending: undefined,
@@ -551,9 +556,11 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
   promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
-  planHistoryProjections: session.planHistoryProjections?.map((plan) =>
-    plan.externalResponse ? { ...plan, externalResponse: undefined } : plan
-  ),
+  planHistoryProjections: session.planHistoryProjections?.map((plan) => ({
+    ...plan,
+    externalResponse: undefined,
+    originatingTaskRunId: undefined
+  })),
   runtimeContext: session.runtimeContext
     ? {
         ...session.runtimeContext,
@@ -574,15 +581,19 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
               }
             }
           : {}),
-        ...(session.runtimeContext.plan?.externalResponse
+        ...(session.runtimeContext.plan &&
+        (session.runtimeContext.plan.externalResponse ||
+          session.runtimeContext.plan.originatingTaskRunId)
           ? {
               plan: {
                 ...session.runtimeContext.plan,
-                ...(session.runtimeContext.plan.delivery?.commandId ===
-                session.runtimeContext.plan.externalResponse.commandId
+                ...(session.runtimeContext.plan.externalResponse &&
+                session.runtimeContext.plan.delivery?.commandId ===
+                  session.runtimeContext.plan.externalResponse.commandId
                   ? { delivery: undefined }
                   : {}),
-                externalResponse: undefined
+                externalResponse: undefined,
+                originatingTaskRunId: undefined
               }
             }
           : {}),
@@ -621,6 +632,10 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
             isRecord(activity) &&
             isRecord(activity.elicitation) &&
             (Object.hasOwn(activity.elicitation, 'taskRequestId') ||
+              Object.hasOwn(activity.elicitation, 'taskRunId') ||
+              (isRecord(activity.elicitation.durable) &&
+                isRecord(activity.elicitation.durable.provenanceContext) &&
+                Object.hasOwn(activity.elicitation.durable.provenanceContext, 'taskRunId')) ||
               Object.hasOwn(activity.elicitation, 'taskResponse'))
         )
     )
@@ -640,10 +655,13 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   if (
     (isRecord(runtimeContext) &&
       isRecord(runtimeContext.plan) &&
-      Object.hasOwn(runtimeContext.plan, 'externalResponse')) ||
+      (Object.hasOwn(runtimeContext.plan, 'externalResponse') ||
+        Object.hasOwn(runtimeContext.plan, 'originatingTaskRunId'))) ||
     (Array.isArray(session.planHistoryProjections) &&
       session.planHistoryProjections.some(
-        (plan) => isRecord(plan) && Object.hasOwn(plan, 'externalResponse')
+        (plan) =>
+          isRecord(plan) &&
+          (Object.hasOwn(plan, 'externalResponse') || Object.hasOwn(plan, 'originatingTaskRunId'))
       ))
   )
     return true

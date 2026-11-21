@@ -1,4 +1,5 @@
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
+import { withTaskPromptOwner } from '../../shared/task-continuation'
 import {
   registerResourceObservation,
   recordResourceEvent,
@@ -364,8 +365,8 @@ class AcpRuntime {
             originalPromptMessageId: permission.promptMessageId,
             promptMessageId: permission.promptMessageId
           },
-          (onTrackedDispatch) =>
-            this.sendDurableAppContinuation(request, {
+          (onTrackedDispatch, taskRunId) =>
+            this.sendDurableAppContinuation(withTaskPromptOwner(request, taskRunId), {
               permissionContinuation: permission,
               promptAttemptId: permission.requestId,
               onProviderDispatched: () => {
@@ -381,8 +382,11 @@ class AcpRuntime {
     const planContinuations = composeAcpRuntimePlanContinuations(options, session, {
       scheduleContinuation: (sessionId) => this.schedulePendingAppContinuation(sessionId),
       send: (request, delivery, onProviderDispatched) => {
-        const send = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
-          this.sendDurableAppContinuation(request, {
+        const send = (
+          onTrackedDispatch?: () => void,
+          taskRunId?: string
+        ): Promise<PromptResponse> =>
+          this.sendDurableAppContinuation(withTaskPromptOwner(request, taskRunId), {
             promptAttemptId: delivery?.commandId,
             planDelivery: delivery,
             onProviderDispatched: () => {
@@ -400,7 +404,8 @@ class AcpRuntime {
             sessionId: request.sessionId,
             attemptId: delivery.commandId,
             promptMessageId,
-            originalPromptMessageId: delivery.externalOriginPromptId
+            originalPromptMessageId: delivery.externalOriginPromptId,
+            originalRunId: delivery.externalOriginRunId
           },
           send
         )

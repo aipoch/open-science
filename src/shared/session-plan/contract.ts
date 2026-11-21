@@ -125,6 +125,7 @@ export type ActivePlanProjection = Readonly<{
   artifactVersionId: string
   artifactChecksum: string
   originatingPromptMessageId?: string
+  originatingTaskRunId?: string
   materializedAt?: number
   revision: number
   /** Live review identity; receipt revisions do not create a new user interaction. */
@@ -500,6 +501,8 @@ export type SessionPlanRuntimeContext = Readonly<{
   document?: PlanDocumentV1
   // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
   originatingPromptMessageId?: string
+  // Local owner when several Task Runs use the same user Message.
+  originatingTaskRunId?: string
   // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
   materializedAt?: number
   approval: SessionPlanApproval

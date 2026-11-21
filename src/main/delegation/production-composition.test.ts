@@ -70,7 +70,7 @@ import { createDelegationSettlementContinuationDispatch } from './settlement-con
 import { HeadlessTaskApi, type TaskApiPorts } from '../web-service/task-api'
 import { startWebHttpServer } from '../web-service/http-server'
 import { ApplicationEventHub } from '../application-events'
-import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import { taskPromptOwnerOf, type TaskContinuationTracker } from '../../shared/task-continuation'
 import type { TaskRun, TaskSubmission } from '../../shared/task-api'
 import type { TaskPermissionInteraction } from '../../shared/task-interaction'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
@@ -1691,6 +1691,7 @@ describe('production delegated-work composition', () => {
           ]
         })
         const [{ runId, requestId }] = parent.continuations!
+        expect(taskPromptOwnerOf(send.mock.calls[0][0])).toBe(runId)
         await expect(task<TaskSubmission>(`run-submissions/${requestId}`)).resolves.toMatchObject({
           requestId,
           runId,

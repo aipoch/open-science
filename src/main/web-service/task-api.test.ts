@@ -124,7 +124,8 @@ type TaskQuestionHarness = {
   continuations: AcpAppContinuationOwner
   schedule: ReturnType<typeof vi.fn>
   providerSend: ReturnType<typeof vi.fn>
-  newOwner: () => AcpElicitationOwner
+  newOwner: (requestId?: string) => AcpElicitationOwner
+  addContinuationRun: () => void
   createApi: (
     owner: AcpElicitationOwner,
     restored: boolean,
@@ -182,11 +183,12 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuesti
       return structuredClone(session)
     }
   })
-  const newOwner = (): AcpElicitationOwner =>
+  const newOwner = (requestId = 'root-question'): AcpElicitationOwner =>
     new AcpElicitationOwner({
-      createRequestId: () => 'root-question',
+      createRequestId: () => requestId,
       onProjection: (request, elicitation) => {
         session.activities = [
+          ...(session.activities ?? []).filter(({ id }) => id !== request.toolCallId),
           {
             id: request.toolCallId,
             kind: 'tool',
@@ -275,6 +277,17 @@ const taskQuestionHarness = (status: 'running' | 'waiting-for-user'): TaskQuesti
     schedule,
     providerSend,
     newOwner,
+    addContinuationRun: () => {
+      journal.push({
+        ...journal[0],
+        id: 'continuation-run',
+        continuedFromRunId: 'original-run',
+        requestId: 'tracked-continuation',
+        startedAt: 2,
+        completedAt: 2,
+        status: 'completed'
+      })
+    },
     createApi,
     restart: () => {
       session = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
@@ -890,6 +903,7 @@ describe('HeadlessTaskApi adapter', () => {
       startedAt: 1,
       completedAt: 2,
       status: 'completed',
+      interactionPolicy: { mode: 'delegate', revision: 1 },
       promptMessageId,
       artifacts: [],
       preferredComputeHostIds: []
@@ -1030,6 +1044,7 @@ describe('HeadlessTaskApi adapter', () => {
           })
         })
         expect(agent.prompt).not.toHaveBeenCalled()
+        expect(intent.hasClaimedContinuation).toBe(false)
 
         const accepted = await send(server.port, 'continue-once', request)
         expect(accepted.status).toBe(202)
@@ -1045,9 +1060,19 @@ describe('HeadlessTaskApi adapter', () => {
         })
         await expect(api.waitForRun(receipt.runId!)).resolves.toMatchObject({
           ...scope,
-          status: 'completed'
+          status: 'completed',
+          continuedFromRunId: originalRun.id,
+          interactionPolicy: { mode: 'delegate', revision: 1 }
         })
+        expect(intent.hasClaimedContinuation).toBe(true)
+        await expect(
+          api.setRunInteractionMode(originalRun.id, {
+            interactionMode: 'relay',
+            expectedRevision: 1
+          })
+        ).resolves.toEqual({ mode: 'relay', revision: 2 })
         await expect(api.getRun(receipt.runId!)).resolves.toMatchObject({
+          interactionPolicy: { mode: 'relay', revision: 2 },
           execution: { continuedFromRefusalId: refusalId }
         })
         await expect(api.continueNotebook('continue-once', request)).resolves.toEqual(receipt)
@@ -1057,6 +1082,9 @@ describe('HeadlessTaskApi adapter', () => {
         expect(agent.prompt).toHaveBeenCalledTimes(1)
         await expect(api.getRun(originalRun.id)).resolves.toMatchObject({
           status: originalRun.status,
+          continuations: [
+            { runId: receipt.runId, requestId: 'continue-once', status: 'completed' }
+          ],
           execution: { status: 'failed', refusalId }
         })
         notebook.bindExecutionIntent(scope, intent)
@@ -1081,6 +1109,10 @@ describe('HeadlessTaskApi adapter', () => {
         await restarted.runWithCallerContext(caller, async () => {
           const receipt = await restarted.getSubmission('continue-once')
           expect(receipt).toMatchObject({ status: 'accepted', notebookContinuation: { refusalId } })
+          await expect(restarted.getRun(receipt.runId!)).resolves.toMatchObject({
+            continuedFromRunId: originalRun.id,
+            interactionPolicy: { mode: 'relay', revision: 2 }
+          })
           const repeated = await send(restartedServer.port, 'continue-once', request)
           expect(repeated.status).toBe(202)
           expect(await repeated.json()).toEqual({ data: receipt })
@@ -2029,6 +2061,94 @@ describe('HeadlessTaskApi adapter', () => {
     }
   })
 
+  it('keeps questions with their actual Run when a continuation shares the prompt and timestamp', async () => {
+    const h = taskQuestionHarness('waiting-for-user')
+    const origin = { runId: 'original-run' }
+    const continuation = { runId: 'continuation-run' }
+    const originalOwner = h.newOwner()
+    const currentOwner = h.newOwner('new-question')
+    const makeQuestion = (owner: AcpElicitationOwner, runId: string, requestId: string): void => {
+      const provenanceContext = { ...h.provenance, taskRunId: runId }
+      expect(
+        owner.requestDetached(
+          {
+            mode: 'form',
+            sessionId: 'provider-session',
+            toolCallId: requestId,
+            message: 'Choose a group.',
+            requestedSchema: {
+              type: 'object',
+              properties: { group: { type: 'string' } },
+              required: ['group']
+            }
+          },
+          { sessionId: h.scope.sessionId },
+          {
+            kind: 'agent-user-choice',
+            requestId,
+            promptMessageId: h.provenance.promptMessageId,
+            provenanceContext
+          }
+        )
+      ).toBeDefined()
+    }
+    makeQuestion(originalOwner, origin.runId, 'old-question')
+    originalOwner.respond(
+      { requestId: 'old-question', action: 'accept', answers: [{ fieldId: 'group', value: 'A' }] },
+      {
+        source: 'user_relay',
+        action: 'accept',
+        reviewedRevision: 1,
+        checksum: 'a'.repeat(64)
+      }
+    )
+    originalOwner.dispose()
+    h.addContinuationRun()
+    makeQuestion(currentOwner, continuation.runId, 'new-question')
+    h.restart()
+    const api = h.createApi(currentOwner, true)
+    try {
+      await api.initialize()
+      await api.runWithCallerContext(
+        createTaskCallerContext({ authenticatedLocalBearer: true }),
+        async () => {
+          const id = 'question:new-question'
+          const current = await api.getInteraction(id, continuation)
+          expect(current).toMatchObject({ runId: continuation.runId, state: 'pending' })
+          await expect(api.listInteractions(origin)).resolves.toEqual([])
+          await expect(api.getInteraction(id, origin)).rejects.toMatchObject({
+            code: 'interaction_not_found'
+          })
+          await expect(api.getInteraction('question:old-question', origin)).resolves.toMatchObject({
+            runId: origin.runId,
+            state: 'responded'
+          })
+          await expect(
+            api.getInteraction('question:old-question', continuation)
+          ).rejects.toMatchObject({ code: 'interaction_not_found' })
+          const response = {
+            source: 'user_relay',
+            action: 'accept',
+            expectedRevision: current.revision,
+            expectedBranchId: current.branchId!,
+            answers: [{ fieldId: 'group', value: 'B' }]
+          } as const
+          const input = { ...response, answers: [...response.answers] }
+          await expect(api.answerQuestion(id, origin, input)).rejects.toMatchObject({
+            code: 'interaction_not_found'
+          })
+          await expect(api.answerQuestion(id, continuation, input)).resolves.toMatchObject({
+            changed: true,
+            interaction: { runId: continuation.runId, state: 'responded' }
+          })
+        }
+      )
+    } finally {
+      currentOwner.dispose()
+      await api.dispose()
+    }
+  })
+
   it('expires a pending form whose Provider wait disappeared on restart', async () => {
     const h = taskQuestionHarness('running')
     const owner = h.newOwner()
@@ -2275,8 +2395,19 @@ describe('HeadlessTaskApi adapter', () => {
     let trackContinuation: TaskContinuationTracker | undefined
     const enteredPlanOwner = Promise.withResolvers<void>()
     const finishPlanPreflight = Promise.withResolvers<void>()
-    const send = vi.fn(async (onProviderDispatched: () => void) => {
+    const send = vi.fn(async (onProviderDispatched: () => void, taskRunId?: string) => {
       onProviderDispatched()
+      persisted.planHistoryProjections = [projection()]
+      persisted.runtimeContext = {
+        version: 1,
+        revision: 5,
+        plan: {
+          ...plan,
+          artifactVersionId: 'continuation-plan-version',
+          originatingTaskRunId: taskRunId,
+          materializedAt: now
+        }
+      }
       await appendNotebookRun('continuation-cell', ++now)
       now++
       return { stopReason: 'end_turn' }
@@ -2286,6 +2417,7 @@ describe('HeadlessTaskApi adapter', () => {
       artifactVersionId: 'plan-version',
       artifactChecksum: 'checksum',
       originatingPromptMessageId: 'plan-prompt',
+      materializedAt: 100,
       approval: 'pending' as const,
       stepStatuses: {}
     }
@@ -2334,19 +2466,38 @@ describe('HeadlessTaskApi adapter', () => {
       })
     await repository.loadOrCreate({ ...notebookScope, workspaceCwd: submissionRoot })
     await appendNotebookRun('original-cell', 5)
+    const projection = (): NonNullable<PersistedChatSession['planHistoryProjections']>[number] => {
+      const plan = persisted.runtimeContext!.plan!
+      return {
+        ...plan,
+        document: {
+          schema_version: 1,
+          task_summary: 'Compare groups.',
+          phases: [
+            {
+              name: 'Analysis',
+              delegations: [
+                {
+                  name: 'Compare',
+                  steps: [{ title: 'Check groups', description: 'Compare the group totals.' }]
+                }
+              ]
+            }
+          ],
+          desired_outputs: [],
+          feasibility: { confidence: 'high', rationale: 'The groups are available.' }
+        },
+        revision: persisted.runtimeContext!.revision,
+        lifecycle: plan.approval === 'pending' ? 'awaiting_approval' : 'approved',
+        stepStates: {},
+        counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+      }
+    }
     const commandInvoke = vi.fn(async (channel: string) => {
       if (channel === 'sessions:load-all') {
         return { sessions: [persisted], manifest: { version: 1 } }
       }
-      if (channel === 'acp:get-plan-projection')
-        return {
-          ...persisted.runtimeContext!.plan!,
-          revision: persisted.runtimeContext!.revision,
-          lifecycle:
-            persisted.runtimeContext!.plan!.approval === 'pending'
-              ? 'awaiting_approval'
-              : 'approved'
-        }
+      if (channel === 'acp:get-plan-projection') return projection()
       if (channel === 'acp:respond-plan') {
         persisted.runtimeContext = {
           version: 1,
@@ -2479,14 +2630,15 @@ describe('HeadlessTaskApi adapter', () => {
       })
     })
     await api.dispose()
+    Object.assign(persisted, normalizeSessionFile(JSON.parse(JSON.stringify(persisted))))
     const restarted = createApi()
     await restarted.initialize()
     await restarted.runWithCallerContext(caller, async () => {
-      await expect(restarted.listInteractions(scope)).resolves.toEqual([])
       const interaction = await restarted.getInteraction('plan:plan-version', scope)
       if (interaction.kind !== 'plan') throw new Error('Expected the recorded Plan interaction.')
       expect(interaction).toMatchObject({
         state: 'responded',
+        runId: 'plan-run',
         response: {
           source: 'user_relay',
           action: 'approved',
@@ -2494,6 +2646,18 @@ describe('HeadlessTaskApi adapter', () => {
         }
       })
       const continuation = interaction.response!.continuation
+      const current = { runId: continuation.runId! }
+      const original = { runId: 'plan-run' }
+      await expect(restarted.listInteractions(original)).resolves.toEqual([])
+      await expect(restarted.listInteractions(current)).resolves.toMatchObject([
+        { id: 'plan:continuation-plan-version', runId: current.runId, state: 'pending' }
+      ])
+      await expect(
+        restarted.getInteraction('plan:continuation-plan-version', original)
+      ).rejects.toMatchObject({ code: 'interaction_not_found' })
+      await expect(restarted.getInteraction('plan:plan-version', current)).rejects.toMatchObject({
+        code: 'interaction_not_found'
+      })
       expect(continuation.runId).toBeTruthy()
       expect(continuation.requestId).toBeTruthy()
       await expect(restarted.getSubmission(continuation.requestId!)).resolves.toMatchObject({
@@ -3106,6 +3270,7 @@ describe('HeadlessTaskApi adapter', () => {
     expect(agent.prompt).toHaveBeenCalledWith(
       {
         sessionId: existing.id,
+        taskRunId: run.id,
         promptMessageId: 'attached-user',
         provenanceContext: {
           rootFrameId: 'root-frame-session-attached',
@@ -3331,6 +3496,7 @@ describe('HeadlessTaskApi adapter', () => {
           runtimeSegmentId: 'runtime-segment-session-context',
           promptMessageId: expect.any(String)
         },
+        taskRunId: run.id,
         text: 'Research with remote context.'
       },
       { onProviderPromptAccepted: expect.any(Function) }

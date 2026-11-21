@@ -1,5 +1,5 @@
 import type { AcpPromptRequest } from '../../shared/acp'
-import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import { withTaskPromptOwner, type TaskContinuationTracker } from '../../shared/task-continuation'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
 
@@ -43,10 +43,13 @@ const createDelegationSettlementContinuationDispatch =
         }
       }
       try {
-        return await options.sendAppContinuationObserved(prompt, () => {
-          providerAccepted = true
-          onProviderDispatched?.()
-        })
+        return await options.sendAppContinuationObserved(
+          withTaskPromptOwner(prompt, taskRunId),
+          () => {
+            providerAccepted = true
+            onProviderDispatched?.()
+          }
+        )
       } catch (error) {
         untrackedPreAcceptanceFailure =
           !taskRunId && !providerAccepted && error instanceof DelegateMessagePreAcceptanceError
