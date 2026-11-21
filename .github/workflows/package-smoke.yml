@@ -1,14 +1,14 @@
-name: Linux AppImage SDK baseline
+name: Linux Debian SDK baseline
 on: workflow_dispatch
 permissions:
   contents: read
 jobs:
-  mounted-upgrade:
+  debian-upgrade:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, arch: x86_64, feed: latest-linux.yml }
+          - { os: ubuntu-latest, arch: amd64, feed: latest-linux.yml }
           - { os: ubuntu-24.04-arm, arch: arm64, feed: latest-linux-arm64.yml }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -29,24 +29,23 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install --yes libfuse2t64 gnome-keyring dbus-user-session
+          sudo apt-get install --yes gnome-keyring dbus-user-session xdg-utils bubblewrap libnotify4
           for ver in 1.3.1 1.3.2; do
             dir="$RUNNER_TEMP/$ver"
             mkdir -p "$dir"
-            name="aipoch-open-science-$ver-linux-$ARCH.AppImage"
+            name="aipoch-open-science_${ver}_${ARCH}.deb"
             gh release download "v$ver" -p "$name" -p "$FEED" -D "$dir"
             gh release view "v$ver" --json assets > "$dir/release.json"
             node scripts/ci/probe-appimage-sdk.cjs verify "$dir" "$name" "$FEED"
             chmod 755 "$dir/$name"
           done
-      - name: Run both versions through the native mounted entry
+      - name: Verify explicit package manager upgrade and both live versions
         env:
           ARCH: ${{ matrix.arch }}
           XDG_CURRENT_DESKTOP: GNOME
         run: |
           set -euo pipefail
-          test -c /dev/fuse
           xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
             printf "%s\n" baseline | gnome-keyring-daemon --unlock --components=secrets
-            node scripts/ci/probe-appimage-sdk.cjs mounted "$RUNNER_TEMP" "$ARCH"
+            node scripts/ci/probe-appimage-sdk.cjs deb "$RUNNER_TEMP" "$ARCH"
           '

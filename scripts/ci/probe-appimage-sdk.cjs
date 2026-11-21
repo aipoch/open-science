@@ -30,7 +30,13 @@ async function version(entry, expected, profile) {
       version:app.getVersion(), entry:process.env.APPIMAGE, exe:app.getPath('exe'),
       mount:process.env.APPDIR
     }))
-    assert.equal(result.entry,entry); assert.equal(result.version,expected)
+    assert.equal(result.version,expected)
+    if (!entry.endsWith('.AppImage')) {
+      assert.equal(result.exe,entry)
+      console.log(JSON.stringify(result))
+      return
+    }
+    assert.equal(result.entry,entry)
     assert.ok(result.mount && result.exe.startsWith(result.mount + '/'))
     const mounts=fs.readFileSync('/proc/'+app.process().pid+'/mountinfo','utf8')
     assert.ok(mounts.split('\n').some(line=>line.includes(' '+result.mount+' ') && line.includes(' - fuse')))
@@ -44,6 +50,22 @@ async function version(entry, expected, profile) {
 async function main(){
   const [mode,dir,arch,feed]=process.argv.slice(2)
   if(mode==='verify')return verify(dir,arch,feed)
+  if(mode==='deb'){
+    const {DebUpdater}=require('electron-updater/out/DebUpdater')
+    const profile=fs.mkdtempSync(path.join(dir,'profile-'))
+    for(const ver of ['1.3.1','1.3.2']){
+      const file=path.join(dir,ver,'aipoch-open-science_'+ver+'_'+arch+'.deb')
+      if(ver==='1.3.1') execFileSync('sudo',['-n','apt-get','install','--yes',file],{stdio:'inherit',timeout:180000})
+      else {
+        // The user has explicitly approved this call. Hosted runners provide noninteractive sudo.
+        const run=([command,...args])=>execFileSync('sudo',['-n',command,...args],{stdio:'inherit',timeout:180000})
+        DebUpdater.installWithCommandRunner('dpkg',file,run,console)
+      }
+      assert.equal(execFileSync('dpkg-query',['-W','-f=${Version}', 'open-science'],{encoding:'utf8'}),ver)
+      await version('/opt/Open-Science/open-science',ver,profile)
+    }
+    return
+  }
   if(mode==='apply'){
     const {AppImageUpdater}=require('electron-updater/out/AppImageUpdater')
     const sdk=Object.create(AppImageUpdater.prototype)
