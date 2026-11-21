@@ -4411,8 +4411,12 @@ describe('ConversationPanel composer intake', () => {
       errorDetail: 'disk full'
     }
     renderPanel({
+      view: { actionError: failed.error },
       composer: {
         view: {
+          error: failed.error,
+          errorDetail: failed.errorDetail,
+          attachmentNotice: { title: failed.error },
           transfers: [
             failed,
             { ...failed, transferId: 'restored', name: 'restored.csv', canRetry: false }
@@ -4424,9 +4428,15 @@ describe('ConversationPanel composer intake', () => {
     const retry = container.querySelector<HTMLButtonElement>(
       '[aria-label="Retry attachment failed.csv"]'
     )
+    expect(
+      container.querySelector('[data-notice-operation="attachment"] h2')?.textContent
+    ).toContain(failed.error)
+    expect(container.querySelector('[data-notice-operation="action"]')).toBeNull()
     expect(retry).not.toBeNull()
     expect(container.querySelector('[aria-label="Retry attachment restored.csv"]')).toBeNull()
-    expect(container.querySelector('[title="disk full"]')).not.toBeNull()
+    expect(container.querySelector('[title$="disk full"]')?.getAttribute('title')).toBe(
+      'Upload failed\ndisk full'
+    )
     act(() => retry?.click())
     expect(retryTransfer).toHaveBeenCalledExactlyOnceWith(failed)
   })

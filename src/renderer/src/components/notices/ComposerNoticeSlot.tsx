@@ -95,7 +95,7 @@ const ComposerFailureNoticeSlot = ({
       ? notices.find(({ id }) => id === selected?.id)
       : undefined) ?? notices[0]
   if (!current) return null
-  const presentation = noticePresentation(current.failure)
+  const presentation = noticePresentation(current.failure, current.operation)
   const providerMessage = current.failure.diagnostics.protocol
     ? undefined
     : current.failure.responseMessage
@@ -166,7 +166,7 @@ const ComposerFailureNoticeSlot = ({
     (showDiagnostics && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
   const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
-    const action = noticePresentation(notice.failure).primaryAction
+    const action = noticePresentation(notice.failure, notice.operation).primaryAction
     return notice.source === 'session' && available('resume', notice)
       ? 'resume'
       : action && available(action, notice)
@@ -274,7 +274,7 @@ const ComposerFailureNoticeSlot = ({
             {notices
               .filter(({ id }) => id !== current.id)
               .map((notice) => {
-                const item = noticePresentation(notice.failure)
+                const item = noticePresentation(notice.failure, notice.operation)
                 const Icon =
                   notice.failure.category === 'session'
                     ? PauseCircle

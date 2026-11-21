@@ -95,7 +95,10 @@ export const useComposerNotices = (input: {
           ...failure.diagnostics,
           raw:
             [operation.message, operation.detail ?? failure.diagnostics.raw]
-              .filter((value, index, all) => value && all.indexOf(value) === index)
+              .filter(
+                (value, index, all) =>
+                  value && value !== operation.summary?.title && all.indexOf(value) === index
+              )
               .join('\n') || undefined
         }
       }
