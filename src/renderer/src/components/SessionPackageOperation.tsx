@@ -1231,6 +1231,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                             />
                             {operation.state === 'failed' &&
                             !(
+                              operation.exportBlocked &&
                               operation.kind === 'export' &&
                               operation.progress.phase === 'preparing'
                             ) ? (

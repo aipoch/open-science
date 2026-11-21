@@ -817,6 +817,7 @@ it('shows the reason and Close when export is blocked before packaging', async (
 })
 
 it.each([
+  [{ phase: 'preparing' }, 'Preparing package…'],
   [{ phase: 'saving' }, 'Saving package…'],
   [{ phase: 'importing', importStage: 'publish' }, 'Finishing import…']
 ])('retains the failed processing stage %s in the result', async (progress, label) => {
