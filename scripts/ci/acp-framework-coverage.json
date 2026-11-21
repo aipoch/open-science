@@ -1,5 +1,5 @@
 {
-  "shared": [
+  "baseline": [
     "src/main/agent-framework/registry.test.ts",
     "src/main/settings/backend-route-planner.test.ts",
     "src/main/agent-framework/native-shell-policy.test.ts",
@@ -26,7 +26,7 @@
       "src/main/settings/claude-provider-configuration.integration.test.ts"
     ]
   },
-  "frameworks": {
+  "specialized": {
     "claude-code": ["src/main/agent-framework/claude-code.test.ts"],
     "opencode": ["src/main/agent-framework/opencode.test.ts"],
     "codex": ["src/main/agent-framework/codex.test.ts"],

@@ -24,9 +24,9 @@ if (missingEnvironment.length > 0) {
   )
 }
 
-const files = [...manifest.shared, ...manifest.representative.files]
+const files = [...manifest.baseline, ...manifest.representative.files]
 if (scope === 'full') {
-  for (const frameworkFiles of Object.values(manifest.frameworks)) files.push(...frameworkFiles)
+  for (const frameworkFiles of Object.values(manifest.specialized)) files.push(...frameworkFiles)
 }
 
 const uniqueFiles = [...new Set(files)]

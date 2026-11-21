@@ -8,21 +8,21 @@ const root = resolve(import.meta.dirname, '../..')
 const manifest = JSON.parse(
   readFileSync(resolve(root, 'scripts/ci/acp-framework-coverage.json'), 'utf8')
 ) as {
-  shared: string[]
+  baseline: string[]
   representative: { framework: string; files: string[] }
-  frameworks: Record<string, string[]>
+  specialized: Record<string, string[]>
 }
 
 describe('ACP framework coverage manifest', () => {
-  it('keeps every registered framework in the full coverage scope', () => {
-    expect(Object.keys(manifest.frameworks).sort()).toEqual([...AGENT_FRAMEWORK_ID_VALUES].sort())
+  it('keeps every registered framework in specialized coverage', () => {
+    expect(Object.keys(manifest.specialized).sort()).toEqual([...AGENT_FRAMEWORK_ID_VALUES].sort())
   })
 
   it('keeps all declared coverage files in the repository', () => {
     const files = [
-      ...manifest.shared,
+      ...manifest.baseline,
       ...manifest.representative.files,
-      ...Object.values(manifest.frameworks).flat()
+      ...Object.values(manifest.specialized).flat()
     ]
     expect(files.every((file) => existsSync(resolve(root, file)))).toBe(true)
   })
