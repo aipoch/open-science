@@ -1,7 +1,7 @@
 const fs=require('node:fs'), path=require('node:path'), assert=require('node:assert/strict'), http=require('node:http')
 const {createRequire}=require('node:module')
 const req=createRequire(path.join(process.env.QA_REPO,'package.json'))
-const {_electron}=req('playwright')
+const {_electron,chromium}=req('playwright')
 const {setTimeout:sleep}=require('node:timers/promises')
 const [candidate,feedDir,feedName]=process.argv.slice(2)
 const root=fs.mkdtempSync('/tmp/quit-case-'), image=path.join(root,'Open-Science-1.3.1.AppImage')
@@ -16,6 +16,7 @@ async function main(){
  })
  await new Promise(r=>server.listen(0,'127.0.0.1',r))
  const env={...process.env,OPEN_SCIENCE_E2E_STORAGE_ROOT:path.join(root,'profile')}
+ const entry=require('./probe-quit-desktop-entry.cjs')({image,root,env,chromium})
  console.log('starting',image)
  const desk=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:45000})
  desk.process().stderr.on('data',b=>{const s=b.toString();if(/fail|error|quit|occup/i.test(s))console.log('desktop',s.slice(-800))})
@@ -26,7 +27,7 @@ async function main(){
    dialog.showMessageBox=(...args)=>{const opts=args.at(-1);console.error('QA dialog',opts.title,opts.message,opts.detail);return show(...args)}
  })
  const page=await desk.firstWindow()
- await page.waitForFunction(async()=>{try{return !!(await window.api.update.getStatus()).current}catch{return false}},{},{timeout:90000})
+ await page.waitForFunction(async()=>{try{return (await window.api.databaseStartup.getState()).phase==='ready'}catch{return false}},{},{timeout:90000})
  await page.evaluate(()=>window.api.settings.markOnboardingComplete())
  await page.reload({waitUntil:'domcontentloaded'})
  console.log('initial status',await page.evaluate(()=>window.api.update.getStatus()))
@@ -42,6 +43,13 @@ async function main(){
  for(let i=0;fs.existsSync('/proc/'+oldPid)&&i<900;i++)await sleep(100)
  assert.ok(!fs.existsSync('/proc/'+oldPid),'ordinary quit timed out')
  console.log('old PID exited',oldPid)
+ if(process.env.QA_OPEN_KIND) {
+   const kind=process.env.QA_OPEN_KIND
+   entry.open(kind)
+   await entry.verify(kind)
+   server.close()
+   return
+ }
  const next=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:45000})
  const actual=await next.evaluate(({app})=>({version:app.getVersion(),entry:process.env.APPIMAGE}))
  console.log('reopened',actual);assert.equal(actual.version,'1.3.2');assert.equal(actual.entry,image)
