@@ -1951,7 +1951,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
                 imageEditorVersionId={imageEditorItem?.selectedVersionId}
-                imageEditAction={mode === 'view' ? imageEditAction : undefined}
+                imageEditAction={
+                  mode === 'view' && !provenanceFocused ? imageEditAction : undefined
+                }
                 provenanceEntry={provenanceEntry}
                 onOpenProvenance={openProvenance}
                 onViewInContext={canViewInContext ? viewInContext : undefined}
