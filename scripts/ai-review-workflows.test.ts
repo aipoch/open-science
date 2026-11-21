@@ -669,14 +669,25 @@ describe('single Codex workflow contract', () => {
     })
   })
 
-  it('checks out the resolved immutable review SHA with a read-only token', () => {
-    const checkout = getStep(codexWorkflow, 'review', 'Checkout pull request review commit')
+  it('builds a trusted merge context from the resolved base and head', () => {
+    const checkout = getStep(codexWorkflow, 'review', 'Checkout trusted review base')
     expect(checkout.with).toMatchObject({
-      ref: '${{ inputs.review_sha }}',
+      ref: "${{ inputs.review_state == 'MERGED' && inputs.review_sha || inputs.base_sha }}",
       'persist-credentials': false
     })
     expect(checkout.with).not.toHaveProperty('allow-unsafe-pr-checkout')
     expect(codexWorkflow.jobs.review.permissions).toEqual({ contents: 'read' })
+
+    const snapshot = getStep(codexWorkflow, 'review', 'Prepare review merge context')
+    expect(snapshot.id).toBe('review_snapshot')
+    expect(snapshot.run).toContain('refs/pull/${PR_NUMBER}/head')
+    expect(snapshot.run).toContain('fetched_head')
+    expect(snapshot.run).toContain('git merge-tree --write-tree "$PR_BASE_SHA" "$PR_HEAD_SHA"')
+    expect(snapshot.run).toContain(
+      'git commit-tree "$merge_tree" -p "$PR_BASE_SHA" -p "$PR_HEAD_SHA"'
+    )
+    expect(snapshot.run).toContain('git reset --hard "$merge_sha"')
+    expect(snapshot.run).toContain('Pull request head changed while preparing the merge context.')
   })
 
   pit('bootstraps managed subscription auth on a GitHub-hosted runner', () => {
@@ -843,7 +854,7 @@ describe('single Codex workflow contract', () => {
       stepNames.indexOf('Prepare Codex authentication')
     )
     expect(stepNames.indexOf('Prepare Codex authentication')).toBeLessThan(
-      stepNames.indexOf('Checkout pull request review commit')
+      stepNames.indexOf('Checkout trusted review base')
     )
   })
 

@@ -6,7 +6,10 @@ Reviews run for ready PRs targeting main on opened, synchronize, reopened, and
 ready_for_review events, after the permissionless PR Automation Signal completes.
 The trusted default-branch listener resolves the current PR head before calling the
 review workflow; stale signals cannot select a different revision for review.
-The reviewer checks out that immutable head SHA and compares it with its merge base.
+For an open PR, the trusted runner fetches that immutable head, creates the equivalent
+clean merge tree against the resolved target base, and reviews the resulting synthetic
+merge context. The review still records and publishes against the immutable PR head SHA.
+Merged manual reviews retain their merge-commit snapshot.
 Draft PRs are skipped, including manual dispatches.
 Converting a PR back to draft cancels its automatic run for the same head through concurrency;
 the publisher also checks the current draft status before posting feedback.
