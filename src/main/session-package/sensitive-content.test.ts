@@ -623,6 +623,8 @@ it('checks export metadata values independently of their field names', () => {
     'clientToken',
     'jobContinuationToken',
     'reportSessionToken',
+    'report.session.token',
+    'provider.has.api.key',
     'REPORT_SESSION_TOKEN',
     'worker_session_token',
     'database_secret',
@@ -715,6 +717,32 @@ it('checks escapes in a long JSON string and reports the original source span', 
       expect(match.valueLength).toBe(token.length)
       expect(buildSensitiveContentEvidence(finding.text, match, 'data.json').context).not.toContain(
         'syntheticprivatevalue'
+      )
+    }
+  }
+})
+
+it('keeps a decoded assignment through whitespace across reads in the same JSON string', () => {
+  const gap = ' '.repeat(140000)
+  const key = String.raw`\u0070assword`
+  const opaque = String.raw`priv\u0061te-value`
+  for (const [content, blocked] of [
+    [key + gap + '=' + gap + opaque, true],
+    [key + '=' + gap + '[redacted]', false],
+    [key + '=' + gap + 'process.env.PASSWORD', false],
+    [key + '=' + gap + '","' + opaque, false],
+    [String.raw`report.session.\u0074oken` + '=' + gap + opaque, false]
+  ] as const) {
+    const text = '["' + content + '"]'
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += 65536) scanner.write(text.slice(i, i + 65536))
+    const finding = scanner.finish()
+    expect(Boolean(finding)).toBe(blocked)
+    if (finding) {
+      const { match, offset } = finding
+      expect(offset + match.valueOffset!).toBe(text.indexOf(opaque))
+      expect(buildSensitiveContentEvidence(finding.text, match, 'data.json').valueHash).toBe(
+        createHash('sha256').update(opaque).digest('hex')
       )
     }
   }
@@ -854,6 +882,9 @@ it.each([
   'sessionToken',
   'AWS_SESSION_TOKEN',
   'tenantOAuthSessionToken',
+  'oauth.token',
+  'my.oauth.token',
+  'req.headers.authorization',
   'JWT_SECRET',
   'tenantSigningSecret',
   'openai_api_key',

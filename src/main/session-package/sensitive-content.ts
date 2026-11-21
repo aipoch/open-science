@@ -33,6 +33,7 @@ const qualifiedCredentialSuffixes = [
   /_(?:(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key)$/,
   /_(?:api|client|jwt|signing)_?secrets?$/,
   /_(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security)_?tokens?$/,
+  /(?:^|_)headers?_(?:authorization|proxy_authorization|cookies?|set_cookie)$/,
   /(?:^|_)(?:aws|auth|authentication|oauth|oidc)_session_?tokens?$/
 ]
 
@@ -44,8 +45,9 @@ const normalizeFieldName = (key: string): string =>
     .toLowerCase()
 
 const isCredentialKey = (key: string): boolean => {
+  if (!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(key)) return false
+  key = key.replaceAll('.', '_')
   if (credentialKeyPatterns.some((rule) => rule.test(key))) return true
-  if (!/^[a-z][a-z0-9_-]*$/i.test(key)) return false
   const words = normalizeFieldName(key)
   // Both predicates and token quantities can follow a business namespace.
   if (/(?:^|_)(?:has|is|no|needs|requires|supports)_/.test(words)) return false
@@ -140,13 +142,13 @@ const findPackageTextMatch = (
     if (!jsonMetadata) return false
     // Header rules can start at a hyphenated key's suffix; recover the member name
     // before deciding whether its value is a JSON boolean (also across overlaps).
-    while (index > 0 && /[a-z0-9_-]/i.test(text[index - 1])) index--
+    while (index > 0 && /[a-z0-9_.-]/i.test(text[index - 1])) index--
     const preceding = index === 0 ? beforeText.slice(-1) : text[index - 1]
     // An overlap may begin at or inside a key. Carry its preceding character so
     // rescanning cannot turn a validated boolean field into an unquoted assignment.
     // The closing quote/colon below and whole-input validation still prove its type.
-    if (preceding !== '"' && !(index === 0 && /^[a-z0-9_-]$/i.test(preceding))) return false
-    const field = /^[a-z0-9_-]+"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
+    if (preceding !== '"' && !(index === 0 && /^[a-z0-9_.-]$/i.test(preceding))) return false
+    const field = /^[a-z0-9_.-]+"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
     if (!field) return false
     const rest = text.slice(index + field[0].length)
     if (/^(?:true|false|null|\[[ \t\r\n]*\]|\{[ \t\r\n]*\})[ \t\r\n]*(?=[,}])/.test(rest))
@@ -338,7 +340,7 @@ const findPackageTextMatch = (
     }
   }
   for (const match of text.matchAll(
-    /(?<![a-z0-9_-])(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*(?:["']\s*)?:\s*["']?([^"'\r\n}]*)/gi
+    /(?<![a-z0-9_.-])(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*(?:["']\s*)?:\s*["']?([^"'\r\n}]*)/gi
   )) {
     if (nonCredentialField(match.index)) continue
     if (privateValue(match[1], match.index + match[0].length))
@@ -353,13 +355,13 @@ const findPackageTextMatch = (
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(
-    /(?:\\+[rn]|\b)([a-z][a-z0-9_-]*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*(?:["']\s*)?[:=]\s*)/gi
+    /(?:\\+[rn]|\b)([a-z][a-z0-9_.-]*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_.-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*(?:["']\s*)?[:=]\s*)/gi
   )) {
     // A literal indexed write can identify a credential inside an ordinary object.
     let key = match[1]
     if (!isCredentialKey(key)) {
       if (!match[0].includes('[')) continue
-      for (const index of match[0].matchAll(/\[[ \t]*\\*["']([a-z0-9_-]+)\\*["']/gi)) {
+      for (const index of match[0].matchAll(/\[[ \t]*\\*["']([a-z0-9_.-]+)\\*["']/gi)) {
         if (isCredentialKey(index[1])) {
           key = index[1]
           break
@@ -519,7 +521,7 @@ const findPackageTextMatch = (
     }
   }
   for (const match of text.matchAll(
-    /(?<![\p{L}\p{N}\p{M}_-])--?([a-z][a-z0-9_-]*)(?:\s+|=)(["'](?:\\.|[^"'\\\r\n])*["']|["'][^\r\n]*$|(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+)/giu
+    /(?<![\p{L}\p{N}\p{M}_-])--?([a-z][a-z0-9_.-]*)(?:\s+|=)(["'](?:\\.|[^"'\\\r\n])*["']|["'][^\r\n]*$|(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+)/giu
   )) {
     if (!isCredentialKey(match[1])) continue
     const value = match[2].replace(/^(["'])(.*)\1$/, '$2').replace(/^["']/, '')
@@ -588,8 +590,20 @@ type TextFinding = { text: string; match: PackageTextMatch; offset: number }
 const retainedWindowStart = (text: string): number => {
   // Keep short identifiers whole so a business key's suffix cannot become a credential.
   const cut = Math.max(0, text.length - 8192)
-  const prefix = text.slice(Math.max(0, cut - 512), cut).match(/[\w%\\-]+$/)?.[0] ?? ''
+  const prefix = text.slice(Math.max(0, cut - 512), cut).match(/[\w%.\\-]+$/)?.[0] ?? ''
   return cut - prefix.length
+}
+
+// When a window ends in a credential name or separator followed by whitespace,
+// retain just the unfinished assignment and the context needed by the code rules.
+const pendingStringAssignment = (discarded: string): string => {
+  const end = discarded.trimEnd()
+  if (!end) return ''
+  const separator = /[:=]$/.test(end) ? end.slice(-1) : ''
+  const name = (separator ? end.slice(0, -1).trimEnd() : end).slice(-1025)
+  const match = /(?:^|[^\w.-])([a-z][\w.-]*)(["']?)$/i.exec(name)
+  if (!match || match[1].length > 512 || !isCredentialKey(match[1])) return ''
+  return name.slice(Math.max(0, match.index - 511)) + separator + ' '
 }
 
 // Every JSON escape represents one UTF-16 code unit. Translate only offsets
@@ -612,6 +626,7 @@ export class PackageTextScanner {
   private original?: TextFinding
   private structured?: TextFinding
   private stringTail = ''
+  private pendingAssignment = ''
   private encoded?: TextFinding
 
   private inspectString(
@@ -628,11 +643,23 @@ export class PackageTextScanner {
     const escaped = safe.includes('\\')
     const value: string = escaped ? JSON.parse('"' + safe + '"') : safe
     const cut = closed ? value.length : retainedWindowStart(value)
-    if (escaped && cut > 0) {
-      const match = scanPackageText(value, closed, false)
-      if (match && match.offset < cut) {
-        const start = jsonStringSourceOffset(safe, match.offset)
-        const valueStart = match.valueOffset ?? match.offset
+    const prefix = this.pendingAssignment
+    const window = prefix + value
+    if ((escaped || prefix) && cut > 0) {
+      const match = scanPackageText(window, closed, false)
+      const valueStart = match && (match.valueOffset ?? match.offset) - prefix.length
+      if (
+        match &&
+        valueStart !== undefined &&
+        valueStart >= 0 &&
+        match.offset < prefix.length + cut
+      ) {
+        // If the key has left the source window, anchor evidence at its real
+        // value. Never hash synthetic whitespace or include it in a file offset.
+        const start = jsonStringSourceOffset(
+          safe,
+          match.offset < prefix.length ? valueStart : match.offset - prefix.length
+        )
         const valueOffset = jsonStringSourceOffset(safe, valueStart)
         this.encoded = {
           text: safe,
@@ -640,7 +667,8 @@ export class PackageTextScanner {
           match: {
             ...match,
             offset: start,
-            length: jsonStringSourceOffset(safe, match.offset + match.length) - start,
+            length:
+              jsonStringSourceOffset(safe, match.offset + match.length - prefix.length) - start,
             valueOffset,
             valueLength:
               jsonStringSourceOffset(safe, valueStart + (match.valueLength ?? match.length)) -
@@ -648,6 +676,14 @@ export class PackageTextScanner {
           }
         }
       }
+    }
+    if (closed) this.pendingAssignment = ''
+    else if (cut > 0) {
+      const boundary = prefix.length + cut
+      this.pendingAssignment =
+        /\s/.test(window[boundary - 1]) || /\s/.test(window[boundary])
+          ? pendingStringAssignment(window.slice(0, boundary))
+          : ''
     }
     this.stringTail = closed ? '' : raw.slice(escaped ? jsonStringSourceOffset(safe, cut) : cut)
   }
