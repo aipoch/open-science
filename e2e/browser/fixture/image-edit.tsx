@@ -269,13 +269,16 @@ export function Layout(): React.JSX.Element {
           borderRight: '1px solid #8884'
         }}
       >
-        <div ref={attachHost} hidden={!active} />
-        <textarea
-          aria-label="Conversation draft"
-          hidden={active}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
+        <div className="relative">
+          <div ref={attachHost} hidden={!active} className="absolute inset-x-0 bottom-0 z-30" />
+          <textarea
+            aria-label="Conversation draft"
+            className={active ? 'invisible' : undefined}
+            inert={active || undefined}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </div>
       </section>
       <section data-testid="preview-pane" style={{ minWidth: 0, minHeight: 0 }}>
         {new URLSearchParams(location.search).has('preview') ? (

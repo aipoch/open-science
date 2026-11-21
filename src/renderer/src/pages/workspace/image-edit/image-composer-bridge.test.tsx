@@ -25,7 +25,7 @@ function Editor({ scope, history }: { scope: string; history: boolean }): React.
   return (
     <div data-editor>
       {history ? null : <div ref={setViewport} />}
-      {target ? createPortal(input, target) : input}
+      {target ? createPortal(input, target) : target === undefined ? input : null}
     </div>
   )
 }

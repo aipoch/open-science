@@ -72,7 +72,7 @@ export function useImageComposerTarget(
   scope: string,
   viewport: HTMLElement | null,
   localComposer = false
-): HTMLDivElement | undefined {
+): HTMLDivElement | null | undefined {
   const bridge = useContext(Context)
   const id = useId()
   const [placement, setPlacement] = useState<'conversation' | 'local'>()
@@ -91,7 +91,12 @@ export function useImageComposerTarget(
     if (placement === 'conversation' && registerEditor) return registerEditor({ id, scope })
     return undefined
   }, [id, scope, placement, registerEditor])
-  const host = bridge?.host
-  const owner = bridge?.editors.findLast((entry) => entry.scope === scope)
-  return host?.enabled && host.scope === scope && owner?.id === id ? host.element : undefined
+  // undefined renders locally. null defers the first mount until its destination is known.
+  if (!bridge || localComposer || placement === 'local') return undefined
+  if (!placement) return null
+  const host = bridge.host
+  if (!host?.enabled || host.scope !== scope) return undefined
+  if (!bridge.editors.some((entry) => entry.id === id && entry.scope === scope)) return null
+  const owner = bridge.editors.findLast((entry) => entry.scope === scope)
+  return owner?.id === id ? host.element : undefined
 }

@@ -172,11 +172,24 @@ test('image instructions use the left composer and preserve the conversation dra
   await page.goto('/image-edit.html?conversation')
   const chat = page.getByRole('textbox', { name: 'Conversation draft' })
   await chat.fill('My unsent conversation draft')
+  const editFocus = await page.evaluateHandle(() => {
+    const panes: (string | undefined)[] = []
+    document.addEventListener('focusin', (event) => {
+      if (
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.matches('[aria-label="Image editing instruction"]')
+      ) {
+        panes.push(event.target.closest('section')?.dataset.testid)
+      }
+    })
+    return panes
+  })
   await page.getByTestId('preview-edit-image').click()
   const left = page.getByTestId('conversation-pane')
   const right = page.getByTestId('preview-pane')
   const input = left.getByRole('textbox', { name: 'Image editing instruction' })
-  await expect(input).toBeVisible()
+  await expect(input).toBeFocused()
+  expect(await editFocus.jsonValue()).toEqual(['conversation-pane'])
   await expect(chat).toBeHidden()
   await expect(right.getByRole('textbox', { name: 'Image editing instruction' })).toHaveCount(0)
   await input.fill('Make the circle gold')
