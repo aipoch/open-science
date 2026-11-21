@@ -97,6 +97,75 @@ unrelated paths denied; a real-kernel regression checks both boundaries. The pro
 was deterministic in this check. The runtime, Notebook dispatch, isolation, and output were
 real; this check did not exercise WorkBuddy or a live model.
 
+## Installed delivery and independent R continuation preview: November 21, 2026
+
+The source used an actual macOS arm64 npm installation from `331d078d2`; the independent
+receiver used the Linux arm64 installation from `a7bb7ac56`. The functional source was the
+same. The CLI tarballs shared SHA-256
+`aef9f2a525a0b2f2c47107c77101cfd46833eba535d46bbbc2094b8899e9b662`. The macOS and Linux
+native tarball SHA-256 values were `4ce6e6100cc9e1e38756924e82dfd02e350c4f6e22ff0b88769b9dff77e7fbc7`
+and `c161e8c43ea5e881df6e5a109a42afef2b084cd3ae3a1a7754f1f1978ae0ec08`.
+
+Both used direct MCP stdio and a deterministic Provider response to test the real service,
+managed R kernel, and file operations. The CLI handled service startup and read back the
+source receipt as JSON after restart. Fresh profiles had no Projects, runtime selection, or prepared
+Python or R. The harness selected the built-in Agent, validated its local API Provider, and
+prepared only R through MCP. It used the exact runtime ID returned by discovery.
+
+- On macOS, request `b19a7318-db1d-449b-80c8-e7aa383defb8` admitted Run
+  `8b289765-fffe-493c-8768-8bc691574dca` in Session `5895006f-fbb7-466b-9b2f-05151aaf00ba`.
+  Notebook `notebook-run-1795249315441-1` completed with real R dispatch. After restarting
+  the service, CLI JSON recovered the original receipt and MCP still reported the same
+  Notebook execution. Artifact download IDs were `de33651b-7410-4219-8fea-b9aa6ced4d79`
+  and `e9258afb-69bc-488a-b054-906acdc15e47`. MCP download, delivery check and export lookup
+  (`8a7ea6a4-3d80-4b83-bb2c-76f1f822f456`) agreed on the source files. Independent calculation
+  confirmed four observations per group, means of 13 and 17 cm, and a difference of 4 cm.
+- Only `greenhouse-study.science` crossed as research content into a fresh Debian 13 arm64
+  container. It ran as an unprivileged user with Node `24.22.3`, its own Secret Service, and no
+  host directory mounts. A preliminary container with a private cgroup namespace stopped
+  before dispatch with `NOTEBOOK_MEMORY_UNAVAILABLE`. The successful container used host
+  cgroup visibility and allowed nested namespaces and private procfs mounts. Bubblewrap and
+  the product memory check both passed. No application isolation was disabled.
+- The receiver matched the source package hash, queried import `57d51a04-230a-453c-9c57-247b56017ec3`,
+  and confirmed that Session `import-7398a61a-08f1-41bb-b526-0db7c4e4d79f` was read-only
+  with both historical Artifacts. Its fixture operator then created and queried Fork
+  `e6ffb021-d6d2-4ca6-ba0e-4db3ee9656a2`. Writable Session `ebbd118e-2be5-4063-90da-a85c209f24ce`
+  admitted fresh request `bb61ebd1-ef44-4afd-8295-dce5c1b707bc` as Run
+  `15dd888e-7027-4747-8c5e-125486766747`. Notebook `notebook-run-1795249827552-1` read the migrated
+  input, dispatched R, and produced new report/table Artifacts. MCP completed delivery and
+  verified export `d6dd1426-2ce6-483d-8bbf-9a0f9f478d1a`. The original Session remained read-only.
+  Independent calculation confirmed sample variance `20/3` cm² and range `6` cm in both groups.
+  With `sleep` as PID 1, the test container did not reap exited children; CLI `stop` timed out
+  checking the exited service process. A full restart of the same container preserved the
+  profile. MCP recovered the original request, Run and Notebook dispatch without a new submission.
+
+| Verified file                 |   Bytes | SHA-256                                                            |
+| ----------------------------- | ------: | ------------------------------------------------------------------ |
+| `greenhouse_report.md`        |     183 | `a8232825b8b8fff9d7e680547bc51a68157e01be82b4e8e78b68b4e72d3c4af8` |
+| `greenhouse_results.csv`      |      61 | `81fff5f2a1d733a530e83e7b1479b4334d3003ed84dee0dd065454a322665838` |
+| `greenhouse-study.science`    |  57,623 | `a90810d78d12684379d70b6fb46026ae4b8a6052923c4a3170089d005dc96e4e` |
+| `greenhouse_followup.md`      |     198 | `94dd66cfbc2a6874370c20ba65c4df9c60b88847de6278e7fa7c4788e52e3fd1` |
+| `greenhouse_variance.csv`     |     101 | `92e7e8dcac04a52f3b8ac201fdab4efc985a9f0d2d5da896ccfbc19ac2dec59a` |
+| `greenhouse-followup.science` | 169,519 | `d9c262e96e6f38b4ddcb4cf9fb6ad50b3d6f9e0fbe04b7d1a280b3fa3dc00d3f` |
+
+Every listed inventory record matched the archived bytes (19 source records and 30 receiver
+records). Each archive contained its delivered report and table. The follow-up files came
+from the new Run; the receiving model was configured independently.
+
+In a separate live-model run, Qwen3.5-9B used the same MCP runtime review on Run
+`c7e99275-2dbf-41d1-8230-e9262f9a9e9d`. The operator declined a shell write and, later, a
+report overwrite that violated the test request. It published two Artifacts from
+`notebook-run-1795249271838-4`; the last Notebook attempt remained interrupted even though
+the Run ended. This is partial live-model evidence, not a completed handoff. An earlier
+request using a display label in place of `runtimeId` correctly failed before Provider
+dispatch but was misclassified as continuable. `c11ceb790` fixed the projection, and real
+MCP stdio and CLI JSON both reported failure without a continuation action.
+
+The direct MCP preview validates the installed service and migration mechanics. It does not
+replace #80 and #81's live host acceptance from the short README prompt. WorkBuddy 5.9.4's
+separate test connector requires the host's first-use Trust action; the existing connectors
+were preserved.
+
 ## WorkBuddy setup revision: macOS arm64, November 21, 2026
 
 - Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local
@@ -630,9 +699,11 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 ## Remaining gates
 
 The original pre-release README runs are recorded in #66 and #67. They preceded the revised short
-prompt and setup capabilities. WorkBuddy verification of the revised flow currently reaches the
-human R kernel review; completing that study and repeating independent migration with a real
-research package are separate checks. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+prompt and setup capabilities. The installed direct MCP preview now completes real R dispatch,
+delivery, and migration in an independent Linux container with a deterministic Provider. The
+latest WorkBuddy conversation from the short prompt and a receiving Agent's migration of that
+conversation's package are still the separate #80 and #81 gates. The new WorkBuddy connector
+requires first-use Trust. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
 supersedes [#4519](https://github.com/aipoch/open-science/pull/4519) to follow the upstream branch
 naming rule. It requires the upstream checks and CI owner review of the Windows routing
 registration before merge.
