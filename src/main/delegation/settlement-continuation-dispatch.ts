@@ -1,5 +1,9 @@
 import type { AcpPromptRequest } from '../../shared/acp'
-import { withTaskPromptOwner, type TaskContinuationTracker } from '../../shared/task-continuation'
+import {
+  withDelegationSettlementPrompt,
+  withTaskPromptOwner,
+  type TaskContinuationTracker
+} from '../../shared/task-continuation'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
 
@@ -44,7 +48,9 @@ const createDelegationSettlementContinuationDispatch =
       }
       try {
         return await options.sendAppContinuationObserved(
-          withTaskPromptOwner(prompt, taskRunId),
+          taskRunId
+            ? withDelegationSettlementPrompt(withTaskPromptOwner(prompt, taskRunId))
+            : prompt,
           () => {
             providerAccepted = true
             onProviderDispatched?.()

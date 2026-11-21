@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { isDelegationSettlementPrompt } from '../../shared/task-continuation'
 import {
   markTrustedNotebookBindingPermissionPrompts,
   taskNotebookRuntimeSelection
@@ -746,6 +747,9 @@ const composeAcpRuntimePromptOwners = (
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
                 ...(applicationPrompt ? { applicationPrompt } : {}),
+                ...(continuationAdmission && isDelegationSettlementPrompt(request)
+                  ? { delegationSettlement: true }
+                  : {}),
                 ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
               },
               continuationAdmission

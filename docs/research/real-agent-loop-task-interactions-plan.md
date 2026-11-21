@@ -182,10 +182,12 @@ reaches the provider, but it does not restore the original Attempt's Notebook ex
 
 When background child settlement wakes the main agent, the scheduler uses the Task tracker to
 journal a new Run and `requestId` before provider dispatch. The original `get_run` lists the new
-Run in `continuations`. The new Run uses the current logical task policy; the original Run remains
-unchanged. Notebook execution and stops for a shared prompt are queried in each Run's execution
-window. A tracked Run interrupted by restart reports `process_restarted`; live waits expire and
-are not replayed.
+Run in `continuations`. The runtime rechecks that the completed parent prompt, its Message Branch,
+and its Runtime Segment are still current when admitting the wake. A changed path or pending
+network approval prevents dispatch and leaves a reason on the continuation Run. The new Run uses
+the current logical task policy; the original Run remains unchanged. Notebook execution and stops
+for a shared prompt are queried in each Run's execution window. A tracked Run interrupted by restart
+reports `process_restarted`; live waits expire and are not replayed.
 
 Root Plans and AskUser created on one of these Runs retain the actual Run ID, including when
 several Runs share a prompt or timestamp. Run-scoped lookups and question responses cannot use

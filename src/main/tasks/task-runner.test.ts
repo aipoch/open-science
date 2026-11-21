@@ -61,6 +61,8 @@ import {
   type TaskSessionPort
 } from './task-runner'
 import { TaskSubmissions } from './task-submissions'
+import { TaskRunnerError } from './task-runner-error'
+import { DelegationSettlementAdmissionError } from '../../shared/task-continuation'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
@@ -130,6 +132,87 @@ const configuredSettings: SettingsSnapshot = {
 }
 
 class RetainedRunEventPayload {}
+
+it('retains safe causes for a failed Task continuation after reopening its journal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'task-continuation-failure-'))
+  temporaryRoots.push(root)
+  const journal = new FileTaskRunJournal(root)
+  await journal.replace([
+    {
+      id: 'original-run',
+      projectId: project.id,
+      sessionId: session.id,
+      cwd: session.cwd,
+      status: 'completed',
+      startedAt: 1,
+      completedAt: 2,
+      promptMessageId: 'originating-prompt',
+      artifacts: [],
+      preferredComputeHostIds: []
+    }
+  ])
+  const runner = createRunner({ createId: randomUUID, runJournal: journal })
+  const cases = [
+    {
+      expected: {
+        failureCode: undefined,
+        error: expect.stringContaining('parent prompt')
+      },
+      error: new TaskRunnerError('interaction_revision_conflict', 'Private branch details')
+    },
+    {
+      expected: { error: expect.stringContaining('parent prompt') },
+      error: new Error('Private wrapper details', {
+        cause: new DelegationSettlementAdmissionError()
+      })
+    },
+    {
+      expected: { error: expect.stringContaining('waiting for network approval') },
+      error: new Error('Private wrapper details', {
+        cause: new DelegationSettlementAdmissionError('network_approval_pending')
+      })
+    },
+    {
+      expected: { error: expect.stringContaining('before the Provider accepted') },
+      error: new Error('Private details')
+    },
+    {
+      expected: { error: expect.stringContaining('turn limit') },
+      accepted: true,
+      stopReason: 'max_turn_requests'
+    }
+  ]
+  const outcomes: Array<{ id: string; expected: object }> = []
+  try {
+    for (const [index, { expected, error, accepted, stopReason }] of cases.entries()) {
+      const next = await runner.beginContinuation(
+        'original-run',
+        'originating-prompt',
+        `next-${index}`
+      )
+      if (accepted) next.onProviderDispatched()
+      await next.settle({ error, stopReason })
+      outcomes.push({ id: next.run.id, expected })
+    }
+  } finally {
+    await runner.dispose()
+  }
+  const restored = createRunner({ runJournal: journal })
+  try {
+    await restored.initialize()
+    for (const { id, expected } of outcomes) {
+      const run = restored.getRun(id)
+      expect(run).toMatchObject({
+        status: 'failed',
+        continuedFromRunId: 'original-run',
+        ...expected
+      })
+      expect(run.error).not.toContain('Private')
+    }
+  } finally {
+    await restored.dispose()
+  }
+})
 
 type TaskRunnerOverrides = Omit<
   Partial<TaskRunnerDependencies>,

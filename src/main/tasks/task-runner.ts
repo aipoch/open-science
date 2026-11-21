@@ -105,10 +105,21 @@ import type {
   TaskRunJournalEntry,
   TaskRunPermissionRecord
 } from './task-run-journal'
-import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import {
+  DelegationSettlementAdmissionError,
+  type TaskContinuationTracker
+} from '../../shared/task-continuation'
 import { TaskRunnerError } from './task-runner-error'
 
 const log = createLogger('task-runner')
+
+const taskRunLimitMessage = (stopReason?: string): string | undefined => {
+  if (stopReason === 'max_tokens')
+    return 'The model reached its output token limit before completing this Run.'
+  if (stopReason === 'max_turn_requests')
+    return 'The model reached its turn limit before completing this Run. Check the model and context window for this Session.'
+  return undefined
+}
 
 type TaskProjectPort = {
   list(): Promise<Project[]>
@@ -1821,16 +1832,28 @@ class TaskRunner {
         run.completedAt = this.dependencies.now()
         run.output = captured.assistantOutput || undefined
         run.artifacts = captured.publishedArtifacts
-        const failed =
-          error !== undefined ||
-          !run.providerAccepted ||
-          stopReason === 'max_tokens' ||
-          stopReason === 'max_turn_requests'
+        const limitMessage = taskRunLimitMessage(stopReason)
+        const failed = error !== undefined || !run.providerAccepted || limitMessage !== undefined
         this.stopHeartbeat(run)
         try {
-          if (failed)
+          if (failed) {
+            // The coordinator wraps failures from the prompt admission guard with a cause.
+            const admission =
+              error instanceof DelegationSettlementAdmissionError
+                ? error
+                : error instanceof Error &&
+                    error.cause instanceof DelegationSettlementAdmissionError
+                  ? error.cause
+                  : undefined
             run.error =
-              'The Task continuation did not finish. Check the original interaction and Session.'
+              admission?.message ??
+              (error instanceof TaskRunnerError && error.code === 'interaction_revision_conflict'
+                ? DelegationSettlementAdmissionError.scopeChangedMessage
+                : (limitMessage ??
+                  (run.providerAccepted
+                    ? 'The continuation failed after the Provider accepted it. Check the Session for any partial result before continuing.'
+                    : 'The continuation stopped before the Provider accepted it. Check the original Run and current Session before continuing.')))
+          }
           if (stopReason === 'cancelled' && !failed) run.cancelledAt = run.completedAt
           await this.persistTerminalRun(
             run,
@@ -2620,17 +2643,8 @@ class TaskRunner {
   ): Promise<void> {
     const stopReason = run.eventAccumulator?.runtimeStopReason
     const runtimeCancelled = stopReason === 'cancelled'
-    if (promptError === undefined) {
-      if (stopReason === 'max_tokens') {
-        promptError = new Error(
-          'The model reached its output token limit before completing this Run.'
-        )
-      } else if (stopReason === 'max_turn_requests') {
-        promptError = new Error(
-          'The model reached its turn limit before completing this Run. Check the model and context window for this Session.'
-        )
-      }
-    }
+    const limitMessage = taskRunLimitMessage(stopReason)
+    if (promptError === undefined && limitMessage) promptError = new Error(limitMessage)
     const acceptedSession =
       promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 

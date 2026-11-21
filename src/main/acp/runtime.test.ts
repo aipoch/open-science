@@ -49,6 +49,7 @@ import {
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
+import { createDelegationSettlementContinuationDispatch } from '../delegation/settlement-continuation-dispatch'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
@@ -34909,6 +34910,169 @@ it('dispatches a recovered child answer without granting Notebook execution', as
     await httpHost.close()
     await rpc.close()
     await service.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('dispatches a tracked child settlement after the originating prompt has completed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-child-settlement-'))
+  const child = new FakeAgentProcess()
+  const provider = startFakeAgent(child, ['settlement-session'])
+  const projectId = 'settlement-project'
+  const promptMessageId = 'originating-prompt'
+  const repository = new SessionRepository(root, {
+    hasLiveRuntimeSession: () => true,
+    hasActiveRuntimePrompt: () => true
+  })
+  const persistence = new SessionPersistenceCoordinator(repository, {
+    syncSession: async () => [],
+    softDeleteSession: async () => 'deleted',
+    restoreSession: async () => undefined,
+    softDeleteProject: async () => 'deleted',
+    reconcileActiveSessions: async () => undefined,
+    reconcileProjectSessions: async () => undefined,
+    markReconciliationIncomplete: () => undefined
+  })
+  let changeBranchBeforeWrite = false
+  const sessions = new RuntimeSessionOwner({
+    loadSession: (scope) =>
+      persistence.loadSessionForContinuation(scope.projectId, scope.sessionId),
+    mutateSession: async (scope, mutate) => {
+      if (changeBranchBeforeWrite) {
+        changeBranchBeforeWrite = false
+        await persistence.mutateRuntimeSession(scope, (session) =>
+          applySessionConversationCommands(session, [
+            {
+              id: 'fork-parent-before-settlement',
+              kind: 'fork-message',
+              timestamp: Date.now(),
+              messageId: promptMessageId,
+              parentBranchId: scope.messageBranchId,
+              branchId: 'revised-parent-branch'
+            }
+          ])
+        )
+      }
+      return persistence.mutateRuntimeSession(scope, mutate)
+    },
+    finalizeArtifacts: async () => []
+  })
+  const runtime = new AcpRuntime({
+    appVersion: 'test',
+    defaultCwd: root,
+    resolveBackend: () => ({
+      framework: { ...opencodeFramework, spawn: () => asAgentProcess(child) },
+      executablePath: '/agent',
+      env: {}
+    }),
+    runtimeSessions: sessions,
+    callbacks: { onEvent: (event) => sessions.accept(event) }
+  })
+  try {
+    const { sessionId } = await runtime.createSession({ projectId, cwd: root })
+    const initial = await repository.saveSession(
+      materializeSessionConversationGraph({
+        id: sessionId,
+        projectId,
+        title: 'Synthetic study',
+        cwd: root,
+        status: 'running',
+        agentFrameworkId: 'opencode',
+        activeRun: { promptMessageId, startedAt: 1 },
+        messages: [
+          {
+            id: promptMessageId,
+            role: 'user',
+            content: 'Coordinate the background cohort check.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        filesRevision: 0,
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+    const provenanceContext = getActiveConversationContext(
+      initial.conversationGraph!,
+      promptMessageId
+    )!
+    await runtime.sendPrompt({ sessionId, text: initial.messages[0].content, provenanceContext })
+    const previous = await persistence.loadSessionForContinuation(projectId, sessionId)
+    expect(previous).toMatchObject({
+      status: 'idle',
+      runtimeTranscriptLastRun: { promptMessageId }
+    })
+    expect(previous?.messages.find(({ id }) => id === promptMessageId)?.turnOutcome?.kind).toBe(
+      'completed'
+    )
+    expect(previous?.activeRun).toBeUndefined()
+    expect(provider.prompts).toHaveLength(1)
+
+    const text = 'Delegated work settlement update: the cohort check completed.'
+    await expect(
+      runtime.sendAppContinuation({ sessionId, text, provenanceContext, suppressUserMessage: true })
+    ).rejects.toThrow('Runtime Session turn is unknown or superseded')
+    expect(provider.prompts).toHaveLength(1)
+
+    let dispatchFailure: unknown
+    let tracked = false
+    const dispatched = vi.fn()
+    const settled = vi.fn()
+    const dispatch = createDelegationSettlementContinuationDispatch({
+      sendAppContinuationObserved: (request, accepted) =>
+        runtime.sendAppContinuation(request, undefined, undefined, undefined, undefined, accepted),
+      trackTaskContinuation: async (_identity, send) => {
+        try {
+          const result = await send(dispatched, tracked ? 'settlement-task-run' : undefined)
+          settled(result.stopReason)
+          return result
+        } catch (error) {
+          dispatchFailure = error
+          throw error
+        }
+      },
+      onPromptEnded: () => {}
+    })
+    const wake = {
+      projectId,
+      sessionId,
+      originatingPromptId: promptMessageId,
+      rootFrameId: provenanceContext.rootFrameId,
+      rootBranchId: provenanceContext.messageBranchId,
+      runtimeSegmentId: provenanceContext.runtimeSegmentId,
+      promptId: 'wake-on-settlement',
+      text
+    }
+    // The tracker can forward a non-Task wake without a Run. It must not gain this admission.
+    await dispatch(wake)
+    expect(dispatchFailure).toMatchObject({ message: expect.stringContaining('superseded') })
+    expect(provider.prompts).toHaveLength(1)
+    dispatchFailure = undefined
+    tracked = true
+    await dispatch(wake)
+    if (dispatchFailure) throw dispatchFailure
+    expect(provider.prompts).toHaveLength(2)
+    expect(provider.prompts[1].text).toContain(text)
+    expect(dispatched).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledExactlyOnceWith('end_turn')
+    const durable = await persistence.loadSessionForContinuation(projectId, sessionId)
+    expect(durable?.status).toBe('idle')
+    expect(durable?.activeRun).toBeUndefined()
+    expect(durable?.messages.filter(({ role }) => role === 'user')).toHaveLength(1)
+
+    changeBranchBeforeWrite = true
+    await dispatch({ ...wake, promptId: 'wake-after-edit' })
+    expect(dispatchFailure).toMatchObject({ message: expect.stringContaining('no longer current') })
+    expect(dispatched).toHaveBeenCalledOnce()
+    expect(provider.prompts).toHaveLength(2)
+    const revised = await persistence.loadSessionForContinuation(projectId, sessionId)
+    expect(revised.conversationGraph?.frames[0].activeBranchId).toBe('revised-parent-branch')
+    expect(revised.activeRun).toBeUndefined()
+  } finally {
+    await runtime.shutdownForQuit()
     await rm(root, { recursive: true, force: true })
   }
 })
