@@ -66,6 +66,39 @@ first-use Trust, so no MCP call or research submission is attributed to that con
 Linux replay above used the direct MCP fixture package, not a WorkBuddy-produced archive.
 Tickets #80 and #81 therefore remain open. No package was published to npm.
 
+### Installed AskUser recovery and live task delegation
+
+Both npm builds from `89010daee` passed installed resolution, native loading, and startup.
+The shared CLI tarball digest was `678f95559eaa7bdfe0ae47e41f7e8b7142694eaf51f75327b2d747125121557b`;
+macOS and Linux arm64 native digests were `d6a225a1fc17aca50c0f5cb3bd9cf17c8c7dea22a6927e74661818ab27a341a9`
+and `e96626b8a03df5ffccf7e10b4b7aa7a527460d017793d14a14e08515702ea2ae`.
+
+- With the actual macOS service, local MCP stdio and a deterministic Provider, #73 reproduced
+  a delegated question whose new Attempt failed before provider dispatch after an interrupted
+  service. On `89010daee`, the restarted service retained request
+  `08ef9662-866b-4ebe-9d3f-78aae74b7468`, original Run `dafdef0e-6631-4297-88d6-8a8a3af8000e`,
+  question revision and source Attempt. The relayed answer drove new Attempt
+  `attempt-0b9a1539-44be-441b-acf6-31f77c397f0d` to completion. Repeating the same answer
+  returned `changed: false`; the Provider received exactly one continuation with the answer.
+  Disconnecting only MCP also passed and retained the same service PID. An explicit clean
+  shutdown expires an unresolved live question. The regression checks that the recovered
+  child can receive the answer without reacquiring the original Notebook authority.
+- In a separate live model run on macOS `10186febe`, OpenCode configured Kilo and prepared R
+  through MCP. The default relay test reached an R runtime review without kernel dispatch but
+  the service was no longer running after that headless host turn ended. The next call
+  recovered the failed Run and refused the expired approval instead of resubmitting. The
+  operator started the same profile independently using the CLI and separately authorized
+  a new synthetic study with task-local delegation. Request `gh-r-run-20261121-b1`, Run
+  `e7118d00-8954-431e-b8fd-768a32147efc`, used a scoped `delegated_agent` review response
+  and completed Notebook `notebook-run-1795253184772-1` with managed R. OpenCode downloaded
+  and verified two Artifacts through MCP (`20fe0c57-f2b5-40d2-bf0a-7c25501e21d1` and
+  `9a410b72-b58f-45c4-a021-9789fba52d5c`). The host paused after downloading; the test operator
+  completed the handoff through direct MCP stdio on the existing Run. Export
+  `34a3b750-103b-4e53-b448-33110d38f0e6` delivered `greenhouse-study.science` (73,115 bytes,
+  SHA-256 `928d66e7b019bf2920802f5d0b9ec31d1f0b18330b9efa91d760f0b14198293d`). All 19 archive
+  inventory records and both downloaded files matched; independent calculation reproduced the
+  counts, group means and 4 cm difference. The WorkBuddy connector still needs its first connection.
+
 ## Task setup preview: Linux arm64, November 21, 2026
 
 The npm build from `ee0edc803` includes [#77](https://github.com/guch96/open-science/issues/77)
