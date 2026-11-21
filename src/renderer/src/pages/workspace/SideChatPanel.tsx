@@ -9,7 +9,10 @@ import { annotationValidationMessage } from './annotations/annotation-validation
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
-import type { ComposerNotice } from '@/components/notices/composer-notice-catalog'
+import {
+  isUnclassifiedRequestFailure,
+  type ComposerNotice
+} from '@/components/notices/composer-notice-catalog'
 import { useSettingsStore } from '@/stores/settings-store'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
@@ -267,7 +270,9 @@ const SideChatPanel = ({
       source: 'operation',
       occurredAt: 0,
       failure,
-      ...(failure.responseMessage || failure.diagnostics.providerExcerpt
+      ...(failure.responseMessage ||
+      failure.diagnostics.providerExcerpt ||
+      isUnclassifiedRequestFailure(failure)
         ? {}
         : { summary: { title: view.error } })
     })

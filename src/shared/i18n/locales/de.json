@@ -7926,6 +7926,7 @@
     "The connection closed before the model finished replying. Retry the request.": "Die Verbindung wurde vor Abschluss der Modellantwort geschlossen. Wiederholen Sie die Anfrage.",
     "The model response could not be parsed": "Die Modellantwort konnte nicht verarbeitet werden",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "Der Modellanbieter hat eine ungültige Antwort zurückgegeben. Prüfen Sie die Protokolleinstellungen oder versuchen Sie es erneut.",
+    "Request failed": "Anfrage fehlgeschlagen",
     "Model request failed": "Modellanfrage fehlgeschlagen",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Der Modellanbieter konnte die Anfrage nicht abschließen. Versuchen Sie es erneut oder prüfen Sie die Anbietereinstellungen.",
     "The input is too long": "Die Eingabe ist zu lang",

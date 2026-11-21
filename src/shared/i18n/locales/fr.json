@@ -8096,6 +8096,7 @@
     "The connection closed before the model finished replying. Retry the request.": "La connexion s’est fermée avant la fin de la réponse du modèle. Réessayez la requête.",
     "The model response could not be parsed": "La réponse du modèle n’a pas pu être analysée",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "Le fournisseur de modèle a renvoyé une réponse incorrecte. Vérifiez les paramètres du protocole ou réessayez.",
+    "Request failed": "Échec de la requête",
     "Model request failed": "La requête au modèle a échoué",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Le fournisseur de modèle n’a pas pu terminer la requête. Réessayez ou vérifiez ses paramètres.",
     "The input is too long": "Le contenu saisi est trop long",

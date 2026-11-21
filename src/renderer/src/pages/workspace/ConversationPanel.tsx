@@ -1194,6 +1194,10 @@ const ConversationPanel = ({
         blocksSend: true,
         ...(labSignInExpired
           ? {
+              summary: {
+                title: t('Model provider error'),
+                description: t('Lab sign-in expired. Sign in again.')
+              },
               failure: {
                 category: 'configuration' as const,
                 reason: 'configuration/auth-failed' as const,

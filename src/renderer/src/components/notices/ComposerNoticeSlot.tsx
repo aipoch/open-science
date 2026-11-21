@@ -100,27 +100,18 @@ const ComposerFailureNoticeSlot = ({
   const providerMessage = current.failure.diagnostics.protocol
     ? undefined
     : current.failure.responseMessage
-  const excerpt = providerErrorExcerpt(
-    current.failure.diagnostics.providerExcerpt ??
-      providerMessage ??
-      (current.failure.reason === 'input/context-overflow'
-        ? current.failure.diagnostics.raw
-        : undefined)
-  )
-  const title =
-    current.summary?.title ??
-    (providerMessage && !excerpt ? t('Model provider error') : t(presentation.titleKey))
+  const excerpt =
+    current.failure.reason === 'input/context-overflow'
+      ? providerErrorExcerpt(current.failure.diagnostics.raw)
+      : undefined
+  const title = current.summary?.title ?? t(presentation.titleKey)
   const description = current.summary
     ? (current.summary.description ?? '')
     : excerpt
       ? `${t(presentation.descriptionKey)} ${excerpt}`
       : current.source === 'session' && current.failure.diagnostics.protocol
         ? t('This turn was interrupted. Resume to continue.')
-        : providerMessage
-          ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
-            ? ''
-            : providerMessage
-          : t(presentation.descriptionKey)
+        : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
@@ -317,16 +308,7 @@ const ComposerFailureNoticeSlot = ({
                         setExpanded(false)
                       }}
                     >
-                      <TruncatedText
-                        text={
-                          notice.summary?.title ??
-                          (notice.failure.responseMessage &&
-                          !notice.failure.diagnostics.protocol &&
-                          !providerErrorExcerpt(notice.failure.responseMessage)
-                            ? t('Model provider error')
-                            : t(item.titleKey))
-                        }
-                      />
+                      <TruncatedText text={notice.summary?.title ?? t(item.titleKey)} />
                     </button>
                     {primaryAction(notice) ? actionButton(primaryAction(notice)!, notice) : null}
                   </li>

@@ -1,3 +1,5 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type {
   ClassifiedFailure,
   FailureCategory,
@@ -230,6 +232,11 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
+// Older saved outcomes may only have the outer JSON-RPC code. It identifies a failed
+// request, but says nothing about which service produced its diagnostic text.
+export const isUnclassifiedRequestFailure = (failure: ClassifiedFailure): boolean =>
+  failure.category === 'internal' && !failure.reason && failure.diagnostics.code === '-32603'
+
 export const noticePresentation = (
   failure: ClassifiedFailure,
   operation?: string
@@ -243,9 +250,23 @@ export const noticePresentation = (
       secondaryActions: [],
       feedback: 'none'
     }
+  if (isUnclassifiedRequestFailure(failure))
+    return {
+      ...noticeCatalog.internal,
+      titleKey: 'Request failed',
+      descriptionKey: 'The action could not be completed. See details and try again.'
+    }
   const presentation =
     (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
-  return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation
+  if (!failure.responseMessage) return presentation
+  return {
+    ...presentation,
+    titleKey:
+      failure.diagnostics.protocol || providerErrorExcerpt(failure.responseMessage)
+        ? presentation.titleKey
+        : 'Model provider error',
+    feedback: 'none'
+  }
 }
 
 export type ComposerNotice = Readonly<{
@@ -287,10 +308,15 @@ export const formatNoticeDiagnostics = (
   [
     title,
     ...(description ? [description] : []),
-    ...Object.entries(notice.failure.diagnostics)
+    ...Object.entries({
+      ...notice.failure.diagnostics,
+      raw: notice.failure.diagnostics.raw ?? notice.failure.responseMessage
+    })
       .filter(
         ([key, value]) =>
           value !== undefined && (key !== 'raw' || (value !== title && value !== description))
       )
-      .map(([key, value]) => (key === 'raw' ? String(value) : `${key}: ${value}`))
+      .map(([key, value]) =>
+        key === 'raw' ? redactSensitiveText(String(value)) : `${key}: ${value}`
+      )
   ].join('\n')

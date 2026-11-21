@@ -71,7 +71,33 @@ describe('turn outcome notice action ownership', () => {
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 
-  it('shows the provider response directly without an application report action', () => {
+  it.each([
+    ['internal', 'Request failed'],
+    ['service', 'Model provider error']
+  ] as const)('keeps the opaque ACP response in Details for category %s', (category, title) => {
+    const body = '{"vendor_detail":"stream ended","api_key":"private-value"}'
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category,
+        ...(category === 'service' ? { responseMessage: body } : {}),
+        diagnostics: { code: '-32603', raw: 'Internal error: ' + body }
+      }
+    })
+
+    expect(container.querySelector('h2')?.textContent).toBe(title)
+    expect(container.querySelector('[role="alert"], [role="status"]')?.textContent).not.toContain(
+      'stream ended'
+    )
+    const details = container.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.querySelector('pre')?.textContent).toContain('stream ended')
+    expect(details?.querySelector('pre')?.textContent).toContain('-32603')
+    expect(container.textContent).not.toContain('private-value')
+  })
+
+  it('keeps a saved provider message in Details when no raw diagnostic was stored', () => {
     render({
       kind: 'failed',
       settledAt: 1,
@@ -82,7 +108,10 @@ describe('turn outcome notice action ownership', () => {
       }
     })
     expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
-    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+    expect(container.querySelector('[role="status"]')?.textContent).not.toContain(
+      'Example service is unavailable'
+    )
+    expect(container.querySelector('details pre')?.textContent).toContain(
       'Example service is unavailable'
     )
     expect(container.textContent).toContain('status: 503')
