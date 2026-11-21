@@ -11,6 +11,17 @@ export type SetTaskInteractionModeRequest = {
   interactionMode: TaskInteractionMode
 }
 
+export type TaskDelegatedInteraction = {
+  frameId: string
+  attemptId: string
+  branchId: string
+  attemptStatus: 'running' | 'completed' | 'cancelled' | 'error'
+  continuation?: {
+    attemptId: string
+    status: TaskDelegatedInteraction['attemptStatus'] | 'unconfirmed'
+  }
+}
+
 export type TaskNotebookReviewLanguage = 'python' | 'r' | 'repl' | 'bash'
 
 export type TaskInteractionReference = {
@@ -24,6 +35,7 @@ export type TaskInteractionReference = {
   branchId?: string
   revision: number
   interactionPolicy?: TaskInteractionPolicy
+  delegated?: TaskDelegatedInteraction
   notebookReview?: { kind: 'runtime' | 'code'; language: TaskNotebookReviewLanguage }
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string

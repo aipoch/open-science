@@ -2113,6 +2113,10 @@ class AcpRuntimeCoordinator {
     return this.sessionRuntimes.get(sessionId)?.getTaskPermissions(sessionId, promptMessageId) ?? []
   }
 
+  get delegateInteractions(): RootDelegatedWorkControl['taskInteractions'] {
+    return this.delegatedWork?.taskInteractions
+  }
+
   respondTaskPermission(
     ...args: Parameters<AcpRuntime['respondTaskPermission']>
   ): Promise<boolean> {

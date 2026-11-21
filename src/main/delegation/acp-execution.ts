@@ -93,6 +93,7 @@ type AcpDelegateRuntime = Readonly<{
     profile: PermissionProfileId
   }): Promise<unknown>
   respondToPermission(response: AcpPermissionResponse): Promise<unknown>
+  respondTaskPermission?: import('../acp/runtime').AcpRuntime['respondTaskPermission']
   deleteSession(request: { sessionId: string }): Promise<unknown>
   shutdownForQuit(): Promise<{ reaped: boolean }>
 }>
@@ -446,6 +447,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           providerToolName: request.providerToolName,
           isMcp: request.isMcp,
           toolKind: request.toolKind,
+          ...(!request.appOwned && runtime?.respondTaskPermission
+            ? { taskBranchId: activeTurn?.messageBranchId ?? scope?.provenance.messageBranchId }
+            : {}),
           options: request.options.map(({ optionId, name, kind, scope }) => ({
             optionId,
             name,
@@ -789,12 +793,27 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         }
         await runtime.setPermissionProfile({ sessionId: providerSessionId, profile })
       },
-      async respondToPermission(response: DelegatePermissionResponse) {
+      async respondToPermission(response: DelegatePermissionResponse, decision) {
         if (!writable || !runtime || !pendingPermissions.delete(response.requestId)) {
           throw new Error(`permission request is not active: ${response.requestId}`)
         }
         try {
-          await runtime.respondToPermission(response)
+          if (decision) {
+            const prompt = activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId
+            if (
+              !providerSessionId ||
+              !prompt ||
+              !response.optionId ||
+              !(await runtime.respondTaskPermission?.(
+                providerSessionId,
+                prompt,
+                response.requestId,
+                response.optionId,
+                decision
+              ))
+            )
+              throw new Error('The child permission is no longer active.')
+          } else await runtime.respondToPermission(response)
         } catch (error) {
           if (writable && !terminalSettled && !cancelRequested) {
             pendingPermissions.add(response.requestId)

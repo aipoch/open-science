@@ -306,10 +306,11 @@ open-science project create "First review" --json
 open-science run --project "First review" --prompt "Review the evidence in this project" --wait --jsonl
 ```
 
-To use Claude Code, Codex, OpenCode, CodeBuddy, or Pi, select the Agent in Settings. Choose
-Install or Repair to download its app-managed runtime from npm. Codex can reuse a compatible
-local CLI and download just its ACP adapter. The CLI also supports installing Codex explicitly
-as shown below.
+To use Claude Code, Codex, OpenCode, CodeBuddy, or Pi, choose an Agent runtime from
+`list_runtimes`. Both MCP and `open-science tools call` support `prepare_runtime` and
+`select_runtime` for an explicitly chosen framework. In Settings, choose Install or Repair
+to download its app-managed runtime from npm. Codex can also reuse a compatible local CLI
+and download just its ACP adapter. The optional commands below are specific to Codex.
 
 <a id="first-run-setup-codex"></a>
 
@@ -762,6 +763,15 @@ original Run remains interrupted. When Plan or permission recovery produces anot
 turn, `response.continuation.id` identifies the original handoff and `taskRunStatus: tracked`
 includes the new `requestId` and `runId`. Query that submission or Run and check Notebook
 execution and delivered files separately. `pending` or `unconfirmed` does not prove execution.
+
+Child permissions and AskUser questions appear on the parent Run, even after its provider turn
+ends. An interaction with `delegated` identifies the child Frame, branch, and Attempt. Use the
+parent `runId` and top-level `branchId` when responding. Only the offered one-time permission
+options are available, subject to the parent's current interaction mode. A child AskUser question
+uses `answer_question` with a complete answer for each question. If the child is settling, query
+the same interaction again. After confirmation, query it for `delegated.continuation.attemptId`
+and status. The child Attempt ID is separate from Task Run IDs. Live child permissions cannot
+survive a service restart; an observed request without a recorded decision becomes `expired`.
 
 ## Use an existing Notebook interpreter
 

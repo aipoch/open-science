@@ -197,13 +197,26 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
   )
 })
 
-it.each(['permission', 'runtime', 'code'] as const)(
+it.each(['permission', 'runtime', 'code', 'child'] as const)(
   'queries and relays the same %s decision through CLI JSON and MCP stdio',
   async (kind) => {
     const scope = { runId: 'task-1' }
-    const notebookReview = kind !== 'permission' ? { kind, language: 'r' } : undefined
+    const notebookReview =
+      kind === 'runtime' || kind === 'code' ? { kind, language: 'r' } : undefined
+    const delegated =
+      kind === 'child'
+        ? {
+            frameId: 'child-frame',
+            attemptId: 'source-attempt',
+            branchId: 'child-branch',
+            attemptStatus: 'running'
+          }
+        : undefined
+    const id = delegated
+      ? 'child-permission:delegated:p1:s1:child-frame:source-attempt:review-1'
+      : 'permission:review-1'
     const interaction = {
-      id: 'permission:review-1',
+      id,
       kind: 'permission',
       state: 'pending',
       owner: 'user',
@@ -215,7 +228,8 @@ it.each(['permission', 'runtime', 'code'] as const)(
       interactionPolicy: { mode: 'relay', revision: 0 },
       actions: ['allow-once', 'reject-once'],
       responseCapability: 'respond_permission',
-      ...(notebookReview ? { notebookReview } : {})
+      ...(notebookReview ? { notebookReview } : {}),
+      ...(delegated ? { delegated } : {})
     }
     const detail = {
       ...interaction,
@@ -279,13 +293,12 @@ it.each(['permission', 'runtime', 'code'] as const)(
           json({ mode: 'delegate', revision: 1 })
         } else if (
           url.searchParams.get('runId') === 'task-1' &&
-          decodeURIComponent(url.pathname) === '/api/v1/interactions/permission:review-1'
+          decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}`
         ) {
           json(detail)
         } else if (
           url.searchParams.get('runId') === 'task-1' &&
-          decodeURIComponent(url.pathname) ===
-            '/api/v1/interactions/permission:review-1/permission' &&
+          decodeURIComponent(url.pathname) === `/api/v1/interactions/${id}/permission` &&
           request.method === 'POST'
         ) {
           let body = ''
@@ -353,49 +366,63 @@ it.each(['permission', 'runtime', 'code'] as const)(
   }
 )
 
-it('answers the same scoped AskUser question through CLI JSON and MCP stdio', async () => {
-  const scope = { runId: 'run-1' }
-  const interactionId = 'question:question-1'
-  const response = {
-    expectedRevision: 2,
-    expectedBranchId: 'branch-1',
-    action: 'accept',
-    source: 'known_context',
-    answers: [
-      { fieldId: 'groups', value: ['Control', 'Treatment'] },
-      { fieldId: 'units_custom', value: 'millimeters', status: 'answered' }
-    ]
-  }
-  let changed = true
-  const agent = await resourceAgents(
-    async (request, reply) => {
-      const url = new URL(request.url!, 'http://localhost')
-      expect(decodeURIComponent(url.pathname)).toBe(`/api/v1/interactions/${interactionId}/answer`)
-      expect(request.method).toBe('POST')
-      expect(url.searchParams.get('runId')).toBe(scope.runId)
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(chunk)
-      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(response)
-      reply.end(
-        JSON.stringify({
-          data: { changed, interaction: { id: interactionId, state: 'responded' } }
-        })
-      )
-      changed = false
-    },
-    ['task-questions']
-  )
+it.each(['question:question-1', 'child-question:question-1'])(
+  'answers %s through CLI JSON and MCP stdio',
+  async (interactionId) => {
+    const scope = { runId: 'run-1' }
+    const delegated = interactionId.startsWith('child-')
+      ? {
+          frameId: 'child-frame',
+          attemptId: 'source-attempt',
+          branchId: 'child-branch',
+          attemptStatus: 'completed',
+          continuation: { attemptId: 'continuation-attempt', status: 'running' }
+        }
+      : undefined
+    const settled = { id: interactionId, state: 'responded', ...(delegated ? { delegated } : {}) }
+    const response = {
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      action: 'accept',
+      source: 'known_context',
+      answers: [
+        { fieldId: 'groups', value: ['Control', 'Treatment'] },
+        { fieldId: 'units_custom', value: 'millimeters', status: 'answered' }
+      ]
+    }
+    let changed = true
+    const agent = await resourceAgents(
+      async (request, reply) => {
+        const url = new URL(request.url!, 'http://localhost')
+        expect(decodeURIComponent(url.pathname)).toBe(
+          `/api/v1/interactions/${interactionId}/answer`
+        )
+        expect(request.method).toBe('POST')
+        expect(url.searchParams.get('runId')).toBe(scope.runId)
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(chunk)
+        expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(response)
+        reply.end(
+          JSON.stringify({
+            data: { changed, interaction: settled }
+          })
+        )
+        changed = false
+      },
+      ['task-questions']
+    )
 
-  const input = { ...scope, interactionId, ...response }
-  expect(await agent.cli('answer_question', input)).toEqual({
-    result: { changed: true, interaction: { id: interactionId, state: 'responded' } }
-  })
-  const mcp = await agent.mcp('answer_question', input)
-  expect(mcp.isError).not.toBe(true)
-  expect(mcp.structuredContent).toEqual({
-    result: { changed: false, interaction: { id: interactionId, state: 'responded' } }
-  })
-})
+    const input = { ...scope, interactionId, ...response }
+    expect(await agent.cli('answer_question', input)).toEqual({
+      result: { changed: true, interaction: settled }
+    })
+    const mcp = await agent.mcp('answer_question', input)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual({
+      result: { changed: false, interaction: settled }
+    })
+  }
+)
 
 it('discovers, registers and explicitly enables an existing Notebook interpreter through CLI and MCP', async () => {
   const runtime = {

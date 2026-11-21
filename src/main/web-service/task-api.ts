@@ -17,7 +17,8 @@ import {
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import {
   resolveActiveConversationActivities,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  type PersistedAgentFrame
 } from '../../shared/conversation-graph'
 import {
   resolveAgentUserChoiceQuestions,
@@ -96,6 +97,11 @@ import { taskPermissionOptions } from '../acp/permission-broker'
 import { restorableTaskPermission } from '../acp/permission-wait-owner'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
+import type {
+  DelegatedQuestionRequest,
+  DelegatedWorkAttemptRecord
+} from '../../shared/delegated-work-contract'
+import { DurableDelegatedWorkError } from '../delegation/durable-delegated-work-error'
 import {
   canRelayTaskInteraction,
   createTaskCallerContext,
@@ -130,6 +136,8 @@ import { taskQuestionAnswer, taskQuestionRevision } from '../acp/elicitation-own
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
 const log = createLogger('web-service:task-api')
 const notebookStopPrefix = 'notebook-continuation:'
+const childPermissionPrefix = 'child-permission:'
+const childQuestionPrefix = 'child-question:'
 const notebookContinuationRequest = z.strictObject({
   runId: z.string().trim().min(1),
   branchId: z.string().trim().min(1),
@@ -309,6 +317,12 @@ type ScopedTaskQuestion = {
   readyToAnswer: boolean
 }
 
+type ScopedChildQuestion = {
+  interaction: TaskQuestionInteraction
+  record: DelegatedQuestionRequest
+  request: PendingElicitationRequest
+}
+
 const rootQuestionScope = (
   session: PersistedChatSession
 ): { branchId: string; promptMessageId: string } | undefined => {
@@ -332,6 +346,54 @@ const staleQuestion = (): TaskRunnerError =>
     'interaction_revision_conflict',
     'The question, prompt, or active Message Branch changed. Read the current interaction before answering.'
   )
+
+const delegatedAttempt = (
+  session: PersistedChatSession,
+  frameId: string,
+  attemptId: string
+):
+  | {
+      attempt: DelegatedWorkAttemptRecord
+      frame: PersistedAgentFrame
+      promptMessageId: string
+      rootBranchId: string
+      active: boolean
+      latest: boolean
+    }
+  | undefined => {
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === frameId)
+  const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+  const attempts = session.runtimeContext?.delegatedWork?.records.find(
+    ({ agentFrameId }) => agentFrameId === frameId
+  )?.attempts
+  const attempt = attempts?.find(({ id }) => id === attemptId)
+  const promptMessageId = attempt?.initiatingTurnMessageId
+  if (
+    !graph ||
+    !root ||
+    frame?.kind !== 'delegate' ||
+    frame.parentFrameId !== root.id ||
+    frame.originBindingState !== 'validated' ||
+    !attempt ||
+    !promptMessageId
+  )
+    return
+  const prompt = graph.messages.find(({ id }) => id === promptMessageId)
+  if (!prompt || prompt.agentFrameId !== root.id) return
+  return {
+    attempt,
+    frame,
+    promptMessageId,
+    active:
+      root.activeBranchId === prompt.introducedOnBranchId &&
+      resolveActiveConversationMessages({ ...graph, activeFrameId: root.id }).some(
+        ({ id }) => id === prompt.id
+      ),
+    rootBranchId: prompt.introducedOnBranchId,
+    latest: attempts?.at(-1)?.id === attemptId
+  }
+}
 
 class HeadlessTaskApi {
   private readonly callerContexts = new AsyncLocalStorage<CallerContext>()
@@ -1136,6 +1198,112 @@ class HeadlessTaskApi {
     return interactions
   }
 
+  private async childPermissionInteractions(
+    session: PersistedChatSession,
+    run?: TaskRun,
+    interactionId?: string
+  ): Promise<TaskPermissionInteraction[]> {
+    const port = this.ports.agent.delegateInteractions
+    if (!port || session.packageOrigin || session.archivedAt !== undefined) return []
+    const key = { projectId: session.projectId, sessionId: session.id }
+    const interactions: TaskPermissionInteraction[] = []
+    for (const { request, branchId } of await port.permissions(key)) {
+      const id = `${childPermissionPrefix}${request.requestId}`
+      if (!request.delegated || (interactionId && id !== interactionId)) continue
+      const { frameId, attemptId } = request.delegated
+      const origin = delegatedAttempt(session, frameId, attemptId)
+      if (
+        !origin?.active ||
+        !origin.latest ||
+        origin.attempt.status !== 'running' ||
+        origin.frame.activeBranchId !== branchId
+      )
+        continue
+      const runId = this.runner.findRunIdForPrompt(
+        session.id,
+        origin.promptMessageId,
+        origin.attempt.startedAt
+      )
+      if (!runId || (run && run.id !== runId)) continue
+      const task = run ?? this.runner.getRun(runId)
+      if (
+        task.status === 'cancelled' ||
+        task.cancelRequestedAt !== undefined ||
+        this.runner
+          .getPermissionInteractions(runId)
+          .some((record) => record.id === id && record.response)
+      )
+        continue
+      const preview = permissionPreview(request)
+      if (!preview.options.length) continue
+      const delegated = { frameId, attemptId, branchId, attemptStatus: origin.attempt.status }
+      const revision = createHash('sha256')
+        .update(JSON.stringify([delegated, preview]))
+        .digest()
+        .readUIntBE(0, 6)
+      await this.runner.recordPermissionInteraction(runId, {
+        id,
+        branchId: origin.rootBranchId,
+        revision,
+        delegated
+      })
+      interactions.push({
+        ...key,
+        id,
+        kind: 'permission',
+        runId,
+        promptMessageId: origin.promptMessageId,
+        branchId: origin.rootBranchId,
+        revision,
+        delegated,
+        interactionPolicy: task.interactionPolicy,
+        state: 'pending',
+        owner: task.interactionPolicy?.mode === 'delegate' ? 'agent' : 'user',
+        actions: preview.options.map(({ optionId }) => optionId),
+        responseCapability: 'respond_permission',
+        request: preview,
+        recovery: 'original_run'
+      })
+    }
+    if (!interactionId || interactions.length) return interactions
+
+    const runId = run?.id ?? this.runner.findRunIdForPermission(session.id, interactionId)
+    if (!runId) return []
+    const record = this.runner
+      .getPermissionInteractions(runId)
+      .find(({ id }) => id === interactionId)
+    if (!record?.delegated) return []
+    const { frameId, attemptId } = record.delegated
+    const current = delegatedAttempt(session, frameId, attemptId)
+    const state =
+      record.response?.status === 'released'
+        ? 'responded'
+        : record.response
+          ? 'unconfirmed'
+          : 'expired'
+    return [
+      {
+        ...key,
+        ...record,
+        kind: 'permission',
+        state,
+        runId,
+        promptMessageId: this.runner.getRunPromptMessageId(runId),
+        delegated: {
+          ...record.delegated,
+          attemptStatus: current?.attempt.status ?? record.delegated.attemptStatus
+        },
+        owner: 'service',
+        actions: [],
+        ...(state !== 'responded'
+          ? {
+              next: 'Inspect the original child Attempt. This permission has no live wait to resume. Do not repeat the previous decision.'
+            }
+          : {})
+      }
+    ]
+  }
+
   private async interactionSession(scope: TaskInteractionScope): Promise<{
     session: PersistedChatSession
     run?: TaskRun
@@ -1242,7 +1410,10 @@ class HeadlessTaskApi {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
     const interaction = await this.planInteraction(session, run)
-    const permissions = (await this.permissionInteractions(session, run))
+    const permissions = [
+      ...(await this.permissionInteractions(session, run)),
+      ...(await this.childPermissionInteractions(session, run))
+    ]
       .filter(({ state }) => state === 'pending')
       .map(({ request, response, recovery, ...reference }) => {
         void request
@@ -1263,12 +1434,27 @@ class HeadlessTaskApi {
       void question
       references.push(reference)
     }
+    for (const { interaction } of this.childQuestions(session, run)) {
+      if (interaction.state !== 'pending') continue
+      const { question, ...reference } = interaction
+      void question
+      references.push(reference)
+    }
     return references
   }
 
   async getInteraction(id: string, scope: TaskInteractionScope): Promise<TaskInteraction> {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
+    if (id.startsWith(childQuestionPrefix)) {
+      const child = this.childQuestions(session, run, id)[0]
+      if (!child)
+        throw new TaskRunnerError(
+          'interaction_not_found',
+          'No matching child question in this scope.'
+        )
+      return child.interaction
+    }
     const question = id.startsWith('question:')
       ? this.questionInteractions(session, run, id)[0]
       : undefined
@@ -1280,7 +1466,9 @@ class HeadlessTaskApi {
     }
     const interaction = id.startsWith('permission:')
       ? (await this.permissionInteractions(session, run, id))[0]
-      : await this.planInteraction(session, run, id)
+      : id.startsWith(childPermissionPrefix)
+        ? (await this.childPermissionInteractions(session, run, id))[0]
+        : await this.planInteraction(session, run, id)
     if (!interaction) {
       throw new TaskRunnerError('interaction_not_found', 'No matching interaction in this scope.')
     }
@@ -1341,7 +1529,8 @@ class HeadlessTaskApi {
     }
     assertCurrent()
     const restored = current.recovery === 'new_continuation'
-    const requestId = id.slice('permission:'.length)
+    const child = current.delegated
+    const requestId = id.slice((child ? childPermissionPrefix : 'permission:').length)
     if (restored) {
       if (!this.submissions || !this.releaseContinuationTracker) {
         throw new TaskRunnerError(
@@ -1356,7 +1545,18 @@ class HeadlessTaskApi {
         const latest = await this.runner.findSession(sessionId, projectId)
         const graph = latest.conversationGraph
         const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-        if (!frame || frame.activeBranchId !== current.branchId || latest.packageOrigin)
+        const delegated = child && delegatedAttempt(latest, child.frameId, child.attemptId)
+        if (
+          latest.packageOrigin ||
+          (child
+            ? !delegated?.active ||
+              !delegated.latest ||
+              delegated.rootBranchId !== current.branchId ||
+              delegated.promptMessageId !== promptMessageId ||
+              delegated.frame.activeBranchId !== child.branchId ||
+              delegated.attempt.status !== 'running'
+            : !frame || frame.activeBranchId !== current.branchId)
+        )
           throw new TaskRunnerError(
             'interaction_revision_conflict',
             'This permission is no longer on the active Message Branch.'
@@ -1385,6 +1585,7 @@ class HeadlessTaskApi {
             id,
             branchId: current.branchId,
             revision: current.revision,
+            ...(child ? { delegated: child } : {}),
             notebookReview: current.notebookReview,
             response: {
               source: response.source,
@@ -1393,6 +1594,29 @@ class HeadlessTaskApi {
               ...(restored ? { continuation: { id: requestId, taskRunStatus: 'unconfirmed' } } : {})
             }
           })
+      }
+      if (child) {
+        try {
+          return (
+            (await this.ports.agent.delegateInteractions?.respondPermission(
+              { projectId, sessionId },
+              {
+                requestId,
+                optionId: response.optionId,
+                frameId: child.frameId,
+                attemptId: child.attemptId,
+                branchId: child.branchId
+              },
+              decision
+            )) ?? false
+          )
+        } catch (error) {
+          if (!(error instanceof DurableDelegatedWorkError)) throw error
+          throw new TaskRunnerError(
+            'interaction_revision_conflict',
+            'The child Attempt is no longer awaiting this permission.'
+          )
+        }
       }
       return restored
         ? ((await this.ports.agent.restoreTaskPermission?.(
@@ -1563,8 +1787,138 @@ class HeadlessTaskApi {
     return [...byRequestId.values()]
   }
 
+  private childQuestions(
+    session: PersistedChatSession,
+    run?: TaskRun,
+    interactionId?: string
+  ): ScopedChildQuestion[] {
+    const graph = session.conversationGraph
+    if (
+      !this.ports.agent.delegateInteractions ||
+      !graph ||
+      session.packageOrigin ||
+      session.archivedAt !== undefined
+    )
+      return []
+    const questions = session.runtimeContext?.delegatedWork?.questionRequests ?? []
+    const rootMessages = resolveActiveConversationMessages({
+      ...graph,
+      activeFrameId: graph.rootFrameId
+    })
+    return questions.flatMap((record) => {
+      const {
+        requestId,
+        sourceFrameId: frameId,
+        sourceAttemptId: attemptId,
+        sourceMessageBranchId: childBranchId,
+        rootBranchId: branchId
+      } = record
+      const id = `${childQuestionPrefix}${requestId}`
+      if (interactionId && id !== interactionId) return []
+      const origin = delegatedAttempt(session, frameId, attemptId)
+      if (!origin || origin.rootBranchId !== branchId) return []
+      const runId = this.runner.findRunIdForPrompt(
+        session.id,
+        origin.promptMessageId,
+        origin.attempt.startedAt
+      )
+      if (!runId || (run && run.id !== runId)) return []
+      const task = run ?? this.runner.getRun(runId)
+      const { status: attemptStatus, cancellationReason } = origin.attempt
+      const receipt = record.taskResponse
+      const sameAttempt =
+        origin.active &&
+        origin.latest &&
+        origin.frame.activeBranchId === childBranchId &&
+        rootMessages.some(({ id }) => id === record.rootOriginMessageId) &&
+        origin.attempt.runtimeSegmentIds.at(-1) === record.sourceRuntimeSegmentId
+      const pending =
+        record.status === 'pending' &&
+        sameAttempt &&
+        (attemptStatus === 'running' ||
+          attemptStatus === 'completed' ||
+          cancellationReason === 'runtime_interrupted') &&
+        task.status !== 'cancelled' &&
+        task.cancelRequestedAt === undefined
+      const state = receipt ? 'responded' : pending ? 'pending' : 'expired'
+      if (!interactionId && !pending) return []
+      const ready = pending && attemptStatus !== 'running'
+      const request: PendingElicitationRequest = {
+        requestId,
+        sessionId: session.id,
+        toolCallId: `${frameId}:${attemptId}:${record.sourceRuntimeSegmentId}:${childBranchId}`,
+        message: record.questions[0].question,
+        fields: record.questions.flatMap((question, index) => [
+          {
+            id: `question_${index}`,
+            label: question.header ?? `Question ${index + 1}`,
+            description: question.question,
+            kind: question.kind ?? 'single-select',
+            options: question.options.map((option) => ({ ...option, value: option.label }))
+          },
+          { id: `question_${index}_custom`, label: 'Other', kind: 'text' }
+        ])
+      }
+      const continuationId = receipt && record.continuationAttemptId
+      const continuation = continuationId
+        ? delegatedAttempt(session, frameId, continuationId)?.attempt
+        : undefined
+      const interaction: TaskQuestionInteraction = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        id,
+        kind: 'question',
+        state,
+        runId,
+        branchId,
+        promptMessageId: origin.promptMessageId,
+        revision: taskQuestionRevision(request, origin.promptMessageId, branchId),
+        interactionPolicy: task.interactionPolicy,
+        delegated: {
+          frameId,
+          attemptId,
+          branchId: childBranchId,
+          attemptStatus,
+          ...(continuationId
+            ? {
+                continuation: {
+                  attemptId: continuationId,
+                  status: continuation?.status ?? 'unconfirmed'
+                }
+              }
+            : {})
+        },
+        owner: pending ? 'user' : 'service',
+        actions: ready ? ['accept'] : [],
+        ...(ready ? { responseCapability: 'answer_question' } : {}),
+        ...(pending
+          ? { question: { message: request.message, fields: request.fields, skipFieldIds: [] } }
+          : {}),
+        ...(pending && !ready
+          ? { next: 'The child Attempt is settling. Query this question again before answering.' }
+          : {}),
+        ...(state === 'expired'
+          ? { next: 'Check the parent Run and current child Attempt before asking the user again.' }
+          : {}),
+        ...(receipt
+          ? {
+              response: {
+                source: receipt.source,
+                action: 'accept',
+                reviewedRevision: receipt.reviewedRevision
+              }
+            }
+          : {})
+      }
+      return [{ interaction, record, request }]
+    })
+  }
+
   supportsTaskQuestions(): boolean {
-    return this.ports.agent.questions !== undefined
+    return (
+      this.ports.agent.questions !== undefined ||
+      this.ports.agent.delegateInteractions !== undefined
+    )
   }
 
   async answerQuestion(
@@ -1593,6 +1947,8 @@ class HeadlessTaskApi {
     response: TaskQuestionResponse
   ): Promise<{ changed: boolean; interaction: TaskQuestionInteraction }> {
     const { session, run } = await this.interactionSession(scope)
+    if (id.startsWith(childQuestionPrefix))
+      return this.commitChildQuestion(id, session, run, response)
     const question = this.questionInteractions(session, run, id)[0]
     if (!question || !this.ports.agent.questions)
       throw new TaskRunnerError('interaction_not_found', 'No matching question in this scope.')
@@ -1710,6 +2066,110 @@ class HeadlessTaskApi {
     return {
       changed: true,
       interaction: (await this.getInteraction(id, scope)) as TaskQuestionInteraction
+    }
+  }
+
+  private async commitChildQuestion(
+    id: string,
+    session: PersistedChatSession,
+    run: TaskRun | undefined,
+    response: TaskQuestionResponse
+  ): Promise<{ changed: boolean; interaction: TaskQuestionInteraction }> {
+    const scoped = this.childQuestions(session, run, id)[0]
+    const port = this.ports.agent.delegateInteractions
+    if (!scoped || !port)
+      throw new TaskRunnerError(
+        'interaction_not_found',
+        'No matching child question in this scope.'
+      )
+    const { interaction, request, record } = scoped
+    if (
+      interaction.branchId !== response.expectedBranchId ||
+      interaction.revision !== response.expectedRevision ||
+      interaction.state === 'expired'
+    )
+      throw staleQuestion()
+    const { receipt, answers } = (() => {
+      try {
+        if (response.action !== 'accept')
+          throw new Error('The child question requires an answer for each question.')
+        const normalized = taskQuestionAnswer(request, response)
+        return {
+          receipt: normalized.receipt,
+          answers: record.questions.map((_question, questionIndex) => {
+            const fieldId = `question_${questionIndex}`
+            const value = normalized.answers.find(
+              (answer) => answer.fieldId === fieldId || answer.fieldId === `${fieldId}_custom`
+            )?.value
+            if (typeof value !== 'string' && !Array.isArray(value))
+              throw new Error('The child question requires an answer for each question.')
+            return { questionIndex, value }
+          })
+        }
+      } catch (error) {
+        throw new TaskRunnerError(
+          'invalid_request',
+          error instanceof Error ? error.message : 'Invalid child question answer.'
+        )
+      }
+    })()
+    if (record.taskResponse) {
+      if (
+        record.taskResponse.source !== receipt.source ||
+        record.taskResponse.checksum !== receipt.checksum ||
+        record.taskResponse.reviewedRevision !== receipt.reviewedRevision
+      )
+        throw new TaskRunnerError(
+          'question_already_answered',
+          'The child question already has a different recorded answer.'
+        )
+      return { changed: false, interaction }
+    }
+    if (!interaction.actions.length)
+      throw new TaskRunnerError(
+        'session_busy',
+        'Wait for the child Attempt to settle and read the original question again.'
+      )
+    const { projectId, sessionId } = interaction
+    const runId = interaction.runId!
+    try {
+      await this.ports.agent.withSessionAvailable(projectId, sessionId, () =>
+        port.answerQuestion(
+          { projectId, sessionId },
+          {
+            requestId: record.requestId,
+            answers,
+            task: {
+              frameId: record.sourceFrameId,
+              attemptId: record.sourceAttemptId,
+              branchId: record.sourceMessageBranchId,
+              rootBranchId: record.rootBranchId,
+              canonicalDigest: record.canonicalDigest,
+              response: {
+                source: receipt.source,
+                reviewedRevision: receipt.reviewedRevision,
+                checksum: receipt.checksum
+              },
+              assertCurrent: () => {
+                this.requireTaskRelay()
+                const current = this.runner.getRun(runId)
+                if (current.status === 'cancelled' || current.cancelRequestedAt !== undefined)
+                  throw staleQuestion()
+              }
+            }
+          }
+        )
+      )
+    } catch (error) {
+      if (!(error instanceof DurableDelegatedWorkError)) throw error
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'The child Attempt could not accept this answer. Query the original question before responding again.'
+      )
+    }
+    return {
+      changed: true,
+      interaction: (await this.getInteraction(id, { runId })) as TaskQuestionInteraction
     }
   }
 
@@ -1981,6 +2441,7 @@ class HeadlessTaskApi {
         run.failureCode === 'process_restarted' ||
         run.execution?.refusalId ||
         this.supportsTaskQuestions() ||
+        this.ports.agent.delegateInteractions ||
         (promptMessageId &&
           this.ports.agent.getTaskPermissions?.(run.sessionId, promptMessageId).length))
     ) {

@@ -66,6 +66,9 @@ import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from '../acp/runtime'
 import { createDelegationSettlementContinuationDispatch } from './settlement-continuation-dispatch'
+import { HeadlessTaskApi, type TaskApiPorts } from '../web-service/task-api'
+import { FileTaskRunJournal } from '../tasks/task-run-journal'
+import { createTaskCallerContext } from '../caller-context'
 
 let root: string | undefined
 let server: NotebookLocalRpcServer | undefined
@@ -2827,6 +2830,332 @@ describe('production delegated-work composition', () => {
         optionId: 'allow'
       })
     ).rejects.toThrow('no longer active')
+  })
+
+  it('relays a child permission through the parent Run and recovers its one-shot receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-task-permission-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    const journal = new FileTaskRunJournal(root)
+    const scope = { runId: 'parent-run' }
+    const key = harness.caller.session
+    await journal.replace([
+      {
+        ...key,
+        id: scope.runId,
+        cwd: root,
+        status: 'completed',
+        startedAt: 1,
+        promptMessageId: harness.caller.originMessageId,
+        artifacts: [],
+        preferredComputeHostIds: [],
+        interactionPolicy: { mode: 'delegate', revision: 1 }
+      },
+      {
+        ...key,
+        id: 'unrelated-run',
+        cwd: root,
+        status: 'completed',
+        startedAt: 1,
+        promptMessageId: 'unrelated-prompt',
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    ])
+    const open = (rootControl: typeof harness.composition.root): HeadlessTaskApi =>
+      new HeadlessTaskApi(
+        {
+          commands: {
+            commandNames: () => ['sessions:load-all'],
+            invoke: async (channel: string) => {
+              if (channel === 'sessions:load-all') return { sessions: [harness.durable()] }
+              throw new Error(`Unexpected command: ${channel}`)
+            }
+          },
+          agent: {
+            delegateInteractions: rootControl.taskInteractions,
+            withSessionAvailable: async (_project, _session, operation) => operation()
+          } as TaskApiPorts['agent']
+        },
+        { runJournal: journal }
+      )
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    const first = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Inspect the study file', name: 'Table review' },
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    const control = harness.execution.controls()[0]
+    control.accept()
+    const { frameId, attemptId } = first.children[0]
+    const branchId = harness
+      .durable()
+      .conversationGraph!.frames.find(({ id }) => id === frameId)!.activeBranchId
+    const emit = (requestId: string): void =>
+      control.emit({
+        kind: 'permission',
+        awaiting: true,
+        requestId,
+        title: 'Read study.csv',
+        taskBranchId: branchId,
+        options: [
+          { optionId: 'allow', kind: 'allow_once', name: 'Allow once' },
+          { optionId: 'always', kind: 'allow_always', name: 'Always allow' },
+          { optionId: 'deny', kind: 'reject_once', name: 'Deny' }
+        ]
+      })
+    const api = open(harness.composition.root)
+    await api.initialize()
+    emit('child-permission')
+    let expiredId = ''
+    let answeredId = ''
+    try {
+      await api.runWithCallerContext(caller, async () => {
+        const [interaction] = await api.listInteractions(scope)
+        expect(interaction).toMatchObject({
+          kind: 'permission',
+          runId: scope.runId,
+          owner: 'agent',
+          actions: ['allow', 'deny'],
+          delegated: { frameId, attemptId, branchId, attemptStatus: 'running' }
+        })
+        await expect(api.getRun(scope.runId)).resolves.toMatchObject({
+          attention: { kind: 'interactions', interactions: [{ id: interaction.id }] }
+        })
+        const decision = {
+          source: 'delegated_agent',
+          expectedModeRevision: 1,
+          expectedBranchId: interaction.branchId!,
+          expectedRevision: interaction.revision,
+          optionId: 'allow'
+        } as const
+        const relayed = { ...decision, source: 'user_relay' } as const
+        await expect(
+          api.respondPermission(interaction.id, { runId: 'unrelated-run' }, relayed)
+        ).rejects.toMatchObject({ code: 'interaction_not_found' })
+        const original = structuredClone(harness.durable())
+        harness.replaceDurable({
+          ...original,
+          messages: [],
+          activities: [],
+          conversationGraph: forkEditedConversationMessage(
+            original.conversationGraph!,
+            harness.caller.originMessageId,
+            'edited-root-branch',
+            50
+          )
+        })
+        await expect(api.respondPermission(interaction.id, scope, relayed)).rejects.toMatchObject({
+          code: 'interaction_revision_conflict'
+        })
+        expect(control.permissionResponses()).toEqual([])
+        harness.replaceDurable(original)
+        await api.setRunInteractionMode(scope.runId, {
+          expectedRevision: 1,
+          interactionMode: 'relay'
+        })
+        await expect(api.respondPermission(interaction.id, scope, decision)).rejects.toMatchObject({
+          code: 'task_delegation_required'
+        })
+        await expect(api.respondPermission(interaction.id, scope, relayed)).resolves.toMatchObject({
+          changed: true,
+          interaction: {
+            state: 'responded',
+            response: { source: 'user_relay', status: 'released' }
+          }
+        })
+        await expect(api.respondPermission(interaction.id, scope, relayed)).resolves.toMatchObject({
+          changed: false
+        })
+        expect(control.permissionResponses()).toEqual([
+          { requestId: 'child-permission', optionId: 'allow' }
+        ])
+        answeredId = interaction.id
+        emit('child-permission-lost')
+        expiredId = (await api.listInteractions(scope))[0].id
+      })
+    } finally {
+      await api.dispose()
+    }
+    await harness.composition.root.stopAll()
+    const restarted = open(harness.reopen().root)
+    await restarted.initialize()
+    try {
+      await restarted.runWithCallerContext(caller, async () => {
+        await expect(restarted.getInteraction(answeredId, scope)).resolves.toMatchObject({
+          state: 'responded'
+        })
+        await expect(restarted.getInteraction(expiredId, scope)).resolves.toMatchObject({
+          state: 'expired',
+          delegated: { frameId, attemptId }
+        })
+      })
+    } finally {
+      await restarted.dispose()
+    }
+  })
+
+  it('answers a durable child question after startup recovery and follows the new Attempt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-task-question-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    const journal = new FileTaskRunJournal(root)
+    const scope = { runId: 'parent-run' }
+    const key = harness.caller.session
+    await journal.replace([
+      {
+        ...key,
+        id: scope.runId,
+        cwd: root,
+        status: 'running',
+        startedAt: 1,
+        promptMessageId: harness.caller.originMessageId,
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    ])
+    const { children } = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Check cohort definitions', name: 'Definition check' },
+      { wait: false }
+    )
+    const { frameId, attemptId } = children[0]
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    const control = harness.execution.controls()[0]
+    control.accept()
+    const originMessageId = harness
+      .durable()
+      .conversationGraph!.messages.find(
+        ({ agentFrameId, role }) => agentFrameId === frameId && role === 'user'
+      )!.id
+    for (const [questionId, question] of [
+      ['child-question-1', 'Which cohorts are in scope?'],
+      ['child-question-2', 'Which cohorts should get a separate plot?']
+    ]) {
+      await harness.composition.host.requestUserInput(
+        {
+          session: key,
+          frameId,
+          role: 'delegate',
+          attemptId,
+          originMessageId,
+          toolInvocationId: questionId
+        },
+        {
+          sessionId: key.sessionId,
+          questions: [
+            {
+              question,
+              kind: 'multi-select',
+              options: [{ label: 'Control' }, { label: 'Treatment' }]
+            }
+          ]
+        },
+        questionId
+      )
+    }
+
+    // Startup fences the original process; the persisted question can outlive that Attempt.
+    await harness.recoverStartup()
+    const reopened = harness.reopen()
+    const api = new HeadlessTaskApi(
+      {
+        commands: {
+          commandNames: () => ['sessions:load-all'],
+          invoke: async (channel: string) => {
+            if (channel === 'sessions:load-all') return { sessions: [harness.durable()] }
+            throw new Error(`Unexpected command: ${channel}`)
+          }
+        },
+        agent: {
+          delegateInteractions: reopened.root.taskInteractions,
+          withSessionAvailable: async (_project, _session, operation) => operation()
+        } as TaskApiPorts['agent']
+      },
+      { runJournal: journal }
+    )
+    await api.initialize()
+    try {
+      await api.runWithCallerContext(
+        createTaskCallerContext({ authenticatedLocalBearer: true }),
+        async () => {
+          const [item, superseded] = await api.listInteractions(scope)
+          expect(item).toMatchObject({
+            kind: 'question',
+            runId: scope.runId,
+            owner: 'user',
+            delegated: { frameId, attemptId, attemptStatus: 'cancelled' },
+            actions: ['accept']
+          })
+          const answer = {
+            expectedBranchId: item.branchId!,
+            expectedRevision: item.revision,
+            source: 'known_context',
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: ['Treatment', 'Control'] }]
+          } as const
+          const response = {
+            ...answer,
+            answers: [{ ...answer.answers[0], value: ['Treatment', 'Control'] }]
+          }
+          await expect(
+            api.answerQuestion(item.id, scope, { ...response, expectedBranchId: 'wrong-branch' })
+          ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+          await expect(
+            api.answerQuestion(item.id, scope, {
+              ...response,
+              answers: [{ fieldId: 'question_0', value: ['Invented'] }]
+            })
+          ).rejects.toMatchObject({ code: 'invalid_request' })
+          await expect(api.answerQuestion(item.id, scope, response)).resolves.toMatchObject({
+            changed: true
+          })
+          await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+          const next = harness.execution.controls()[1]
+          expect(next.input.attemptId).not.toBe(attemptId)
+          expect(next.input.task).toContain('["Control","Treatment"]')
+          await expect(api.getInteraction(superseded.id, scope)).resolves.toMatchObject({
+            state: 'expired',
+            delegated: { attemptId }
+          })
+          await expect(
+            api.answerQuestion(superseded.id, scope, {
+              ...response,
+              expectedRevision: superseded.revision
+            })
+          ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+          expect(harness.execution.controls()).toHaveLength(2)
+          await expect(api.answerQuestion(item.id, scope, response)).resolves.toMatchObject({
+            changed: false,
+            interaction: {
+              state: 'responded',
+              response: { source: 'known_context' },
+              delegated: {
+                attemptId,
+                continuation: { attemptId: next.input.attemptId, status: 'running' }
+              }
+            }
+          })
+          await expect(
+            api.answerQuestion(item.id, scope, { ...response, source: 'user_relay' })
+          ).rejects.toMatchObject({ code: 'question_already_answered' })
+          await expect(api.getRun(scope.runId)).resolves.toMatchObject({
+            status: 'failed',
+            failureCode: 'process_restarted'
+          })
+          next.complete('Cohorts checked.')
+          await expect
+            .poll(() => api.getInteraction(item.id, scope))
+            .toMatchObject({
+              state: 'responded',
+              delegated: { continuation: { attemptId: next.input.attemptId, status: 'completed' } }
+            })
+        }
+      )
+    } finally {
+      await api.dispose()
+      await reopened.root.stopAll()
+      await harness.composition.root.stopAll()
+    }
   })
 
   it('updates the Permission Profile of every live Attempt in the Session', async () => {
