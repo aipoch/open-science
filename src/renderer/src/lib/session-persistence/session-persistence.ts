@@ -87,7 +87,7 @@ import {
   pendingSessionConversationCommands,
   retainActivePreparationCommands
 } from '../../stores/session-conversation-intents'
-import { loadSessionHistoryPage } from './session-history'
+import { loadSessionHistoryPage, sessionReadErrorMessage } from './session-history'
 import type {
   LoadSessionHistoryPageRequest,
   SessionHistoryPage
@@ -2271,8 +2271,6 @@ const observePersistencePhase = <Result>(
 
 const SAFE_SESSION_LOAD_ERROR =
   'Open-Science could not read saved conversation data. Retry to continue.'
-const SESSION_LOAD_ERROR_KEY =
-  'Could not reload the saved conversation. Retained changes were kept. Please try again.'
 const SAFE_SESSION_WRITE_ERROR =
   'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
@@ -2339,7 +2337,7 @@ const loadPersistedSessions = async (
         summariesToHydrate.map(async (summary) => {
           try {
             const loaded = await loadPersistedSession(
-              { projectId: summary.projectId, sessionId: summary.id },
+              { projectId: summary.projectId, sessionId: summary.id, reportReadFailure: true },
               api,
               // Recovery must not validate cached content against the previous store revision.
               { bypassCache: true }
@@ -4066,7 +4064,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
               const sessionLoadKey = `${summary.projectId}\0${summary.id}`
               const next = {
                 ...sessionLoadErrorsBySessionRef.current,
-                [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
+                [sessionLoadKey]: sessionReadErrorMessage(error)
               }
               sessionLoadErrorsBySessionRef.current = next
               setSessionLoadErrorsBySession(next)
@@ -4399,7 +4397,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           }
           const initialLoad = recoverSessionDetails
             ? loadPersistedSession(
-                { projectId: selected.projectId, sessionId: selected.id },
+                { projectId: selected.projectId, sessionId: selected.id, reportReadFailure: true },
                 undefined,
                 { bypassCache: true, recoverSessionDetails: true }
               ).then((session) => {
@@ -4408,9 +4406,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
             : supportsPages
               ? loadSessionHistoryPage({
                   projectId: selected.projectId,
-                  sessionId: selected.id
+                  sessionId: selected.id,
+                  reportReadFailure: true
                 })
-              : loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
+              : loadPersistedSession({
+                  projectId: selected.projectId,
+                  sessionId: selected.id,
+                  reportReadFailure: true
+                })
           void initialLoad
             .then(async (session) => {
               if (recoverSessionDetails) {
@@ -4458,7 +4461,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
               if (isMounted && isCurrentSessionLoad()) {
                 const next = {
                   ...sessionLoadErrorsBySessionRef.current,
-                  [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
+                  [sessionLoadKey]: sessionReadErrorMessage(error)
                 }
                 sessionLoadErrorsBySessionRef.current = next
                 setSessionLoadErrorsBySession(next)

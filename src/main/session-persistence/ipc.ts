@@ -1,5 +1,6 @@
 import {
   loadSessionHistoryPageRequestSchema,
+  sessionReadIpcResult,
   type LoadSessionHistoryPageRequest,
   type SessionHistoryPage
 } from '../../shared/session-history'
@@ -387,10 +388,10 @@ const registerSessionPersistenceIpcHandlers = (
     withDataRootWrite(() => handlers.searchMessages(request))
   )
   ipcMainHandle('sessions:load-one', (_event, request: LoadSessionRequest) =>
-    withDataRootWrite(() => handlers.loadOne(request))
+    sessionReadIpcResult(() => withDataRootWrite(() => handlers.loadOne(request)))
   )
   ipcMainHandle('sessions:load-history-page', (_event, request: LoadSessionHistoryPageRequest) =>
-    withDataRootWrite(() => handlers.loadHistoryPage(request))
+    sessionReadIpcResult(() => withDataRootWrite(() => handlers.loadHistoryPage(request)))
   )
   ipcMainHandle('sessions:list-runtime-terminal-failures', () =>
     handlers.listRuntimeTerminalFailures()

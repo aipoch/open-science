@@ -130,6 +130,8 @@ export type LoadSessionRequest = {
   sessionId: string
   /** Request local Session Details recovery after the Session is opened. */
   recoverSessionDetails?: boolean
+  /** Preserve the reason a selected conversation could not be opened. */
+  reportReadFailure?: true
 }
 
 export const retryRuntimeTerminalCommitRequestSchema = z

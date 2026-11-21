@@ -14,7 +14,10 @@ import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import {
+  isSessionReadChannel,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
 import type { OfficePreviewRuntimeState } from '../shared/office-preview'
 import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
@@ -585,7 +588,10 @@ export async function startDesktopRuntimeTransport(options: {
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
                 ok: false,
                 error: {
-                  code: 'command-failed',
+                  code:
+                    'channel' in request && isSessionReadChannel(request.channel)
+                      ? 'response-too-large'
+                      : 'command-failed',
                   message: 'Desktop runtime response exceeds the transport byte budget.'
                 }
               })
