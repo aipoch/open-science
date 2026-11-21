@@ -74,6 +74,26 @@ type PendingPermission = {
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
+type TaskNotebookReviewScope = Readonly<{ projectId: string; messageBranchId: string }>
+
+const notebookReviewMatches = (
+  request: AcpPermissionRequest,
+  promptMessageId: string,
+  scope?: TaskNotebookReviewScope
+): boolean => {
+  if (!scope) return false
+  const review = isAppOwnedNotebookRuntimeReview(request)
+    ? request.rawInput.notebookRuntimeSelection
+    : isAppOwnedNotebookCodeReview(request)
+      ? request.rawInput.notebookCodeRisk
+      : undefined
+  return (
+    review?.promptMessageId === promptMessageId &&
+    review.projectId === scope.projectId &&
+    review.messageBranchId === scope.messageBranchId
+  )
+}
+
 const taskPermissionOptions = (request: AcpPermissionRequest): AcpPermissionRequest['options'] =>
   request.options.filter(
     (option) =>
@@ -945,14 +965,20 @@ class AcpPermissionBroker {
       .map(({ request }) => request)
   }
 
-  getTaskPermissions(sessionId: string, promptMessageId: string): AcpPermissionRequest[] {
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string,
+    notebookScope?: TaskNotebookReviewScope
+  ): AcpPermissionRequest[] {
     return this.getPendingRequests().filter((request) => {
-      if (request.sessionId !== sessionId || request.appOwned || request.delegated) return false
+      if (request.sessionId !== sessionId || request.delegated) return false
       const pending = this.pendingRequests.get(request.requestId)
       return Boolean(
         pending &&
-        pending.policyContext?.promptMessageId === promptMessageId &&
-        this.isPendingCurrent(pending)
+        this.isPendingCurrent(pending) &&
+        (pending.appOwned
+          ? notebookReviewMatches(request, promptMessageId, notebookScope)
+          : pending.policyContext?.promptMessageId === promptMessageId)
       )
     })
   }
@@ -962,9 +988,10 @@ class AcpPermissionBroker {
     promptMessageId: string,
     requestId: string,
     optionId: string,
-    decision: TaskPermissionDecision
+    decision: TaskPermissionDecision,
+    notebookScope?: TaskNotebookReviewScope
   ): Promise<boolean> {
-    const request = this.getTaskPermissions(sessionId, promptMessageId).find(
+    const request = this.getTaskPermissions(sessionId, promptMessageId, notebookScope).find(
       (item) => item.requestId === requestId
     )
     if (!request || !taskPermissionOptions(request).some((item) => item.optionId === optionId)) {

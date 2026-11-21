@@ -7,7 +7,11 @@ import type { CliLauncherStatus } from '../../shared/cli'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import {
+  isAppOwnedNotebookCodeReview,
+  isAppOwnedNotebookRuntimeReview,
+  type AcpPermissionRequest
+} from '../../shared/acp-permission-contract'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import {
   resolveActiveConversationActivities,
@@ -136,24 +140,97 @@ const notebookStopExpired = (): TaskRunnerError =>
     'The Notebook stop is no longer current in this branch, or cannot be recovered after restart. Inspect the original Run and ask the user before starting any new work.'
   )
 
+const permissionText = (value: string): string =>
+  containsSecretBearingMaterial(value) ? '[Redacted]' : value.slice(0, 512)
+
+const reviewRiskSchema = z.object({
+  operation: z.string(),
+  source: z.string(),
+  line: z.number().int().positive()
+})
+
+function notebookPermissionPreview(request: AcpPermissionRequest):
+  | {
+      notebookReview: NonNullable<TaskPermissionInteraction['notebookReview']>
+      input: Record<string, unknown>
+    }
+  | undefined {
+  const fields = (source: Record<string, unknown>, keys: string[]): Record<string, string> =>
+    Object.fromEntries(
+      keys.flatMap((key) =>
+        typeof source[key] === 'string' ? [[key, permissionText(source[key])]] : []
+      )
+    )
+  if (isAppOwnedNotebookRuntimeReview(request)) {
+    const target = request.rawInput.notebookRuntimeSelection
+    if (
+      (target.language !== 'r' && target.language !== 'python') ||
+      typeof target.runtimeId !== 'string' ||
+      !target.runtimeId
+    )
+      return undefined
+    return {
+      notebookReview: { kind: 'runtime', language: target.language },
+      input: fields(target, [
+        'runtimeId',
+        'label',
+        'interpreterPath',
+        'previousRuntimeId',
+        'previousLabel'
+      ])
+    }
+  }
+  if (isAppOwnedNotebookCodeReview(request)) {
+    const { code, notebookCodeRisk: risk } = request.rawInput
+    const language = z.enum(['python', 'r', 'repl', 'bash']).safeParse(risk.language)
+    if (
+      !language.success ||
+      !Array.isArray(risk.risks) ||
+      typeof risk.runId !== 'string' ||
+      !risk.runId
+    )
+      return undefined
+    const risks = risk.risks.slice(0, 16).flatMap((entry) => {
+      const parsed = reviewRiskSchema.safeParse(entry)
+      return parsed.success
+        ? [{ ...fields(parsed.data, ['operation', 'source']), line: parsed.data.line }]
+        : []
+    })
+    if (!risks.length) return undefined
+    return {
+      notebookReview: { kind: 'code', language: language.data },
+      input: {
+        ...fields(risk, ['runId', 'environment', 'runtimeId']),
+        riskCount: risk.risks.length,
+        risks,
+        ...(typeof code === 'string' && code.length <= 8192 && !containsSecretBearingMaterial(code)
+          ? { code }
+          : { codeOmitted: true })
+      }
+    }
+  }
+  return undefined
+}
+
 function permissionPreview(
-  request: AcpPermissionRequest
+  request: AcpPermissionRequest,
+  notebook?: ReturnType<typeof notebookPermissionPreview>
 ): NonNullable<TaskPermissionInteraction['request']> {
-  const text = (value: string): string =>
-    containsSecretBearingMaterial(value) ? '[Redacted]' : value.slice(0, 512)
-  const preview = JSON.stringify(request.rawInput)
+  const preview = notebook ? undefined : JSON.stringify(request.rawInput)
   return {
-    title: text(request.title),
+    title: permissionText(request.title),
     toolCallId: request.toolCallId,
     ...((request.mcpIdentity ?? request.providerToolName)
-      ? { tool: text((request.mcpIdentity ?? request.providerToolName)!) }
+      ? { tool: permissionText((request.mcpIdentity ?? request.providerToolName)!) }
       : {}),
-    ...(preview && preview.length <= 8192 && !containsSecretBearingMaterial(preview)
-      ? { input: request.rawInput }
-      : {}),
+    ...(notebook
+      ? { input: notebook.input }
+      : preview && preview.length <= 8192 && !containsSecretBearingMaterial(preview)
+        ? { input: request.rawInput }
+        : {}),
     options: taskPermissionOptions(request).map((option) => ({
       ...option,
-      name: text(option.name)
+      name: permissionText(option.name)
     }))
   }
 }
@@ -875,7 +952,12 @@ class HeadlessTaskApi {
       const record = witnessed.find((item) => item.id === id)
       const current = pending.get(id)
       if ((!record && !current) || (!interactionId && record?.response)) continue
-      const preview = current && permissionPreview(current.request)
+      const notebook = current && notebookPermissionPreview(current.request)
+      const notebookReview = record?.notebookReview ?? notebook?.notebookReview
+      const preview =
+        current && (!current.request.appOwned || notebook)
+          ? permissionPreview(current.request, notebook)
+          : undefined
       const state = record?.response
         ? record.response.status === 'released' || record.response.continuation
           ? 'responded'
@@ -886,7 +968,12 @@ class HeadlessTaskApi {
       if (state === 'pending' && !record) {
         // Keep addressable witnesses for process-only requests observed through Task. A later
         // process can distinguish a known expired request from an ID outside this scope.
-        await this.runner.recordPermissionInteraction(taskId, { id, branchId, revision: 0 })
+        await this.runner.recordPermissionInteraction(taskId, {
+          id,
+          branchId,
+          revision: 0,
+          notebookReview
+        })
       }
       const response = record?.response
       const continuation = response?.continuation
@@ -909,6 +996,7 @@ class HeadlessTaskApi {
         branchId: record?.branchId ?? branchId,
         revision: record?.revision ?? 0,
         interactionPolicy: task.interactionPolicy,
+        ...(notebookReview ? { notebookReview } : {}),
         owner:
           state === 'pending'
             ? task.interactionPolicy?.mode === 'delegate'
@@ -1118,6 +1206,11 @@ class HeadlessTaskApi {
         'Read the current permission and its branch before responding.'
       )
     }
+    if (current.notebookReview?.language !== response.expectedLanguage)
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'For a Notebook review, copy notebookReview.language from this request as expectedLanguage.'
+      )
     if (current.response) {
       if (
         current.response.source === response.source &&
@@ -1188,6 +1281,7 @@ class HeadlessTaskApi {
             id,
             branchId: current.branchId,
             revision: current.revision,
+            notebookReview: current.notebookReview,
             response: {
               source: response.source,
               optionId: response.optionId,
@@ -1794,6 +1888,24 @@ class HeadlessTaskApi {
             action: 'continue_notebook',
             message:
               'Resolve the reported cause and ask the user whether to continue this stop. Use the original Run and the branch and refusal IDs in the interaction. Do not replay the stopped cell.'
+          }
+        }
+        const execution = run.execution
+        if (execution?.status === 'waiting_for_user' && !execution.refusalId) {
+          const review = interactions.find(
+            ({ notebookReview, branchId }) =>
+              notebookReview &&
+              branchId === execution.messageBranchId &&
+              execution.reasonCode === `notebook_${notebookReview.kind}_review_required`
+          )
+          if (review) {
+            execution.owner = review.owner === 'agent' ? 'agent' : 'user'
+            if (execution.owner === 'agent') delete execution.requiresUser
+            execution.next = {
+              action: 'respond_permission',
+              message:
+                'Read the pending Notebook review with get_interaction, then relay the user decision or respond under current task delegation. Recheck this Run afterward.'
+            }
           }
         }
         return {
