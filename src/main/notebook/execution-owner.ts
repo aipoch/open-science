@@ -93,6 +93,8 @@ type NotebookControlResult = Pick<
   | 'kernelDispatched'
   | 'recovery'
 > & {
+  runId?: string
+  executionInvocationId?: string
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
   viewImageError?: 'evidence-unavailable'
@@ -323,6 +325,8 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
     throw new Error(`REPL Run ${run.runId} has no terminal foreground result.`)
   }
   return {
+    runId: run.runId,
+    executionInvocationId: run.executionInvocationId,
     status: run.status,
     kernelDispatched: run.kernelDispatched,
     executionStarted: run.executionStarted,
@@ -1555,6 +1559,8 @@ class NotebookExecutionOwner {
     if (!result) return controlResultFromRun(terminalized.run)
 
     return {
+      runId: terminalized.run.runId,
+      executionInvocationId: terminalized.run.executionInvocationId,
       status: result.status,
       executionStarted: result.executionStarted,
       kernelDispatched: result.kernelDispatched,

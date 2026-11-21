@@ -3704,6 +3704,8 @@ describe('notebook runtime service', () => {
     const retry = await service.executeControl(request)
 
     const expected = {
+      runId: (await service.state(request)).runs[0].runId,
+      executionInvocationId: request.executionInvocationId,
       status: 'completed',
       stdout: 'stable result',
       kernelDispatched: true,

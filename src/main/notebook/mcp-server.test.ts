@@ -2008,11 +2008,12 @@ describe('repl_execute tool', () => {
       const text = (response.content as Array<{ type: string; text?: string }>).find(
         (item) => item.type === 'text'
       )!.text!
-      expect(JSON.parse(text).recovery).toMatchObject(recovery)
-      expect(JSON.parse(text).recovery.guidance).toContain('no extra restart')
-      expect(
-        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.recovery
-      ).toEqual(recovery)
+      const run = (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)!
+      const result = JSON.parse(text)
+      expect(response.isError).toBe(true)
+      expect(result).toMatchObject({ runId: run.runId, status: 'failed', recovery })
+      expect(result.recovery.guidance).toContain('no extra restart')
+      expect(run.recovery).toEqual(recovery)
     } finally {
       await client.close()
       await mcp.close()
