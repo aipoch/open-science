@@ -742,6 +742,20 @@ and owner approval precede normal merge-queue admission. Never remove the Integr
 trigger while its check is required; the `required-check-triggers` rule rejects a PR Gate or CI
 Integrity revision that drops its `merge_group` or pull request trigger.
 
+CI Integrity may replace `pull_request_target` with the default-branch
+`workflow_run` completion listener for **PR Automation Signal**. The listener must
+not filter source branches: those are contributor branches, including forks.
+The policy accepting this successor must land before the workflow migration.
+The successor must validate GitHub run/PR metadata, inspect candidate Git objects
+using trusted code, and publish **CI Integrity** on the inspected PR head. Retain
+`merge_group: checks_requested` and the existing required-check names throughout
+the rollout; policy approval alone does not activate or verify the successor.
+Integrity also validates the candidate signal and resolver even when those files
+are unchanged in the diff. Removing or disabling the signal, narrowing its PR
+activities, or disconnecting the reusable resolver blocks the migration and later
+changes. Runtime check-publication behavior still requires workflow tests and
+CI-owner review.
+
 Trusted policy may retire a historical cross-package contract test registration only when
 its existing package selector already excludes that test package for every owner path. Both Git
 snapshots must retain the test's unique owner and owner-test evidence, and complete static plus

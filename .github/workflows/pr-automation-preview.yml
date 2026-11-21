@@ -1,0 +1,38 @@
+name: PR automation preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful PR Automation Signal run to inspect without writes
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  resolve:
+    permissions:
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/resolve-pr-signal.yml
+    with:
+      run_id: ${{ inputs.run_id }}
+
+  preview:
+    name: Preview PR target
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+        with:
+          script: |
+            if (!process.env.PR_NUMBER) {
+              core.setFailed('Signal did not resolve to a current PR');
+              return;
+            }
+            core.info(`PR #${process.env.PR_NUMBER} at ${process.env.PR_HEAD_SHA}`);
