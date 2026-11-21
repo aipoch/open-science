@@ -52,6 +52,51 @@ preview package was ready, the computer use session could no longer attach to th
 window. The preview therefore verifies installation, discovery, and restart lookup; it does
 not pass the WorkBuddy or independent receiving environment gates in #80 and #81.
 
+### Managed R dispatch with a live model
+
+The installed macOS arm64 build from `0dd064848` used CLI tarball SHA-256
+`f942c5939a8f91dfe1c9ceefd7fb039475cb0f7bc4b94ce6f9dd2db0d3cd8dc1` and native tarball SHA-256
+`138358538f9a71817335812c64d68d56f126e385d36853d08d6bc13a1d24cad6`. An MCP client prepared managed
+R and verified readiness after reconnecting; Python remained unprepared. A real local Qwen3-4B
+model requested `default-r` in Run `480dc334-db9b-40a0-bcab-70116572c645`, under durable request
+`422cafe3-5144-4a70-93df-1161e3177478`. Execution was waiting for review with `kernelDispatched:
+false`. The synthetic test operator relayed the review for that environment through MCP. In
+the same Run, Notebook `notebook-run-1795247171409-1` dispatched and printed `12`. Repeating
+the decision through CLI JSON returned `changed: false`. The observation also exposed a
+missing `execution.language` field, fixed in `73eadaf5d`.
+
+The subsequent greenhouse study (`ef495b54-845f-4133-9f54-f1219dee6503`, Run
+`d268c732-69c0-4554-a99d-2af6f0008dec`) reached the model's output limit without dispatching
+a Notebook. Its Run failed and had no Artifacts. These are real model and installed Notebook
+observations from a direct MCP client, separate from the WorkBuddy conversation gate.
+
+## Existing Notebook interpreters (#79): macOS arm64, November 21, 2026
+
+The `ffadf8047` build passed installed npm resolution, native loading and startup with
+Node 24.22.2. The entry and native tarball SHA-256 values were
+`aef9f2a525a0b2f2c47107c77101cfd46833eba535d46bbbc2094b8899e9b662` and
+`97e93e5676993ca6ae116ad4dc38954ab1883ae9ad05101b1e2e4516dc920c9f`.
+
+Two fresh profiles had neither managed language prepared. Actual MCP stdio registered and
+enabled two existing candidates for the requested language, passed the exact `runtimeId` and
+language to `start_run`, and received an accepted durable receipt. CLI JSON and MCP agreed on
+the available interpreters, the same-Run review and the final execution evidence. Both reviews
+showed `kernelDispatched: false`; a response for the wrong language was refused, and the
+fixture relayed the one-time decision for the exact requested interpreter on the original Run.
+
+| Language       | Task Run                               | Notebook Run                   | Stdout   |
+| -------------- | -------------------------------------- | ------------------------------ | -------- |
+| Python 3.12.16 | `2bb12be9-bb8f-4ca4-b9b7-35104be0b149` | `notebook-run-1795248180444-1` | `12.0`   |
+| R 4.4.3        | `ff4a3aa7-87d1-426d-a4bf-b6690ed9472c` | `notebook-run-1795248124010-1` | `[1] 12` |
+
+Both completed with `kernelDispatched: true` and `runtimeSource: external`, and reported the
+selected external interpreter's exact identity. The other language remained unprepared. The
+first external Conda R run reproduced a macOS sandbox block at its own `lib/R` launcher.
+The fix allows the selected external Conda R's library tree to be read and keeps writes and
+unrelated paths denied; a real-kernel regression checks both boundaries. The provider response
+was deterministic in this check. The runtime, Notebook dispatch, isolation, and output were
+real; this check did not exercise WorkBuddy or a live model.
+
 ## WorkBuddy setup revision: macOS arm64, November 21, 2026
 
 - Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local

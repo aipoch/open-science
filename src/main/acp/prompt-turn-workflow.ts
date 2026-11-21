@@ -150,6 +150,11 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  prepareTaskNotebookRuntime?: (
+    request: AcpPromptRequest,
+    cwd: string,
+    signal: AbortSignal
+  ) => Promise<void>
   commitNotebookDispatch?: (appSessionId: string) => void
   prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
   observeNotebookExecutionLoop?: (input: {
@@ -634,6 +639,12 @@ class AcpPromptTurnWorkflow {
           }
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
+      if (turn.mode.kind === 'user' && turn.mode.runtimeReviewOwner === 'task')
+        await env.prepareTaskNotebookRuntime?.(
+          request,
+          snapshot?.cwd ?? this.options.currentCwd(),
+          interaction.signal
+        )
       const backend = env.backend()
       promptBackend = backend
       const planContext =

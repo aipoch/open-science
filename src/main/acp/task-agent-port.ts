@@ -7,6 +7,7 @@ import type {
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
 import { notebookExecutionIntent, withNotebookUserOperation } from '../notebook/execution-intent'
+import { markTaskNotebookRuntime } from '../notebook/runtime-binding-admission'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import {
   toSessionAgentConfiguration,
@@ -132,7 +133,7 @@ const createAcpTaskAgentPort = (
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
   setMemoryEnabled: async (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
   prompt: async (request, observer) => {
-    const prompt = toAcpPromptRequest(request)
+    const prompt = markTaskNotebookRuntime(toAcpPromptRequest(request), request.notebookRuntime)
     // TaskRunner owns this boundary after reserving the Session and accepting its exact root
     // prompt. Freeze authority before notifications, admission or Provider preparation can yield.
     const acpRequest = request.notebookContinuation

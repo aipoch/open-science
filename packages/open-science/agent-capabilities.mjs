@@ -293,6 +293,15 @@ registerResource(
     cwd: id(
       'An existing working directory on the Open-Science host. Omit to use the Project or existing Session default.'
     ).optional(),
+    notebookLanguage: z.enum(['python', 'r']).optional(),
+    notebookRuntimeId: z
+      .string()
+      .min(1)
+      .max(4096)
+      .describe(
+        'Exact enabled runtimeId from list_notebook_runtimes; supply with notebookLanguage.'
+      )
+      .optional(),
     ...agentConfiguration.shape,
     ...sessionPreferences,
     permissionPrompts: z
@@ -317,7 +326,16 @@ registerResource(
   { ...write, idempotentHint: true },
   async (
     client,
-    { requestId, projectId, providerId, model, reasoningEffort, ...request },
+    {
+      requestId,
+      projectId,
+      providerId,
+      model,
+      reasoningEffort,
+      notebookLanguage,
+      notebookRuntimeId,
+      ...request
+    },
     options
   ) =>
     projectSubmissionReceipt(
@@ -326,6 +344,9 @@ registerResource(
         {
           project: projectId,
           ...request,
+          ...(notebookLanguage
+            ? { notebookRuntime: { language: notebookLanguage, runtimeId: notebookRuntimeId } }
+            : {}),
           ...(providerId !== undefined || model !== undefined || reasoningEffort !== undefined
             ? { agentConfiguration: { providerId, model, reasoningEffort } }
             : {})
@@ -334,7 +355,15 @@ registerResource(
       ),
       client.configRoot
     ),
-  ({ permissionPrompts, turnIntent, interactionMode }, context) => {
+  (
+    { permissionPrompts, turnIntent, interactionMode, notebookLanguage, notebookRuntimeId },
+    context
+  ) => {
+    if ((notebookLanguage === undefined) !== (notebookRuntimeId === undefined))
+      context.addIssue({
+        code: 'custom',
+        message: 'Supply notebookLanguage and notebookRuntimeId together.'
+      })
     if (permissionPrompts === 'none' && turnIntent === 'plan-first')
       context.addIssue({ code: 'custom', message: 'A Plan requires an available human approver.' })
     if (permissionPrompts === 'none' && interactionMode === 'delegate')

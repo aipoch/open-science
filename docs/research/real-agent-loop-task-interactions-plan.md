@@ -196,6 +196,13 @@ Web 是备用配置入口，不能用于补齐声明为支持的普通 API Provi
 重启或历史回执移除后返回 `unconfirmed`，应先复查语言环境，不应自动重试。修复仍由现有 Owner
 验证当前默认托管目标，进入重建阶段后必须完成。安装回执不等于 Notebook 已获准执行。
 
+#79 使用本机 Bearer Task 连接读取 `list_notebook_runtimes` 的语言清单、`runnable` 与 `enabled`。
+`register_notebook_interpreter` 只探测选定的绝对路径；`enable_notebook_runtime` 只启用同语言的精确
+`runtimeId`。已有解释器可独立于托管安装运行，二者均不授予安装依赖的权限。`start_run` 的
+`notebookLanguage` 和 `notebookRuntimeId` 必须同时提供，由 Notebook Binding Owner 在当前 Task
+分支中绑定；如需审阅，走同一个 `respond_permission`。已有不同绑定明确拒绝，不默认换环境。执行后从
+`execution.runtimeId`、`runtimeSource` 和 `kernelDispatched` 核对实际运行结果。
+
 ## 响应去重与恢复
 
 复用现有 Permission Wait、Elicitation、Plan、delegation、Notebook intent 和 Package Owner 保存事实，

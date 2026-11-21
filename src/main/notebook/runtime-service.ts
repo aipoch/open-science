@@ -839,10 +839,12 @@ class NotebookRuntimeService {
     signal?: AbortSignal,
     {
       requireHostDecision = false,
+      requireRunnable = false,
       permissionPrompts,
       provenanceContext
     }: {
       requireHostDecision?: boolean
+      requireRunnable?: boolean
       permissionPrompts?: 'none'
       provenanceContext?: NotebookSessionRequest['provenanceContext']
     } = {}
@@ -850,6 +852,10 @@ class NotebookRuntimeService {
     signal?.throwIfAborted()
     const target = await this.runtimeBindingOwner.resolveBindingTarget(language, binding.runtimeId)
     signal?.throwIfAborted()
+    if (requireRunnable && (!target.runnable || target.binding.status !== 'active'))
+      throw new Error(
+        'The selected Notebook runtime is not ready. Recheck this language and exact runtime before starting research.'
+      )
     if (!this.runtimeBindingOwner.sameTarget(binding, target.binding)) {
       throw new Error(
         'The selected Notebook runtime changed before approval. Select an enabled runtime again.'
@@ -1731,6 +1737,12 @@ class NotebookRuntimeService {
       ...(lastRun.messageBranchId ? { messageBranchId: lastRun.messageBranchId } : {}),
       notebookRunId: lastRun.runId,
       language: lastRun.kernelKind,
+      ...(lastRun.frozenRuntimeTarget?.runtimeId || lastRun.runtimeId
+        ? { runtimeId: lastRun.frozenRuntimeTarget?.runtimeId ?? lastRun.runtimeId }
+        : {}),
+      ...(lastRun.frozenRuntimeTarget?.source
+        ? { runtimeSource: lastRun.frozenRuntimeTarget.source }
+        : {}),
       ...(lastRun.kernelDispatched === undefined
         ? {}
         : { kernelDispatched: lastRun.kernelDispatched })
@@ -1993,6 +2005,14 @@ class NotebookRuntimeService {
     return this.changeRuntimeBinding(request, 'bind', signal, admission?.requireHostDecision)
   }
 
+  async bindTaskRuntime(
+    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
+    signal: AbortSignal
+  ): Promise<void> {
+    const result = await this.changeRuntimeBinding(request, 'bind', signal, false, true)
+    if ('error' in result) throw new Error(result.error)
+  }
+
   // An explicit switch stops the previous kernel before committing the new runtime selection.
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
@@ -2005,7 +2025,8 @@ class NotebookRuntimeService {
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
     operation: 'bind' | 'switch',
     signal?: AbortSignal,
-    requireHostDecision = false
+    requireHostDecision = false,
+    requireRunnable = false
   ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) =>
       this.runtimeBindingOwner.runWrite(
@@ -2041,6 +2062,7 @@ class NotebookRuntimeService {
                     signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
                     {
                       requireHostDecision,
+                      requireRunnable,
                       permissionPrompts: readTrustedNotebookBindingPermissionPrompts(request),
                       provenanceContext: request.provenanceContext
                     }

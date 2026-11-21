@@ -169,12 +169,38 @@ describe('OpenScienceClient', () => {
     }
   )
 
+  it.each([undefined, 'existing-runtime-request'])(
+    'never submits an exact Notebook target to an older server (requestId=%s)',
+    async (requestId) => {
+      const fetch = vi.fn(async () => response(200, { taskCapabilities: ['durable-submissions'] }))
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'test',
+        fetch
+      })
+      await expect(
+        client.startRun(
+          {
+            project: 'project-1',
+            prompt: 'Research',
+            notebookRuntime: { language: 'r', runtimeId: '/existing/bin/R' }
+          },
+          { requestId }
+        )
+      ).rejects.toMatchObject({ code: 'unsupported_capability' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('pins the SDK method inventory including Connector management', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
         'doctor',
         'prepareNotebookEnvironment',
+        'listNotebookRuntimes',
+        'registerNotebookInterpreter',
+        'enableNotebookRuntime',
         'startNotebookEnvironmentOperation',
         'getNotebookEnvironmentOperation',
         'cancelNotebookEnvironmentOperation',

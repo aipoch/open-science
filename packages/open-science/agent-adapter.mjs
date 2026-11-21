@@ -22,6 +22,8 @@ Use list_runtimes and list_providers to find the runtime, providers, and models 
 
 Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Check the requested language before research. With authorization, prepare that language using prepare_notebook_environment. Generate and keep an operationId before submitting. After a timeout or disconnect, call get_notebook_environment_operation with the same language and ID. To cancel, use cancel_notebook_environment_operation with that same target and check the result. Use repair_notebook_environment only for a requested repair of the selected app-managed default environment. Recheck readiness after installation: environment setup, binding approval and Notebook execution are separate. System dependencies, isolation and memory can still block execution independently.
 
+When the user asks to use an existing interpreter, call list_notebook_runtimes for the chosen language. Its runnable and enabled fields describe the interpreter independently of app-managed setup. For an interpreter not listed, use register_notebook_interpreter only with the absolute path the user selected and trusts; this runs a readiness probe. Then enable only the chosen runnable environment with enable_notebook_runtime. Supply notebookLanguage and its exact notebookRuntimeId to start_run; do not put the interpreter path in the research prompt. The Run may still need the Notebook runtime review. Read execution.runtimeId and execution.runtimeSource to verify which runtime handled a Notebook cell. Registering, enabling and binding do not grant permission to install dependencies.
+
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. The user owns provider consent, each decision to continue a stopped Notebook, and sensitive export confirmation.
 
 If a Run returns interaction attention, call list_interactions with the original Run ID, or with both Project and Session IDs. Read each request with get_interaction. For a permission, submit one of the displayed one-time options with respond_permission. For a Plan, use respond_plan with the exact version, branch and revision reviewed. The default mode is relay: ask the user and send source user_relay. If the user explicitly delegates routine decisions for this task, use interactionMode delegate on start_run or set_run_interaction_mode on the existing Run. For a delegated decision, send source delegated_agent and the current expectedModeRevision. Switch back to relay at the user's request.
@@ -117,6 +119,11 @@ const policies = {
     'service',
     'Open-Science could not prepare the requested Notebook language. Recheck setup and inspect the service log before repeating it.',
     { action: 'get_setup_status' }
+  ],
+  notebook_runtime_unavailable: [
+    'agent',
+    'The selected Notebook interpreter is no longer available for this language. Read current runtimes and check that the exact target is runnable and enabled.',
+    { action: 'list_notebook_runtimes' }
   ],
   notebook_environment_operation_conflict: [
     'agent',
@@ -845,6 +852,52 @@ const definitions = [
     exposure: { cli: true, mcp: true },
     serviceCapability: 'provider-setup',
     handler: (args, context) => providerSetup({ action: 'provider-activate', ...args }, context)
+  },
+  {
+    name: 'list_notebook_runtimes',
+    group: 'setup',
+    description:
+      'Discover existing Notebook interpreters for one language, including disabled ones. Returns their runtimeId, source, readiness and effective enabled status. Does not register, enable or install anything.',
+    inputSchema: z.strictObject({ language: languageInput }),
+    annotations: readOnly,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async ({ language }, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).listNotebookRuntimes(language, {
+        signal: context.signal
+      })
+  },
+  {
+    name: 'register_notebook_interpreter',
+    group: 'setup',
+    description:
+      'Probe and register a user-selected existing Python or R interpreter by its absolute local path. Only use a path the user trusts; the application runs a version/readiness probe. Does not enable it or install dependencies.',
+    inputSchema: z.strictObject({ language: languageInput, path: z.string().min(1).max(4096) }),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async (request, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).registerNotebookInterpreter(
+        request,
+        { signal: context.signal }
+      )
+  },
+  {
+    name: 'enable_notebook_runtime',
+    group: 'setup',
+    description:
+      'Enable one explicitly user-selected, runnable Notebook environment in this local profile. Pass the language and exact runtimeId from discovery. Does not bind it to a Session or grant package installation rights.',
+    inputSchema: z.strictObject({
+      language: languageInput,
+      runtimeId: z.string().min(1).max(4096)
+    }),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-runtime-selection',
+    handler: async (request, context) =>
+      (await setupClient(context, 'notebook-runtime-selection')).enableNotebookRuntime(request, {
+        signal: context.signal
+      })
   },
   {
     name: 'prepare_notebook_environment',

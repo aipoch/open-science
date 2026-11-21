@@ -451,6 +451,75 @@ it.each(['question:question-1', 'child-question:question-1'])(
   }
 )
 
+it('discovers, registers and explicitly enables an existing Notebook interpreter through CLI and MCP', async () => {
+  const runtime = {
+    runtimeId: '/workspace/existing-r/bin/R',
+    interpreterPath: '/workspace/existing-r/bin/R',
+    language: 'r',
+    source: 'external',
+    provenance: 'user-own',
+    label: 'Existing R',
+    version: '4.5.1',
+    runnable: true,
+    enabled: false
+  }
+  let registered = false
+  const agent = await resourceAgents(
+    async (request, response) => {
+      const path = '/api/v1/notebook-runtimes'
+      if (request.url === `${path}?language=r` && request.method === 'GET') {
+        response.end(JSON.stringify({ data: registered ? [runtime] : [] }))
+        return
+      }
+      expect(request.url).toBe(path)
+      expect(request.method).toBe('POST')
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(chunk)
+      const input = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (input.action === 'register') {
+        expect(input).toEqual({ action: 'register', language: 'r', path: runtime.interpreterPath })
+        registered = true
+      } else {
+        expect(input).toEqual({ action: 'enable', language: 'r', runtimeId: runtime.runtimeId })
+        expect(registered).toBe(true)
+        runtime.enabled = true
+      }
+      response.end(JSON.stringify({ data: runtime }))
+    },
+    ['notebook-runtime-selection']
+  )
+
+  expect(await agent.cli('list_notebook_runtimes', { language: 'r' })).toEqual({ result: [] })
+  expect(
+    (
+      await agent.mcp('register_notebook_interpreter', {
+        language: 'r',
+        path: runtime.interpreterPath
+      })
+    ).structuredContent
+  ).toMatchObject({ result: { enabled: false, runnable: true } })
+  expect((await agent.mcp('list_notebook_runtimes', { language: 'r' })).structuredContent).toEqual(
+    await agent.cli('list_notebook_runtimes', { language: 'r' })
+  )
+  expect(
+    await agent.cli('enable_notebook_runtime', { language: 'r', runtimeId: runtime.runtimeId })
+  ).toMatchObject({ result: { enabled: true } })
+  expect((await agent.mcp('list_notebook_runtimes', { language: 'r' })).structuredContent).toEqual({
+    result: [runtime]
+  })
+  const withoutRuntimeId = {
+    requestId: 'incomplete-runtime-selection',
+    projectId: 'project-1',
+    prompt: 'Research',
+    notebookLanguage: 'r'
+  }
+  const invalid = await agent.cliError('start_run', withoutRuntimeId)
+  expect(invalid.error.code).toBe('invalid_request')
+  expect((await agent.mcp('start_run', withoutRuntimeId)).structuredContent).toEqual({
+    error: invalid.error
+  })
+})
+
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
   const target = { language: 'r', operationId: 'prepare-r' }
   const path = `/api/v1/notebook-environment/operations/${target.operationId}`

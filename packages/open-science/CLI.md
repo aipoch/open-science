@@ -779,6 +779,24 @@ Run includes the new Run and submission in `continuations`. Follow the new `runI
 Use the linked `requestId` after reconnect. A Run interrupted by restart stays failed, and a live
 review that disappeared is `expired`. Do not repeat the original research or decision to wake it.
 
+## Use an existing Notebook interpreter
+
+Select the language the research requires. `list_notebook_runtimes` reports existing and managed
+interpreters for that language, including the exact `runtimeId`, `runnable` and `enabled`. If the
+chosen interpreter is missing from the list, `register_notebook_interpreter` takes `language` and
+an absolute `path` selected by the user. Registration probes the executable and does not enable it.
+Use `enable_notebook_runtime` with `language` and the exact `runtimeId` to explicitly enable it.
+These are local authenticated MCP tools and also work with `open-science tools call NAME --json`.
+Neither registration nor enablement installs dependencies or grants package installation rights.
+
+Pass `notebookLanguage` and `notebookRuntimeId` together with the research input to `start_run`. The
+SDK uses `notebookRuntime: { language, runtimeId }`. The service checks the exact runtime on the
+target branch before handing the Run to the provider and does not silently replace an existing, different
+binding. If a runtime review is required, decide it with `respond_permission` in the original Run.
+Check the finished Run's `execution.runtimeId`, `runtimeSource`, and `kernelDispatched` for evidence of
+actual execution. A working external environment does not require the app-managed environment for
+either language to be installed.
+
 ## Session configuration
 
 Read the persisted and effective configuration, including referenced provider, model, Specialist,

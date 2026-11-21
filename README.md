@@ -214,6 +214,10 @@ or later and npm on the client's PATH:
 }
 ```
 
+If your client edits the whole MCP configuration, merge the `open-science` entry into its
+existing `mcpServers` object. Some clients, including WorkBuddy, ask you to trust the local
+server before they will connect to it. Check the command and arguments before trusting it.
+
 On Windows, set `"command": "cmd.exe"` and use
 `"args": ["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]`
 so the client can launch npm's command shim.
