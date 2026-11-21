@@ -1,9 +1,11 @@
 import type { ActivePlanProjection } from './session-plan/contract'
 import type { AcpPermissionOption } from './acp-permission-contract'
 import type { ElicitationAnswer, ElicitationField, TaskQuestionSource } from './elicitation'
+import type { TaskInteractionDecisionSource } from './task-interaction-decision-source'
+
+export type { TaskInteractionDecisionSource } from './task-interaction-decision-source'
 
 export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
-export type TaskInteractionDecisionSource = 'user_relay' | 'delegated_agent'
 export type TaskInteractionMode = 'relay' | 'delegate'
 export type TaskInteractionPolicy = Readonly<{ mode: TaskInteractionMode; revision: number }>
 export type SetTaskInteractionModeRequest = {

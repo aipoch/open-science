@@ -1,9 +1,9 @@
 import type { AcpPermissionResponse } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
-import { resolveRestorablePermissionToolAuthority } from '../../shared/session-persistence/restore'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  resolveRestorablePermissionToolAuthority,
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
   type SessionPermissionRuntimeContext,

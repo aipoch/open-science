@@ -112,7 +112,10 @@ const executeToolSchema = {
     .optional()
     .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
-  language: z.enum(['python', 'r']).optional(),
+  language: z
+    .enum(['python', 'r'])
+    .optional()
+    .describe('Omitting language selects Python. Set language to "r" for R code.'),
   kernelSkillIds: z
     .array(z.string().min(1).max(128))
     .optional()
