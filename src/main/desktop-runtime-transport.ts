@@ -9,6 +9,7 @@ import { DesktopRuntimeDisconnectedError } from '../shared/desktop-runtime-recov
 import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { isSessionReadChannel } from '../shared/session-history'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
 import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import { randomUUID } from 'node:crypto'
@@ -585,7 +586,10 @@ export async function startDesktopRuntimeTransport(options: {
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
                 ok: false,
                 error: {
-                  code: 'command-failed',
+                  code:
+                    'channel' in request && isSessionReadChannel(request.channel)
+                      ? 'response-too-large'
+                      : 'command-failed',
                   message: 'Desktop runtime response exceeds the transport byte budget.'
                 }
               })

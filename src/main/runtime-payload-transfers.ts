@@ -1,3 +1,5 @@
+import { isSessionReadChannel } from '../shared/session-history'
+import { ApplicationCommandError } from '../shared/application-command-contract'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdtemp, open, readdir, rm, rmdir, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -275,7 +277,12 @@ export class RuntimePayloadTransfers {
     // until a slot is available, so at most four materialized results can wait here. Small reads
     // bypass this queue; uploads and mutations still fail admission before dispatching side effects.
     if (bytes > MAX_RUNTIME_PAYLOAD_BYTES)
-      return Promise.reject(new Error('Payload transfer exceeds the temporary byte budget.'))
+      return Promise.reject(
+        new ApplicationCommandError(
+          isSessionReadChannel(channel) ? 'response-too-large' : 'command-failed',
+          'Payload transfer exceeds the temporary byte budget.'
+        )
+      )
     return new Promise<Transfer>((resolve, reject) => {
       const cleanup = (): void => {
         this.readTransferWaiters.delete(waiter)

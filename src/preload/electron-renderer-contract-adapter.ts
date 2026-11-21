@@ -1,3 +1,4 @@
+import { isSessionReadChannel } from '../shared/session-history'
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
 import {
   ApplicationCommandError,
@@ -159,14 +160,24 @@ export const createElectronRendererContractAdapter = (
     )
     if (encodedArgs === null) return null as Result
     const result = await port.invoke(channel, ...encodedArgs)
+    const sessionRead = isSessionReadChannel(channel)
     try {
+      if (
+        sessionRead &&
+        result &&
+        typeof result === 'object' &&
+        'ok' in result &&
+        result.ok === false
+      )
+        return unwrapApplicationCommandOutcome<Result>(result)
       return contract.applicationCommand === 'runtime-validated'
         ? unwrapApplicationCommandOutcome<Result>(result)
         : (result as Result)
     } catch (error) {
       if (
         error instanceof ApplicationCommandError &&
-        (publicPath === 'settings.getSettings' ||
+        (sessionRead ||
+          publicPath === 'settings.getSettings' ||
           publicPath === 'sessions.rename' ||
           publicPath === 'sessions.setPinned' ||
           (publicPath === 'sessions.importPackage' && error.code === 'session-package-busy') ||

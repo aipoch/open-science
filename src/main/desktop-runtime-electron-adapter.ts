@@ -1,3 +1,4 @@
+import { isSessionReadChannel, sessionReadIpcResult } from '../shared/session-history'
 import { ipcMain, type IpcMainEvent } from 'electron'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
@@ -90,6 +91,7 @@ export function installDesktopRuntimeElectronAdapter(
       if (!rendererChannels.has(channel)) continue
       ipcMainHandle(channel, async (event, ...args) => {
         const invoke = (): Promise<unknown> => forward(event, channel, args)
+        if (isSessionReadChannel(channel)) return sessionReadIpcResult(invoke)
         if (!enveloped.has(channel)) return invoke()
         try {
           return { ok: true, result: await invoke() }

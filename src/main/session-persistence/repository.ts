@@ -1,3 +1,4 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   loadSessionHistoryPageRequestSchema,
   type LoadSessionHistoryPageRequest,
@@ -1055,20 +1056,31 @@ class SessionRepository {
   // than retaining the snapshot that existed when the initial review started.
   async loadSession(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    reportReadFailure = false
   ): Promise<PersistedChatSession | undefined> {
     const safeProjectId = assertSafeSegment(projectId)
     if ((await this.inspectActiveProjectBoundary(safeProjectId)) !== 'valid') return undefined
-    return (
-      await this.readSessionFile(
-        this.sessionFilePath(safeProjectId, assertSafeSegment(sessionId)),
-        safeProjectId
+    const safeSessionId = assertSafeSegment(sessionId)
+    const read = await this.readSessionFile(
+      this.sessionFilePath(safeProjectId, safeSessionId),
+      safeProjectId
+    )
+    if (read.session || !reportReadFailure) return read.session
+    if (read.warning && 'projectId' in read.warning)
+      throw new ApplicationCommandError(
+        `session-file-${read.warning.kind}`,
+        'Could not read the conversation file.'
       )
-    ).session
+    const quarantine = await this.hasQuarantinedSessionFile(safeProjectId, safeSessionId)
+    if (read.isComplete && quarantine.isComplete && !quarantine.exists)
+      throw new ApplicationCommandError('session-file-missing', 'Conversation file not found.')
+    return undefined
   }
 
   async loadSessionHistoryPage(
-    request: LoadSessionHistoryPageRequest
+    request: LoadSessionHistoryPageRequest,
+    reportReadFailure = false
   ): Promise<SessionHistoryPage | undefined> {
     const input = loadSessionHistoryPageRequestSchema.parse(request)
     const projectId = assertSafeSegment(input.projectId)
@@ -1091,7 +1103,7 @@ class SessionRepository {
       ) {
         // Old JSON already stores the full conversation. Keep its original read path without
         // creating a display index or rewriting the file just to open it.
-        const session = await this.loadSession(projectId, sessionId)
+        const session = await this.loadSession(projectId, sessionId, reportReadFailure)
         return session ? completePage(session) : undefined
       }
       if (!this.projection) return undefined
@@ -1107,7 +1119,7 @@ class SessionRepository {
         return page
       // Missing/stale JSONL indexes are admitted once through the existing full decoder.
       // Subsequent display pages query only their indexed rows.
-      const session = await this.loadSession(projectId, sessionId)
+      const session = await this.loadSession(projectId, sessionId, reportReadFailure)
       if (!session) return undefined
       const currentFingerprint = await this.historySourceFingerprint(projectId, sessionId)
       if (!currentFingerprint || currentFingerprint !== fingerprint)

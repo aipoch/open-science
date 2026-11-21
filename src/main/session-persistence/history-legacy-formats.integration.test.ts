@@ -162,6 +162,9 @@ it('refuses to overwrite an unsupported future envelope through the compatibilit
   const raw = JSON.stringify({ version: SESSION_FILE_VERSION + 1, session: fixture() }, null, 2)
   await writeFile(logicalPath(), raw)
   expect(await repository.loadSessionHistoryPage(request)).toBeUndefined()
+  await expect(repository.loadSessionHistoryPage(request, true)).rejects.toMatchObject({
+    code: 'session-file-unsupported-version'
+  })
   expect(
     await repository.loadSessionWithDiagnostics(request.projectId, request.sessionId, {
       mode: 'read-only'

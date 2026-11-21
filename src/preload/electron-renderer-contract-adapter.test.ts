@@ -214,6 +214,18 @@ describe('electron renderer contract adapter', () => {
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
   })
 
+  it.each(['sessions.loadOne', 'sessions.loadHistoryPage'])(
+    'preserves the read failure across the Electron bridge for %s',
+    async (name) => {
+      const port = createPort()
+      const error = { code: 'response-too-large', message: 'Response exceeds the limit.' }
+      port.invoke.mockResolvedValue({ ok: false, error })
+      await expect(
+        createElectronRendererContractAdapter(port).invoke(name, { projectId: 'p', sessionId: 's' })
+      ).rejects.toEqual(error)
+    }
+  )
+
   it('preserves package import contention across the Electron context bridge', async () => {
     const error = toApplicationCommandErrorEnvelope(
       new ApplicationCommandError(

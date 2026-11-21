@@ -1,3 +1,7 @@
+import {
+  toApplicationCommandErrorEnvelope,
+  type ApplicationCommandErrorEnvelope
+} from './application-command-contract'
 import { z } from 'zod'
 import type { PersistedChatSession } from './session-persistence'
 
@@ -37,5 +41,20 @@ export class SessionHistoryCursorStaleError extends Error {
   constructor() {
     super(`${SESSION_HISTORY_CURSOR_STALE}: Session history changed. Reload its first page.`)
     this.name = 'SessionHistoryCursorStaleError'
+  }
+}
+
+export const isSessionReadChannel = (channel: string): boolean =>
+  channel === 'sessions:load-one' || channel === 'sessions:load-history-page'
+
+// Electron drops properties on rejected errors. Only wrap failures so successful reads
+// preserve the existing optional Session and history page contracts.
+export const sessionReadIpcResult = async <T>(
+  read: () => Promise<T>
+): Promise<T | { ok: false; error: ApplicationCommandErrorEnvelope }> => {
+  try {
+    return await read()
+  } catch (error) {
+    return { ok: false as const, error: toApplicationCommandErrorEnvelope(error) }
   }
 }
