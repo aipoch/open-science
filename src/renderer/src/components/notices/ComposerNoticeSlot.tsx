@@ -226,28 +226,23 @@ const ComposerFailureNoticeSlot = ({
   // Known Main diagnostics are stored in English; localize them for display only.
   const sessionRecoveryMessage = (notice: ComposerNotice, fallback: string): string => {
     const raw = notice.failure.diagnostics.raw?.trim()
-    if (raw) {
-      switch (raw) {
-        case 'This turn was interrupted. Resume to continue.':
-          return t('This turn was interrupted. Resume to continue.')
-        case 'ACP connection closed':
-        case 'Connection lost — Resume to reconnect and continue.':
-          return t('Connection lost — Resume to reconnect and continue.')
-        case 'Session was interrupted before the app closed.':
-          return t('Session was interrupted before the app closed.')
-        default:
-          return raw
-      }
-    }
-    switch (notice.recoveryCause) {
-      case 'cancelled':
-        return t('This turn was interrupted. Resume to continue.')
-      case 'connection-lost':
+    if (!raw || raw === 'This turn was interrupted. Resume to continue.') {
+      if (notice.recoveryCause === 'connection-lost')
         return t('Connection lost — Resume to reconnect and continue.')
-      case 'app-restart':
+      if (notice.recoveryCause === 'app-restart')
+        return t('Session was interrupted before the app closed.')
+      return raw || notice.recoveryCause === 'cancelled'
+        ? t('This turn was interrupted. Resume to continue.')
+        : fallback
+    }
+    switch (raw) {
+      case 'ACP connection closed':
+      case 'Connection lost — Resume to reconnect and continue.':
+        return t('Connection lost — Resume to reconnect and continue.')
+      case 'Session was interrupted before the app closed.':
         return t('Session was interrupted before the app closed.')
       default:
-        return fallback
+        return raw
     }
   }
 
