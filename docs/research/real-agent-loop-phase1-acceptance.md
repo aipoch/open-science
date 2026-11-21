@@ -28,6 +28,30 @@ and R were ready, and Python was still absent. Project lists remained empty. Thi
 setup and disconnect evidence only. No WorkBuddy conversation, research, Notebook dispatch or
 file delivery was part of this run.
 
+## Task interaction preview: macOS arm64, November 21, 2026
+
+The installed npm CLI and native runtime built from `a16448a4d` passed real npm resolution,
+native loading, and the standalone startup check. Their SHA-256 values were
+`630f310cdb53d6fdccb6e399563842347fccb592c8b909600330e05b88bd7bcb` and
+`090214025c179c0e0503b0fd0ca513cf7b95926adde7853206c28fabf6bf4ba4`. Actual MCP stdio exposed
+Plan, ordinary permission, AskUser, Notebook continuation, and sensitive export responses.
+CLI JSON and MCP agreed on an unset Agent runtime and separate unprepared Python and R
+environments in the new profile. The MCP Project list was empty after discovery.
+
+The earlier `fbdc980eb` package admitted a real Plan First task with the local Qwen3-4B provider.
+The model processed the prompt and generated tokens, but no Plan interaction appeared during
+the bounded five-minute probe. The Kilo free route also admitted a Run without yielding a Plan
+in that observation window. No Plan decision or new Run is attributed to either probe. After a
+controlled restart of the Qwen test profile, CLI JSON recovered accepted request
+`a58208fb-ac69-44e6-bba2-a23f8d002206` and the original Run
+`963b646d-dda5-4599-9c62-e658cd6ba57d` with `failureCode: process_restarted` and unconfirmed
+Notebook execution. No replacement request was sent.
+
+The WorkBuddy 5.9.4 window showed the older Notebook review stop without dispatch. When the
+preview package was ready, the computer use session could no longer attach to the WorkBuddy
+window. The preview therefore verifies installation, discovery, and restart lookup; it does
+not pass the WorkBuddy or independent receiving environment gates in #80 and #81.
+
 ## WorkBuddy setup revision: macOS arm64, November 21, 2026
 
 - Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local
