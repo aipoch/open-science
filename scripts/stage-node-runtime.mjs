@@ -33,6 +33,8 @@ const cliBundle = 'cli-bundle.cjs'
 const initTemplate = 'node_modules/init-package-json/lib/default-input.js'
 const bundledEntries = {
   cli: 'lib/cli/entry.js',
+  // The upstream npx launcher imports these definitions before forwarding to npm exec.
+  definitions: 'node_modules/@npmcli/config/lib/definitions/index.js',
   prefix: 'bin/npm-prefix.js',
   gyp: 'node_modules/node-gyp/bin/node-gyp.js'
 }

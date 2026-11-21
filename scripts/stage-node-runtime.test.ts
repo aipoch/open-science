@@ -30,9 +30,10 @@ const npmFiles = {
   'bin/npx': 'npx-shell',
   'bin/npm.cmd': 'npm-cmd',
   'bin/npx.cmd': 'npx-cmd',
-  'bin/npx-cli.js': 'npx-entry',
+  'bin/npx-cli.js': "console.log(require('@npmcli/config/lib/definitions'))",
   'bin/npm-prefix.js': '',
   'lib/cli/entry.js': "module.exports = require('dependency')",
+  'node_modules/@npmcli/config/lib/definitions/index.js': "module.exports = 'npx-definitions'",
   'node_modules/node-gyp/bin/node-gyp.js': '',
   'node_modules/init-package-json/lib/default-input.js': '',
   'lib/cli.js': 'runtime-code',
@@ -120,7 +121,7 @@ it.skipIf(process.platform === 'win32')(
     // archive moves off the staging machine, breaking the bundled npm fallback.
     for (const [name, entry] of [
       ['npm', npmFiles['bin/npm-cli.js']],
-      ['npx', 'npx-entry']
+      ['npx', npmFiles['bin/npx-cli.js']]
     ]) {
       const target = await readlink(join(output, name))
       expect(target.startsWith('/')).toBe(false)
@@ -233,6 +234,9 @@ it.for(['darwin', 'win32'])(
       await rm(join(output, 'node_modules/npm/bin/npx-cli.js'))
       await stageNodeRuntime(options)
       const npm = join(output, 'node_modules/npm')
+      expect(
+        execFileSync(process.execPath, [join(npm, 'bin/npx-cli.js')], { encoding: 'utf8' }).trim()
+      ).toBe('npx-definitions')
       expect(
         execFileSync(process.execPath, [join(npm, 'bin/npm-cli.js')], { encoding: 'utf8' }).trim()
       ).toBe('dependency-code')
