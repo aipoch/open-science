@@ -253,6 +253,8 @@ export function createDesktopDependencyFilter(manifest) {
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
   const unusedDistributions = {
     'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
+    // The Node OCR worker loads the paired .js and .wasm files for each kernel.
+    'tesseract.js-core@6.1.2': /^tesseract-core(?:-simd)?(?:-lstm)?\.wasm\.js$/,
     'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
     'styled-exceljs@0.21.6':
       /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
