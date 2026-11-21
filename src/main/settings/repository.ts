@@ -230,19 +230,33 @@ class SettingsRepository {
   }
 
   /** Provision Kilo and select its free route when users skip onboarding. */
-  async addOnboardingKiloProvider(): Promise<void> {
+  async addOnboardingKiloProvider(framework?: AgentFrameworkId): Promise<void> {
     await this.mutate((settings) => {
-      if (settings.onboardingCompletedAt !== undefined) return settings
-      const existing = settings.providers.find(isKiloProvider)
-      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers)
+      if (framework === undefined && settings.onboardingCompletedAt !== undefined) return settings
+      const existing = settings.providers.find(
+        (provider) => isKiloProvider(provider) && (framework === undefined || !provider.keyRef)
+      )
+      if (
+        framework !== undefined &&
+        (settings.agentFrameworkId !== framework ||
+          (settings.activeProviderId &&
+            (settings.activeProviderId !== existing?.id ||
+              settings.activeModel !== KILO_FREE_MODEL_ID)))
+      )
+        throw new BootstrapError('configuration_conflict')
+      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) {
+        if (framework !== undefined) throw new BootstrapError('configuration_conflict')
         return settings
+      }
       const provider = existing ?? createDefaultKiloProvider(settings)
       if (
         !resolveOfficialModelCatalog({ ...provider, hasKey: false }).some(
           (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
         )
-      )
+      ) {
+        if (framework !== undefined) throw new BootstrapError('runtime_unavailable')
         return settings
+      }
       return {
         ...settings,
         kiloDefaultInitialized: true,

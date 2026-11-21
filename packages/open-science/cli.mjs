@@ -20,6 +20,7 @@ import {
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
+import { openBrowser } from './open-browser.mjs'
 import { startLaunchLogReader } from './launch-log.mjs'
 import { protectInstallationStartup } from './installation-startup.cjs'
 import {
@@ -890,17 +891,6 @@ export const waitForStartup = async (
   }
 }
 
-const openBrowser = (url) => {
-  const [command, args] =
-    process.platform === 'win32'
-      ? ['cmd', ['/c', 'start', '', url]]
-      : process.platform === 'darwin'
-        ? ['open', [url]]
-        : ['xdg-open', [url]]
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
-  child.unref()
-}
-
 // The real I/O the commands use, bundled so tests can substitute fakes. Declared after the helpers it
 // references so its initializer sees them; commands take `deps = DEFAULT_DEPS`, so production callers
 // pass nothing and get these.
@@ -1583,9 +1573,6 @@ const runAgentCommand = async ({ command, subcommand, positionals = [], options 
   if (command === 'doctor') {
     name = 'doctor'
     input = {}
-  } else if (command === 'runtime') {
-    name = 'prepare_runtime'
-    input = { timeoutMs: options.timeoutMs }
   } else if (subcommand === 'list') {
     name = 'list_capabilities'
     input = { group: operand, checkService: options.checkService }
@@ -1618,9 +1605,6 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
   if (command === 'doctor' || command === 'tools') return runAgentCommand(parsed, deps)
-  if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex') {
-    return runAgentCommand(parsed, deps)
-  }
   const client = await deps.connect({ configRoot: options.configRoot })
   const call = async (name, input = {}, signal) => {
     const { invokeAgentCapability } = await import('./agent-adapter.mjs')
@@ -1672,13 +1656,15 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       options.model
     ) {
       request = { action: 'provider', key: readSecret(options.apiKeyEnv), model: options.model }
+    } else if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex') {
+      request = { action: 'runtime' }
     } else if (command === 'connector' && positionals[0] === 'literature')
       request = { action: 'openalex', key: readSecret(options.openAlexKeyEnv) }
     else
       throw new CliUsageError(
         'Supported setup commands: runtime install codex; provider add --type official --vendor openai --model <id> --api-key-env <ENV>; connector configure literature --openalex-key-env <ENV>.'
       )
-    const result = await client.bootstrap(request, { timeoutMs: 600_000 })
+    const result = await client.bootstrap(request, { timeoutMs: options.timeoutMs ?? 600_000 })
     if (!result.ok)
       throw Object.assign(new Error(`Setup failed: ${result.code}.`), { code: result.code })
     outputValue(result, options, deps)

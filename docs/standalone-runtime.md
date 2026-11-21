@@ -335,14 +335,15 @@ Electron tests also require an unlocked test Secret Service.
 
 Run `open-science doctor --profile /absolute/path/to/profile --json` or call `get_setup_status`
 in that profile's local MCP session. `readiness.agent` covers runtime and provider. The independent
-`readiness.notebook` checks the default Python environment, protection dependencies and host
-memory policy using existing service Owners. You can inspect `checks.notebook.environment.rReady`
-for R. This check starts no Notebook or new execution domain, changes no execution permission,
+`readiness.notebook` checks the installed Python and R environments separately from protection
+dependencies and host memory policy. Supply `language: "python"` or `language: "r"` to check a
+specific language. This check starts no Notebook or new execution domain, changes no execution permission,
 and leaves any user stop in effect. The delivery directory check runs in the CLI or MCP process.
 
 | Finding                                               | Who acts and how                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Missing Python or recovery required                   | The user prepares or follows recovery instructions in Notebook environment Settings.                                                                                                                                                                                |
+| Requested language is missing                         | The agent can use `prepare_notebook_environment` for the language the user requested. A general setup check does not choose or install a language.                                                                                                                  |
+| Notebook environment recovery required                | Open same-profile Web setup or Settings to review the recovery instructions for the affected language.                                                                                                                                                              |
 | Invalid trust bundle                                  | The deployment operator checks the installation's OpenSSL and public CA prerequisites and the profile's custom PEM bundle. Doctor can diagnose the bundle of a running service; if the native OpenSSL dependency prevents startup, use the service startup log.     |
 | Missing bubblewrap                                    | The Linux deployment operator installs the distribution package and makes `bwrap` available on the service PATH.                                                                                                                                                    |
 | Linux namespaces unavailable                          | The deployment operator grants the service account the namespaces required by bubblewrap. Doctor runs the same fixed, bounded read-only bubblewrap probe used by Notebook launch and reports this category only when the diagnostic identifies a namespace failure. |

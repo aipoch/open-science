@@ -10,12 +10,22 @@ const actions = {
   notebook_environment_recovery_required: [
     'user',
     'review_notebook_environment',
-    'Open Notebook environment settings and review the recovery or reset instructions for Python.'
+    'Open Notebook environment settings and review recovery for the selected language.'
+  ],
+  notebook_environment_missing: [
+    'agent',
+    'prepare_notebook_environment',
+    'Prepare the requested Notebook language for this profile.'
+  ],
+  notebook_language_required: [
+    'user',
+    'choose_notebook_language',
+    'No Notebook language is ready. Check the Python and R results and choose a language when the user requests computation.'
   ],
   notebook_python_missing: [
     'user',
-    'prepare_notebook_environment',
-    'Prepare the default Python environment in Open-Science Settings.'
+    'choose_notebook_language',
+    'This service reports legacy Python readiness only. Check the required language in Open-Science or update the service.'
   ],
   notebook_sandbox_preparing: [
     'service',
@@ -126,6 +136,8 @@ const scope = z
   .regex(/^(darwin:host|windows:host|linux:host|linux:cgroup-v[12]:\/[\w./:@-]{0,241}|default)$/u)
 const schemas = {
   environment: check.extend({
+    python: check.optional(),
+    r: check.optional(),
     pythonReady: z.boolean().optional(),
     rReady: z.boolean().optional()
   }),
@@ -137,7 +149,7 @@ const schemas = {
   })
 }
 
-export function projectAgentNotebookReadiness(evidence, profile) {
+export function projectAgentNotebookReadiness(evidence, profile, language) {
   const platform = z.enum(['darwin', 'linux', 'win32']).safeParse(evidence?.platform)
   const checks = Object.fromEntries(
     Object.entries(schemas).map(([key, schema]) => [
@@ -145,8 +157,28 @@ export function projectAgentNotebookReadiness(evidence, profile) {
       schema.safeParse(evidence?.[key]).data ?? { status: 'unconfirmed' }
     ])
   )
-  if (checks.environment.status === 'ready' && checks.environment.pythonReady !== true) {
-    checks.environment = { status: 'unconfirmed' }
+  const environment = checks.environment
+  if (environment.python && environment.r) {
+    const languages = [environment.python, environment.r]
+    const active = language
+      ? environment[language]
+      : (languages.find(({ status }) => status === 'ready') ??
+        languages.find(({ status }) => status === 'checking') ??
+        (languages.every(({ status }) => status === 'blocked')
+          ? { status: 'blocked', reason: 'notebook_language_required' }
+          : { status: 'unconfirmed' }))
+    checks.environment = {
+      ...environment,
+      ...active,
+      reason: active.reason,
+      ...(language ? { language } : {})
+    }
+  } else if (language === 'r' || (environment.status === 'ready' && !environment.pythonReady)) {
+    checks.environment = {
+      ...environment,
+      status: 'unconfirmed',
+      reason: 'notebook_evidence_unavailable'
+    }
   }
   if (
     checks.memoryPolicy.status === 'ready' &&
@@ -164,11 +196,11 @@ export function projectAgentNotebookReadiness(evidence, profile) {
           ? 'ready'
           : 'unconfirmed',
     checks: { ...(platform.success ? { platform: platform.data } : {}), ...checks },
-    next: readinessActions(Object.values(checks), profile)
+    next: readinessActions(Object.values(checks), profile, language)
   }
 }
 
-export const readinessActions = (checks, profile) =>
+export const readinessActions = (checks, profile, language) =>
   [...new Set(checks.filter(({ status }) => status !== 'ready').map(({ reason }) => reason))]
     .filter((code) => Object.hasOwn(actions, code))
     .map((code) => {
@@ -178,8 +210,16 @@ export const readinessActions = (checks, profile) =>
         owner,
         action,
         message,
-        requiresUser: owner !== 'service',
+        ...(action === 'prepare_notebook_environment' && language
+          ? { arguments: { language } }
+          : {}),
+        ...(action === 'choose_notebook_language' ? { choices: ['python', 'r'] } : {}),
+        requiresUser: owner === 'user' || owner === 'deployment',
         retryable: owner === 'service',
-        verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
+        verify: {
+          capability: 'get_setup_status',
+          ...(profile ? { profile } : {}),
+          ...(language ? { arguments: { language } } : {})
+        }
       }
     })

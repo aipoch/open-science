@@ -5,9 +5,9 @@
 `recovery-interface-notes.md` 的历史调研。调研证明过核心 Notebook 与包迁移路径，不能作为本次构建的验收结果。
 本轮代码核对基线：`b41cbc4be84e56c56f8c5e75581e50bcd181c7e2`。
 
-一期保证外部 Agent、MCP 进程和 OpenScience 服务同机并共享可访问的文件系统。外部 Agent 从 README
-英文提示语进入，安装或启动、发现本版本能力、检查准备状态，再按用户授权完成研究及交付。迁移时只把
-`.science` 包带到另一个独立环境，先只读检查，用户同意后才 Fork、二次研究并再次导出。
+一期保证外部 Agent、MCP 进程和 OpenScience 服务同机并共享可访问的文件系统。README 的一段英文提示语
+只负责安装或连接 MCP、发现版本能力、检查环境和说明需要本人处理的动作。研究、文件交付、导入和 Fork
+根据后续实际用户请求调用 MCP。即使附有 `.science`，单独的设置提示也不触发导入、执行或 Fork。
 
 ## 基线核对与实施取舍
 
@@ -24,6 +24,17 @@
 验收分别检查 **readiness**（能否开始）、**execution**（实际执行了什么）和 **delivery**（实际交付了什么）。
 文件核验通过不能证明计算正确，使用已知数据另行核对报告和结果表。以上三层状态、统一错误和敏感确认均为一期门槛。
 既有 SDK 和持久数据兼容；旧 CLI/MCP 协议、远端文件交付、跨 Agent 模型迁移和订阅复用不在本期。
+
+## 外部 Agent 配置接力
+
+- `doctor` / `get_setup_status` 只读。没有已选 runtime 时列举本版可用的选择；服务的有效默认值不能代替用户选择。
+  `list_runtimes`、`select_runtime` 和 `prepare_runtime` 共用现有运行时清单、路由与托管安装。选择运行时与选择 provider 是两件事。
+- 用户选定免密钥的 Kilo Gateway 免费路由后，Agent 可用 `configure_provider` 配置并检查。其他 provider 可通过
+  `open_setup` 打开同 profile 的 Web 配置；Agent 可处理已授权的非凭据步骤。OAuth 同意和凭据输入由用户完成。
+  认证 URL 只交给浏览器，不进入 MCP 返回或验收记录。没有浏览器时说明宿主限制和同 profile 入口。
+- 分别报告 Python、R 与宿主依赖、隔离、内存。如果只检查环境，不推断语言或主动安装；明确需要时，
+  Agent 可用 `prepare_notebook_environment` 准备指定语言。缺 Python 不阻止仅需要 R 的工作，反之亦然。
+  该能力不运行 Notebook，也不改变 Notebook 的人工审阅、继续或敏感导出权限。
 
 ## 任务依赖与验证
 
@@ -77,8 +88,10 @@
    原生对话框默认取消，批准绑定候选归档大小与 SHA-256，发布时再次核对。拒绝或十分钟未确认即取消并清理；
    本地 Web 可显示此操作，但浏览器、CLI、MCP 的认证不能批准。Agent 通过原操作查询结果。
    Electron 验收使用真实服务、MCP、界面和 IPC，仅替换 OS 对话框选择；另有候选归档变更、过期、拒绝和伪造测试。
-4. [#66–#67](https://github.com/guch96/open-science/issues/54) 以实际构建的 npm 包运行 README 两条验收路径。
-   只给提示语时，准备好后等用户研究指令；给包时在无源数据库、Notebook 工作目录或凭据的独立环境先只读检查。
+4. [#66–#67](https://github.com/guch96/open-science/issues/54) 使用实际 npm 构建从同一 README 短提示进入。
+   空 profile 和附包时都先检查设置；单独发出研究请求或导入请求。空 profile 验证可选择并代办非 Codex
+   配置、只准备指定 Python/R、同 profile 浏览器接力。迁移环境无源数据库、Notebook 工作目录或凭据；用户
+   请求导入后只读检查，明确授权后 Fork 和续研。使用 WorkBuddy 复验宿主行为，分别记录协议与真实模型证据。
 5. [#68](https://github.com/guch96/open-science/issues/68) 在目标版本发布后从 registry 复验。
    本次实现与本地打包不发布 npm，也不以旧 registry 版本替代当前构建。
 

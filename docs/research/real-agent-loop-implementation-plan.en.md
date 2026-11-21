@@ -7,11 +7,10 @@ validated important Notebook and package migration paths, but it is not acceptan
 build. The code baseline used for the initial comparison was `b41cbc4be84e56c56f8c5e75581e50bcd181c7e2`.
 
 Phase 1 guarantees that the external Agent, MCP process, and OpenScience service run on the same
-machine and can access the same filesystem. The external Agent starts from the English prompt in the
-README, installs or starts OpenScience, discovers the capabilities of the installed version, checks
-readiness, and completes research and delivery after the required user actions. For migration, only
-the `.science` package crosses into a separate environment: the Agent first performs a read-only
-inspection, then creates a Fork and performs a second study only after the user agrees.
+machine and can access the same filesystem. The README's English setup prompt covers MCP connection,
+capability discovery, readiness checks, and any required user action. Research, delivery, import, and
+Fork follow the user's separate requests. A `.science` attachment alone does not request import,
+execution, or Fork. Only the package crosses into the independent migration environment.
 
 ## Baseline and Implementation Contracts
 
@@ -31,6 +30,19 @@ scientific correctness; reports and result tables are checked separately with kn
 state layers, consistent errors, and sensitive-export confirmation are Phase 1 gates. Existing SDK
 and persisted data compatibility remains supported. Old CLI/MCP protocols, remote file delivery,
 cross-Agent model migration, and subscription reuse are outside this phase.
+
+## Setup through an external Agent
+
+- `doctor` and `get_setup_status` are read-only. List the available runtimes when a user has not
+  selected one; the effective fallback does not count as a choice. `list_runtimes`, `select_runtime`,
+  and `prepare_runtime` reuse runtime discovery, routing, and managed installers.
+- After the user selects the keyless Kilo Gateway free route, `configure_provider` can set it up and
+  check it. `open_setup` opens the same profile in the local browser for other provider settings.
+  The Agent can handle authorized routine setup. The user handles credentials and consent. The browser
+  receives the private URL directly, and MCP results and test evidence omit it.
+- Report Python and R readiness separately from dependencies, isolation, and memory. A general
+  check does not pick or install a language. `prepare_notebook_environment` requires an explicit
+  language. It neither starts a Notebook nor grants permission to resume a stopped one.
 
 ## Ticket Dependencies and Verification
 
@@ -117,10 +129,13 @@ cross-Agent model migration, and subscription reuse are outside this phase.
    original operation. Electron acceptance uses the real service, MCP, UI, and IPC, with only the OS
    dialog selection replaced; candidate mutation, expiration, rejection, and spoofing are tested too.
 
-4. [#66–#67](https://github.com/guch96/open-science/issues/54) run the README's two acceptance
-   paths against an actually built npm package. With only the prompt, setup completes and then waits
-   for the user's research request. With an attached package, the new environment has no source
-   database, Notebook working directory, or credentials and performs a read-only inspection first.
+4. [#66–#67](https://github.com/guch96/open-science/issues/54) use the same short README prompt
+   against an actual npm build. Check setup both with and without an attachment. Separately ask
+   for research or import. Verify that WorkBuddy can prepare a selected non-Codex runtime/provider,
+   prepare only the requested language, and open same-profile Web setup. In an independent
+   environment with no source database, working directory, or credentials, explicitly request
+   read-only import and separately authorize the Fork and follow-up work. Record real Agent and
+   Notebook evidence separately from protocol regressions.
 
 5. [#68](https://github.com/guch96/open-science/issues/68) repeats the acceptance from the registry
    after the target version is published. This implementation does not publish npm or substitute an

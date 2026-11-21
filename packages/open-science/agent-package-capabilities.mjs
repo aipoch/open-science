@@ -377,7 +377,7 @@ export const getAgentPackageCapabilities = (AgentError) => [
     name: 'import_session',
     group: 'delivery',
     description:
-      'Import a local .science package as read-only research history. Never executes its Notebook or creates a Fork. Use get_package_operation after an interrupted wait.',
+      'Import a local .science package as read-only research history when the user requests import or inspection. An attachment alone does not request import. Never executes its Notebook or creates a Fork. Use get_package_operation after an interrupted wait.',
     inputSchema: z
       .strictObject({
         sourcePath: pathSchema.describe('Absolute path to the local .science package.'),

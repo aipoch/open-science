@@ -1,9 +1,16 @@
 export type BootstrapRequest =
   | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
+  | { action: 'agent-runtime' | 'kilo-free'; framework: AgentFramework }
   | { action: 'provider'; key: string; model: string }
   | { action: 'openalex'; key: string }
 export type BootstrapResult =
-  | { ok: true; providerId?: string; next?: { runtime?: string[]; provider?: string[] } }
+  | {
+      ok: true
+      providerId?: string
+      selectedFramework?: AgentFramework | null
+      keylessKiloAvailable?: boolean
+      next?: { runtime?: string[]; provider?: string[] }
+    }
   | {
       ok: false
       code:
@@ -235,7 +242,12 @@ export type NotebookReadinessCheck = {
 }
 export type NotebookReadiness = {
   platform: string
-  environment: NotebookReadinessCheck & { pythonReady?: boolean; rReady?: boolean }
+  environment: NotebookReadinessCheck & {
+    pythonReady?: boolean
+    rReady?: boolean
+    python?: NotebookReadinessCheck
+    r?: NotebookReadinessCheck
+  }
   dependencies: NotebookReadinessCheck
   sandbox: NotebookReadinessCheck
   memoryPolicy: NotebookReadinessCheck & { source?: string; executionScope?: string }
@@ -244,9 +256,14 @@ export type DoctorReport = {
   ready: boolean
   checks: {
     daemon: { status: 'ready' }
-    runtime: { status: ReadinessStatus; framework: AgentFramework }
-    provider:
+    runtime: {
+      status: ReadinessStatus
+      framework: AgentFramework
+      selectedFramework?: AgentFramework | null
+    }
+    provider: (
       { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+    ) & { keylessKiloAvailable?: boolean }
     skills: { status: 'ready'; enabled: string[] }
     notebook?: NotebookReadiness
   }
@@ -670,6 +687,10 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<{ installed: boolean; onPath: boolean; target: string; pathHint?: string }>
   doctor(options?: RequestOptions): Promise<DoctorReport>
+  prepareNotebookEnvironment(
+    language: 'python' | 'r',
+    options?: RequestOptions
+  ): Promise<Record<string, never>>
   listRuntimes(options?: RequestOptions): Promise<AgentRuntime[]>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(

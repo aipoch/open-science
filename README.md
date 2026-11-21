@@ -147,15 +147,9 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 ### Connect your own agent through MCP
 
-If your agent can configure local MCP servers, copy this prompt into its chat. Attach a `.science`
-file only if you want to bring in existing research. If your client cannot attach binary files,
-include the package's absolute local path in the same message.
+If your agent can configure local MCP servers, copy this setup prompt into its chat.
 
 > Set up Open-Science for me using https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp. Discover what the installed version supports and check whether Open-Science and its Notebook are ready. Tell me where to sign in, continue a stopped Notebook, or review a sensitive export when my action is required.
->
-> If I haven't attached a `.science` file, stop after setup and wait for my research request. When I give you a question and data, run the research through Open-Science MCP and deliver a readable report, a results table, and a `.science` package. Tell me separately what the Notebook ran and which files you verified.
->
-> If I attach a `.science` file, use MCP to import it and summarize the read-only Session and its existing results without running its Notebook. Wait for my explicit permission before forking it. Do the follow-up research I request in the Fork, then deliver its new report, results table, and `.science` package through MCP.
 
 Choose your agent to see its setup options. For clients with local command access, the Open-Science CLI is also available.
 

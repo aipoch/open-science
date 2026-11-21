@@ -3,32 +3,51 @@ import { fileURLToPath } from 'node:url'
 
 const cliPath = fileURLToPath(new URL('./cli.mjs', import.meta.url))
 
-export const setupAction = ({ code, argv }, profile) => {
+export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvailable) => {
   const runtime = code.startsWith('runtime_')
-  const prepare = runtime && argv?.[0] === 'runtime' && argv[1] === 'install' && argv[2] === 'codex'
-  const login = !runtime && argv?.[0] === 'codex' && argv[1] === 'login'
-  const action = prepare ? 'prepare_runtime' : login ? 'provider_login' : 'open_settings'
-  const userCommand = login
-    ? ['codex', 'login', ...(argv[2] === '--force' ? ['--force'] : [])]
-    : ['url']
+  const prepare = runtime && framework
+  const login =
+    framework === 'codex' && argv?.[0] === 'codex' && argv[1] === 'login' && argv[2] === '--force'
+  const choose = !runtime && code === 'provider_missing' && !login
+  const action = prepare
+    ? 'prepare_runtime'
+    : login
+      ? 'provider_login'
+      : choose
+        ? 'choose_provider'
+        : 'open_setup'
   return {
     code,
     action,
-    owner: prepare ? 'agent' : 'user',
-    requiresUser: !prepare,
+    owner: prepare || action === 'open_setup' ? 'agent' : 'user',
+    requiresUser: Boolean(login || choose),
     retryable: false,
     message: prepare
-      ? 'Prepare the managed Codex runtime through Open-Science.'
+      ? 'Prepare this selected Agent runtime through Open-Science.'
       : login
-        ? 'Ask the user to run the Open-Science Codex login command for this profile.'
-        : `Ask the user to open Open-Science Settings for this profile and check the ${runtime ? 'Agent runtime' : 'model provider'}.`,
-    ...(!prepare
+        ? 'Open this profile in Web or use the installed sign-in command. The user completes Codex sign-in.'
+        : choose
+          ? 'Ask which model provider to use. Open Web setup to see and configure the available providers.'
+          : 'Open this profile in Web to review the reported setup problem and hand off any sign-in or credential entry to the user.',
+    ...(prepare ? { arguments: { framework } } : {}),
+    ...(choose && framework && keylessKiloAvailable
       ? {
-          executable: process.execPath,
-          argv: [cliPath, ...userCommand, ...(profile ? ['--profile', profile] : [])],
-          ...(profile ? { cwd: profile } : {})
+          options: [
+            {
+              label: 'Kilo Gateway (free, no API key)',
+              capability: 'configure_provider',
+              arguments: { provider: 'kilo-free', framework }
+            }
+          ]
         }
       : {}),
+    ...(login
+      ? {
+          executable: process.execPath,
+          argv: [cliPath, 'codex', 'login', '--force', ...(profile ? ['--profile', profile] : [])]
+        }
+      : {}),
+    ...(!prepare ? { web: { capability: 'open_setup' } } : {}),
     verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
   }
 }
@@ -52,7 +71,14 @@ export const projectSubmissionReceipt = (receipt, profile) => {
       owner: 'user',
       requiresUser: true,
       retryable: false,
-      next: [setupAction({ code }, profile)]
+      next: [
+        {
+          ...setupAction({ code }, profile),
+          action: 'open_setup',
+          owner: 'user',
+          requiresUser: true
+        }
+      ]
     }
   }
 }

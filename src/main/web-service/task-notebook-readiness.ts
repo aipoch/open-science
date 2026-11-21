@@ -26,14 +26,32 @@ async function observe<T>(work: Promise<unknown>): Promise<T | undefined> {
 
 function environmentCheck(status?: ProvisionStatus): TaskNotebookReadiness['environment'] {
   if (!status) return unconfirmed
-  const check: TaskReadinessCheck = status.provisioning
-    ? { status: 'checking', reason: 'notebook_environment_preparing' }
-    : status.pythonRepairRequired || status.pythonRecoveryBlocked || status.recovery?.corruptJournal
+  const languageCheck = (installed: boolean, needsRecovery?: boolean): TaskReadinessCheck =>
+    needsRecovery || status.recovery?.corruptJournal
       ? { status: 'blocked', reason: 'notebook_environment_recovery_required' }
-      : status.pythonReady
+      : installed
         ? ready
-        : { status: 'blocked', reason: 'notebook_python_missing' }
-  return { ...check, pythonReady: status.pythonReady, rReady: status.rReady }
+        : status.provisioning
+          ? { status: 'checking', reason: 'notebook_environment_preparing' }
+          : { status: 'blocked', reason: 'notebook_environment_missing' }
+  const python = languageCheck(
+    status.pythonReady,
+    status.pythonRepairRequired || status.pythonRecoveryBlocked
+  )
+  const r = languageCheck(status.rReady, status.rRepairRequired || status.rRecoveryBlocked)
+  const check: TaskReadinessCheck =
+    python.status === 'ready' || r.status === 'ready'
+      ? ready
+      : python.status === 'checking' || r.status === 'checking'
+        ? { status: 'checking', reason: 'notebook_environment_preparing' }
+        : { status: 'blocked', reason: 'notebook_language_required' }
+  return {
+    ...check,
+    pythonReady: python.status === 'ready',
+    rReady: r.status === 'ready',
+    python,
+    r
+  }
 }
 
 async function networkChecks(

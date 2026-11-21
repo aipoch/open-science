@@ -239,6 +239,14 @@ export class OpenScienceClient {
     return this.request('/api/v1/doctor', { ...options, method: 'GET' })
   }
 
+  prepareNotebookEnvironment(language, options) {
+    return this.request('/api/v1/notebook-environment', {
+      ...options,
+      method: 'POST',
+      body: { language }
+    })
+  }
+
   listRuntimes(options) {
     return this.request('/api/v1/runtimes', { ...options, method: 'GET' })
   }

@@ -227,11 +227,11 @@ The command prints `{ "result": { "readiness": ..., "checks": ..., "next": ... }
 `readiness.agent: "ready"` requires both the selected Agent runtime and active provider to be
 ready. A check is `missing` when its resource is absent and `not_ready` when it is configured but
 unusable; provider failures may include a stable `reason`, such as `credential_invalid`.
-`readiness.notebook` summarizes the service's default Python environment, system dependencies,
-isolation, and current host memory policy. `checks.notebook` reports each separately and includes
-the service platform, Python/R availability, and the memory source and scope when known. `ready`
-means the reported prerequisites passed. `checking` means an Owner is preparing or checking a
-prerequisite. `blocked` identifies a known problem. `unconfirmed` means some evidence is missing.
+`checks.notebook` reports Python and R separately from system dependencies, isolation, and host
+memory policy. In a general check, either usable language can satisfy the environment check. Use
+`get_setup_status` with `{"language":"r"}` or `{"language":"python"}` to check a specific
+language. `ready` means the reported prerequisites passed. `checking` means an Owner is checking or
+preparing a prerequisite. `blocked` identifies a known problem. `unconfirmed` means evidence is missing.
 See the [deployment prerequisites](../../docs/standalone-runtime.md#notebook-readiness-for-agents)
 for what each platform can establish. Actual Notebook dispatch and output delivery are separate.
 
@@ -251,17 +251,17 @@ unreachable, the CLI emits `daemon_unavailable` and the startup command for the 
 on stderr, and exits with code `3`. An HTTP authentication rejection stays an `access_denied`
 error.
 
-The shared `prepare_runtime` capability installs or checks the managed Codex runtime using the
-existing bootstrap service. `open-science runtime install codex --json` invokes the same
-capability. Its installation request waits up to 600,000 ms by default, then successful installs
-are checked again in the same profile. After a timeout, check setup before repeating installation.
+Use `list_runtimes` to see the installed version's choices. After the user chooses, use
+`select_runtime` with its `framework` ID and `prepare_runtime` if the runtime needs installation.
+Provider selection is separate. `configure_provider` offers the Kilo Gateway free route where
+supported. The user can choose other providers through Open-Science Web. Use `open_setup` to launch
+that profile in the browser without exposing its private URL. The agent may complete authorized
+setup steps; the user enters credentials and completes any sign-in. Recheck the same profile afterward.
 
-Keep the service and MCP on the same profile, for example `open-science mcp --profile
-/absolute/path/to/profile`. When a provider action specifies `requiresUser`, give the user the
-returned executable and argument list; it points to this installation of Open-Science. For
-Codex, the user runs Open-Science's `codex login` subcommand. For other provider setups they open
-Open-Science Settings. An action using `url` prints a private sign-in URL for the user. Do not
-request or collect it or credentials in MCP. Recheck `get_setup_status` after the user's action.
+After the user requests a language, use `prepare_notebook_environment` with `language` set to
+`python` or `r`. Nothing is installed by a setup check. Installation requests wait up to 600,000 ms
+by default. After a timeout, check the same profile and requested language before repeating.
+These tools are also available from `open-science tools call <name> --json` with JSON on stdin.
 
 ## First-run setup (Codex)
 
@@ -296,8 +296,8 @@ before saving its protected credential reference and validation record. This ini
 If Settings changed the active model, revalidation preserves the provider default model and
 active selection. Different existing credentials,
 providers, or framework selections produce `configuration_conflict`, without overwriting them.
-Later account edits remain in Settings. Other runtime/provider bootstrap combinations are not yet
-supported. Existing run-time selection commands are unchanged.
+Later credential and account edits remain in Settings. For other runtimes and the keyless
+provider, use the shared setup tools described above.
 
 OpenAlex keys are validated before persistence and Literature Graph enablement. Rejected keys or a
 configuration changed during the probe are not saved. A recognized key may still have exhausted
@@ -314,8 +314,8 @@ execution are separate operations.
 `bootstrap` SDK requests return `{ ok: true, providerId? }` or `{ ok: false, code }`. Codes are
 `invalid_request` (including unknown model/input), `configuration_conflict`, `runtime_unavailable`,
 `credential_invalid`, or `bootstrap_failed`. The CLI exits nonzero for failures; results never
-include the submitted secret or raw upstream error. Bootstrap/launcher writes require an
-authenticated local connection and are not exposed as research-agent tools.
+include the submitted secret or raw upstream error. Credential and launcher bootstrap actions
+require an authenticated local connection and are not exposed as research-agent tools.
 
 For desktop packages without an automatically registered command, use **Settings > General >
 Command line tool > Install command**. To invoke the bundled ordinary Node CLI directly on macOS:
@@ -1155,46 +1155,49 @@ Read the Markdown resource `openscience://agent/guide` or call `get_agent_guide`
 does not expose resources. The full local workflow requires the external Agent, MCP process, and
 service on the same machine with access to the input and delivery files.
 
-| Tool                              | Purpose                                                  |
-| --------------------------------- | -------------------------------------------------------- |
-| `doctor`                          | Check base Agent readiness                               |
-| `list_runtimes`                   | List detected Agent runtimes                             |
-| `list_projects`                   | List projects and IDs                                    |
-| `create_project`                  | Create a persistent project                              |
-| `update_project`                  | Update project metadata and Agent Context                |
-| `get_project_session_defaults`    | Read defaults for new Sessions and the Project revision  |
-| `update_project_session_defaults` | Update defaults for new Sessions                         |
-| `list_sessions`                   | List sessions, optionally by project                     |
-| `get_session`                     | Read Session status and import or Fork provenance        |
-| `get_session_configuration`       | Read session configuration and revision                  |
-| `update_session_configuration`    | Update settings with `expectedRevision`                  |
-| `start_run`                       | Submit research under a caller-supplied request ID       |
-| `get_submission`                  | Read the original durable receipt                        |
-| `wait_submission`                 | Wait until the original receipt leaves `pending`         |
-| `get_run`                         | Read progress, output and attention state                |
-| `wait_run`                        | Wait until a Run finishes or needs attention             |
-| `cancel_run`                      | Explicitly cancel a run without undoing previous effects |
-| `get_plan`                        | Read the plan and its version/revision                   |
-| `respond_plan`                    | Approve/reject a reviewed version or request changes     |
-| `list_artifacts`                  | List published Artifact versions and download IDs        |
-| `download_artifact`               | Deliver one listed version to a new local file           |
-| `get_delivery_status`             | Check report and result table delivery for one Run       |
-| `export_session`                  | Export one Session to a local `.science` file            |
-| `import_session`                  | Import a local `.science` file as a read-only Session    |
-| `fork_session`                    | Create a writable copy after the user agrees             |
-| `get_package_operation`           | Check the outcome of a specific package operation        |
-| `search_literature`               | Search or browse Literature library records              |
-| `get_literature_item`             | Read one Literature record                               |
-| `list_citation_styles`            | List citation styles available for formatting            |
-| `format_references`               | Format records as citations with BibTeX/RIS exports      |
-| `get_reference_metadata`          | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
-| `import_literature`               | Preview, then commit a BibTeX/RIS/NBIB or item import    |
-| `create_literature_item`          | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
-| `update_project_literature`       | Link or unlink records and a project                     |
-| `create_literature_collection`    | Create a collection                                      |
-| `update_collection_items`         | Add or remove records in a collection                    |
-| `set_reading_status`              | Set unread, reading, or read                             |
-| `set_literature_lifecycle`        | Move records to the trash or restore them                |
+| Tool                                | Purpose                                                  |
+| ----------------------------------- | -------------------------------------------------------- |
+| `doctor`                            | Check Agent and Python/R Notebook readiness              |
+| `list_runtimes`                     | List available and detected Agent runtimes               |
+| `select_runtime`, `prepare_runtime` | Select or prepare an explicitly chosen runtime           |
+| `configure_provider`, `open_setup`  | Set up the keyless provider or open same-profile Web     |
+| `prepare_notebook_environment`      | Install the explicitly requested Python or R environment |
+| `list_projects`                     | List projects and IDs                                    |
+| `create_project`                    | Create a persistent project                              |
+| `update_project`                    | Update project metadata and Agent Context                |
+| `get_project_session_defaults`      | Read defaults for new Sessions and the Project revision  |
+| `update_project_session_defaults`   | Update defaults for new Sessions                         |
+| `list_sessions`                     | List sessions, optionally by project                     |
+| `get_session`                       | Read Session status and import or Fork provenance        |
+| `get_session_configuration`         | Read session configuration and revision                  |
+| `update_session_configuration`      | Update settings with `expectedRevision`                  |
+| `start_run`                         | Submit research under a caller-supplied request ID       |
+| `get_submission`                    | Read the original durable receipt                        |
+| `wait_submission`                   | Wait until the original receipt leaves `pending`         |
+| `get_run`                           | Read progress, output and attention state                |
+| `wait_run`                          | Wait until a Run finishes or needs attention             |
+| `cancel_run`                        | Explicitly cancel a run without undoing previous effects |
+| `get_plan`                          | Read the plan and its version/revision                   |
+| `respond_plan`                      | Approve/reject a reviewed version or request changes     |
+| `list_artifacts`                    | List published Artifact versions and download IDs        |
+| `download_artifact`                 | Deliver one listed version to a new local file           |
+| `get_delivery_status`               | Check report and result table delivery for one Run       |
+| `export_session`                    | Export one Session to a local `.science` file            |
+| `import_session`                    | Import a local `.science` file as a read-only Session    |
+| `fork_session`                      | Create a writable copy after the user agrees             |
+| `get_package_operation`             | Check the outcome of a specific package operation        |
+| `search_literature`                 | Search or browse Literature library records              |
+| `get_literature_item`               | Read one Literature record                               |
+| `list_citation_styles`              | List citation styles available for formatting            |
+| `format_references`                 | Format records as citations with BibTeX/RIS exports      |
+| `get_reference_metadata`            | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
+| `import_literature`                 | Preview, then commit a BibTeX/RIS/NBIB or item import    |
+| `create_literature_item`            | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
+| `update_project_literature`         | Link or unlink records and a project                     |
+| `create_literature_collection`      | Create a collection                                      |
+| `update_collection_items`           | Add or remove records in a collection                    |
+| `set_reading_status`                | Set unread, reading, or read                             |
+| `set_literature_lifecycle`          | Move records to the trash or restore them                |
 
 Generate and retain a `requestId` before calling `start_run` over MCP or `tools call`. Send
 `{ "requestId": "analysis-001", "projectId": "…", "prompt": "…" }`. The result is a durable

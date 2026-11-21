@@ -34,7 +34,12 @@ export type TaskReadinessCheck = Readonly<{
 
 export type TaskNotebookReadiness = Readonly<{
   platform: NodeJS.Platform
-  environment: TaskReadinessCheck & { pythonReady?: boolean; rReady?: boolean }
+  environment: TaskReadinessCheck & {
+    pythonReady?: boolean
+    rReady?: boolean
+    python?: TaskReadinessCheck
+    r?: TaskReadinessCheck
+  }
   dependencies: TaskReadinessCheck
   sandbox: TaskReadinessCheck
   memoryPolicy: TaskReadinessCheck & { source?: string; executionScope?: string }
@@ -44,9 +49,15 @@ export type TaskDoctorReport = Readonly<{
   ready: boolean
   checks: Readonly<{
     daemon: Readonly<{ status: 'ready' }>
-    runtime: Readonly<{ status: ReadinessStatus; framework: AgentFrameworkId }>
+    runtime: Readonly<{
+      status: ReadinessStatus
+      framework: AgentFrameworkId
+      selectedFramework?: AgentFrameworkId | null
+    }>
     provider: Readonly<
-      { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+      (
+        { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+      ) & { keylessKiloAvailable?: boolean }
     >
     skills: Readonly<{ status: 'ready'; enabled: string[] }>
     notebook?: TaskNotebookReadiness
@@ -313,6 +324,7 @@ export type AcquiredTaskArtifact = {
 }
 
 export type TaskApiErrorCode =
+  | 'notebook_setup_failed'
   | 'submission_conflict'
   | 'submission_unavailable'
   | 'submission_not_found'

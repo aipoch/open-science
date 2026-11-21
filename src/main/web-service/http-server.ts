@@ -196,6 +196,7 @@ type WebServerOptions = {
         | 'updateAgentRouting'
         | 'doctor'
         | 'bootstrap'
+        | 'prepareNotebookEnvironment'
         | 'installCli'
         | 'listRuntimes'
       >
@@ -614,6 +615,7 @@ const readJsonBody = async (
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
+  if (error.code === 'notebook_setup_failed') return 503
   if (error.code === 'submission_unavailable') return 503
   if (
     error.code === 'submission_conflict' ||
@@ -1064,6 +1066,25 @@ const handleTaskApiRequest = async (
       if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         reply(200, { data: await tasks.installCli() })
+        return true
+      }
+      if (
+        url.pathname === '/api/v1/notebook-environment' &&
+        request.method === 'POST' &&
+        tasks.prepareNotebookEnvironment
+      ) {
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        const language = (body as { language?: unknown } | null)?.language
+        if ((language !== 'python' && language !== 'r') || Object.keys(body as object).length !== 1)
+          throw new TaskApiError('invalid_request', 'Supply only a Notebook language: python or r.')
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        await tasks.prepareNotebookEnvironment(language)
+        reply(200, { data: {} })
         return true
       }
       if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
@@ -1639,8 +1660,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   'task-artifacts',
                   ...(options.tasks.doctor ? ['doctor'] : []),
                   ...(!externalAuthorization && options.tasks.bootstrap
-                    ? ['runtime-bootstrap']
+                    ? ['runtime-bootstrap', 'agent-setup']
                     : []),
+                  ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
+                    ? ['notebook-setup']
+                    : []),
+                  ...(options.tasks.listRuntimes ? ['list-runtimes'] : []),
                   ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
                     ? ['durable-submissions']
                     : [])

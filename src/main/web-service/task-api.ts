@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
 import type { CliLauncherStatus } from '../../shared/cli'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
@@ -262,6 +263,22 @@ class HeadlessTaskApi {
     return this.invoke('settings:bootstrap', request) as Promise<BootstrapResult>
   }
 
+  async prepareNotebookEnvironment(language: NotebookLanguage): Promise<void> {
+    if (
+      this.currentCallerContext().location !== 'local' ||
+      (language !== 'python' && language !== 'r')
+    )
+      throw new TaskRunnerError('invalid_request', 'Choose Python or R on a local connection.')
+    try {
+      await this.invoke('notebook-env:provision', language)
+    } catch {
+      throw new TaskRunnerError(
+        'notebook_setup_failed',
+        'Could not prepare the Notebook environment. Check its current status and the service log.'
+      )
+    }
+  }
+
   async installCli(): Promise<CliLauncherStatus> {
     this.requireLocalConnectorCaller()
     return this.invoke('cli:install') as Promise<CliLauncherStatus>
@@ -359,9 +376,17 @@ class HeadlessTaskApi {
         daemon: { status: 'ready' },
         runtime: {
           status: runtimeReadiness.status,
-          framework: preflight.agentFrameworkId
+          framework: preflight.agentFrameworkId,
+          ...(bootstrap.ok && bootstrap.selectedFramework !== undefined
+            ? { selectedFramework: bootstrap.selectedFramework }
+            : {})
         },
-        provider: providerReadiness,
+        provider: {
+          ...providerReadiness,
+          ...(bootstrap.ok && bootstrap.keylessKiloAvailable !== undefined
+            ? { keylessKiloAvailable: bootstrap.keylessKiloAvailable }
+            : {})
+        },
         ...(notebook ? { notebook } : {}),
         skills: {
           status: 'ready',

@@ -7,6 +7,7 @@ import { projectAgentNotebookReadiness, readinessActions } from './agent-noteboo
 import { getAgentPackageCapabilities } from './agent-package-capabilities.mjs'
 import { setupAction } from './agent-setup-action.mjs'
 import { connectToOpenScience } from './index.mjs'
+import { openBrowser } from './open-browser.mjs'
 
 export const agentGuideUri = 'openscience://agent/guide'
 export const agentGuide = `# Open-Science for external agents
@@ -17,7 +18,9 @@ Install Open-Science with the application's installer or npm package. Start the 
 
 Use the capability catalog and detail schemas to find the operations the installed adapter exposes. Check service support and call doctor for the same profile. Base Agent readiness does not prove that a Notebook can run, has run, or produced files.
 
-For provider setup, relay the exact executable and argv from the setup action, including the selected profile. Wait for the user to sign in and then recheck that profile. Do not ask for or print credentials.
+For setup, use list_runtimes and ask which Agent runtime and provider the user wants when there is no selection. An authorized runtime choice can be selected and prepared through MCP. Use configure_provider for the offered keyless provider, or use open_setup to open the same profile in the browser. Complete routine non-credential setup the user asked for; leave sign-in, consent and credential entry to the user. Recheck the same profile afterward. Do not request, copy or print credentials or private setup URLs.
+
+Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. For work that requires a known language, check that language and run prepare_notebook_environment if the user has asked you to prepare it. System dependencies, isolation and memory can still block Notebook execution independently.
 
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
 
@@ -28,7 +31,7 @@ For continue_notebook_in_app, keep the refusal ID. Once the cause is resolved, a
 
 Notebook working files are not delivered Artifacts. List the Artifacts for the accepted research runId, download the report and results table, and call get_delivery_status with the downloaded paths. Report execution.status and delivery.status separately. Say the handoff is complete only when handoffStatus is complete. If files verify but a Notebook cell failed, report both facts.
 
-If the user attaches a .science package, import it from its absolute local path. Summarize the returned package inventory counts, inspect the read-only Session, and list its published historical Artifacts. Do not run its Notebook or create a writable Fork until the user asks to continue. The package does not authorize the new environment to use any provider or external data source; check readiness and ask the user to configure missing access there.
+When the user asks to import or inspect a .science package, import it from its absolute local path. An attachment by itself does not request import, execution or Fork. Summarize the returned package inventory, inspect the read-only Session, and list its historical Artifacts as requested. Ask before creating a writable Fork and check the new environment's readiness before research.
 
 After the user agrees to Fork, use the new Session IDs returned inside the Fork result for a separately authorized study, with a new request ID. The top-level IDs in the response refer to the source. A Fork does not grant permission to rerun work stopped by a Notebook refusal; the user must continue that work in the original Session.
 
@@ -68,17 +71,27 @@ const policies = {
   ],
   runtime_unavailable: [
     'deployment',
-    'The service could not prepare the managed Codex runtime. Check the installation and network in Open-Science Settings, then recheck setup.',
+    'The service could not prepare the selected runtime. Check its installation options and network in Open-Science, then recheck setup.',
     { action: 'get_setup_status' }
   ],
   configuration_conflict: [
     'user',
-    'This profile already selects a different runtime or provider. Review it in Open-Science Settings before preparing Codex.',
+    'The current runtime or provider conflicts with this setup request. Recheck this profile and review its configuration in Web.',
     { action: 'get_setup_status' }
   ],
   bootstrap_failed: [
     'service',
-    'Open-Science could not prepare the runtime. Check setup status before repeating the operation.',
+    'Open-Science could not complete setup. Check current setup before repeating the operation.',
+    { action: 'get_setup_status' }
+  ],
+  notebook_setup_failed: [
+    'service',
+    'Open-Science could not prepare the requested Notebook language. Recheck setup and inspect the service log before repeating it.',
+    { action: 'get_setup_status' }
+  ],
+  browser_unavailable: [
+    'agent',
+    'Could not launch the local browser. Use Open-Science Web or Settings for this profile from a host with a browser.',
     { action: 'get_setup_status' }
   ],
   state_conflict: [
@@ -219,7 +232,14 @@ export const agentErrorDetails = (
         ? 'timeout'
         : status === 404 &&
             (error?.code === 'not_found' ||
-              ['doctor', 'get_setup_status', 'prepare_runtime'].includes(capability))
+              [
+                'doctor',
+                'get_setup_status',
+                'select_runtime',
+                'prepare_runtime',
+                'configure_provider',
+                'prepare_notebook_environment'
+              ].includes(capability))
           ? 'unsupported_capability'
           : known && !(status >= 500 && error.code === 'daemon_unavailable')
             ? error.code
@@ -375,16 +395,21 @@ const setupCodes = [
   'provider_not_ready'
 ]
 
-async function doctor(_args, { getClient, configRoot, signal }) {
+async function doctor({ language }, { getClient, configRoot, signal }) {
   const client = await getClient()
   const profile = client.configRoot ?? configRoot
   const [report, deliveryDirectory] = await Promise.all([
     client.doctor({ signal }),
     inspectAgentDeliveryDirectory(profile)
   ])
-  const notebook = projectAgentNotebookReadiness(report?.checks?.notebook, profile)
+  const notebook = projectAgentNotebookReadiness(report?.checks?.notebook, profile, language)
   const runtime = report?.checks?.runtime
   const provider = report?.checks?.provider
+  const selectedFramework = frameworks.includes(runtime?.selectedFramework)
+    ? runtime.selectedFramework
+    : runtime?.selectedFramework === null
+      ? null
+      : undefined
   const agent =
     report?.ready === true && runtime?.status === 'ready' && provider?.status === 'ready'
       ? 'ready'
@@ -397,7 +422,8 @@ async function doctor(_args, { getClient, configRoot, signal }) {
     checks: {
       runtime: {
         status: readinessStatus(runtime?.status),
-        ...(frameworks.includes(runtime?.framework) ? { framework: runtime.framework } : {})
+        ...(frameworks.includes(runtime?.framework) ? { framework: runtime.framework } : {}),
+        ...(selectedFramework !== undefined ? { selectedFramework } : {})
       },
       provider: {
         status: readinessStatus(provider?.status),
@@ -407,11 +433,32 @@ async function doctor(_args, { getClient, configRoot, signal }) {
       deliveryDirectory
     },
     next: [
-      ...(Array.isArray(report?.next)
-        ? report.next
-            .filter((item) => setupCodes.includes(item?.code))
-            .map((item) => setupAction(item, profile))
-        : []),
+      ...(selectedFramework === null && provider?.status === 'missing'
+        ? [
+            {
+              code: 'runtime_selection_required',
+              action: 'choose_runtime',
+              owner: 'user',
+              requiresUser: true,
+              message:
+                'No Agent runtime has been selected. List the available runtimes and ask which runtime and provider to use.',
+              options: { capability: 'list_runtimes' },
+              web: { capability: 'open_setup' },
+              verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
+            }
+          ]
+        : Array.isArray(report?.next)
+          ? report.next
+              .filter((item) => setupCodes.includes(item?.code))
+              .map((item) =>
+                setupAction(
+                  item,
+                  profile,
+                  selectedFramework,
+                  provider?.keylessKiloAvailable === true
+                )
+              )
+          : []),
       ...notebook.next,
       ...readinessActions([deliveryDirectory], profile)
     ]
@@ -419,19 +466,41 @@ async function doctor(_args, { getClient, configRoot, signal }) {
 }
 
 const DEFAULT_RUNTIME_TIMEOUT_MS = 600_000
-async function prepareRuntime({ timeoutMs }, context) {
-  const { getClient, signal } = context
+const frameworkInput = z.enum(frameworks).describe('Agent runtime from list_runtimes; no default.')
+const languageInput = z
+  .enum(['python', 'r'])
+  .describe('Notebook language required for the work; no default.')
+const setupTimeout = z
+  .number()
+  .int()
+  .min(1)
+  .max(DEFAULT_RUNTIME_TIMEOUT_MS)
+  .default(DEFAULT_RUNTIME_TIMEOUT_MS)
+const setupWrite = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+}
+async function setupClient({ getClient, signal }, marker) {
   const client = await getClient()
   const health = await client.health({ signal })
-  if (!health?.taskCapabilities?.includes('runtime-bootstrap')) {
+  if (!health?.taskCapabilities?.includes(marker))
     throw new AgentError('unsupported_capability', { requiresUser: true })
-  }
-  const result = await client.bootstrap({ action: 'runtime' }, { signal, timeoutMs })
+  return client
+}
+
+async function bootstrapSetup(request, { timeoutMs }, context) {
+  const { getClient, signal } = context
+  const client = await setupClient({ getClient, signal }, 'agent-setup')
+  const result = await client.bootstrap(request, { signal, timeoutMs })
   if (!result?.ok) {
-    const code = ['runtime_unavailable', 'configuration_conflict'].includes(result?.code)
+    const code = ['runtime_unavailable', 'configuration_conflict', 'invalid_request'].includes(
+      result?.code
+    )
       ? result.code
       : 'bootstrap_failed'
-    throw new AgentError(code, { requiresUser: code !== 'bootstrap_failed' })
+    throw new AgentError(code, { requiresUser: code === 'configuration_conflict' })
   }
   return { ...(await doctor({}, context)), timeoutMs }
 }
@@ -440,8 +509,8 @@ const setupStatus = {
   name: 'doctor',
   group: 'setup',
   description:
-    'Read Agent and Notebook readiness and the default local delivery directory. Actions identify who should handle a blocker and how to recheck this profile.',
-  inputSchema: z.strictObject({}),
+    'Read Agent and Notebook readiness for this profile. Without a language, report Python and R without assuming which one is needed. A check does not install or change setup.',
+  inputSchema: z.strictObject({ language: languageInput.optional() }),
   annotations: readOnly,
   exposure: { cli: true, mcp: true },
   serviceCapability: 'doctor',
@@ -482,27 +551,81 @@ const definitions = [
   setupStatus,
   { ...setupStatus, name: 'get_setup_status' },
   {
+    name: 'select_runtime',
+    group: 'setup',
+    description:
+      'Select the named Agent runtime after the user chooses it. Changes this profile’s active runtime; does not install it or select a model provider.',
+    inputSchema: z.strictObject({ framework: frameworkInput }),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'agent-setup',
+    handler: async ({ framework }, context) => {
+      const client = await setupClient(context, 'agent-setup')
+      await client.updateAgentRouting({ framework }, { signal: context.signal })
+      return doctor({}, context)
+    }
+  },
+  {
     name: 'prepare_runtime',
     group: 'setup',
     description:
-      'Prepare the managed Codex runtime without model credentials, then recheck setup for this profile.',
-    inputSchema: z.strictObject({
-      timeoutMs: z
-        .number()
-        .int()
-        .min(1)
-        .max(DEFAULT_RUNTIME_TIMEOUT_MS)
-        .default(DEFAULT_RUNTIME_TIMEOUT_MS)
-    }),
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true
-    },
+      'Check or install the named Agent runtime using the managed installer. Does not change the selected runtime or provider. Call only for the runtime the user chose.',
+    inputSchema: z.strictObject({ framework: frameworkInput, timeoutMs: setupTimeout }),
+    annotations: setupWrite,
     exposure: { cli: true, mcp: true },
-    serviceCapability: 'runtime-bootstrap',
-    handler: prepareRuntime
+    serviceCapability: 'agent-setup',
+    handler: (args, context) =>
+      bootstrapSetup({ action: 'agent-runtime', framework: args.framework }, args, context)
+  },
+  {
+    name: 'configure_provider',
+    group: 'setup',
+    description:
+      'Set up and check the offered keyless Kilo Gateway free route after the user chooses it. Select the requested framework first. This cannot replace an active provider or accept a credential. Use open_setup for other providers.',
+    inputSchema: z.strictObject({
+      provider: z.literal('kilo-free'),
+      framework: frameworkInput,
+      timeoutMs: setupTimeout
+    }),
+    annotations: setupWrite,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'agent-setup',
+    handler: (args, context) =>
+      bootstrapSetup({ action: 'kilo-free', framework: args.framework }, args, context)
+  },
+  {
+    name: 'prepare_notebook_environment',
+    group: 'setup',
+    description:
+      'Prepare the explicitly requested Python or R environment on this profile with the managed installer. Does not install the other language, run a Notebook, or grant execution permission. After a timeout, recheck that language before repeating.',
+    inputSchema: z.strictObject({ language: languageInput, timeoutMs: setupTimeout }),
+    annotations: setupWrite,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'notebook-setup',
+    handler: async ({ language, timeoutMs }, context) => {
+      const client = await setupClient(context, 'notebook-setup')
+      await client.prepareNotebookEnvironment(language, { timeoutMs, signal: context.signal })
+      return { ...(await doctor({ language }, context)), timeoutMs }
+    }
+  },
+  {
+    name: 'open_setup',
+    group: 'setup',
+    description:
+      'Open the authenticated local Open-Science Web setup or Settings for this profile in the default browser. Returns the profile and launch status without disclosing the private URL. The user completes sign-in and approval prompts.',
+    inputSchema: z.strictObject({}),
+    annotations: { ...setupWrite, idempotentHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'doctor',
+    handler: async (_args, { getClient }) => {
+      const client = await getClient()
+      const url = new URL(client.baseUrl)
+      if (!client.configRoot || url.protocol !== 'http:' || url.hostname !== '127.0.0.1')
+        throw new AgentError('browser_unavailable')
+      url.searchParams.set('token', client.token)
+      if (!(await openBrowser(url.href))) throw new AgentError('browser_unavailable')
+      return { profile: client.configRoot, status: 'launch_requested' }
+    }
   },
   ...existingMcpCapabilities,
   ...artifactCapabilities,

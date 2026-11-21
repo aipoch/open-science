@@ -148,13 +148,15 @@ const addCapability = (
 const register = (...definition) => addCapability({ mcp: true }, ...definition)
 const registerResource = (...definition) => addCapability({ cli: true, mcp: true }, ...definition)
 
-register(
+registerResource(
   'list_runtimes',
   'setup',
   'List detected Agent runtimes and readiness. Does not install runtimes or change the selected framework.',
   {},
   read,
-  (client, _args, options) => client.listRuntimes(options)
+  (client, _args, options) => client.listRuntimes(options),
+  undefined,
+  { serviceCapability: 'list-runtimes' }
 )
 registerResource(
   'list_projects',

@@ -220,9 +220,8 @@ it('recovers the same provider authentication handoff through CLI and MCP', asyn
       retryable: false,
       next: [
         expect.objectContaining({
-          action: 'open_settings',
-          executable: process.execPath,
-          argv: [cli, 'url', '--profile', agent.profile],
+          action: 'open_setup',
+          web: { capability: 'open_setup' },
           verify: { capability: 'get_setup_status', profile: agent.profile }
         })
       ]
@@ -1066,7 +1065,7 @@ it('uses the authenticated service for doctor and maps invalid or unsupported ca
   expect(denied.isError).toBe(true)
   expect(denied.structuredContent).toMatchObject({ error: { code: 'capability_not_exposed' } })
   expect(
-    (await cliError(['tools', 'call', 'list_runtimes', '--profile', profile, '--json'])).error
+    (await cliError(['tools', 'call', 'unregistered_tool', '--profile', profile, '--json'])).error
   ).toMatchObject({
     code: 'capability_not_exposed'
   })
@@ -1092,7 +1091,153 @@ it('uses the authenticated service for doctor and maps invalid or unsupported ca
   }
 })
 
-it('prepares the managed runtime and leaves login to the user in the same profile', async () => {
+it('discovers setup choices and prepares only the selected runtime, provider and language', async () => {
+  const writes: unknown[] = []
+  let selected: string | null = null
+  let provider = 'missing'
+  const installed = new Set<string>()
+  const agent = await resourceAgents(
+    async (req, res) => {
+      let text = ''
+      for await (const chunk of req) text += chunk
+      const args = text ? JSON.parse(text) : undefined
+      if (args) writes.push(args)
+      const respond = (data: unknown): void => {
+        res.end(JSON.stringify({ data }))
+      }
+      switch (req.url) {
+        case '/api/v1/doctor':
+          return respond({
+            ready: provider === 'ready' && installed.has(selected ?? ''),
+            checks: {
+              runtime: {
+                status: installed.has(selected ?? '') ? 'ready' : 'missing',
+                framework: selected ?? 'codex',
+                selectedFramework: selected
+              },
+              provider: { status: provider, keylessKiloAvailable: true },
+              notebook: {
+                platform: 'darwin',
+                environment: {
+                  status: 'blocked',
+                  reason: 'notebook_python_missing',
+                  python: {
+                    status: installed.has('python') ? 'ready' : 'blocked',
+                    reason: installed.has('python') ? undefined : 'notebook_environment_missing'
+                  },
+                  r: {
+                    status: installed.has('r') ? 'ready' : 'blocked',
+                    reason: installed.has('r') ? undefined : 'notebook_environment_missing'
+                  }
+                },
+                dependencies: { status: 'ready' },
+                sandbox: { status: 'ready' },
+                memoryPolicy: { status: 'ready', source: 'darwin', executionScope: 'darwin:host' }
+              }
+            },
+            next: [
+              { code: 'runtime_missing' },
+              ...(provider === 'missing'
+                ? [{ code: 'provider_missing', argv: ['codex', 'login'] }]
+                : [])
+            ]
+          })
+        case '/api/v1/runtimes':
+          return respond(
+            ['open-science-agent', 'opencode', 'codex'].map((framework) => ({
+              framework,
+              status: installed.has(framework) ? 'ready' : 'missing'
+            }))
+          )
+        case '/api/v1/bootstrap':
+          if (args.action === 'agent-runtime') installed.add(args.framework)
+          else if (args.action === 'kilo-free') provider = 'ready'
+          return respond({ ok: true })
+        case '/api/v1/settings/agent-routing':
+          selected = args.framework
+          return respond({ configured: { framework: selected } })
+        case '/api/v1/notebook-environment':
+          installed.add(args.language)
+          return respond({})
+        default:
+          res.writeHead(404).end()
+      }
+    },
+    ['doctor', 'agent-setup', 'notebook-setup', 'list-runtimes']
+  )
+  const both = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+    const mcp = await agent.mcp(name, args)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual(await agent.cli(name, args))
+    return mcp.structuredContent?.result
+  }
+  const fresh = await both('get_setup_status')
+  expect(fresh).toMatchObject({
+    checks: {
+      runtime: { selectedFramework: null },
+      notebook: { environment: { python: { status: 'blocked' }, r: { status: 'blocked' } } }
+    },
+    next: expect.arrayContaining([
+      expect.objectContaining({ action: 'choose_runtime' }),
+      expect.objectContaining({ action: 'choose_notebook_language' })
+    ])
+  })
+  expect(JSON.stringify(fresh)).not.toContain('provider_login')
+  expect(await both('list_runtimes')).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ framework: 'opencode' }),
+      expect.objectContaining({ framework: 'codex' })
+    ])
+  )
+  expect(writes).toEqual([])
+  for (const name of ['prepare_runtime', 'configure_provider', 'prepare_notebook_environment']) {
+    const mcp = await agent.mcp(name, { apiKey: 'private-value' })
+    expect(mcp.isError).toBe(true)
+    expect(mcp.structuredContent).toEqual({
+      error: (await agent.cliError(name, { apiKey: 'private-value' })).error
+    })
+    expect(JSON.stringify(mcp)).not.toContain('private-value')
+  }
+  expect(writes).toEqual([])
+  const framework = 'opencode'
+  await both('select_runtime', { framework })
+  await both('prepare_runtime', { framework })
+  expect(await both('configure_provider', { provider: 'kilo-free', framework })).toMatchObject({
+    readiness: { agent: 'ready' },
+    checks: { runtime: { framework, selectedFramework: framework } }
+  })
+  expect(await both('prepare_notebook_environment', { language: 'r' })).toMatchObject({
+    readiness: { notebook: 'ready' },
+    checks: { notebook: { environment: { python: { status: 'blocked' }, r: { status: 'ready' } } } }
+  })
+  expect(await both('get_setup_status', { language: 'python' })).toMatchObject({
+    readiness: { notebook: 'blocked' },
+    next: expect.arrayContaining([
+      expect.objectContaining({
+        action: 'prepare_notebook_environment',
+        owner: 'agent',
+        requiresUser: false,
+        arguments: { language: 'python' }
+      })
+    ])
+  })
+  installed.delete('r')
+  expect(await both('prepare_notebook_environment', { language: 'python' })).toMatchObject({
+    readiness: { notebook: 'ready' },
+    checks: { notebook: { environment: { python: { status: 'ready' }, r: { status: 'blocked' } } } }
+  })
+  expect(writes).toEqual([
+    ...Array(2).fill({ framework }),
+    ...Array(2).fill({ action: 'agent-runtime', framework }),
+    ...Array(2).fill({ action: 'kilo-free', framework }),
+    { language: 'r' },
+    { language: 'r' },
+    { language: 'python' },
+    { language: 'python' }
+  ])
+})
+
+it('leaves the configured Codex provider login to the user in the same profile', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-setup-'))
   cleanup.push(() => rm(profile, { recursive: true, force: true }))
   const token = 'setup-fixture-secret'
@@ -1104,7 +1249,7 @@ it('prepares the managed runtime and leaves login to the user in the same profil
     if (req.headers.authorization !== `Bearer ${token}`) return res.writeHead(401).end()
     res.setHeader('content-type', 'application/json')
     if (req.url === '/api/bootstrap') {
-      return res.end(JSON.stringify({ taskCapabilities: ['doctor', 'runtime-bootstrap'] }))
+      return res.end(JSON.stringify({ taskCapabilities: ['doctor', 'agent-setup'] }))
     }
     if (req.url === '/api/v1/bootstrap' && req.method === 'POST') {
       let body = ''
@@ -1124,11 +1269,13 @@ it('prepares the managed runtime and leaves login to the user in the same profil
           data: {
             ready: runtime === 'ready' && provider === 'ready',
             checks: {
-              runtime: { status: runtime, framework: 'codex' },
+              runtime: { status: runtime, framework: 'codex', selectedFramework: 'codex' },
               provider: { status: provider }
             },
             next:
-              provider === 'missing' ? [{ code: 'provider_missing', argv: ['codex', 'login'] }] : []
+              provider === 'missing'
+                ? [{ code: 'provider_missing', argv: ['codex', 'login', '--force'] }]
+                : []
           }
         })
       )
@@ -1159,10 +1306,12 @@ it('prepares the managed runtime and leaves login to the user in the same profil
     profile,
     '--json'
   ]
-  const both = async (name: string): Promise<unknown> => {
-    const mcp = await client.callTool({ name })
+  const both = async (name: string, args: object = {}): Promise<unknown> => {
+    const mcp = await client.callTool({ name, arguments: args })
     expect(mcp.isError).not.toBe(true)
-    expect(mcp.structuredContent).toEqual(JSON.parse((await runCli(cliArgs(name))).stdout))
+    expect(mcp.structuredContent).toEqual(
+      JSON.parse((await runCli(cliArgs(name), JSON.stringify(args))).stdout)
+    )
     return mcp.structuredContent?.result
   }
   expect(await both('get_setup_status')).toMatchObject({
@@ -1177,10 +1326,11 @@ it('prepares the managed runtime and leaves login to the user in the same profil
   expect(installs).toEqual([])
 
   installationFails = true
-  const failed = await client.callTool({ name: 'prepare_runtime' })
+  const runtimeArgs = { framework: 'codex' }
+  const failed = await client.callTool({ name: 'prepare_runtime', arguments: runtimeArgs })
   expect(failed.isError).toBe(true)
   expect(failed.structuredContent).toEqual({
-    error: (await cliError(cliArgs('prepare_runtime'))).error
+    error: (await cliError(cliArgs('prepare_runtime'), JSON.stringify(runtimeArgs))).error
   })
   expect(failed.structuredContent).toMatchObject({
     error: { code: 'runtime_unavailable', owner: 'deployment', retryable: false }
@@ -1188,7 +1338,7 @@ it('prepares the managed runtime and leaves login to the user in the same profil
   expect(JSON.stringify(failed)).not.toContain(token)
 
   installationFails = false
-  const prepared = await both('prepare_runtime')
+  const prepared = await both('prepare_runtime', runtimeArgs)
   expect(prepared).toMatchObject({
     profile,
     checks: { runtime: { status: 'ready' }, provider: { status: 'missing' } },
@@ -1197,7 +1347,7 @@ it('prepares the managed runtime and leaves login to the user in the same profil
         code: 'provider_missing',
         owner: 'user',
         executable: process.execPath,
-        argv: [cli, 'codex', 'login', '--profile', profile],
+        argv: [cli, 'codex', 'login', '--force', '--profile', profile],
         requiresUser: true,
         retryable: false,
         verify: { capability: 'get_setup_status', profile }
@@ -1205,8 +1355,11 @@ it('prepares the managed runtime and leaves login to the user in the same profil
     ]
   })
   const { stdout } = await runCli(['runtime', 'install', 'codex', '--profile', profile, '--json'])
-  expect(JSON.parse(stdout)).toEqual({ result: prepared })
-  expect(installs).toEqual(Array.from({ length: 5 }, () => ({ action: 'runtime' })))
+  expect(JSON.parse(stdout)).toEqual({ ok: true })
+  expect(installs).toEqual([
+    ...Array(4).fill({ action: 'agent-runtime', framework: 'codex' }),
+    { action: 'runtime' }
+  ])
   provider = 'ready' // The product's login owns this change, outside the external Agent API.
   expect(await both('get_setup_status')).toMatchObject({
     profile,
