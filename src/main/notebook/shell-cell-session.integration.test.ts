@@ -709,6 +709,7 @@ console.log(JSON.stringify(result))
     })
     expect(result.exitCode).toBeNull()
     expect(result.stderr).toContain('timed out')
+    expect(result.timedOut).toBe(true)
     expect(result.stderr).not.toContain('Shell command was cancelled.')
     expect(
       await adapter.execute(

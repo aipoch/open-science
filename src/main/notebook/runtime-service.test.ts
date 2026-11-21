@@ -1429,6 +1429,7 @@ describe('notebook runtime service', () => {
 
     await expect(control).resolves.toMatchObject({ status: 'cancelled' })
     await expect(shell).resolves.toEqual({
+      status: 'cancelled',
       stdout: '',
       stderr: 'Shell command was cancelled.',
       exitCode: null
@@ -3664,6 +3665,8 @@ describe('notebook runtime service', () => {
       async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
         status: 'completed',
         stdout: 'stable result',
+        kernelDispatched: true,
+        executionStarted: true,
         stderr: '',
         traceback: '',
         cwdAfter: request.cwd,
@@ -3701,8 +3704,12 @@ describe('notebook runtime service', () => {
     const retry = await service.executeControl(request)
 
     const expected = {
+      runId: (await service.state(request)).runs[0].runId,
+      executionInvocationId: request.executionInvocationId,
       status: 'completed',
       stdout: 'stable result',
+      kernelDispatched: true,
+      executionStarted: true,
       viewImages: [{ data: Buffer.from('stable image').toString('base64'), mimeType: 'image/png' }]
     }
     expect(first).toMatchObject(expected)
@@ -5148,35 +5155,52 @@ describe('notebook runtime service', () => {
       expect(execute).toHaveBeenCalledOnce()
     })
 
-    it('preserves unavailable Shell results on durable retries', async () => {
-      const root = await createStorageRoot()
-      const unavailable = {
-        stdout: '',
-        stderr: 'unavailable',
-        exitCode: null,
-        runtimeStatus: 'unavailable' as const,
-        errorCode: 'shell-runtime-unavailable' as const,
-        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' } as const
+    it.each([
+      [{ runtimeStatus: 'unavailable', errorCode: 'shell-runtime-unavailable' }, 'failed'],
+      [{ errorCode: 'shell-network-transport-unsupported' }, 'failed'],
+      [{ timedOut: true }, 'timeout']
+    ] as const)(
+      'preserves the Shell terminal outcome for %o on durable retries',
+      async (cause, status) => {
+        const root = await createStorageRoot()
+        const unavailable = {
+          stdout: '',
+          stderr: 'unavailable',
+          exitCode: null,
+          ...cause,
+          ...('errorCode' in cause
+            ? { recovery: { execution: 'not-started', retryAfter: 'runtime-ready' } as const }
+            : {})
+        }
+        const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
+        const service = new NotebookRuntimeService({
+          memoryPolicy: healthyNotebookMemoryPolicy(),
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          shellProcess: { execute }
+        })
+        const request = {
+          sessionId: 'unavailable-retry',
+          workspaceCwd: root,
+          command: 'echo hello',
+          executionInvocationId: 'same-invocation'
+        }
+        const first = await service.executeShell(request)
+        expect(first).toMatchObject({
+          status,
+          exitCode: null,
+          ...('errorCode' in cause
+            ? { errorCode: cause.errorCode, recovery: unavailable.recovery }
+            : {})
+        })
+        expect(first).not.toHaveProperty('timedOut')
+        expect((await service.state(request)).runs[0].status).toBe(status)
+        expect(await service.executeShell(request)).toEqual(first)
+        expect(execute).toHaveBeenCalledOnce()
       }
-      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
-      const service = new NotebookRuntimeService({
-        memoryPolicy: healthyNotebookMemoryPolicy(),
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
-        shellProcess: { execute }
-      })
-      const request = {
-        sessionId: 'unavailable-retry',
-        workspaceCwd: root,
-        command: 'echo hello',
-        executionInvocationId: 'same-invocation'
-      }
-      expect(await service.executeShell(request)).toEqual(unavailable)
-      expect(await service.executeShell(request)).toEqual(unavailable)
-      expect(execute).toHaveBeenCalledOnce()
-    })
+    )
 
     it.each([false, true])(
       'replays completed Shell work without checking current runtime readiness (background: %s)',
@@ -5558,6 +5582,8 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
         cancellation.abort()
         await expect(queued).resolves.toEqual({
+          status: 'cancelled',
+          kernelDispatched: false,
           stdout: '',
           stderr: 'Shell command was cancelled.',
           exitCode: null
@@ -5777,7 +5803,7 @@ describe('notebook runtime service', () => {
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
-        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
+        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null, status: 'cancelled' },
         expect.objectContaining({ exitCode: null })
       ])
       await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
@@ -5826,6 +5852,7 @@ describe('notebook runtime service', () => {
 
       const disposal = service.dispose()
       await expect(execution).resolves.toEqual({
+        status: 'cancelled',
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null
