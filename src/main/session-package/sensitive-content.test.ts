@@ -359,6 +359,7 @@ it('keeps matched values out of location errors', async () => {
 it.each([
   '{"estimatedTokens":71862,"difference":16335}',
   '{"tokens":88197,"estimated":true}',
+  '{"modelMaxAccessTokens":50,"quota_remaining_refresh_tokens":12}',
   '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0,"contextUsedTokens":42}',
   'Authorization: Bearer [redacted]',
   '--authorization Bearer [redacted]',
@@ -367,6 +368,7 @@ it.each([
   'password=%5Bredacted%5D',
   'password="  [redacted]  "',
   'Authorization: Bearer   [redacted]  ',
+  String.raw`{"note":"\u0042earer [redacted]"}`,
   '{"password":"  [redacted]  "}'
 ])('does not reject any incomplete safe prefix: %s', (value) => {
   for (let length = 1; length < value.length; length++)
@@ -618,11 +620,22 @@ it('checks export metadata values independently of their field names', () => {
     'apiSecretName',
     'API_SECRET_NAME',
     'NEXT_PAGE_TOKEN',
+    'clientToken',
+    'jobContinuationToken',
+    'reportSessionToken',
+    'REPORT_SESSION_TOKEN',
+    'worker_session_token',
+    'database_secret',
     'APP_SECRET_KEY_LABEL',
     'credential_name',
     'hasCredentials',
     'no-api-key',
     'hasDatabasePassword',
+    'providerHasApiKey',
+    'database_requires_password',
+    'modelMaxAccessTokens',
+    'quota_remaining_refresh_tokens',
+    'worker-supports-refresh-tokens',
     'reportPageToken',
     'pipelineSecretKeyLabel',
     'compassWord',
@@ -838,7 +851,11 @@ it.each([
   'api-secret',
   'API_SECRET',
   'ACME_SECRET_KEY',
-  'REPORT_SESSION_TOKEN',
+  'sessionToken',
+  'AWS_SESSION_TOKEN',
+  'tenantOAuthSessionToken',
+  'JWT_SECRET',
+  'tenantSigningSecret',
   'openai_api_key',
   'db_password',
   'warehouseAPIKey',
@@ -849,7 +866,6 @@ it.each([
   'accessTokens',
   'githubToken',
   'hf_token',
-  'worker_session_token',
   'backupPassphrase'
 ])('recognizes %s as a credential position', (key) => {
   expect(isPrivatePackageField(key, 'opaque')).toBe(true)

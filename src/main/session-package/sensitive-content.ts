@@ -20,29 +20,41 @@ export const isPrivatePackageValue = (value: string): boolean => {
 const credentialKeyPatterns = [
   /^(?:apiSecret|api_secret|api-secret|API_SECRET)$/,
   /^(?:auth|authentication|authorization|bearer|cookies?|credentials?|passwords?|passphrases?|passwd|pat|secrets?|tokens?)$/i,
-  /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|client[_-]?secret)$/i,
+  /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|(?:client|jwt|signing)[_-]?secrets?)$/i,
   /^(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|security|session)[_-]?tokens?$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
   /^(?:gh|github|hf)[_-]?tokens?$/i
 ]
 
-// Qualified names need a credential-specific ending. Bare "token" and "secret"
-// also end ordinary business names such as pagination cursors.
-const qualifiedCredentialSuffix =
-  /_(?:passwords?|passwd|passphrases?|(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key|(?:api|client)_?secrets?|(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security|session)_?tokens?)$/
+// Business names can end in "token", "session token" or "secret". Only a
+// credential-specific suffix supplies enough evidence to flag an opaque value.
+const qualifiedCredentialSuffixes = [
+  /_(?:passwords?|passwd|passphrases?)$/,
+  /_(?:(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key)$/,
+  /_(?:api|client|jwt|signing)_?secrets?$/,
+  /_(?:access|api|auth|bearer|id|oauth|personal_?access|private|refresh|rpc|security)_?tokens?$/,
+  /(?:^|_)(?:aws|auth|authentication|oauth|oidc)_session_?tokens?$/
+]
 
-const isCredentialKey = (key: string): boolean => {
-  if (credentialKeyPatterns.some((rule) => rule.test(key))) return true
-  if (!/^[a-z][a-z0-9_-]*$/i.test(key)) return false
-  const words = key
+const normalizeFieldName = (key: string): string =>
+  key
     .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replaceAll('-', '_')
     .toLowerCase()
-  // Predicate names describe whether a credential exists or is required.
-  return (
-    !/^(?:has|is|no|needs|requires|supports)_/.test(words) && qualifiedCredentialSuffix.test(words)
+
+const isCredentialKey = (key: string): boolean => {
+  if (credentialKeyPatterns.some((rule) => rule.test(key))) return true
+  if (!/^[a-z][a-z0-9_-]*$/i.test(key)) return false
+  const words = normalizeFieldName(key)
+  // Both predicates and token quantities can follow a business namespace.
+  if (/(?:^|_)(?:has|is|no|needs|requires|supports)_/.test(words)) return false
+  if (
+    words.endsWith('_tokens') &&
+    /(?:^|_)(?:min|max|count|total|remaining|limit|budget)_/.test(words)
   )
+    return false
+  return qualifiedCredentialSuffixes.some((rule) => rule.test(words))
 }
 
 export const isPrivatePackageField = (key: string, value: string): boolean =>
