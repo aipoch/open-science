@@ -378,7 +378,10 @@ function ActiveImageEditor({
     width?: number
     height?: number
   }>()
-  const cachedImage = useCachedPreviewImage(displayed)
+  const cachedImage = useCachedPreviewImage({
+    ...displayed,
+    imageGenerationSessionId: displayed.sessionId
+  })
   const [measured, setMeasured] = useState<{ url: string; width: number; height: number }>()
   const image =
     cachedImage.status === 'loading' &&
