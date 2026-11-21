@@ -306,7 +306,7 @@ class ArtifactProvenanceProducerCapture {
       request.projectId,
       request.notebookSessionId
     )
-    const document =
+    let document =
       (request.producerRunId
         ? documents.find((candidate) =>
             candidate.runs.some((run) => run.runId === request.producerRunId)
@@ -378,12 +378,27 @@ class ArtifactProvenanceProducerCapture {
       }
     }
     const producerRunIndex = document?.runs.findIndex((run) => run.runId === producerRunId) ?? -1
-    const producerRun = document?.runs[producerRunIndex]
+    const producerRun = producerRunIndex >= 0 ? document?.runs[producerRunIndex] : undefined
 
     if (!document || !producerRun || producerRunIndex < 0) {
       throw new Error(`Notebook producer run not found: ${producerRunId}`)
     }
-    const scopeMismatch = producerScopeMismatch(producerRun, scope)
+    const hydratedProducerRun = await this.options.notebookRepository.readSessionRun(
+      request.projectId,
+      request.notebookSessionId,
+      producerRunId
+    )
+    if (hydratedProducerRun) {
+      document = {
+        ...document,
+        runs: document.runs.map((run) => (run.runId === producerRunId ? hydratedProducerRun : run))
+      }
+    }
+    const selectedProducerRun = document.runs[producerRunIndex]
+    if (!selectedProducerRun) {
+      throw new Error(`Notebook producer run not found: ${producerRunId}`)
+    }
+    const scopeMismatch = producerScopeMismatch(selectedProducerRun, scope)
     if (scopeMismatch) {
       if (scopeMismatch === 'agentFrameId') {
         throw new Error(
@@ -483,7 +498,11 @@ class ArtifactProvenanceProducerCapture {
       })
     )
     const sourceGenerationId = sourceFileObservation
-      ? await this.findSourceGenerationId(producerRun, sourceFileObservation, target.checksum)
+      ? await this.findSourceGenerationId(
+          selectedProducerRun,
+          sourceFileObservation,
+          target.checksum
+        )
       : undefined
     const notebookDependencies = await this.options.dependencyAnalyzer
       ?.project({
@@ -527,7 +546,7 @@ class ArtifactProvenanceProducerCapture {
     const inputFiles = executionSnapshot.inputFiles
     await this.validateInputReferences(request.projectId, inputFiles)
     const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
-    const environment = resolveRunEnvironmentCapture(producerRun)
+    const environment = resolveRunEnvironmentCapture(selectedProducerRun)
     const computeExecutions = computeResult.activities.map((compute) => compute.evidence)
 
     return {
@@ -539,9 +558,9 @@ class ArtifactProvenanceProducerCapture {
       associationMethod: request.producerRunId
         ? 'agent-declared-and-session-validated'
         : 'server-inferred-file-observation',
-      kernelKind: producerRun.kernelKind,
-      environmentName: producerRun.environment,
-      reproductionCode: producerRun.script,
+      kernelKind: selectedProducerRun.kernelKind,
+      environmentName: selectedProducerRun.environment,
+      reproductionCode: selectedProducerRun.script,
       executionJson,
       executionChecksum: sha256(executionJson),
       inputFiles,

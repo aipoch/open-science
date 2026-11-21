@@ -348,7 +348,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
@@ -373,7 +373,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
@@ -443,7 +443,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     delete publicRun.admittedAt
     delete publicRun.frozenRuntimeTarget
     delete publicRun.frozenPermissionScope
-    if (!includeEnvironmentManifest && publicRun.environmentManifestChecksum)
+    const environmentManifestChecksum =
+      publicRun.environmentManifestChecksum ??
+      (publicRun.environmentCapture?.state === 'available' ||
+      publicRun.environmentCapture?.state === 'partial'
+        ? publicRun.environmentCapture.manifestChecksum
+        : undefined)
+    if (!includeEnvironmentManifest && environmentManifestChecksum)
       delete publicRun.environmentManifest
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
