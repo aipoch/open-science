@@ -712,14 +712,23 @@ provide the handoff; the Web or Desktop app presents the decision. Public `permi
 notices for these reviews identify the Run and reason without carrying decision options,
 interpreter paths, or code risk details.
 
-For `next.action: "continue_notebook_in_app"`, keep the refusal, Session, and branch references.
-Once the cause has been resolved, the user opens that conversation branch in the Open-Science
-desktop app connected to the same service and chooses **Continue Notebook work** in **Compute**.
-Web shows the handoff; only Desktop can continue. Do not retry or switch tools, language,
-environment, or Session to bypass it. After the user acts, `get_session` can observe execution for
-the active or latest prompt in the same Session; `execution.continuedFromRefusalId` associates the
-new prompt with the original refusal. This association lives in the running service. The original
-Run keeps its own outcome, and opening a fresh Session is not recovery.
+For `next.action: "continue_notebook"`, find the current stop with `list_interactions` and read it
+with `get_interaction`. Once the cause has been resolved, ask the user whether to continue this
+specific stop. Send the original `runId`, `branchId`, `refusalId`, `source: "user_relay"`, a
+continuation `prompt` and a new `requestId` through `continue_notebook`. Use the same flat inputs
+for MCP and `open-science tools call continue_notebook --json` with JSON on stdin. This action requires
+the authenticated local Task connection. A different permission profile or a delegated task
+cannot authorize this step.
+
+Keep `requestId` before sending. If a response is lost, use `get_submission` or `wait_submission`
+with the same ID. The receipt's `runId` identifies the new Run and `notebookContinuation.runId`
+identifies the stopped Run. Inspect the new Run's execution and delivery. The original Run keeps
+its outcome. The stop itself is in memory; if it expires or the service restarts, query any
+existing receipt and inspect the original Run before asking the user about new work.
+
+For `next.action: "continue_notebook_in_app"`, the user can still choose **Continue Notebook
+work** in **Compute** on the original Desktop Session and branch. Recheck the same Session for
+`execution.continuedFromRefusalId` after they act.
 
 Inspect and respond to an active Plan with its exact version and revision:
 
@@ -1222,54 +1231,55 @@ Read the Markdown resource `openscience://agent/guide` or call `get_agent_guide`
 does not expose resources. The full local workflow requires the external Agent, MCP process, and
 service on the same machine with access to the input and delivery files.
 
-| Tool                                | Purpose                                                  |
-| ----------------------------------- | -------------------------------------------------------- |
-| `doctor`                            | Check Agent and Python/R Notebook readiness              |
-| `list_runtimes`                     | List available and detected Agent runtimes               |
-| `select_runtime`, `prepare_runtime` | Select or prepare an explicitly chosen runtime           |
-| `configure_provider`, `open_setup`  | Set up the keyless provider or open same-profile Web     |
-| `prepare_notebook_environment`      | Start installation of the selected managed environment   |
-| `get_notebook_environment_operation` | Read original setup or repair progress by ID |
-| `cancel_notebook_environment_operation` | Request cancellation of the exact operation |
-| `repair_notebook_environment`       | Request a repair of the selected managed default        |
-| `list_projects`                     | List projects and IDs                                    |
-| `create_project`                    | Create a persistent project                              |
-| `update_project`                    | Update project metadata and Agent Context                |
-| `get_project_session_defaults`      | Read defaults for new Sessions and the Project revision  |
-| `update_project_session_defaults`   | Update defaults for new Sessions                         |
-| `list_sessions`                     | List sessions, optionally by project                     |
-| `get_session`                       | Read Session status and import or Fork provenance        |
-| `get_session_configuration`         | Read session configuration and revision                  |
-| `update_session_configuration`      | Update settings with `expectedRevision`                  |
-| `start_run`                         | Submit research under a caller-supplied request ID       |
-| `get_submission`                    | Read the original durable receipt                        |
-| `wait_submission`                   | Wait until the original receipt leaves `pending`         |
-| `get_run`                           | Read progress, output and attention state                |
-| `wait_run`                          | Wait until a Run finishes or needs attention             |
-| `cancel_run`                        | Explicitly cancel a run without undoing previous effects |
-| `get_plan`                          | Read the plan and its version/revision                   |
-| `respond_plan`                      | Approve/reject a reviewed version or request changes     |
-| `list_interactions`                 | Find pending decisions in a Run or Project and Session   |
-| `get_interaction`                   | Read a scoped decision, Plan or continuation receipt     |
-| `list_artifacts`                    | List published Artifact versions and download IDs        |
-| `download_artifact`                 | Deliver one listed version to a new local file           |
-| `get_delivery_status`               | Check report and result table delivery for one Run       |
-| `export_session`                    | Export one Session to a local `.science` file            |
-| `import_session`                    | Import a local `.science` file as a read-only Session    |
-| `fork_session`                      | Create a writable copy after the user agrees             |
-| `get_package_operation`             | Check the outcome of a specific package operation        |
-| `search_literature`                 | Search or browse Literature library records              |
-| `get_literature_item`               | Read one Literature record                               |
-| `list_citation_styles`              | List citation styles available for formatting            |
-| `format_references`                 | Format records as citations with BibTeX/RIS exports      |
-| `get_reference_metadata`            | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
-| `import_literature`                 | Preview, then commit a BibTeX/RIS/NBIB or item import    |
-| `create_literature_item`            | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
-| `update_project_literature`         | Link or unlink records and a project                     |
-| `create_literature_collection`      | Create a collection                                      |
-| `update_collection_items`           | Add or remove records in a collection                    |
-| `set_reading_status`                | Set unread, reading, or read                             |
-| `set_literature_lifecycle`          | Move records to the trash or restore them                |
+| Tool                                    | Purpose                                                  |
+| --------------------------------------- | -------------------------------------------------------- |
+| `doctor`                                | Check Agent and Python/R Notebook readiness              |
+| `list_runtimes`                         | List available and detected Agent runtimes               |
+| `select_runtime`, `prepare_runtime`     | Select or prepare an explicitly chosen runtime           |
+| `configure_provider`, `open_setup`      | Set up the keyless provider or open same-profile Web     |
+| `prepare_notebook_environment`          | Start installation of the selected managed environment   |
+| `get_notebook_environment_operation`    | Read original setup or repair progress by ID             |
+| `cancel_notebook_environment_operation` | Request cancellation of the exact operation              |
+| `repair_notebook_environment`           | Request a repair of the selected managed default         |
+| `list_projects`                         | List projects and IDs                                    |
+| `create_project`                        | Create a persistent project                              |
+| `update_project`                        | Update project metadata and Agent Context                |
+| `get_project_session_defaults`          | Read defaults for new Sessions and the Project revision  |
+| `update_project_session_defaults`       | Update defaults for new Sessions                         |
+| `list_sessions`                         | List sessions, optionally by project                     |
+| `get_session`                           | Read Session status and import or Fork provenance        |
+| `get_session_configuration`             | Read session configuration and revision                  |
+| `update_session_configuration`          | Update settings with `expectedRevision`                  |
+| `start_run`                             | Submit research under a caller-supplied request ID       |
+| `get_submission`                        | Read the original durable receipt                        |
+| `wait_submission`                       | Wait until the original receipt leaves `pending`         |
+| `get_run`                               | Read progress, output and attention state                |
+| `wait_run`                              | Wait until a Run finishes or needs attention             |
+| `cancel_run`                            | Explicitly cancel a run without undoing previous effects |
+| `get_plan`                              | Read the plan and its version/revision                   |
+| `respond_plan`                          | Approve/reject a reviewed version or request changes     |
+| `list_interactions`                     | Find pending decisions in a Run or Project and Session   |
+| `get_interaction`                       | Read a scoped decision, Plan or continuation receipt     |
+| `continue_notebook`                     | Relay a user's decision to continue a specific stop      |
+| `list_artifacts`                        | List published Artifact versions and download IDs        |
+| `download_artifact`                     | Deliver one listed version to a new local file           |
+| `get_delivery_status`                   | Check report and result table delivery for one Run       |
+| `export_session`                        | Export one Session to a local `.science` file            |
+| `import_session`                        | Import a local `.science` file as a read-only Session    |
+| `fork_session`                          | Create a writable copy after the user agrees             |
+| `get_package_operation`                 | Check the outcome of a specific package operation        |
+| `search_literature`                     | Search or browse Literature library records              |
+| `get_literature_item`                   | Read one Literature record                               |
+| `list_citation_styles`                  | List citation styles available for formatting            |
+| `format_references`                     | Format records as citations with BibTeX/RIS exports      |
+| `get_reference_metadata`                | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
+| `import_literature`                     | Preview, then commit a BibTeX/RIS/NBIB or item import    |
+| `create_literature_item`                | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
+| `update_project_literature`             | Link or unlink records and a project                     |
+| `create_literature_collection`          | Create a collection                                      |
+| `update_collection_items`               | Add or remove records in a collection                    |
+| `set_reading_status`                    | Set unread, reading, or read                             |
+| `set_literature_lifecycle`              | Move records to the trash or restore them                |
 
 Generate and retain a `requestId` before calling `start_run` over MCP or `tools call`. Send
 `{ "requestId": "analysis-001", "projectId": "…", "prompt": "…" }`. The result is a durable

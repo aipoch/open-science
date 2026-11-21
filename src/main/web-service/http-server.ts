@@ -178,6 +178,8 @@ type WebServerOptions = {
         | 'supportsSubmissions'
         | 'submitRun'
         | 'getSubmission'
+        | 'supportsNotebookContinuation'
+        | 'continueNotebook'
         | 'getSessionPlan'
         | 'respondSessionPlan'
         | 'listInteractions'
@@ -632,6 +634,7 @@ const taskErrorStatus = (error: TaskApiError): number => {
   if (
     error.code === 'submission_conflict' ||
     error.code === 'notebook_environment_operation_conflict' ||
+    error.code === 'notebook_continuation_expired' ||
     error.code === 'session_read_only' ||
     error.code === 'session_project_mismatch'
   )
@@ -1403,6 +1406,29 @@ const handleTaskApiRequest = async (
         return true
       }
 
+      const notebookContinuationMatch = url.pathname.match(
+        /^\/api\/v1\/notebook-continuations\/([^/]+)$/
+      )
+      if (notebookContinuationMatch && request.method === 'PUT' && tasks.continueNotebook) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Notebook continuation requires a local authenticated Task connection.'
+          )
+        }
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        reply(202, {
+          data: await tasks.continueNotebook(decodeURIComponent(notebookContinuationMatch[1]), body)
+        })
+        return true
+      }
+
       if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
         const body = (await readJsonBody(
           request,
@@ -1901,6 +1927,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                     : []),
                   ...(auth.localBearer && options.tasks.respondPermission
                     ? ['task-permissions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsNotebookContinuation?.()
+                    ? ['notebook-continuation']
                     : []),
                   ...(options.tasks.doctor ? ['doctor'] : []),
                   ...(!externalAuthorization && options.tasks.bootstrap

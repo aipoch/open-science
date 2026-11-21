@@ -394,6 +394,27 @@ registerResource(
   { boundedWait: true }
 )
 registerResource(
+  'continue_notebook',
+  'research',
+  "Relay the user's explicit decision to continue this specific Notebook stop. Copy the original Run, branch and refusal IDs and use a new requestId that you keep before sending. This starts a new turn in the same Session and rechecks execution conditions; it does not retry a stopped cell. If the response is lost, query get_submission with the same ID.",
+  {
+    requestId,
+    runId,
+    branchId: id('Message branch from the current Notebook stop.'),
+    refusalId: id('Refusal ID from the current Notebook stop.'),
+    source: z.literal('user_relay').describe("Relay the user's explicit decision for this stop."),
+    prompt: id('Instructions for continuing the authorized Notebook work.')
+  },
+  { ...write, idempotentHint: true },
+  async (client, { requestId, ...request }, options) =>
+    projectSubmissionReceipt(
+      await client.continueNotebook(requestId, request, options),
+      client.configRoot
+    ),
+  undefined,
+  { serviceCapability: 'notebook-continuation' }
+)
+registerResource(
   'cancel_run',
   'research',
   'Explicitly cancel a research run and wait for service finalization. This does not undo files, data or costs already produced.',

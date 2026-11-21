@@ -1612,12 +1612,23 @@ class NotebookRuntimeService {
         ? { continuedFromRefusalId: observedIntent.scope.continuedFromRefusalId }
         : {})
     }
+    if (observedIntent?.refusalId && observedIntent.hasClaimedContinuation) {
+      return {
+        ...origin,
+        status: 'failed',
+        reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
+        refusalId: observedIntent.refusalId,
+        refusalReason: observedIntent.refusalReason,
+        retryable: false
+      }
+    }
     if (observedIntent?.refusalId && observedIntent === current) {
       return {
         ...origin,
         status: 'waiting_for_user',
         reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
         refusalId: observedIntent.refusalId,
+        refusalReason: observedIntent.refusalReason,
         owner: 'user',
         requiresUser: true,
         retryable: false,

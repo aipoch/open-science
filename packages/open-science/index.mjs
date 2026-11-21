@@ -599,9 +599,35 @@ export class OpenScienceClient {
         { code: 'unsupported_capability' }
       )
     }
+    return this.#putSubmission(
+      'run-submissions',
+      requestId,
+      request,
+      beforeDeadline(options, deadline)
+    )
+  }
+
+  async continueNotebook(requestId, request, options) {
+    const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
+    const bootstrap = await this.health(beforeDeadline(options, deadline))
+    if (!bootstrap.taskCapabilities?.includes('notebook-continuation')) {
+      throw new OpenScienceApiError(
+        'This service does not support Notebook continuation through a local Task connection.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    return this.#putSubmission(
+      'notebook-continuations',
+      requestId,
+      request,
+      beforeDeadline(options, deadline)
+    )
+  }
+
+  async #putSubmission(endpoint, requestId, request, options) {
     try {
-      return await this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, {
-        ...beforeDeadline(options, deadline),
+      return await this.request(`/api/v1/${endpoint}/${encodeURIComponent(requestId)}`, {
+        ...options,
         method: 'PUT',
         body: request
       })
