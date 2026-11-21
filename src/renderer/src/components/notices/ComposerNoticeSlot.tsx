@@ -6,6 +6,7 @@ import {
   Info,
   TriangleAlert,
   ChevronDown,
+  ChevronRight,
   Check,
   LoaderCircle
 } from 'lucide-react'
@@ -324,6 +325,7 @@ const ComposerFailureNoticeSlot = ({
     ) : null
 
   if (current.source === 'session' && current.recoveryCause === 'cancelled') {
+    const resuming = pending.get(current.id) === 'resume' || handlers.resume?.busy
     return (
       <TooltipProvider delayDuration={800}>
         <div
@@ -331,7 +333,29 @@ const ComposerFailureNoticeSlot = ({
           data-slot="session-recovery-notice"
           className="mb-2"
         >
-          <div className="flex justify-end">{actionButton('resume', current, true)}</div>
+          {available('resume') && (
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 w-full gap-2 rounded-xl border-border-200 bg-bg-100 px-3 text-text-100 hover:bg-bg-200"
+              data-notice-action="resume"
+              aria-label={t('Resume session')}
+              aria-busy={resuming || undefined}
+              disabled={pending.has(current.id) || resuming || handlers.resume?.disabled?.(current)}
+              onClick={() => void run('resume', current)}
+            >
+              <PauseCircle aria-hidden="true" className="size-4 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-left font-normal">{t('Stopped')}</span>
+              {resuming ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="size-3.5 animate-spin motion-reduce:animate-none"
+                />
+              ) : null}
+              {resuming ? t('Resuming…') : t('Resume session')}
+              <ChevronRight aria-hidden="true" className="size-3.5" />
+            </Button>
+          )}
           {actionFailure?.id === current.id && (
             <p role="alert">{t('Could not resume the session.')}</p>
           )}

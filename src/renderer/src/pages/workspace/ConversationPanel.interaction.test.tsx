@@ -6981,10 +6981,11 @@ describe('ConversationPanel interrupted Session recovery', () => {
       )
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
-      if (cause === 'cancelled')
-        expect(container.querySelector('[data-slot="session-recovery-notice"]')?.textContent).toBe(
-          'Resume'
-        )
+      if (cause === 'cancelled') {
+        expect(resumeButton?.textContent).toContain('Stopped')
+        expect(resumeButton?.textContent).toContain('Resume session')
+        expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+      }
       await act(async () => resumeButton?.click())
       expect(onResumeSession).toHaveBeenCalledTimes(1)
     }
