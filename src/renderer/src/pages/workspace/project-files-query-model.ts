@@ -8,6 +8,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -29,6 +30,74 @@ import {
   type ProjectFilesIndexState,
   type ProjectFilesIndexScope
 } from './use-project-files-index'
+
+// Select copy from the operation and its cursor. A refresh can retain items even when it
+// restarts at the first page, so item count cannot identify a continuation failure.
+const fileLoadMessage = (
+  t: TFunction,
+  page: Pick<PageState<unknown>, 'error' | 'failedCursor'> | undefined,
+  searching = false
+): string | undefined => {
+  if (!page?.error) return undefined
+  const message = searching
+    ? page.failedCursor
+      ? t('Could not load more search results.')
+      : t('Could not load search results.')
+    : page.failedCursor
+      ? t('Could not load more project files.')
+      : t('Could not load project files')
+  return page.error.connection
+    ? [message, t('Reconnect to the local service and try again.')].join('\n')
+    : message
+}
+
+type IndexWarning = {
+  message: string
+  checkingStatus: boolean
+  button: {
+    children: string
+    'aria-label'?: string
+    disabled: boolean
+    onClick: () => Promise<void>
+  }
+}
+
+const indexWarning = (index: ProjectFilesIndexState, t: TFunction): IndexWarning | undefined => {
+  if (index.overview.isIndexComplete) return undefined
+  const error = index.repairError
+  let message = t('Some files could not be indexed yet.')
+  if (error?.connection === 'desktop-runtime-not-submitted') {
+    message = t('Reconnect to the local service and retry indexing.')
+  } else if (
+    error?.detail === 'Project files cannot be repaired until the sessions directory is readable.'
+  ) {
+    message = t('Restore read access to the sessions folder, then retry indexing.')
+  } else if (error) {
+    return {
+      message: index.overviewError
+        ? t('Could not check the file index status.')
+        : error.connection
+          ? t('Reconnect to check whether indexing finished.')
+          : t('Could not confirm whether indexing finished.'),
+      checkingStatus: true,
+      button: {
+        children: t('Check index status'),
+        onClick: index.reloadOverview,
+        disabled: !index.isOverviewLoaded
+      }
+    }
+  }
+  return {
+    message,
+    checkingStatus: false,
+    button: {
+      children: t(index.isRepairing ? 'Retrying...' : 'Retry'),
+      'aria-label': t('Retry indexing project files'),
+      onClick: index.repairIndex,
+      disabled: index.isRepairing
+    }
+  }
+}
 
 type ProjectFilesFilterOption = {
   id: string
@@ -592,5 +661,11 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   }
 }
 
-export { readPersistedProjectFilesFilter, useProjectFileInfiniteLoad, useProjectFilesQueryModel }
+export {
+  fileLoadMessage,
+  indexWarning,
+  readPersistedProjectFilesFilter,
+  useProjectFileInfiniteLoad,
+  useProjectFilesQueryModel
+}
 export type { ProjectFilesFilterOption }
