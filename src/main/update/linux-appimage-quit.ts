@@ -1,6 +1,7 @@
 import { constants, accessSync, lstatSync, renameSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { isNewer } from '../../shared/update'
+import { currentApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import { verifyArtifactChecksum } from './installation-artifact'
 import { inspectOwnedLinuxAppImageLauncher } from './installation-occupancy'
 import { inspectInstallationAvailability } from './installation-protection'
@@ -49,7 +50,7 @@ export async function applyLinuxAppImageOnQuit(
       installationRoot: image,
       allowedProcessIds,
       replaceIfIdle() {
-        if (strategy.getStatus() !== ready) return
+        if (currentApplicationShutdownTrigger() !== 'quit' || strategy.getStatus() !== ready) return
         const target = lstatSync(image, { bigint: true })
         const source = lstatSync(archive, { bigint: true })
         if (

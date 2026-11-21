@@ -413,6 +413,9 @@ it.runIf(process.platform === 'linux')(
   'blocks an unregistered bundled Node with rewritten argv until the actual process exits',
   async () => {
     const f = fixture()
+    const replaceIfIdle = vi.fn()
+    const probe = (): Promise<void> =>
+      inspectInstallationAvailability({ ...f.location, replaceIfIdle })
     const executable = join(f.location.installationRoot, 'node')
     copyFileSync(process.execPath, executable)
     const child = spawn(
@@ -430,13 +433,14 @@ it.runIf(process.platform === 'linux')(
       expect(await inspectInstallationProcessesAsync(f.location.installationRoot)).toContain(
         child.pid
       )
-      await expect(inspectInstallationAvailability(f.location)).rejects.toMatchObject({
+      await expect(probe()).rejects.toMatchObject({
         reason: 'installation-busy',
         recovery: {
           detail: 'foreign-process',
           blockingProcesses: [{ pid: child.pid }]
         }
       })
+      expect(replaceIfIdle).not.toHaveBeenCalled()
       expect(child.exitCode).toBeNull()
       expect(inspectInstallationUpdate(f.location)).toBeUndefined()
     } finally {
@@ -446,7 +450,8 @@ it.runIf(process.platform === 'linux')(
         await exited
       }
     }
-    await expect(inspectInstallationAvailability(f.location)).resolves.toBeUndefined()
+    await expect(probe()).resolves.toBeUndefined()
+    expect(replaceIfIdle).toHaveBeenCalledOnce()
   },
   15000
 )
