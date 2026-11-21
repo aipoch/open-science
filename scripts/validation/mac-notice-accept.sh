@@ -33,7 +33,9 @@ mkdirSync(dirname(path),{recursive:true,mode:0o700})
 const timer=setTimeout(()=>process.exit(2),90000)
 const server=createServer(peer=>peer.once('data',data=>{
   if(data.toString()!=='reopen\n') throw Error('unexpected handoff')
-  peer.write(JSON.stringify({targetVersion:'1.3.2'})+'\n')
+  peer.write('{"targetVersion":')
+  setTimeout(()=>peer.write('"1.3.2"}'),100)
+  setTimeout(()=>peer.write('\n'),200)
   setTimeout(()=>{server.close();peer.end();clearTimeout(timer)},4000)
 })).listen(path,()=>writeFileSync(join(root,'fixture-listening'),'ready'))
 NODE

@@ -32,6 +32,7 @@ probe configure
 probe hide
 wait_status 's.state==="ready"'
 test "$(zip_requests)" = 1
+probe socket
 pid=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).details.pid)" "$D/last-status")
 probe quit
 python3 - "$pid" "$D/old-pid-exit" <<'WAIT_PID'
@@ -53,6 +54,34 @@ else
   export FIXTURE_FILE="$D/document.science"
   cp src/main/session-package/fixtures/session-package-v0.31.1-minimal.science "$FIXTURE_FILE"
 fi
+# Observe helper identities without making another connection or delaying LaunchServices.
+python3 - "$D" <<'TRACE' &
+import json, os, re, subprocess, sys, time
+from pathlib import Path
+d=Path(sys.argv[1])
+sock=(d/'fixture-socket').read_text()
+exe=str(d/'Applications/Open-Science.app/Contents/MacOS/Open-Science')
+def match(mode,rows):
+    marker='mac-quit-handoff.cjs '+mode+' '+sock+' '+exe+' '
+    for row in rows:
+        if marker not in row: continue
+        pid,_,_=row.strip().partition(' ')
+        gui=row.split(marker,1)[1].split()[0]
+        if pid.isdigit() and gui.isdigit(): return {'helperPid':int(pid),'sourceGuiPid':int(gui)}
+end=time.monotonic()+70
+while time.monotonic()<end:
+    rows=subprocess.check_output(['/bin/ps','-axww','-o','pid=,command='],text=True).splitlines()
+    watcher=match('watch',rows)
+    reopen=match('reopen',rows)
+    if watcher and reopen and watcher['sourceGuiPid']!=reopen['sourceGuiPid']:
+        (d/'document-socket-witness.json').write_text(json.dumps({
+          'sameSourceVersionSocket':True,'sourceVersion':'1.3.1','watcher':watcher,'reopen':reopen
+        }))
+        break
+    time.sleep(.08)
+else: raise RuntimeError('did not observe both signed helper processes using the source-version socket')
+TRACE
+witness=$!
 probe launch
 cutoff=$((SECONDS+125))
 while ((SECONDS<cutoff)); do
@@ -83,6 +112,7 @@ if observe_document "$D/document-at-handoff"; then
 const fs=require('node:fs'), d=JSON.parse(fs.readFileSync(process.argv[2])).details
 if(d.version!=='1.3.2'||d.argvHasDocument||d.argvHasUrl||d.count>1)throw Error('invalid handoff')
 JS
+  wait "$witness"
   exit 0
 fi
 # Positive control with the very same signed B, target and launch command after replacement.
