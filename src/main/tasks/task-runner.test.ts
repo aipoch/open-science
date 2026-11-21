@@ -577,6 +577,53 @@ describe('TaskRunner', () => {
     expect(saved.every((session) => !('permissionPrompts' in session))).toBe(true)
   })
 
+  it('reads and revokes one task delegation through either the original or continuation Run', async () => {
+    const run = {
+      id: 'original',
+      sessionId: 'session-1',
+      projectId: project.id,
+      cwd: '/workspace',
+      status: 'failed',
+      failureCode: 'process_restarted',
+      startedAt: 1,
+      completedAt: 2,
+      artifacts: [],
+      preferredComputeHostIds: [],
+      interactionPolicy: { mode: 'delegate', revision: 2 }
+    } satisfies TaskRunJournalEntry
+    const continuation = {
+      ...run,
+      id: 'continuation',
+      continuedFromRunId: run.id,
+      startedAt: 3,
+      completedAt: 4,
+      interactionPolicy: undefined
+    } satisfies TaskRunJournalEntry
+    const runner = createRunner({
+      runJournal: { load: async () => [run, continuation], replace: async () => {} }
+    })
+    try {
+      await runner.initialize()
+      expect(runner.getRun(continuation.id).interactionPolicy).toEqual({
+        mode: 'delegate',
+        revision: 2
+      })
+      expect(() =>
+        runner.assertTaskInteractionDecision(continuation.id, 'delegated_agent', 2)
+      ).not.toThrow()
+      await expect(runner.setRunInteractionMode(continuation.id, 2, 'relay')).resolves.toEqual({
+        mode: 'relay',
+        revision: 3
+      })
+      expect(runner.getRun(run.id).interactionPolicy).toEqual({ mode: 'relay', revision: 3 })
+      expect(() =>
+        runner.assertTaskInteractionDecision(continuation.id, 'delegated_agent', 2)
+      ).toThrow()
+    } finally {
+      await runner.dispose()
+    }
+  })
+
   it.each([
     { concurrent: false, cancel: false, tool: false },
     { concurrent: true, cancel: false, tool: false },

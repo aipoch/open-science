@@ -221,6 +221,7 @@ export type TaskPlanResponseRequest = {
 
 export type TaskRun = {
   requestId?: string
+  continuedFromRunId?: string
   id: string
   sessionId: string
   projectId: string

@@ -473,6 +473,7 @@ const createTaskRunActivities = (
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
   ...(run.requestId ? { requestId: run.requestId } : {}),
+  ...(run.continuedFromRunId ? { continuedFromRunId: run.continuedFromRunId } : {}),
   id: run.id,
   sessionId: run.sessionId,
   projectId: run.projectId,
@@ -1700,7 +1701,7 @@ class TaskRunner {
   getRun(runId: string): TaskRun {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
-    const snapshot = cloneRun(run)
+    const snapshot = this.publicRun(run)
     // A terminal fact is public only after all Session admission ownership has been released.
     if (this.activeRunBySession.get(run.sessionId) === run.id) {
       snapshot.status = 'running'
@@ -1713,6 +1714,34 @@ class TaskRunner {
     return this.runs.get(runId)?.promptMessageId || undefined
   }
 
+  private interactionPolicyOwner(run: MutableTaskRun): MutableTaskRun | undefined {
+    let owner = run
+    const visited = new Set([run.id])
+    while (owner.continuedFromRunId) {
+      const previous = this.runs.get(owner.continuedFromRunId)
+      if (
+        !previous ||
+        visited.has(previous.id) ||
+        previous.sessionId !== run.sessionId ||
+        previous.projectId !== run.projectId
+      )
+        return undefined
+      visited.add(previous.id)
+      owner = previous
+    }
+    return owner
+  }
+
+  private publicRun(run: MutableTaskRun): TaskRun {
+    return {
+      ...cloneRun(run),
+      interactionPolicy: this.interactionPolicyOwner(run)?.interactionPolicy ?? {
+        mode: 'relay',
+        revision: 0
+      }
+    }
+  }
+
   async setRunInteractionMode(
     runId: string,
     expectedRevision: number,
@@ -1720,16 +1749,22 @@ class TaskRunner {
   ): Promise<TaskInteractionPolicy> {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    const owner = this.interactionPolicyOwner(run)
+    if (!owner)
+      throw new TaskRunnerError(
+        'task_delegation_required',
+        'The original task policy is no longer available.'
+      )
     if (mode !== 'relay' && mode !== 'delegate')
       throw new TaskRunnerError('invalid_request', 'Interaction mode must be relay or delegate.')
-    if (run.permissionPrompts === 'none' && mode === 'delegate')
+    if (owner.permissionPrompts === 'none' && mode === 'delegate')
       throw new TaskRunnerError('invalid_request', 'Task delegation requires permission prompts.')
     if (run.status === 'cancelled')
       throw new TaskRunnerError('interaction_not_found', 'The original Run was cancelled.')
-    const current = run.interactionPolicy ?? { mode: 'relay', revision: 0 }
+    const current = owner.interactionPolicy ?? { mode: 'relay', revision: 0 }
     if (
-      run.changingInteractionMode ||
-      run.committingPermissionDecision ||
+      owner.changingInteractionMode ||
+      owner.committingPermissionDecision ||
       current.revision !== expectedRevision
     )
       throw new TaskRunnerError(
@@ -1738,21 +1773,21 @@ class TaskRunner {
       )
     if (current.mode === mode) return current
     const next = { mode, revision: current.revision + 1 }
-    run.changingInteractionMode = true
-    run.interactionPolicy = next
+    owner.changingInteractionMode = true
+    owner.interactionPolicy = next
     try {
       await this.persistRuns()
       return next
     } catch (error) {
       // A failed write cannot grant authority in the current process.
-      run.interactionPolicy = { mode: 'relay', revision: next.revision }
+      owner.interactionPolicy = { mode: 'relay', revision: next.revision }
       log.error('Task interaction policy needs recovery.', { runId, error })
       throw new TaskRunnerError(
         'submission_unavailable',
         'Could not confirm the task interaction policy change.'
       )
     } finally {
-      run.changingInteractionMode = false
+      owner.changingInteractionMode = false
     }
   }
 
@@ -1765,12 +1800,13 @@ class TaskRunner {
     if (run?.status === 'cancelled' || run?.cancelRequestedAt !== undefined)
       throw new TaskRunnerError('interaction_revision_conflict', 'The original Run was cancelled.')
     if (source === 'user_relay') return
-    if (!run || run.changingInteractionMode || run.interactionPolicy?.mode !== 'delegate')
+    const owner = run && this.interactionPolicyOwner(run)
+    if (!owner || owner.changingInteractionMode || owner.interactionPolicy?.mode !== 'delegate')
       throw new TaskRunnerError(
         'task_delegation_required',
         'This Run has no current task delegation.'
       )
-    if (run.interactionPolicy.revision !== expectedModeRevision)
+    if (owner.interactionPolicy.revision !== expectedModeRevision)
       throw new TaskRunnerError(
         'interaction_revision_conflict',
         'Read the current Run interaction policy before responding.'
@@ -1820,16 +1856,17 @@ class TaskRunner {
   async withPermissionDecision<T>(runId: string, operation: () => Promise<T>): Promise<T> {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
-    if (run.committingPermissionDecision || run.changingInteractionMode)
+    const owner = this.interactionPolicyOwner(run) ?? run
+    if (owner.committingPermissionDecision || owner.changingInteractionMode)
       throw new TaskRunnerError(
         'interaction_revision_conflict',
         'A decision for this Run is being committed. Check the current state.'
       )
-    run.committingPermissionDecision = true
+    owner.committingPermissionDecision = true
     try {
       return await operation()
     } finally {
-      run.committingPermissionDecision = false
+      owner.committingPermissionDecision = false
     }
   }
 
@@ -1847,7 +1884,7 @@ class TaskRunner {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
     await run.completion
-    return cloneRun(run)
+    return this.publicRun(run)
   }
 
   async cancelRun(runId: string): Promise<TaskRun> {
@@ -1855,17 +1892,17 @@ class TaskRunner {
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
     if (run.status !== 'running') {
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
     if (run.terminalStatus) {
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
     const existingCancellation = run.cancellation
     if (existingCancellation) {
       await existingCancellation.dispatch
       await run.completion
-      return cloneRun(run)
+      return this.publicRun(run)
     }
 
     run.cancelRequestedAt = this.dependencies.now()
@@ -1905,7 +1942,7 @@ class TaskRunner {
 
     await cancellation.dispatch
     await run.completion
-    return cloneRun(run)
+    return this.publicRun(run)
   }
 
   private async failUnpublishedRunAfterSessionSave(
