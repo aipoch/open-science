@@ -113,6 +113,7 @@ it.each([false, true])(
     await h.repository.saveSession({ ...initial, status: 'idle' }, h.initial.revision)
     expect(await h.projection.list()).toMatchObject([{ presentedStatus: 'running' }])
 
+    await h.coordinator.prepareRuntimeResume('project', 'session')
     const live = await h.coordinator.recoverStartupSession('project', 'session')
     expect(live?.activeRun).toEqual(initial.activeRun)
     active = false

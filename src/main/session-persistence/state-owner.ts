@@ -897,9 +897,13 @@ class SessionPersistenceStateOwner {
   // Commit restore normalization before attachment makes reads preserve runtime state.
   // Parked/approved Plans also lose their stale run, without a resumeRecovery error.
   async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
-    const preserveRuntimeState =
+    const hasLiveRuntime = (): boolean =>
       this.runtimeTerminalFailures.has(scope.sessionId) ||
       (this.options.repository.hasLiveRuntimeSession?.(scope.projectId, scope.sessionId) ?? false)
+    const ownsIdleRun = (): boolean =>
+      hasLiveRuntime() ||
+      (this.options.repository.hasActiveRuntimePrompt?.(scope.projectId, scope.sessionId) ?? false)
+    const preserveRuntimeState = hasLiveRuntime()
     const restored = await this.options.repository.loadSessionWithDiagnostics(
       scope.projectId,
       scope.sessionId,
@@ -907,6 +911,9 @@ class SessionPersistenceStateOwner {
     )
     if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
     if (preserveRuntimeState || this.promptPreparations.ownsPreparation(restored.session)) return
+    // A prompt may be admitted before the provider Session becomes visible. The running
+    // snapshot recovery below also handles stale prompt registrations after provider loss.
+    if (restored.session.status === 'idle' && restored.session.activeRun && ownsIdleRun()) return
     const recovered = recoverDetachedIdleRun(restored.session)
     if (recovered.promptPreparation) {
       await this.mutateRuntimeSession(scope, (latest) =>
@@ -929,7 +936,10 @@ class SessionPersistenceStateOwner {
       if (!authority.session.activeRun && !restoredQuestionWait) return
     }
     await this.mutateRuntimeSession(scope, (latest) => {
-      if (sessionRevision(latest) !== sessionRevision(restored.session)) {
+      if (
+        sessionRevision(latest) !== sessionRevision(restored.session) ||
+        (recovered !== restored.session && ownsIdleRun())
+      ) {
         throw new Error('Session changed before restart recovery could be committed.')
       }
       return recordRestartTurnOutcome(recovered, latest)
