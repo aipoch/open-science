@@ -127,6 +127,12 @@ Project、Session、Run、分支、prompt 或 delegated attempt 的服务端引�
 重新检查运行时和内存。`get_submission` 可跨服务重启恢复该提交回执；其 `runId` 指向新 Run，
 `notebookContinuation.runId` 指向原 Run。拒绝本身不持久化，未处理的旧拒绝重启后报告失效，不能重放。
 
+#76 的 Agent 导出在私有暂存中扫描候选包。`get_package_operation` 只按原操作返回待审状态、脱敏风险类型、
+文件范围、目标、大小、SHA-256 和截止时间。用户可以在外部 Agent 对话中决定；`respond_export_review`
+只接受本机 Bearer 验证的 Task 调用转交 `user_relay`，绑定原操作和候选数据。旧的 Desktop 审阅入口仍可用。
+发布前复核暂存文件摘要并拒绝覆盖目标。原操作查询区分决定来源和可验证的交付；相同决定不重复发布。
+拒绝或过期清理候选文件。重启后旧审阅不能响应；旧操作缺少确证时返回 `unconfirmed`，不自动重做。
+
 ## 配置与环境准备
 
 ### Provider 和 Agent

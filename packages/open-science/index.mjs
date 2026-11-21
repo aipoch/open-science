@@ -483,6 +483,14 @@ export class OpenScienceClient {
     return this.callRpc('sessions:package-operation', [{ action: 'snapshot' }], options)
   }
 
+  respondExportReview(request, options) {
+    return this.callRpc(
+      'sessions:package-operation',
+      [{ ...request, action: 'respond-export-review' }],
+      options
+    )
+  }
+
   startAgentPackageImport(sourcePath, target, correlationId, options) {
     return this.callRpc(
       'sessions:package-operation',

@@ -483,7 +483,8 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
     error.code === 'session-details-conflict' ||
     error.code === 'session-revision-conflict' ||
     error.code === 'session-package-busy' ||
-    error.code === 'session-package-operation-conflict'
+    error.code === 'session-package-operation-conflict' ||
+    error.code === 'session-package-review-unavailable'
   )
     return 409
   return 500
@@ -1702,6 +1703,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     (clientId, principalId) => {
       try {
         commandClient.releaseClient('web', clientId)
+        commandClient.releaseClient('task', clientId)
       } finally {
         if (principalId !== 'local') options.tasks?.releaseRemoteClient?.(clientId)
       }
@@ -1835,7 +1837,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
               ? ['agent-package-operations', 'agent-package-fork']
               : []),
             ...(auth.localBearer && rpcChannels.includes('sessions:package-operation')
-              ? ['agent-package-import']
+              ? ['agent-package-import', 'agent-sensitive-export-review']
               : [])
           ],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -2003,23 +2005,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           )
           return
         }
-        const callerContext = createWebCallerContext(clientId, {
-          authorities:
-            auth.localBearer &&
-            (channel === 'sessions:import-package' || channel === 'sessions:package-operation')
-              ? ['import-local-package-path']
-              : [],
-          ...(externalAuthorization
-            ? {
-                location: 'remote' as const,
-                authorities:
-                  externalAuthorization.kind === 'authorized-pairing-manager'
-                    ? (['manage-remote-pairing'] as const)
-                    : [],
-                isAuthorizationCurrent: externalAuthorization.isCurrent
-              }
-            : {})
-        })
         let clientLease: WebClientLease
         try {
           clientLease = webClientLeases.acquireHttp(clientPrincipalId, clientNonce, clientId)
@@ -2033,6 +2018,34 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const releaseDisconnectedClient = (): void => clientLease.release(true)
         request.once('aborted', releaseDisconnectedClient)
         response.once('close', releaseDisconnectedClient)
+        const operation = parsed.data.args[0] as { action?: unknown } | null | undefined
+        const callerContext =
+          channel === 'sessions:package-operation' && operation?.action === 'respond-export-review'
+            ? createTaskCallerContext({
+                clientId,
+                location: externalAuthorization ? 'remote' : 'local',
+                authenticatedLocalBearer: auth.localBearer,
+                isAuthorizationCurrent: () =>
+                  clientLease.isCurrent() && (externalAuthorization?.isCurrent() ?? true)
+              })
+            : createWebCallerContext(clientId, {
+                authorities:
+                  auth.localBearer &&
+                  (channel === 'sessions:import-package' ||
+                    channel === 'sessions:package-operation')
+                    ? ['import-local-package-path']
+                    : [],
+                ...(externalAuthorization
+                  ? {
+                      location: 'remote' as const,
+                      authorities:
+                        externalAuthorization.kind === 'authorized-pairing-manager'
+                          ? (['manage-remote-pairing'] as const)
+                          : [],
+                      isAuthorizationCurrent: externalAuthorization.isCurrent
+                    }
+                  : {})
+              })
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
           const dispatcher = auth.ok
