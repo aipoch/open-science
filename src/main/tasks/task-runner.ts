@@ -93,9 +93,18 @@ import type {
   TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import type {
+  TaskInteractionDecisionSource,
+  TaskInteractionMode,
+  TaskInteractionPolicy
+} from '../../shared/task-interaction'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
-import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
+import type {
+  TaskRunJournal,
+  TaskRunJournalEntry,
+  TaskRunPermissionRecord
+} from './task-run-journal'
 
 const log = createLogger('task-runner')
 
@@ -220,6 +229,25 @@ type TaskAgentPort = {
   setMemoryEnabled(sessionId: string, enabled: boolean): Promise<void>
   prompt(request: TaskAgentPromptRequest, observer?: TaskAgentPromptObserver): Promise<void>
   cancelPrompt(sessionId: string): Promise<void>
+  respondDelegatedPlan?(
+    command: import('../../shared/session-plan/contract').PlanResponseCommand,
+    isCurrent: () => boolean
+  ): Promise<import('../session-plan/plan-service').PlanResponseResult>
+  getTaskPermissions?(
+    sessionId: string,
+    promptMessageId: string
+  ): import('../../shared/acp-permission-contract').AcpPermissionRequest[]
+  respondTaskPermission?(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: import('../acp/permission-broker').TaskPermissionDecision
+  ): Promise<boolean>
+  restoreTaskPermission?(
+    scope: { projectId: string; sessionId: string; requestId: string; optionId: string },
+    decision: import('../acp/permission-continuation-workflow').TaskRestoredPermissionDecision
+  ): Promise<boolean>
 }
 
 type TaskArtifactPort = {
@@ -279,6 +307,11 @@ type TaskRunEventAccumulator = {
 }
 
 type MutableTaskRun = TaskRun & {
+  permissionPrompts?: 'none'
+  interactionPolicy?: TaskInteractionPolicy
+  changingInteractionMode?: boolean
+  committingPermissionDecision?: boolean
+  permissionInteractions?: TaskRunJournalEntry['permissionInteractions']
   eventAccumulator?: TaskRunEventAccumulator
   completion: Promise<void>
   promptMessageId: string
@@ -452,6 +485,7 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   failureCode: run.failureCode,
   artifacts: [...run.artifacts],
   attention: run.attention,
+  interactionPolicy: run.interactionPolicy ?? { mode: 'relay', revision: 0 },
   review: run.review,
   preferredComputeHostIds: [...run.preferredComputeHostIds]
 })
@@ -462,6 +496,10 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
     ...cloneRun(run),
     status: run.terminalStatus ?? run.status,
     ...(run.promptMessageId ? { promptMessageId: run.promptMessageId } : {}),
+    ...(run.permissionPrompts ? { permissionPrompts: run.permissionPrompts } : {}),
+    ...(run.permissionInteractions?.length
+      ? { permissionInteractions: [...run.permissionInteractions] }
+      : {}),
     ...(sessionCommit
       ? {
           sessionCommitStatus: sessionCommit.status,
@@ -1321,10 +1359,20 @@ class TaskRunner {
         'Permission prompts must be none when specified.'
       )
     }
-    if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
+    if (
+      request.interactionMode !== undefined &&
+      request.interactionMode !== 'relay' &&
+      request.interactionMode !== 'delegate'
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Interaction mode must be relay or delegate.')
+    }
+    if (
+      request.permissionPrompts === 'none' &&
+      (request.turnIntent === 'plan-first' || request.interactionMode === 'delegate')
+    ) {
       throw new TaskRunnerError(
         'invalid_request',
-        'Plan-first requires an available human approver.'
+        'Plan-first and task delegation require permission prompts.'
       )
     }
     if (request.turnIntent !== undefined && request.turnIntent !== 'plan-first') {
@@ -1533,6 +1581,8 @@ class TaskRunner {
           projectId: project.id,
           cwd: session.cwd,
           status: 'running' as const,
+          interactionPolicy: { mode: request.interactionMode ?? 'relay', revision: 0 },
+          permissionPrompts: request.permissionPrompts,
           startedAt: this.dependencies.now(),
           artifacts: [],
           preferredComputeHostIds: [
@@ -1656,10 +1706,134 @@ class TaskRunner {
     return this.runs.get(runId)?.promptMessageId || undefined
   }
 
+  async setRunInteractionMode(
+    runId: string,
+    expectedRevision: number,
+    mode: TaskInteractionMode
+  ): Promise<TaskInteractionPolicy> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    if (mode !== 'relay' && mode !== 'delegate')
+      throw new TaskRunnerError('invalid_request', 'Interaction mode must be relay or delegate.')
+    if (run.permissionPrompts === 'none' && mode === 'delegate')
+      throw new TaskRunnerError('invalid_request', 'Task delegation requires permission prompts.')
+    if (run.status === 'cancelled')
+      throw new TaskRunnerError('interaction_not_found', 'The original Run was cancelled.')
+    const current = run.interactionPolicy ?? { mode: 'relay', revision: 0 }
+    if (
+      run.changingInteractionMode ||
+      run.committingPermissionDecision ||
+      current.revision !== expectedRevision
+    )
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Read the current Run interaction policy before changing it.'
+      )
+    if (current.mode === mode) return current
+    const next = { mode, revision: current.revision + 1 }
+    run.changingInteractionMode = true
+    run.interactionPolicy = next
+    try {
+      await this.persistRuns()
+      return next
+    } catch (error) {
+      // A failed write cannot grant authority in the current process.
+      run.interactionPolicy = { mode: 'relay', revision: next.revision }
+      log.error('Task interaction policy needs recovery.', { runId, error })
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'Could not confirm the task interaction policy change.'
+      )
+    } finally {
+      run.changingInteractionMode = false
+    }
+  }
+
+  assertTaskInteractionDecision(
+    runId: string | undefined,
+    source: TaskInteractionDecisionSource,
+    expectedModeRevision?: number
+  ): void {
+    const run = runId ? this.runs.get(runId) : undefined
+    if (run?.status === 'cancelled' || run?.cancelRequestedAt !== undefined)
+      throw new TaskRunnerError('interaction_revision_conflict', 'The original Run was cancelled.')
+    if (source === 'user_relay') return
+    if (!run || run.changingInteractionMode || run.interactionPolicy?.mode !== 'delegate')
+      throw new TaskRunnerError(
+        'task_delegation_required',
+        'This Run has no current task delegation.'
+      )
+    if (run.interactionPolicy.revision !== expectedModeRevision)
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Read the current Run interaction policy before responding.'
+      )
+  }
+
+  getPermissionInteractions(runId: string): readonly TaskRunPermissionRecord[] {
+    return this.runs.get(runId)?.permissionInteractions ?? []
+  }
+
+  findRunIdForPermission(sessionId: string, interactionId: string): string | undefined {
+    return [...this.runs.values()].findLast(
+      (run) =>
+        run.sessionId === sessionId &&
+        run.permissionInteractions?.some(({ id }) => id === interactionId)
+    )?.id
+  }
+
+  async recordPermissionInteraction(
+    runId: string,
+    interaction: TaskRunPermissionRecord
+  ): Promise<void> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    const existing = run.permissionInteractions ?? []
+    const prior = existing.find(({ id }) => id === interaction.id)
+    if (!interaction.response && prior) return
+    run.permissionInteractions = [
+      ...existing.filter(({ id }) => id !== interaction.id).slice(-31),
+      interaction
+    ]
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      // A release write may be ambiguous. Keep the prior fail-closed receipt for local queries.
+      if (interaction.response?.status === 'released') {
+        run.permissionInteractions = [...existing]
+      }
+      log.error('Could not confirm Task permission receipt persistence.', { runId, error })
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'Could not confirm the permission receipt. Query the original interaction before retrying.'
+      )
+    }
+  }
+
+  async withPermissionDecision<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    if (run.committingPermissionDecision || run.changingInteractionMode)
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'A decision for this Run is being committed. Check the current state.'
+      )
+    run.committingPermissionDecision = true
+    try {
+      return await operation()
+    } finally {
+      run.committingPermissionDecision = false
+    }
+  }
+
   findRunIdForPrompt(sessionId: string, promptMessageId: string): string | undefined {
     return [...this.runs.values()].findLast(
       (run) => run.sessionId === sessionId && run.promptMessageId === promptMessageId
     )?.id
+  }
+
+  findLatestRunIdForSession(sessionId: string): string | undefined {
+    return [...this.runs.values()].findLast((run) => run.sessionId === sessionId)?.id
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {

@@ -299,6 +299,12 @@ registerResource(
       .literal('none')
       .describe('Deny requests that still need a person.')
       .optional(),
+    interactionMode: z
+      .enum(['relay', 'delegate'])
+      .describe(
+        'Default: relay. Use delegate only after the user delegates routine decisions for this task.'
+      )
+      .optional(),
     skillIds: z.array(id('Skill ID.')).optional(),
     specialist: id('Specialist ID or exact name for a new session.').optional(),
     turnIntent: z
@@ -328,9 +334,11 @@ registerResource(
       ),
       client.configRoot
     ),
-  ({ permissionPrompts, turnIntent }, context) => {
+  ({ permissionPrompts, turnIntent, interactionMode }, context) => {
     if (permissionPrompts === 'none' && turnIntent === 'plan-first')
       context.addIssue({ code: 'custom', message: 'A Plan requires an available human approver.' })
+    if (permissionPrompts === 'none' && interactionMode === 'delegate')
+      context.addIssue({ code: 'custom', message: 'Task delegation requires permission prompts.' })
   },
   { serviceCapability: 'durable-submissions' }
 )
@@ -405,6 +413,19 @@ const requireInteractionScope = ({ runId, projectId, sessionId }, context) => {
   }
 }
 
+const decisionSource = {
+  source: z.enum(['user_relay', 'delegated_agent']),
+  expectedModeRevision: z.number().int().nonnegative().optional()
+}
+const requireDelegationRevision = ({ source, expectedModeRevision }, context) => {
+  if ((source === 'delegated_agent') !== (expectedModeRevision !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Supply expectedModeRevision only for a delegated_agent decision.'
+    })
+  }
+}
+
 registerResource(
   'list_interactions',
   'research',
@@ -430,6 +451,42 @@ registerResource(
   { serviceCapability: 'task-interactions' }
 )
 registerResource(
+  'respond_permission',
+  'research',
+  'Select one allowed action for an exact pending permission. Use user_relay for a user decision, or delegated_agent with the current Run interaction policy revision. This does not remember a grant.',
+  {
+    ...interactionScope,
+    interactionId: id('Permission interaction ID from get_interaction.'),
+    optionId: id('One of the options in the current interaction.'),
+    expectedRevision,
+    expectedBranchId: id('Branch ID from get_interaction.'),
+    ...decisionSource
+  },
+  write,
+  (client, { runId, projectId, sessionId, interactionId, ...response }, options) =>
+    client.respondPermission(
+      interactionId,
+      runId ? { runId } : { projectId, sessionId },
+      response,
+      options
+    ),
+  (args, context) => {
+    requireInteractionScope(args, context)
+    requireDelegationRevision(args, context)
+  },
+  { serviceCapability: 'task-permissions' }
+)
+registerResource(
+  'set_run_interaction_mode',
+  'research',
+  'Set relay or delegate on one Run using its current interactionPolicy.revision. Delegate only when the user asks; use relay to withdraw. Does not change Session or global permissions.',
+  { runId, expectedRevision, interactionMode: z.enum(['relay', 'delegate']) },
+  write,
+  (client, { runId, ...fields }, options) => client.setRunInteractionMode(runId, fields, options),
+  undefined,
+  { serviceCapability: 'task-delegation' }
+)
+registerResource(
   'get_plan',
   'research',
   'Read the current session plan, artifact version and revision, or null when there is no plan.',
@@ -440,24 +497,25 @@ registerResource(
 registerResource(
   'respond_plan',
   'research',
-  'Relay the user’s approval, rejection, or requested changes for the exact Plan version and revision they reviewed. Approval may resume execution and incur costs. Do not submit a decision without asking the user.',
+  'Respond to a reviewed Plan as user_relay for a specific user decision, or delegated_agent with the current task delegation revision. Approval can resume execution and incur costs.',
   {
     sessionId,
     projectId: projectId.optional(),
     artifactVersionId: id('Plan Artifact Version from get_interaction or get_plan.'),
     expectedRevision,
     expectedBranchId: id('Branch ID from get_interaction or get_plan.'),
-    source: z.literal('user_relay').describe('Relay an explicit decision by the user.'),
+    ...decisionSource,
     decision: z.enum(['approved', 'rejected']).optional(),
     feedback: id('Requested changes to the Plan.').optional()
   },
   write,
   (client, { sessionId, ...response }, options) =>
     client.respondSessionPlan(sessionId, response, options),
-  ({ decision, feedback }, context) => {
+  ({ decision, feedback, ...args }, context) => {
     if (Boolean(decision) === Boolean(feedback)) {
       context.addIssue({ code: 'custom', message: 'Supply one decision or feedback.' })
     }
+    requireDelegationRevision(args, context)
   },
   { serviceCapability: 'task-interactions' }
 )

@@ -67,6 +67,56 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
   ]
 })
 
+it('keeps the original permission pending when task delegation is withdrawn before commit', async () => {
+  const broker = new AcpPermissionBroker(vi.fn())
+  const request = createPermissionRequest()
+  const waiting = broker.requestPermission(request, { profile: 'ask', promptMessageId: 'prompt-1' })
+  const [pending] = broker.getTaskPermissions(request.sessionId, 'prompt-1')
+  const record = vi.fn<(status: 'unconfirmed' | 'released') => Promise<void>>(async () => {})
+  const withdrawn = new Error('Task delegation was withdrawn.')
+
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'stale-option', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async (release) => release(),
+      record
+    })
+  ).resolves.toBe(false)
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'allow-once', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async () => {
+        throw withdrawn
+      },
+      record
+    })
+  ).rejects.toThrow(withdrawn.message)
+  expect(broker.getTaskPermissions(request.sessionId, 'prompt-1')).toEqual([pending])
+  expect(record).not.toHaveBeenCalled()
+
+  expect(
+    await broker.respondTaskPermission(
+      request.sessionId,
+      'prompt-1',
+      pending.requestId,
+      'allow-once',
+      {
+        source: 'user_relay',
+        assertCurrent: () => {},
+        commit: async (release) => release(),
+        record
+      }
+    )
+  ).toBe(true)
+  await expect(waiting).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'allow-once' }
+  })
+  expect(record.mock.calls).toEqual([['unconfirmed'], ['released']])
+  expect(broker.listGrants(request.sessionId)).toEqual([])
+})
+
 it.each(['generate_image', 'edit_image'])('asks once per %s call in Ask mode', async (tool) => {
   const emit = vi.fn()
   const grants = new ConversationPermissionGrantStore()

@@ -17,6 +17,7 @@ import type {
 } from '../../shared/permission-grants'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
+import type { TaskInteractionDecisionSource } from '../../shared/task-interaction'
 import {
   canonicalAppMcpServerName,
   resolveCanonicalMcpToolIdentity
@@ -73,6 +74,21 @@ type PendingPermission = {
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
+const taskPermissionOptions = (request: AcpPermissionRequest): AcpPermissionRequest['options'] =>
+  request.options.filter(
+    (option) =>
+      (option.scope === undefined || option.scope === 'once') &&
+      ['allow_once', 'reject_once'].includes(option.kind.toLowerCase())
+  )
+
+type TaskPermissionDecision = Readonly<{
+  source: TaskInteractionDecisionSource
+  assertCurrent: () => void
+  assertScope?: () => Promise<void>
+  commit: (operation: () => Promise<boolean>) => Promise<boolean>
+  record: (status: 'unconfirmed' | 'released') => Promise<void>
+}>
+
 type AppPermissionRequest = Readonly<{
   onNetworkAddressesApproved?: (addresses: readonly string[]) => void
   requestId?: string
@@ -117,6 +133,7 @@ type RestoredPermissionContinuation = {
   readonly requestId: string
   readonly promptMessageId: string
   readonly fingerprint: string
+  readonly taskResponse?: true
   interactionSequence?: number
   agentFrameId?: string
   messageBranchId?: string
@@ -926,6 +943,34 @@ class AcpPermissionBroker {
           pending.durablePersistenceSettled === true
       )
       .map(({ request }) => request)
+  }
+
+  getTaskPermissions(sessionId: string, promptMessageId: string): AcpPermissionRequest[] {
+    return this.getPendingRequests().filter((request) => {
+      if (request.sessionId !== sessionId || request.appOwned || request.delegated) return false
+      const pending = this.pendingRequests.get(request.requestId)
+      return Boolean(
+        pending &&
+        pending.policyContext?.promptMessageId === promptMessageId &&
+        this.isPendingCurrent(pending)
+      )
+    })
+  }
+
+  respondTaskPermission(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: TaskPermissionDecision
+  ): Promise<boolean> {
+    const request = this.getTaskPermissions(sessionId, promptMessageId).find(
+      (item) => item.requestId === requestId
+    )
+    if (!request || !taskPermissionOptions(request).some((item) => item.optionId === optionId)) {
+      return Promise.resolve(false)
+    }
+    return this.respond({ requestId, optionId }, decision)
   }
 
   pendingNotebookReviews(sessionId: string): PendingNotebookReview[] {
@@ -1753,18 +1798,20 @@ class AcpPermissionBroker {
   }
 
   // Resolves one pending request and reports whether it was found.
-  async respond(response: AcpPermissionResponse): Promise<boolean> {
+  async respond(response: AcpPermissionResponse, task?: TaskPermissionDecision): Promise<boolean> {
     const pending = this.pendingRequests.get(response.requestId)
 
     if (!pending) {
       return false
     }
 
+    task?.assertCurrent()
     this.pendingRequests.delete(response.requestId)
-    pending.decisionAuthority ??= 'human'
+    pending.decisionAuthority ??= task?.source ?? 'human'
 
     // Keep the claimed request cancellable until its provider decision is released.
     this.respondingRequests.set(response.requestId, pending)
+    let taskCommitStarted = false
     try {
       if (pending.beforeRespond) {
         const optionId =
@@ -1855,10 +1902,30 @@ class AcpPermissionBroker {
       }
 
       // Legacy Session grants are owned by Open-Science. The Agent receives only its one-shot option.
-      if (pending.categoryKey) {
+      if (pending.categoryKey && !task) {
         this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
       }
 
+      if (task) {
+        return await task.commit(async () => {
+          task.assertCurrent()
+          if (pending.settled || !this.isPendingCurrent(pending)) return false
+          taskCommitStarted = true
+          await task.record('unconfirmed')
+          const persistence = this.persistLiveSettlement(pending)
+          if (persistence) await persistence
+          await task.assertScope?.()
+          if (pending.settled || !this.isPendingCurrent(pending)) return false
+          task.assertCurrent()
+          this.settlePending(
+            pending,
+            { outcome: { outcome: 'selected', optionId: providerOptionId } },
+            settlementState
+          )
+          await task.record('released')
+          return true
+        })
+      }
       const persistence = this.persistLiveSettlement(pending)
       if (persistence) await persistence
       if (pending.decisionAuthority === 'registry_grant') {
@@ -1892,7 +1959,8 @@ class AcpPermissionBroker {
     } catch (error) {
       // A durable app decision that failed to commit still owns its live wait. Keep it actionable
       // and do not release privileged work as if the human had denied the request.
-      if (pending.beforeRespond && !pending.settled) {
+      if ((pending.beforeRespond || (task && !taskCommitStarted)) && !pending.settled) {
+        if (task) pending.decisionAuthority = undefined
         if (pending.refreshRequest) {
           pending.request = pending.refreshRequest()
           this.emitPermissionRequest(pending.request)
@@ -2159,4 +2227,10 @@ export {
   resolveNotebookPermissionContext,
   type AppPermissionRequest
 }
-export type { DurablePermissionWaitCandidate, PermissionWaitHooks, RestoredPermissionContinuation }
+export { taskPermissionOptions }
+export type {
+  DurablePermissionWaitCandidate,
+  PermissionWaitHooks,
+  RestoredPermissionContinuation,
+  TaskPermissionDecision
+}

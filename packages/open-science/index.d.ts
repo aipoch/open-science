@@ -508,6 +508,11 @@ export type SessionPlan = {
 }
 
 export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
+export type TaskInteractionMode = 'relay' | 'delegate'
+export type TaskInteractionPolicy = { mode: TaskInteractionMode; revision: number }
+export type TaskInteractionDecision =
+  | { source: 'user_relay'; expectedModeRevision?: never }
+  | { source: 'delegated_agent'; expectedModeRevision: number }
 export type TaskInteractionReference = {
   id: string
   kind: string
@@ -518,6 +523,7 @@ export type TaskInteractionReference = {
   promptMessageId?: string
   branchId?: string
   revision: number
+  interactionPolicy?: TaskInteractionPolicy
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]
@@ -538,6 +544,24 @@ export type PlanInteraction = TaskInteractionReference & {
     }
   }
 }
+export type PermissionInteraction = TaskInteractionReference & {
+  kind: 'permission'
+  recovery?: 'original_run' | 'new_continuation'
+  request?: {
+    title: string
+    toolCallId: string
+    tool?: string
+    input?: unknown
+    options: readonly { optionId: string; name: string; kind: string; scope?: 'once' }[]
+  }
+  response?: {
+    source: TaskInteractionDecision['source']
+    optionId: string
+    status: 'released' | 'unconfirmed'
+    continuation?: { taskRunStatus: 'unconfirmed' }
+  }
+}
+export type TaskInteraction = PlanInteraction | PermissionInteraction
 export type RunAttention =
   | { kind: 'plan-approval'; plan: SessionPlan }
   | { kind: 'interactions'; interactions: TaskInteractionReference[] }
@@ -562,6 +586,7 @@ export type Run = {
   execution?: NotebookExecution
   artifacts: Artifact[]
   attention?: RunAttention
+  interactionPolicy?: TaskInteractionPolicy
   review?: {
     started: boolean
     reason?: string
@@ -904,19 +929,33 @@ export class OpenScienceClient {
     interactionId: string,
     scope: TaskInteractionScope,
     options?: RequestOptions
-  ): Promise<PlanInteraction>
+  ): Promise<TaskInteraction>
+  setRunInteractionMode(
+    runId: string,
+    request: { expectedRevision: number; interactionMode: TaskInteractionMode },
+    options?: RequestOptions
+  ): Promise<TaskInteractionPolicy>
+  respondPermission(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    response: TaskInteractionDecision & {
+      optionId: string
+      expectedRevision: number
+      expectedBranchId: string
+    },
+    options?: RequestOptions
+  ): Promise<{ changed: boolean; interaction: PermissionInteraction }>
   respondSessionPlan(
     sessionId: string,
-    response: {
+    response: TaskInteractionDecision & {
       projectId?: string
-      source: 'user_relay'
       artifactVersionId: string
       expectedRevision: number
       expectedBranchId: string
     } & (
-      | { decision: 'approved' | 'rejected'; feedback?: never }
-      | { feedback: string; decision?: never }
-    ),
+        | { decision: 'approved' | 'rejected'; feedback?: never }
+        | { feedback: string; decision?: never }
+      ),
     options?: RequestOptions
   ): Promise<PlanResponse>
   forkSession(
@@ -981,6 +1020,8 @@ export class OpenScienceClient {
       turnIntent?: TurnIntent
       /** Deny unresolved human interactions without changing the authorization profile. */
       permissionPrompts?: 'none'
+      /** Defaults to relay. Use delegate only when the user delegates this task's routine decisions. */
+      interactionMode?: TaskInteractionMode
       autoReviewEnabled?: boolean
       specialist?: string
       delegationPolicy?: DelegationPolicy

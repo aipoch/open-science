@@ -71,7 +71,7 @@ const taskSettings = {
 
 type TaskAgentMock = {
   [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
-    TaskAgentPort[Method]
+    NonNullable<TaskAgentPort[Method]>
   >
 } & Pick<TaskAgentPort, 'withSessionAvailable'>
 
@@ -88,6 +88,10 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
   setMemoryEnabled: vi.fn<TaskAgentPort['setMemoryEnabled']>(async () => undefined),
   prompt: vi.fn<TaskAgentPort['prompt']>(async () => undefined),
   cancelPrompt: vi.fn<TaskAgentPort['cancelPrompt']>(async () => undefined),
+  respondDelegatedPlan: vi.fn(),
+  getTaskPermissions: vi.fn(() => []),
+  respondTaskPermission: vi.fn(async () => false),
+  restoreTaskPermission: vi.fn(async () => false),
   ...overrides
 })
 
@@ -1345,6 +1349,198 @@ describe('HeadlessTaskApi adapter', () => {
     ).toHaveLength(1)
     await api.dispose()
   })
+  it('relays a parked permission after restart and expires a known process-only request', async () => {
+    const sessionId = 'session-parked-permission'
+    const promptMessageId = 'permission-prompt'
+    const scope = { runId: 'permission-run' }
+    const persisted = materializeSessionConversationGraph({
+      id: sessionId,
+      projectId: project.id,
+      title: 'Parked permission',
+      cwd: '/workspace/permission',
+      status: 'waiting-permission',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: promptMessageId,
+          role: 'user',
+          content: 'Read study table.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [
+        {
+          id: 'parked-tool',
+          promptMessageId,
+          title: 'Read study table',
+          status: 'pending',
+          kind: 'read',
+          startedAt: 2
+        }
+      ],
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        permission: {
+          state: 'pending',
+          originatingPromptMessageId: promptMessageId,
+          fingerprint: 'a'.repeat(64),
+          createdAt: 2,
+          request: {
+            requestId: 'parked',
+            sessionId,
+            toolCallId: 'parked-tool',
+            title: 'Read study table',
+            isMcp: true,
+            mcpIdentity: 'science/read_table',
+            rawInput: { path: 'study.csv' },
+            options: [
+              { optionId: 'once', name: 'Read once', kind: 'allow_once', scope: 'once' },
+              { optionId: 'always', name: 'Always read', kind: 'allow_always', scope: 'session' },
+              { optionId: 'deny', name: 'Decline', kind: 'reject_once' }
+            ]
+          }
+        }
+      }
+    })
+    const branchId = persisted.conversationGraph.branches[0]!.id
+    let journal: TaskRunJournalEntry[] = [
+      {
+        id: scope.runId,
+        projectId: project.id,
+        sessionId,
+        promptMessageId,
+        cwd: persisted.cwd,
+        status: 'running',
+        startedAt: 1,
+        artifacts: [],
+        preferredComputeHostIds: [],
+        interactionPolicy: { mode: 'delegate', revision: 2 },
+        permissionInteractions: [{ id: 'permission:ephemeral', branchId, revision: 0 }]
+      }
+    ]
+    const agent = createAgent({
+      restoreTaskPermission: vi.fn(async (_restored, decision) =>
+        decision.commit(async () => {
+          await decision.record('unconfirmed')
+          return true
+        })
+      )
+    })
+    const open = (): HeadlessTaskApi =>
+      new HeadlessTaskApi(
+        {
+          commands: commandsFrom(async (channel) => {
+            if (channel === 'sessions:load-all') return { sessions: [persisted] }
+            throw new Error(`Unexpected Task command: ${channel}`)
+          }),
+          agent
+        },
+        {
+          runJournal: {
+            load: async () => structuredClone(journal),
+            replace: async (entries) => {
+              journal = structuredClone([...entries])
+            }
+          }
+        }
+      )
+    const id = 'permission:parked'
+    const response = {
+      source: 'delegated_agent',
+      expectedModeRevision: 2,
+      expectedRevision: 0,
+      expectedBranchId: branchId,
+      optionId: 'once'
+    } as const
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    const api = open()
+    await api.initialize()
+    try {
+      await api.runWithCallerContext(caller, async () => {
+        await expect(api.getRun(scope.runId)).resolves.toMatchObject({
+          status: 'failed',
+          failureCode: 'process_restarted',
+          attention: {
+            kind: 'interactions',
+            interactions: [{ id, state: 'pending', owner: 'agent', actions: ['once', 'deny'] }]
+          }
+        })
+        await expect(api.getInteraction('permission:ephemeral', scope)).resolves.toMatchObject({
+          state: 'expired'
+        })
+        await expect(api.getInteraction(id, scope)).resolves.toMatchObject({
+          state: 'pending',
+          recovery: 'new_continuation',
+          branchId,
+          request: { toolCallId: 'parked-tool', input: { path: 'study.csv' } }
+        })
+        await expect(
+          api.respondPermission(id, scope, { ...response, expectedBranchId: 'other' })
+        ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+        await expect(
+          api.respondPermission(id, scope, { ...response, optionId: 'always' })
+        ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+        await expect(
+          api.setRunInteractionMode(scope.runId, { interactionMode: 'relay', expectedRevision: 2 })
+        ).resolves.toEqual({ mode: 'relay', revision: 3 })
+        await expect(api.respondPermission(id, scope, response)).rejects.toMatchObject({
+          code: 'task_delegation_required'
+        })
+        await expect(
+          api.setRunInteractionMode(scope.runId, {
+            interactionMode: 'delegate',
+            expectedRevision: 3
+          })
+        ).resolves.toEqual({ mode: 'delegate', revision: 4 })
+        await expect(
+          api.respondPermission(id, scope, { ...response, expectedModeRevision: 4 })
+        ).resolves.toMatchObject({
+          changed: true,
+          interaction: {
+            response: {
+              source: 'delegated_agent',
+              optionId: 'once',
+              continuation: { taskRunStatus: 'unconfirmed' }
+            }
+          }
+        })
+      })
+    } finally {
+      await api.dispose()
+    }
+    const reopened = open()
+    await reopened.initialize()
+    try {
+      await reopened.runWithCallerContext(caller, async () => {
+        const sessionScope = { projectId: project.id, sessionId }
+        await expect(reopened.listInteractions(sessionScope)).resolves.toEqual([])
+        await expect(
+          reopened.respondPermission(id, sessionScope, { ...response, expectedModeRevision: 4 })
+        ).resolves.toMatchObject({ changed: false })
+        await expect(
+          reopened.respondPermission(id, scope, {
+            ...response,
+            expectedModeRevision: 4,
+            optionId: 'deny'
+          })
+        ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+        await expect(reopened.getRun(scope.runId)).resolves.toMatchObject({
+          status: 'failed',
+          failureCode: 'process_restarted'
+        })
+      })
+      expect(agent.restoreTaskPermission).toHaveBeenCalledTimes(1)
+      expect(agent.prompt).not.toHaveBeenCalled()
+    } finally {
+      await reopened.dispose()
+    }
+  })
+
   it('exposes Task Run progress through one subscription seam', async () => {
     const invoke = vi.fn(
       async (channel: string, _callerContext: CallerContext, args: unknown[]) => {

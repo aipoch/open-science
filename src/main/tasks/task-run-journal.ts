@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 
 import type { ArtifactFile } from '../../shared/artifacts'
+import type { TaskPermissionInteraction } from '../../shared/task-interaction'
 import {
   generatePlanContentSchema,
   type ActivePlanProjection
@@ -25,7 +26,14 @@ const TASK_RUN_JOURNAL_VERSION = 1 as const
 export type TaskRunJournalEntry = TaskRun & {
   promptMessageId?: string
   sessionCommitStatus?: Exclude<TaskRunStatus, 'running'>
+  permissionPrompts?: 'none'
+  permissionInteractions?: TaskRunPermissionRecord[]
 }
+
+export type TaskRunPermissionRecord = Pick<
+  TaskPermissionInteraction,
+  'id' | 'revision' | 'branchId' | 'response'
+>
 
 type TaskRunJournalDocument = {
   version: typeof TASK_RUN_JOURNAL_VERSION
@@ -135,6 +143,26 @@ const reviewSchema = z.object({
 const nestedRunSchema = z.object({
   artifacts: z.array(artifactSchema),
   attention: z.object({ kind: z.literal('plan-approval'), plan: planSchema }).optional(),
+  interactionPolicy: z.object({ mode: z.enum(['relay', 'delegate']), revision: count }).optional(),
+  permissionPrompts: z.literal('none').optional(),
+  permissionInteractions: z
+    .array(
+      z.object({
+        id: identity,
+        revision: count,
+        branchId: identity.optional(),
+        response: z
+          .object({
+            source: z.enum(['user_relay', 'delegated_agent']),
+            optionId: identity,
+            status: z.enum(['released', 'unconfirmed']),
+            continuation: z.object({ taskRunStatus: z.literal('unconfirmed') }).optional()
+          })
+          .optional()
+      })
+    )
+    .max(32)
+    .optional(),
   review: reviewSchema.optional()
 })
 

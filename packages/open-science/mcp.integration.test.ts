@@ -197,6 +197,129 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
   )
 })
 
+it('queries and relays the same task permission through CLI JSON and MCP stdio', async () => {
+  const scope = { runId: 'task-1' }
+  const interaction = {
+    id: 'permission:review-1',
+    kind: 'permission',
+    state: 'pending',
+    owner: 'user',
+    ...scope,
+    projectId: 'p1',
+    sessionId: 's1',
+    branchId: 'branch-1',
+    revision: 0,
+    interactionPolicy: { mode: 'relay', revision: 0 },
+    actions: ['allow-once', 'reject-once'],
+    responseCapability: 'respond_permission'
+  }
+  const detail = {
+    ...interaction,
+    recovery: 'original_run',
+    request: {
+      title: 'Read study table',
+      toolCallId: 'tool-1',
+      tool: 'files/read',
+      input: { path: 'study.csv' },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+  }
+  let released = false
+  const agent = await resourceAgents(
+    async (request, response) => {
+      const url = new URL(request.url!, 'http://localhost')
+      const json = (data: unknown): void => {
+        response.end(JSON.stringify({ data }))
+      }
+      if (url.pathname === '/api/v1/runs/task-1') {
+        json({
+          id: 'task-1',
+          status: 'running',
+          attention: { kind: 'interactions', interactions: [interaction] }
+        })
+      } else if (
+        url.pathname === '/api/v1/interactions' &&
+        url.searchParams.get('runId') === 'task-1'
+      ) {
+        json(released ? [] : [interaction])
+      } else if (
+        url.pathname === '/api/v1/runs/task-1/interaction-mode' &&
+        request.method === 'PUT'
+      ) {
+        let body = ''
+        for await (const chunk of request) body += chunk
+        expect(JSON.parse(body)).toEqual({ interactionMode: 'delegate', expectedRevision: 0 })
+        json({ mode: 'delegate', revision: 1 })
+      } else if (
+        url.searchParams.get('runId') === 'task-1' &&
+        decodeURIComponent(url.pathname) === '/api/v1/interactions/permission:review-1'
+      ) {
+        json(detail)
+      } else if (
+        url.searchParams.get('runId') === 'task-1' &&
+        decodeURIComponent(url.pathname) ===
+          '/api/v1/interactions/permission:review-1/permission' &&
+        request.method === 'POST'
+      ) {
+        let body = ''
+        for await (const chunk of request) body += chunk
+        expect(JSON.parse(body)).toEqual({
+          optionId: 'allow-once',
+          source: 'user_relay',
+          expectedBranchId: 'branch-1',
+          expectedRevision: 0
+        })
+        json({
+          changed: !released,
+          interaction: {
+            ...interaction,
+            state: 'responded',
+            actions: [],
+            response: { source: 'user_relay', optionId: 'allow-once', status: 'released' }
+          }
+        })
+        released = true
+      } else {
+        response.writeHead(404).end()
+      }
+    },
+    ['task-interactions', 'task-permissions', 'task-delegation']
+  )
+
+  for (const [name, input] of [
+    ['get_run', scope],
+    ['wait_run', { ...scope, timeoutMs: 1000 }],
+    ['list_interactions', scope],
+    ['get_interaction', { ...scope, interactionId: interaction.id }],
+    ['set_run_interaction_mode', { ...scope, interactionMode: 'delegate', expectedRevision: 0 }]
+  ] as const) {
+    expect((await agent.mcp(name, input)).structuredContent).toEqual(await agent.cli(name, input))
+  }
+  const reviewed = {
+    ...scope,
+    interactionId: interaction.id,
+    optionId: 'allow-once',
+    expectedRevision: 0,
+    expectedBranchId: 'branch-1'
+  }
+  const invalid = { ...reviewed, source: 'delegated_agent' }
+  const rejected = await agent.mcp('respond_permission', invalid)
+  expect(rejected.structuredContent).toEqual({
+    error: (await agent.cliError('respond_permission', invalid)).error
+  })
+  expect(rejected.structuredContent).toMatchObject({ error: { code: 'invalid_request' } })
+  const response = { ...reviewed, source: 'user_relay' }
+  const first = await agent.cli('respond_permission', response)
+  expect(first).toMatchObject({
+    result: { changed: true, interaction: { response: { status: 'released' } } }
+  })
+  const retry = await agent.mcp('respond_permission', response)
+  expect(retry.structuredContent).toEqual({
+    result: { ...(first.result as object), changed: false }
+  })
+  expect(await agent.cli('list_interactions', scope)).toEqual({ result: [] })
+})
+
 it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
   const target = { language: 'r', operationId: 'prepare-r' }
   const path = `/api/v1/notebook-environment/operations/${target.operationId}`

@@ -24,7 +24,7 @@ Notebook status includes Python and R. For a general setup request, report both 
 
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
 
-If a Run returns interaction attention, call list_interactions with the original Run ID, or with both Project and Session IDs. Use get_interaction to read its current details. For a pending Plan, present the current Plan to the user in this conversation and relay their approval, rejection, or revision feedback with respond_plan and source user_relay. Use the Artifact Version and revision they reviewed. If the response is lost, query the same interaction. A recorded Plan response does not mean the Notebook ran or files were delivered.
+If a Run returns interaction attention, call list_interactions with the original Run ID, or with both Project and Session IDs. Read each request with get_interaction. For a permission, submit one of the displayed one-time options with respond_permission. For a Plan, use respond_plan with the exact version, branch and revision reviewed. The default mode is relay: ask the user and send source user_relay. If the user explicitly delegates routine decisions for this task, use interactionMode delegate on start_run or set_run_interaction_mode on the existing Run. For a delegated decision, send source delegated_agent and the current expectedModeRevision. Switch back to relay at the user's request. Query the same interaction after losing a response. Follow the original Run for a live permission and any continuation reference returned after recovery. A decision or handoff does not establish Notebook execution or file delivery.
 
 Read the Run's Notebook execution separately from its outer status. When execution is waiting_for_user, follow its next action. For review_notebook_code_in_app, ask the user to decide the pending review in the original Session and branch in Open-Science on the same profile. Recheck the same Run after the user responds. The agent cannot make the decision or submit a replacement Run.
 For review_notebook_runtime_in_app, explain that the selected kernel and environment need the user's approval, even if the environment is installed. The review can be pending before a Notebook Run exists. Use execution.language when present to check the relevant language if needed. Offer to open Notebook settings if the user wants to check or change setup. Ask them to respond to Confirm Notebook kernel and environment in the original Session and branch in the Web or Desktop app on the same profile. Recheck the same Run after the user responds; do not make the decision or submit a replacement Run.
@@ -145,6 +145,16 @@ const policies = {
     'agent',
     'This interaction does not belong to the supplied Run or Session. Check the original scope.',
     { action: 'list_interactions' }
+  ],
+  task_delegation_required: [
+    'user',
+    'This Run has no current task delegation. Ask the user or relay their decision.',
+    { action: 'get_run' }
+  ],
+  interaction_revision_conflict: [
+    'agent',
+    'The task policy or interaction changed. Read the current interaction before responding.',
+    { action: 'get_interaction' }
   ],
   project_not_found: [
     'agent',

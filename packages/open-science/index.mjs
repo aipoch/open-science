@@ -537,6 +537,26 @@ export class OpenScienceClient {
     )
   }
 
+  setRunInteractionMode(runId, request, options) {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/interaction-mode`, {
+      ...options,
+      method: 'PUT',
+      body: request
+    })
+  }
+
+  respondPermission(interactionId, scope, response, options) {
+    const query = new URLSearchParams(scope)
+    return this.request(
+      `/api/v1/interactions/${encodeURIComponent(interactionId)}/permission?${query}`,
+      {
+        ...options,
+        method: 'POST',
+        body: response
+      }
+    )
+  }
+
   async respondSessionPlan(sessionId, response, options) {
     const bootstrap = await this.health(options)
     if (!bootstrap.taskCapabilities?.includes('task-interactions')) {
@@ -567,6 +587,15 @@ export class OpenScienceClient {
     ) {
       throw new OpenScienceApiError(
         'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    if (
+      request.interactionMode === 'delegate' &&
+      !bootstrap.taskCapabilities.includes('task-delegation')
+    ) {
+      throw new OpenScienceApiError(
+        'This server does not support task delegation on this connection.',
         { code: 'unsupported_capability' }
       )
     }
@@ -637,11 +666,26 @@ export class OpenScienceClient {
 
   async startRun(request, options) {
     const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
-    if (!options?.requestId && request.permissionPrompts === 'none') {
+    if (
+      !options?.requestId &&
+      (request.permissionPrompts === 'none' || request.interactionMode === 'delegate')
+    ) {
       const bootstrap = await this.health(beforeDeadline(options, deadline))
-      if (!bootstrap.taskCapabilities?.includes('permission-prompts-none')) {
+      if (
+        request.permissionPrompts === 'none' &&
+        !bootstrap.taskCapabilities?.includes('permission-prompts-none')
+      ) {
         throw new OpenScienceApiError(
           'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
+          { code: 'unsupported_capability' }
+        )
+      }
+      if (
+        request.interactionMode === 'delegate' &&
+        !bootstrap.taskCapabilities?.includes('task-delegation')
+      ) {
+        throw new OpenScienceApiError(
+          'This server does not support task delegation on this connection.',
           { code: 'unsupported_capability' }
         )
       }

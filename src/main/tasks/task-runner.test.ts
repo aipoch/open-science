@@ -505,6 +505,50 @@ describe('TaskRunner', () => {
     }
   )
 
+  it('keeps task delegation on the original Run across a restart', async () => {
+    let journal: TaskRunJournalEntry[] = []
+    const runJournal = {
+      load: async () => structuredClone(journal),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        journal = structuredClone([...runs])
+      }
+    }
+    const release = Promise.withResolvers<void>()
+    const runner = createRunner({ runJournal, agent: { prompt: async () => release.promise } })
+    try {
+      const run = await runner.startRun({ project: project.id, prompt: 'Compare groups.' })
+      expect(run.interactionPolicy).toEqual({ mode: 'relay', revision: 0 })
+      await expect(runner.setRunInteractionMode(run.id, 0, 'delegate')).resolves.toEqual({
+        mode: 'delegate',
+        revision: 1
+      })
+      await expect(runner.setRunInteractionMode(run.id, 0, 'relay')).rejects.toMatchObject({
+        code: 'interaction_revision_conflict'
+      })
+      const copy = structuredClone(journal)
+      const recovered = createRunner({
+        runJournal: { load: async () => copy, replace: async () => {} }
+      })
+      try {
+        await recovered.initialize()
+        expect(recovered.getRun(run.id)).toMatchObject({
+          status: 'failed',
+          failureCode: 'process_restarted',
+          interactionPolicy: { mode: 'delegate', revision: 1 }
+        })
+      } finally {
+        await recovered.dispose()
+      }
+      await expect(runner.setRunInteractionMode(run.id, 1, 'relay')).resolves.toEqual({
+        mode: 'relay',
+        revision: 2
+      })
+    } finally {
+      release.resolve()
+      await runner.dispose()
+    }
+  })
+
   it('passes unattended policy to the prompt without persisting it as a Session preference', async () => {
     const saved: PersistedChatSession[] = []
     const prompt = vi.fn(async (_request, observer) => {

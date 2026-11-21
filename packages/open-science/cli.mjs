@@ -132,6 +132,7 @@ Options:
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
   --clear-delegation | --clear-specialist  Clear one automation new-session default
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
+  --interaction-mode relay|delegate  Handle routine approvals in this task (default: relay)
   --request-id <id>      Stable submission identity for lookup and safe retries
   --wait                 Observe the Run until completion or attention (default: 10s, max: 30s)
   --return-on-attention  Accepted for older scripts; --wait now returns on attention
@@ -177,6 +178,7 @@ const VALUE_OPTIONS = {
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
   '--permission-prompts': 'permissionPrompts',
+  '--interaction-mode': 'interactionMode',
   '--provider': 'provider',
   '--model': 'model',
   '--reasoning-effort': 'reasoningEffort',
@@ -467,6 +469,15 @@ export const parseCliArgs = (argv) => {
   if (options.permissionPrompts === 'none' && options.planFirst) {
     throw new CliUsageError('--plan-first cannot be combined with --permission-prompts none.')
   }
+  if (
+    options.interactionMode !== undefined &&
+    !['relay', 'delegate'].includes(options.interactionMode)
+  ) {
+    throw new CliUsageError('--interaction-mode must be relay or delegate.')
+  }
+  if (options.permissionPrompts === 'none' && options.interactionMode === 'delegate') {
+    throw new CliUsageError('--interaction-mode delegate requires permission prompts.')
+  }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
   }
@@ -678,6 +689,7 @@ export const parseCliArgs = (argv) => {
   const runOnlyOptions = [
     ['--plan-first', options.planFirst],
     ['--permission-prompts', options.permissionPrompts !== undefined],
+    ['--interaction-mode', options.interactionMode !== undefined],
     ['--skill', options.skills !== undefined]
   ]
   for (const [label, present] of runOnlyOptions) {
@@ -2282,6 +2294,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
                 ? { permissionPrompts: options.permissionPrompts }
                 : {}),
               ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
+              ...(options.interactionMode ? { interactionMode: options.interactionMode } : {}),
               ...(options.autoReviewEnabled !== undefined
                 ? { autoReviewEnabled: options.autoReviewEnabled }
                 : {}),

@@ -5,6 +5,7 @@ import type { CliLauncherStatus } from '../../shared/cli'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type {
@@ -27,8 +28,12 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type {
   TaskInteractionScope,
   TaskInteraction,
+  TaskInteractionPolicy,
   TaskInteractionReference,
-  TaskPlanInteraction
+  TaskPermissionInteraction,
+  TaskPermissionResponse,
+  TaskPlanInteraction,
+  SetTaskInteractionModeRequest
 } from '../../shared/task-interaction'
 import type {
   AddCustomServerRequest,
@@ -65,6 +70,8 @@ import type {
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
+import { taskPermissionOptions } from '../acp/permission-broker'
+import { restorableTaskPermission } from '../acp/permission-wait-owner'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
 import {
@@ -77,6 +84,7 @@ import {
   type ManagedNotebookSetup
 } from '../notebook/environment-lifecycle-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import { containsSecretBearingMaterial } from '../permission-grants/capability'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { TaskSubmissions } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
@@ -92,6 +100,28 @@ import { readTaskNotebookReadiness } from './task-notebook-readiness'
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
 const log = createLogger('web-service:task-api')
+
+function permissionPreview(
+  request: AcpPermissionRequest
+): NonNullable<TaskPermissionInteraction['request']> {
+  const text = (value: string): string =>
+    containsSecretBearingMaterial(value) ? '[Redacted]' : value.slice(0, 512)
+  const preview = JSON.stringify(request.rawInput)
+  return {
+    title: text(request.title),
+    toolCallId: request.toolCallId,
+    ...((request.mcpIdentity ?? request.providerToolName)
+      ? { tool: text((request.mcpIdentity ?? request.providerToolName)!) }
+      : {}),
+    ...(preview && preview.length <= 8192 && !containsSecretBearingMaterial(preview)
+      ? { input: request.rawInput }
+      : {}),
+    options: taskPermissionOptions(request).map((option) => ({
+      ...option,
+      name: text(option.name)
+    }))
+  }
+}
 
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
@@ -181,6 +211,8 @@ class HeadlessTaskApi {
           ),
         listAttachedSessionIds: () =>
           this.withCurrentCaller(() => this.ports.agent.listAttachedSessionIds()),
+        getTaskPermissions: (sessionId, promptMessageId) =>
+          this.ports.agent.getTaskPermissions?.(sessionId, promptMessageId) ?? [],
         createSession: (request) =>
           this.withCurrentCaller(() => this.ports.agent.createSession(request)),
         resumeSession: (request) =>
@@ -637,6 +669,122 @@ class HeadlessTaskApi {
     }
   }
 
+  async setRunInteractionMode(
+    runId: string,
+    request: SetTaskInteractionModeRequest
+  ): Promise<TaskInteractionPolicy> {
+    this.requireTaskRelay()
+    return this.runner.setRunInteractionMode(
+      runId,
+      request.expectedRevision,
+      request.interactionMode
+    )
+  }
+
+  private async permissionInteractions(
+    session: PersistedChatSession,
+    run?: TaskRun,
+    interactionId?: string
+  ): Promise<TaskPermissionInteraction[]> {
+    const graph = session.conversationGraph
+    const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+    const durable = session.runtimeContext?.permission
+    const taskId =
+      run?.id ??
+      (interactionId ? this.runner.findRunIdForPermission(session.id, interactionId) : undefined) ??
+      (durable
+        ? this.runner.findRunIdForPrompt(session.id, durable.originatingPromptMessageId)
+        : undefined) ??
+      this.runner.findLatestRunIdForSession(session.id)
+    if (!taskId || session.packageOrigin) return []
+    const task = run ?? this.runner.getRun(taskId)
+    const promptMessageId = this.runner.getRunPromptMessageId(taskId)
+    if (!promptMessageId) return []
+    const branchId = frame?.activeBranchId
+    const prompt = graph?.messages.find(({ id }) => id === promptMessageId)
+    const onOriginalBranch = Boolean(
+      frame && prompt?.agentFrameId === frame.id && prompt.introducedOnBranchId === branchId
+    )
+    const pending = new Map<
+      string,
+      {
+        request: AcpPermissionRequest
+        recovery: NonNullable<TaskPermissionInteraction['recovery']>
+      }
+    >()
+    if (onOriginalBranch && task.status === 'running' && !task.cancelRequestedAt) {
+      for (const request of this.ports.agent.getTaskPermissions?.(session.id, promptMessageId) ??
+        []) {
+        pending.set(`permission:${request.requestId}`, { request, recovery: 'original_run' })
+      }
+    } else if (
+      task.status === 'failed' &&
+      this.ports.agent.restoreTaskPermission &&
+      this.runner.findRunIdForPrompt(session.id, promptMessageId) === taskId
+    ) {
+      const parked = restorableTaskPermission(session, promptMessageId)
+      if (parked) {
+        const { request } = parked.permission
+        pending.set(`permission:${request.requestId}`, { request, recovery: 'new_continuation' })
+      }
+    }
+    const witnessed = this.runner.getPermissionInteractions(taskId)
+    const ids = interactionId ? [interactionId] : [...pending.keys()]
+    const interactions: TaskPermissionInteraction[] = []
+    for (const id of ids) {
+      const record = witnessed.find((item) => item.id === id)
+      const current = pending.get(id)
+      if ((!record && !current) || (!interactionId && record?.response)) continue
+      const preview = current && permissionPreview(current.request)
+      const state = record?.response
+        ? record.response.status === 'released' || record.response.continuation
+          ? 'responded'
+          : 'unconfirmed'
+        : preview?.options.length && (!record || record.branchId === branchId)
+          ? 'pending'
+          : 'expired'
+      if (state === 'pending' && !record) {
+        // Keep addressable witnesses for process-only requests observed through Task. A later
+        // process can distinguish a known expired request from an ID outside this scope.
+        await this.runner.recordPermissionInteraction(taskId, { id, branchId, revision: 0 })
+      }
+      interactions.push({
+        id,
+        kind: 'permission',
+        state,
+        promptMessageId,
+        runId: taskId,
+        projectId: task.projectId,
+        sessionId: task.sessionId,
+        branchId: record?.branchId ?? branchId,
+        revision: record?.revision ?? 0,
+        interactionPolicy: task.interactionPolicy,
+        owner:
+          state === 'pending'
+            ? task.interactionPolicy?.mode === 'delegate'
+              ? 'agent'
+              : 'user'
+            : 'service',
+        actions:
+          state === 'pending' && preview ? preview.options.map(({ optionId }) => optionId) : [],
+        ...(preview && state === 'pending'
+          ? {
+              request: preview,
+              recovery: current!.recovery,
+              responseCapability: 'respond_permission'
+            }
+          : {}),
+        ...(record?.response ? { response: record.response } : {}),
+        ...(state === 'expired' || state === 'unconfirmed'
+          ? {
+              next: 'Inspect the original Run and Session before starting new work. Do not repeat the decision.'
+            }
+          : {})
+      })
+    }
+    return interactions
+  }
+
   private async interactionSession(scope: TaskInteractionScope): Promise<{
     session: PersistedChatSession
     run?: TaskRun
@@ -672,6 +820,7 @@ class HeadlessTaskApi {
       return undefined
     if (run && this.runner.getRunPromptMessageId(run.id) !== promptMessageId) return undefined
     const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
+    const interactionPolicy = runId ? this.runner.getRun(runId).interactionPolicy : undefined
     const branchId = graph?.frames.find(({ id }) => id === graph.activeFrameId)?.activeBranchId
     const plan =
       historical ??
@@ -701,7 +850,13 @@ class HeadlessTaskApi {
       promptMessageId,
       ...(branchId ? { branchId } : {}),
       revision: plan.revision,
-      owner: state === 'pending' ? 'user' : 'service',
+      owner:
+        state === 'pending'
+          ? interactionPolicy?.mode === 'delegate'
+            ? 'agent'
+            : 'user'
+          : 'service',
+      ...(interactionPolicy ? { interactionPolicy } : {}),
       actions: state === 'pending' ? ['approved', 'rejected', 'revise'] : [],
       ...(state === 'pending' ? { responseCapability: 'respond_plan' } : {}),
       ...(state === 'expired' ? { next: 'Read the current Session Plan before responding.' } : {}),
@@ -731,20 +886,154 @@ class HeadlessTaskApi {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
     const interaction = await this.planInteraction(session, run)
-    if (interaction?.state !== 'pending') return []
+    const permissions = (await this.permissionInteractions(session, run))
+      .filter(({ state }) => state === 'pending')
+      .map(({ request, response, recovery, ...reference }) => {
+        void request
+        void response
+        void recovery
+        return reference
+      })
+    if (interaction?.state !== 'pending') return permissions
     const { plan, ...reference } = interaction
     void plan
-    return [reference]
+    return [reference, ...permissions]
   }
 
   async getInteraction(id: string, scope: TaskInteractionScope): Promise<TaskInteraction> {
     this.requireTaskRelay()
     const { session, run } = await this.interactionSession(scope)
-    const interaction = await this.planInteraction(session, run, id)
+    const interaction = id.startsWith('permission:')
+      ? (await this.permissionInteractions(session, run, id))[0]
+      : await this.planInteraction(session, run, id)
     if (!interaction) {
       throw new TaskRunnerError('interaction_not_found', 'No matching interaction in this scope.')
     }
     return interaction
+  }
+
+  async respondPermission(
+    id: string,
+    scope: TaskInteractionScope,
+    response: TaskPermissionResponse
+  ): Promise<{ changed: boolean; interaction: TaskPermissionInteraction }> {
+    this.requireTaskRelay()
+    const current = await this.getInteraction(id, scope)
+    if (current.kind !== 'permission' || !current.runId || !current.promptMessageId) {
+      throw new TaskRunnerError(
+        'interaction_not_found',
+        'No matching Task permission in this scope.'
+      )
+    }
+    const { runId, promptMessageId, sessionId, projectId } = current
+    if (
+      current.revision !== response.expectedRevision ||
+      current.branchId !== response.expectedBranchId
+    ) {
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Read the current permission and its branch before responding.'
+      )
+    }
+    if (current.response) {
+      if (
+        current.response.source === response.source &&
+        current.response.optionId === response.optionId
+      )
+        return { changed: false, interaction: current }
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'This permission already has a different response.'
+      )
+    }
+    if (current.state !== 'pending' || !current.actions.includes(response.optionId))
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'Choose an option from the current permission request.'
+      )
+    const assertCurrent = (): void => {
+      this.requireTaskRelay()
+      this.runner.assertTaskInteractionDecision(
+        runId,
+        response.source,
+        response.expectedModeRevision
+      )
+    }
+    assertCurrent()
+    const restored = current.recovery === 'new_continuation'
+    const requestId = id.slice('permission:'.length)
+    if (restored) await this.runner.ensureSessionAttached(sessionId)
+    const changed = await this.ports.agent.withSessionAvailable(projectId, sessionId, async () => {
+      const assertScope = async (): Promise<void> => {
+        const latest = await this.runner.findSession(sessionId, projectId)
+        const graph = latest.conversationGraph
+        const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+        if (!frame || frame.activeBranchId !== current.branchId || latest.packageOrigin)
+          throw new TaskRunnerError(
+            'interaction_revision_conflict',
+            'This permission is no longer on the active Message Branch.'
+          )
+      }
+      const decision: import('../acp/permission-broker').TaskPermissionDecision = {
+        source: response.source,
+        assertCurrent,
+        assertScope,
+        commit: async (operation) => {
+          // Revalidate after archive and owner preflight waits, before locking the policy revision.
+          await assertScope()
+          return this.runner.withPermissionDecision(runId, () => {
+            assertCurrent()
+            if (
+              this.runner
+                .getPermissionInteractions(runId)
+                .some((item) => item.id === id && item.response)
+            )
+              return Promise.resolve(false)
+            return operation()
+          })
+        },
+        record: (status) =>
+          this.runner.recordPermissionInteraction(runId, {
+            id,
+            branchId: current.branchId,
+            revision: current.revision,
+            response: {
+              source: response.source,
+              optionId: response.optionId,
+              status,
+              ...(restored ? { continuation: { taskRunStatus: 'unconfirmed' } } : {})
+            }
+          })
+      }
+      return restored
+        ? ((await this.ports.agent.restoreTaskPermission?.(
+            { projectId, sessionId, requestId, optionId: response.optionId },
+            {
+              ...decision,
+              branchId: response.expectedBranchId,
+              promptMessageId
+            }
+          )) ?? false)
+        : ((await this.ports.agent.respondTaskPermission?.(
+            sessionId,
+            promptMessageId,
+            requestId,
+            response.optionId,
+            decision
+          )) ?? false)
+    })
+    const interaction = (await this.getInteraction(id, { runId })) as TaskPermissionInteraction
+    if (
+      !changed &&
+      (interaction.response?.source !== response.source ||
+        interaction.response.optionId !== response.optionId)
+    ) {
+      throw new TaskRunnerError(
+        'interaction_revision_conflict',
+        'The permission is no longer awaiting this response. Query the original request.'
+      )
+    }
+    return { changed, interaction }
   }
 
   async respondSessionPlan(
@@ -809,15 +1098,49 @@ class HeadlessTaskApi {
     const command: PlanResponseCommand = request.decision
       ? { ...identity, decision: request.decision }
       : { ...identity, feedback: request.feedback }
+    const assertCurrent = (): void => {
+      this.requireTaskRelay()
+      this.runner.assertTaskInteractionDecision(
+        interaction.runId,
+        request.source,
+        request.expectedModeRevision
+      )
+    }
+    assertCurrent()
     await this.runner.ensureSessionAttached(sessionId)
-    const result = (await this.invoke('acp:respond-plan', command)) as { changed?: boolean }
+    const result =
+      request.source === 'delegated_agent'
+        ? await this.respondDelegatedPlan(command, assertCurrent)
+        : ((await this.invoke('acp:respond-plan', command)) as { changed?: boolean })
     return {
-      changed: result.changed !== false,
+      changed: !('changed' in result) || result.changed !== false,
       interaction: (await this.getInteraction(interactionId, {
         projectId,
         sessionId
       })) as TaskPlanInteraction
     }
+  }
+
+  private respondDelegatedPlan(
+    command: PlanResponseCommand,
+    assertCurrent: () => void
+  ): Promise<import('../session-plan/plan-service').PlanResponseResult> {
+    const respond = this.ports.agent.respondDelegatedPlan
+    if (!respond)
+      throw new TaskRunnerError(
+        'task_delegation_required',
+        'The service cannot verify a delegated Plan response.'
+      )
+    return this.ports.agent.withSessionAvailable(command.projectId, command.sessionId, () =>
+      respond(command, () => {
+        try {
+          assertCurrent()
+          return true
+        } catch {
+          return false
+        }
+      })
+    )
   }
 
   supportsSubmissions(): boolean {
@@ -828,6 +1151,7 @@ class HeadlessTaskApi {
     requestId: string,
     request: StartTaskRunRequest
   ): Promise<import('../../shared/task-api').TaskSubmission> {
+    if (request?.interactionMode === 'delegate') this.requireTaskRelay()
     if (!this.submissions)
       throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
     return this.submissions.submit(requestId, request)
@@ -840,14 +1164,19 @@ class HeadlessTaskApi {
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
+    if (request?.interactionMode === 'delegate') this.requireTaskRelay()
     return this.runner.startRun(request)
   }
 
   async getRun(runId: string): Promise<TaskRun> {
     const run = this.runner.getRun(runId)
+    const promptMessageId = this.runner.getRunPromptMessageId(runId)
     if (
       canRelayTaskInteraction(this.currentCallerContext()) &&
-      (run.attention?.kind === 'plan-approval' || run.failureCode === 'process_restarted')
+      (run.attention?.kind === 'plan-approval' ||
+        run.failureCode === 'process_restarted' ||
+        (promptMessageId &&
+          this.ports.agent.getTaskPermissions?.(run.sessionId, promptMessageId).length))
     ) {
       try {
         const interactions = await this.listInteractions({ runId })

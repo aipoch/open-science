@@ -14,7 +14,12 @@ import type {
 } from './session-configuration'
 import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
 import type { ActivePlanProjection } from './session-plan/contract'
-import type { TaskInteractionReference } from './task-interaction'
+import type {
+  TaskInteractionDecisionSource,
+  TaskInteractionMode,
+  TaskInteractionPolicy,
+  TaskInteractionReference
+} from './task-interaction'
 import type {
   AgentFrameworkId,
   ProviderReadinessReason,
@@ -157,6 +162,7 @@ export type StartTaskRunRequest = {
   permissionProfile?: PermissionProfileId
   /** Per-execution: deny unresolved human interactions instead of waiting. */
   permissionPrompts?: 'none'
+  interactionMode?: TaskInteractionMode
   skillIds?: string[]
   turnIntent?: 'plan-first'
   autoReviewEnabled?: boolean
@@ -189,7 +195,8 @@ export type TaskPlanResponseRequest = {
   artifactVersionId: string
   expectedRevision: number
   expectedBranchId: string
-  source: 'user_relay'
+  source: TaskInteractionDecisionSource
+  expectedModeRevision?: number
 } & (
   | {
       decision: 'approved' | 'rejected'
@@ -216,6 +223,7 @@ export type TaskRun = {
   execution?: TaskNotebookExecution
   artifacts: ArtifactFile[]
   attention?: TaskRunAttention
+  interactionPolicy?: TaskInteractionPolicy
   review?: TaskRunReview
   /** Final selected execution-target provider IDs committed by the Session authority. */
   preferredComputeHostIds: string[]
@@ -355,6 +363,8 @@ export type TaskApiErrorCode =
   | 'notebook_setup_failed'
   | 'task_relay_required'
   | 'interaction_not_found'
+  | 'interaction_revision_conflict'
+  | 'task_delegation_required'
   | 'notebook_environment_operation_conflict'
   | 'submission_conflict'
   | 'submission_unavailable'

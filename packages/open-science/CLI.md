@@ -654,9 +654,9 @@ inspect those and the final output when deciding whether the task achieved its g
 
 The CLI checks host support before starting an unattended Run. An older daemon without the
 `permission-prompts-none` capability returns `unsupported_capability`; update the host rather than
-silently running a task that might wait for a person. Omitting the option retains existing behavior,
-including Desktop/Web approval for unresolved ordinary permissions. There are no ordinary
-`permission list/show/approve` CLI commands. `--return-on-attention` only covers Plan approval.
+silently running a task that might wait for a person. With prompts enabled, `wait_run` and
+`--return-on-attention` return supported pending interactions. Use `list_interactions`,
+`get_interaction` and `respond_permission` for ordinary Task permissions.
 
 ### Execution controls
 
@@ -730,14 +730,24 @@ open-science plan reject <session-id> --artifact-version <id> --revision <number
 open-science plan revise <session-id> --artifact-version <id> --revision <number> --branch <id> --feedback "Split the validation step" --json
 ```
 
-Plan responses require the authenticated local Task connection. Use the version, revision and
-branch the user reviewed. `list_interactions` accepts a Run ID or an explicit Project and Session.
-`get_interaction` accepts the same scope plus the returned interaction ID. `respond_plan` accepts
-flat `sessionId`, `artifactVersionId`, `expectedRevision`, `expectedBranchId`, `source: "user_relay"`
-and either `decision` or `feedback`. Ask the user in the current conversation before calling it.
-If the response is lost, query the same interaction. A continuation ID identifies the Plan Owner's
-durable handoff; the original Run keeps its outcome, including any restart interruption. The
-handoff status does not establish Notebook execution or file delivery.
+Permission and Plan responses require the authenticated local Task connection. `list_interactions`
+accepts `runId` or both `projectId` and `sessionId`. Use the same scope and `interactionId` with
+`get_interaction` to read the review details. `respond_permission` takes those fields plus
+`expectedRevision`, `expectedBranchId`, `source` and an offered one-time `optionId`. It cannot
+remember a grant. `respond_plan` takes `sessionId`, `artifactVersionId`, `expectedRevision`,
+`expectedBranchId`, `source` and either `decision` or `feedback`.
+
+The default `interactionMode` is `relay`: ask the user and send the decision as `user_relay`. If
+the user delegates routine decisions for this task, pass `interactionMode: "delegate"` to
+`start_run`, or call `set_run_interaction_mode` with `runId`, `interactionMode` and
+`expectedRevision` from the Run's `interactionPolicy`. A delegated response uses
+`source: "delegated_agent"` with `expectedModeRevision`. Switch the mode to `relay` to withdraw
+delegation. New research requests in the same Session default to `relay`.
+
+After losing a response, query the same interaction. A live permission releases the original
+wait. After a restart, a still-valid parked permission can start a continuation while the
+original Run remains interrupted. An `expired` or `unconfirmed` response is not evidence of
+execution: inspect the Run and Session before starting more work.
 
 ## Session configuration
 

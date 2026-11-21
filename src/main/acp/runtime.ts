@@ -1968,6 +1968,74 @@ class AcpRuntime {
     }
   }
 
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string
+  ): ReturnType<AcpPermissionContext['getTaskPermissions']> {
+    const scope = this.sessionInteractions.current(sessionId)
+    if (
+      scope?.kind !== 'prompt' ||
+      scope.promptMessageId !== promptMessageId ||
+      this.sessionInteractions.isCancellationAccepted(scope)
+    )
+      return []
+    return this.permissionContext.getTaskPermissions(sessionId, promptMessageId)
+  }
+
+  respondTaskPermission(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: import('./permission-broker').TaskPermissionDecision
+  ): Promise<boolean> {
+    const scope = this.sessionInteractions.current(sessionId)
+    if (
+      scope?.kind !== 'prompt' ||
+      scope.promptMessageId !== promptMessageId ||
+      this.sessionInteractions.isCancellationAccepted(scope)
+    )
+      return Promise.resolve(false)
+    return this.permissionContext.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      requestId,
+      optionId,
+      {
+        ...decision,
+        assertCurrent: () => {
+          if (
+            this.sessionInteractions.current(sessionId) !== scope ||
+            this.sessionInteractions.isCancellationAccepted(scope)
+          )
+            throw new Error('The original prompt is no longer awaiting a decision.')
+          decision.assertCurrent()
+        }
+      }
+    )
+  }
+
+  async restoreTaskPermission(
+    {
+      projectId,
+      sessionId,
+      requestId,
+      optionId
+    }: { projectId: string; sessionId: string; requestId: string; optionId: string },
+    decision: import('./permission-continuation-workflow').TaskRestoredPermissionDecision
+  ): Promise<boolean> {
+    if (
+      this.sessionInteractions.current(sessionId) ||
+      this.permissionContext.getPendingRequests().some((request) => request.sessionId === sessionId)
+    )
+      return false
+    await this.permissionContinuations.respond(
+      { requestId, optionId, restored: { projectId, sessionId } },
+      decision
+    )
+    return true
+  }
+
   // Resolves or cancels one pending permission request from the renderer.
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
     const permissionRequest = this.permissionContext

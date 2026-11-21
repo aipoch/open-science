@@ -43,7 +43,7 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { TaskInteractionScope } from '../../shared/task-interaction'
+import type { TaskInteractionScope, TaskPermissionResponse } from '../../shared/task-interaction'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
@@ -182,6 +182,8 @@ type WebServerOptions = {
         | 'respondSessionPlan'
         | 'listInteractions'
         | 'getInteraction'
+        | 'respondPermission'
+        | 'setRunInteractionMode'
         | 'resolveActiveRun'
         | 'getProjectSessionDefaults'
         | 'updateProjectSessionDefaults'
@@ -624,7 +626,7 @@ const readJsonBody = async (
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
-  if (error.code === 'task_relay_required') return 403
+  if (error.code === 'task_relay_required' || error.code === 'task_delegation_required') return 403
   if (error.code === 'notebook_setup_failed') return 503
   if (error.code === 'submission_unavailable') return 503
   if (
@@ -638,6 +640,7 @@ const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_configuration') return 400
   if (
     error.code === 'session_busy' ||
+    error.code === 'interaction_revision_conflict' ||
     error.code === 'session_revision_conflict' ||
     error.code === 'project_conflict' ||
     error.code === 'session_archived' ||
@@ -661,6 +664,7 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
           'artifactVersionId',
           'expectedRevision',
           'expectedBranchId',
+          'expectedModeRevision',
           'source',
           'feedback',
           'decision'
@@ -668,7 +672,11 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
     ) ||
     (candidate.projectId !== undefined &&
       (typeof candidate.projectId !== 'string' || !candidate.projectId.trim())) ||
-    candidate.source !== 'user_relay' ||
+    (candidate.source !== 'user_relay' && candidate.source !== 'delegated_agent') ||
+    (candidate.source === 'delegated_agent' &&
+      (!Number.isSafeInteger(candidate.expectedModeRevision) ||
+        (candidate.expectedModeRevision as number) < 0)) ||
+    (candidate.source === 'user_relay' && candidate.expectedModeRevision !== undefined) ||
     typeof candidate.artifactVersionId !== 'string' ||
     candidate.artifactVersionId.trim().length === 0 ||
     typeof candidate.expectedBranchId !== 'string' ||
@@ -682,7 +690,10 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
     )
   }
   const reviewedPlan = {
-    source: candidate.source as 'user_relay',
+    source: candidate.source as TaskPlanResponseRequest['source'],
+    ...(candidate.source === 'delegated_agent'
+      ? { expectedModeRevision: candidate.expectedModeRevision as number }
+      : {}),
     ...(typeof candidate.projectId === 'string' ? { projectId: candidate.projectId.trim() } : {}),
     artifactVersionId: candidate.artifactVersionId.trim(),
     expectedBranchId: candidate.expectedBranchId.trim(),
@@ -1420,7 +1431,108 @@ const handleTaskApiRequest = async (
         reply(200, { data: await tasks.getRun(decodeURIComponent(runMatch[1])) })
         return true
       }
+      const modeMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/interaction-mode$/)
+      if (modeMatch && request.method === 'PUT' && tasks.setRunInteractionMode) {
+        if (!canRelayTaskInteraction(callerContext))
+          throw new TaskApiError(
+            'task_relay_required',
+            'Task delegation requires a local authenticated Task connection.'
+          )
+        const input: unknown = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).length !== 2 ||
+          !('interactionMode' in input) ||
+          (input.interactionMode !== 'relay' && input.interactionMode !== 'delegate') ||
+          !('expectedRevision' in input) ||
+          typeof input.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(input.expectedRevision) ||
+          input.expectedRevision < 0
+        )
+          throw new TaskApiError(
+            'invalid_request',
+            'Supply the current revision and relay or delegate.'
+          )
+        reply(200, {
+          data: await tasks.setRunInteractionMode(decodeURIComponent(modeMatch[1]), {
+            interactionMode: input.interactionMode,
+            expectedRevision: input.expectedRevision
+          })
+        })
+        return true
+      }
       const interactionMatch = url.pathname.match(/^\/api\/v1\/interactions(?:\/([^/]+))?$/)
+      const permissionResponseMatch = url.pathname.match(
+        /^\/api\/v1\/interactions\/([^/]+)\/permission$/
+      )
+      if (permissionResponseMatch && request.method === 'POST' && tasks.respondPermission) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Permission responses require a local authenticated Task connection.'
+          )
+        }
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const input: unknown = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).some(
+            (key) =>
+              ![
+                'optionId',
+                'source',
+                'expectedRevision',
+                'expectedModeRevision',
+                'expectedBranchId'
+              ].includes(key)
+          ) ||
+          !('optionId' in input) ||
+          typeof input.optionId !== 'string' ||
+          !input.optionId.trim() ||
+          !('expectedBranchId' in input) ||
+          typeof input.expectedBranchId !== 'string' ||
+          !input.expectedBranchId.trim() ||
+          !('expectedRevision' in input) ||
+          typeof input.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(input.expectedRevision) ||
+          input.expectedRevision < 0 ||
+          !('source' in input) ||
+          (input.source !== 'user_relay' && input.source !== 'delegated_agent') ||
+          (input.source === 'delegated_agent' &&
+            (!('expectedModeRevision' in input) ||
+              typeof input.expectedModeRevision !== 'number' ||
+              !Number.isSafeInteger(input.expectedModeRevision) ||
+              input.expectedModeRevision < 0)) ||
+          (input.source === 'user_relay' && 'expectedModeRevision' in input)
+        ) {
+          throw new TaskApiError(
+            'invalid_request',
+            'Supply the current permission option, branch, revision and decision source.'
+          )
+        }
+        reply(200, {
+          data: await tasks.respondPermission(
+            decodeURIComponent(permissionResponseMatch[1]),
+            scope,
+            input as TaskPermissionResponse
+          )
+        })
+        return true
+      }
       if (
         interactionMatch &&
         request.method === 'GET' &&
@@ -1783,6 +1895,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   options.tasks.getInteraction &&
                   options.tasks.respondSessionPlan
                     ? ['task-interactions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.setRunInteractionMode
+                    ? ['task-delegation']
+                    : []),
+                  ...(auth.localBearer && options.tasks.respondPermission
+                    ? ['task-permissions']
                     : []),
                   ...(options.tasks.doctor ? ['doctor'] : []),
                   ...(!externalAuthorization && options.tasks.bootstrap

@@ -31,7 +31,8 @@ import {
   resolveNotebookPermissionContext,
   type AppPermissionRequest,
   type PermissionWaitHooks,
-  type RestoredPermissionContinuation
+  type RestoredPermissionContinuation,
+  type TaskPermissionDecision
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
@@ -764,6 +765,26 @@ class AcpPermissionContext {
 
   getPendingRequests(): AcpPermissionRequest[] {
     return this.broker.getPendingRequests()
+  }
+
+  getTaskPermissions(sessionId: string, promptMessageId: string): AcpPermissionRequest[] {
+    return this.broker.getTaskPermissions(sessionId, promptMessageId)
+  }
+
+  respondTaskPermission(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: TaskPermissionDecision
+  ): Promise<boolean> {
+    return this.broker.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      requestId,
+      optionId,
+      decision
+    )
   }
 
   pendingNotebookReviews(

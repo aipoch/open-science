@@ -28,6 +28,10 @@ type AcpTaskAgentRuntime = {
     runtimeReviewOwner?: 'task' | 'renderer'
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
+  respondSessionPlan?: NonNullable<TaskAgentPort['respondDelegatedPlan']>
+  getTaskPermissions?: TaskAgentPort['getTaskPermissions']
+  respondTaskPermission?: TaskAgentPort['respondTaskPermission']
+  restoreTaskPermission?: TaskAgentPort['restoreTaskPermission']
 }
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -136,7 +140,19 @@ const createAcpTaskAgentPort = (
       throw error
     }
   },
-  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined)
+  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined),
+  ...(runtime.respondSessionPlan
+    ? { respondDelegatedPlan: runtime.respondSessionPlan.bind(runtime) }
+    : {}),
+  ...(runtime.getTaskPermissions
+    ? { getTaskPermissions: runtime.getTaskPermissions.bind(runtime) }
+    : {}),
+  ...(runtime.respondTaskPermission
+    ? { respondTaskPermission: runtime.respondTaskPermission.bind(runtime) }
+    : {}),
+  ...(runtime.restoreTaskPermission
+    ? { restoreTaskPermission: runtime.restoreTaskPermission.bind(runtime) }
+    : {})
 })
 
 export { createAcpTaskAgentPort }

@@ -2086,6 +2086,27 @@ class AcpRuntimeCoordinator {
     return this.getState()
   }
 
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string
+  ): ReturnType<AcpRuntime['getTaskPermissions']> {
+    return this.sessionRuntimes.get(sessionId)?.getTaskPermissions(sessionId, promptMessageId) ?? []
+  }
+
+  respondTaskPermission(
+    ...args: Parameters<AcpRuntime['respondTaskPermission']>
+  ): Promise<boolean> {
+    return (
+      this.sessionRuntimes.get(args[0])?.respondTaskPermission(...args) ?? Promise.resolve(false)
+    )
+  }
+
+  restoreTaskPermission(
+    ...args: Parameters<AcpRuntime['restoreTaskPermission']>
+  ): Promise<boolean> {
+    return this.runtimeForSession(args[0].sessionId).restoreTaskPermission(...args)
+  }
+
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpRuntimeState> {
     if (this.delegatedWork && (await this.delegatedWork.respondToPermission(response))) {
       return this.getState()

@@ -31,6 +31,10 @@ describe('ACP Task Agent port', () => {
       | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
+      | 'getTaskPermissions'
+      | 'respondTaskPermission'
+      | 'restoreTaskPermission'
+      | 'respondDelegatedPlan'
     >()
   })
 
