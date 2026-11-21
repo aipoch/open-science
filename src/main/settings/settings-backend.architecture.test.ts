@@ -421,6 +421,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
       'beginXaiOAuthLogin',
       'bindCodexHarnessConnection',
+      'bootstrapApiProvider',
       'bootstrapOpenAi',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',

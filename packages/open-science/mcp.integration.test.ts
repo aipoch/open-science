@@ -26,17 +26,25 @@ afterEach(async () => {
 
 const cli = resolve('packages/open-science/cli.mjs')
 const exec = promisify(execFile)
-const runCli = (args: string[], input?: string): ReturnType<typeof exec> => {
-  const promise = exec(process.execPath, [cli, ...args], { timeout: 5000 })
+const runCli = (
+  args: string[],
+  input?: string,
+  env?: Record<string, string>
+): ReturnType<typeof exec> => {
+  const promise = exec(process.execPath, [cli, ...args], {
+    timeout: 5000,
+    env: { ...process.env, ...env }
+  })
   promise.child.stdin?.end(input)
   return promise
 }
 
-async function connectMcp(profile: string): Promise<Client> {
+async function connectMcp(profile: string, env?: Record<string, string>): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, 'mcp', '--profile', profile],
-    stderr: 'pipe'
+    stderr: 'pipe',
+    env
   })
   const client = new Client({ name: 'external-agent', version: '1.0.0' })
   cleanup.push(() => client.close())
@@ -46,10 +54,11 @@ async function connectMcp(profile: string): Promise<Client> {
 
 async function cliError(
   args: string[],
-  input?: string
+  input?: string,
+  env?: Record<string, string>
 ): Promise<{ error: Record<string, unknown>; exitCode: number }> {
   try {
-    await runCli(args, input)
+    await runCli(args, input, env)
   } catch (error) {
     const { stdout, stderr, code } = error as { stdout: string; stderr: string; code: number }
     expect(stdout).toBe('')
@@ -62,7 +71,8 @@ async function cliError(
 
 async function resourceAgents(
   handle: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
-  taskCapabilities: string[] = []
+  taskCapabilities: string[] = [],
+  env?: Record<string, string>
 ): Promise<{
   profile: string
   cli: (name: string, args?: Record<string, unknown>) => Promise<{ result: unknown }>
@@ -99,7 +109,7 @@ async function resourceAgents(
     })
   )
   await writeFile(join(profile, 'web-token'), token)
-  const client = await connectMcp(profile)
+  const client = await connectMcp(profile, env)
   const cliArgs = (name: string): string[] => [
     'tools',
     'call',
@@ -111,14 +121,14 @@ async function resourceAgents(
   return {
     profile,
     async cli(name: string, args: Record<string, unknown> = {}) {
-      return JSON.parse((await runCli(cliArgs(name), JSON.stringify(args))).stdout) as {
+      return JSON.parse((await runCli(cliArgs(name), JSON.stringify(args), env)).stdout) as {
         result: unknown
       }
     },
     mcp: (name: string, args: Record<string, unknown> = {}) =>
       client.callTool({ name, arguments: args }),
     cliError: (name: string, args: Record<string, unknown>) =>
-      cliError(cliArgs(name), JSON.stringify(args))
+      cliError(cliArgs(name), JSON.stringify(args), env)
   }
 }
 
@@ -185,6 +195,123 @@ it('finds a Plan that needs review from CLI JSON and MCP stdio', async () => {
     { projectId: 'p1', sessionId: 's1', interactionId: interaction.id },
     { ...interaction, plan }
   )
+})
+
+it('resumes the same managed Notebook installation through CLI and MCP after a bounded wait', async () => {
+  const target = { language: 'r', operationId: 'prepare-r' }
+  const path = `/api/v1/notebook-environment/operations/${target.operationId}`
+  let accepted = false
+  let finished = false
+  let starts = 0
+  const agent = await resourceAgents(
+    (request, response) => {
+      if (request.url === path && request.method === 'PUT') {
+        accepted = true
+        starts++
+      } else if (request.url !== `${path}?language=r` || request.method !== 'GET') {
+        response.writeHead(404).end()
+        return
+      }
+      expect(accepted).toBe(true)
+      response.end(
+        JSON.stringify({
+          data: {
+            ...target,
+            action: 'prepare',
+            status: finished ? 'completed' : 'preparing',
+            progress: { phase: finished ? 'done' : 'fetch-r', fraction: finished ? 1 : 0.25 }
+          }
+        })
+      )
+    },
+    ['notebook-setup-operations']
+  )
+
+  expect(
+    await agent.cli('prepare_notebook_environment', { ...target, timeoutMs: 1 })
+  ).toMatchObject({
+    result: {
+      operation: { ...target, status: 'preparing', progress: { phase: 'fetch-r', fraction: 0.25 } },
+      timedOut: true,
+      next: [{ action: 'get_notebook_environment_operation', arguments: target }]
+    }
+  })
+  finished = true
+  const result = await agent.mcp('get_notebook_environment_operation', target)
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    result: {
+      operation: { ...target, status: 'completed' },
+      next: [{ action: 'get_setup_status', arguments: { language: 'r' } }]
+    }
+  })
+  expect(result.structuredContent).toEqual(
+    await agent.cli('get_notebook_environment_operation', target)
+  )
+  expect(starts).toBe(1)
+})
+
+it('recovers a lost setup response and uses the same cancel and repair contract through CLI and MCP', async () => {
+  const rTarget = { language: 'r', operationId: 'r-lost-response' }
+  const pyTarget = { language: 'python', operationId: 'python-repair' }
+  let rStatus = 'unconfirmed'
+  const agent = await resourceAgents(
+    async (request, response) => {
+      const url = new URL(request.url!, 'http://localhost')
+      const operationId = url.pathname.split('/').at(-1)
+      const reply = (data: unknown): void => {
+        response.end(JSON.stringify({ data }))
+      }
+      if (operationId === rTarget.operationId) {
+        if (request.method === 'PUT') {
+          rStatus = 'preparing'
+          response.destroy()
+          return
+        }
+        if (request.method === 'DELETE') rStatus = 'cancelled'
+        return reply({ ...rTarget, status: rStatus })
+      }
+      if (operationId === pyTarget.operationId && request.method === 'PUT') {
+        let payload = ''
+        for await (const chunk of request) payload += chunk
+        if (JSON.parse(payload).action === 'repair')
+          return reply({
+            ...pyTarget,
+            action: 'repair',
+            status: 'failed',
+            reason: 'notebook_environment_recovery_required'
+          })
+      }
+      response.writeHead(404).end()
+    },
+    ['notebook-setup-operations']
+  )
+
+  const lost = await agent.mcp('prepare_notebook_environment', rTarget)
+  expect(lost.isError).toBe(true)
+  expect(lost.structuredContent).toMatchObject({
+    error: {
+      operationId: rTarget.operationId,
+      completionStatus: 'unconfirmed',
+      next: [{ action: 'get_notebook_environment_operation', arguments: rTarget }]
+    }
+  })
+  const reconnected = await connectMcp(agent.profile)
+  expect(
+    (await reconnected.callTool({ name: 'get_notebook_environment_operation', arguments: rTarget }))
+      .structuredContent
+  ).toMatchObject({
+    result: { operation: { ...rTarget, status: 'preparing' } }
+  })
+  for (const [name, target, status] of [
+    ['cancel_notebook_environment_operation', rTarget, 'cancelled'],
+    ['repair_notebook_environment', pyTarget, 'failed']
+  ] as const) {
+    const mcp = await agent.mcp(name, target)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual(await agent.cli(name, target))
+    expect(mcp.structuredContent).toMatchObject({ result: { operation: { ...target, status } } })
+  }
 })
 
 it('recovers the original study after the initial submission response is lost', async () => {
@@ -1221,14 +1348,19 @@ it('discovers setup choices and prepares only the selected runtime, provider and
         case '/api/v1/settings/agent-routing':
           selected = args.framework
           return respond({ configured: { framework: selected } })
-        case '/api/v1/notebook-environment':
+        case '/api/v1/notebook-environment/operations/prepare-r':
+        case '/api/v1/notebook-environment/operations/prepare-python':
           installed.add(args.language)
-          return respond({})
+          return respond({
+            operationId: `prepare-${args.language}`,
+            ...args,
+            status: 'completed'
+          })
         default:
           res.writeHead(404).end()
       }
     },
-    ['doctor', 'agent-setup', 'notebook-setup', 'list-runtimes']
+    ['doctor', 'agent-setup', 'notebook-setup-operations', 'list-runtimes']
   )
   const both = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const mcp = await agent.mcp(name, args)
@@ -1271,7 +1403,12 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     readiness: { agent: 'ready' },
     checks: { runtime: { framework, selectedFramework: framework } }
   })
-  expect(await both('prepare_notebook_environment', { language: 'r' })).toMatchObject({
+  expect(
+    await both('prepare_notebook_environment', { language: 'r', operationId: 'prepare-r' })
+  ).toMatchObject({
+    operation: { language: 'r', status: 'completed' }
+  })
+  expect(await both('get_setup_status', { language: 'r' })).toMatchObject({
     readiness: { notebook: 'ready' },
     checks: { notebook: { environment: { python: { status: 'blocked' }, r: { status: 'ready' } } } }
   })
@@ -1288,7 +1425,15 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     ])
   })
   installed.delete('r')
-  expect(await both('prepare_notebook_environment', { language: 'python' })).toMatchObject({
+  expect(
+    await both('prepare_notebook_environment', {
+      language: 'python',
+      operationId: 'prepare-python'
+    })
+  ).toMatchObject({
+    operation: { language: 'python', status: 'completed' }
+  })
+  expect(await both('get_setup_status', { language: 'python' })).toMatchObject({
     readiness: { notebook: 'ready' },
     checks: { notebook: { environment: { python: { status: 'ready' }, r: { status: 'blocked' } } } }
   })
@@ -1296,11 +1441,144 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     ...Array(2).fill({ framework }),
     ...Array(2).fill({ action: 'agent-runtime', framework }),
     ...Array(2).fill({ action: 'kilo-free', framework }),
-    { language: 'r' },
-    { language: 'r' },
-    { language: 'python' },
-    { language: 'python' }
+    ...Array(2).fill({ language: 'r', action: 'prepare' }),
+    ...Array(2).fill({ language: 'python', action: 'prepare' })
   ])
+})
+
+it('discovers, saves and explicitly activates an API provider through CLI and MCP', async () => {
+  const key = 'synthetic-provider-secret'
+  const framework = 'opencode'
+  const model = 'gateway-model'
+  const active = { providerId: null as string | null, model: null as string | null }
+  const saved = { providerId: 'gateway', model, framework, saved: true, active: false }
+  let savedProvider = false
+  const profile = await resourceAgents(
+    async (req, res) => {
+      if (req.url !== '/api/v1/bootstrap') return void res.writeHead(404).end()
+      let text = ''
+      for await (const chunk of req) text += chunk
+      const input = JSON.parse(text)
+      const respond = (data: unknown): void => void res.end(JSON.stringify({ data }))
+      switch (input.action) {
+        case 'provider-options':
+          return respond({
+            ok: true,
+            providerOptions: {
+              framework,
+              selectedFramework: framework,
+              active,
+              providers: savedProvider
+                ? [{ id: saved.providerId, type: 'custom', models: [model] }]
+                : [],
+              official: [{ vendorId: 'openai', models: ['gpt-5.4'] }]
+            }
+          })
+        case 'provider-save':
+          if (input.key !== key && input.credentialRef !== 'fixture-ref')
+            return respond({ ok: false, code: 'credential_invalid' })
+          if (input.model === 'rejected-model')
+            return respond({
+              ok: false,
+              code: 'provider_validation_failed',
+              category: 'model-not-found',
+              message: key
+            })
+          savedProvider = true
+          return respond({ ok: true, providerSetup: { ...saved, validation: 'passed' } })
+        case 'provider-activate':
+          if (
+            input.expectedActiveProviderId !== active.providerId ||
+            input.expectedActiveModel !== active.model
+          )
+            return respond({ ok: false, code: 'configuration_conflict' })
+          active.providerId = saved.providerId
+          active.model = model
+          return respond({
+            ok: true,
+            providerSetup: { ...saved, active: true, validation: 'passed' }
+          })
+        default:
+          res.writeHead(404).end()
+      }
+    },
+    ['provider-setup'],
+    { OSCI_TEST_PROVIDER_KEY: key }
+  )
+  const draft = {
+    providerType: 'custom',
+    framework,
+    baseUrl: 'https://gateway.example/v1',
+    protocol: 'chat-completions',
+    model,
+    apiKeyEnv: 'OSCI_TEST_PROVIDER_KEY'
+  }
+  const success = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+    const mcp = await profile.mcp(name, args)
+    expect(mcp.isError).not.toBe(true)
+    expect(mcp.structuredContent).toEqual(await profile.cli(name, args))
+    expect(JSON.stringify(mcp)).not.toContain(key)
+    return mcp.structuredContent?.result
+  }
+  const failure = async (
+    name: string,
+    args: Record<string, unknown>,
+    code: string
+  ): Promise<void> => {
+    const mcp = await profile.mcp(name, args)
+    expect(mcp.isError).toBe(true)
+    const { error } = await profile.cliError(name, args)
+    expect(error.code).toBe(code)
+    expect(mcp.structuredContent).toEqual({ error })
+    expect(JSON.stringify(mcp)).not.toContain(key)
+  }
+
+  expect(await success('list_providers')).toMatchObject({
+    framework,
+    active: { providerId: null, model: null },
+    providers: [],
+    official: [{ vendorId: 'openai', models: ['gpt-5.4'] }]
+  })
+  await failure(
+    'save_api_provider',
+    { ...draft, apiKeyEnv: 'OSCI_TEST_PROVIDER_KEY_MISSING' },
+    'provider_credential_missing'
+  )
+  await failure('save_api_provider', { ...draft, apiKey: key }, 'invalid_request')
+  await failure(
+    'save_api_provider',
+    { ...draft, model: 'rejected-model' },
+    'provider_validation_failed'
+  )
+  expect(await success('save_api_provider', draft)).toEqual({ ...saved, validation: 'passed' })
+  expect(
+    await success('save_api_provider', {
+      ...draft,
+      apiKeyEnv: undefined,
+      credentialRef: 'fixture-ref'
+    })
+  ).toEqual({ ...saved, validation: 'passed' })
+  expect(await success('list_providers')).toMatchObject({
+    active: { providerId: null, model: null },
+    providers: [{ id: saved.providerId, models: [model] }]
+  })
+  const selection = {
+    providerId: saved.providerId,
+    framework,
+    model,
+    expectedActiveProviderId: null,
+    expectedActiveModel: null
+  }
+  const mcp = await profile.mcp('activate_provider', selection)
+  expect(mcp.structuredContent?.result).toEqual({ ...saved, active: true, validation: 'passed' })
+  await failure('activate_provider', selection, 'configuration_conflict')
+  expect(
+    await success('activate_provider', {
+      ...selection,
+      expectedActiveProviderId: saved.providerId,
+      expectedActiveModel: model
+    })
+  ).toEqual({ ...saved, active: true, validation: 'passed' })
 })
 
 it('leaves the configured Codex provider login to the user in the same profile', async () => {

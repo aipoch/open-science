@@ -47,6 +47,7 @@ import {
   type RunningWebServer
 } from './http-server'
 import { HeadlessTaskApi, TaskApiError } from './task-api'
+import { createNotebookEnvironmentLifecycle } from '../notebook/environment-lifecycle-workflows'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -4451,6 +4452,20 @@ describe('startWebHttpServer', () => {
     expect(unauthorizedBootstrap.status).toBe(401)
     expect(tasks.bootstrap).toHaveBeenCalledOnce()
 
+    const cookie = { cookie: 'open_science_web_token=test-token' }
+    const browserProviderSetup = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      headers: cookie,
+      body: JSON.stringify({ action: 'provider-options' })
+    })
+    expect(browserProviderSetup.status).toBe(403)
+    expect(tasks.bootstrap).toHaveBeenCalledOnce()
+    const browserDiscovery = await fetch(`${base}/api/bootstrap`, { headers: cookie })
+    expect((await browserDiscovery.json()).taskCapabilities).not.toContain('provider-setup')
+    expect((await sdk.health()).taskCapabilities).toContain('provider-setup')
+    expect(await sdk.bootstrap({ action: 'provider-options' })).toEqual({ ok: true })
+    expect(tasks.bootstrap).toHaveBeenLastCalledWith({ action: 'provider-options' })
+
     const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
     expect(doctor.status).toBe(200)
     expect(await doctor.json()).toEqual({
@@ -5269,6 +5284,77 @@ describe('Web preview reconnect owner contract', () => {
       for (const socket of sockets) socket.close()
     }
   })
+})
+
+it('advertises managed Notebook setup locally and returns the outcome for the original operation', async () => {
+  const lifecycle = createNotebookEnvironmentLifecycle({
+    root: '/unused',
+    provisioner: undefined,
+    projectProgress: () => undefined
+  })
+  const tasks = new HeadlessTaskApi({
+    commands: { commandNames: () => [], invoke: async () => undefined },
+    agent: {} as never,
+    notebookEnvironment: lifecycle.managedSetup
+  })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    tasks,
+    externalAccess: {
+      authorizeHttp: async () => accessOnlyExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    rpc: { channels: () => [], invoke: async () => undefined },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const target = { language: 'r', operationId: 'r-setup' } as const
+  try {
+    expect((await client.health()).taskCapabilities).toContain('notebook-setup-operations')
+    const remote = new OpenScienceClient({ baseUrl, token: 'remote-token' })
+    expect((await remote.health()).taskCapabilities).not.toContain('notebook-setup-operations')
+    await expect(
+      remote.startNotebookEnvironmentOperation({ ...target, action: 'prepare' })
+    ).rejects.toMatchObject({ status: 403 })
+    await expect(client.getNotebookEnvironmentOperation(target)).resolves.toMatchObject({
+      status: 'unconfirmed'
+    })
+
+    await expect(
+      client.startNotebookEnvironmentOperation({ ...target, action: 'prepare' })
+    ).resolves.toMatchObject({
+      ...target,
+      status: 'preparing'
+    })
+    await expect(client.getNotebookEnvironmentOperation(target)).resolves.toEqual({
+      ...target,
+      action: 'prepare',
+      status: 'failed',
+      reason: 'notebook_setup_failed'
+    })
+    await expect(
+      client.startNotebookEnvironmentOperation({ ...target, action: 'repair' })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'notebook_environment_operation_conflict'
+    })
+    await expect(
+      client.cancelNotebookEnvironmentOperation({ ...target, language: 'python' })
+    ).resolves.toMatchObject({ status: 'unconfirmed' })
+  } finally {
+    await tasks.dispose()
+  }
 })
 
 describe('Connector Task HTTP routes', () => {

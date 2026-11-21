@@ -501,6 +501,7 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly lab: LabAccountOwner
   private readonly providers: ProviderAccountsModule
+  private readonly deviceCredentials: DeviceCredentialStore
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
   private readonly providerAcpValidator: ProviderAcpValidator
@@ -622,10 +623,11 @@ class SettingsService {
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
+    this.deviceCredentials = new DeviceCredentialStore(this.configRoot)
     this.connectors = new ConnectorSettingsModule(
       this.repository,
       options.openAlexFetch,
-      new DeviceCredentialStore(this.configRoot)
+      this.deviceCredentials
     )
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
@@ -1672,6 +1674,13 @@ class SettingsService {
           }
         }
       }
+      if (
+        request.action === 'provider-options' ||
+        request.action === 'provider-save' ||
+        request.action === 'provider-activate'
+      ) {
+        return await this.providers.bootstrapApiProvider(request, this.deviceCredentials)
+      }
       if (request.action === 'agent-runtime') {
         if (!(await this.prepareAgentRuntime(request.framework, onEvent)))
           throw new BootstrapError('runtime_unavailable')
@@ -1696,7 +1705,9 @@ class SettingsService {
       return { ok: true }
     } catch (error) {
       // Installer/provider exceptions can contain secret inputs. Only return our closed codes.
-      return { ok: false, code: error instanceof BootstrapError ? error.code : 'bootstrap_failed' }
+      return error instanceof BootstrapError
+        ? { ok: false, code: error.code, ...(error.category ? { category: error.category } : {}) }
+        : { ok: false, code: 'bootstrap_failed' }
     }
   }
 

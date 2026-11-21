@@ -15,9 +15,19 @@ import {
 import { hasWorkBuddyProfile } from './codebuddy-profile'
 import { runCodeBuddyAuth } from './codebuddy-auth'
 import { isDeepStrictEqual } from 'node:util'
-import { BootstrapError } from '../../shared/bootstrap'
-import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
-import { defaultVendorModel } from '../../shared/provider-model-policy'
+import {
+  BootstrapError,
+  type BootstrapRequest,
+  type BootstrapResult,
+  type BootstrapProviderOptions
+} from '../../shared/bootstrap'
+import {
+  OFFICIAL_VENDORS,
+  getOfficialVendor,
+  type ModelProtocol,
+  isOfficialVendorId
+} from '@aipoch/providers'
+import { defaultVendorModel, getOfficialVendorModelIds } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
   providerAllowsAnonymousAccess,
@@ -57,6 +67,7 @@ import {
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
+  providerValidationSucceeded,
   requiresChatCompletionsBridge,
   xaiSubscriptionProviderIdentity
 } from '../../shared/settings-runtime'
@@ -70,6 +81,7 @@ import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
+import type { DeviceCredentialStore } from './device-credentials'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
   ProviderAuthLifecycleOwner
@@ -133,6 +145,10 @@ type PreparedProvider = {
   settings: StoredSettings
   catalogBaseline?: ProviderCatalogState
 }
+type TaskProviderSetupRequest = Extract<
+  BootstrapRequest,
+  { action: 'provider-options' | 'provider-save' | 'provider-activate' }
+>
 
 const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
 
@@ -309,6 +325,229 @@ class ProviderAccountsModule {
       true
     )
     return id
+  }
+
+  async bootstrapApiProvider(
+    request: TaskProviderSetupRequest,
+    credentials: DeviceCredentialStore
+  ): Promise<BootstrapResult> {
+    const settings = await this.repository.getSettings()
+    if (request.action === 'provider-options') {
+      return {
+        ok: true,
+        providerOptions: await this.taskProviderOptions(settings, credentials, request.framework)
+      }
+    }
+    if (settings.agentFrameworkId !== request.framework)
+      throw new BootstrapError('configuration_conflict')
+
+    const { framework, model } = request
+    const providerId =
+      request.action === 'provider-save'
+        ? await this.saveTaskProvider(request, credentials)
+        : await this.activateTaskProvider(request, settings)
+    return {
+      ok: true,
+      providerSetup: {
+        providerId,
+        model,
+        framework,
+        saved: true,
+        validation: 'passed',
+        active: request.action === 'provider-activate'
+      }
+    }
+  }
+
+  private async taskProviderOptions(
+    settings: StoredSettings,
+    credentials: DeviceCredentialStore,
+    framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+  ): Promise<BootstrapProviderOptions> {
+    const runtime = getAgentFramework(framework)
+    const modelOption = (
+      provider: StoredProvider,
+      id: string
+    ): BootstrapProviderOptions['official'][number]['models'][number] => {
+      const apiEndpoints = this.resolveProviderApiEndpoints(provider, id)
+      return {
+        id,
+        apiEndpoints,
+        compatible:
+          isProviderUsableByFramework({ type: provider.type, apiEndpoints }, runtime) &&
+          isModelStreamingCompatible(framework, provider.modelStreaming?.[id]),
+        credentialRequired: !providerAllowsAnonymousAccess({ ...provider, model: id })
+      }
+    }
+    return {
+      framework,
+      selectedFramework: settings.agentFrameworkId ?? null,
+      active: {
+        providerId: settings.activeProviderId ?? null,
+        model: settings.activeModel ?? null
+      },
+      providers: settings.providers.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        type: provider.type,
+        models: this.toProviderView(provider).models.map((id) => modelOption(provider, id)),
+        authentication:
+          provider.type === 'official' || provider.type === 'custom'
+            ? 'api'
+            : isLabProvider(provider.type)
+              ? 'app-managed'
+              : 'user-sign-in'
+      })),
+      official: OFFICIAL_VENDORS.flatMap((vendor) =>
+        (vendor.regions ?? [undefined]).map((region) => ({
+          vendorId: vendor.id,
+          name: vendor.label,
+          ...(region ? { region: region.id, regionLabel: region.label } : {}),
+          models: getOfficialVendorModelIds(vendor.id, region?.id).map((id) =>
+            modelOption(
+              {
+                id: vendor.id,
+                name: vendor.label,
+                type: 'official',
+                vendorId: vendor.id,
+                region: region?.id
+              },
+              id
+            )
+          )
+        }))
+      ),
+      customProtocols: [...runtime.supportedApiTypes],
+      credentialRefs: (await credentials.list()).flatMap((credential) =>
+        credential.kind !== 'oauth'
+          ? [{ id: credential.id, displayName: credential.displayName }]
+          : []
+      )
+    }
+  }
+
+  private async saveTaskProvider(
+    request: Extract<TaskProviderSetupRequest, { action: 'provider-save' }>,
+    credentials: DeviceCredentialStore
+  ): Promise<string> {
+    const {
+      providerType: type,
+      framework,
+      model,
+      baseUrl,
+      protocol,
+      vendorId,
+      region,
+      credentialRef
+    } = request
+    const vendor = isOfficialVendorId(vendorId) ? getOfficialVendor(vendorId) : undefined
+    if (
+      (request.key && credentialRef) ||
+      (type === 'official'
+        ? !vendor ||
+          baseUrl ||
+          protocol ||
+          (region && !vendor.regions?.some(({ id }) => id === region))
+        : !baseUrl || !protocol || vendorId || region || getCustomProviderBaseUrlError(baseUrl))
+    )
+      throw new BootstrapError('invalid_request')
+
+    let key = request.key
+    if (credentialRef) {
+      try {
+        key = await credentials.resolveStatic(credentialRef, { kind: 'env', name: 'API_KEY' })
+      } catch {
+        throw new BootstrapError('credential_invalid')
+      }
+    }
+    if (!key && !providerAllowsAnonymousAccess({ type, vendorId: vendor?.id, baseUrl, model }))
+      throw new BootstrapError('credential_invalid')
+
+    const { validation, providerId } = await this.saveValidatedProvider(
+      {
+        type,
+        model,
+        name: request.name ?? vendor?.label ?? 'Custom API provider',
+        ...(vendor ? { vendorId: vendor.id, region } : { baseUrl, apiEndpoints: [protocol!] }),
+        ...(key ? { key } : {})
+      },
+      framework
+    )
+    if (!providerId) throw new BootstrapError('provider_validation_failed', validation.category)
+    return providerId
+  }
+
+  private taskModelTarget(
+    provider: StoredProvider,
+    model: string,
+    framework: AgentFrameworkId
+  ): ResolvedProvider {
+    let target: ProviderRuntimeTarget
+    try {
+      target = this.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model },
+        getAgentFramework(framework)
+      )
+    } catch {
+      throw new BootstrapError('provider_validation_failed', 'model-not-found')
+    }
+    if (!target.frameworkCompatible || !target.modelBridgeSupported)
+      throw new BootstrapError('provider_validation_failed', 'incompatible')
+    return target.provider
+  }
+
+  private async activateTaskProvider(
+    request: Extract<TaskProviderSetupRequest, { action: 'provider-activate' }>,
+    settings: StoredSettings
+  ): Promise<string> {
+    const { providerId, model, framework, expectedActiveProviderId, expectedActiveModel } = request
+    const checkSelection = (current: StoredSettings): void => {
+      if (
+        current.agentFrameworkId !== framework ||
+        (current.activeProviderId ?? null) !== expectedActiveProviderId ||
+        (current.activeModel ?? null) !== expectedActiveModel
+      )
+        throw new BootstrapError('configuration_conflict')
+    }
+    checkSelection(settings)
+    const provider = settings.providers.find(({ id }) => id === providerId)
+    if (!provider || (provider.type !== 'official' && provider.type !== 'custom'))
+      throw new BootstrapError('invalid_request')
+    const tested = this.taskModelTarget(provider, model, framework)
+    if (!tested.key && !providerAllowsAnonymousAccess(tested))
+      throw new BootstrapError('credential_invalid')
+    const validation = await this.validateResolvedProvider({ providerId, model }, settings, {
+      provider: tested,
+      storedId: providerId
+    })
+    if (validation.applied === false) throw new BootstrapError('configuration_conflict')
+    if (!validation.ok || validation.frameworkIncompatible)
+      throw new BootstrapError(
+        'provider_validation_failed',
+        validation.frameworkIncompatible ? 'incompatible' : validation.category
+      )
+    const evidence = targetForValidationResult(validation, {
+      model,
+      endpoint: preferredEndpoint(
+        tested.apiEndpoints ?? ['messages'],
+        this.validationFrameworkEndpoints(tested, settings) ?? DEFAULT_ENDPOINT_ORDER
+      )
+    })
+
+    await this.repository.setActiveProvider(providerId, model, (current) => {
+      checkSelection(current)
+      const candidate = current.providers.find(({ id }) => id === providerId)
+      if (
+        !candidate ||
+        (candidate.configRevision ?? 0) !== (provider.configRevision ?? 0) ||
+        !this.sameValidationTarget(tested, this.taskModelTarget(candidate, model, framework)) ||
+        !evidence ||
+        !providerValidationSucceeded(candidate, evidence)
+      )
+        throw new BootstrapError('configuration_conflict')
+    })
+    return providerId
   }
 
   // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.
@@ -569,16 +808,22 @@ class ProviderAccountsModule {
   }
 
   async saveValidatedProvider(
-    request: UpsertProviderRequest
+    request: UpsertProviderRequest,
+    expectedFramework?: AgentFrameworkId
   ): Promise<SaveValidatedProviderResult> {
     const prepared = await this.prepareProviderEdit(request)
+    if (expectedFramework !== undefined && prepared.settings.agentFrameworkId !== expectedFramework)
+      throw new BootstrapError('configuration_conflict')
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
-    const tested = this.resolveProvider(
-      prepared.provider,
-      request.type === 'official' ? request.model?.trim() || undefined : undefined
-    )
+    const tested =
+      expectedFramework !== undefined && request.model
+        ? this.taskModelTarget(prepared.provider, request.model, expectedFramework)
+        : this.resolveProvider(
+            prepared.provider,
+            request.type === 'official' ? request.model?.trim() || undefined : undefined
+          )
     const expectedValidationState =
       saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
@@ -588,6 +833,8 @@ class ProviderAccountsModule {
           }
         : undefined
     const validation = await this.validateProviderEdit(prepared.provider, prepared.settings, tested)
+    if (expectedFramework !== undefined && validation.applied === false)
+      throw new BootstrapError('configuration_conflict')
     if (!validation.ok) return { validation }
     if (validation.applied === false)
       throw new Error(
@@ -612,6 +859,7 @@ class ProviderAccountsModule {
         provider,
         prepared.requireExisting ? provider.id : undefined,
         {
+          expectedFramework,
           catalogBaseline: prepared.catalogBaseline,
           expectedConfigRevision: prepared.expectedConfigRevision,
           expectedValidationState,

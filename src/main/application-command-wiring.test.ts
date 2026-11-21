@@ -604,7 +604,7 @@ describe('production application command wiring', () => {
       "taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, controls: taskControls, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
@@ -815,6 +815,7 @@ it('connects committed deletion to the same credential broker used by approval s
     sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
+    notebookEnvironmentLifecycle: { managedSetup: {} },
     specialistDomain: {},
     notebookCommands: {},
     jobRepository: {},

@@ -1,5 +1,6 @@
 import { projectSessionEventPayload } from '../session-event-payload'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { isProviderSetupAction } from '../../shared/bootstrap'
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -201,6 +202,10 @@ type WebServerOptions = {
         | 'doctor'
         | 'bootstrap'
         | 'prepareNotebookEnvironment'
+        | 'supportsNotebookEnvironmentOperations'
+        | 'startNotebookEnvironmentOperation'
+        | 'getNotebookEnvironmentOperation'
+        | 'cancelNotebookEnvironmentOperation'
         | 'installCli'
         | 'listRuntimes'
       >
@@ -624,6 +629,7 @@ const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'submission_unavailable') return 503
   if (
     error.code === 'submission_conflict' ||
+    error.code === 'notebook_environment_operation_conflict' ||
     error.code === 'session_read_only' ||
     error.code === 'session_project_mismatch'
   )
@@ -1068,7 +1074,8 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview']
+  fetchPreview?: WebServerOptions['fetchPreview'],
+  localBearer?: boolean
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     const reply = (status: number, body: unknown): void => {
@@ -1090,6 +1097,15 @@ const handleTaskApiRequest = async (
           requestBodyBudgetRegistry,
           requestBodyClientId
         )
+        if (isProviderSetupAction((body as { action?: unknown } | null)?.action) && !localBearer) {
+          reply(403, {
+            error: {
+              code: 'forbidden',
+              message: 'Provider setup requires a local CLI or MCP connection.'
+            }
+          })
+          return true
+        }
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.bootstrap(
           body as import('../../shared/bootstrap').BootstrapRequest
@@ -1120,6 +1136,54 @@ const handleTaskApiRequest = async (
         await tasks.prepareNotebookEnvironment(language)
         reply(200, { data: {} })
         return true
+      }
+      const environmentOperation = url.pathname.match(
+        /^\/api\/v1\/notebook-environment\/operations\/([A-Za-z0-9_-]{1,128})$/
+      )
+      if (environmentOperation && tasks.supportsNotebookEnvironmentOperations?.()) {
+        if (externalAuthorization) {
+          reply(403, {
+            error: { code: 'access_denied', message: 'Notebook setup requires a local connection.' }
+          })
+          return true
+        }
+        const operationId = environmentOperation[1]
+        if (request.method === 'PUT' && tasks.startNotebookEnvironmentOperation) {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          const { language, action } = (body ?? {}) as { language?: unknown; action?: unknown }
+          if (
+            (language !== 'python' && language !== 'r') ||
+            (action !== 'prepare' && action !== 'repair') ||
+            Object.keys(body as object).length !== 2
+          )
+            throw new TaskApiError(
+              'invalid_request',
+              'Supply a Notebook language and a prepare or repair action.'
+            )
+          reply(200, {
+            data: tasks.startNotebookEnvironmentOperation({ operationId, language, action })
+          })
+          return true
+        }
+        if (request.method === 'GET' || request.method === 'DELETE') {
+          const language = url.searchParams.get('language')
+          if (language !== 'python' && language !== 'r')
+            throw new TaskApiError('invalid_request', 'Supply a Notebook language: python or r.')
+          const target = { operationId, language } as const
+          const data =
+            request.method === 'GET'
+              ? tasks.getNotebookEnvironmentOperation?.(target)
+              : tasks.cancelNotebookEnvironmentOperation?.(target)
+          if (data) {
+            reply(200, { data })
+            return true
+          }
+        }
       }
       if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
         assertExternalAuthorizationCurrent(externalAuthorization)
@@ -1724,8 +1788,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   ...(!externalAuthorization && options.tasks.bootstrap
                     ? ['runtime-bootstrap', 'agent-setup']
                     : []),
+                  ...(auth.localBearer && options.tasks.bootstrap ? ['provider-setup'] : []),
                   ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
                     ? ['notebook-setup']
+                    : []),
+                  ...(!externalAuthorization &&
+                  options.tasks.supportsNotebookEnvironmentOperations?.()
+                    ? ['notebook-setup-operations']
                     : []),
                   ...(options.tasks.listRuntimes ? ['list-runtimes'] : []),
                   ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
@@ -1821,7 +1890,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 taskIdempotencyRegistry,
                 authorization,
                 options.waitUntilTasksReady,
-                options.fetchPreview
+                options.fetchPreview,
+                auth.localBearer
               )
             )
               return

@@ -1,3 +1,4 @@
+import type { ProvisionPhase } from '@aipoch/environment/contracts'
 import type { ArtifactFile } from './artifacts'
 import type { NotebookLanguage } from './notebook-language-contract'
 import type { PermissionProfileId } from './permission-profiles'
@@ -46,6 +47,23 @@ export type TaskNotebookReadiness = Readonly<{
   sandbox: TaskReadinessCheck
   memoryPolicy: TaskReadinessCheck & { source?: string; executionScope?: string }
 }>
+
+export type TaskNotebookEnvironmentTarget = Readonly<{
+  language: NotebookLanguage
+  operationId: string
+}>
+
+export type TaskNotebookEnvironmentRequest = TaskNotebookEnvironmentTarget &
+  Readonly<{ action: 'prepare' | 'repair' }>
+
+export type TaskNotebookEnvironmentOperation = TaskNotebookEnvironmentTarget &
+  Readonly<{
+    action?: TaskNotebookEnvironmentRequest['action']
+    status: 'preparing' | 'completed' | 'failed' | 'cancelled' | 'unconfirmed'
+    progress?: { phase: ProvisionPhase; fraction: number }
+    cancelRequested?: boolean
+    reason?: 'notebook_setup_failed' | 'notebook_environment_recovery_required'
+  }>
 
 export type TaskDoctorReport = Readonly<{
   ready: boolean
@@ -337,6 +355,7 @@ export type TaskApiErrorCode =
   | 'notebook_setup_failed'
   | 'task_relay_required'
   | 'interaction_not_found'
+  | 'notebook_environment_operation_conflict'
   | 'submission_conflict'
   | 'submission_unavailable'
   | 'submission_not_found'

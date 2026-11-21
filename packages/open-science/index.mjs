@@ -247,6 +247,32 @@ export class OpenScienceClient {
     })
   }
 
+  startNotebookEnvironmentOperation({ language, operationId, action }, options) {
+    return this.request(
+      `/api/v1/notebook-environment/operations/${encodeURIComponent(operationId)}`,
+      {
+        ...options,
+        method: 'PUT',
+        body: { language, action }
+      }
+    )
+  }
+
+  getNotebookEnvironmentOperation(target, options) {
+    return this.#notebookEnvironmentOperationRequest('GET', target, options)
+  }
+
+  cancelNotebookEnvironmentOperation(target, options) {
+    return this.#notebookEnvironmentOperationRequest('DELETE', target, options)
+  }
+
+  #notebookEnvironmentOperationRequest(method, { language, operationId }, options) {
+    return this.request(
+      `/api/v1/notebook-environment/operations/${encodeURIComponent(operationId)}?${new URLSearchParams({ language })}`,
+      { ...options, method }
+    )
+  }
+
   listRuntimes(options) {
     return this.request('/api/v1/runtimes', { ...options, method: 'GET' })
   }

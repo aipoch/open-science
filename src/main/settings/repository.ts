@@ -338,6 +338,7 @@ class SettingsRepository {
     provider: StoredProvider,
     existingId?: string,
     configEdit?: {
+      expectedFramework?: AgentFrameworkId
       expectedConfigRevision?: number
       catalogBaseline?: ProviderCatalogState
       validationMatches?: (merged: StoredProvider) => boolean
@@ -349,6 +350,11 @@ class SettingsRepository {
     guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (
+        configEdit?.expectedFramework !== undefined &&
+        settings.agentFrameworkId !== configEdit.expectedFramework
+      )
+        throw new BootstrapError('configuration_conflict')
       if (guard?.isCurrent && !guard.isCurrent()) {
         throw new Error('Lab catalog changed. The stale catalog was not written.')
       }
@@ -863,8 +869,13 @@ class SettingsRepository {
 
   // Sets (or clears) the active provider pointer and its model, ignoring ids that do not exist. The
   // caller (service) resolves the concrete model, so an undefined model here clears it.
-  async setActiveProvider(id: string | undefined, model?: string): Promise<StoredSettings> {
+  async setActiveProvider(
+    id: string | undefined,
+    model?: string,
+    assertCurrent?: (settings: StoredSettings) => void
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      assertCurrent?.(settings)
       if (id !== undefined && !settings.providers.some((provider) => provider.id === id)) {
         return settings
       }

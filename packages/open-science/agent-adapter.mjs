@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { artifactCapabilities } from './agent-artifacts.mjs'
 import { existingMcpCapabilities } from './agent-capabilities.mjs'
@@ -17,9 +18,9 @@ Install Open-Science with the application's installer or npm package. Start the 
 
 Use the capability catalog and detail schemas to find the operations the installed adapter exposes. Check service support and call doctor for the same profile. Base Agent readiness does not prove that a Notebook can run, has run, or produced files.
 
-For setup, use list_runtimes and ask which Agent runtime and provider the user wants when there is no selection. An authorized runtime choice can be selected and prepared through MCP. Use configure_provider for the offered keyless provider, or use open_setup to open the same profile in the browser. Complete routine non-credential setup the user asked for; leave sign-in, consent and credential entry to the user. Recheck the same profile afterward. Do not request, copy or print credentials or private setup URLs.
+Use list_runtimes and list_providers to find the runtime, providers, and models supported by this version. Ask the user to choose when they have not made a selection. Select and prepare only an authorized runtime. Save and verify an API connection with save_api_provider, then use activate_provider for the provider and exact model the user chose, including an existing provider. Use configure_provider for the offered keyless option. Supply only a user-chosen stored credential reference or the name of a variable visible to this CLI or MCP process. Never ask for a secret in chat or pass its value as a tool argument. For OAuth, use the supported sign-in handoff or open_setup for the same profile and let the user complete consent. Recheck the same profile afterward. Do not copy or print credentials or private setup URLs.
 
-Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Before submitting research that needs a known language, call get_setup_status with that language. If its environment is missing, offer to prepare it through prepare_notebook_environment or open the same profile's Notebook settings through open_setup with section notebook. The user can set it up there, or you can do routine setup through MCP or the Web controls when asked. Recheck that language after setup. System dependencies, isolation and memory can still block Notebook execution independently.
+Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Check the requested language before research. With authorization, prepare that language using prepare_notebook_environment. Generate and keep an operationId before submitting. After a timeout or disconnect, call get_notebook_environment_operation with the same language and ID. To cancel, use cancel_notebook_environment_operation with that same target and check the result. Use repair_notebook_environment only for a requested repair of the selected app-managed default environment. Recheck readiness after installation: environment setup, binding approval and Notebook execution are separate. System dependencies, isolation and memory can still block execution independently.
 
 Use the user's research instructions and choose an explicit Project. Omit the working directory to use the Project default for a new Session, or the existing Session directory when continuing. The Agent delivery directory is for downloads and may not exist before the first delivery. Generate and keep a request ID before sending. If the response is lost, query the original receipt in the same profile. Waiting only observes work; it does not cancel it. Use a new ID only for a new research turn. Leave provider credentials, Notebook continuation, and sensitive export confirmation to the user in Open-Science.
 
@@ -77,8 +78,23 @@ const policies = {
   ],
   configuration_conflict: [
     'user',
-    'The current runtime or provider conflicts with this setup request. Recheck this profile and review its configuration in Web.',
+    'The current runtime, provider, or model conflicts with this setup request. Recheck this profile before deciding whether to change it.',
     { action: 'get_setup_status' }
+  ],
+  credential_invalid: [
+    'user',
+    'The chosen provider credential is missing, unreadable, or invalid. Check the credential reference or environment variable for this profile.',
+    { action: 'list_providers' }
+  ],
+  provider_credential_missing: [
+    'user',
+    'The specified environment variable is not available to this CLI or MCP process. Make it available to this host for the same profile or select an existing credential reference. Never put a key in a tool argument.',
+    { action: 'list_providers' }
+  ],
+  provider_validation_failed: [
+    'agent',
+    'The selected provider and model did not pass validation. Check the reported category and recheck provider options before retrying.',
+    { action: 'list_providers' }
   ],
   bootstrap_failed: [
     'service',
@@ -88,6 +104,11 @@ const policies = {
   notebook_setup_failed: [
     'service',
     'Open-Science could not prepare the requested Notebook language. Recheck setup and inspect the service log before repeating it.',
+    { action: 'get_setup_status' }
+  ],
+  notebook_environment_operation_conflict: [
+    'agent',
+    'This operation ID belongs to another request, or this language already has a setup operation in progress. Check setup before requesting another write.',
     { action: 'get_setup_status' }
   ],
   browser_unavailable: [
@@ -265,7 +286,10 @@ export const agentErrorDetails = (
                 'select_runtime',
                 'prepare_runtime',
                 'configure_provider',
-                'prepare_notebook_environment'
+                'prepare_notebook_environment',
+                'repair_notebook_environment',
+                'get_notebook_environment_operation',
+                'cancel_notebook_environment_operation'
               ].includes(capability))
           ? 'unsupported_capability'
           : known && !(status >= 500 && error.code === 'daemon_unavailable')
@@ -341,6 +365,23 @@ export const agentErrorDetails = (
         ...(safeId.safeParse(args.artifactVersionId).success
           ? { interactionId: `plan:${args.artifactVersionId}` }
           : {})
+      }
+    ]
+  }
+  if (
+    details.operationId &&
+    ['python', 'r'].includes(args.language) &&
+    ['timeout', 'request_failed'].includes(code) &&
+    [
+      'prepare_notebook_environment',
+      'repair_notebook_environment',
+      'cancel_notebook_environment_operation'
+    ].includes(capability)
+  ) {
+    details.next = [
+      {
+        action: 'get_notebook_environment_operation',
+        arguments: { language: args.language, operationId: details.operationId }
       }
     ]
   }
@@ -482,6 +523,7 @@ async function doctor({ language }, { getClient, configRoot, signal }) {
               message:
                 'No Agent runtime has been selected. List the available runtimes and ask which runtime and provider to use.',
               options: { capability: 'list_runtimes' },
+              providerDiscovery: { capability: 'list_providers' },
               web: { capability: 'open_setup' },
               verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
             }
@@ -542,6 +584,79 @@ async function bootstrapSetup(request, { timeoutMs }, context) {
     throw new AgentError(code, { requiresUser: code === 'configuration_conflict' })
   }
   return { ...(await doctor({}, context)), timeoutMs }
+}
+
+async function providerSetup(request, context) {
+  const client = await setupClient(context, 'provider-setup')
+  const result = await client.bootstrap(request, { signal: context.signal, timeoutMs: 60_000 })
+  const data =
+    request.action === 'provider-options' ? result?.providerOptions : result?.providerSetup
+  if (result?.ok && data) return data
+  const code = [
+    'configuration_conflict',
+    'credential_invalid',
+    'invalid_request',
+    'provider_validation_failed'
+  ].includes(result?.code)
+    ? result.code
+    : 'bootstrap_failed'
+  const category = ['auth', ...providerReasons].includes(result?.category)
+    ? result.category
+    : undefined
+  const needsCredential = code === 'credential_invalid' || category === 'auth'
+  throw new AgentError(code, {
+    requiresUser: needsCredential || code === 'configuration_conflict',
+    ...(needsCredential ? { owner: 'user' } : {}),
+    ...(code === 'configuration_conflict' ? { next: [{ action: 'list_providers' }] } : {}),
+    ...(category ? { category } : {})
+  })
+}
+
+const notebookOperationTarget = {
+  language: languageInput,
+  operationId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,128}$/)
+    .describe('A unique operation ID you generate and retain before submission, such as a UUID.')
+}
+const notebookOperationTimeout = z.number().int().min(0).max(30_000).default(1_000)
+const notebookSetupSupport = 'notebook-setup-operations'
+
+function notebookOperationResult(operation, target, timeoutMs) {
+  return {
+    operation,
+    ...(timeoutMs === undefined
+      ? {}
+      : { timeoutMs, timedOut: timeoutMs > 0 && operation.status === 'preparing' }),
+    next: [
+      operation.status === 'preparing'
+        ? { action: 'get_notebook_environment_operation', arguments: target }
+        : { action: 'get_setup_status', arguments: { language: target.language } }
+    ]
+  }
+}
+
+async function startNotebookOperation(action, { language, operationId, timeoutMs }, context) {
+  const client = await setupClient(context, notebookSetupSupport)
+  const { signal } = context
+  const target = { language, operationId }
+  let operation = await client.startNotebookEnvironmentOperation({ ...target, action }, { signal })
+  const deadline = performance.now() + timeoutMs
+  while (operation.status === 'preparing' && performance.now() < deadline) {
+    await delay(Math.min(250, Math.max(1, deadline - performance.now())), undefined, { signal })
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) break
+    try {
+      operation = await client.getNotebookEnvironmentOperation(target, {
+        signal,
+        timeoutMs: remaining
+      })
+    } catch (error) {
+      if (error?.code !== 'timeout') throw error
+      break
+    }
+  }
+  return notebookOperationResult(operation, target, timeoutMs)
 }
 
 const setupStatus = {
@@ -620,7 +735,7 @@ const definitions = [
     name: 'configure_provider',
     group: 'setup',
     description:
-      'Set up and check the offered keyless Kilo Gateway free route after the user chooses it. Select the requested framework first. This cannot replace an active provider or accept a credential. Use open_setup for other providers.',
+      'Set up and check the offered keyless Kilo Gateway free route after the user chooses it. Select the requested framework first. This cannot replace an active provider or accept a credential. For ordinary API providers, use list_providers and save_api_provider.',
     inputSchema: z.strictObject({
       provider: z.literal('kilo-free'),
       framework: frameworkInput,
@@ -633,18 +748,132 @@ const definitions = [
       bootstrapSetup({ action: 'kilo-free', framework: args.framework }, args, context)
   },
   {
+    name: 'list_providers',
+    group: 'setup',
+    description:
+      'Read configured providers, bundled API options, model compatibility, and the current model selection. Omit framework to check the current effective runtime. Does not sign in, select, or install anything.',
+    inputSchema: z.strictObject({ framework: frameworkInput.optional() }),
+    annotations: readOnly,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'provider-setup',
+    handler: (args, context) => providerSetup({ action: 'provider-options', ...args }, context)
+  },
+  {
+    name: 'save_api_provider',
+    group: 'setup',
+    description:
+      'Validate and save a new API provider for the selected framework and exact model, without activating it. Official providers take a vendorId and optional region; custom providers take a baseUrl and protocol. Supply only a user-chosen apiKeyEnv or credentialRef when a key is required. Never pass a credential value.',
+    inputSchema: z.strictObject({
+      providerType: z.enum(['official', 'custom']),
+      framework: frameworkInput,
+      model: z.string().trim().min(1).max(512),
+      name: z.string().trim().min(1).max(128).optional(),
+      vendorId: safeId.optional(),
+      region: safeId.optional(),
+      baseUrl: z.string().trim().min(1).max(2048).optional(),
+      protocol: z.enum(['messages', 'chat-completions', 'responses']).optional(),
+      apiKeyEnv: z
+        .string()
+        .regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)
+        .optional(),
+      credentialRef: safeId.optional()
+    }),
+    annotations: { ...setupWrite, idempotentHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'provider-setup',
+    handler: ({ apiKeyEnv, ...args }, context) => {
+      if (
+        (apiKeyEnv && args.credentialRef) ||
+        (args.providerType === 'official'
+          ? !args.vendorId || args.baseUrl || args.protocol
+          : !args.baseUrl || !args.protocol || args.vendorId || args.region)
+      )
+        throw new AgentError('invalid_request')
+      const key = apiKeyEnv ? process.env[apiKeyEnv]?.trim() : undefined
+      if (apiKeyEnv && !key)
+        throw new AgentError('provider_credential_missing', { requiresUser: true })
+      if (key && Buffer.byteLength(key, 'utf8') > 8192)
+        throw new AgentError('credential_invalid', { requiresUser: true })
+      return providerSetup({ action: 'provider-save', ...args, ...(key ? { key } : {}) }, context)
+    }
+  },
+  {
+    name: 'activate_provider',
+    group: 'setup',
+    description:
+      'Validate and activate an explicitly chosen saved API provider and model. Copy the active provider and model from list_providers, including nulls for an empty selection. A different or changed selection is a conflict. For subscription authentication, use the user sign-in handoff.',
+    inputSchema: z.strictObject({
+      framework: frameworkInput,
+      providerId: safeId,
+      model: z.string().trim().min(1).max(512),
+      expectedActiveProviderId: safeId.nullable(),
+      expectedActiveModel: z.string().trim().min(1).max(512).nullable()
+    }),
+    annotations: { ...setupWrite, destructiveHint: true },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: 'provider-setup',
+    handler: (args, context) => providerSetup({ action: 'provider-activate', ...args }, context)
+  },
+  {
     name: 'prepare_notebook_environment',
     group: 'setup',
     description:
-      'Prepare the explicitly requested Python or R environment on this profile with the managed installer. Does not install the other language, run a Notebook, or grant execution permission. After a timeout, recheck that language before repeating.',
-    inputSchema: z.strictObject({ language: languageInput, timeoutMs: setupTimeout }),
+      'Prepare the explicitly requested managed Python or R environment. Retain a new operation ID before calling. The bounded wait leaves work running; query the original operation by ID after a timeout or disconnect. Setup does not authorize or run a Notebook.',
+    inputSchema: z.strictObject({
+      ...notebookOperationTarget,
+      timeoutMs: notebookOperationTimeout
+    }),
     annotations: setupWrite,
     exposure: { cli: true, mcp: true },
-    serviceCapability: 'notebook-setup',
-    handler: async ({ language, timeoutMs }, context) => {
-      const client = await setupClient(context, 'notebook-setup')
-      await client.prepareNotebookEnvironment(language, { timeoutMs, signal: context.signal })
-      return { ...(await doctor({ language }, context)), timeoutMs }
+    serviceCapability: notebookSetupSupport,
+    handler: (args, context) => startNotebookOperation('prepare', args, context)
+  },
+  {
+    name: 'repair_notebook_environment',
+    group: 'setup',
+    description:
+      'Rebuild the current app-managed default environment for the selected language when authorized by the user. It can replace that environment and interrupt its kernels. Use a new operation ID and query that ID afterward.',
+    inputSchema: z.strictObject({
+      ...notebookOperationTarget,
+      timeoutMs: notebookOperationTimeout
+    }),
+    annotations: { ...setupWrite, destructiveHint: true },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: notebookSetupSupport,
+    handler: (args, context) => startNotebookOperation('repair', args, context)
+  },
+  {
+    name: 'get_notebook_environment_operation',
+    group: 'setup',
+    description:
+      'Read setup progress and the outcome for the original language and operation ID. Unconfirmed means the service cannot establish the outcome; recheck language readiness before any new write.',
+    inputSchema: z.strictObject(notebookOperationTarget),
+    annotations: readOnly,
+    exposure: { cli: true, mcp: true },
+    serviceCapability: notebookSetupSupport,
+    handler: async (target, context) => {
+      const client = await setupClient(context, notebookSetupSupport)
+      return notebookOperationResult(
+        await client.getNotebookEnvironmentOperation(target, { signal: context.signal }),
+        target
+      )
+    }
+  },
+  {
+    name: 'cancel_notebook_environment_operation',
+    group: 'setup',
+    description:
+      'Request cancellation of this exact managed setup operation. Observe its final result; repair may already have reached the point where it must finish.',
+    inputSchema: z.strictObject(notebookOperationTarget),
+    annotations: { ...setupWrite, openWorldHint: false },
+    exposure: { cli: true, mcp: true },
+    serviceCapability: notebookSetupSupport,
+    handler: async (target, context) => {
+      const client = await setupClient(context, notebookSetupSupport)
+      return notebookOperationResult(
+        await client.cancelNotebookEnvironmentOperation(target, { signal: context.signal }),
+        target
+      )
     }
   },
   {
