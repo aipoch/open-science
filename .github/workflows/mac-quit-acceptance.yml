@@ -35,10 +35,10 @@ jobs:
           mkdir -p feed source
           gh release download v1.3.2 --repo aipoch/open-science -p "aipoch-open-science-1.3.2-mac-$ARCH.zip" -p latest-mac.yml -D feed
           for i in {1..70}; do
-            if gh api repos/aipoch/open-science/actions/runs/44893402336/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
+            if gh api repos/aipoch/open-science/actions/runs/44896190264/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
             sleep 30
           done
-          gh run download 44893402336 --repo aipoch/open-science -n "macos-$ARCH" -D source
+          gh run download 44896190264 --repo aipoch/open-science -n "macos-$ARCH" -D source
       - name: Exercise signed A to B
         if: matrix.scenario == 'reopen'
         env:
@@ -83,6 +83,7 @@ jobs:
             ${{ runner.temp }}/quit-trash/shipit.txt
             ${{ runner.temp }}/quit-trash/job.txt
             ${{ runner.temp }}/quit-trash/events.jsonl
+            ${{ runner.temp }}/quit-acceptance/old-pid-exit
             ${{ runner.temp }}/quit-acceptance/workspace-ready
             ${{ runner.temp }}/quit-abort/job.txt
             ${{ runner.temp }}/quit-abort/shipit.txt
