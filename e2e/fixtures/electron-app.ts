@@ -39,11 +39,8 @@ import {
   type ElectronContentTraceArtifact
 } from '../../scripts/performance/electron-content-trace'
 import { terminateProcessTree } from '../../src/main/process-tree'
-import {
-  readProcessTable,
-  readProcessTree,
-  selectProcessTree
-} from '../../scripts/performance/process-snapshot'
+import { selectProcessTree } from '../../scripts/performance/process-snapshot'
+import { listWindowsProcesses } from '../../src/main/windows-process-query'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
@@ -1935,29 +1932,35 @@ class ElectronAppHarness implements ElectronApp {
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
-    const before =
-      process.platform === 'win32' && child.pid !== undefined
-        ? await readProcessTree(child.pid)
-        : undefined
     await this.stopElectronTrace(application)
+    let windowsTree: Set<number> | undefined
+    if (process.platform === 'win32') {
+      if (!child.pid) throw new Error('Electron crash simulation has no root PID.')
+      const table = listWindowsProcesses().map(({ pid, ppid }) => ({ pid, parentPid: ppid }))
+      windowsTree = new Set(selectProcessTree(table, child.pid).map(({ pid }) => pid))
+      if (!windowsTree.has(child.pid))
+        throw new Error(`Electron crash simulation could not observe root PID ${child.pid}.`)
+    }
     const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
     let reaped = result.reaped
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
-    if (process.platform === 'win32') {
-      reaped = false
-      if (before?.complete) {
-        const deadline = Date.now() + 10_000
-        do {
-          const after = await readProcessTable()
-          reaped =
-            after.complete &&
-            before.processes.every(
-              ({ pid }) => selectProcessTree(after.processes, pid).length === 0
-            )
-          if (reaped || Date.now() >= deadline) break
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        } while (Date.now() < deadline)
+    if (windowsTree) {
+      const before = windowsTree
+      const deadline = Date.now() + 10_000
+      for (;;) {
+        const remaining = listWindowsProcesses().filter(
+          ({ pid, ppid }) => before.has(pid) || before.has(ppid)
+        )
+        if (remaining.length === 0) {
+          reaped = true
+          break
+        }
+        if (Date.now() >= deadline)
+          throw new Error(
+            `Electron crash simulation still observes PIDs ${remaining.map(({ pid }) => pid).join(', ')}.`
+          )
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
     }
     if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
