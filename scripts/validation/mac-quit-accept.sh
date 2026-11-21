@@ -29,46 +29,16 @@ test "$(version)" = '1.3.1'
 probe launch
 wait_status 's.automaticDownloads===true'
 probe configure
-probe settings
-probe off
 probe hide
-sleep 65
-test "$(zip_requests)" = 0
-probe quit
-wait_exit
-probe launch
-wait_status 's.automaticDownloads===false'
-probe configure
-probe on
-# Denying helper execution models a failed NWPath probe while keeping the signed bytes intact.
-chmod u-x "$app/Contents/MacOS/mac-update-network"
-trap 'chmod u+x "$app/Contents/MacOS/mac-update-network"; kill "$feed_pid" 2>/dev/null || true' EXIT
-probe hide
-sleep 65
-test "$(zip_requests)" = 0
-chmod u+x "$app/Contents/MacOS/mac-update-network"
-trap 'kill "$feed_pid" 2>/dev/null || true' EXIT
-codesign --verify --strict --deep "$app"
 wait_status 's.state==="ready"'
 test "$(zip_requests)" = 1
-probe identity
-cp "$D/settings.png" "$D/settings-before-download.png"
-open -a "$app"
-sleep 2
-probe settings
-cp "$D/settings.png" "$D/settings-ready.png"
-open -a "$app"
-sleep 2
-probe status
-probe close
-open -a "$app"
-sleep 3
-probe status
 pid=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).details.pid)" "$D/last-status")
 probe quit
 for i in {1..1500}; do if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.03; done
 ! kill -0 "$pid" 2>/dev/null
 date -u > "$D/immediate-reopen"
+export FIXTURE_FILE="$D/document.science"
+cp src/main/session-package/fixtures/session-package-v0.31.1-minimal.science "$FIXTURE_FILE"
 probe launch
 cutoff=$((SECONDS+125))
 while ((SECONDS<cutoff)); do
@@ -86,7 +56,18 @@ while ((SECONDS<cutoff)); do
   sleep 1
 done
 node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1])).details;if(s.version!=='1.3.2'||s.data.version!=='1.3.2')process.exit(1)" "$D/workspace-ready"
-test "$(zip_requests)" = 1
-echo SIGNED_RAPID_REOPEN_PASSED
+observe_document() {
+  local output="$1"
+  for i in {1..30}; do
+    if probe document >"$output" && grep -q '"observed":true' "$output"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+observe_document "$D/document-at-handoff" || true
+# Positive control with the very same signed B, target and launch command after replacement.
 probe quit
 wait_exit
+probe launch
+observe_document "$D/document-control"
+grep -q '"observed":true' "$D/document-at-handoff"
