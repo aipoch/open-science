@@ -85,7 +85,9 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
-      for (const name of platformBackendOnlyElectronDependencies('darwin', 'arm64')) {
+      const audited = platformBackendOnlyElectronDependencies('darwin', 'arm64')
+      expect(audited).toContain('diff')
+      for (const name of audited) {
         expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
         expect(() => assertElectronHostDependencies([name], root, 'win32', 'x64')).toThrow(name)
       }

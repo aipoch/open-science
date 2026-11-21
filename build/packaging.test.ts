@@ -78,6 +78,7 @@ describe('desktop packaging preparation', () => {
     ['win32', 'x64', 'win', true],
     ['win32', 'arm64', 'win', false],
     ['darwin', 'x64', 'mac', true],
+    ['darwin', 'arm64', 'mac', true],
     ['linux', 'x64', 'linux', false]
   ] as const)(
     'prepares application resources before staging on %s/%s',
