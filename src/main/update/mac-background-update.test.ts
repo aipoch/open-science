@@ -44,7 +44,7 @@ it.runIf(process.platform === 'darwin')(
       const occupied = vi.fn(async () => {
         throw new Error('occupied')
       })
-      const prepare = (inspect = async (): Promise<void> => {}) =>
+      const prepare = (inspect = async (): Promise<void> => {}): Promise<void> =>
         prepareMacUpdateOnQuit(strategy, native as unknown as AutoUpdater, dir, dir, inspect)
       await prepare()
       expect(native.checkForUpdates).not.toHaveBeenCalled()
