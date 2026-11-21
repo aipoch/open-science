@@ -26,9 +26,24 @@ async function main(){
    const show=dialog.showMessageBox.bind(dialog)
    dialog.showMessageBox=(...args)=>{const opts=args.at(-1);console.error('QA dialog',opts.title,opts.message,opts.detail);return show(...args)}
  })
+ desk.on('window',w=>w.on('pageerror',e=>console.log('renderer startup error',e.message.slice(0,350))))
  const page=await desk.firstWindow()
+ page.on('pageerror',e=>console.log('renderer startup error',e.message.slice(0,350)))
+ page.on('console',m=>{if(m.type()==='error')console.log('renderer console',m.text().slice(0,350))})
  await page.waitForFunction(async()=>{try{return (await window.api.databaseStartup.getState()).phase==='ready'}catch{return false}},{},{timeout:90000})
 
+ for(let i=0;i<45;i++) {
+   const view=await page.evaluate(()=>({text:document.body.innerText.slice(0,220),onboarding:!!document.querySelector('[data-onboarding-layout]'),state:window.location.hash})).catch(()=>({}))
+   if(i%5===0)console.log('desktop view',view)
+   if(view.onboarding) {
+     await page.evaluate(()=>window.api.settings.markOnboardingComplete())
+     await page.reload({waitUntil:'domcontentloaded'})
+     break
+   }
+   if(await page.getByRole('button',{name:'New project',exact:true}).count())break
+   await sleep(1000)
+ }
+ console.log('workspace view',await page.locator('body').innerText().then(x=>x.slice(0,350)))
  console.log('initial status',await page.evaluate(()=>window.api.update.getStatus()))
  await desk.evaluate(({app},url)=>{
    const sdk=process.mainModule.require('node:module').createRequire(app.getAppPath()+'/package.json')('electron-updater').autoUpdater

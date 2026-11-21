@@ -85,7 +85,7 @@ jobs:
             test=(xvfb-run -a dbus-run-session -- sh scripts/ci/probe-quit-session.sh scripts/ci/probe-ordinary-quit.cjs "$PWD"/dist/*.AppImage "$dir" "$FEED")
             if [[ "$DESKTOP" = docker ]]; then
               if [[ "$kind" = ordinary ]]; then docker build -t quit-ubuntu:acceptance - < scripts/ci/probe-quit.Dockerfile; fi
-              docker run --init --rm --user "$(id -u):$(id -g)" --cap-drop ALL --shm-size=512m \
+              docker run --init --rm --user 65534:65534 --cap-drop ALL --shm-size=512m \
                 -e APPIMAGE_EXTRACT_AND_RUN=1 -e QA_REPO="$PWD" -e QA_OPEN_KIND \
                 -v "$PWD:$PWD:ro" -v "$dir:$dir:ro" -w "$PWD" quit-ubuntu:acceptance "${test[@]}"
             else
