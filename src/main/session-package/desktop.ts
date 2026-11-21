@@ -1,4 +1,5 @@
 import {
+  ArchiveAvailabilityError,
   SessionExportBlockedError,
   sessionExportBlockerMessage
 } from '../archive/availability-error'
@@ -714,10 +715,16 @@ export class SessionPackageDesktop {
       ...(safeFailureMessages.has(detail) ? { error: { message: detail } } : {})
     })
     const translate = this.options.translate
+    const blocked = (message: string): PackageExportBlockedError =>
+      new PackageExportBlockedError(message, { cause: error })
     if (error instanceof SessionExportBlockedError)
-      throw new PackageExportBlockedError(sessionExportBlockerMessage(error.reason, translate), {
-        cause: error
-      })
+      throw blocked(sessionExportBlockerMessage(error.reason, translate))
+    if (request && error instanceof ArchiveAvailabilityError)
+      throw blocked(
+        error.code === 'project-archived'
+          ? translate('Restore the archived project, then export again.')
+          : translate('Restore the archived session, then export again.')
+      )
     if (detail === PACKAGE_REQUIRES_UPDATE)
       throw new Error(
         translate(
@@ -816,11 +823,13 @@ export class SessionPackageDesktop {
           )
       }
     }
-    if (detail === 'Wait for the application handoff to finish before transferring research.')
-      throw new Error(
-        translate('Wait for the application handoff to finish before transferring research.'),
-        { cause: error }
+    if (detail === 'Wait for the application handoff to finish before transferring research.') {
+      const message = translate(
+        'Wait for the application handoff to finish before transferring research.'
       )
+      if (request) throw blocked(message)
+      throw new Error(message, { cause: error })
+    }
     if (detail.startsWith('An excluded file also exists'))
       throw new Error(
         translate(
@@ -855,8 +864,6 @@ export class SessionPackageDesktop {
         { cause: error }
       )
     if (request) {
-      const blocked = (message: string): PackageExportBlockedError =>
-        new PackageExportBlockedError(message, { cause: error })
       let message: string | undefined
       switch (detail) {
         case 'Legacy file references must have immutable Versions before packaging.':

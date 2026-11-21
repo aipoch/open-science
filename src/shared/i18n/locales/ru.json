@@ -130,6 +130,8 @@
     "OK": "ОК",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Дождитесь завершения операции или отмените её в окне хода выполнения перед выходом.",
     "An excluded file also exists in retained research evidence. Include that file to export this Session.": "Копия исключённого файла есть в сохраняемых доказательствах. Включите этот файл для экспорта сеанса.",
+    "Restore the archived project, then export again.": "Восстановите проект из архива и повторите экспорт.",
+    "Restore the archived session, then export again.": "Восстановите сеанс из архива и повторите экспорт.",
     "The agent is still working in this conversation. Wait for it to finish, then export again.": "Агент ещё работает в этом разговоре. Дождитесь завершения работы и повторите экспорт.",
     "A historical file reference in this session has no immutable version. Use Export conversation to save the messages.": "У старой ссылки на файл в этом сеансе нет неизменяемой версии. Чтобы сохранить сообщения, выберите «Экспортировать диалог».",
     "Wait for the subagent to finish its task, then export again.": "Дождитесь завершения задачи субагента и повторите экспорт.",
