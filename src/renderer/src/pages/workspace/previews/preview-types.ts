@@ -18,6 +18,7 @@ export type PreviewFileRendererProps = {
   imageEditPresentation?: 'panel' | 'expanded-panel' | 'dialog'
   onPinImageSource?: () => void
   onImageEditorVersionChange?: (item: PreviewFileItem | undefined) => void
+  onImageEditActionChange?: (action: PreviewImageEditAction | undefined) => void
   readOnly?: boolean
   presentation?: 'reader' | 'search'
   annotationVersionId?: string
@@ -35,6 +36,11 @@ export type PreviewFileRendererProps = {
   pdfProseRegions?: readonly PdfProseRegion[]
   pdfProseRegionIdentityKey?: string
   onPdfProseRegionsChange?: (regions: readonly PdfProseRegion[]) => void
+}
+
+export type PreviewImageEditAction = {
+  execute: () => void
+  disabled?: boolean
 }
 
 export type PreviewAnnotationPort = Omit<PreviewFileRendererProps, 'item'>

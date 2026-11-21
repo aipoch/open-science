@@ -200,11 +200,57 @@ if (workbench) {
   usePreviewWorkbenchStore.getState().upsertAndActivateItem(item)
 }
 
+function PreviewWithToolbar({
+  item,
+  onAddAnnotation
+}: {
+  item: PreviewFileRendererProps['item']
+  onAddAnnotation: NonNullable<PreviewFileRendererProps['onAddAnnotation']>
+}): React.JSX.Element {
+  const [editAction, setEditAction] = useState<{
+    execute: () => void
+    disabled?: boolean
+  }>()
+  return (
+    <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
+      <header
+        style={{
+          display: 'flex',
+          minHeight: 36,
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          borderBottom: '1px solid #8884',
+          padding: '0 8px'
+        }}
+      >
+        {editAction ? (
+          <button
+            type="button"
+            data-testid="preview-edit-image"
+            aria-label="Edit image"
+            disabled={editAction.disabled}
+            onClick={editAction.execute}
+          >
+            Edit image
+          </button>
+        ) : null}
+      </header>
+      <div style={{ minHeight: 0, flex: 1 }}>
+        <PreviewFileContent
+          item={item}
+          onAddAnnotation={onAddAnnotation}
+          onImageEditActionChange={setEditAction}
+        />
+      </div>
+    </div>
+  )
+}
+
 export function Layout(): React.JSX.Element {
   const preview = workbench ? (
     <PreviewPanelSurface onAddAnnotation={() => undefined} />
   ) : (
-    <PreviewFileContent item={item} onAddAnnotation={() => undefined} />
+    <PreviewWithToolbar item={item} onAddAnnotation={() => undefined} />
   )
   const session = useSessionStore((state) => state.sessions[0])
   const { active, attachHost } = useImageComposerHost(imageEditorScope(session), true)

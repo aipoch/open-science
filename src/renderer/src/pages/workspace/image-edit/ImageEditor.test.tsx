@@ -2,7 +2,7 @@ import type { ImageModelSettingsSnapshot } from '../../../../../shared/image-mod
 import { useImageModelSettingsStore } from '@/stores/image-model-settings-store'
 import { useSettingsStore } from '@/stores/settings-store'
 // @vitest-environment jsdom
-import { act, useEffect } from 'react'
+import { act, useEffect, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ImageEditingProvider } from './ImageEditingProvider'
@@ -100,13 +100,13 @@ async function render(expanded = false, preview: PreviewFileItem | null = item):
         <Capture />
         <div key={expanded ? 'modal' : 'panel'}>
           {preview ? (
-            <ImageEditorBoundary item={preview}>
-              {({ onEdit, editDisabledReason }) =>
-                onEdit ? (
+            <EditActionBoundary item={preview}>
+              {({ editAction, editDisabledReason }) =>
+                editAction ? (
                   <button
                     aria-label="Edit image"
                     disabled={Boolean(editDisabledReason)}
-                    onClick={onEdit}
+                    onClick={editAction.execute}
                   >
                     <img alt="source" />
                   </button>
@@ -114,11 +114,31 @@ async function render(expanded = false, preview: PreviewFileItem | null = item):
                   <img alt="source" />
                 )
               }
-            </ImageEditorBoundary>
+            </EditActionBoundary>
           ) : null}
         </div>
       </ImageEditingProvider>
     )
+  )
+}
+
+function EditActionBoundary({
+  item,
+  children
+}: {
+  item: PreviewFileItem
+  children: (args: {
+    editAction: { execute: () => void; disabled?: boolean } | undefined
+    editDisabledReason?: string
+  }) => ReactNode
+}): React.JSX.Element {
+  const [editAction, setEditAction] = useState<
+    { execute: () => void; disabled?: boolean } | undefined
+  >()
+  return (
+    <ImageEditorBoundary item={item} onEditActionChange={setEditAction}>
+      {({ editDisabledReason }) => children({ editAction, editDisabledReason })}
+    </ImageEditorBoundary>
   )
 }
 const button = (name: string): HTMLButtonElement => {
@@ -720,6 +740,12 @@ it('releases deleted Session drafts but preserves ordinary navigation and conten
 
 it('keeps Notebook data links out and only shows completed task candidates from the source chain', () => {
   expect(imageEditorSource({ ...item, fromNotebookDataLink: true })).toBeUndefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/png' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/jpeg' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/webp' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/gif' })).toBeUndefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/tiff' })).toBeUndefined()
+  expect(imageEditorSource({ ...item, source: 'local' })).toBeUndefined()
   const task: ImageTask = {
     id: crypto.randomUUID(),
     projectId: 'p',

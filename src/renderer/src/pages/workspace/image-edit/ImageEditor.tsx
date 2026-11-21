@@ -1672,7 +1672,8 @@ export function ImageEditorBoundary({
   readOnly,
   presentation = 'panel',
   onPinSource,
-  onVersionChange
+  onVersionChange,
+  onEditActionChange
 }: {
   item: PreviewFileItem
   children:
@@ -1688,6 +1689,7 @@ export function ImageEditorBoundary({
   readOnly?: boolean
   onPinSource?: () => void
   onVersionChange?: (item: PreviewFileItem | undefined) => void
+  onEditActionChange?: (action: { execute: () => void; disabled?: boolean } | undefined) => void
 }): React.JSX.Element {
   const [loadingRequest, setLoadingRequest] = useState<object>()
   const [failedRequest, setFailedRequest] = useState<object>()
@@ -1713,7 +1715,7 @@ export function ImageEditorBoundary({
   const scope = imageEditorScope(session)
   const key = scope ? imageEditorKey(scope, item) : undefined
   const allowed = !readOnly && owner && session && session.projectId === item.projectId && key
-  const canEnter =
+  const canEnter = Boolean(
     !readOnly &&
     owner &&
     session &&
@@ -1721,6 +1723,7 @@ export function ImageEditorBoundary({
     session.projectId === item.projectId &&
     imageEditorSource(item) &&
     (key || (session.contentLoaded === false && session.historyPage))
+  )
   useEffect(() => {
     return () => {
       entryRequest.requests.forEach((request) => request.abort())
@@ -1741,6 +1744,102 @@ export function ImageEditorBoundary({
     if (draft && !editing) onVersionChange?.(previewItem)
   }, [draft, editing, previewItem, onVersionChange])
   useLayoutEffect(() => () => onVersionChange?.(undefined), [onVersionChange])
+  const editDisabledReason = entryLoading
+    ? t('Loading...')
+    : !draft && draftLimitReached
+      ? t('Close another image editor to start a new one.')
+      : undefined
+  const onEditRef = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => {
+    const onEdit = (): void => {
+      if (!canEnter || !owner || !session || entryLoading || (!draft && draftLimitReached)) return
+      const request = new AbortController()
+      entryRequest.requests.add(request)
+      setFailedRequest(undefined)
+      const begin = (loaded: ChatSession | undefined): void => {
+        if (request.signal.aborted || useSessionStore.getState().selectedSessionId !== session.id)
+          return
+        const loadedScope = imageEditorScope(loaded)
+        const loadedKey = loadedScope ? imageEditorKey(loadedScope, item) : undefined
+        if (!loaded || !loadedKey || loaded.projectId !== item.projectId) return
+        setRequestedEditKey(loadedKey)
+        onPinSource?.()
+        void owner.reloadSettings().catch(() => {})
+        const frame = loaded.conversationGraph?.frames.find(
+          ({ id }) => id === loaded.conversationGraph?.activeFrameId
+        )
+        owner.update(loadedKey, (current) =>
+          current
+            ? {
+                ...current,
+                panelOpen: current.panelOpen || !inDialog,
+                composerCollapsed: false,
+                zoom: previewZoom?.key === previewZoomKey ? previewZoom.zoom : current.zoom
+              }
+            : {
+                owner: {
+                  sessionId: session.id,
+                  frameId: frame?.id,
+                  branchId: frame?.activeBranchId
+                },
+                panelOpen: !inDialog,
+                source: { ...item },
+                prompt: '',
+                options: {},
+                regions: [],
+                undo: [],
+                redo: [],
+                tool: 'pan',
+                zoom: previewZoom?.key === previewZoomKey ? previewZoom.zoom : undefined
+              }
+        )
+      }
+      if (session.contentLoaded !== false) {
+        begin(session)
+        entryRequest.requests.delete(request)
+        return
+      }
+      setLoadingRequest(entryRequest)
+      void ensureSessionContentLoaded({ projectId: session.projectId!, sessionId: session.id })
+        .then(begin)
+        .catch(() => {
+          if (!request.signal.aborted) setFailedRequest(entryRequest)
+        })
+        .finally(() => {
+          entryRequest.requests.delete(request)
+          if (!request.signal.aborted) setLoadingRequest(undefined)
+        })
+    }
+    onEditRef.current = onEdit
+    return () => {
+      if (onEditRef.current === onEdit) onEditRef.current = undefined
+    }
+  }, [
+    canEnter,
+    draft,
+    draftLimitReached,
+    entryLoading,
+    entryRequest,
+    inDialog,
+    item,
+    onPinSource,
+    owner,
+    previewZoom,
+    previewZoomKey,
+    session
+  ])
+  useEffect(() => {
+    if (!onEditActionChange) return
+    onEditActionChange(
+      canEnter && !editing
+        ? {
+            execute: () => onEditRef.current?.(),
+            disabled: Boolean(editDisabledReason)
+          }
+        : undefined
+    )
+    return () => onEditActionChange(undefined)
+  }, [canEnter, editDisabledReason, editing, onEditActionChange])
   if (draft && allowed && editing)
     return (
       <ActiveImageEditor
@@ -1758,67 +1857,6 @@ export function ImageEditorBoundary({
         onVersionChange={onVersionChange}
       />
     )
-  const onEdit = canEnter
-    ? (): void => {
-        if (entryLoading || (!draft && draftLimitReached)) return
-        const request = new AbortController()
-        entryRequest.requests.add(request)
-        setFailedRequest(undefined)
-        const begin = (loaded: ChatSession | undefined): void => {
-          if (request.signal.aborted || useSessionStore.getState().selectedSessionId !== session.id)
-            return
-          const loadedScope = imageEditorScope(loaded)
-          const loadedKey = loadedScope ? imageEditorKey(loadedScope, item) : undefined
-          if (!loaded || !loadedKey || loaded.projectId !== item.projectId) return
-          setRequestedEditKey(loadedKey)
-          onPinSource?.()
-          void owner.reloadSettings().catch(() => {})
-          const frame = loaded.conversationGraph?.frames.find(
-            ({ id }) => id === loaded.conversationGraph?.activeFrameId
-          )
-          owner.update(loadedKey, (current) =>
-            current
-              ? {
-                  ...current,
-                  panelOpen: current.panelOpen || !inDialog,
-                  composerCollapsed: false,
-                  zoom: previewZoom?.key === previewZoomKey ? previewZoom.zoom : current.zoom
-                }
-              : {
-                  owner: {
-                    sessionId: session.id,
-                    frameId: frame?.id,
-                    branchId: frame?.activeBranchId
-                  },
-                  panelOpen: !inDialog,
-                  source: { ...item },
-                  prompt: '',
-                  options: {},
-                  regions: [],
-                  undo: [],
-                  redo: [],
-                  tool: 'pan',
-                  zoom: previewZoom?.key === previewZoomKey ? previewZoom.zoom : undefined
-                }
-          )
-        }
-        if (session.contentLoaded !== false) {
-          begin(session)
-          entryRequest.requests.delete(request)
-          return
-        }
-        setLoadingRequest(entryRequest)
-        void ensureSessionContentLoaded({ projectId: session.projectId!, sessionId: session.id })
-          .then(begin)
-          .catch(() => {
-            if (!request.signal.aborted) setFailedRequest(entryRequest)
-          })
-          .finally(() => {
-            entryRequest.requests.delete(request)
-            if (!request.signal.aborted) setLoadingRequest(undefined)
-          })
-      }
-    : undefined
   return (
     <div className="relative size-full">
       {entryError ? (
@@ -1829,36 +1867,14 @@ export function ImageEditorBoundary({
       {typeof children === 'function'
         ? children({
             item: previewItem,
-            onEdit,
-            editDisabledReason: entryLoading
-              ? t('Loading...')
-              : !draft && draftLimitReached
-                ? t('Close another image editor to start a new one.')
-                : undefined,
+            onEdit: undefined,
+            editDisabledReason,
             initialTransform: draft?.zoom,
             onTransformEnd: (zoom) => {
               setPreviewZoom({ key: previewZoomKey, zoom })
             }
           })
         : children}
-      {presentation !== 'panel' && onEdit ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="absolute right-3 top-3 gap-1.5 bg-bg-000 shadow-sm"
-          disabled={entryLoading || (!draft && Boolean(draftLimitReached))}
-          title={
-            !draft && draftLimitReached
-              ? t('Close another image editor to start a new one.')
-              : undefined
-          }
-          onClick={onEdit}
-        >
-          <Sparkles className="size-3.5" />
-          {t('Edit image')}
-        </Button>
-      ) : null}
     </div>
   )
 }

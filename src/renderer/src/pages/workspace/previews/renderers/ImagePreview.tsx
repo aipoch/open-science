@@ -1,4 +1,3 @@
-import { imagePointAnnotationSourceForPreview } from '../../annotations/image-annotation-source'
 import { ImageEditEntry } from '../../image-edit/ImageEditEntry'
 import type { ImageEditorDraft } from '../../image-edit/image-editor-state'
 import { ImageEditorBoundary } from '../../image-edit/ImageEditor'
@@ -28,10 +27,7 @@ const ZoomableImage = ({
   onRemoveAnnotation,
   onAnnotationError,
   initialTransform,
-  onTransformEnd,
-  onEdit,
-  editDisabledReason,
-  annotationRequiresAlt
+  onTransformEnd
 }: {
   url: string
   name: string
@@ -44,9 +40,6 @@ const ZoomableImage = ({
   onRemoveAnnotation?: (id: string) => void
   onAnnotationError?: (error: AnnotationValidationError) => void
   initialTransform?: ImageEditorDraft['zoom']
-  onEdit?: () => void
-  annotationRequiresAlt?: boolean
-  editDisabledReason?: string
   onTransformEnd?: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
 }): React.JSX.Element => {
   return (
@@ -55,21 +48,14 @@ const ZoomableImage = ({
       initialTransform={initialTransform}
       onTransformEnd={onTransformEnd}
     >
-      <ImageEditEntry
-        onEdit={onEdit}
-        disabledReason={editDisabledReason}
-        sourceSize={sourceSize}
-        canAnnotate={Boolean(
-          onAddAnnotation && annotationItem && imagePointAnnotationSourceForPreview(annotationItem)
-        )}
-      >
+      <ImageEditEntry>
         {annotationItem ? (
           <ImagePointAnnotationSurface
             item={annotationItem}
             src={url}
             sourceSize={sourceSize}
             activeAnnotations={activeAnnotations}
-            requireAltToAdd={annotationRequiresAlt}
+            requireAltToAdd={false}
             onAdd={onAddAnnotation}
             onUpdateNote={onUpdateAnnotationNote}
             onRemove={onRemoveAnnotation}
@@ -108,10 +94,7 @@ export const PreviewImageContent = ({
   onRemoveAnnotation,
   onAnnotationError,
   initialTransform,
-  onTransformEnd,
-  onEdit,
-  editDisabledReason,
-  annotationRequiresAlt
+  onTransformEnd
 }: {
   path: string
   name: string
@@ -130,9 +113,6 @@ export const PreviewImageContent = ({
   onRemoveAnnotation?: (id: string) => void
   onAnnotationError?: (error: AnnotationValidationError) => void
   initialTransform?: ImageEditorDraft['zoom']
-  onEdit?: () => void
-  annotationRequiresAlt?: boolean
-  editDisabledReason?: string
   onTransformEnd?: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -195,11 +175,8 @@ export const PreviewImageContent = ({
   return (
     <div className="relative size-full overflow-hidden p-4">
       <ZoomableImage
-        onEdit={onEdit}
-        editDisabledReason={editDisabledReason}
         initialTransform={initialTransform}
         onTransformEnd={onTransformEnd}
-        annotationRequiresAlt={annotationRequiresAlt}
         url={state.url}
         name={name}
         onError={() => setFailedRequestKey(requestKey)}
@@ -223,6 +200,7 @@ export const ImagePreviewRenderer = ({
   readOnly,
   onPinImageSource,
   onImageEditorVersionChange,
+  onImageEditActionChange,
   activeAnnotations,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -235,11 +213,10 @@ export const ImagePreviewRenderer = ({
     readOnly={readOnly}
     onPinSource={onPinImageSource}
     onVersionChange={onImageEditorVersionChange}
+    onEditActionChange={onImageEditActionChange}
   >
-    {({ item: previewItem, initialTransform, onTransformEnd, onEdit, editDisabledReason }) => (
+    {({ item: previewItem, initialTransform, onTransformEnd }) => (
       <PreviewImageContent
-        onEdit={imageEditPresentation === 'panel' ? onEdit : undefined}
-        editDisabledReason={editDisabledReason}
         key={previewItem.selectedVersionId}
         initialTransform={initialTransform}
         onTransformEnd={onTransformEnd}
@@ -259,7 +236,6 @@ export const ImagePreviewRenderer = ({
         activeAnnotations={
           previewItem.selectedVersionId === item.selectedVersionId ? activeAnnotations : []
         }
-        annotationRequiresAlt={imageEditPresentation !== 'panel'}
         onAddAnnotation={onAddAnnotation}
         onUpdateAnnotationNote={onUpdateAnnotationNote}
         onRemoveAnnotation={onRemoveAnnotation}
