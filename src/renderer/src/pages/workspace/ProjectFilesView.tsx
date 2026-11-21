@@ -41,11 +41,12 @@ import {
   type ProjectFilesViewMode
 } from './project-files-presentation-owner'
 import {
+  fileLoadMessage,
+  indexWarning,
   readPersistedProjectFilesFilter,
   useProjectFileInfiniteLoad,
   useProjectFilesQueryModel
 } from './project-files-query-model'
-import { PageLoadError, ProjectFilesIndexNotice } from './project-files-notices'
 import { FILE_PAGE_SIZE, type PageState } from './use-project-files-index'
 
 type FilePageLoadMode = 'manual' | 'scroll'
@@ -120,6 +121,25 @@ const SectionHeader = ({
     <span className="shrink-0 text-[11px] text-text-300">{countLabel}</span>
   </button>
 )
+
+const PageLoadError = ({
+  message,
+  onRetry
+}: {
+  message?: string
+  onRetry: () => void
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  return message ? (
+    <div className="px-4 py-3">
+      <ErrorNotice
+        role="alert"
+        description={message}
+        primaryButton={{ label: t('Retry'), onClick: onRetry }}
+      />
+    </div>
+  ) : null
+}
 
 // All mode uses a compact per-section button; category mode normally scroll-loads. Both modes share
 // the same terminal state so each upload/session section says No more independently.
@@ -252,14 +272,7 @@ const ProjectArtifactGroupSection = ({
               onOpenInPanel={onOpenInPanel}
             />
           ) : null}
-          {page?.error ? (
-            <PageLoadError
-              error={page.error}
-              failedCursor={page.failedCursor}
-              searching={searching}
-              onRetry={() => void loadPage()}
-            />
-          ) : null}
+          <PageLoadError message={fileLoadMessage(t, page, searching)} onRetry={loadPage} />
           <FilePageFooter
             page={page}
             mode={effectiveLoadMode}
@@ -503,6 +516,7 @@ const ProjectFilesViewContent = ({
   const selectedLocalRoot = selectedLocalRootId
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
+  const warning = indexWarning(catalogIndex, t)
   const filesExpansionLabel = isFilesExpanded ? t('Exit full screen files') : t('Expand files')
   const grantedRootMutationErrorTitle = grantedRootMutationError
     ? grantedRootMutationError.kind === 'change'
@@ -693,10 +707,25 @@ const ProjectFilesViewContent = ({
         />
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
-          <ProjectFilesIndexNotice catalogIndex={catalogIndex} />
-
-          {isSearchActive && isAllFilter && index.overviewError ? (
-            <PageLoadError error={index.overviewError} searching onRetry={index.reloadOverview} />
+          {warning ? (
+            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 px-3 py-2 text-[11px] text-text-200">
+              <span className="min-w-0 flex-1">{warning.message}</span>
+              <Button type="button" variant="outline" size="xs" {...warning.button} />
+            </div>
+          ) : null}
+          <PageLoadError
+            message={
+              warning?.checkingStatus
+                ? undefined
+                : fileLoadMessage(t, { error: catalogIndex.overviewError })
+            }
+            onRetry={catalogIndex.reloadOverview}
+          />
+          {isSearchActive && isAllFilter ? (
+            <PageLoadError
+              message={fileLoadMessage(t, { error: index.overviewError }, true)}
+              onRetry={index.reloadOverview}
+            />
           ) : null}
 
           {hasLoadedInitialPages &&
@@ -743,14 +772,10 @@ const ProjectFilesViewContent = ({
                     data-testid="upload-page-sentinel"
                     className="h-px"
                   />
-                  {index.uploads.error ? (
-                    <PageLoadError
-                      error={index.uploads.error}
-                      searching={isSearchActive}
-                      failedCursor={index.uploads.failedCursor}
-                      onRetry={() => void index.loadMoreUploads()}
-                    />
-                  ) : null}
+                  <PageLoadError
+                    message={fileLoadMessage(t, index.uploads, isSearchActive)}
+                    onRetry={index.loadMoreUploads}
+                  />
                   <FilePageFooter
                     page={index.uploads}
                     mode={isAllFilter || !supportsIntersectionObserver ? 'manual' : 'scroll'}
@@ -772,12 +797,10 @@ const ProjectFilesViewContent = ({
             </section>
           ) : null}
 
-          {isAllFilter && index.groups.error ? (
+          {isAllFilter ? (
             <PageLoadError
-              error={index.groups.error}
-              searching={isSearchActive}
-              failedCursor={index.groups.failedCursor}
-              onRetry={() => void index.loadMoreGroups()}
+              message={fileLoadMessage(t, index.groups, isSearchActive)}
+              onRetry={index.loadMoreGroups}
             />
           ) : null}
 
