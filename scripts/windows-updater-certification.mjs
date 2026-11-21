@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+import { rejects } from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -68,6 +69,27 @@ const sha512Base64 = async (path) =>
   createHash('sha512')
     .update(await readFile(path))
     .digest('base64')
+
+// Model a cached package without duplicating a full extracted installer on the runner.
+const seedPreparedFixture = async (root, executable, version, fileName, marker) => {
+  const canonical = await realpath(executable)
+  const sha512 = createHash('sha512').update(randomUUID()).digest('base64')
+  const id = createHash('sha256')
+    .update(canonical.toLowerCase())
+    .update('\0')
+    .update(sha512)
+    .digest('hex')
+    .slice(0, 32)
+  const stage = join(root, id)
+  await mkdir(join(stage, 'payload'), { recursive: true })
+  await writeFile(join(stage, 'payload', 'sample'), 'prepared payload')
+  await writeFile(
+    join(stage, marker),
+    JSON.stringify({ executable: canonical, version, fileName, sha512 }),
+    { flag: 'wx' }
+  )
+  return stage
+}
 
 const verifyCachedInstaller = async (source, cached) => {
   const [sourceHash, cachedHash] = await Promise.all([sha512Base64(source), sha512Base64(cached)])
@@ -627,27 +649,14 @@ const runElectronUpdater = async ({
   if (coldLaunch) {
     // Model an already-claimed, superseded build of the same version. Only the SDK's current
     // installer is genuine; the desktop must leave this receipt alone until the new app starts.
-    const sha512 = createHash('sha512').update('superseded smoke fixture').digest('base64')
-    const canonical = await realpath(executable)
-    const id = createHash('sha256')
-      .update(canonical.toLowerCase())
-      .update('\0')
-      .update(sha512)
-      .digest('hex')
-      .slice(0, 32)
-    const directory = join(preparedRoot, id)
-    await mkdir(directory, { recursive: true })
-    claimedFixture = join(directory, 'installing.json')
-    await writeFile(
-      claimedFixture,
-      JSON.stringify({
-        executable: canonical,
-        version: expectedVersion,
-        sha512,
-        fileName: basename(expectedInstaller)
-      }),
-      { flag: 'wx' }
+    const directory = await seedPreparedFixture(
+      preparedRoot,
+      executable,
+      expectedVersion,
+      basename(expectedInstaller),
+      'installing.json'
     )
+    claimedFixture = join(directory, 'installing.json')
   }
   const child = spawn(executable, ['--remote-debugging-port=0'], {
     env: appEnv,
@@ -1069,6 +1078,7 @@ const main = async () => {
   ])
 
   let installed = false
+  let nextPreparation
   let assetServer
   let primaryError
   let observation
@@ -1234,6 +1244,16 @@ const main = async () => {
     if (options.coldLaunch) await waitForInstalledApplicationsToExit(installDirectory, env)
     else await terminateDirectoryProcesses(installDirectory)
     if (options.coldLaunch) {
+      // The upgrade's nested uninstall must leave a future preparation for this installation.
+      const nextVersion = currentVersion.replace(/\d+$/, (patch) => String(Number(patch) + 1))
+      const prepared = join(updaterCache, 'open-science-prepared')
+      nextPreparation = await seedPreparedFixture(
+        prepared,
+        installedExecutable,
+        nextVersion,
+        basename(currentInstaller),
+        'ready.json'
+      )
       const { child } = await launchUninstallerLockHolder(
         installDirectory,
         env,
@@ -1273,10 +1293,10 @@ const main = async () => {
         cachedInstaller
       )
       successor.shortcutVersions = [previousVersion, currentVersion]
-      if ((await readdir(join(updaterCache, 'open-science-prepared'))).length)
-        throw new Error(
-          'The new desktop did not reclaim the installed and superseded preparations.'
-        )
+      const remaining = await readdir(prepared)
+      if (remaining.length !== 1 || remaining[0] !== basename(nextPreparation))
+        throw new Error('Expected only the future preparation to survive the upgrade.')
+      await stat(join(nextPreparation, 'payload', 'sample'))
     }
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
@@ -1356,6 +1376,13 @@ const main = async () => {
         env
       })
       await uninstallAndVerify(installDirectory, env, { processRoot: root })
+      if (nextPreparation) {
+        await rejects(
+          stat(nextPreparation),
+          { code: 'ENOENT' },
+          'Manual uninstall retained the prepared update.'
+        )
+      }
     })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.

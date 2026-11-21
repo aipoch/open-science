@@ -1,6 +1,15 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -12,6 +21,67 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+
+it.skipIf(process.platform !== 'win32')(
+  'uninstalls only prepared packages owned by this executable',
+  () => {
+    const temp = mkdtempSync(join(tmpdir(), 'prepared-uninstall-'))
+    roots.push(temp)
+    // Test TEMP can be writable by other accounts; reproduce the private LocalAppData cache.
+    const acl = spawnSync('icacls.exe', [
+      temp,
+      '/inheritance:r',
+      '/grant:r',
+      `${process.env.USERDOMAIN}\\${process.env.USERNAME}:(OI)(CI)F`,
+      '*S-1-5-18:(OI)(CI)F',
+      '*S-1-5-32-544:(OI)(CI)F'
+    ])
+    expect(acl.status).toBe(0)
+    const cache = join(temp, 'sdk')
+    const prepared = join(cache, 'open-science-prepared')
+    const outside = join(temp, 'unrelated')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'keep'), 'unrelated')
+    const executable = join(realpathSync.native(temp), 'app.exe')
+    writeFileSync(executable, '')
+    const seed = (owner: string, marker: string): string => {
+      const sha512 = createHash('sha512').update(marker).digest('base64')
+      const id = createHash('sha256')
+        .update(owner.toLowerCase() + '\0' + sha512)
+        .digest('hex')
+        .slice(0, 32)
+      const stage = join(prepared, id)
+      mkdirSync(join(stage, 'payload'), { recursive: true })
+      writeFileSync(
+        join(stage, marker),
+        JSON.stringify({ executable: owner, version: '2.0.0', sha512, fileName: 'setup.exe' })
+      )
+      return stage
+    }
+    const ready = seed(executable, 'ready.json')
+    const claimed = seed(executable, 'installing.json')
+    const timedOut = seed(executable, 'scan-timed-out.json')
+    const other = seed(join(outside, 'app.exe'), 'ready.json')
+    const deep = join(ready, 'payload', 'a'.repeat(100), 'b'.repeat(100))
+    mkdirSync(deep, { recursive: true })
+    writeFileSync(join(deep, 'file'), '')
+    symlinkSync(outside, join(ready, 'payload', 'junction'), 'junction')
+    writeFileSync(join(cache, 'installer.exe'), 'SDK delta basis')
+
+    const result = runUninstallHelper([
+      'prepared-updates',
+      '--cache',
+      cache,
+      '--executable',
+      executable
+    ])
+    expect(result.status, result.stderr).toBe(0)
+    expect([ready, claimed, timedOut].filter(existsSync), result.stderr).toEqual([])
+    expect(existsSync(join(other, 'ready.json'))).toBe(true)
+    expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('unrelated')
+    expect(readFileSync(join(cache, 'installer.exe'), 'utf8')).toBe('SDK delta basis')
+  }
+)
 
 describe.skipIf(process.platform !== 'win32')('Windows update presentation uninstall', () => {
   it.each(

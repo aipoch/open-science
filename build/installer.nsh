@@ -59,6 +59,16 @@
     MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried." /SD IDOK
     Abort
     notebookSandboxCleanupComplete:
+    !ifdef APP_INSTALLER_STORE_FILE
+      ${if} $installMode == CurrentUser
+        ${GetParent} "$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}" $0
+        nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" prepared-updates --cache "$0" --executable "$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+        Pop $0
+        ${if} $0 != 0
+          DetailPrint "Open-Science prepared update cleanup returned $0"
+        ${endif}
+      ${endif}
+    !endif
     # A second installation may now own the scheme. Never remove its association.
     ReadRegStr $0 HKCU "Software\Classes\open-science\shell\open\command" ""
     ${if} $0 == '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
