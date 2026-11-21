@@ -52,6 +52,33 @@ preview package was ready, the computer use session could no longer attach to th
 window. The preview therefore verifies installation, discovery, and restart lookup; it does
 not pass the WorkBuddy or independent receiving environment gates in #80 and #81.
 
+## Existing Notebook interpreters (#79): macOS arm64, November 21, 2026
+
+The `ffadf8047` build passed installed npm resolution, native loading and startup with
+Node 24.22.2. The entry and native tarball SHA-256 values were
+`aef9f2a525a0b2f2c47107c77101cfd46833eba535d46bbbc2094b8899e9b662` and
+`97e93e5676993ca6ae116ad4dc38954ab1883ae9ad05101b1e2e4516dc920c9f`.
+
+Two fresh profiles had neither managed language prepared. Actual MCP stdio registered and
+enabled two existing candidates for the requested language, passed the exact `runtimeId` and
+language to `start_run`, and received an accepted durable receipt. CLI JSON and MCP agreed on
+the available interpreters, the same-Run review and the final execution evidence. Both reviews
+showed `kernelDispatched: false`; a response for the wrong language was refused, and the
+fixture relayed the one-time decision for the exact requested interpreter on the original Run.
+
+| Language       | Task Run                               | Notebook Run                   | Stdout   |
+| -------------- | -------------------------------------- | ------------------------------ | -------- |
+| Python 3.12.16 | `2bb12be9-bb8f-4ca4-b9b7-35104be0b149` | `notebook-run-1795248180444-1` | `12.0`   |
+| R 4.4.3        | `ff4a3aa7-87d1-426d-a4bf-b6690ed9472c` | `notebook-run-1795248124010-1` | `[1] 12` |
+
+Both completed with `kernelDispatched: true` and `runtimeSource: external`, and reported the
+selected external interpreter's exact identity. The other language remained unprepared. The
+first external Conda R run reproduced a macOS sandbox block at its own `lib/R` launcher.
+The fix allows the selected external Conda R's library tree to be read and keeps writes and
+unrelated paths denied; a real-kernel regression checks both boundaries. The provider response
+was deterministic in this check. The runtime, Notebook dispatch, isolation, and output were
+real; this check did not exercise WorkBuddy or a live model.
+
 ## WorkBuddy setup revision: macOS arm64, November 21, 2026
 
 - Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local
