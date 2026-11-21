@@ -132,13 +132,14 @@ export type TaskNotebookExecution = {
   refusalId?: string
   refusalReason?: string
   continuedFromRefusalId?: string
-  owner?: 'user'
+  owner?: 'user' | 'agent'
   requiresUser?: true
   retryable?: false
   next?: {
     action:
       | 'continue_notebook'
       | 'continue_notebook_in_app'
+      | 'respond_permission'
       | 'review_notebook_code_in_app'
       | 'review_notebook_runtime_in_app'
     message: string

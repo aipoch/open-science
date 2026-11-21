@@ -22,6 +22,7 @@ import {
 import { AcpAppContinuationOwner } from '../acp/app-continuation-owner'
 import { AcpDurableContinuationContextOwner } from '../acp/durable-continuation-context-owner'
 import { AcpElicitationOwner } from '../acp/elicitation-owner'
+import { AcpPermissionBroker } from '../acp/permission-broker'
 import { AcpQuestionContinuationWorkflow } from '../acp/question-continuation-workflow'
 import { AcpSessionInteractionOwner } from '../acp/session-interaction-owner'
 import type { TaskNotebookContinuationRequest, TaskNotebookExecution } from '../../shared/task-api'
@@ -480,6 +481,296 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('relays Notebook reviews on the original Run with exact language and task authority', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-notebook-reviews-'))
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
+    const journal = new FileTaskRunJournal(root)
+    const repository = new NotebookRunRepository(root)
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository
+    })
+    const broker = new AcpPermissionBroker(() => {})
+    notebook.setExecutionApproval(
+      (request) => broker.requestAppApproval(request),
+      (sessionId) => broker.pendingNotebookReviews(sessionId)
+    )
+    const sessionScope = { projectId: project.id, sessionId: 'session-created' }
+    let session: PersistedChatSession | undefined
+    let holdResponse: { entered: () => void; release: Promise<void> } | undefined
+    const agent = createAgent({
+      withSessionAvailable: async (_projectId, _sessionId, operation) => {
+        if (holdResponse) {
+          holdResponse.entered()
+          await holdResponse.release
+        }
+        return operation()
+      },
+      getTaskPermissions: vi.fn((sessionId, promptMessageId) =>
+        broker.getTaskPermissions(sessionId, promptMessageId, {
+          projectId: project.id,
+          messageBranchId: getActiveConversationContext(
+            session!.conversationGraph!,
+            promptMessageId
+          ).messageBranchId!
+        })
+      ),
+      respondTaskPermission: vi.fn((sessionId, promptMessageId, id, option, decision) =>
+        broker.respondTaskPermission(sessionId, promptMessageId, id, option, decision, {
+          projectId: project.id,
+          messageBranchId: getActiveConversationContext(
+            session!.conversationGraph!,
+            promptMessageId
+          ).messageBranchId!
+        })
+      ),
+      prompt: vi.fn(async ({ promptMessageId, provenanceContext }, observer) => {
+        observer?.onProviderPromptAccepted?.()
+        const messageBranchId = provenanceContext!.messageBranchId!
+        notebook.createExecutionIntent({ ...sessionScope, promptMessageId, messageBranchId })
+        const provenance = { projectId: project.id, promptMessageId, messageBranchId }
+        const bound = await broker.requestAppApproval({
+          sessionId: sessionScope.sessionId,
+          title: 'Confirm Notebook kernel and environment',
+          rawInput: {
+            notebookRuntimeSelection: {
+              ...provenance,
+              language: 'r',
+              runtimeId: 'r-research',
+              label: 'Research R',
+              interpreterPath: '/runtime/bin/Rscript',
+              ignored: 'not part of the review'
+            }
+          }
+        })
+        if (!bound) return
+        const lane = createFrameNotebookLane(
+          project.id,
+          sessionScope.sessionId,
+          provenanceContext!.agentFrameId!
+        )
+        await repository.loadOrCreate({ ...sessionScope, lane, workspaceCwd: root })
+        const record = {
+          runId: 'r-review-cell',
+          cellId: 'cell-1',
+          source: 'agent' as const,
+          kernelKind: 'r' as const,
+          script: 'write.csv(results, "study.csv")',
+          startedAt: 10,
+          promptMessageId,
+          messageBranchId,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+        await repository.appendRun({ ...sessionScope, lane, run: { ...record, status: 'queued' } })
+        const approved = await broker.requestAppApproval({
+          sessionId: sessionScope.sessionId,
+          title: 'Review potentially destructive code',
+          rawInput: {
+            code: record.script,
+            notebookCodeRisk: {
+              ...provenance,
+              language: 'r',
+              runId: record.runId,
+              runtimeId: 'r-research',
+              risks: [{ operation: 'overwrite file', source: record.script, line: 1 }]
+            }
+          }
+        })
+        await repository.updateRun({
+          ...sessionScope,
+          lane,
+          run: { ...record, status: approved ? 'completed' : 'failed', kernelDispatched: approved }
+        })
+      })
+    })
+    const commands = commandsFrom(async (channel, _caller, args) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: session ? [session] : [] }
+      if (channel === 'sessions:save-session') {
+        session = materializeSessionConversationGraph(args[0] as PersistedChatSession)
+        return session
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands, agent, notebook }, { runJournal: journal })
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: root,
+      applicationCommands: {
+        localWeb: commands,
+        remoteWeb: { ...commands, rejectedCommandNames: () => [] }
+      },
+      applicationEvents: new ApplicationEventHub(),
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: 'test',
+        configRoot: root,
+        platform: 'test',
+        versions: { node: 'test' }
+      },
+      tasks: api
+    })
+    const send = (
+      id: string,
+      runId: string,
+      input: unknown,
+      headers: Record<string, string> = { authorization: 'Bearer test-token' }
+    ): Promise<Response> =>
+      fetch(
+        `http://127.0.0.1:${server.port}/api/v1/interactions/${encodeURIComponent(id)}/permission?runId=${runId}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify(input)
+        }
+      )
+    const caller = createTaskCallerContext({ authenticatedLocalBearer: true })
+    try {
+      await api.runWithCallerContext(caller, async () => {
+        const started = await api.startRun({ project: project.id, prompt: 'Run the R study.' })
+        const scope = { runId: started.id }
+        await expect
+          .poll(() => api.getRun(started.id))
+          .toMatchObject({
+            status: 'running',
+            execution: {
+              reasonCode: 'notebook_runtime_review_required',
+              language: 'r',
+              kernelDispatched: false,
+              next: { action: 'respond_permission' }
+            },
+            attention: {
+              kind: 'interactions',
+              interactions: [{ notebookReview: { kind: 'runtime' } }]
+            }
+          })
+        const [runtime] = await api.listInteractions(scope)
+        const info = await api.getInteraction(runtime.id, scope)
+        expect(info).toMatchObject({
+          recovery: 'original_run',
+          owner: 'user',
+          notebookReview: { kind: 'runtime', language: 'r' },
+          request: {
+            input: {
+              runtimeId: 'r-research',
+              label: 'Research R',
+              interpreterPath: '/runtime/bin/Rscript'
+            }
+          }
+        })
+        expect(info).not.toHaveProperty('request.input.ignored')
+        const answer = {
+          expectedRevision: runtime.revision,
+          expectedBranchId: runtime.branchId!,
+          expectedLanguage: 'r',
+          optionId: runtime.actions[0],
+          source: 'user_relay'
+        } as const
+        expect(
+          (
+            await send(runtime.id, started.id, answer, {
+              cookie: 'open_science_web_token=test-token'
+            })
+          ).status
+        ).toBe(403)
+        const wrongLanguage = await send(runtime.id, started.id, {
+          ...answer,
+          expectedLanguage: 'python'
+        })
+        expect(wrongLanguage.status).toBe(409)
+        expect(await wrongLanguage.json()).toMatchObject({
+          error: { code: 'interaction_revision_conflict' }
+        })
+        await expect(
+          api.respondPermission(runtime.id, scope, { ...answer, expectedBranchId: 'stale' })
+        ).rejects.toMatchObject({ code: 'interaction_revision_conflict' })
+        await api.setRunInteractionMode(started.id, {
+          expectedRevision: 0,
+          interactionMode: 'delegate'
+        })
+        const entered = Promise.withResolvers<void>()
+        const finish = Promise.withResolvers<void>()
+        holdResponse = { entered: entered.resolve, release: finish.promise }
+        const delegated = api.respondPermission(runtime.id, scope, {
+          ...answer,
+          source: 'delegated_agent',
+          expectedModeRevision: 1
+        })
+        const rejected = expect(delegated).rejects.toMatchObject({
+          code: 'task_delegation_required'
+        })
+        await entered.promise
+        try {
+          await api.setRunInteractionMode(started.id, {
+            expectedRevision: 1,
+            interactionMode: 'relay'
+          })
+        } finally {
+          holdResponse = undefined
+          finish.resolve()
+        }
+        await rejected
+        expect((await send(runtime.id, started.id, answer)).status).toBe(200)
+        await expect(api.respondPermission(runtime.id, scope, answer)).resolves.toMatchObject({
+          changed: false
+        })
+        await expect
+          .poll(() => api.getRun(started.id))
+          .toMatchObject({
+            status: 'running',
+            execution: { reasonCode: 'notebook_code_review_required', kernelDispatched: false },
+            attention: {
+              kind: 'interactions',
+              interactions: [{ notebookReview: { kind: 'code' } }]
+            }
+          })
+        const [code] = await api.listInteractions(scope)
+        await expect(api.getInteraction(code.id, scope)).resolves.toMatchObject({
+          notebookReview: { kind: 'code', language: 'r' },
+          request: {
+            input: { runId: 'r-review-cell', risks: [{ operation: 'overwrite file', line: 1 }] }
+          }
+        })
+        const declined = await send(code.id, started.id, { ...answer, optionId: code.actions[1] })
+        expect(declined.status).toBe(200)
+        expect(await declined.json()).toMatchObject({
+          data: { changed: true, interaction: { response: { status: 'released' } } }
+        })
+        await expect(api.waitForRun(started.id)).resolves.toMatchObject({
+          id: started.id,
+          execution: { status: 'failed', kernelDispatched: false }
+        })
+        const restarted = new HeadlessTaskApi(
+          { commands, agent: createAgent() },
+          { runJournal: journal }
+        )
+        try {
+          await restarted.initialize()
+          await restarted.runWithCallerContext(caller, () =>
+            expect(restarted.getInteraction(code.id, scope)).resolves.toMatchObject({
+              state: 'responded',
+              notebookReview: { kind: 'code', language: 'r' },
+              response: { optionId: code.actions[1], source: 'user_relay', status: 'released' }
+            })
+          )
+        } finally {
+          await restarted.dispose()
+        }
+      })
+    } finally {
+      broker.cancelAllPending()
+      await server.close()
+      await api.dispose()
+      await notebook.dispose()
+    }
+  })
+
   it('does not report successful Notebook execution from a completed Run or a historical cell', async () => {
     const root = await mkdtemp(join(tmpdir(), 'task-notebook-observation-'))
     const repository = new NotebookRunRepository(root)
@@ -2305,7 +2596,14 @@ describe('HeadlessTaskApi adapter', () => {
         artifacts: [],
         preferredComputeHostIds: [],
         interactionPolicy: { mode: 'delegate', revision: 2 },
-        permissionInteractions: [{ id: 'permission:ephemeral', branchId, revision: 0 }]
+        permissionInteractions: [
+          {
+            id: 'permission:ephemeral',
+            branchId,
+            revision: 0,
+            notebookReview: { kind: 'runtime', language: 'python' }
+          }
+        ]
       }
     ]
     let trackContinuation: TaskContinuationTracker | undefined
@@ -2383,7 +2681,9 @@ describe('HeadlessTaskApi adapter', () => {
           }
         })
         await expect(api.getInteraction('permission:ephemeral', scope)).resolves.toMatchObject({
-          state: 'expired'
+          state: 'expired',
+          notebookReview: { kind: 'runtime', language: 'python' },
+          actions: []
         })
         await expect(api.getInteraction(id, scope)).resolves.toMatchObject({
           state: 'pending',

@@ -22,6 +22,8 @@ export type TaskDelegatedInteraction = {
   }
 }
 
+export type TaskNotebookReviewLanguage = 'python' | 'r' | 'repl' | 'bash'
+
 export type TaskInteractionReference = {
   id: string
   kind: string
@@ -34,6 +36,7 @@ export type TaskInteractionReference = {
   revision: number
   interactionPolicy?: TaskInteractionPolicy
   delegated?: TaskDelegatedInteraction
+  notebookReview?: { kind: 'runtime' | 'code'; language: TaskNotebookReviewLanguage }
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]
@@ -62,6 +65,7 @@ export type TaskPermissionResponse = {
   expectedRevision: number
   expectedBranchId: string
   expectedModeRevision?: number
+  expectedLanguage?: TaskNotebookReviewLanguage
   optionId: string
   source: TaskInteractionDecisionSource
 }

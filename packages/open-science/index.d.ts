@@ -432,13 +432,14 @@ export type NotebookExecution = {
   refusalId?: string
   refusalReason?: string
   continuedFromRefusalId?: string
-  owner?: 'user'
+  owner?: 'user' | 'agent'
   requiresUser?: true
   retryable?: false
   next?: {
     action:
       | 'continue_notebook'
       | 'continue_notebook_in_app'
+      | 'respond_permission'
       | 'review_notebook_code_in_app'
       | 'review_notebook_runtime_in_app'
     message: string
@@ -521,6 +522,7 @@ export type SessionPlan = {
 
 export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
 export type TaskInteractionMode = 'relay' | 'delegate'
+export type NotebookReviewLanguage = 'python' | 'r' | 'repl' | 'bash'
 export type TaskInteractionPolicy = { mode: TaskInteractionMode; revision: number }
 export type TaskInteractionDecision =
   | { source: 'user_relay'; expectedModeRevision?: never }
@@ -547,6 +549,7 @@ export type TaskInteractionReference = {
   revision: number
   interactionPolicy?: TaskInteractionPolicy
   delegated?: TaskDelegatedInteraction
+  notebookReview?: { kind: 'runtime' | 'code'; language: NotebookReviewLanguage }
   owner: 'user' | 'agent' | 'service'
   responseCapability?: string
   actions: readonly string[]
@@ -687,6 +690,16 @@ export type Run = {
 export type SessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
 
+export type ExportReviewDecisionRequest = {
+  operationId: string
+  destinationPath: string
+  expiresAt: number
+  sizeBytes: number
+  sha256: string
+  source: 'user_relay'
+  decision: 'approved' | 'rejected'
+}
+
 export type PackageOperation = {
   id: string
   kind: 'export' | 'import' | 'fork'
@@ -697,6 +710,16 @@ export type PackageOperation = {
     expiresAt: number
     destination?: string
     fileDigest: { sizeBytes: number; checksum: string }
+    agentDetails?: {
+      fileScope: { fileCount: number; includesSessionHistory: true }
+      findings: {
+        source: 'session_metadata' | 'package_metadata' | 'research_file'
+        rule: 'field' | 'assignment' | 'url' | 'token'
+      }[]
+    }
+  }
+  sensitiveExportDecision?: Omit<ExportReviewDecisionRequest, 'operationId' | 'source'> & {
+    source: 'user_relay' | 'desktop'
   }
   agent?: {
     correlationId: string
@@ -706,6 +729,7 @@ export type PackageOperation = {
       | 'destination-conflict'
       | 'requires-user'
       | 'content-changed'
+      | 'export-review-expired'
       | 'invalid-archive'
       | 'source-unavailable'
       | 'requires-update'
@@ -1028,6 +1052,7 @@ export class OpenScienceClient {
       optionId: string
       expectedRevision: number
       expectedBranchId: string
+      expectedLanguage?: NotebookReviewLanguage
     },
     options?: RequestOptions
   ): Promise<{ changed: boolean; interaction: PermissionInteraction }>
@@ -1075,6 +1100,10 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<PackageOperation>
   getPackageOperation(options?: RequestOptions): Promise<PackageOperation | null>
+  respondExportReview(
+    request: ExportReviewDecisionRequest,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
   startAgentPackageImport(
     sourcePath: string,
     target: { projectId?: string; projectName?: string },

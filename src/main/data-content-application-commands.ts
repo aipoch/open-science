@@ -59,7 +59,11 @@ import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
-import { canMutateSessionDelegationPolicy, hasCallerAuthority } from './caller-context'
+import {
+  canMutateSessionDelegationPolicy,
+  canRelayTaskInteraction,
+  hasCallerAuthority
+} from './caller-context'
 import { preserveSessionSizeLimitCode } from './session-persistence/application-command-errors'
 
 import {
@@ -1430,6 +1434,17 @@ const registerDataContentApplicationCommands = (
         return dependencies.orgCases.cancelImport(invocation.args[0])
       },
       'sessions:package-operation': (invocation) => {
+        if (invocation.args[0].action === 'respond-export-review') {
+          if (
+            !canRelayTaskInteraction(invocation.callerContext) ||
+            !invocation.callerLease.isCurrent()
+          )
+            throw new ApplicationCommandError(
+              'command-unavailable',
+              'Relaying a sensitive export decision requires the authenticated local Agent interface.'
+            )
+          return dependencies.electron.sessionPackageOperation(invocation)
+        }
         assertElectronOrLocalWebCaller(
           invocation,
           dataContentApplicationCommands.sessionPackageOperation.name

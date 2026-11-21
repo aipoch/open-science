@@ -656,7 +656,7 @@ The CLI checks host support before starting an unattended Run. An older daemon w
 `permission-prompts-none` capability returns `unsupported_capability`; update the host rather than
 silently running a task that might wait for a person. With prompts enabled, `wait_run` and
 `--return-on-attention` return supported pending interactions. Use `list_interactions`,
-`get_interaction` and `respond_permission` for ordinary Task permissions.
+`get_interaction` and `respond_permission` for ordinary Task permissions and Notebook reviews.
 
 ### Execution controls
 
@@ -702,15 +702,18 @@ Notebook success. A missing `kernelDispatched` is unknown. Check output delivery
 If the model reaches its turn or output budget, the Run fails with an explanation and retains
 any partial output. Check the model settings for that Session before trying another research turn.
 
-For `review_notebook_runtime_in_app`, the user responds to **Confirm Notebook kernel and
-environment** in the original Session and branch. The selected language is reported when known.
-An installed environment may still need this approval before the first Notebook Run is created.
-Use `get_setup_status` to check the language and open Notebook settings if the user wants to
-configure it. For `review_notebook_code_in_app`, the user reviews
-the pending cell there. Recheck the same research Run after either decision. CLI and MCP
-provide the handoff; the Web or Desktop app presents the decision. Public `permission.requested`
-notices for these reviews identify the Run and reason without carrying decision options,
-interpreter paths, or code risk details.
+For `execution.next.action: "respond_permission"`, read the pending Notebook review with
+`get_interaction`. `notebookReview.kind` distinguishes a runtime selection from code risk;
+its detail shows the selected environment or the cell's bounded risk evidence. Code can be
+omitted if it is too large or contains sensitive material. Copy `notebookReview.language` into
+`expectedLanguage` and relay the chosen one-time option, branch, and revision. The same
+`relay` and `delegate` policy applies to both reviews. Follow the original Run after a decision.
+`kernelDispatched: false` means the pending cell has not started. An already installed environment
+may still require a binding review. Use `get_setup_status` for installation readiness.
+
+For `review_notebook_runtime_in_app` or `review_notebook_code_in_app`, the review is available
+in the original Session and branch in Open-Science. Public `permission.requested` events
+signal attention; use the scoped detail query for the current options and review evidence.
 
 For `next.action: "continue_notebook"`, find the current stop with `list_interactions` and read it
 with `get_interaction`. Once the cause has been resolved, ask the user whether to continue this
@@ -823,18 +826,23 @@ replaced the original, or the file cannot be verified, expect `completionStatus:
 Keep the original references and check the destination; do not repeat the export automatically.
 Package operations do not offer the durable receipts that research submissions provide.
 If the package contains flagged content, the CLI/MCP export reports `package_sensitive_content`,
-`requiresUser: true` and `completionStatus: "pending"`. Nothing has been published. Open
-Open-Science Desktop on the same machine and profile to find the pending package operation.
-Review the redacted evidence and destination, acknowledge the risk, then confirm in the native
-dialog. The dialog identifies the staged package by its size and SHA-256. It defaults to Cancel.
-The approval is for those exact bytes and that operation, and expires after ten minutes. Local
-Web can show the request, but approval requires Desktop; a browser-only or headless environment
-can cancel the export or remove the flagged content before requesting a new export.
+`requiresUser: true` and `completionStatus: "pending"`. Nothing has been published. Read
+`sensitiveExportReview` from the original operation and present the redacted findings, file
+scope, destination, size, SHA-256, and deadline. Approval includes flagged content without
+redaction. The user may approve or reject that candidate in the external Agent conversation.
+Desktop's native confirmation remains available on the same profile, with Cancel as its default.
 
-After the user responds, query the original `operationId` or `correlationId`; the export call
-does not need to be repeated. Cancellation or expiration publishes no file. If the staged bytes
-change, Open-Science refuses publication even when the size is unchanged. There is no CLI/MCP
-confirmation or force option.
+After the user decides, call `respond_export_review` in MCP or
+`open-science tools call respond_export_review --json`. Pass the original `operationId`,
+`destinationPath`, `expiresAt`, `sizeBytes`, and `sha256` from the review or its `next` action,
+plus `source: "user_relay"` and `decision: "approved"` or `"rejected"`. This action requires
+the authenticated local Agent connection. Task delegation does not approve an export.
+
+Check the original operation for `sensitiveExportDecision` and verified delivery, including after
+a lost response. The same decision can be queried or repeated without publishing twice; a different
+decision conflicts. Rejection or expiration (after ten minutes) cancels the export and removes the
+candidate. Restart invalidates an outstanding review. If the staged bytes change, Open-Science
+refuses publication even when the size is unchanged.
 
 Import an attached `.science` package with the shared `import_session` capability. Pass the
 absolute `sourcePath` on the local shared filesystem and optionally `targetProjectId` for an
@@ -1276,6 +1284,7 @@ service on the same machine with access to the input and delivery files.
 | `download_artifact`                     | Deliver one listed version to a new local file           |
 | `get_delivery_status`                   | Check report and result table delivery for one Run       |
 | `export_session`                        | Export one Session to a local `.science` file            |
+| `respond_export_review`                 | Relay a user's decision about a specific sensitive export |
 | `import_session`                        | Import a local `.science` file as a read-only Session    |
 | `fork_session`                          | Create a writable copy after the user agrees             |
 | `get_package_operation`                 | Check the outcome of a specific package operation        |

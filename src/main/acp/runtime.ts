@@ -2023,7 +2023,14 @@ class AcpRuntime {
       this.sessionInteractions.isCancellationAccepted(scope)
     )
       return []
-    return this.permissionContext.getTaskPermissions(sessionId, promptMessageId)
+    const messageBranchId = scope.provenanceContext?.messageBranchId
+    return this.permissionContext.getTaskPermissions(
+      sessionId,
+      promptMessageId,
+      messageBranchId
+        ? { projectId: this.sessionEnvironment.projectId(sessionId), messageBranchId }
+        : undefined
+    )
   }
 
   respondTaskPermission(
@@ -2040,6 +2047,7 @@ class AcpRuntime {
       this.sessionInteractions.isCancellationAccepted(scope)
     )
       return Promise.resolve(false)
+    const messageBranchId = scope.provenanceContext?.messageBranchId
     return this.permissionContext.respondTaskPermission(
       sessionId,
       promptMessageId,
@@ -2050,12 +2058,16 @@ class AcpRuntime {
         assertCurrent: () => {
           if (
             this.sessionInteractions.current(sessionId) !== scope ||
+            scope.provenanceContext?.messageBranchId !== messageBranchId ||
             this.sessionInteractions.isCancellationAccepted(scope)
           )
             throw new Error('The original prompt is no longer awaiting a decision.')
           decision.assertCurrent()
         }
-      }
+      },
+      messageBranchId
+        ? { projectId: this.sessionEnvironment.projectId(sessionId), messageBranchId }
+        : undefined
     )
   }
 

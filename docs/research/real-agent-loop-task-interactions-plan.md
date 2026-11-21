@@ -130,6 +130,12 @@ Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Pl
 持久等待重用原 Permission Wait Owner，从原请求派生新的 continuation 提交 ID。用 `get_interaction`
 查询决定与接续回执；旧 Run 的中断原因仍保留。决定和查询记录都保存在本机 Task Run 日志，不写入 `.science`。
 
+#74 的 Notebook 环境绑定与代码审阅复用 `respond_permission`。`notebookReview.kind` 区分环境与代码，
+`get_interaction` 返回目标环境或有界的代码风险证据。响应须带已读语言 `expectedLanguage`、原分支、
+revision 和一次性选项；委托仍按当前任务 revision 检查。决定只释放原 Broker 等待，跟踪同一个 Run。
+待审仍为 `kernelDispatched: false`；安装就绪、现有 `auto`/`full` 策略、执行前检查及停止接力保持各自语义。
+服务重启后，已记录决定仍可查询；未处理的活跃审阅失效，不自动重放。
+
 #72 的主任务 AskUser 用 `answer_question` 对已读的唯一题目提交 `accept` 或 `decline`。每个答案包含 `fieldId` 和字面 `value`，允许跳过的字段由 `skipFieldIds` 明示，可提交 `{ fieldId, status: "skipped" }`。`known_context` 只用于用户已提供的信息；跳过或拒绝需要 `user_relay`。提交不会授予权限。
 
 原 Run 尚未停稳时，待办提示重新查询；普通 ACP 表单直接解除原 Provider 等待。Provider 已结束的持久问题原子保存规范答案，再由既有 Question Owner 接续。接续先登记持久 `requestId` 和新 Run，随后才允许发送。用原交互查询该回执，并用 `get_run` 检查新 Run 的真实执行。若重启时答案已记录、接续仍无登记，查询返回 `unconfirmed`；重复提交已记录的回答不会再次发送。原 Run 若因重启中断，仍保持中断。只有活跃进程能回答的表单在重启后失效。本机回答回执不进入 `.science` 或其 Fork。
@@ -145,6 +151,12 @@ Task 接续在调用 Provider 前持久化新的 `requestId` 和 Run，并在 Pl
 当前拒绝、归属分支和原 prompt，并创建新一轮执行意图。旧上下文及其工具调用仍被拒绝；新一轮按现有规则
 重新检查运行时和内存。`get_submission` 可跨服务重启恢复该提交回执；其 `runId` 指向新 Run，
 `notebookContinuation.runId` 指向原 Run。拒绝本身不持久化，未处理的旧拒绝重启后报告失效，不能重放。
+
+#76 的 Agent 导出在私有暂存中扫描候选包。`get_package_operation` 只按原操作返回待审状态、脱敏风险类型、
+文件范围、目标、大小、SHA-256 和截止时间。用户可以在外部 Agent 对话中决定；`respond_export_review`
+只接受本机 Bearer 验证的 Task 调用转交 `user_relay`，绑定原操作和候选数据。旧的 Desktop 审阅入口仍可用。
+发布前复核暂存文件摘要并拒绝覆盖目标。原操作查询区分决定来源和可验证的交付；相同决定不重复发布。
+拒绝或过期清理候选文件。重启后旧审阅不能响应；旧操作缺少确证时返回 `unconfirmed`，不自动重做。
 
 ## 配置与环境准备
 
