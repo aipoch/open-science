@@ -31,13 +31,23 @@ if operation == "quit" {
     var todo=[AXUIElementCreateApplication(dock.processIdentifier)]
     while let el=todo.popLast() {
         if let url=attribute(el,kAXURLAttribute) as? URL, url.resolvingSymlinksInPath().standardizedFileURL.path==bundle {
-            guard AXUIElementPerformAction(el,kAXPressAction as CFString) == .success else { fail("Dock refused tile press") }; exit(0)
+            guard let pos=attribute(el,kAXPositionAttribute), let size=attribute(el,kAXSizeAttribute),
+                  CFGetTypeID(pos)==AXValueGetTypeID(), CFGetTypeID(size)==AXValueGetTypeID() else { fail("Dock tile bounds missing") }
+            var origin=CGPoint.zero, extent=CGSize.zero
+            guard AXValueGetValue(pos as! AXValue,.cgPoint,&origin), AXValueGetValue(size as! AXValue,.cgSize,&extent) else { fail("invalid tile bounds") }
+            let point=CGPoint(x:origin.x+extent.width/2,y:origin.y+extent.height/2)
+            print("Dock tile",bundle,"center",point.x,point.y)
+            for kind:CGEventType in [.mouseMoved,.leftMouseDown,.leftMouseUp] {
+                guard let ev=CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,mouseButton:.left) else { fail("cannot create mouse event") }
+                ev.post(tap:.cghidEventTap); usleep(100_000)
+            }
+            exit(0)
         }
         todo += (attribute(el,kAXChildrenAttribute) as? [AXUIElement]) ?? []
     }
     fail("no Dock tile for exact installed app")
 } else if operation=="visible" {
-    for app in desktop.runningApplications where matches(app) {
+    for app in desktop.runningApplications where matches(app) && !app.isHidden && app.isActive {
         let el=AXUIElementCreateApplication(app.processIdentifier)
         if !(attribute(el,kAXWindowsAttribute) as? [AXUIElement] ?? []).isEmpty {
             print(app.processIdentifier); exit(0)

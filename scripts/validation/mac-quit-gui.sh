@@ -65,7 +65,7 @@ check_window() {
     if pid=$("$gui" visible "$app" 2>/dev/null); then break; fi
     sleep .2
   done
-  test -n "$pid"
+  if [[ -z "$pid" ]]; then /usr/bin/lsappinfo list > "$D/gui-unobserved-apps"; echo "No visible window following $name"; return 1; fi
   /usr/bin/lsappinfo list > "$D/registered-apps"
   python3 - "$D" "$app" "$pid" "$name" <<'CHECK'
 import sys,re
@@ -83,14 +83,49 @@ for i,line in enumerate(lines):
 else: raise RuntimeError('visible PID not registered at the expected path')
 CHECK
 }
+# Install a kept-in-Dock tile in this disposable runner before the bundle is replaced.
+python3 - "$app" <<'PIN'
+import pathlib,plistlib,subprocess,sys
+url=pathlib.Path(sys.argv[1]).as_uri()+'/'
+tile={'tile-type':'file-tile','tile-data':{'file-data':{'_CFURLString':url,'_CFURLStringType':15},'file-label':'Open-Science'}}
+xml=plistlib.dumps(tile).decode()
+subprocess.run(['defaults','write','com.apple.dock','persistent-apps','-array-add',xml],check=True)
+PIN
+defaults write com.apple.dock autohide -bool false
+killall Dock
+sleep 3
+restore() {
+  "$gui" dock "$app"
+  for n in {1..60}; do
+    if actual=$("$gui" visible "$app" 2>/dev/null) && test "$actual" = "$pid"; then return 0; fi
+    sleep .25
+  done
+  echo "Dock did not restore original PID"
+  return 1
+}
+restore
+probe close
+sleep 1
+restore
+echo "$pid" > "$D/gui-same-process-restore"
 wait_name=gui-A-quit
 press_quit
-open -R "$app"
-sleep 1
-"$gui" finder "$app"
-check_window Finder
+if [[ "$ARCH" == x64 ]]; then
+  "$gui" dock "$app"
+  check_window Dock
+else
+  open -R "$app"; sleep 1
+  "$gui" finder "$app"
+  check_window Finder
+fi
 codesign --verify --strict --deep "$app"
 wait_name=gui-B-quit
 press_quit
-"$gui" dock "$app"
-check_window Dock
+if [[ "$ARCH" == x64 ]]; then
+  open -R "$app"; sleep 1
+  "$gui" finder "$app"
+  check_window Finder
+else
+  "$gui" dock "$app"
+  check_window Dock
+fi
