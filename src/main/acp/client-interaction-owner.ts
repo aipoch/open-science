@@ -74,13 +74,15 @@ class AcpClientInteractionOwner {
     }
 
     const promptMessageId = this.options.routing.promptMessageIdForSession(sessionId)
+    const provenance = this.options.routing.provenanceForSession?.(sessionId)
     return this.options.elicitation.request(
       params,
       { sessionId },
       promptMessageId
         ? {
             promptMessageId,
-            provenanceContext: this.options.routing.provenanceForSession?.(sessionId)
+            provenanceContext:
+              provenance?.agentFrameId && provenance.messageBranchId ? provenance : undefined
           }
         : undefined
     )
