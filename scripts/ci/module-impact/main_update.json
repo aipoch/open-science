@@ -1,7 +1,11 @@
 {
   "ownerPaths": [
+    "build/mac-update-network.c",
+    "src/main/update/mac-background-update.test.ts",
     "src/main/update/windows-desktop-version.test.ts",
     "src/main/update/windows-desktop-version.ts",
+    "src/main/update/download-preference.ts",
+    "src/main/update/mac-background-update.ts",
     "src/main/update/windows-background-download.ts",
     "src/main/update/windows-recovery-identity.integration.test.ts",
     "src/main/update/windows-signature-verification.test.ts",
@@ -64,6 +68,8 @@
   ],
   "interfacePaths": [
     "src/main/update/windows-desktop-version.ts",
+    "src/main/update/download-preference.ts",
+    "src/main/update/mac-background-update.ts",
     "src/main/update/windows-background-download.ts",
     "src/main/update/create-strategy.ts",
     "src/main/update/ipc.ts",
@@ -85,6 +91,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/update/mac-background-update.test.ts",
       "src/main/update/windows-desktop-version.test.ts",
       "src/main/update/windows-recovery-identity.integration.test.ts",
       "src/main/update/windows-signature-verification.test.ts",

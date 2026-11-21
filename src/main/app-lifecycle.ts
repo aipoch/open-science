@@ -95,7 +95,7 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
-  beforeExit?: () => void | Promise<void>
+  beforeExit?: (cleanOrdinaryQuit: boolean) => void | Promise<void>
   // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
@@ -363,12 +363,12 @@ export const installAppLifecycle = (
   // migration guard (registered earlier) via defaultPrevented + isMigrationInProgress so a
   // migration-cancelled quit is respected. #177's will-quit guard remains a synchronous backstop for a
   // committed quit that never reaches this path.
-  const finishShutdown = async (): Promise<void> => {
+  const finishShutdown = async (cleanOrdinaryQuit = false): Promise<void> => {
     if (shutdownFinished) return
     shutdownFinished = true
     trayBox.current?.destroy()
     try {
-      await awaitQuitStep(deps.beforeExit?.())
+      await awaitQuitStep(deps.beforeExit?.(cleanOrdinaryQuit))
     } catch (error) {
       deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
     } finally {
@@ -506,6 +506,7 @@ export const installAppLifecycle = (
       let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       let persistenceFailureNeedsConsent = false
       let backendFailure: unknown
+      let cleanOrdinaryQuit = false
       let quitScopeChanged = false
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
@@ -676,6 +677,11 @@ export const installAppLifecycle = (
           usageDrainResult !== 'completed' ||
           rendererFlushResult !== 'completed' ||
           backendTeardownResult !== 'completed'
+        cleanOrdinaryQuit =
+          ordinaryQuit &&
+          !degraded &&
+          rendererPreflightResult === 'completed' &&
+          !persistenceFailureIsForced
         diagnostics?.complete({
           degraded,
           rendererPreflightResult,
@@ -758,7 +764,7 @@ export const installAppLifecycle = (
             }
           }
         } else {
-          await finishShutdown()
+          await finishShutdown(cleanOrdinaryQuit && !systemShutdownRequested)
         }
       }
     })()

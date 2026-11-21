@@ -478,7 +478,7 @@ describe('installAppLifecycle', () => {
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
-    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledWith(true)
     expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
       app.exit.mock.invocationCallOrder[0]
     )

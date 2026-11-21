@@ -41,6 +41,7 @@ import { deliverDesktopEvent } from './desktop-event-delivery'
 import {
   app,
   BrowserWindow,
+  autoUpdater as nativeUpdater,
   Menu,
   Notification,
   crashReporter,
@@ -89,6 +90,8 @@ import { UpdateLifecycleError } from '../shared/update'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
+import { canDownloadMacUpdate, prepareMacUpdateOnQuit } from './update/mac-background-update'
+import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
 import { configureIpcHandlerRegistry, ipcMainHandle } from './ipc-handler-registry'
@@ -1828,10 +1831,16 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
-  const backgroundDownloads =
-    process.platform === 'win32' && app.isPackaged && !headless && !app.getVersion().includes('-')
+  const desktopStable = app.isPackaged && !headless && !app.getVersion().includes('-')
+  const backgroundDownloads = !desktopStable
+    ? undefined
+    : process.platform === 'win32'
       ? loadWindowsDownloadPreference(profilePath)
-      : undefined
+      : process.platform === 'darwin'
+        ? Promise.resolve(profileDownloadPreference(profilePath))
+        : undefined
+  const macBundle = dirname(dirname(dirname(process.execPath)))
+  const macCache = join(app.getPath('home'), 'Library', 'Caches')
   const update = createUpdateStrategy(process.platform, {
     downloadPreference: backgroundDownloads,
     translate,
@@ -1886,9 +1895,11 @@ async function startDesktop(): Promise<void> {
             )
           },
           canDownload: (bytes) =>
-            process.env.LOCALAPPDATA
-              ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
-              : Promise.resolve(false)
+            process.platform === 'darwin'
+              ? canDownloadMacUpdate(macBundle, macCache, bytes)
+              : process.env.LOCALAPPDATA
+                ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
+                : Promise.resolve(false)
         }
       : undefined
   )
@@ -1898,6 +1909,7 @@ async function startDesktop(): Promise<void> {
   })
   const settings = async (): Promise<SettingsSnapshot> =>
     client!.invokeHost('settings:get-settings') as Promise<SettingsSnapshot>
+  let quitStoppedService = false
   let work: DesktopShutdownWork | undefined
   let admission: Promise<unknown> = Promise.resolve()
   app.removeListener('before-quit', holdStartupQuit)
@@ -2072,17 +2084,37 @@ async function startDesktop(): Promise<void> {
       reportError(error)
     },
     shutdownBackends: async (deadlineAt) => {
-      if (!runtimeStopped && recovery.state().phase === 'connected')
-        retainShutdownLease(await client!.quit({ deadlineAt }))
-      else client?.close()
+      if (!runtimeStopped && recovery.state().phase === 'connected') {
+        const lease = await client!.quit({ deadlineAt })
+        quitStoppedService = Boolean(lease)
+        retainShutdownLease(lease)
+      } else client?.close()
       preview?.dispose()
       notifications.dispose()
       visibility.dispose()
       relay?.uninstall()
     },
-    beforeExit: async () => {
+    beforeExit: async (cleanOrdinaryQuit) => {
       const { completeMacInstallationHandoff } = await import('./mac-installation')
       completeMacInstallationHandoff()
+      if (
+        process.platform === 'darwin' &&
+        cleanOrdinaryQuit &&
+        quitStoppedService &&
+        !plannedRelaunch &&
+        !updateCommitted &&
+        !work?.preserveService
+      ) {
+        await prepareMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
+          inspectInstallationAvailability(
+            {
+              installationRoot: installationRootForEntry(backendPaths.entry),
+              allowedProcessIds: allowedInstallationProcessIds
+            },
+            AbortSignal.timeout(10_000)
+          )
+        )
+      }
     }
   })
   // Install the normal lifecycle and its first window before closing the startup gate.
