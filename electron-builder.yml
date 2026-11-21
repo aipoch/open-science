@@ -151,6 +151,8 @@ nsis:
   include: build/installer-license.nsh
 mac:
   extraResources:
+    - from: build/mac-quit-handoff.cjs
+      to: mac-quit-handoff.cjs
     - from: out/desktop-service-launcher
       to: backend/desktop-service-launcher
   # Windows ProgID is a persisted association identity; other platforms use a display name.

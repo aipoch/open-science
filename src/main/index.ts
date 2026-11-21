@@ -91,6 +91,7 @@ import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
 import { canDownloadMacUpdate, prepareMacUpdateOnQuit } from './update/mac-background-update'
+import { macQuitHandoff } from './update/mac-quit-handoff'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
@@ -238,6 +239,15 @@ const buildZoomSafeApplicationMenu = (
 
 async function startDesktop(): Promise<void> {
   const { headless } = parseWebModeOptions(process.argv)
+  if (
+    process.platform === 'darwin' &&
+    app.isPackaged &&
+    !headless &&
+    (await macQuitHandoff('reopen', app.getVersion(), process.argv.slice(1)))
+  ) {
+    app.exit(0)
+    return
+  }
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
     locale: app.getLocale(),
@@ -2105,15 +2115,22 @@ async function startDesktop(): Promise<void> {
         !updateCommitted &&
         !work?.preserveService
       ) {
-        await prepareMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
-          inspectInstallationAvailability(
-            {
-              installationRoot: installationRootForEntry(backendPaths.entry),
-              allowedProcessIds: allowedInstallationProcessIds
-            },
-            AbortSignal.timeout(10_000)
-          )
+        const prepared = await prepareMacUpdateOnQuit(
+          update,
+          nativeUpdater,
+          macBundle,
+          macCache,
+          () =>
+            inspectInstallationAvailability(
+              {
+                installationRoot: installationRootForEntry(backendPaths.entry),
+                allowedProcessIds: allowedInstallationProcessIds
+              },
+              AbortSignal.timeout(10_000)
+            )
         )
+        if (prepared && !(await macQuitHandoff('watch', app.getVersion(), [macCache])))
+          bootstrapLog.warn('macOS update handoff observer unavailable')
       }
     }
   })
