@@ -496,6 +496,75 @@ describe('session diagnostics isolated collector', () => {
       )
     ).toContain('source-unavailable-or-integrity-failure')
   })
+  it('hydrates retained Notebook run records before exporting environment sidecars', async () => {
+    const input = await fixture()
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    const manifest = {
+      schemaVersion: 1,
+      captureKind: 'completed-run',
+      capturedAt: '2026-11-20T00:00:00.000Z',
+      installedInventory: {
+        capturedAt: '2026-11-20T00:00:00.000Z',
+        source: 'full-scan',
+        validation: 'full-scan'
+      },
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      runtimeSource: 'managed',
+      inventorySources: ['kernel-native'],
+      packages: [],
+      complete: true,
+      captureStatus: 'complete'
+    }
+    const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`
+    const manifestChecksum = createHash('sha256').update(manifestContents).digest('hex')
+    await mkdir(join(input.dataRoot, 'runtime/provenance/environment-manifests'), {
+      recursive: true
+    })
+    await writeFile(
+      join(input.dataRoot, 'runtime/provenance/environment-manifests', `${manifestChecksum}.json`),
+      manifestContents
+    )
+    const run = { runId: 'run-1', environmentManifestChecksum: manifestChecksum }
+    const runContents = JSON.stringify(run)
+    const runChecksum = createHash('sha256').update(runContents).digest('hex')
+    await mkdir(join(notebookRoot, '.run-records'), { recursive: true })
+    await writeFile(join(notebookRoot, '.run-records', `${runChecksum}.json`), runContents)
+    await mkdir(notebookRoot, { recursive: true })
+    await writeFile(
+      join(notebookRoot, 'run.json'),
+      JSON.stringify({
+        projectId: 'project',
+        sessionId: 'session',
+        runs: [
+          {
+            storage: 'file',
+            runId: run.runId,
+            sha256: runChecksum,
+            bytes: Buffer.byteLength(runContents)
+          }
+        ]
+      })
+    )
+
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['notebook'] })
+
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    const exported = JSON.parse(
+      await readFile(join(input.directory!, 'content/notebook/run.json'), 'utf8')
+    )
+    expect(exported.runs[0].environmentManifestChecksum).toBe(manifestChecksum)
+    await expect(
+      readFile(
+        join(
+          input.directory!,
+          'content/notebook/environment-manifests',
+          `${manifestChecksum}.json`
+        ),
+        'utf8'
+      )
+    ).resolves.toBe(manifestContents)
+  })
   it('counts only delivered Notebook code when one selected file cannot be written', async () => {
     const input = await fixture()
     const notebookRoot = join(input.dataRoot, 'notebooks/project/session')

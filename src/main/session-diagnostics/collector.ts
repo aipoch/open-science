@@ -509,6 +509,25 @@ const environmentManifestChecksumForRun = (run: Record<string, unknown>): string
 const environmentManifestPath = (dataRoot: string, checksum: string): string =>
   join(dataRoot, ENVIRONMENT_MANIFEST_DIRECTORY, `${checksum}.json`)
 
+const isNotebookRunReference = (
+  value: unknown
+): value is {
+  storage: 'file'
+  runId: string
+  sha256: string
+  bytes: number
+} => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const reference = value as Record<string, unknown>
+  return (
+    reference.storage === 'file' &&
+    typeof reference.runId === 'string' &&
+    digestPattern.test(String(reference.sha256)) &&
+    Number.isSafeInteger(reference.bytes) &&
+    Number(reference.bytes) > 0
+  )
+}
+
 export async function runSessionDiagnosticWorker(
   input: SessionDiagnosticWorkerInput
 ): Promise<SessionDiagnosticWorkerResult> {
@@ -658,6 +677,46 @@ export async function runSessionDiagnosticWorker(
           )
         }
       }
+    }
+    const hydrateNotebookRunReferences = async (
+      value: Record<string, unknown>,
+      source: Source,
+      state: { status: string; reason?: string }
+    ): Promise<Record<string, unknown>> => {
+      if (!Array.isArray(value.runs)) return value
+      const runs = [...value.runs]
+      const firstRetained = Math.max(0, runs.length - 100)
+      for (let index = firstRetained; index < runs.length; index++) {
+        const reference = runs[index]
+        if (!isNotebookRunReference(reference)) continue
+        const path = join(dirname(source.path!), '.run-records', `${reference.sha256}.json`)
+        try {
+          await checkPath(source.root, path)
+          const before = await lstat(path)
+          if (!before.isFile() || before.isSymbolicLink() || before.size > FILE_LIMIT)
+            throw new DiagnosticCollectionError('Notebook run record is unavailable')
+          const contents = await readFile(path, 'utf8')
+          const after = await lstat(path)
+          if (
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            before.size !== reference.bytes ||
+            digest(contents) !== reference.sha256
+          )
+            throw new DiagnosticCollectionError('Notebook run record checksum mismatch')
+          const run = JSON.parse(contents) as Record<string, unknown>
+          if (!run || Array.isArray(run) || run.runId !== reference.runId)
+            throw new DiagnosticCollectionError('Notebook run record identity mismatch')
+          runs[index] = run
+        } catch (error) {
+          partial = true
+          if (state.status === 'exported') state.status = 'partial'
+          state.reason = diagnosticFailure(error)
+          record(`Notebook run record unavailable: ${diagnosticFailure(error)}`)
+          runs[index] = { unavailable: 'run-record-unavailable', runId: reference.runId }
+        }
+      }
+      return { ...value, runs }
     }
     const selected = new Set(
       (input.selectedItems ?? []).filter((id) => sources.some((source) => source.id === id))
@@ -879,8 +938,13 @@ export async function runSessionDiagnosticWorker(
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 if (source.kind === 'notebook') {
                   try {
+                    const hydratedNotebook = await hydrateNotebookRunReferences(
+                      parsed as Record<string, unknown>,
+                      source,
+                      state
+                    )
                     const projection = projectDiagnosticNotebook(
-                      parsed,
+                      hydratedNotebook,
                       {
                         projectId: input.projectId,
                         sessionId: input.sessionId,
@@ -931,7 +995,7 @@ export async function runSessionDiagnosticWorker(
                     } else {
                       state.status = 'partial'
                     }
-                    await exportEnvironmentManifests(parsed as Record<string, unknown>, state)
+                    await exportEnvironmentManifests(hydratedNotebook, state)
                   } catch {
                     await writeBestEffort(
                       `${source.output}.metadata.json`,
