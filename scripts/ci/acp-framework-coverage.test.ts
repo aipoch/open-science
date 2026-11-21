@@ -31,4 +31,13 @@ describe('ACP framework coverage manifest', () => {
     expect(manifest.representative.framework).toBe('claude-code')
     expect(manifest.representative.files.length).toBeGreaterThan(0)
   })
+
+  it('keeps baseline and specialized files disjoint', () => {
+    const baseline = new Set(manifest.baseline)
+    const specialized = Object.values(manifest.specialized).flat()
+    expect(specialized.every((file) => !baseline.has(file))).toBe(true)
+    const representative = new Set(manifest.representative.files)
+    expect(specialized.every((file) => !representative.has(file))).toBe(true)
+    expect(manifest.baseline.every((file) => !representative.has(file))).toBe(true)
+  })
 })
