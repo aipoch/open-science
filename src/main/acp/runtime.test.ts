@@ -34800,3 +34800,115 @@ it.each(
     }
   }
 )
+
+it('dispatches a recovered child answer without granting Notebook execution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-child-answer-cold-resume-'))
+  const framework = getAgentFramework('open-science-agent')
+  const session = { projectId: 'project', sessionId: 'parent-session' }
+  const provenance = {
+    ...session,
+    agentFrameId: 'child-frame',
+    runtimeSegmentId: 'resumed-segment',
+    messageBranchId: 'child-branch',
+    promptMessageId: 'resumed-answer'
+  }
+  const attemptId = 'resumed-attempt'
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: session.projectId,
+    memoryPolicy: healthyNotebookMemoryPolicy()
+  })
+  const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+  const httpHost = new AgentMcpHttpHost()
+  try {
+    // A recovered Attempt has no live grant from the original child. Its Notebook connection
+    // blocks execution while allowing the provider to receive the saved answer.
+    const capability = await rpc.issueDelegatedNotebookConnection({
+      ...provenance,
+      attemptId,
+      rootFrameId: 'root-frame',
+      workspaceCwd: root,
+      isAttemptWritable: () => true
+    })
+    const child = new FakeAgentProcess()
+    let notebookResult: string | undefined
+    const agent = startFakeAgent(child, ['11111111-1111-4111-8111-111111111111'], {
+      onPrompt: async () => {
+        const reply = await fetchLocalRpc(
+          capability,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${capability.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'executeControl',
+              params: { sessionId: session.sessionId, workspaceCwd: root, code: 'return 1' }
+            })
+          },
+          'recovered child Notebook capability'
+        )
+        notebookResult = await reply.text()
+        return { stopReason: 'end_turn' }
+      }
+    })
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: () => ({
+        executionId: attemptId,
+        provenance,
+        workspace: { cwd: root },
+        runtimeHome: root,
+        frameworkId: framework.id,
+        capability
+      }),
+      assertFrameworkNativeDelegationDisabled: () => {},
+      createRuntime: (_scope, callbacks) =>
+        new AcpRuntime({
+          mcpHttpHost: httpHost,
+          appVersion: 'test',
+          defaultCwd: root,
+          resolveBackend: () => ({
+            framework: { ...framework, spawn: () => asAgentProcess(child) },
+            executablePath: '/agent',
+            env: {}
+          }),
+          callbacks,
+          notebook: {
+            projectId: session.projectId,
+            mcpEntryPath: '/app/main.js',
+            getRpcConnection: async () => capability,
+            resolveExecutionIntent: (scope, promptId) =>
+              rpc.resolveExecutionIntent(scope, promptId),
+            rememberExecutionIntent: (scope, promptId, intent) =>
+              rpc.rememberExecutionIntent(scope, promptId, intent)
+          }
+        })
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(
+      {
+        session,
+        frameId: provenance.agentFrameId,
+        runtimeSegmentId: provenance.runtimeSegmentId,
+        attemptId,
+        continuation: true,
+        task: 'The user answered your delegated questions: Control and Treatment.',
+        inputs: []
+      },
+      reservation.slotIds[0]
+    )
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    expect(agent.prompts.map(({ text }) => text)).toEqual([
+      expect.stringContaining('The user answered your delegated questions: Control and Treatment.')
+    ])
+    expect(notebookResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+  } finally {
+    await httpHost.close()
+    await rpc.close()
+    await service.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})

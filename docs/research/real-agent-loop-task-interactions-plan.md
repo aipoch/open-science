@@ -176,6 +176,10 @@ the new Attempt in the same commit. Query `delegated.continuation` on the origin
 The original Run and Attempt states are preserved, and local answer receipts and authority do not
 travel in a package or Fork.
 
+A normal service stop cancels pending child questions as part of stopping the Session. After an
+unexpected interruption, a recoverable durable child question can start a new Attempt. The answer
+reaches the provider, but it does not restore the original Attempt's Notebook execution grant.
+
 When background child settlement wakes the main agent, the scheduler uses the Task tracker to
 journal a new Run and `requestId` before provider dispatch. The original `get_run` lists the new
 Run in `continuations`. The new Run uses the current logical task policy; the original Run remains

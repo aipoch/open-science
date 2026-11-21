@@ -616,8 +616,12 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
             }
           : {})
       }
+      // A cold continuation has no inherited intent. Use the first connection's own blocked
+      // intent so the provider can receive the answer without restarting Notebook execution.
       const intent =
-        (activeTurn && notebookExecutionIntent(activeTurn)) ?? notebookExecutionIntent(input)
+        (activeTurn && notebookExecutionIntent(activeTurn)) ??
+        notebookExecutionIntent(input) ??
+        (scope && !activeMessage ? notebookExecutionIntent(scope.capability) : undefined)
       if (intent) markNotebookExecutionIntent(request, intent)
       return request
     }
