@@ -1,5 +1,6 @@
 import { projectSessionEventPayload } from '../session-event-payload'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { isProviderSetupAction } from '../../shared/bootstrap'
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -1034,7 +1035,8 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview']
+  fetchPreview?: WebServerOptions['fetchPreview'],
+  localBearer?: boolean
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     const reply = (status: number, body: unknown): void => {
@@ -1056,6 +1058,15 @@ const handleTaskApiRequest = async (
           requestBodyBudgetRegistry,
           requestBodyClientId
         )
+        if (isProviderSetupAction((body as { action?: unknown } | null)?.action) && !localBearer) {
+          reply(403, {
+            error: {
+              code: 'forbidden',
+              message: 'Provider setup requires a local CLI or MCP connection.'
+            }
+          })
+          return true
+        }
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.bootstrap(
           body as import('../../shared/bootstrap').BootstrapRequest
@@ -1662,6 +1673,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                   ...(!externalAuthorization && options.tasks.bootstrap
                     ? ['runtime-bootstrap', 'agent-setup']
                     : []),
+                  ...(auth.localBearer && options.tasks.bootstrap ? ['provider-setup'] : []),
                   ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
                     ? ['notebook-setup']
                     : []),
@@ -1756,7 +1768,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 taskIdempotencyRegistry,
                 authorization,
                 options.waitUntilTasksReady,
-                options.fetchPreview
+                options.fetchPreview,
+                auth.localBearer
               )
             )
               return

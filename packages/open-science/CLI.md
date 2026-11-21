@@ -253,10 +253,24 @@ error.
 
 Use `list_runtimes` to see the installed version's choices. After the user chooses, use
 `select_runtime` with its `framework` ID and `prepare_runtime` if the runtime needs installation.
-Provider selection is separate. `configure_provider` offers the Kilo Gateway free route where
-supported. The user can choose other providers through Open-Science Web. Use `open_setup` to launch
-that profile in the browser without exposing its private URL. The agent may complete authorized
-setup steps; the user enters credentials and completes any sign-in. Recheck the same profile afterward.
+`list_providers` shows the selected runtime, active provider and model, saved providers, bundled
+API options, and which models are compatible. Pass `framework` to check another runtime without
+selecting it. Discovery does not select or prepare anything.
+
+For a new API provider, call `save_api_provider` with the chosen `framework` and exact `model`.
+Choose `providerType: "official"` and a `vendorId` (and `region` if needed), or choose
+`providerType: "custom"` and the `baseUrl` and `protocol`. `apiKeyEnv` names an environment
+variable visible to the CLI or MCP process; `credentialRef` instead selects a stored credential
+from `list_providers`. The service stores the key using the existing Provider credential store.
+Do not pass the key itself in tool input. A successful save has `validation: "passed"` and
+`active: false`. The same saved connection or an existing API provider can be tested and enabled
+with `activate_provider`. Supply the `expectedActiveProviderId` and `expectedActiveModel` from
+`list_providers`, including `null` for either absent value. Recheck after a timeout or conflict
+before repeating a write. An active Provider is only one part of the same profile's readiness.
+
+`configure_provider` also offers the Kilo Gateway free route where supported. Use the offered
+sign-in handoff or `open_setup` when the chosen Provider needs user sign-in. This opens the same
+profile in the browser without returning its private URL. The user completes sign-in and consent.
 
 Before submitting research that needs Python or R, use `get_setup_status` with that `language`.
 A setup check installs nothing. If the requested environment is missing, `next` offers

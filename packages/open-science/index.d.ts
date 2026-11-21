@@ -1,14 +1,74 @@
 export type BootstrapRequest =
   | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
   | { action: 'agent-runtime' | 'kilo-free'; framework: AgentFramework }
+  | { action: 'provider-options'; framework?: AgentFramework }
+  | ({
+      action: 'provider-save'
+      framework: AgentFramework
+      model: string
+      name?: string
+      credentialRef?: string
+      // SDK transport to the authenticated local service, not a CLI/MCP tool parameter.
+      key?: string
+    } & (
+      | { providerType: 'official'; vendorId: string; region?: string }
+      | { providerType: 'custom'; baseUrl: string; protocol: ProviderProtocol }
+    ))
+  | {
+      action: 'provider-activate'
+      framework: AgentFramework
+      providerId: string
+      model: string
+      expectedActiveProviderId: string | null
+      expectedActiveModel: string | null
+    }
   | { action: 'provider'; key: string; model: string }
   | { action: 'openalex'; key: string }
+
+export type ProviderProtocol = 'messages' | 'chat-completions' | 'responses'
+export type BootstrapProviderModelOption = {
+  id: string
+  compatible: boolean
+  apiEndpoints: ProviderProtocol[]
+  credentialRequired: boolean
+}
+export type BootstrapProviderOptions = {
+  framework: AgentFramework
+  selectedFramework: AgentFramework | null
+  active: { providerId: string | null; model: string | null }
+  providers: {
+    id: string
+    name: string
+    type: string
+    models: BootstrapProviderModelOption[]
+    authentication: 'api' | 'user-sign-in' | 'app-managed'
+  }[]
+  official: {
+    vendorId: string
+    name: string
+    region?: string
+    regionLabel?: string
+    models: BootstrapProviderModelOption[]
+  }[]
+  customProtocols: ProviderProtocol[]
+  credentialRefs: { id: string; displayName: string }[]
+}
+export type BootstrapProviderSetup = {
+  providerId: string
+  framework: AgentFramework
+  model: string
+  saved: true
+  validation: 'passed'
+  active: boolean
+}
 export type BootstrapResult =
   | {
       ok: true
       providerId?: string
       selectedFramework?: AgentFramework | null
       keylessKiloAvailable?: boolean
+      providerOptions?: BootstrapProviderOptions
+      providerSetup?: BootstrapProviderSetup
       next?: { runtime?: string[]; provider?: string[] }
     }
   | {
@@ -18,7 +78,9 @@ export type BootstrapResult =
         | 'configuration_conflict'
         | 'runtime_unavailable'
         | 'credential_invalid'
+        | 'provider_validation_failed'
         | 'bootstrap_failed'
+      category?: 'ok' | 'auth' | Exclude<ProviderReadinessReason, 'credential_invalid'>
     }
 
 // Keep these standalone published types aligned with the safe Settings contracts.

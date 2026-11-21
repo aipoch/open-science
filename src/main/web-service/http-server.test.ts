@@ -4451,6 +4451,20 @@ describe('startWebHttpServer', () => {
     expect(unauthorizedBootstrap.status).toBe(401)
     expect(tasks.bootstrap).toHaveBeenCalledOnce()
 
+    const cookie = { cookie: 'open_science_web_token=test-token' }
+    const browserProviderSetup = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      headers: cookie,
+      body: JSON.stringify({ action: 'provider-options' })
+    })
+    expect(browserProviderSetup.status).toBe(403)
+    expect(tasks.bootstrap).toHaveBeenCalledOnce()
+    const browserDiscovery = await fetch(`${base}/api/bootstrap`, { headers: cookie })
+    expect((await browserDiscovery.json()).taskCapabilities).not.toContain('provider-setup')
+    expect((await sdk.health()).taskCapabilities).toContain('provider-setup')
+    expect(await sdk.bootstrap({ action: 'provider-options' })).toEqual({ ok: true })
+    expect(tasks.bootstrap).toHaveBeenLastCalledWith({ action: 'provider-options' })
+
     const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
     expect(doctor.status).toBe(200)
     expect(await doctor.json()).toEqual({

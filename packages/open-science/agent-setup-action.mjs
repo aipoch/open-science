@@ -40,9 +40,10 @@ export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvail
       : login
         ? 'Open this profile in Web or use the installed sign-in command. The user completes Codex sign-in.'
         : choose
-          ? 'Ask which model provider to use. Open Web setup to see and configure the available providers.'
-          : 'Open this profile in Web to review the reported setup problem and hand off any sign-in or credential entry to the user.',
+          ? 'List the available providers and ask the user which provider and model to use.'
+          : 'Review provider options in this profile. For a provider that needs user sign-in, open the same profile and let the user sign in.',
     ...(prepare ? { arguments: { framework } } : {}),
+    ...(!runtime && !login ? { discovery: { capability: 'list_providers' } } : {}),
     ...(choose && framework && keylessKiloAvailable
       ? {
           options: [
