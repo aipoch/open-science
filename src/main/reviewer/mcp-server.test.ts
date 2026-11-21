@@ -7,6 +7,8 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { once } from 'node:events'
+import { connect } from 'node:net'
 import { request as httpRequest } from 'node:http'
 import { describe, it, expect, vi } from 'vitest'
 
@@ -515,6 +517,35 @@ describe('validateReviewerEvidenceAccess', () => {
 // channel. This exercises the full initialize → GET → tool-call flow against a live server.
 describe('ReviewerMcpServer HTTP transport', () => {
   const MCP_ACCEPT = 'application/json, text/event-stream'
+
+  it('releases unused connections at shutdown while a partial HTTP request drains', async () => {
+    const server = new ReviewerMcpServer(scope, async () => undefined, undefined, 'initial')
+    const { endpoint } = await server.start()
+    const { hostname, port } = new URL(endpoint)
+    const partial = connect(Number(port), hostname)
+    const unused = connect(Number(port), hostname)
+    let stopping: Promise<void> | undefined
+    try {
+      await Promise.all([once(partial, 'connect'), once(unused, 'connect')])
+      partial.write('GET /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n')
+      // A separate HTTP round trip lets the listener accept both sockets and read the prefix.
+      const probe = await fetch(endpoint, { headers: { connection: 'close' } })
+      await probe.text()
+      const unusedClosed = once(unused, 'close', { signal: AbortSignal.timeout(2_000) })
+      stopping = server.stop()
+      await unusedClosed
+      const chunks: Buffer[] = []
+      partial.on('data', (chunk: Buffer) => chunks.push(chunk))
+      const complete = once(partial, 'end')
+      partial.write('\r\n')
+      await complete
+      expect(Buffer.concat(chunks).toString()).toMatch(/^HTTP\/1\.1 401/)
+    } finally {
+      unused.destroy()
+      partial.destroy()
+      await (stopping ?? server.stop())
+    }
+  })
 
   const parseSse = (body: string): { result?: unknown; error?: { message?: string } } => {
     const dataLine = body.split('\n').find((line) => line.startsWith('data:'))

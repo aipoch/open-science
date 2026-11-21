@@ -30,6 +30,12 @@ const assertLocalCaller = (callerContext: CallerContext, commandName: string): v
   }
 }
 
+const notebookRunEvidenceCommand = defineApplicationCommand<
+  'notebook:run-evidence',
+  WorkflowArgs<'runEvidence'>,
+  WorkflowResult<'runEvidence'>
+>('notebook:run-evidence')
+
 const notebookRunIndexCommand = defineApplicationCommand<
   'notebook:run-index',
   WorkflowArgs<'runIndex'>,
@@ -175,6 +181,7 @@ const notebookReadInputPreviewCommand = defineApplicationCommand<
 >('notebook:read-input-preview')
 
 const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
+  notebookRunEvidenceCommand,
   notebookRunIndexCommand,
   notebookBackgroundTasksCommand,
   notebookStateCommand,
@@ -236,6 +243,8 @@ const installNotebookApplicationCommands = (
         dependencies.workflows.retryResourceRelease(invocation.args[0], currentHuman(invocation)),
       'notebook:background-tasks': (invocation) =>
         dependencies.workflows.backgroundTasks(invocation.args[0]),
+      'notebook:run-evidence': (invocation) =>
+        dependencies.workflows.runEvidence(invocation.args[0]),
       'notebook:run-index': (invocation) => dependencies.workflows.runIndex(invocation.args[0]),
       'notebook:state': (invocation) => dependencies.workflows.state(invocation.args[0]),
       'notebook:memory-policy-state': (invocation) =>

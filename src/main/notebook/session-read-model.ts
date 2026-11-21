@@ -6,6 +6,7 @@ import {
 } from '@aipoch/notebook-analysis'
 import type {
   NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceSnapshot,
   NotebookCell,
   NotebookEnvironmentStatus,
   NotebookKernelInstanceIdentity,
@@ -170,6 +171,36 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       workspaceCwd: session.cwd,
       lane: session.lane
     })
+  }
+
+  async runEvidence(
+    projectId: string,
+    sessionId: string,
+    runId: string,
+    session?: Session
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    if (session) await this.loadSessionDocument(session)
+    // The same targeted window as state keeps lane selection and legacy inline evidence identical.
+    const window = await this.options.repository.readSessionRunWindow(projectId, sessionId, 0, [
+      runId
+    ])
+    const run = window.runs.find((item) => item.runId === runId)
+    if (!run) return null
+    const {
+      kernelEpochId,
+      environmentCapture,
+      environmentManifestChecksum,
+      environmentManifest,
+      helperEvidenceStatus
+    } = this.toPublicRunRecord(run, true)
+    return {
+      runId,
+      kernelEpochId,
+      environmentCapture,
+      environmentManifestChecksum,
+      environmentManifest,
+      helperEvidenceStatus
+    }
   }
 
   async backgroundTasks(

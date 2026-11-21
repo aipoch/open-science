@@ -21,6 +21,7 @@ const shutdownCommands = new Set([
   'acp:get-state',
   'acp:cancel',
   'notebook:background-tasks',
+  'notebook:run-evidence',
   'notebook:state',
   'notebook:project-activity',
   'notebook:memory-policy-state',

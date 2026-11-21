@@ -125,6 +125,30 @@ const makeReadModel = (
   })
 
 describe('NotebookSessionReadModel', () => {
+  it('reads only the requested public evidence, including from a historical frame', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const readModel = makeReadModel(storageRoot, undefined, repository)
+    const lane = createFrameNotebookLane('project', 'session', 'child')
+    await repository.loadOrCreate({
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: storageRoot,
+      lane
+    })
+    const run = makeRun({
+      agentFrameId: 'child',
+      kernelEpochId: 'epoch',
+      submissionIdentity: 'internal'
+    })
+    await repository.appendRun({ projectId: 'project', sessionId: 'session', lane, run })
+    const window = vi.spyOn(repository, 'readSessionRunWindow')
+    const evidence = await readModel.runEvidence('project', 'session', run.runId)
+    expect(window).toHaveBeenCalledWith('project', 'session', 0, [run.runId])
+    expect(evidence).toEqual({ runId: run.runId, kernelEpochId: 'epoch' })
+    await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
+  })
+
   it('projects only visible background task metadata within the same byte window', async () => {
     root = await createRoot()
     const repository = new NotebookRunRepository(root)

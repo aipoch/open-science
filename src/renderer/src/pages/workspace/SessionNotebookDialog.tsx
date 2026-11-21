@@ -22,6 +22,7 @@ import type {
   NotebookKernelKind,
   NotebookAgentSummary,
   NotebookRunPage,
+  NotebookRunEvidenceSnapshot,
   NotebookRunRecord
 } from '../../../../shared/notebook'
 import { kernelKindLabel, resolveRunKernelKind } from './notebook-cell-utils'
@@ -65,7 +66,7 @@ type SessionNotebookContentProps = {
   frameLabels?: Readonly<Record<string, string>>
   agentSummaries?: readonly NotebookAgentSummary[]
   onLoadEarlier?: () => void
-  loadRun?: (runId: string) => Promise<NotebookRunRecord | undefined>
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -644,15 +645,14 @@ const SessionNotebookDialog = ({
   }, [dialogSession, historyPage, loadingEarlier, runs])
 
   const loadRun = useCallback(
-    async (runId: string): Promise<NotebookRunRecord | undefined> => {
+    async (runId: string) => {
       if (!dialogSession) return undefined
-      const state = await window.api.notebook.state({
+      return window.api.notebook.runEvidence({
         sessionId: dialogSession.id,
         projectId: dialogSession.projectId,
         workspaceCwd: dialogSession.cwd ?? '',
-        runIds: [runId]
+        runId
       })
-      return state.runs.find((run) => run.runId === runId)
     },
     [dialogSession]
   )

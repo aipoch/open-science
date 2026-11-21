@@ -1243,7 +1243,10 @@ const callbackContainerSummaryArray = (
   return summaries
 }
 
-const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
+const normalizeFacts = (
+  value: unknown,
+  persistedTypeSummaries?: NotebookDependencyTypeSummary[]
+): NotebookRunDependencyFacts => {
   if (!value || typeof value !== 'object') return unknownFacts('invalid-parser-result')
   const record = value as Record<string, unknown>
   const callbackContainers = callbackContainerSummaryArray(
@@ -1271,7 +1274,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   if (record.rGraphicsState !== undefined && !graphics) return unknownFacts('invalid-parser-result')
   if (record.state === 'unknown') {
     const reasons = stringArray(record.reasons)
-    const typeSummaries = typeSummaryArray(record.typeSummaries ?? [])
+    const typeSummaries = persistedTypeSummaries ?? typeSummaryArray(record.typeSummaries ?? [])
     const typeBindings = typeBindingArray(record.typeBindings ?? [])
     const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
     const memberWrites = memberWriteArray(record.memberWrites ?? [])
@@ -1376,7 +1379,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   const copyOnModifyInvalidatedNames = stringArray(record.copyOnModifyInvalidatedNames ?? [])
   const safeCallNames = stringArray(record.safeCallNames ?? [])
   const safeCallArgumentNames = stringArray(record.safeCallArgumentNames ?? [])
-  const typeSummaries = typeSummaryArray(record.typeSummaries ?? [])
+  const typeSummaries = persistedTypeSummaries ?? typeSummaryArray(record.typeSummaries ?? [])
   const typeBindings = typeBindingArray(record.typeBindings ?? [])
   const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
   const memberWrites = memberWriteArray(record.memberWrites ?? [])
@@ -2476,7 +2479,6 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.safeCallNames) !== undefined) &&
               (factsRecord.safeCallArgumentNames === undefined ||
                 stringArray(factsRecord.safeCallArgumentNames) !== undefined) &&
-              typeSummaryArray(factsRecord.typeSummaries, true) !== undefined &&
               typeBindingArray(factsRecord.typeBindings, true) !== undefined &&
               receiverCallArray(factsRecord.receiverCalls, true) !== undefined &&
               memberWriteArray(factsRecord.memberWrites, true) !== undefined
@@ -2523,14 +2525,15 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.safeCallNames) !== undefined) &&
               (factsRecord.safeCallArgumentNames === undefined ||
                 stringArray(factsRecord.safeCallArgumentNames) !== undefined) &&
-              typeSummaryArray(factsRecord.typeSummaries, true) !== undefined &&
               typeBindingArray(factsRecord.typeBindings, true) !== undefined &&
               receiverCallArray(factsRecord.receiverCalls, true) !== undefined &&
               memberWriteArray(factsRecord.memberWrites, true) !== undefined
         if (!validFacts) return emptySidecar()
+        const typeSummaries = typeSummaryArray(factsRecord.typeSummaries, true)
+        if (!typeSummaries) return emptySidecar()
         runs[runId] = {
           checksum: record.checksum,
-          facts: normalizeFacts(rawFacts),
+          facts: normalizeFacts(rawFacts, typeSummaries),
           ...(fileAccess ? { fileAccess } : {}),
           ...(fileContext ? { fileContext } : {})
         }
@@ -2563,7 +2566,7 @@ class NotebookDependencyAnalyzer {
     await mkdir(dirname(path), { recursive: true })
     const temporaryPath = `${path}.${randomUUID()}.tmp`
     try {
-      await writeFile(temporaryPath, `${JSON.stringify(sidecar, null, 2)}\n`, 'utf8')
+      await writeFile(temporaryPath, `${JSON.stringify(sidecar)}\n`, 'utf8')
       await rename(temporaryPath, path)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => undefined)

@@ -13,7 +13,12 @@ import {
   removeDocumentSources,
   type DocumentTransaction
 } from './document-store'
-import { Prisma, type PdfAnnotation as PdfAnnotationRow, type PrismaClient } from '@prisma/client'
+import {
+  Prisma,
+  type PdfAnnotation as PdfAnnotationRow,
+  type PdfAnnotationSourceBinding,
+  type PrismaClient
+} from '@prisma/client'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -272,19 +277,26 @@ const deletePdfAnnotations = async (
 const scopeWhere = (request: ListPdfAnnotationsRequest): Prisma.PdfAnnotationWhereInput => ({
   document: { sources: { some: bindingWhere(request) } }
 })
-const scopedRow = async (
+const requireScopedSource = async (
   tx: Transaction,
-  row: PdfAnnotationRow,
+  documentId: string,
   scope: ListPdfAnnotationsRequest
-): Promise<PdfAnnotationRow> => {
+): Promise<PdfAnnotationSourceBinding> => {
   const source = await tx.pdfAnnotationSourceBinding.findFirst({
-    where: { ...bindingWhere(scope), documentId: row.documentId },
+    where: { ...bindingWhere(scope), documentId },
     orderBy: { id: 'asc' }
   })
   if (!source) throw new Error('PDF annotation source is not available.')
   await requireDocumentOwner(tx, source)
-  return projectAnnotation(row, source)
+  return source
 }
+
+const scopedRow = async (
+  tx: Transaction,
+  row: PdfAnnotationRow,
+  scope: ListPdfAnnotationsRequest
+): Promise<PdfAnnotationRow> =>
+  projectAnnotation(row, await requireScopedSource(tx, row.documentId, scope))
 
 const requireProject = async (
   client: Pick<Transaction, 'project' | 'projectDeletionIntent'>,
@@ -541,10 +553,20 @@ class PdfAnnotationRepository {
             )
         )
         .flatMap((document) => document.sources.map(bindingSource))
-      const projected = await Promise.all(
-        rows.slice(0, limit).map((row) => scopedRow(transaction, row, request))
+      const pageRows = rows.slice(0, limit)
+      const documentIds = new Set(pageRows.map((row) => row.documentId))
+      const scopedSources = new Map(
+        await Promise.all(
+          Array.from(
+            documentIds,
+            async (id) => [id, await requireScopedSource(transaction, id, request)] as const
+          )
+        )
       )
-      const page = await readAnnotations(transaction, projected)
+      const page = await readAnnotations(
+        transaction,
+        pageRows.map((row) => projectAnnotation(row, scopedSources.get(row.documentId)!))
+      )
       const last = rows.length > limit ? page.at(-1) : undefined
       const receipt =
         !request.cursor &&

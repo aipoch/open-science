@@ -23,6 +23,7 @@ import type {
   NotebookRestartRequest,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
+  NotebookRunEvidenceRequest,
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
@@ -88,6 +89,9 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   )
   ipcMainHandle('notebook:background-tasks', (_event, request: NotebookSessionRequest) =>
     handlers.backgroundTasks(request)
+  )
+  ipcMainHandle('notebook:run-evidence', (_event, request: NotebookRunEvidenceRequest) =>
+    handlers.runEvidence(request)
   )
   ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
     handlers.runIndex(request)

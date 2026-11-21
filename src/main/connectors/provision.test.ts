@@ -5,6 +5,13 @@ import { join } from 'node:path'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import type { StoredCustomMcpServer } from '../settings/types'
 
+vi.mock(import('@aipoch/connector-core'), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createConnectorRegistry: () => {
+    throw new Error('Provisioning Skill documents must not compile tool argument validators')
+  }
+}))
+
 describe('syncConnectorSkillDocs', () => {
   it('does not write or remove bundled docs when already cancelled', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'skills-cancel-'))

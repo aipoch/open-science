@@ -111,6 +111,8 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceRequest,
+  NotebookRunEvidenceSnapshot,
   NotebookSessionRequest,
   NotebookSessionState,
   NotebookSessionStateRequest,
@@ -2832,6 +2834,25 @@ class NotebookRuntimeService {
     await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
     await this.runTerminalization.reconcilePending(session)
     return session
+  }
+
+  async runEvidence(
+    request: NotebookRunEvidenceRequest
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      async () => {
+        const projectId = resolveProjectId(request, resolveProjectId(this.options))
+        const session = await this.sessionForHistoryRead(request, projectId)
+        return this.sessionReadModel.runEvidence(
+          session?.projectId ?? projectId,
+          session?.sessionId ?? request.sessionId,
+          request.runId,
+          session
+        )
+      },
+      false
+    )
   }
 
   async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
