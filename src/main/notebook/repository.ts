@@ -274,6 +274,8 @@ type ReadSessionDocumentsOptions = Readonly<{
   includeEnvironmentManifests?: boolean
 }>
 
+type ReadSessionRunsOptions = ReadSessionDocumentsOptions
+
 type AppendOrGetNotebookRunResult = NotebookRunMutationResult & { admitted: boolean }
 type TransitionNotebookRunResult = NotebookRunMutationResult & { transitioned: boolean }
 
@@ -1536,10 +1538,12 @@ class NotebookRunRepository {
     )
   }
 
-  async readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]> {
-    const documents = await this.readSessionDocuments(projectId, sessionId, {
-      includeEnvironmentManifests: true
-    })
+  async readSessionRuns(
+    projectId: string,
+    sessionId: string,
+    options: ReadSessionRunsOptions = {}
+  ): Promise<NotebookRunRecord[]> {
+    const documents = await this.readSessionDocuments(projectId, sessionId, options)
     return documents
       .flatMap((document) => this.historyRuns(document, projectId, sessionId))
       .sort(

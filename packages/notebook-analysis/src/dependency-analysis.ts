@@ -1776,7 +1776,11 @@ class NotebookDependencyAnalyzer {
     private readonly options: {
       cachePath: (projectId: string, sessionId: string) => string
       repository: {
-        readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]>
+        readSessionRuns(
+          projectId: string,
+          sessionId: string,
+          options?: { includeEnvironmentManifests?: boolean }
+        ): Promise<NotebookRunRecord[]>
       }
       /** Execution directory within the generation path namespace. Defaults to its root. */
       executionRelativeRoot?: string
@@ -2043,7 +2047,9 @@ class NotebookDependencyAnalyzer {
   ): Promise<NotebookDependencyProjection> {
     const runs =
       prepared?.runs ??
-      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId))
+      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      }))
     const boundaryRunId = analyzeBeforeRunId ?? request.throughRunId
     const boundaryIndex = boundaryRunId ? runs.findIndex((run) => run.runId === boundaryRunId) : -1
     const runsToAnalyze =

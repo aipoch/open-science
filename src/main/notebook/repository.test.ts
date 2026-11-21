@@ -286,7 +286,11 @@ describe('notebook run repository', () => {
     expect(ordinary[0]?.runs[0]).not.toHaveProperty('environmentManifest')
     const targeted = await reopened.readSessionRunWindow(projectId, sessionId, 0, ['run-1'])
     expect(targeted.runs[0]?.environmentManifest).toEqual(manifest)
-    const fullRuns = await reopened.readSessionRuns(projectId, sessionId)
+    const lightRuns = await reopened.readSessionRuns(projectId, sessionId)
+    expect(lightRuns[0]).not.toHaveProperty('environmentManifest')
+    const fullRuns = await reopened.readSessionRuns(projectId, sessionId, {
+      includeEnvironmentManifests: true
+    })
     expect(fullRuns[0]?.environmentManifest).toEqual(manifest)
 
     await writeFile(sidecarPath, '{}')
