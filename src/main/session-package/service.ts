@@ -1283,6 +1283,7 @@ export class SessionPackageService {
       ...new Set(
         notebooks.flatMap((document) =>
           document.runs.flatMap((run) => {
+            if (run.environmentManifest) return []
             const checksum = environmentManifestChecksumForRun(run)
             return checksum && /^[a-f0-9]{64}$/u.test(checksum)
               ? [environmentManifestStorageKey(checksum)]
