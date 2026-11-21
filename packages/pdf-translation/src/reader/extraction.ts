@@ -491,6 +491,7 @@ async function readPdfTranslationSource({
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
   const unreliableItems = new Set<string>()
+  const unreliableMathItems = new Set<string>()
   const outlierNavigation = new Map<string, NonNullable<ReturnType<typeof independentRect>>>()
   const navigationPageCount = document.numPages
   const type3Navigation: NonNullable<Awaited<ReturnType<typeof readNativeType3Navigation>>>[] = []
@@ -521,8 +522,9 @@ async function readPdfTranslationSource({
       throw new Error('Invalid PDF page geometry')
     const content = await getPdfTranslationTextContent(
       page,
-      (indexes) => {
+      (indexes, mathIndexes) => {
         for (const index of indexes) unreliableItems.add(`${pageNumber}:${index}`)
+        for (const index of mathIndexes) unreliableMathItems.add(`${pageNumber}:${index}`)
       },
       (proved) => {
         if (proved)
@@ -921,8 +923,58 @@ async function readPdfTranslationSource({
         unit.originalStrings.every((text) => /^[\p{Cc}\s]*$/u.test(text))
       // Keep a proved missing-Unicode symbol on its existing original navigation.
       // Ordinary words and mixed prose retain their established admission.
+      const opaqueMathRun =
+        unreliable &&
+        !unit.figure &&
+        !unit.referenceBoundary &&
+        fragments.length > 0 &&
+        fragments.every(
+          (fragment) =>
+            fragment.pageNumber === fragments[0].pageNumber &&
+            fragment.items.length > 0 &&
+            fragment.items.every(
+              ({ index, text }) =>
+                unreliableMathItems.has(`${fragment.pageNumber}:${index}`) &&
+                pages[fragment.pageNumber - 1].items[index].str === text
+            )
+        )
+      // A damaged formula can leave the same unfinished clause at the end
+      // of adjacent rows. That repeated tail has no independent translation.
+      const [head, tail] = fragments
+      const repeatedMathTail =
+        unreliable &&
+        !unit.figure &&
+        !unit.referenceBoundary &&
+        fragments.length === 2 &&
+        head.pageNumber === tail.pageNumber &&
+        head.rect.width < 0.14 &&
+        tail.rect.width < 0.14 &&
+        Math.abs(head.rect.x + head.rect.width - tail.rect.x - tail.rect.width) <
+          head.rect.height * 0.3 &&
+        tail.rect.y - head.rect.y > head.rect.height * 0.7 &&
+        tail.rect.y - head.rect.y < head.rect.height * 1.45 &&
+        (() => {
+          const suffixes = [head, tail].map(({ pageNumber, items }) => {
+            const [first, ...words] = items
+            if (
+              !first ||
+              !unreliableMathItems.has(`${pageNumber}:${first.index}`) ||
+              pages[pageNumber - 1].items[first.index].str !== first.text
+            )
+              return ''
+            return words
+              .map(({ text }) => text)
+              .join(' ')
+              .replace(/^[)\] ]+/u, '')
+              .trim()
+          })
+          return suffixes[0] === suffixes[1] && /^\p{Ll}{2,12} (?:no|the|a|an)$/u.test(suffixes[0])
+        })()
+      const preserve = unit.preserve ?? (opaqueMathRun ? 'formula' : undefined)
       const sourceOnly =
         unit.sourceOnly ||
+        opaqueMathRun ||
+        repeatedMathTail ||
         opaqueControlRun ||
         (unreliable &&
           [...unit.source].length <= 32 &&
@@ -952,7 +1004,7 @@ async function readPdfTranslationSource({
         id: unit.id,
         source: unit.source,
         ...(sourceOnly ? { sourceOnly: true as const } : {}),
-        ...(unit.preserve ? { preserve: unit.preserve } : {}),
+        ...(preserve ? { preserve } : {}),
         ...(unit.figure ? { figure: true as const } : {}),
         ...(unit.referenceBoundary ? { referenceBoundary: true as const } : {}),
         fragments

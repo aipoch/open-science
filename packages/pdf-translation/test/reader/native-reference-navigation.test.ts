@@ -424,3 +424,74 @@ test.each(['textless leaf', 'later prose', 'wrong sequence'])(
     )
   }
 )
+
+test.each(['complete', 'foreign text', 'different font'] as const)(
+  'keeps a short journal-reference column continuation eligible only when unproved (%s)',
+  (shape) => {
+    const entries = [
+      item('The concluding discussion summarizes the independent measurements.', 42, 215, 239),
+      item('REFERENCES', 42, 265, 69, 9, 'Heading'),
+      item('Adler A., 1996, Field Review, 2, 18.', 42, 285, 159, 8),
+      item('Baird M., 2000, Field Review, 7, 42.', 42, 742, 170, 8),
+      item('Cline T., Archer D., 2002 Test Reports, 16, 105.', 42, 752, 210, 8),
+      item('Cline T., Brook W., 2003 Test Reports, 20, 301.', 299, 72, 220, 8),
+      item(
+        shape === 'foreign text'
+          ? 'These final remarks summarize the observations and describe our next experiment.'
+          : 'Dale M., 2005, Field Review, 8, 32.',
+        299,
+        82,
+        175,
+        8,
+        shape === 'different font' ? 'Other' : 'Body'
+      ),
+      item('© Journal of Methods', 420, 773, 120, 8)
+    ]
+    const { units } = group([page(1, entries)])
+    const right = units.filter((unit) => unit.items.some((key) => key === '1:5' || key === '1:6'))
+    expect(right.length).toBeGreaterThan(0)
+    expect(right.some((unit) => unit.preserve === 'reference')).toBe(shape === 'complete')
+    expect(units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each([true, false])(
+  'preserves a closed hanging bibliography that turns to the top of the right column (%s)',
+  (complete) => {
+    const bibliography = (names: string[], x: number, y: number): PdfLayoutTextItem[] => {
+      const rows = [
+        `${names[0]}, A. 2013, Field Review, 8, 38`,
+        `${names[1]}, E., Marsh, L. 2008, in Proc. Methods`,
+        'Conference Series, 5, 144',
+        `${names[2]}, F. 2017, Data Journal, 3, 21`,
+        `${names[3]}, T. 2019, in Review of Independent`,
+        'Measurement Techniques, 550'
+      ]
+      return rows.map((text, index) =>
+        item(text, x + (index === 2 || index === 5 ? 10 : 0), y + index * 9, 180, 8)
+      )
+    }
+    const left = bibliography(['Adler', 'Brown', 'Clay', 'Dale'], 42, 665),
+      right = bibliography(['Firth', 'Gale', 'Holt', 'Ives'], 306, 62)
+    if (!complete) right[3].str = 'A separate discussion of the results follows.'
+    const items = [
+      item(
+        'The discussion ends with an independent paragraph above the bibliography.',
+        42,
+        605,
+        235
+      ),
+      item('References', 42, 650, 60, 10, 'Heading'),
+      ...left,
+      ...right,
+      item('Article number, page 1 of 1', 450, 742, 90, 9)
+    ]
+    const { units } = group([page(1, items)])
+    const rightKeys = right.map((_, i) => `1:${2 + left.length + i}`)
+    const owner = (key: string): PdfTranslationLayout['units'][number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    expect(rightKeys.every((key) => owner(key)?.preserve === 'reference')).toBe(complete)
+    expect(owner('1:0')?.sourceOnly).toBeUndefined()
+    expect(new Set(units.flatMap((unit) => unit.items)).size).toBe(items.length)
+  }
+)
