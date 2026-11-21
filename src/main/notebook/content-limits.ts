@@ -33,11 +33,10 @@ export const notebookDiagnosticPreview = (text: string, limit: number): string =
   const marker = '\n…\n'
   const available = limit - marker.length
   const head = Math.ceil(available / 2)
-  return (
-    text.slice(0, head).toWellFormed() +
-    marker +
-    text.slice(text.length - (available - head)).toWellFormed()
-  )
+  // Drop a split surrogate at either cut rather than returning half a character.
+  const prefix = text.slice(0, head).replace(/[\uD800-\uDBFF]$/u, '')
+  const suffix = text.slice(text.length - (available - head)).replace(/^[\uDC00-\uDFFF]/u, '')
+  return prefix + marker + suffix
 }
 
 // Takes a UTF-8 prefix without leaving an invalid partial code point at the boundary.
