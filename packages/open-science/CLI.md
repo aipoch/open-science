@@ -306,10 +306,11 @@ open-science project create "First review" --json
 open-science run --project "First review" --prompt "Review the evidence in this project" --wait --jsonl
 ```
 
-To use Claude Code, Codex, OpenCode, CodeBuddy, or Pi, select the Agent in Settings. Choose
-Install or Repair to download its app-managed runtime from npm. Codex can reuse a compatible
-local CLI and download just its ACP adapter. The CLI also supports installing Codex explicitly
-as shown below.
+To use Claude Code, Codex, OpenCode, CodeBuddy, or Pi, choose an Agent runtime from
+`list_runtimes`. Both MCP and `open-science tools call` support `prepare_runtime` and
+`select_runtime` for an explicitly chosen framework. In Settings, choose Install or Repair
+to download its app-managed runtime from npm. Codex can also reuse a compatible local CLI
+and download just its ACP adapter. The optional commands below are specific to Codex.
 
 <a id="first-run-setup-codex"></a>
 
