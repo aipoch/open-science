@@ -35,7 +35,7 @@ if(action==='serve'){
     if(action==='configure'){
       const url=readFileSync(join(dir,'feed-url'),'utf8');writeFileSync(join(dir,'test-feed.yml'),'provider: generic\nurl: '+url+'\nupdaterCacheDirName: '+updName+'\n')
       record('configure',await run(`const u=req('electron-updater').autoUpdater;u.updateConfigPath=${JSON.stringify(join(dir,'test-feed.yml'))};u.setFeedURL({provider:'generic',url:${JSON.stringify(url)}});for(const [owner,e] of [['SDK',u],['Squirrel',native]])for(const name of ['checking-for-update','update-downloaded','error'])e.on(name,(x)=>fs.appendFileSync(${JSON.stringify(join(dir,'events.jsonl'))},JSON.stringify({t:new Date(),owner,name,pid:process.pid,info:x instanceof Error?x.message:undefined})+'\\n'));return {exe:process.execPath,pid:process.pid,version:app.getVersion(),sdk:req('electron-updater/package.json').version,windows:BrowserWindow.getAllWindows().map(w=>w.webContents.getURL())}`))
-      record('check',await renderer('window.api.update.check()'))
+      await renderer('window.api.update.check()'); record('check',await renderer('window.api.update.check()')); assert.ok(readFileSync(join(dir,'server.log'),'utf8').includes('/latest-mac.yml'),'test feed was not contacted')
     }else if(action==='status')record('status',await run("return {pid:process.pid,version:app.getVersion(),focused:!!BrowserWindow.getFocusedWindow(),win:BrowserWindow.getAllWindows().map(x=>x.webContents.getURL()),status:await render('window.api.update.getStatus()')}"))
     else if(action==='identity')record('identity',await run('return {version:app.getVersion(),pid:process.pid,exe:process.execPath}'))
     else if(action==='off'||action==='on')record(action,await renderer('window.api.update.setAutomaticDownloads('+String(action==='on')+')'))
@@ -46,6 +46,7 @@ if(action==='serve'){
     else if(action==='close')record(action,await run('w.close();return process.pid'))
     else if(action==='quit')record(action,await run("setTimeout(()=>Menu.sendActionToFirstResponder('terminate:'),100);return process.pid"))
     else if(action==='settings'){
+      for(let n=0;n<30&&!await renderer("!!document.querySelector('[aria-label=\"Settings\"]')");n++)await delay(250)
       record('controls',await renderer("Array.from(document.querySelectorAll('button')).map(b=>b.getAttribute('aria-label')||b.textContent).filter(Boolean).slice(0,65)"))
       await renderer("document.querySelector('[aria-label=\"Settings\"]')?.click()")
       await delay(900)
