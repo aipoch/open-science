@@ -140,6 +140,9 @@ const composeAcpRuntimePlanWorkflow = (
         kind: 'plan',
         level: 'info',
         sessionId,
+        ...(projection.originatingTaskRunId && projection.originatingPromptMessageId
+          ? { promptMessageId: projection.originatingPromptMessageId }
+          : {}),
         title: 'Session Plan updated',
         planProjection: projection
       })
@@ -348,6 +351,7 @@ const composeAcpRuntimePlanWorkflow = (
           sessionId: input.sessionId,
           executionId: execution.turnToken,
           interactionId,
+          taskRunId: execution.provenanceContext?.taskRunId,
           content: input.input as GeneratePlanContent
         })
       } catch (error) {

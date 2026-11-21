@@ -485,6 +485,8 @@ export class AcpElicitationOwner {
       ...(durableChoiceContext?.provenanceContext || resolvedDurable?.provenanceContext
         ? { taskRequestId: requestId }
         : {}),
+      taskRunId: (durableChoiceContext?.provenanceContext ?? resolvedDurable?.provenanceContext)
+        ?.taskRunId,
       ...(resolvedDurable ? { durable: resolvedDurable } : {})
     })
     if (!projection) return undefined

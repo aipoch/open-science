@@ -25,6 +25,8 @@ const TASK_RUN_JOURNAL_VERSION = 1 as const
 
 export type TaskRunJournalEntry = TaskRun & {
   promptMessageId?: string
+  /** Notebook continuations own a fresh prompt; tracked app continuations bind exact interactions. */
+  continuationKind?: 'notebook' | 'app'
   sessionCommitStatus?: Exclude<TaskRunStatus, 'running'>
   permissionPrompts?: 'none'
   permissionInteractions?: TaskRunPermissionRecord[]
@@ -145,6 +147,7 @@ const nestedRunSchema = z.object({
   attention: z.object({ kind: z.literal('plan-approval'), plan: planSchema }).optional(),
   interactionPolicy: z.object({ mode: z.enum(['relay', 'delegate']), revision: count }).optional(),
   permissionPrompts: z.literal('none').optional(),
+  continuationKind: z.enum(['notebook', 'app']).optional(),
   permissionInteractions: z
     .array(
       z.object({
@@ -193,6 +196,7 @@ const decodeRun = (value: unknown): TaskRunJournalEntry => {
     (value.requestId !== undefined && !identity.safeParse(value.requestId).success) ||
     (value.continuedFromRunId !== undefined &&
       !identity.safeParse(value.continuedFromRunId).success) ||
+    (value.continuationKind !== undefined && value.continuedFromRunId === undefined) ||
     !identity.safeParse(value.sessionId).success ||
     !identity.safeParse(value.projectId).success ||
     typeof value.cwd !== 'string' ||

@@ -309,6 +309,7 @@ type ArtifactBrowserSelection = {
 }
 
 type ScopedTaskQuestion = {
+  taskRunId?: string
   interaction: TaskQuestionInteraction
   request: PendingElicitationRequest
   receipt?: TaskQuestionReceipt
@@ -571,15 +572,22 @@ class HeadlessTaskApi {
           'This continuation was already recorded; the provider was not called again.'
         )
     }
-    const originRunId = this.runner.findRunIdForPrompt(
-      identity.sessionId,
-      identity.originalPromptMessageId
-    )
+    const scopedInteraction =
+      identity.kind === 'plan' || identity.kind === 'question'
+        ? this.runner.resolveInteractionRun(
+            identity,
+            identity.originalPromptMessageId,
+            identity.originalRunId
+          )
+        : undefined
+    const originRunId = scopedInteraction
+      ? scopedInteraction.runId
+      : this.runner.findRunIdForPrompt(identity.sessionId, identity.originalPromptMessageId)
     if (!originRunId || this.runner.getRun(originRunId).projectId !== identity.projectId) {
-      if (identity.kind === 'permission')
+      if (scopedInteraction?.unresolved || identity.kind === 'permission')
         throw new TaskRunnerError(
           'interaction_not_found',
-          'The original Task permission Run is no longer available.'
+          'The original Task interaction Run is no longer available.'
         )
       return send(() => undefined)
     }
@@ -654,6 +662,7 @@ class HeadlessTaskApi {
       if (receipt?.status === 'accepted')
         return { taskRunStatus: 'tracked', requestId, runId: receipt.runId }
       if (receipt?.status === 'pending') return { taskRunStatus: 'pending', requestId }
+      if (receipt) return { taskRunStatus: 'unconfirmed', requestId }
     } catch (error) {
       if (
         !(error instanceof TaskRunnerError) ||
@@ -1079,8 +1088,13 @@ class HeadlessTaskApi {
     return interaction?.plan ? { ...interaction.plan, branchId: interaction.branchId } : null
   }
 
-  private publicPlan({ externalResponse, ...plan }: ActivePlanProjection): ActivePlanProjection {
+  private publicPlan({
+    externalResponse,
+    originatingTaskRunId,
+    ...plan
+  }: ActivePlanProjection): ActivePlanProjection {
     void externalResponse
+    void originatingTaskRunId
     return plan
   }
 
@@ -1378,9 +1392,14 @@ class HeadlessTaskApi {
     const promptMessageId = record.originatingPromptMessageId
     if (!promptMessageId || !messages.some((message) => message.id === promptMessageId))
       return undefined
-    if (run && this.runner.getRunPromptMessageId(run.id) !== promptMessageId) return undefined
-    const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
-    const interactionPolicy = runId ? this.runner.getRun(runId).interactionPolicy : undefined
+    const { runId, unresolved } = this.runner.resolveInteractionRun(
+      { projectId: session.projectId, sessionId: session.id },
+      promptMessageId,
+      record.originatingTaskRunId
+    )
+    if (run && runId !== run.id) return undefined
+    const ownerRun = runId ? this.runner.getRun(runId) : undefined
+    const interactionPolicy = ownerRun?.interactionPolicy
     const branchId = graph?.frames.find(({ id }) => id === graph.activeFrameId)?.activeBranchId
     const plan =
       historical ??
@@ -1396,7 +1415,11 @@ class HeadlessTaskApi {
         ? active.delivery
         : undefined
     const expired = Boolean(
-      session.packageOrigin || historical || !branchId || run?.status === 'cancelled'
+      unresolved ||
+      session.packageOrigin ||
+      historical ||
+      !branchId ||
+      ownerRun?.status === 'cancelled'
     )
     const state =
       receipt || plan.approval !== 'pending' ? 'responded' : expired ? 'expired' : 'pending'
@@ -1707,20 +1730,29 @@ class HeadlessTaskApi {
       promptMessageId: string,
       waitsForProvider: boolean,
       pending: boolean,
-      receipt?: TaskQuestionReceipt
+      receipt?: TaskQuestionReceipt,
+      taskRunId?: string
     ): void => {
       const id = `question:${request.requestId}`
       if (interactionId && id !== interactionId) return
-      if (run && this.runner.getRunPromptMessageId(run.id) !== promptMessageId) return
-      const runId = run?.id ?? this.runner.findRunIdForPrompt(session.id, promptMessageId)
+      const { runId, unresolved } = this.runner.resolveInteractionRun(
+        { projectId: session.projectId, sessionId: session.id },
+        promptMessageId,
+        taskRunId
+      )
+      if (run && runId !== run.id) return
       const state = receipt
         ? 'responded'
-        : pending && run?.status !== 'cancelled' && activePromptId === promptMessageId
+        : !unresolved &&
+            pending &&
+            (!runId || this.runner.getRun(runId).status !== 'cancelled') &&
+            activePromptId === promptMessageId
           ? 'pending'
           : 'expired'
       const readyToAnswer =
         waitsForProvider || (session.status === 'waiting-for-user' && !session.activeRun)
       byRequestId.set(request.requestId, {
+        taskRunId,
         request,
         receipt,
         waitsForProvider,
@@ -1811,7 +1843,8 @@ class HeadlessTaskApi {
         Boolean(
           question.durable && question.state === 'pending' && session.status === 'waiting-for-user'
         ),
-        question.taskResponse
+        question.taskResponse,
+        question.taskRunId
       )
     }
     for (const {
@@ -1822,8 +1855,16 @@ class HeadlessTaskApi {
     } of this.ports.agent.questions.list(session.id)) {
       if (provenance.agentFrameId !== graph.rootFrameId || provenance.messageBranchId !== branchId)
         continue
-      if (byRequestId.get(request.requestId)?.receipt) continue
-      add(request, provenance.promptMessageId, waitsForProvider, true, receipt)
+      const durable = byRequestId.get(request.requestId)
+      if (durable?.receipt) continue
+      add(
+        request,
+        provenance.promptMessageId,
+        waitsForProvider,
+        true,
+        receipt,
+        provenance.taskRunId
+      )
     }
     return [...byRequestId.values()]
   }
@@ -2074,6 +2115,7 @@ class HeadlessTaskApi {
       }
       await this.ports.agent.questions!.respond({
         projectId: session.projectId,
+        originalRunId: interaction.runId,
         request,
         waitsForProvider,
         answers,
@@ -2083,7 +2125,8 @@ class HeadlessTaskApi {
           assertQuestion(current)
           if (
             provenance?.messageBranchId !== branchId ||
-            provenance?.promptMessageId !== promptMessageId
+            provenance?.promptMessageId !== promptMessageId ||
+            provenance?.taskRunId !== question.taskRunId
           )
             throw staleQuestion()
         },
@@ -2093,7 +2136,8 @@ class HeadlessTaskApi {
           if (
             latest.packageOrigin ||
             active?.branchId !== branchId ||
-            active?.promptMessageId !== promptMessageId
+            active?.promptMessageId !== promptMessageId ||
+            current?.durable?.provenanceContext?.taskRunId !== question.taskRunId
           )
             throw staleQuestion()
           if (latest.activeRun)
@@ -2443,6 +2487,7 @@ class HeadlessTaskApi {
           { project: stop.projectId, sessionId: stop.sessionId, prompt: input.prompt },
           requestId,
           {
+            originalRunId: input.runId,
             projectId: stop.projectId,
             refusalId: stop.refusalId,
             task: { branchId: input.branchId, promptMessageId: stop.promptMessageId }

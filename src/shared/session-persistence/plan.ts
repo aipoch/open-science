@@ -52,6 +52,7 @@ export const sanitizeSessionPlanRuntimeContext = (
           'artifactChecksum',
           'document',
           'originatingPromptMessageId',
+          'originatingTaskRunId',
           'materializedAt',
           'approval',
           'reviewFeedbackMessageId',
@@ -82,12 +83,14 @@ export const sanitizeSessionPlanRuntimeContext = (
       : asString(value.originatingPromptMessageId)
   const materializedAt =
     value.materializedAt === undefined ? undefined : asNumber(value.materializedAt)
+  const originatingTaskRunId = asString(value.originatingTaskRunId)
   const approval = asString(value.approval) as SessionPlanApproval | undefined
   if (
     !artifactId ||
     !artifactVersionId ||
     !artifactChecksum ||
     (value.originatingPromptMessageId !== undefined && !originatingPromptMessageId) ||
+    (value.originatingTaskRunId !== undefined && !originatingTaskRunId) ||
     (value.materializedAt !== undefined && (materializedAt === undefined || materializedAt < 0)) ||
     !approval ||
     !SESSION_PLAN_APPROVALS.has(approval) ||
@@ -190,6 +193,7 @@ export const sanitizeSessionPlanRuntimeContext = (
     artifactChecksum,
     ...(document ? { document } : {}),
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
+    ...(originatingTaskRunId ? { originatingTaskRunId } : {}),
     ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,
     ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}),
@@ -261,6 +265,7 @@ const sanitizeHistoricalPlanProjection = (
     artifactVersionId: sanitizedJson.artifactVersionId,
     artifactChecksum: sanitizedJson.artifactChecksum,
     originatingPromptMessageId,
+    originatingTaskRunId: sanitizedJson.originatingTaskRunId,
     approval: sanitizedJson.approval,
     stepStatuses: sanitizedJson.stepStatuses
   })
@@ -281,6 +286,9 @@ const sanitizeHistoricalPlanProjection = (
       artifactVersionId: runtimePlan.artifactVersionId,
       artifactChecksum: runtimePlan.artifactChecksum,
       originatingPromptMessageId,
+      ...(runtimePlan.originatingTaskRunId
+        ? { originatingTaskRunId: runtimePlan.originatingTaskRunId }
+        : {}),
       revision,
       ...(externalResponse ? { externalResponse } : {}),
       approval: runtimePlan.approval,

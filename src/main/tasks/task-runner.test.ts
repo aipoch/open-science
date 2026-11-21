@@ -3421,6 +3421,7 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        taskRunId: started.id,
         promptMessageId: 'new-user',
         provenanceContext: {
           rootFrameId: 'root-frame-session-1',
@@ -3835,6 +3836,7 @@ describe('TaskRunner', () => {
       expect(prompts).toEqual([
         {
           sessionId: existing.id,
+          taskRunId: started.id,
           promptMessageId: 'skill-user',
           provenanceContext: {
             rootFrameId: 'root-frame-session-1',

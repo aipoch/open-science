@@ -189,6 +189,7 @@ class PlanService {
     sessionId: string
     executionId: string
     interactionId: string
+    taskRunId?: string
     content: GeneratePlanContent
   }): Promise<{ projection: ActivePlanProjection; pauseInteraction: true }> {
     const document = createPlanDocumentV1(input.content)
@@ -259,6 +260,7 @@ class PlanService {
       artifactChecksum: artifact.checksum,
       document,
       originatingPromptMessageId: input.interactionId,
+      ...(input.taskRunId ? { originatingTaskRunId: input.taskRunId } : {}),
       materializedAt: this.now(),
       approval: 'pending',
       stepStatuses: {}
@@ -972,6 +974,7 @@ class PlanService {
         ? { originatingPromptMessageId: plan.originatingPromptMessageId }
         : {}),
       ...(plan.materializedAt !== undefined ? { materializedAt: plan.materializedAt } : {}),
+      ...(plan.originatingTaskRunId ? { originatingTaskRunId: plan.originatingTaskRunId } : {}),
       ...(plan.externalResponse ? { externalResponse: plan.externalResponse } : {}),
       revision,
       approval: plan.approval,

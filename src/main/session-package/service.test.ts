@@ -4440,7 +4440,7 @@ it.each([
   }
 })
 
-it('excludes local Plan and root and child AskUser receipts from the archive and resulting Fork', async () => {
+it('excludes local Plan and AskUser ownership and receipts from the archive and resulting Fork', async () => {
   const source = await createProvenanceTestFixture()
   const target = await createProvenanceTestFixture()
   fixtures.push(source, target)
@@ -4516,6 +4516,7 @@ it('excludes local Plan and root and child AskUser receipts from the archive and
           state: 'answered',
           answers: [{ fieldId: 'method', value: 'Median' }],
           taskRequestId: 'local-question-id',
+          taskRunId: 'local-question-run',
           taskResponse: {
             action: 'accept',
             source: 'user_relay',
@@ -4567,6 +4568,7 @@ it('excludes local Plan and root and child AskUser receipts from the archive and
         document,
         approval: 'approved',
         originatingPromptMessageId: 'plan-prompt',
+        originatingTaskRunId: 'local-plan-run',
         stepStatuses: {},
         externalResponse: {
           source: 'user_relay',
@@ -4581,9 +4583,13 @@ it('excludes local Plan and root and child AskUser receipts from the archive and
   })
   const saved = await sourceSessions.loadSession(scope.projectId, scope.sessionId)
   expect(saved?.runtimeContext).toMatchObject({
-    plan: { externalResponse: { commandId: 'local-plan-receipt' } },
+    plan: {
+      originatingTaskRunId: 'local-plan-run',
+      externalResponse: { commandId: 'local-plan-receipt' }
+    },
     delegatedWork: { questionRequests: [{ taskResponse: { source: 'known_context' } }] }
   })
+  expect(saved?.activities?.[0].elicitation?.taskRunId).toBe('local-question-run')
   const exporter = new SessionPackageService({
     storageRoot: source.storageRoot,
     getClient: async () => source.client
@@ -4601,6 +4607,8 @@ it('excludes local Plan and root and child AskUser receipts from the archive and
     expect(stored).not.toContain('local-plan-receipt')
     expect(stored).not.toContain('externalResponse')
     expect(stored).not.toContain('local-question-id')
+    expect(stored).not.toContain('local-question-run')
+    expect(stored).not.toContain('local-plan-run')
     expect(stored).not.toContain('taskResponse')
     expect(stored).not.toContain('c'.repeat(64))
     expect(stored).toContain('Which statistic?')
@@ -4613,6 +4621,8 @@ it('excludes local Plan and root and child AskUser receipts from the archive and
     expect(forkedSession).toBeDefined()
     expect(JSON.stringify(forkedSession)).not.toContain('local-plan-receipt')
     expect(JSON.stringify(forkedSession)).not.toContain('local-question-id')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-question-run')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-plan-run')
     expect(JSON.stringify(forkedSession)).not.toContain('taskResponse')
     expect(forkedSession?.activities?.[0].elicitation?.answers).toEqual([
       { fieldId: 'method', value: 'Median' }

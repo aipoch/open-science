@@ -46,6 +46,13 @@ const receiptSchema = z
 const documentSchema = z.object({ version: z.literal(1), submissions: z.array(receiptSchema) })
 type Receipt = z.infer<typeof receiptSchema>
 
+// These rejections from beginContinuation precede its Run journal write.
+const continuationRejections = {
+  run_not_found: 'The original Task Run is no longer available.',
+  session_busy: 'The Session already has an active Run. The continuation was not started.',
+  submission_unavailable: 'The service is stopping. The continuation was not started.'
+} as const
+
 // JSON object property order is not request identity; array order remains significant.
 const canonicalRequest = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalRequest)
@@ -218,7 +225,21 @@ export class TaskSubmissions {
     return this.serialize(async () => {
       const { entry, created } = await this.reserve(requestId, fingerprint)
       if (!created) return { admitted: false, receipt: snapshot(entry) }
-      const run = await createRun(requestId)
+      let run: TaskRun
+      try {
+        run = await createRun(requestId)
+      } catch (error) {
+        if (error instanceof TaskRunnerError && Object.hasOwn(continuationRejections, error.code)) {
+          entry.status = 'failed'
+          entry.error = {
+            code: error.code,
+            message: continuationRejections[error.code as keyof typeof continuationRejections]
+          }
+          await this.persist()
+        }
+        // A journal error can follow a committed write. Leave its receipt pending for recovery.
+        throw error
+      }
       entry.status = 'accepted'
       entry.runId = run.id
       await this.persist()

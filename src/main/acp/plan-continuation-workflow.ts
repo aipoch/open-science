@@ -13,6 +13,7 @@ type PlanContinuationDelivery = Readonly<{
   projectId: string
   commandId: string
   externalOriginPromptId?: string
+  externalOriginRunId?: string
 }>
 
 type PlanContinuationDependencies = Readonly<{
@@ -244,7 +245,10 @@ class AcpPlanContinuationWorkflow {
       projectId,
       commandId: command.commandId,
       ...(plan.externalResponse?.commandId === command.commandId && plan.originatingPromptMessageId
-        ? { externalOriginPromptId: plan.originatingPromptMessageId }
+        ? {
+            externalOriginPromptId: plan.originatingPromptMessageId,
+            externalOriginRunId: plan.originatingTaskRunId
+          }
         : {})
     })
     const rejected = command.kind === 'rejected-plan'

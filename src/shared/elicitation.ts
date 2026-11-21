@@ -50,6 +50,7 @@ export const normalizeAgentUserChoiceAnswers = (
 
 export type AgentTurnProvenanceContext = {
   promptMessageId: string
+  taskRunId?: string
   // A suppressed application continuation may use a synthetic prompt identity while retaining a
   // durable conversation message as the authorization origin for control-plane calls.
   originMessageId?: string
@@ -83,6 +84,7 @@ export type ElicitationProjection = {
   continuationRecovery?: { error: string; retryable?: true }
   // Local Task routing and answer receipt. Excluded from Session packages and Forks.
   taskRequestId?: string
+  taskRunId?: string
   taskResponse?: TaskQuestionReceipt
 }
 
@@ -678,6 +680,7 @@ const sanitizeAgentTurnProvenanceContext = (
   if (!promptMessageId) return undefined
 
   const optionalIds = [
+    'taskRunId',
     'originMessageId',
     'rootFrameId',
     'agentFrameId',
@@ -709,6 +712,7 @@ const sanitizeAgentTurnProvenanceContext = (
 
   return {
     promptMessageId,
+    ...(ids.taskRunId ? { taskRunId: ids.taskRunId } : {}),
     ...(ids.originMessageId ? { originMessageId: ids.originMessageId } : {}),
     ...(ids.rootFrameId ? { rootFrameId: ids.rootFrameId } : {}),
     ...(ids.agentFrameId ? { agentFrameId: ids.agentFrameId } : {}),
@@ -809,6 +813,7 @@ export const sanitizeElicitationProjection = (
     ? cappedString(value.continuationRecovery.error, MAX_ELICITATION_MESSAGE_CHARS)
     : undefined
   const taskRequestId = boundedString(value.taskRequestId, MAX_ELICITATION_LABEL_CHARS)
+  const taskRunId = boundedString(value.taskRunId, MAX_ELICITATION_LABEL_CHARS)
   const receipt = isRecord(value.taskResponse) ? value.taskResponse : undefined
   const recordedAction = state === 'answered' ? 'accept' : 'decline'
   const taskResponse: TaskQuestionReceipt | undefined =
@@ -839,6 +844,7 @@ export const sanitizeElicitationProjection = (
     state,
     ...(durable ? { durable } : {}),
     ...(taskRequestId ? { taskRequestId } : {}),
+    ...(taskRequestId && taskRunId ? { taskRunId } : {}),
     ...(taskResponse && (taskRequestId || durable) ? { taskResponse } : {}),
     ...(state === 'pending' && draftAnswers && draftAnswers.length > 0
       ? { draftAnswers: normalizeAgentUserChoiceAnswers(fields, draftAnswers) }

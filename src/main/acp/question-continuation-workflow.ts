@@ -22,7 +22,7 @@ import type { AcpDurableContinuationContextOwner } from './durable-continuation-
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import type { TaskContinuationTracker } from '../../shared/task-continuation'
+import { withTaskPromptOwner, type TaskContinuationTracker } from '../../shared/task-continuation'
 
 type QuestionContinuationDependencies = Readonly<{
   hasActiveSession: (sessionId: string) => boolean
@@ -57,6 +57,7 @@ type QuestionContinuationDependencies = Readonly<{
 
 type TaskQuestionOwnerResponse = Readonly<{
   projectId: string
+  originalRunId?: string
   request: PendingElicitationRequest
   action: 'accept' | 'decline'
   answers: ElicitationResponse['answers']
@@ -148,8 +149,11 @@ class AcpQuestionContinuationWorkflow {
       const sendContinuation: AcpAppContinuation['send'] =
         send && attemptId
           ? (request, onProviderDispatched) => {
-              const dispatch = (onTrackedDispatch?: () => void): Promise<PromptResponse> =>
-                send(request, attemptId, () => {
+              const dispatch = (
+                onTrackedDispatch?: () => void,
+                taskRunId?: string
+              ): Promise<PromptResponse> =>
+                send(withTaskPromptOwner(request, taskRunId), attemptId, () => {
                   onProviderDispatched()
                   onTrackedDispatch?.()
                 })
@@ -162,7 +166,8 @@ class AcpQuestionContinuationWorkflow {
                   sessionId: request.sessionId,
                   attemptId,
                   promptMessageId,
-                  originalPromptMessageId: promptMessageId
+                  originalPromptMessageId: promptMessageId,
+                  originalRunId: input.originalRunId
                 },
                 dispatch
               )

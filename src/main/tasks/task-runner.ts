@@ -203,6 +203,7 @@ type TaskAgentResumeSessionRequest = {
 type TaskAgentPromptRequest = {
   permissionPrompts?: 'none'
   sessionId: string
+  taskRunId?: string
   promptMessageId: string
   provenanceContext: AgentTurnProvenanceContext
   text: string
@@ -323,6 +324,7 @@ type MutableTaskRun = TaskRun & {
   interactionPolicy?: TaskInteractionPolicy
   changingInteractionMode?: boolean
   committingPermissionDecision?: boolean
+  continuationKind?: TaskRunJournalEntry['continuationKind']
   permissionInteractions?: TaskRunJournalEntry['permissionInteractions']
   eventAccumulator?: TaskRunEventAccumulator
   completion: Promise<void>
@@ -509,6 +511,7 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
     ...cloneRun(run),
     status: run.terminalStatus ?? run.status,
     ...(run.promptMessageId ? { promptMessageId: run.promptMessageId } : {}),
+    ...(run.continuationKind ? { continuationKind: run.continuationKind } : {}),
     ...(run.permissionPrompts ? { permissionPrompts: run.permissionPrompts } : {}),
     ...(run.permissionInteractions?.length
       ? { permissionInteractions: [...run.permissionInteractions] }
@@ -530,14 +533,18 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
   }
 }
 
+const isAppContinuation = (
+  run: Pick<TaskRunJournalEntry, 'continuedFromRunId' | 'continuationKind'>
+): boolean => Boolean(run.continuedFromRunId && run.continuationKind !== 'notebook')
+
 const sessionOwnsTaskRunPrompt = (
   session: PersistedChatSession,
   run: Pick<
     TaskRunJournalEntry,
-    'id' | 'sessionId' | 'projectId' | 'promptMessageId' | 'continuedFromRunId'
+    'id' | 'sessionId' | 'projectId' | 'promptMessageId' | 'continuedFromRunId' | 'continuationKind'
   >
 ): boolean =>
-  !run.continuedFromRunId &&
+  !isAppContinuation(run) &&
   run.promptMessageId !== undefined &&
   session.id === run.sessionId &&
   session.projectId === run.projectId &&
@@ -1334,7 +1341,9 @@ class TaskRunner {
   async startRun(
     request: StartTaskRunRequest,
     requestId?: string,
-    notebookContinuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'>
+    continuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'> & {
+      originalRunId: string
+    }
   ): Promise<TaskRun> {
     this.assertAcceptingRuns()
     await this.initialize()
@@ -1602,6 +1611,12 @@ class TaskRunner {
         this.reserveSession(session.id, runId)
         const run = {
           ...(requestId ? { requestId } : {}),
+          ...(continuation
+            ? {
+                continuedFromRunId: continuation.originalRunId,
+                continuationKind: 'notebook' as const
+              }
+            : {}),
           id: runId,
           sessionId: session.id,
           projectId: project.id,
@@ -1709,7 +1724,7 @@ class TaskRunner {
       prepared.contextReset,
       prepared.resumeFallback,
       prepared.persistOnPromptAdmission,
-      notebookContinuation
+      continuation
     ).finally(() => {
       this.releaseSession(session.id, runId)
       if (run.status !== 'running') this.publishProgress(run, run.status)
@@ -1767,6 +1782,7 @@ class TaskRunner {
     const run: MutableTaskRun = {
       requestId,
       continuedFromRunId: original.id,
+      continuationKind: 'app',
       id,
       sessionId: original.sessionId,
       projectId: original.projectId,
@@ -1992,7 +2008,7 @@ class TaskRunner {
 
   sharesContinuationPrompt(run: TaskRun, promptMessageId: string): boolean {
     return (
-      Boolean(run.continuedFromRunId) ||
+      isAppContinuation(this.runs.get(run.id) ?? run) ||
       [...this.runs.values()].some(
         (entry) => entry.continuedFromRunId === run.id && entry.promptMessageId === promptMessageId
       )
@@ -2010,6 +2026,29 @@ class TaskRunner {
         run.promptMessageId === promptMessageId &&
         (admittedAt === undefined || run.startedAt <= admittedAt)
     )?.id
+  }
+
+  resolveInteractionRun(
+    scope: { sessionId: string; projectId: string },
+    promptMessageId: string,
+    taskRunId?: string
+  ): { runId?: string; unresolved?: true } {
+    const matchesPrompt = (run: MutableTaskRun): boolean =>
+      run.sessionId === scope.sessionId &&
+      run.projectId === scope.projectId &&
+      run.promptMessageId === promptMessageId
+    if (taskRunId) {
+      const run = this.runs.get(taskRunId)
+      return run && matchesPrompt(run) ? { runId: run.id } : { unresolved: true }
+    }
+    const matching = [...this.runs.values()].filter(matchesPrompt)
+    if (!matching.length) return {}
+    // New app continuations always record their exact owner. A legacy unbound interaction can
+    // therefore belong to a unique original Run, but not to an ambiguous older continuation.
+    const legacy = matching.filter(({ continuationKind }) => continuationKind !== 'app')
+    return legacy.length === 1 && !isAppContinuation(legacy[0])
+      ? { runId: legacy[0].id }
+      : { unresolved: true }
   }
 
   findLatestRunIdForSession(sessionId: string): string | undefined {
@@ -2462,6 +2501,7 @@ class TaskRunner {
       await this.dependencies.agent.prompt(
         {
           sessionId: session.id,
+          taskRunId: run.id,
           promptMessageId,
           provenanceContext,
           text: prompt,
@@ -2982,8 +3022,10 @@ class TaskRunner {
     for (const run of this.runs.values()) {
       if (run.status !== 'running' || run.terminalStatus || run.sessionId !== event.sessionId)
         continue
+      const planOwner = event.planProjection?.originatingTaskRunId
+      if (planOwner && planOwner !== run.id) continue
       if (
-        run.continuedFromRunId &&
+        isAppContinuation(run) &&
         (!run.providerAccepted || event.promptMessageId !== run.promptMessageId)
       )
         continue
