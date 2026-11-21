@@ -1143,6 +1143,18 @@ class SessionRepository {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
   }
 
+  hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean {
+    return this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+  }
+
+  shouldPreserveRuntimeState(projectId: string, sessionId: string): boolean {
+    return (
+      this.hasActiveRuntimePrompt(projectId, sessionId) ||
+      this.hasLiveRuntimeSession(projectId, sessionId) ||
+      this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+    )
+  }
+
   // Decode-only preservation for Main's live release after exhausted writes. This is not evidence
   // of an attached runtime and is never persisted; process restart uses ordinary recovery.
   private readonly retainedRuntimeState = new Set<string>()
@@ -3038,10 +3050,7 @@ class SessionRepository {
       preserveRuntimeState:
         preserveRuntimeState !== undefined
           ? preserveRuntimeState
-          : (sessionId) =>
-              this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
-              this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
-              this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+          : (sessionId) => this.shouldPreserveRuntimeState(projectId, sessionId)
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

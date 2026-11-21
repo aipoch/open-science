@@ -3,7 +3,10 @@ import { isDeepStrictEqual } from 'node:util'
 import {
   legacySessionStateForOutcome,
   isPreparedSessionRun,
+  isInheritedForkTurn,
   latestOutcomePrompt,
+  normalizeSessionAfterRestore,
+  resolveTurnOutcome,
   setTurnOutcome,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -97,4 +100,47 @@ export const recordRestartTurnOutcome = (
     ...setTurnOutcome(restored, promptId, outcome),
     ...legacySessionStateForOutcome(outcome, promptId)
   }
+}
+
+// An idle snapshot can retain a run after its execution owner is gone. Only the active
+// branch's latest prompt may acquire an interruption. Older or invisible runs just expire.
+export const recoverDetachedIdleRun = (session: PersistedChatSession): PersistedChatSession => {
+  if (
+    session.status !== 'idle' ||
+    !session.activeRun ||
+    session.promptPreparation ||
+    session.packageOrigin
+  )
+    return session
+  const cleared = { ...session, activeRun: undefined }
+  const prompt = latestOutcomePrompt(session)
+  if (
+    !prompt ||
+    prompt.id !== session.activeRun.promptMessageId ||
+    isInheritedForkTurn(session, prompt.id)
+  )
+    return cleared
+  const graph = session.conversationGraph
+  if (graph) {
+    const node = graph.messages.find(({ id }) => id === prompt.id)
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+    if (
+      !node ||
+      !frame ||
+      node.agentFrameId !== frame.id ||
+      node.introducedOnBranchId !== frame.activeBranchId
+    )
+      return cleared
+  }
+  // The flat transcript here is the decoded active branch. Other branches can contain
+  // finished replies to the same prompt. A last-run identity alone cannot prove completion.
+  const outcome = resolveTurnOutcome(
+    { ...cleared, conversationGraph: undefined, runtimeTranscriptLastRun: undefined },
+    prompt.id
+  )
+  if (outcome) return { ...cleared, ...legacySessionStateForOutcome(outcome, prompt.id) }
+  return recordRestartTurnOutcome(
+    normalizeSessionAfterRestore({ ...session, status: 'running' }),
+    session
+  )
 }

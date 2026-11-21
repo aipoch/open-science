@@ -27756,7 +27756,11 @@ describe('ACP runtime session management', () => {
           }
         }
       })
-      const sessions = new SessionPersistenceCoordinator(new SessionRepository(root), {
+      const repository = new SessionRepository(root, {
+        hasLiveRuntimeSession: (projectId, sessionId) =>
+          runtime.hasLiveSession(projectId, sessionId)
+      })
+      const sessions = new SessionPersistenceCoordinator(repository, {
         syncSession: async () => [],
         softDeleteSession: async () => 'deleted',
         restoreSession: async () => undefined,
@@ -27805,8 +27809,21 @@ describe('ACP runtime session management', () => {
                   return { providers: [], agentFrameworkId: framework.id, agentFrameworks: [] }
                 case 'sessions:load-all':
                   return sessions.loadAllReadOnly()
-                case 'sessions:save-session':
-                  return sessions.saveSession(arg as PersistedChatSession)
+                case 'sessions:save-session': {
+                  const candidate = arg as PersistedChatSession
+                  const saved = await sessions.saveSession(
+                    candidate,
+                    {},
+                    { taskRunCommit: invocation.callerContext.surface === 'task' }
+                  )
+                  // Recover after the first Task save, before the provider receives its prompt.
+                  const recovered = await sessions.recoverStartupSession(saved.projectId, saved.id)
+                  expect(recovered).toMatchObject({
+                    activeRun: candidate.activeRun,
+                    revision: saved.revision
+                  })
+                  return saved
+                }
                 case 'sessions:stage-task-completion':
                   return sessions.stageTaskCompletion(
                     arg as Parameters<typeof sessions.stageTaskCompletion>[0]
