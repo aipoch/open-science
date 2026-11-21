@@ -1989,6 +1989,12 @@ class NotebookRunRepository {
     }
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
+    const cachedDocument = {
+      ...document,
+      runs: document.runs.map((run) =>
+        run.environmentManifestChecksum ? withoutEnvironmentManifest(run) : run
+      )
+    }
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
       size: fileInfo.size,
@@ -1996,7 +2002,7 @@ class NotebookRunRepository {
       weight:
         fileInfo.size +
         runs.reduce((bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0), 0),
-      document
+      document: cachedDocument
     })
   }
 }

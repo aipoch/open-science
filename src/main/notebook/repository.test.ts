@@ -278,6 +278,9 @@ describe('notebook run repository', () => {
     )
     expect(JSON.parse(await readFile(sidecarPath, 'utf8'))).toEqual(manifest)
 
+    const cachedOrdinary = await repository.readSessionDocuments(projectId, sessionId)
+    expect(cachedOrdinary[0]?.runs[0]).not.toHaveProperty('environmentManifest')
+
     const reopened = new NotebookRunRepository(root)
     const ordinary = await reopened.readSessionDocuments(projectId, sessionId)
     expect(ordinary[0]?.runs[0]).not.toHaveProperty('environmentManifest')
