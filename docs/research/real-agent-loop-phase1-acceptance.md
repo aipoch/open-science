@@ -5,6 +5,47 @@ and [the original Chinese implementation note](real-agent-loop-implementation-pl
 [spec #54](https://github.com/guch96/open-science/issues/54). An installed package, an Agent
 turn, a Notebook dispatch, and verified files are separate observations.
 
+## WorkBuddy setup revision: macOS arm64, November 21, 2026
+
+- Host: WorkBuddy `5.9.4`; Node `24.22.2`. Installed the two actual npm tarballs into a local
+  prefix and registered the installed stdio launcher. The default service port was in use;
+  the acceptance profiles used separate loopback ports. The first prompt was the single README
+  paragraph at `281b3902a`, with only the URL changed to the fork. WorkBuddy read the catalog,
+  guide, setup report and runtime list. The new profile had no selected runtime or provider.
+  WorkBuddy presented the available runtime IDs, reported Python and R separately, and did not
+  submit research or try to install a language.
+- In a separate user turn, WorkBuddy selected the built-in Open-Science Agent and configured the
+  keyless Kilo free route. CLI JSON confirmed `readiness.agent: ready` on that same profile.
+  An explicit request to open the profile used `open_setup`; its local browser tab opened on the
+  profile's service port. There was no sign-in or credential input. Other providers still use
+  their existing Web settings/account flows.
+- The installed-service probe found that the local Task command inventory did not yet include
+  `notebook-env:provision`. After `4298dddb1`, the real WorkBuddy R installation completed in
+  about 58 seconds. R was ready and Python remained absent. A separate profile installed Python
+  through CLI JSON in about 59 seconds and left R absent. The R run also encountered host memory
+  recovery, which WorkBuddy reported separately from the ready language. No protection was changed.
+  The rebuilt CLI tarball SHA-256 was
+  `c6ed1e4f84e060d00b419468116cf25bb89889811374085a9c826066b618354b` and the macOS tarball SHA-256 was
+  `af2bb1dc93d25f1bff95edf4864de435ee7292059084c7ec331bdbeab9aab789`.
+- The user separately requested a synthetic greenhouse analysis in R. WorkBuddy submitted
+  request `67f3418c-b244-4ceb-afed-d9e75d2c08dc`. Run `4d5ed3c7-82c2-430f-b8db-874f4f591603`
+  in Session `35e360c5-81fa-48c0-b192-93b093278935` reached `waiting_for_user` with
+  `notebook_runtime_review_required` and `kernelDispatched: false`. WorkBuddy reported the
+  original Session and stopped at the approval. This is live model and handoff evidence, not
+  completed R dispatch, report/CSV delivery, or export evidence.
+- A second WorkBuddy task used the same short README prompt in an empty profile with the fixture
+  attached through the client. `study.science` had source SHA-256
+  `d31f86381012eb7ae54b4ebe6ffca9510e7bc6049dd19e53e5206b7fbbcbcf24`. WorkBuddy noted the
+  attachment and continued setup only. Independent Project and Session queries returned empty
+  lists. Only after a separate request did WorkBuddy import and inspect `Artifact research`,
+  Session `import-11db3b8b-7475-4e01-b1e2-c5de8fe2474b`. Querying operation
+  `919cf84b-4733-4abd-aa0e-76e6495f91cb` matched the read-only Session. The fixture had no
+  downloadable published Artifacts. There was no Notebook dispatch or Fork. This is isolated
+  profile evidence on one Mac, not a new independent machine migration.
+- The branch was merged with upstream `2ee4f3b70`. The integrated `486450e9e` build passed
+  Node/Web type checks and the actual macOS npm install and native loading check. This test
+  used local candidates and does not establish registry availability or coverage for every host.
+
 ## Live first research: macOS arm64, November 20, 2026
 
 - OpenCode `1.19.5` received the exact README quote with no attachment or research instructions.
@@ -481,8 +522,10 @@ the upstream base; it is a different build from the published npm `1.3.2`.
 
 ## Remaining gates
 
-The two pre-release README gates are complete: installation-only research in #66 and independent
-same-Agent migration in #67. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
+The original pre-release README runs are recorded in #66 and #67. They preceded the revised short
+prompt and setup capabilities. WorkBuddy verification of the revised flow currently reaches the
+human R kernel review; completing that study and repeating independent migration with a real
+research package are separate checks. [Upstream PR #4522](https://github.com/aipoch/open-science/pull/4522)
 supersedes [#4519](https://github.com/aipoch/open-science/pull/4519) to follow the upstream branch
 naming rule. It requires the upstream checks and CI owner review of the Windows routing
 registration before merge.

@@ -234,6 +234,7 @@
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
+    "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP がインストールされていません。Claude Code を使用するには、設定で Claude Agent をインストールしてください。",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（動画1分あたりの目安：{{min}}～{{max}}分）",
     "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 は横向き（16:9）で書き出します。書き出しが中断された場合、次回は最初からやり直します。",

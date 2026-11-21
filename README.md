@@ -88,6 +88,14 @@ Open the [official download page](https://aipoch.com/open-science/download) and 
 
 See [download verification](SECURITY.md#verifying-your-download) for checks before installation.
 
+On Windows 10/11 x64, you can install the desktop app from the [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) or use WinGet in PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Available versions may differ by channel. See the [installation and updates guide](https://aipoch.com/docs/guides/installation/) for details.
+
 On macOS, you can also install with [Homebrew](https://brew.sh):
 
 ```bash
@@ -112,7 +120,7 @@ open-science start --no-open
 open-science url
 ```
 
-Open the printed URL to complete setup, or follow the [terminal setup guide](packages/open-science/CLI.md#first-run-setup-codex). npm supports macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; the desktop app is not required. Keep npm optional dependencies enabled and review the [Linux prerequisites and upgrade instructions](docs/standalone-runtime.md#install-from-npm). The URL contains an authentication token; keep it private.
+Open the printed URL to complete setup, or follow the [terminal setup guide](packages/open-science/CLI.md#first-run-setup). npm supports macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; the desktop app is not required. Keep npm optional dependencies enabled and review the [Linux prerequisites and upgrade instructions](docs/standalone-runtime.md#install-from-npm). The URL contains an authentication token; keep it private.
 
 Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 

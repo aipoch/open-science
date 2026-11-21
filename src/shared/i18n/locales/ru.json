@@ -237,6 +237,7 @@
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
+    "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP не установлен. Чтобы использовать Claude Code, установите Claude Agent в настройках.",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (закладывайте {{min}}–{{max}} мин)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (закладывайте {{min}}–{{max}} мин на минуту фильма)",
     "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 экспортируется в альбомной ориентации (16:9). После прерывания следующий экспорт начнётся с начала.",

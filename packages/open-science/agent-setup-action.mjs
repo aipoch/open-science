@@ -1,7 +1,20 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const cliPath = fileURLToPath(new URL('./cli.mjs', import.meta.url))
+
+export const openBrowser = (url) => {
+  const [command, args] =
+    process.platform === 'win32'
+      ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
+      : process.platform === 'darwin'
+        ? ['open', [url]]
+        : ['xdg-open', [url]]
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout: 8_000, windowsHide: true }, (error) => resolve(!error))
+  })
+}
 
 export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvailable) => {
   const runtime = code.startsWith('runtime_')

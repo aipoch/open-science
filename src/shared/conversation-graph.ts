@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
 import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 import type {
   PersistedActivityGroup,
@@ -139,7 +140,7 @@ export const createLinearConversationGraph = (
       {
         id: runtimeSegmentId,
         agentFrameId: rootFrameId,
-        frameworkId: seed.frameworkId ?? 'claude-code',
+        frameworkId: seed.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         providerId: seed.providerId,
         backendId: seed.backendId,
         model: seed.model,

@@ -200,7 +200,11 @@ import { SkillCatalogModule, type SkillCatalogEntry } from '../skills/catalog'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import { resolveConfigRoot } from '../storage-root'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
-import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import {
+  AgentRuntimeManager,
+  type AgentRuntimeManagerOptions,
+  type ExecuteClaudeProbe
+} from './agent-runtime-manager'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -290,6 +294,7 @@ export type SettingsServiceOptions = {
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
   // Same for the managed OpenCode installer.
+  installManagedClaudeAcpImpl?: AgentRuntimeManagerOptions['installManagedClaudeAcpImpl']
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -653,6 +658,7 @@ class SettingsService {
       allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort,
       executeClaudeProbe: options.executeClaudeProbe,
       installManagedClaudeImpl: options.installManagedClaudeImpl,
+      installManagedClaudeAcpImpl: options.installManagedClaudeAcpImpl,
       installManagedOpencodeImpl: options.installManagedOpencodeImpl,
       installManagedCodexImpl: options.installManagedCodexImpl,
       resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
@@ -1627,42 +1633,43 @@ class SettingsService {
       if (request.action === 'status') {
         const settings = await this.repository.getSettings()
         const selectedFramework = settings.agentFrameworkId ?? null
-        const provider = settings.providers.find(({ id }) => id === settings.activeProviderId)
-        const signInProvider =
-          provider ?? (settings.providers.length === 1 ? settings.providers[0] : undefined)
-        let providerArgv =
-          selectedFramework === 'codex' &&
-          signInProvider?.type === 'codex-isolated' &&
-          signInProvider.codexAuthMode === 'isolated'
-            ? ['codex', 'login', '--force']
-            : undefined
-        if (
-          selectedFramework === 'codex' &&
+        const framework = selectedFramework ?? DEFAULT_AGENT_FRAMEWORK_ID
+        const usingCodex = framework === 'codex'
+        const activeProvider = settings.providers.find(({ id }) => id === settings.activeProviderId)
+        const provider =
+          activeProvider ?? (settings.providers.length === 1 ? settings.providers[0] : undefined)
+        const providerArgv =
+          (usingCodex || framework === DEFAULT_AGENT_FRAMEWORK_ID) &&
           provider?.id === 'cli-openai' &&
           provider.type === 'official' &&
           provider.vendorId === 'openai' &&
           provider.model
-        ) {
-          providerArgv = [
-            'provider',
-            'add',
-            '--type',
-            'official',
-            '--vendor',
-            'openai',
-            '--model',
-            settings.activeModel ?? provider.model,
-            '--api-key-env',
-            'OPENAI_API_KEY',
-            '--json'
-          ]
-        }
+            ? [
+                'provider',
+                'add',
+                '--type',
+                'official',
+                '--vendor',
+                'openai',
+                '--model',
+                settings.activeModel ?? provider.model,
+                '--api-key-env',
+                'OPENAI_API_KEY',
+                '--json'
+              ]
+            : usingCodex &&
+                provider?.type === 'codex-isolated' &&
+                provider.codexAuthMode === 'isolated'
+              ? ['codex', 'login', '--force']
+              : undefined
         return {
           ok: true,
           selectedFramework,
-          keylessKiloAvailable:
-            !provider && this.supportsKeylessKilo(selectedFramework ?? DEFAULT_AGENT_FRAMEWORK_ID),
-          next: providerArgv ? { provider: providerArgv } : {}
+          keylessKiloAvailable: !activeProvider && this.supportsKeylessKilo(framework),
+          next: {
+            ...(usingCodex ? { runtime: ['runtime', 'install', 'codex', '--json'] } : {}),
+            ...(providerArgv ? { provider: providerArgv } : {})
+          }
         }
       }
       if (request.action === 'agent-runtime') {

@@ -90,6 +90,14 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 
 Consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) para realizar comprobaciones antes de instalar.
 
+En Windows 10/11 x64, puede instalar la aplicación de escritorio desde [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) o usar WinGet en PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+La versión disponible puede variar según el canal de distribución. Consulte la [guía de instalación y actualizaciones](https://aipoch.com/docs/guides/installation/) para obtener más información.
+
 Los archivos de la CLI independiente para macOS, Linux y Windows incluyen Node.js y se pueden usar sin Homebrew ni npm.
 
 En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh):

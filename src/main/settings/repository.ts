@@ -286,7 +286,7 @@ class SettingsRepository {
   ): Promise<void> {
     await this.mutate((settings) => {
       if (
-        settings.agentFrameworkId !== 'codex' ||
+        settings.agentFrameworkId !== expected.agentFrameworkId ||
         !isDeepStrictEqual(settings.providers, expected.providers) ||
         settings.activeProviderId !== expected.activeProviderId ||
         settings.activeModel !== expected.activeModel ||
@@ -972,8 +972,15 @@ class SettingsRepository {
     return restored
   }
 
-  async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
-    return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  async setAgentFramework(
+    id: AgentFrameworkId,
+    expectedPrevious?: AgentFrameworkId
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      expectedPrevious && settings.agentFrameworkId !== expectedPrevious
+        ? settings
+        : { ...settings, agentFrameworkId: id }
+    )
   }
 
   async setAgentRouting(

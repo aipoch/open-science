@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import { observeResourceProcess } from '../resource-diagnostics/recorder'
 import * as acp from '@agentclientprotocol/sdk'
@@ -135,7 +136,7 @@ class AcpAgentConnectionAdapter {
     let openCodeStore: OpenCodeStoreLease | undefined
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let cleanupUnconfirmed = false
-    let framework: AgentFramework['id'] = 'claude-code'
+    let framework: AgentFramework['id'] = DEFAULT_AGENT_FRAMEWORK_ID
     let startupPhase = 'resolve-backend'
     let opening = true
     let storeWriters = 0

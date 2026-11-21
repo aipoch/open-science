@@ -174,6 +174,7 @@ describe('OpenScienceClient', () => {
       [
         'constructor',
         'doctor',
+        'prepareNotebookEnvironment',
         'bootstrap',
         'installCli',
         'health',

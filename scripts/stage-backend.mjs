@@ -35,6 +35,34 @@ const cliManifest = JSON.parse(
 )
 const forbidden = isElectronPackage
 const metadata = JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
+// External agent runtimes belong to the user's managed installation. Check both compiled
+// inputs and copied packages, including nested dependencies and platform-specific binaries.
+const optionalAgentPackages = new Set([
+  '@agentclientprotocol/claude-agent-acp',
+  '@agentclientprotocol/codex-acp',
+  '@anthropic-ai/claude-code',
+  '@anthropic-ai/claude-agent-sdk',
+  '@openai/codex',
+  'opencode-ai',
+  '@tencent-ai/codebuddy-code',
+  '@openma/pi-acp',
+  '@earendil-works/pi-coding-agent'
+])
+function assertBaseBackendPackage(name) {
+  if (
+    optionalAgentPackages.has(name) ||
+    /^@anthropic-ai\/claude-(?:agent-sdk|code)-/.test(name) ||
+    /^(?:opencode-|@openai\/codex-)(?:darwin|linux|win32|windows)-/.test(name)
+  )
+    throw new Error('Optional agent runtime leaked into the backend: ' + name)
+}
+for (const meta of metadata)
+  for (const file of Object.keys(meta.inputs))
+    for (const [, name] of file
+      .replaceAll('\\', '/')
+      .matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g))
+      assertBaseBackendPackage(name)
+
 const bundledDependencies = desktopBundledDependencies(metadata, undefined, root)
 const dependencyRoots = values.desktop
   ? desktopBackendDependencies(
@@ -56,8 +84,13 @@ await cp(join(root, 'out/pi-bootstrap'), join(stage, 'out/pi-bootstrap'), { recu
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
-  filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
+  filter: (path) =>
+    !relative(join(root, 'resources'), path)
+      .split(sep)
+      .some((part) => ['bin', 'node_modules'].includes(part))
 })
+const claudeAcpPatch = '@agentclientprotocol+claude-agent-acp+0.70.0.patch'
+await cp(join(root, 'patches', claudeAcpPatch), join(stage, 'resources/claude-acp', claudeAcpPatch))
 await syncFileEvidenceCodec({
   root,
   target: join(stage, 'resources/notebook/file_evidence_codec.mjs')
@@ -112,6 +145,7 @@ async function packageDirectory(name, from) {
   }
 }
 async function copyDependency(name, from, destinationParent = stage) {
+  assertBaseBackendPackage(name)
   assertPrivateDependencyChain(name, privateDependencies)
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
   if (bundledDependencies.has(name))
@@ -256,7 +290,7 @@ await writeFile(
       ...cliManifest,
       version: manifest.version,
       description: 'Open-Science standalone Node backend, CLI and SDK',
-      files: ['*.mjs', '*.d.ts', '*.d.mts', 'LICENSE', 'README.md', 'CLI.md', 'out', 'resources'],
+      files: [...cliManifest.files, '*.d.mts', '*.d.cts', 'out', 'resources'],
       os: [process.platform],
       cpu: [process.arch],
       engines: { node: '>=22.13.0' },

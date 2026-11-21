@@ -1298,14 +1298,17 @@ class ElectronAppHarness implements ElectronApp {
     settingsPath: string,
     model: string,
     credentialProfile?: string,
-    framework: AgentFrameworkId = 'opencode'
+    framework: AgentFrameworkId = 'open-science-agent'
   ): Promise<Page> {
     const source = JSON.parse(await readFile(settingsPath, 'utf8'))
     const provider = source.providers?.find(
       (candidate: { id: string }) => candidate.id === source.activeProviderId
     )
-    if (!provider?.keyRef || source.activeModel !== model || !source.opencodePath) {
-      throw new Error('The requested live model and OpenCode must already be configured.')
+    if (!provider?.keyRef || source.activeModel !== model) {
+      throw new Error('The requested live model must already be configured.')
+    }
+    if (framework === 'opencode' && !source.opencodePath) {
+      throw new Error('OpenCode must already be configured for the OpenCode fixture.')
     }
     if (process.platform === 'win32' && provider.keyRef.startsWith('enc:') && !credentialProfile) {
       throw new Error('Encrypted Windows credentials require the source Electron profile.')

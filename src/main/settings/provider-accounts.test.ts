@@ -1082,28 +1082,32 @@ describe('ProviderAccountsModule', () => {
     }
   )
 
-  it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
-    await repository.setAgentFramework('codex')
-    const validate = vi
-      .spyOn(module, 'validateProvider')
-      .mockResolvedValue({ ok: true, category: 'ok' })
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const first = await repository.getSettings()
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const restored = await new SettingsRepository(dir).getSettings()
-    expect(restored.providers).toHaveLength(1)
-    expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
-    expect(restored.providers[0].lastValidatedTarget).toEqual({
-      model: 'gpt-5.4',
-      endpoint: 'responses'
-    })
-    expect(restored.activeProviderId).toBe('cli-openai')
-    await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
-      code: 'configuration_conflict'
-    })
-    expect(await repository.getSettings()).toEqual(restored)
-    expect(validate).toHaveBeenCalledTimes(2)
-  })
+  it.each([undefined, 'codex'] as const)(
+    'publishes validated API credentials without changing the configured framework (%s)',
+    async (framework) => {
+      if (framework) await repository.setAgentFramework(framework)
+      const validate = vi
+        .spyOn(module, 'validateProvider')
+        .mockResolvedValue({ ok: true, category: 'ok' })
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const first = await repository.getSettings()
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const restored = await new SettingsRepository(dir).getSettings()
+      expect(restored.providers).toHaveLength(1)
+      expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
+      expect(restored.providers[0].lastValidatedTarget).toEqual({
+        model: 'gpt-5.4',
+        endpoint: 'responses'
+      })
+      expect(restored.agentFrameworkId).toBe(framework)
+      expect(restored.activeProviderId).toBe('cli-openai')
+      await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
+        code: 'configuration_conflict'
+      })
+      expect(await repository.getSettings()).toEqual(restored)
+      expect(validate).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('revalidates the selected model without replacing the provider default or key', async () => {
     await repository.setAgentFramework('codex')

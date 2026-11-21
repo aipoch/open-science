@@ -257,7 +257,7 @@ export type StoredSettings = {
   imageServices?: StoredImageService[]
   imageModel?: ImageModelBinding
   claude?: ClaudeInfo
-  // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
+  // Selected agent backend. Absent means the built-in Open Science Agent. Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort

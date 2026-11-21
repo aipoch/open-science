@@ -29,7 +29,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  resetOnboardingStores()
+  resetOnboardingStores('claude-code')
   stubWindowApi()
   container = document.createElement('div')
   document.body.appendChild(container)

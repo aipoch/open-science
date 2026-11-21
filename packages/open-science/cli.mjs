@@ -20,7 +20,7 @@ import {
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
-import { openBrowser } from './open-browser.mjs'
+import { openBrowser } from './agent-setup-action.mjs'
 import { startLaunchLogReader } from './launch-log.mjs'
 import { protectInstallationStartup } from './installation-startup.cjs'
 import {

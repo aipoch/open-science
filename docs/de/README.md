@@ -90,6 +90,14 @@ Erstellen Sie aus einem abgeschlossenen Gesprächszweig in der Desktop-App einen
 
 Hinweise zu Prüfungen vor der Installation finden Sie unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
 
+Unter Windows 10/11 x64 können Sie die Desktop-App aus dem [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) installieren oder WinGet in PowerShell verwenden.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Die verfügbare Version kann je nach Vertriebskanal abweichen. Weitere Informationen finden Sie im [Leitfaden zur Installation und zu Updates](https://aipoch.com/docs/guides/installation/).
+
 Die eigenständigen CLI-Archive für macOS, Linux und Windows enthalten Node.js und lassen sich ohne Homebrew oder npm verwenden.
 
 Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installieren:

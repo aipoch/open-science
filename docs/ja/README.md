@@ -90,6 +90,14 @@ _2026 年 11 月 19 日_
 
 インストール前の確認については、[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
 
+Windows 10/11 x64 では、[Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) からデスクトップアプリをインストールするか、PowerShell で WinGet を使ってインストールできます。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+入手できるバージョンは配布チャネルによって異なる場合があります。詳しくは[インストールとアップデートのガイド](https://aipoch.com/docs/guides/installation/)を参照してください。
+
 macOS では [Homebrew](https://brew.sh) でもインストールできます：
 
 ```bash

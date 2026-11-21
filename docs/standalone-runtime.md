@@ -63,7 +63,7 @@ open-science url
 
 Open the printed authenticated URL to configure an Agent runtime, model provider and optional
 Python/R Notebook runtime. For terminal setup and a first task, see the
-[CLI guide](../packages/open-science/CLI.md#first-run-setup-codex).
+[CLI guide](../packages/open-science/CLI.md#first-run-setup).
 
 npm selects a matching optional platform package for macOS ARM64/x64, glibc Linux ARM64/x64
 or Windows x64. The package includes backend resources and native dependencies; it uses your

@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
@@ -2032,7 +2033,7 @@ class TaskRunner {
       const currentGraph = materializeSessionConversationGraph(existing).conversationGraph
       const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
         id: `runtime-segment-${userMessageId}`,
-        frameworkId: session.agentFrameworkId ?? 'claude-code',
+        frameworkId: session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
         providerId: session.agentConfiguration?.providerId,
         backendId: session.agentBackendId,
         model: session.agentModel,

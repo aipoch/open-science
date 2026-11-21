@@ -144,7 +144,6 @@ const AgentPanel = ({
   const [isSwitching, setIsSwitching] = useState(false)
   const [frameworkDetectionError, setFrameworkDetectionError] = useState<string | undefined>()
   const [installActionError, setInstallActionError] = useState<string | undefined>()
-  const onboardingAutoSelectAttempted = useRef(false)
   const onboardingSwitchInFlight = useRef(false)
   const onboardingUserIntentVersion = useRef(0)
   const onboardingPendingSwitch = useRef<OnboardingSwitchRequest | null>(null)
@@ -269,44 +268,6 @@ const AgentPanel = ({
     (!codex.version || isSupportedCodexAcpVersion(codex.version)) &&
     isSupportedCodexCliVersion(codex.nativeVersion)
 
-  // First-run users should land on a runtime they can actually use. Registry order is the stable
-  // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
-  useEffect(() => {
-    if (
-      !isOnboarding ||
-      onboardingAutoSelectAttempted.current ||
-      onboardingUserIntentVersion.current > 0
-    ) {
-      return
-    }
-
-    const readyByFramework: Record<AgentFrameworkId, boolean> = {
-      'claude-code': preflight.claudeReady,
-      opencode: preflight.opencodeReady,
-      codex: codexReady,
-      codebuddy: preflight.codebuddyReady,
-      'open-science-agent': false, // Built-in trial remains an explicit choice during onboarding.
-      pi: preflight.piReady === true
-    }
-    if (agentFrameworkId === 'open-science-agent' || readyByFramework[agentFrameworkId]) return
-
-    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
-    if (!installedFramework) return
-
-    onboardingAutoSelectAttempted.current = true
-    queueOnboardingSwitch(installedFramework.id)
-  }, [
-    agentFrameworkId,
-    agentFrameworks,
-    isOnboarding,
-    preflight.claudeReady,
-    codexReady,
-    preflight.codebuddyReady,
-    preflight.piReady,
-    preflight.opencodeReady,
-    queueOnboardingSwitch
-  ])
-
   // The section-level Re-detect re-scans all frameworks at once; the per-card detect buttons
   // were removed in favor of this single action.
   const isDetectingAnyFramework =
@@ -389,7 +350,7 @@ const AgentPanel = ({
             )
           : t('Install Claude Agent below, or install it manually and re-detect.'),
       uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
-      managed: claudeManaged,
+      managed: claudeManaged || preflight.claudeReady,
       installSources: getClaudeInstallSources(window.api?.platform),
       install: claudeInstall,
       onInstall: (source) =>

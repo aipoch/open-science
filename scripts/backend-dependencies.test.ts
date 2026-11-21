@@ -338,7 +338,7 @@ describe('desktop-only dependency contents', () => {
     }
   }, 40_000)
 
-  it('rejects an external consumer of bundled i18next in the real staging command', async () => {
+  it('rejects optional agent runtimes and external consumers of bundled i18next during staging', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-bundle-consumer-'))
     const put = async (file: string, content: string): Promise<void> => {
       await mkdir(dirname(join(root, file)), { recursive: true })
@@ -352,7 +352,8 @@ describe('desktop-only dependency contents', () => {
         'scripts/desktop-pdf-lib.mjs',
         'scripts/desktop-dependency-chains.mjs',
         'scripts/sync-file-evidence-codec.mjs',
-        'src/main/artifacts/file-evidence-codec.mjs'
+        'src/main/artifacts/file-evidence-codec.mjs',
+        'patches/@agentclientprotocol+claude-agent-acp+0.70.0.patch'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
@@ -374,6 +375,26 @@ describe('desktop-only dependency contents', () => {
         code: 1,
         stderr: expect.stringContaining('desktop-backend-build')
       })
+      for (const [name, separator] of [
+        ['@agentclientprotocol/codex-acp', '\\'],
+        ['@earendil-works/pi-coding-agent', '/'],
+        ['@tencent-ai/codebuddy-code', '/'],
+        ['opencode-linux-x64-baseline', '/'],
+        ['@anthropic-ai/claude-code-darwin-arm64', '/']
+      ]) {
+        const input = `node_modules/consumer/node_modules/${name}/index.js`.replaceAll(
+          '/',
+          separator
+        )
+        await put(
+          'out/desktop-backend-build/dependencies.json',
+          JSON.stringify([{ inputs: { [input]: {} }, outputs: {} }])
+        )
+        await expect(stage()).rejects.toMatchObject({
+          code: 1,
+          stderr: expect.stringContaining('Optional agent runtime leaked into the backend: ' + name)
+        })
+      }
       await put(
         'out/desktop-backend-build/dependencies.json',
         JSON.stringify([
@@ -385,6 +406,7 @@ describe('desktop-only dependency contents', () => {
       )
       const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
       for (const file of [
+        'resources/claude-acp/package.json',
         'out/pi-bootstrap/bootstrap.mjs',
         'out/pi-bootstrap/permission-guard.mjs',
         'out/pi-bootstrap/package-lock.json',
@@ -402,6 +424,16 @@ describe('desktop-only dependency contents', () => {
           : [])
       ])
         await put(file, 'synthetic fixture')
+      await put(
+        'node_modules/consumer/package.json',
+        JSON.stringify({ name: 'consumer', version: '1', dependencies: { '@openai/codex': '1' } })
+      )
+      await expect(stage()).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          'Optional agent runtime leaked into the backend: @openai/codex'
+        )
+      })
       await put(
         'node_modules/consumer/package.json',
         JSON.stringify({ name: 'consumer', version: '1', dependencies: { i18next: '1' } })

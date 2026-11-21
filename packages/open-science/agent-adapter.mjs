@@ -5,9 +5,8 @@ import { existingMcpCapabilities } from './agent-capabilities.mjs'
 import { inspectAgentDeliveryDirectory } from './agent-delivery-directory.mjs'
 import { projectAgentNotebookReadiness, readinessActions } from './agent-notebook-readiness.mjs'
 import { getAgentPackageCapabilities } from './agent-package-capabilities.mjs'
-import { setupAction } from './agent-setup-action.mjs'
+import { openBrowser, setupAction } from './agent-setup-action.mjs'
 import { connectToOpenScience } from './index.mjs'
-import { openBrowser } from './open-browser.mjs'
 
 export const agentGuideUri = 'openscience://agent/guide'
 export const agentGuide = `# Open-Science for external agents
