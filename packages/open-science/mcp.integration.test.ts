@@ -743,8 +743,7 @@ it('recovers the same provider authentication handoff through CLI and MCP', asyn
       retryable: false,
       next: [
         expect.objectContaining({
-          action: 'open_setup',
-          web: { capability: 'open_setup' },
+          action: 'list_providers',
           verify: { capability: 'get_setup_status', profile: agent.profile }
         })
       ]
@@ -761,6 +760,7 @@ it('recovers the same provider authentication handoff through CLI and MCP', asyn
     expect(observed.structuredContent).toMatchObject({
       result: name === 'wait_submission' ? { timeoutMs: 10000, receipt: handoff } : handoff
     })
+    expect(JSON.stringify(observed)).not.toContain('open_setup')
     expect(JSON.stringify(observed)).not.toContain('private provider detail')
   }
 })
@@ -1371,6 +1371,9 @@ it('discovers the same local guide and capability schemas without a running serv
     }
   })
   expect(discover?.inputSchema).toEqual(JSON.parse(description).result.inputSchema)
+  const setupBrowser = tools.find((tool) => tool.name === 'open_setup')
+  expect(setupBrowser?.description).toMatch(/explicitly asks to open Web/)
+  expect(setupBrowser?.description).toMatch(/provider.*requires a browser sign-in/i)
 
   const { resources } = await client.listResources()
   const guide = resources.find((resource) => resource.uri === 'openscience://agent/guide')
@@ -1749,10 +1752,11 @@ it('uses the authenticated service for doctor and maps invalid or unsupported ca
     result: {
       readiness: { service: 'ready', agent: 'blocked', notebook: 'unconfirmed' },
       checks: { provider: { status: 'not_ready', reason: 'credential_invalid' } },
-      next: [{ code: 'provider_not_ready' }]
+      next: [{ code: 'provider_not_ready', action: 'list_providers' }]
     }
   })
 
+  expect(JSON.stringify(blocked.structuredContent)).not.toContain('open_setup')
   const beforeInvalid = doctorRequests
   const invalid = await client.callTool({ name: 'doctor', arguments: { apiKey: token } })
   expect(invalid.isError).toBe(true)
@@ -1895,6 +1899,7 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     ])
   })
   expect(JSON.stringify(fresh)).not.toContain('provider_login')
+  expect(JSON.stringify(fresh)).not.toContain('open_setup')
   expect(await both('list_runtimes')).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ framework: 'opencode' }),
@@ -1912,7 +1917,11 @@ it('discovers setup choices and prepares only the selected runtime, provider and
   }
   expect(writes).toEqual([])
   const framework = 'opencode'
-  await both('select_runtime', { framework })
+  const needsProvider = await both('select_runtime', { framework })
+  expect(needsProvider).toMatchObject({
+    next: expect.arrayContaining([expect.objectContaining({ action: 'choose_provider' })])
+  })
+  expect(JSON.stringify(needsProvider)).not.toContain('open_setup')
   await both('prepare_runtime', { framework })
   expect(await both('configure_provider', { provider: 'kilo-free', framework })).toMatchObject({
     readiness: { agent: 'ready' },
@@ -1927,7 +1936,8 @@ it('discovers setup choices and prepares only the selected runtime, provider and
     readiness: { notebook: 'ready' },
     checks: { notebook: { environment: { python: { status: 'blocked' }, r: { status: 'ready' } } } }
   })
-  expect(await both('get_setup_status', { language: 'python' })).toMatchObject({
+  const missingPython = await both('get_setup_status', { language: 'python' })
+  expect(missingPython).toMatchObject({
     readiness: { notebook: 'blocked' },
     next: expect.arrayContaining([
       expect.objectContaining({
@@ -1935,10 +1945,11 @@ it('discovers setup choices and prepares only the selected runtime, provider and
         owner: 'agent',
         requiresUser: false,
         arguments: { language: 'python' },
-        web: { capability: 'open_setup', arguments: { section: 'notebook' } }
+        message: expect.stringContaining('Settings > Runtimes')
       })
     ])
   })
+  expect(JSON.stringify(missingPython)).not.toContain('open_setup')
   installed.delete('r')
   expect(
     await both('prepare_notebook_environment', {
@@ -2207,6 +2218,7 @@ it('leaves the configured Codex provider login to the user in the same profile',
         owner: 'user',
         executable: process.execPath,
         argv: [cli, 'codex', 'login', '--force', '--profile', profile],
+        web: { capability: 'open_setup' },
         requiresUser: true,
         retryable: false,
         verify: { capability: 'get_setup_status', profile }

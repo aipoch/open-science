@@ -10,12 +10,12 @@ const actions = {
   notebook_environment_recovery_required: [
     'user',
     'review_notebook_environment',
-    'Review recovery for the selected language. Recheck setup, or use repair_notebook_environment if the user explicitly authorizes rebuilding the managed default.'
+    'Review recovery for the selected language. Recheck setup, or use repair_notebook_environment if the user explicitly authorizes rebuilding the managed default. The manual location is Settings > Runtimes.'
   ],
   notebook_environment_missing: [
     'agent',
     'prepare_notebook_environment',
-    'With user authorization, prepare the requested Notebook language or open Notebook settings on this profile.'
+    'Use prepare_notebook_environment for the requested language with user authorization. The manual location is Settings > Runtimes.'
   ],
   notebook_language_required: [
     'user',
@@ -215,9 +215,6 @@ export const readinessActions = (checks, profile, language) =>
           : {}),
         ...(action === 'review_notebook_environment' && language
           ? { repair: { capability: 'repair_notebook_environment', arguments: { language } } }
-          : {}),
-        ...(action === 'prepare_notebook_environment' || action === 'review_notebook_environment'
-          ? { web: { capability: 'open_setup', arguments: { section: 'notebook' } } }
           : {}),
         ...(action === 'choose_notebook_language' ? { choices: ['python', 'r'] } : {}),
         requiresUser: owner === 'user' || owner === 'deployment',

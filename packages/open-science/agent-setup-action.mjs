@@ -28,20 +28,24 @@ export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvail
       ? 'provider_login'
       : choose
         ? 'choose_provider'
-        : 'open_setup'
+        : runtime
+          ? 'list_runtimes'
+          : 'list_providers'
   return {
     code,
     action,
-    owner: prepare || action === 'open_setup' ? 'agent' : 'user',
+    owner: login || choose ? 'user' : 'agent',
     requiresUser: Boolean(login || choose),
     retryable: false,
     message: prepare
       ? 'Prepare this selected Agent runtime through Open-Science.'
       : login
-        ? 'Open this profile in Web or use the installed sign-in command. The user completes Codex sign-in.'
+        ? 'Report Codex sign-in in Open-Science Settings > Model. For an authorized sign-in, use the installed command or the same-profile Web handoff if needed. The user completes consent.'
         : choose
           ? 'List the available providers and ask the user which provider and model to use.'
-          : 'Review provider options in this profile. For a provider that needs user sign-in, open the same profile and let the user sign in.',
+          : runtime
+            ? 'List the available runtimes and report what needs setup. The manual location is Settings > Agent.'
+            : 'Use list_providers to inspect the selected provider and model. The manual location is Settings > Model.',
     ...(prepare ? { arguments: { framework } } : {}),
     ...(!runtime && !login ? { discovery: { capability: 'list_providers' } } : {}),
     ...(choose && framework && keylessKiloAvailable
@@ -58,10 +62,10 @@ export const setupAction = ({ code, argv }, profile, framework, keylessKiloAvail
     ...(login
       ? {
           executable: process.execPath,
-          argv: [cliPath, 'codex', 'login', '--force', ...(profile ? ['--profile', profile] : [])]
+          argv: [cliPath, 'codex', 'login', '--force', ...(profile ? ['--profile', profile] : [])],
+          web: { capability: 'open_setup' }
         }
       : {}),
-    ...(!prepare ? { web: { capability: 'open_setup' } } : {}),
     verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
   }
 }
@@ -81,14 +85,13 @@ export const projectSubmissionReceipt = (receipt, profile) => {
     error: {
       code,
       message:
-        'The model provider requires authentication. Ask the user to fix it in Open-Science, then recheck setup. This request did not start a Run and will not be replayed.',
+        'The model provider requires authentication. Inspect the selected provider and ask the user to reauthenticate, then recheck setup. This request did not start a Run and will not be replayed.',
       owner: 'user',
       requiresUser: true,
       retryable: false,
       next: [
         {
           ...setupAction({ code }, profile),
-          action: 'open_setup',
           owner: 'user',
           requiresUser: true
         }

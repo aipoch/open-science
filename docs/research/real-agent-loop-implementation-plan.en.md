@@ -17,6 +17,10 @@ machine and can access the same filesystem. The README's English setup prompt co
 capability discovery, readiness checks, and any required user action. Research, delivery, import, and
 Fork follow the user's separate requests. A `.science` attachment alone does not request import,
 execution, or Fork. Only the package crosses into the independent migration environment.
+The first setup check reports readiness and next steps with the browser closed. A question about
+where to act gets the page name or menu path. Prefer the installed CLI or MCP capabilities for
+authorized setup. Open Web only on an explicit request or when the chosen Provider's sign-in flow
+requires a browser handoff.
 
 ## Baseline and Implementation Contracts
 
@@ -49,9 +53,9 @@ cross-Agent model migration, and subscription reuse are outside this phase.
 - Report Python and R readiness separately from dependencies, isolation, and memory. A general
   check does not pick or install a language. When research needs a known language, check it with
   `get_setup_status` before submitting. If the environment is missing, the user can ask the Agent
-  to prepare that language through `prepare_notebook_environment` or use `open_setup` with
-  `section: notebook` to open the same profile's Web Settings → Runtimes. The user or authorized
-  Agent can operate the Web setup. Recheck the same language afterward.
+  to prepare that language through `prepare_notebook_environment`. The manual location is
+  Settings → Runtimes. Call `open_setup` with `section: notebook` on an explicit request to open
+  that page. Recheck the same language afterward.
 - Also expose discovery/registration, validation, explicit selection, enablement, and binding of
   existing interpreters. Managed setup progress, cancellation, and explicitly requested repair are
   included. Selecting an environment does not authorize changes to its dependencies.

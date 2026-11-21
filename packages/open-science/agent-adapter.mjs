@@ -18,7 +18,9 @@ Install Open-Science with the application's installer or npm package. Start the 
 
 Use the capability catalog and detail schemas to find the operations the installed adapter exposes. Check service support and call doctor for the same profile. Base Agent readiness does not prove that a Notebook can run, has run, or produced files.
 
-Use list_runtimes and list_providers to find the runtime, providers, and models supported by this version. Ask the user to choose when they have not made a selection. Select and prepare only an authorized runtime. Save and verify an API connection with save_api_provider, then use activate_provider for the provider and exact model the user chose, including an existing provider. Use configure_provider for the offered keyless option. Supply only a user-chosen stored credential reference or the name of a variable visible to this CLI or MCP process. Never ask for a secret in chat or pass its value as a tool argument. For OAuth, use the supported sign-in handoff or open_setup for the same profile and let the user complete consent. Recheck the same profile afterward. Do not copy or print credentials or private setup URLs.
+For the README setup request, install or connect MCP, discover capabilities, check readiness, and report what is missing and the next step. Keep the browser closed. If the user only asks where to act, give the page name or menu path. For requested setup changes, prefer the installed CLI or MCP capabilities. Use open_setup only when the user explicitly asks to open Web or when carrying out the chosen provider's sign-in flow requires a browser handoff.
+
+Use list_runtimes and list_providers to find the runtime, providers, and models supported by this version. Ask the user to choose when they have not made a selection. Select and prepare only an authorized runtime. Save and verify an API connection with save_api_provider, then use activate_provider for the provider and exact model the user chose, including an existing provider. Use configure_provider for the offered keyless option. Supply only a user-chosen stored credential reference or the name of a variable visible to this CLI or MCP process. Never ask for a secret in chat or pass its value as a tool argument. For OAuth, use the supported sign-in handoff for the same profile and let the user complete consent. Recheck the same profile afterward. Do not copy or print credentials or private setup URLs.
 
 Notebook status includes Python and R. For a general setup request, report both without picking or installing a language. Check the requested language before research. With authorization, prepare that language using prepare_notebook_environment. Generate and keep an operationId before submitting. After a timeout or disconnect, call get_notebook_environment_operation with the same language and ID. To cancel, use cancel_notebook_environment_operation with that same target and check the result. Use repair_notebook_environment only for a requested repair of the selected app-managed default environment. Recheck readiness after installation: environment setup, binding approval and Notebook execution are separate. System dependencies, isolation and memory can still block execution independently.
 
@@ -563,7 +565,6 @@ async function doctor({ language }, { getClient, configRoot, signal }) {
                 'No Agent runtime has been selected. List the available runtimes and ask which runtime and provider to use.',
               options: { capability: 'list_runtimes' },
               providerDiscovery: { capability: 'list_providers' },
-              web: { capability: 'open_setup' },
               verify: { capability: 'get_setup_status', ...(profile ? { profile } : {}) }
             }
           ]
@@ -702,7 +703,7 @@ const setupStatus = {
   name: 'doctor',
   group: 'setup',
   description:
-    'Read Agent and Notebook readiness for this profile. Without a language, report Python and R without assuming which one is needed. A check does not install or change setup.',
+    'Read Agent and Notebook readiness for this profile and report the next step. Without a language, report Python and R without assuming which one is needed. A check does not install, change setup, or open Web.',
   inputSchema: z.strictObject({ language: languageInput.optional() }),
   annotations: readOnly,
   exposure: { cli: true, mcp: true },
@@ -964,7 +965,7 @@ const definitions = [
     name: 'open_setup',
     group: 'setup',
     description:
-      'Open the authenticated local Open-Science Web app for this profile in the default browser. Set section to notebook to open the Python and R environment settings. The private URL is not returned. The user completes sign-in and approval prompts.',
+      'Open the authenticated local Open-Science Web app for this profile. Use only when the user explicitly asks to open Web or during requested setup of a chosen provider that requires a browser sign-in handoff. If asked only where to act, report the page or menu path. Set section to notebook for Settings > Runtimes. The private URL is not returned. The user completes sign-in and approvals.',
     inputSchema: z.strictObject({ section: z.literal('notebook').optional() }),
     annotations: { ...setupWrite, idempotentHint: false },
     exposure: { cli: true, mcp: true },

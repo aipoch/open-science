@@ -245,8 +245,9 @@ Codex or validating expiry/revocation remotely; historical provider validation r
 
 `doctor` and `get_setup_status` have the same checks. `profile` identifies the running service's
 configuration root. `next` contains setup actions, with an owner, a user action flag and a
-verification step for the same profile. A completed inspection exits with code `0`, including
-when a readiness check is blocked. If the service is
+verification step for the same profile. For the initial setup check, report those next steps
+and keep the browser closed. If the user asks where to act, give the page name or menu path.
+A completed inspection exits with code `0`, including when a readiness check is blocked. If the service is
 unreachable, the CLI emits `daemon_unavailable` and the startup command for the selected profile
 on stderr, and exits with code `3`. An HTTP authentication rejection stays an `access_denied`
 error.
@@ -268,15 +269,16 @@ with `activate_provider`. Supply the `expectedActiveProviderId` and `expectedAct
 `list_providers`, including `null` for either absent value. Recheck after a timeout or conflict
 before repeating a write. An active Provider is only one part of the same profile's readiness.
 
-`configure_provider` also offers the Kilo Gateway free route where supported. Use the offered
-sign-in handoff or `open_setup` when the chosen Provider needs user sign-in. This opens the same
-profile in the browser without returning its private URL. The user completes sign-in and consent.
+`configure_provider` also offers the Kilo Gateway free route where supported. Use the installed
+CLI or MCP capabilities for requested setup. Call `open_setup` only when the user explicitly asks
+to open Web or the chosen Provider's sign-in flow requires a browser handoff. The tool opens the
+same profile without returning its private URL. The user completes sign-in and consent.
 
 Before submitting research that needs Python or R, use `get_setup_status` with that `language`.
 A setup check installs nothing. If the requested environment is missing, `next` offers
-`prepare_notebook_environment` for that language and `open_setup` with `{"section":"notebook"}`
-for the same profile's Web Settings → Runtimes. The user can do the setup there or ask the Agent
-to handle it. Generate and retain a unique `operationId` (for example a UUID) before using
+`prepare_notebook_environment` for that language. The manual location is Settings → Runtimes.
+On an explicit request to open that page, call `open_setup` with `{"section":"notebook"}`.
+Generate and retain a unique `operationId` (for example a UUID) before using
 `prepare_notebook_environment` with `language` and `operationId`. The tool observes for 1,000 ms by
 default; set `timeoutMs` to `0` to return immediately, or up to `30000` to wait longer. After a timeout
 or disconnect, call `get_notebook_environment_operation` with the original language and ID. The
@@ -293,9 +295,8 @@ These tools are also available from `open-science tools call <name> --json` with
 
 ## First-run setup
 
-The built-in Open Science Agent needs a model provider. Use the authenticated Web Settings to
-configure your provider, including Anthropic Messages endpoints, or add an OpenAI API key with
-the CLI.
+The built-in Open Science Agent needs a model provider. Configure your chosen provider with
+`save_api_provider` and `activate_provider` or use the CLI example below for OpenAI.
 
 ```bash
 open-science start --no-open
