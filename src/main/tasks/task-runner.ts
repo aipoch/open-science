@@ -1738,7 +1738,8 @@ class TaskRunner {
       continuations.push({
         runId: entry.id,
         requestId: entry.requestId,
-        status: this.activeRunBySession.get(entry.sessionId) === entry.id ? 'running' : entry.status,
+        status:
+          this.activeRunBySession.get(entry.sessionId) === entry.id ? 'running' : entry.status,
         ...(entry.failureCode ? { failureCode: entry.failureCode } : {})
       })
     }
