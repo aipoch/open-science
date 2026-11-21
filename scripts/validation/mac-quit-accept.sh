@@ -37,8 +37,12 @@ probe quit
 for i in {1..1500}; do if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.03; done
 ! kill -0 "$pid" 2>/dev/null
 date -u > "$D/immediate-reopen"
-export FIXTURE_FILE="$D/document.science"
-cp src/main/session-package/fixtures/session-package-v0.31.1-minimal.science "$FIXTURE_FILE"
+if [[ "${INTENT:-document}" = link ]]; then
+  export FIXTURE_LINK=1
+else
+  export FIXTURE_FILE="$D/document.science"
+  cp src/main/session-package/fixtures/session-package-v0.31.1-minimal.science "$FIXTURE_FILE"
+fi
 probe launch
 cutoff=$((SECONDS+125))
 while ((SECONDS<cutoff)); do
@@ -59,12 +63,18 @@ node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1])).details
 observe_document() {
   local output="$1"
   for i in {1..30}; do
-    if probe document >"$output" && grep -q '"observed":true' "$output"; then return 0; fi
+    if probe "${INTENT:-document}" >"$output" && grep -q '"observed":true' "$output"; then return 0; fi
     sleep 1
   done
   return 1
 }
-observe_document "$D/document-at-handoff" || true
+if observe_document "$D/document-at-handoff"; then
+  node - "$D/document-at-handoff" <<'JS'
+const fs=require('node:fs'), d=JSON.parse(fs.readFileSync(process.argv[2])).details
+if(d.version!=='1.3.2'||d.argvHasDocument||d.argvHasUrl||d.count>1)throw Error('invalid handoff')
+JS
+  exit 0
+fi
 # Positive control with the very same signed B, target and launch command after replacement.
 probe quit
 wait_exit

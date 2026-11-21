@@ -23,7 +23,8 @@ if(action==='serve'){
   for(const p of [config,profile,data])mkdirSync(p,{recursive:true})
   if(!existsSync(join(config,'settings.json'))) writeFileSync(join(config,'settings.json'),JSON.stringify({version:2,providers:[],onboardingCompletedAt:Date.now(),pathsNormalizedAt:Date.now(),dataRoot:data,localePreference:'en',notificationsEnabled:false}))
   const env={OPEN_SCIENCE_CONFIG_ROOT:config,OPEN_SCIENCE_USER_DATA:profile}
-  execFileSync('open',['-n','--stdout',join(dir,'stdout'),'--stderr',join(dir,'stderr'),'-a',app,...Object.entries(env).flatMap(([k,v])=>['--env',k+'='+v]),...(process.env.FIXTURE_FILE?[process.env.FIXTURE_FILE]:[]),'--args','--inspect=127.0.0.1:19365','--lang=en-US'])
+  execFileSync('open',['-n','--stdout',join(dir,'stdout'),'--stderr',join(dir,'stderr'),'-a',app,...Object.entries(env).flatMap(([k,v])=>['--env',k+'='+v]),...(process.env.FIXTURE_FILE?[process.env.FIXTURE_FILE]:process.env.FIXTURE_LINK
+    ?['open-science://import?'+new URLSearchParams({version:'1',origin:'http://127.0.0.1:65533',port:'65533',name:'handoff-url.science',size:'5',secret:'ab'.repeat(32)})]:[]),'--args','--inspect=127.0.0.1:19365','--lang=en-US'])
 }else {
   const targets=await fetch('http://127.0.0.1:19365/json/list').then(r=>r.json());assert.equal(targets.length,1)
   const sock=new WebSocket(targets[0].webSocketDebuggerUrl);await new Promise((r,j)=>{sock.onopen=r;sock.onerror=j})
@@ -39,6 +40,7 @@ if(action==='serve'){
     }else if(action==='status')record('status',await run("return {pid:process.pid,version:app.getVersion(),focused:!!BrowserWindow.getFocusedWindow(),win:BrowserWindow.getAllWindows().map(x=>x.webContents.getURL()),status:await render('window.api.update.getStatus()')}"))
     else if(action==='workspace')record(action,await run(`if(!w||!w.isVisible())throw Error('no visible workspace'); const data=await render("Promise.all([window.api.runtimeStartup.getState(),window.api.update.getStatus()]).then(([runtime,status])=>({runtime:runtime.phase,version:status.current,text:document.body.innerText.includes('New project')}))");if(!data.text||data.runtime!=='ready')throw Error(JSON.stringify(data)); const projects=await render('window.api.projects.list().then(rows=>rows.length)'); if(!Number.isInteger(projects))throw Error('project list unavailable'); return {data,projects,pid:process.pid,version:app.getVersion(),exe:process.execPath}`))
     else if(action==='document')record(action,await run(`const observed=await render("Array.from(document.querySelectorAll('[role=dialog]')).map(n=>n.innerText).some(t=>t.includes('Import Session package'))");return {observed,version:app.getVersion(),pid:process.pid,argvHasDocument:process.argv.some(v=>v.endsWith('.science'))}`))
+    else if(action==='link')record(action,await run(`const state=await render("window.api.packagePresentation.getState()");const matches=state?.browserTransfers?.filter(t=>t.filename==='handoff-url.science')??[];return {observed:matches.length===1,count:matches.length,version:app.getVersion(),pid:process.pid,argvHasUrl:process.argv.some(v=>v.startsWith('open-science:'))}`))
     else if(action==='identity')record('identity',await run('return {version:app.getVersion(),pid:process.pid,exe:process.execPath}'))
     else if(action==='off'||action==='on')record(action,await renderer('window.api.update.setAutomaticDownloads('+String(action==='on')+')'))
     else if(action==='windows')record('windows',await run('return BrowserWindow.getAllWindows().map(w=>w.webContents.getURL())'))
