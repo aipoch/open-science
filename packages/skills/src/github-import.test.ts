@@ -847,6 +847,15 @@ describe('searchGitHubSkillRepositories', () => {
     await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(message)
   })
 
+  it('explains a Chromium fetch rejection without a network code', async () => {
+    const fetcher: FetchLike = async () => {
+      throw new TypeError('Failed to fetch')
+    }
+    await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
+      'Could not reach GitHub.'
+    )
+  })
+
   it('keeps a bare 403 distinct from rate limiting', async () => {
     const fetcher: FetchLike = async () => ({
       ok: false,

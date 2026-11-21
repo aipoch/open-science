@@ -86,7 +86,7 @@ const throwGitHubNetworkError = (error: unknown): never => {
   ) {
     message = 'GitHub proxy connection failed.'
   } else if (
-    error.message === 'fetch failed' ||
+    /^(?:fetch failed|failed to fetch)$/i.test(error.message) ||
     error.message === 'terminated' ||
     /^net::ERR_/.test(error.message)
   ) {
