@@ -487,7 +487,7 @@ const readOccupancyScans = async (env, since) => {
   const scans = []
   for (const name of await readdir(directory)) {
     if (!/^main(?:\.\d+)?\.log$/.test(name)) continue
-    const lines = (await readFile(join(directory, name), 'utf8')).split('\n')
+    const lines = (await readFile(join(directory, name), 'utf8')).split('\n').slice(0, -1)
     for (const line of lines) {
       if (!line.includes('Windows installation occupancy inspected')) continue
       const { t, scope, msg, data } = JSON.parse(line)
@@ -545,6 +545,8 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
       async () => (await window.api?.databaseStartup.getState())?.phase === 'ready'
     )
     const { current } = await page.evaluate(() => window.api.update.getStatus())
+    const scans = await readOccupancyScans(env, startedAt)
+    console.log('Shortcut occupancy scans:', JSON.stringify({ expectedVersion, current, scans }))
     if (current !== expectedVersion) {
       const log = await readFile(
         join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs', 'main.log'),
@@ -587,10 +589,10 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
         { cause: error }
       )
     }
+    return scans
   } finally {
     await browser.close()
   }
-  return readOccupancyScans(env, startedAt)
 }
 
 const runElectronUpdater = async ({
