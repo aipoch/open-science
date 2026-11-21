@@ -2442,6 +2442,19 @@ describe('workspace conversation controller', () => {
     expect(order).toEqual(['review', 'runtime'])
   })
 
+  it('waits for runtime cancellation and reports an incomplete Fix Loop stop', async () => {
+    const input = options({ activeSession: session({ fixLoopActive: true }) })
+    input.abortFixLoop = vi.fn().mockRejectedValue(new Error('Review still running'))
+    const cancellation = Promise.withResolvers<void>()
+    input.runtime.cancelRun = vi.fn(() => cancellation.promise)
+    const hook = renderController(input)
+    mounted.push(hook)
+    const outcome = hook.result.current.actions.cancel()
+    expect(input.runtime.cancelRun).toHaveBeenCalled()
+    cancellation.resolve()
+    await expect(outcome).rejects.toThrow('Review still running')
+  })
+
   it.each(['configuration', 'prompt', 'preparation', 'permission', 'graph', 'compaction'] as const)(
     'keeps interrupted recovery blocked by current %s ownership',
     async (blocker) => {

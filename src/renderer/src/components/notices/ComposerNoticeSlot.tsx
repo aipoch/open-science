@@ -241,8 +241,6 @@ const ComposerFailureNoticeSlot = ({
       }
     }
     switch (notice.recoveryCause) {
-      case 'cancelled':
-        return t('This turn was interrupted. Resume to continue.')
       case 'connection-lost':
         return t('Connection lost — Resume to reconnect and continue.')
       case 'app-restart':
@@ -325,6 +323,23 @@ const ComposerFailureNoticeSlot = ({
       </div>
     ) : null
 
+  if (current.source === 'session' && current.recoveryCause === 'cancelled') {
+    return (
+      <TooltipProvider delayDuration={800}>
+        <div
+          data-testid="composer-notice-slot"
+          data-slot="session-recovery-notice"
+          className="mb-2"
+        >
+          <div className="flex justify-end">{actionButton('resume', current, true)}</div>
+          {actionFailure?.id === current.id && (
+            <p role="alert">{t('Could not resume the session.')}</p>
+          )}
+          {moreNotices}
+        </div>
+      </TooltipProvider>
+    )
+  }
   if (current.failure.category === 'session') {
     return (
       <TooltipProvider delayDuration={800}>

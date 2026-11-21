@@ -235,15 +235,15 @@ describe('useAcpRuntime snapshot action failures', () => {
     expect(result.current.isConnecting).toBe(false)
   })
 
-  it('normalizes non-Error rejections into UI-safe text', async () => {
+  it('returns cancellation rejection to the initiating surface', async () => {
     acpApi.cancel.mockRejectedValueOnce('raw failure string')
     const { result } = await mountRuntime()
 
     await act(async () => {
-      await result.current.cancel('session-1')
+      await expect(result.current.cancel('session-1')).rejects.toBe('raw failure string')
     })
 
-    expect(result.current.actionError).toBe('raw failure string')
+    expect(result.current.actionError).toBeNull()
   })
 })
 

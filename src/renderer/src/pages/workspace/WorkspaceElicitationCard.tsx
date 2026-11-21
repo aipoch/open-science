@@ -250,6 +250,7 @@ const WorkspaceElicitationCard = ({
       restoredEdit?.activeQuestionIndex ??
       (choiceQuestions ? firstUnansweredQuestionIndex(choiceQuestions, restoredValues) : 0)
   )
+  const responding = useRef(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string>()
   // Accordion review: indexes of the questions whose original content is expanded in place.
@@ -518,7 +519,8 @@ const WorkspaceElicitationCard = ({
   }, [values, activeChoiceIndex, canSaveEditDraft])
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
-    if (readOnly || !onRespond || isSubmitting) return false
+    if (readOnly || !onRespond || responding.current) return false
+    responding.current = true
     setError(undefined)
     setIsSubmitting(true)
     try {
@@ -529,13 +531,25 @@ const WorkspaceElicitationCard = ({
       onEditDraftChange?.(undefined)
       return true
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not submit the response.')
+      setError(caught instanceof Error ? caught.message : String(caught))
       return false
     } finally {
+      responding.current = false
       setIsSubmitting(false)
     }
   }
 
+  const submissionError = error !== undefined && (
+    <div className="mt-2 text-sm">
+      <p role="alert">{t('Could not confirm that your response was submitted.')}</p>
+      {error && (
+        <details className="mt-1 text-xs text-muted-foreground">
+          <summary>{t('Error details')}</summary>
+          {error}
+        </details>
+      )}
+    </div>
+  )
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (!request || !canSubmit) return
@@ -1065,14 +1079,10 @@ const WorkspaceElicitationCard = ({
           ) : null}
 
           <p className="sr-only" aria-live="polite">
-            {isSubmitting ? t('Submitting response') : error ? t('Response submission failed') : ''}
+            {isSubmitting ? t('Submitting response') : ''}
           </p>
 
-          {error ? (
-            <p role="alert" className="mt-2 text-sm text-destructive">
-              {t(error)}
-            </p>
-          ) : null}
+          {submissionError}
         </form>
       ) : elicitation.state === 'pending' && request ? (
         <form className="mt-3 space-y-4" onSubmit={handleSubmit}>
@@ -1276,14 +1286,10 @@ const WorkspaceElicitationCard = ({
           </div>
 
           <p className="sr-only" aria-live="polite">
-            {isSubmitting ? t('Submitting response') : error ? t('Response submission failed') : ''}
+            {isSubmitting ? t('Submitting response') : ''}
           </p>
 
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(error)}
-            </p>
-          ) : null}
+          {submissionError}
 
           <div className="flex justify-end gap-2">
             <Button
@@ -1451,7 +1457,7 @@ const WorkspaceElicitationRecovery = ({
 >): React.JSX.Element => {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<{ ending: boolean; detail: string }>()
   const responding = useRef(false)
   const [retryAttempted, setRetryAttempted] = useState(false)
   const respond = async (retry: boolean): Promise<void> => {
@@ -1468,7 +1474,10 @@ const WorkspaceElicitationRecovery = ({
         ...(retry ? { answers: elicitation.answers, retryContinuation: true } : {})
       })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError({
+        ending: !retry,
+        detail: caught instanceof Error ? caught.message : String(caught)
+      })
     } finally {
       responding.current = false
       setBusy(false)
@@ -1477,10 +1486,12 @@ const WorkspaceElicitationRecovery = ({
   return (
     <div data-testid="elicitation-recovery" className="rounded-2xl bg-bg-000 p-4 shadow-sm">
       <ErrorNotice
-        title={t('Could not continue the task')}
-        description={t(
-          'Your conversation is preserved. End this wait to return to the conversation.'
-        )}
+        title={error?.ending ? t('Could not end this wait.') : t('Could not continue the task')}
+        description={
+          elicitation.state === 'answered' || elicitation.state === 'declined'
+            ? t('Your response was saved.')
+            : undefined
+        }
         primaryButton={{
           label: t('End this wait'),
           onClick: () => void respond(false),
@@ -1498,9 +1509,8 @@ const WorkspaceElicitationRecovery = ({
       >
         <details className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
           <summary>{t('Error details')}</summary>
-          {error ?? elicitation.continuationRecovery?.error}
+          {error?.detail ?? elicitation.continuationRecovery?.error}
         </details>
-        {error ? <p role="alert">{error}</p> : null}
       </ErrorNotice>
     </div>
   )

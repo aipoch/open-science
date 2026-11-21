@@ -234,6 +234,12 @@
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "Не удалось подтвердить остановку всех субагентов.",
+    "Could not confirm that the run stopped.": "Не удалось подтвердить остановку выполнения.",
+    "Could not confirm that your response was submitted.": "Не удалось подтвердить отправку вашего ответа.",
+    "Could not end this wait.": "Не удалось завершить ожидание.",
+    "Your response was saved.": "Ваш ответ сохранён.",
+    "Could not resume the session.": "Не удалось возобновить сеанс.",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP не установлен. Чтобы использовать Claude Code, установите Claude Agent в настройках.",
     "Automatically download updates": "Автоматически скачивать обновления",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (закладывайте {{min}}–{{max}} мин)",
@@ -2662,7 +2668,6 @@
     "Resolved": "Решено",
     "Resolving…": "Решение в процессе...",
     "Resources": "Ресурсы",
-    "Response submission failed": "Ошибка при отправке ответа",
     "Restart": "Перезапустить",
     "Restart R kernel": "Перезапустить R-ядро",
     "Restart now": "Перезапустить сейчас",
@@ -8062,7 +8067,6 @@
     "{{count}} previous messages_many": "{{count}} предыдущих сообщений",
     "{{count}} previous messages_other": "{{count}} предыдущего сообщения",
     "Could not continue the task": "Не удалось продолжить задачу",
-    "Your conversation is preserved. End this wait to return to the conversation.": "Диалог сохранён. Завершите это ожидание, чтобы вернуться к диалогу.",
     "End this wait": "Завершить ожидание",
     "Retry continuation": "Повторить продолжение",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "Не удалось удалить закладку. Сохранённые репозитории оставлены без изменений.",

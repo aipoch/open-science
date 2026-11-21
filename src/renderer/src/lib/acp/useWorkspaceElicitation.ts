@@ -22,6 +22,21 @@ import {
   useWorkspaceElicitationFailures
 } from './workspace-operation-error'
 
+// Legacy requests can arrive before their activity. An explicit branch owner is authoritative.
+const isCurrentQuestionBranch = (
+  session: ChatSession,
+  toolCallId: string,
+  durable: PendingElicitationRequest['durable']
+): boolean => {
+  const graph = session.conversationGraph
+  if (!graph) return true
+  const branchId = graph.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId
+  const owner =
+    durable?.provenanceContext?.messageBranchId ??
+    graph.activities.find((activity) => activity.id === toolCallId)?.messageBranchId
+  return !owner || owner === branchId
+}
+
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
 ): PendingElicitationRequest[] => {
@@ -40,7 +55,8 @@ const pendingWorkspaceElicitations = (
         elicitation.continuationRecovery ||
         (elicitation.continuationPending &&
           (elicitation.state === 'answered' || elicitation.state === 'declined'))) &&
-      elicitation.durable
+      elicitation.durable &&
+      isCurrentQuestionBranch(session, activity.id, elicitation.durable)
       ? [
           {
             requestId: elicitation.durable.requestId,
@@ -119,15 +135,10 @@ const useWorkspaceElicitation = (
         ? useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
         : undefined
       const selected = session ? resolveSessionRuntimeSelection(session.id) : undefined
-      if (sessionId) {
-        useWorkspaceElicitationFailures.setState(({ failures }) => {
-          if (!failures[sessionId]) return {}
-          const next = { ...failures }
-          delete next[sessionId]
-          return { failures: next }
-        })
-      }
 
+      const previousFailure = sessionId
+        ? useWorkspaceElicitationFailures.getState().failures[sessionId]
+        : undefined
       try {
         await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
           supportsImageInput: selected
@@ -139,6 +150,14 @@ const useWorkspaceElicitation = (
           agentTarget: selected?.agentTarget,
           historyReplayDescriptor: selected?.historyReplayDescriptor
         })
+        if (sessionId && previousFailure?.requestId === response.requestId) {
+          useWorkspaceElicitationFailures.setState(({ failures }) => {
+            if (failures[sessionId] !== previousFailure) return {}
+            const next = { ...failures }
+            delete next[sessionId]
+            return { failures: next }
+          })
+        }
       } catch (error) {
         const saved = useSessionStore
           .getState()
@@ -148,6 +167,7 @@ const useWorkspaceElicitation = (
           )?.elicitation
         if (
           sessionId &&
+          response.action !== 'cancel' &&
           saved?.continuationPending &&
           !saved.continuationRecovery &&
           (saved.state === 'answered' || saved.state === 'declined')
@@ -171,6 +191,7 @@ const useWorkspaceElicitation = (
 export {
   createWorkspaceElicitationRuntime,
   pendingWorkspaceElicitations,
+  isCurrentQuestionBranch,
   useWorkspaceElicitation,
   useWorkspaceElicitationFailures
 }

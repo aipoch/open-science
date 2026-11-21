@@ -229,7 +229,7 @@ export const noticePresentation = (
   operation?: string
 ): NoticePresentation => {
   // Attachment recovery belongs to the transfer row or the editable draft.
-  if (operation === 'attachment')
+  if (operation === 'attachment' || operation === 'stop')
     return {
       ...noticeCatalog.internal,
       level: 'warning',

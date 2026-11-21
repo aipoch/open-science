@@ -894,11 +894,13 @@ const useWorkspaceConversationController = (
         const session = current.activeSession
         if (!session) return
         const fixLoopCancellation = session.fixLoopActive
-          ? current
-              .abortFixLoop({ projectId: session.projectId, appSessionId: session.id })
-              .catch((error: unknown) => console.warn('Failed to abort fix loop:', error))
+          ? current.abortFixLoop({ projectId: session.projectId, appSessionId: session.id })
           : Promise.resolve()
-        await Promise.all([fixLoopCancellation, current.runtime.cancelRun(session.id)])
+        const results = await Promise.allSettled([
+          fixLoopCancellation,
+          current.runtime.cancelRun(session.id)
+        ])
+        for (const result of results) if (result.status === 'rejected') throw result.reason
       },
       delete: (): void => optionsRef.current.session.actions.confirmDelete()
     }

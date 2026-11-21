@@ -231,6 +231,12 @@
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "すべてのサブエージェントが停止したか確認できませんでした。",
+    "Could not confirm that the run stopped.": "実行が停止したか確認できませんでした。",
+    "Could not confirm that your response was submitted.": "回答が送信されたか確認できませんでした。",
+    "Could not end this wait.": "待機を終了できませんでした。",
+    "Your response was saved.": "回答は保存されました。",
+    "Could not resume the session.": "セッションを再開できませんでした。",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP がインストールされていません。Claude Code を使用するには、設定で Claude Agent をインストールしてください。",
     "Automatically download updates": "アップデートを自動でダウンロード",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
@@ -2566,7 +2572,6 @@
     "Resolved": "解決済み",
     "Resolving…": "解決中…",
     "Resources": "リソース",
-    "Response submission failed": "応答の送信に失敗しました",
     "Restart": "再起動",
     "Restart R kernel": "R カーネルを再起動する",
     "Restart now": "今すぐ再起動",
@@ -7593,7 +7598,6 @@
     "Switch Mode": "モードを切り替え",
     "{{count}} previous messages_other": "これまでの {{count}} 件のメッセージ",
     "Could not continue the task": "タスクを続行できませんでした",
-    "Your conversation is preserved. End this wait to return to the conversation.": "会話は保存されています。この待機を終了すると会話に戻れます。",
     "End this wait": "この待機を終了",
     "Retry continuation": "続行を再試行",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "このブックマークを削除できませんでした。保存済みリポジトリは保持されています。",

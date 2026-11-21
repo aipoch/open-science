@@ -13527,7 +13527,7 @@ describe('manual native context compaction', () => {
     })
     expect(
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
-    ).toEqual(expect.any(String))
+    ).toBeUndefined()
   })
 })
 

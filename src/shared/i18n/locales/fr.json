@@ -233,6 +233,12 @@
     "Wait for the application handoff to finish before transferring research.": "Attendez la fin du transfert de l’application avant de transférer des travaux de recherche."
   },
   "renderer": {
+    "Could not confirm that all subagents stopped.": "Impossible de confirmer l’arrêt de tous les sous-agents.",
+    "Could not confirm that the run stopped.": "Impossible de confirmer l’arrêt de l’exécution.",
+    "Could not confirm that your response was submitted.": "Impossible de confirmer l’envoi de votre réponse.",
+    "Could not end this wait.": "Impossible de mettre fin à cette attente.",
+    "Your response was saved.": "Votre réponse a été enregistrée.",
+    "Could not resume the session.": "Impossible de reprendre la session.",
     "Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.": "Claude ACP n’est pas installé. Installez Claude Agent dans les paramètres pour utiliser Claude Code.",
     "Automatically download updates": "Télécharger automatiquement les mises à jour",
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prévoir {{min}}–{{max}} min)",
@@ -2650,7 +2656,6 @@
     "Resolved": "Résolu",
     "Resolving…": "Résoudre…",
     "Resources": "Ressources",
-    "Response submission failed": "Échec de l'envoi de la réponse",
     "Restart": "Redémarrer",
     "Restart R kernel": "Redémarrer le noyau R",
     "Restart now": "Redémarrez maintenant",
@@ -7921,7 +7926,6 @@
     "{{count}} previous messages_many": "{{count}} messages précédents",
     "{{count}} previous messages_other": "{{count}} messages précédents",
     "Could not continue the task": "Impossible de poursuivre la tâche",
-    "Your conversation is preserved. End this wait to return to the conversation.": "Votre conversation est conservée. Terminez cette attente pour revenir à la conversation.",
     "End this wait": "Terminer cette attente",
     "Retry continuation": "Réessayer de poursuivre",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "Impossible de supprimer ce favori. Vos dépôts enregistrés ont été conservés.",
