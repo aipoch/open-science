@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi, type Mock } from 'vitest'
 import type { PersistedChatSession } from '../shared/session-persistence'
 
 const projectRoot = resolve(__dirname, '../..')
@@ -621,7 +621,10 @@ describe('production application command wiring', () => {
   })
 })
 
-const rootFixture = vi.hoisted(() => ({ owners: {} as Record<string, unknown> }))
+const rootFixture = vi.hoisted(() => ({
+  owners: {} as Record<string, unknown>,
+  holdUpdateAdmission: vi.fn<() => () => void>()
+}))
 vi.mock('./composition/agent-activation', () => ({
   composeAgentActivation: vi.fn(() => rootFixture.owners)
 }))
@@ -636,7 +639,10 @@ vi.mock('./composition/agent-runtime', () => ({
   composeAgentRuntime: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/application-commands', () => ({
-  registerApplicationCommandComposition: vi.fn(() => rootFixture.owners)
+  registerApplicationCommandComposition: vi.fn(() => ({
+    ...rootFixture.owners,
+    holdUpdateAdmission: rootFixture.holdUpdateAdmission
+  }))
 }))
 vi.mock('./composition/artifact-surfaces', () => ({
   composeArtifactSurfaces: vi.fn(() => rootFixture.owners)
@@ -746,7 +752,10 @@ vi.mock('./desktop-surface-declarations', () => ({
 }))
 vi.mock('./runtime-metadata', () => ({ runtimeMetadata: () => ({ version: 'test' }) }))
 
-import { createApplicationModules } from './ipc-application-composition'
+import {
+  createApplicationModules,
+  type IpcRegistrationOptions
+} from './ipc-application-composition'
 import { composeProjectLifecycle } from './composition/project-lifecycle'
 import { composeSettingsBootstrap } from './composition/settings-bootstrap'
 import { composeBackgroundResults } from './composition/background-results'
@@ -757,6 +766,51 @@ import { composeAgentControls } from './composition/agent-controls'
 import { composeConnectors } from './composition/connectors'
 import { createConnectorApprovalElectronSurface } from './desktop-surface-declarations'
 import { CredentialRequestBroker } from './connectors/credential-request-broker'
+import { composeDocumentReading } from './composition/document-reading'
+import { composeCommandDependencies } from './composition/command-dependencies'
+import { composeHandoff } from './composition/handoff'
+
+type TestModuleRecord = { name: string; start?: () => unknown; dispose?: () => unknown }
+
+async function startDesktopTestRuntime(
+  owners: Record<string, unknown>,
+  options: Partial<IpcRegistrationOptions> = {}
+): Promise<{
+  result: Awaited<ReturnType<typeof createApplicationModules>>
+  moduleRecords: TestModuleRecord[]
+  events: { publish: Mock }
+  phase: Mock
+}> {
+  rootFixture.owners = {
+    configRoot: resolve(process.env.TMPDIR ?? projectRoot, 'command-wiring-config'),
+    reviewerCommandOwnerRef: {},
+    pptxDrafts: { subscribe: vi.fn() },
+    settingsService: {},
+    settingsRepository: { getSettings: async () => ({}) },
+    sessionPackageDesktop: {},
+    computeIpcModule: { handlers: {} },
+    createDeferredRecovery: () => ({}),
+    ...owners
+  }
+  const moduleRecords: TestModuleRecord[] = []
+  const events = { publish: vi.fn() }
+  const add = vi.fn(async (input, create) => {
+    if (typeof input === 'function') return events
+    const module = await create(input)
+    moduleRecords.push(module)
+    return module.capability
+  })
+  const phase = vi.fn()
+  const result = await createApplicationModules(
+    { mainEntryPath: '/unused/main.js', systemLanguageTags: ['en'], ...options },
+    { add } as unknown as Parameters<typeof createApplicationModules>[1],
+    { phase } as unknown as Parameters<typeof createApplicationModules>[2]
+  )
+  onTestFinished(async () => {
+    await moduleRecords.find(({ name }) => name === 'session-schedules')?.dispose?.()
+  })
+  return { result, moduleRecords, events, phase }
+}
 
 // Keep domain factories isolated while exercising their real construction order and late bindings.
 it('connects committed deletion to the same credential broker used by approval surfaces', async () => {
@@ -778,16 +832,12 @@ it('connects committed deletion to the same credential broker used by approval s
   const currentSnapshotAfter = vi.fn(async (value) => value)
   const resolveSpecialist = vi.fn()
   const owners = {
-    // Construction only: this test does not start the runner or write its profiles.
-    configRoot: resolve(process.env.TMPDIR ?? projectRoot, 'command-wiring-config'),
     credentialRequestBroker: broker,
     approvalBroker: {},
     skillImportApprovalBroker: {},
-    reviewerCommandOwnerRef: { current: undefined },
     journalAttributes: { dispose: journalDispose },
     createDeferredRecovery,
     sessionDetailsOwner: { recoverSession },
-    computeIpcModule: { handlers: {} },
     runtime,
     sideChatRuntime: { resumeAfterHandoff },
     shutdownCoordinator: { runForQuitPreparation: shutdown },
@@ -810,14 +860,7 @@ it('connects committed deletion to the same credential broker used by approval s
       hasActiveTransfer: vi.fn(() => true)
     },
     sessionPersistenceCoordinator: { sessionProjectId: vi.fn(async () => 'project') },
-    sessionRepository: {
-      loadSession: vi.fn(async () => ({ memoryEnabled: false })),
-      loadSessionSummaries: vi.fn().mockRejectedValue(new Error('Session projection is not ready.'))
-    },
-    ensureSessionProjection: async () => ({
-      sessions: [{ id: 'readable', projectId: 'project', title: 'Readable session', updatedAt: 1 }]
-    }),
-    projectRepository: { list: async () => [{ id: 'project', name: 'Project' }] },
+    sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
     specialistDomain: {},
@@ -825,7 +868,6 @@ it('connects committed deletion to the same credential broker used by approval s
     jobRepository: {},
     hostRepository: {},
     notebookInputRegistry: {},
-    pptxDrafts: { subscribe: vi.fn() },
     delegatedWorkRef: {},
     literatureCatalog: { getMany: vi.fn() },
     detectSessionExportBlockingSessions: vi.fn(),
@@ -834,24 +876,9 @@ it('connects committed deletion to the same credential broker used by approval s
     task: {},
     desktop: {}
   }
-  rootFixture.owners = owners
-  const moduleRecords: { name: string; start?: () => unknown; dispose?: () => unknown }[] = []
-  const events = { publish: vi.fn() }
-  const add = vi.fn(async (input, create) => {
-    if (typeof input === 'function') return events
-    const module = await create(input)
-    moduleRecords.push(module)
-    return module.capability
+  const { result, moduleRecords, phase } = await startDesktopTestRuntime(owners, {
+    localeOwner: { t: (key: string) => key } as IpcRegistrationOptions['localeOwner']
   })
-  const localeOwner = { t: vi.fn((key: string) => key) }
-  const phase = vi.fn()
-  const result = await createApplicationModules(
-    { mainEntryPath: '/unused/main.js', localeOwner } as unknown as Parameters<
-      typeof createApplicationModules
-    >[0],
-    { add } as unknown as Parameters<typeof createApplicationModules>[1],
-    { phase } as unknown as Parameters<typeof createApplicationModules>[2]
-  )
   const recoveryModule = moduleRecords.find(
     (module) => module.name === 'deferred-session-recovery'
   )!
@@ -926,11 +953,6 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(result.applicationCommands.desktop).toBe(owners.desktop)
   expect(result.sessionDeletionCapability).toBe(owners.sessionPersistenceCoordinator)
   expect(result.archiveCapability).toBe(owners.archiveCoordinator)
-
-  await expect(result.listTrayNavigationSessions()).resolves.toMatchObject([
-    { id: 'readable', projectName: 'Project', title: 'Readable session' }
-  ])
-  expect(owners.sessionRepository.loadSessionSummaries).toHaveBeenCalledOnce()
 
   await result.commitClosePreference('quit')
   expect(setClosePreference).toHaveBeenCalledWith('quit')
@@ -1024,4 +1046,103 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(journalDispose).toHaveBeenCalledOnce()
   await recoveryModule.dispose!()
   expect(recovery.dispose).toHaveBeenCalledOnce()
+})
+
+it('serves readable tray sessions during recovery while update handoff still requires a ready catalog', async () => {
+  const notReady = new Error('Session projection is not ready.')
+  const read = vi.fn().mockRejectedValue(notReady)
+  const session = { id: 'readable', projectId: 'project', title: 'Readable session', updatedAt: 1 }
+  const active = { projectId: session.projectId, sessionId: session.id }
+  const recover = vi.fn(async () => ({
+    sessions: [session, { ...session, id: 'archived', archivedAt: 1 }]
+  }))
+  const release = vi.fn()
+  rootFixture.holdUpdateAdmission.mockReturnValueOnce(release)
+  const handoff =
+    await vi.importActual<typeof import('./composition/handoff')>('./composition/handoff')
+  vi.mocked(composeHandoff).mockImplementationOnce(handoff.composeHandoff)
+  const { result } = await startDesktopTestRuntime({
+    settingsService: { hasActiveInstall: () => false, holdInstallAdmission: () => vi.fn() },
+    sessionRepository: { loadSessionSummaries: read },
+    ensureSessionProjection: recover,
+    projectRepository: { list: async () => [{ id: session.projectId, name: 'Project' }] },
+    runtime: { getQuitBlockingPromptSessions: () => [active] },
+    getActiveSideChatSessions: () => [],
+    getActiveDelegatedSessions: () => [],
+    notebookLifecycle: { getActiveNotebookSessions: () => [] },
+    packageHandoffHeld: { current: false },
+    sessionPackageDesktopLifecycle: { isActive: () => false },
+    sideChatRuntime: { resumeAfterHandoff: vi.fn() }
+  })
+
+  await expect(result.listTrayNavigationSessions()).resolves.toMatchObject([
+    { id: session.id, projectName: 'Project', title: session.title }
+  ])
+  expect(read).toHaveBeenCalledOnce()
+  expect(result.detectActiveSessions()).toEqual([{ ...active, kind: 'agent' }])
+  const signal = new AbortController().signal
+  await expect(result.inspectDesktopUpdate(signal)).rejects.toBe(notReady)
+  expect(read).toHaveBeenLastCalledWith(signal)
+  await expect(result.prepareDesktopUpdate()).resolves.toMatchObject({
+    completed: false,
+    blockedBy: ['agent']
+  })
+  expect(release).toHaveBeenCalledOnce()
+  const failure = new Error('Catalog read failed')
+  read.mockRejectedValueOnce(failure)
+  await expect(result.listTrayNavigationSessions()).rejects.toBe(failure)
+  expect(recover).toHaveBeenCalledOnce()
+})
+
+it('publishes committed desktop defaults and locale changes to the active backend', async () => {
+  const initialize = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+  const projectAfter = vi.fn()
+  const { result, events, moduleRecords } = await startDesktopTestRuntime(
+    {
+      settingsRepository: {
+        getSettings: async () => ({ localePreference: 'en' }),
+        setLocalePreference: vi.fn(),
+        initializeDesktopKiloDefaults: initialize
+      },
+      settingsSnapshotCommits: { projectAfter }
+    },
+    { systemLanguageTags: ['ja'] }
+  )
+  await result.initializeDesktopKiloDefaults(false)
+  await result.initializeDesktopKiloDefaults(true)
+  expect(initialize.mock.calls).toEqual([[false], [true]])
+  expect(projectAfter).toHaveBeenCalledOnce()
+
+  const { localeOwner } = vi.mocked(composeCommandDependencies).mock.lastCall![0]
+  expect(localeOwner.snapshot().locale).toBe('en')
+  const { defaultOcrLanguages } = vi.mocked(composeDocumentReading).mock.lastCall![0]
+  if (typeof defaultOcrLanguages !== 'function') throw new Error('Expected live OCR defaults')
+  expect(defaultOcrLanguages()).toEqual(['eng'])
+  const updated = await localeOwner.setPreference('ja')
+  expect(defaultOcrLanguages()).toEqual(['eng', 'jpn'])
+  expect(events.publish).toHaveBeenCalledWith('locale:changed', updated)
+  await moduleRecords.find(({ name }) => name === 'locale-events')!.dispose!()
+  events.publish.mockClear()
+  await localeOwner.setPreference('en')
+  expect(events.publish).not.toHaveBeenCalled()
+})
+
+it('routes browser package discovery, import and cancellation to the desktop transfer owner', async () => {
+  const transfer = { startDiscovery: vi.fn(), begin: vi.fn(), cancel: vi.fn() }
+  const operations = {
+    snapshot: { id: 'import-1', kind: 'import', state: 'running', progress: { phase: 'preparing' } }
+  }
+  const { result } = await startDesktopTestRuntime({
+    browserPackageImport: transfer,
+    sessionPackageDesktop: { operations }
+  })
+  await result.startBrowserPackageImportDiscovery(44100)
+  expect(transfer.startDiscovery).toHaveBeenCalledWith(44100)
+  const url = `open-science://import?version=1&origin=https://example.com&secret=${'ab'.repeat(32)}&port=49231&name=study.science&size=5`
+  await result.beginBrowserPackageImport(url, false)
+  expect(transfer.begin).toHaveBeenCalledWith(url, false)
+  expect(result.packageOperationSnapshot()).toBe(operations.snapshot)
+  const id = 'a'.repeat(64)
+  await result.cancelBrowserPackageImport(id)
+  expect(transfer.cancel).toHaveBeenCalledWith(id)
 })
