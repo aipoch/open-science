@@ -12,6 +12,7 @@ const run = promisify(execFile)
 const [mode, socketPath, executable, parentPid, ...args] = process.argv.slice(2)
 const bundle = dirname(dirname(dirname(executable)))
 const label = 'com.aipoch.open-science.ShipIt'
+const reopenWaitMs = 60_000
 
 function alive(pid) {
   try {
@@ -90,14 +91,18 @@ async function watch() {
     accepting = false
     server.close()
     for (const peer of peers) peer.end()
+    // Other installations can have active sockets in the same private directory.
+    void fs.rmdir(dirname(socketPath)).catch(() => undefined)
   }
   process.send('armed')
   try {
     const deadline = performance.now() + 120_000
     let installerPid
+    let nextJobCheck = 0
     while (performance.now() < deadline) {
       if (!(await sameFile(directory, originalStage))) break
-      if (!installerPid) {
+      if (!installerPid && performance.now() >= nextJobCheck) {
+        nextJobCheck = performance.now() + 1000
         // The receipt is shared across copies; pin the service executing inside this installation.
         const job = await run('/bin/launchctl', ['list', label], { timeout: 1000 }).catch(
           () => undefined
@@ -113,17 +118,23 @@ async function watch() {
               .catch(() => null))
         )
           installerPid = Number(pid[1])
-      } else if (!alive(installerPid) && !alive(Number(parentPid))) {
+      } else if (installerPid && !alive(installerPid) && !alive(Number(parentPid))) {
         // A successful install removes this directory itself. Only reclaim an abandoned native
         // stage when its exact installer has exited and the original receipt still owns the inode.
+        const finalJob = await run('/bin/launchctl', ['list', label], { timeout: 1000 }).catch(
+          () => undefined
+        )
         if (
+          finalJob &&
+          !/"PID" = \d+;/.test(finalJob.stdout) &&
+          /"LastExitStatus" = 0;/.test(finalJob.stdout) &&
           (await fs.readFile(receiptPath, 'utf8').catch(() => '')) === receipt &&
           (await sameFile(directory, originalStage))
         )
           await fs.rm(directory, { recursive: true })
         break
       }
-      if (firstOpen !== undefined && performance.now() - firstOpen >= 20_000) release()
+      if (firstOpen !== undefined && performance.now() - firstOpen >= reopenWaitMs) release()
       await delay(150)
     }
   } finally {
@@ -136,20 +147,27 @@ async function reopen() {
   const peer = createConnection(socketPath)
   peer.on('connect', () => peer.write('reopen\n'))
   let armed = false
+  let refused = false
   const timer = setTimeout(() => peer.destroy(), 1500)
   peer.once('data', (message) => {
     if (message.toString() !== 'waiting\n') return peer.destroy()
     clearTimeout(timer)
     armed = true
     process.send('armed')
-    peer.setTimeout(25_000, () => peer.destroy())
+    peer.setTimeout(reopenWaitMs + 5_000, () => peer.destroy())
   })
   await new Promise((resolve) => {
-    peer.on('error', () => peer.destroy())
+    peer.on('error', (error) => {
+      refused = error.code === 'ECONNREFUSED'
+      peer.destroy()
+    })
     peer.once('close', resolve)
   })
   clearTimeout(timer)
-  if (!armed) return
+  if (!armed) {
+    if (refused) await clearStaleSocket()
+    return
+  }
   // The initiating Electron PID must really have exited. Never launch an app that the user has
   // moved away or replaced with an unrelated bundle while ShipIt was working.
   for (let i = 0; i < 40 && alive(Number(parentPid)); i++) await delay(50)

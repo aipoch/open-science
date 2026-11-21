@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 function socketPath(version: string): string {
   const id = createHash('sha256')
@@ -10,7 +10,7 @@ function socketPath(version: string): string {
     .update('\0')
     .update(version)
     .digest('hex')
-  return join(tmpdir(), `os-update-${id.slice(0, 20)}.sock`)
+  return join(tmpdir(), `os-update-${process.getuid!()}`, `${id.slice(0, 20)}.sock`)
 }
 
 export async function macQuitHandoff(
@@ -20,6 +20,15 @@ export async function macQuitHandoff(
 ): Promise<boolean> {
   const path = socketPath(version)
   if (mode === 'reopen' && !existsSync(path)) return false
+  const directory = dirname(path)
+  try {
+    if (mode === 'watch') mkdirSync(directory, { recursive: true, mode: 0o700 })
+    const owner = lstatSync(directory)
+    if (!owner.isDirectory() || owner.uid !== process.getuid!() || (owner.mode & 0o077) !== 0)
+      return false
+  } catch {
+    return false
+  }
   const child = spawn(
     join(process.resourcesPath, 'node-runtime/node'),
     [

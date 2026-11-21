@@ -239,15 +239,6 @@ const buildZoomSafeApplicationMenu = (
 
 async function startDesktop(): Promise<void> {
   const { headless } = parseWebModeOptions(process.argv)
-  if (
-    process.platform === 'darwin' &&
-    app.isPackaged &&
-    !headless &&
-    (await macQuitHandoff('reopen', app.getVersion(), process.argv.slice(1)))
-  ) {
-    app.exit(0)
-    return
-  }
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
     locale: app.getLocale(),
@@ -262,6 +253,15 @@ async function startDesktop(): Promise<void> {
     MANAGED_PREVIEW_SCHEME,
     OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
   ])
+  if (
+    process.platform === 'darwin' &&
+    app.isPackaged &&
+    !headless &&
+    (await macQuitHandoff('reopen', app.getVersion(), process.argv.slice(1)))
+  ) {
+    app.exit(0)
+    return
+  }
   const initialBackendPaths = desktopBackendPaths({
     applicationPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
