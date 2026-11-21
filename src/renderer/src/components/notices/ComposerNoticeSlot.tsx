@@ -112,7 +112,7 @@ const ComposerFailureNoticeSlot = ({
       : current.source === 'session' && current.failure.diagnostics.protocol
         ? t('This turn was interrupted. Resume to continue.')
         : t(presentation.descriptionKey)
-  const diagnosticText = formatNoticeDiagnostics(current, title, description)
+  const diagnosticText = formatNoticeDiagnostics(current, title, description, t('Info'))
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
       value !== undefined &&

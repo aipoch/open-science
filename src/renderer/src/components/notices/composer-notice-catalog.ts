@@ -232,6 +232,17 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
+// This is the SDK's display prefix, outside the returned body. Its presence alone
+// does not identify which service failed. Keep the body opaque, including JSON.
+const rpcInternalPrefix = /^\s*(?:RequestError:\s*)?internal error(?:\s*:\s*|\.?\s*$)/i
+
+const isUnattributedRequest = ({ category, reason, diagnostics }: ClassifiedFailure): boolean =>
+  category === 'internal' &&
+  !reason &&
+  (diagnostics.status !== undefined ||
+    diagnostics.code === '-32603' ||
+    rpcInternalPrefix.test(diagnostics.raw ?? ''))
+
 export const noticePresentation = (
   failure: ClassifiedFailure,
   operation?: string
@@ -245,8 +256,7 @@ export const noticePresentation = (
       secondaryActions: [],
       feedback: 'none'
     }
-  // Older outcomes can identify a failed RPC request without identifying its source.
-  if (failure.category === 'internal' && !failure.reason && failure.diagnostics.code === '-32603')
+  if (isUnattributedRequest(failure))
     return {
       ...noticeCatalog.internal,
       titleKey: 'Request failed',
@@ -299,24 +309,39 @@ export const noticePriority = (notice: ComposerNotice): number =>
 export const formatNoticeDiagnostics = (
   notice: ComposerNotice,
   title: string,
-  description: string
+  description: string,
+  infoLabel: string
 ): string => {
   const { raw, ...fields } = notice.failure.diagnostics
-  const diagnostic = raw && redactSensitiveText(raw)
   const response =
     !fields.protocol && notice.failure.responseMessage
       ? redactSensitiveText(notice.failure.responseMessage)
       : undefined
+  const showResponseInfo = Boolean(
+    response ||
+    fields.protocol ||
+    fields.status !== undefined ||
+    notice.failure.reason === 'service/provider-error' ||
+    isUnattributedRequest(notice.failure)
+  )
+  const diagnostic =
+    raw && redactSensitiveText(showResponseInfo ? raw.replace(rpcInternalPrefix, '') : raw)
+  const detail = [
+    diagnostic !== title && diagnostic !== description ? diagnostic : undefined,
+    response !== title && response !== description && response && !diagnostic?.includes(response)
+      ? response
+      : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
   return [
     title,
     description,
     ...Object.entries(fields)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => `${key}: ${value}`),
-    diagnostic !== title && diagnostic !== description ? diagnostic : undefined,
-    response !== title && response !== description && response && !diagnostic?.includes(response)
-      ? response
-      : undefined
+    detail && showResponseInfo ? infoLabel : undefined,
+    detail
   ]
     .filter(Boolean)
     .join('\n')

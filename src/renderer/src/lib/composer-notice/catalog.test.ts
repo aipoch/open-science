@@ -57,9 +57,26 @@ it('does not repeat the displayed description when an operation uses it as its r
         }
       },
       'Optimize question',
-      description
+      description,
+      'Info'
     )
   ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
+})
+
+it('keeps a diagnosed internal failure distinct from an HTTP or unattributed response', () => {
+  const raw = 'Internal error: adapter reconfiguration failed'
+  const text = formatNoticeDiagnostics(
+    {
+      id: 'reconfigure',
+      source: 'operation',
+      occurredAt: 0,
+      failure: { category: 'internal', reason: 'internal/reconfigure', diagnostics: { raw } }
+    },
+    'Reconfiguration failed',
+    '',
+    'Info'
+  )
+  expect(text).toBe('Reconfiguration failed\n' + raw)
 })
 
 describe('composer notice boundaries', () => {

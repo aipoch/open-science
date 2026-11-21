@@ -7764,6 +7764,7 @@
     "The connection closed before the model finished replying. Retry the request.": "模型尚未完成回覆，連線就已關閉。請重試。",
     "The model response could not be parsed": "無法解析模型回覆",
     "The model provider returned an invalid response. Check the protocol settings or retry.": "模型服務商傳回無法辨識的回應。請檢查協定設定或重試。",
+    "Info": "資訊",
     "Request failed": "請求失敗",
     "Model request failed": "模型請求失敗",
     "The model provider could not complete the request. Retry or check the model provider settings.": "模型服務商未能完成請求。請重試或檢查模型服務商設定。",

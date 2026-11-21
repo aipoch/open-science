@@ -95,6 +95,8 @@ describe('turn outcome notice action ownership', () => {
     const details = container.querySelector('details')
     expect(details?.open).toBe(false)
     expect(details?.querySelector('pre')?.textContent).toContain('stream ended')
+    expect(details?.querySelector('pre')?.textContent).toContain('Info\n{"vendor_detail"')
+    expect(details?.querySelector('pre')?.textContent).not.toContain('Internal error')
     expect(details?.querySelector('pre')?.textContent).toContain('-32603')
     expect(container.textContent).not.toContain('private-value')
   })
@@ -118,6 +120,7 @@ describe('turn outcome notice action ownership', () => {
       expect(container.querySelector('details pre')?.textContent).toContain(
         'Example service is unavailable'
       )
+      expect(container.querySelector('details pre')?.textContent).not.toContain('Internal error')
       expect(container.textContent).toContain('status: 503')
       expect(container.textContent).toContain('provider: Example Provider')
       expect(container.textContent).toContain('model: example-model')
