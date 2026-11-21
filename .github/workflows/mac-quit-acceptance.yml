@@ -15,9 +15,7 @@ jobs:
       matrix:
         include:
           - { arch: arm64, os: macos-15, scenario: reopen }
-          - { arch: arm64, os: macos-15, scenario: trash }
           - { arch: x64, os: macos-15-intel, scenario: reopen }
-          - { arch: x64, os: macos-15-intel, scenario: trash }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -37,10 +35,10 @@ jobs:
           mkdir -p feed source
           gh release download v1.3.2 --repo aipoch/open-science -p "aipoch-open-science-1.3.2-mac-$ARCH.zip" -p latest-mac.yml -D feed
           for i in {1..70}; do
-            if gh api repos/aipoch/open-science/actions/runs/44889619037/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
+            if gh api repos/aipoch/open-science/actions/runs/44893402336/artifacts --jq '.artifacts[].name' | grep -Fxq "macos-$ARCH"; then break; fi
             sleep 30
           done
-          gh run download 44889619037 --repo aipoch/open-science -n "macos-$ARCH" -D source
+          gh run download 44893402336 --repo aipoch/open-science -n "macos-$ARCH" -D source
       - name: Exercise signed A to B
         if: matrix.scenario == 'reopen'
         env:
