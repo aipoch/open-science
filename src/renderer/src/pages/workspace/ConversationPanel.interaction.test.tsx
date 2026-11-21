@@ -1936,6 +1936,7 @@ beforeEach(() => {
   window.api = {
     notebook: {
       state: vi.fn().mockResolvedValue({ runs: [] }),
+      backgroundTasks: vi.fn().mockResolvedValue({ runs: [] }),
       onChanged: vi.fn(() => vi.fn()),
       cancelBackgroundRun: vi.fn()
     }

@@ -86,6 +86,9 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
     (_event, request: TerminateNotebookProcessRequest) =>
       handlers.terminateMonitoredProcess(request)
   )
+  ipcMainHandle('notebook:background-tasks', (_event, request: NotebookSessionRequest) =>
+    handlers.backgroundTasks(request)
+  )
   ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
     handlers.runIndex(request)
   )

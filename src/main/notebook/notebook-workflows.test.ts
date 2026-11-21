@@ -34,6 +34,7 @@ const createRuntime = (
   retryResourceRelease: unavailable('retryResourceRelease'),
   runIndex: unavailable('runIndex'),
   state: unavailable('state'),
+  backgroundTasks: unavailable('backgroundTasks'),
   getMemoryPolicyState: unavailable('getMemoryPolicyState'),
   getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),

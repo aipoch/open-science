@@ -36,6 +36,12 @@ const notebookRunIndexCommand = defineApplicationCommand<
   WorkflowResult<'runIndex'>
 >('notebook:run-index')
 
+const notebookBackgroundTasksCommand = defineApplicationCommand<
+  'notebook:background-tasks',
+  WorkflowArgs<'backgroundTasks'>,
+  WorkflowResult<'backgroundTasks'>
+>('notebook:background-tasks')
+
 const notebookStateCommand = defineApplicationCommand<
   'notebook:state',
   WorkflowArgs<'state'>,
@@ -170,6 +176,7 @@ const notebookReadInputPreviewCommand = defineApplicationCommand<
 
 const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
   notebookRunIndexCommand,
+  notebookBackgroundTasksCommand,
   notebookStateCommand,
   notebookProjectActivityCommand,
   notebookProjectResourcesCommand,
@@ -227,6 +234,8 @@ const installNotebookApplicationCommands = (
       },
       'notebook:retry-resource-release': (invocation) =>
         dependencies.workflows.retryResourceRelease(invocation.args[0], currentHuman(invocation)),
+      'notebook:background-tasks': (invocation) =>
+        dependencies.workflows.backgroundTasks(invocation.args[0]),
       'notebook:run-index': (invocation) => dependencies.workflows.runIndex(invocation.args[0]),
       'notebook:state': (invocation) => dependencies.workflows.state(invocation.args[0]),
       'notebook:memory-policy-state': (invocation) =>

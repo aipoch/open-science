@@ -622,6 +622,22 @@ export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
   acceptedAt: number
 }
 
+// Display fields for the Session background-task list. Large code and output stay in Notebook.
+export type NotebookBackgroundTask = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'agentFrameId'
+  | 'status'
+  | 'kernelKind'
+  | 'environment'
+  | 'startedAt'
+  | 'endedAt'
+  | 'cancellationRequestedAt'
+  | 'shellConcurrency'
+> & { title: string }
+
+export type NotebookBackgroundTaskSnapshot = { runs: NotebookBackgroundTask[] }
+
 export type NotebookProjectActivityRequest = ProjectIdScope
 
 export type NotebookProjectActivity = Readonly<{
@@ -768,7 +784,12 @@ export type NotebookSessionReference = ProjectIdScope & {
 }
 
 export type NotebookAvailableEvent = NotebookSessionReference
-export type NotebookChangedEvent = NotebookSessionReference
+export type NotebookChangedEvent = NotebookSessionReference & {
+  // A successful append changes only the draft cell code within an existing write lock.
+  codeAppendOnly?: true
+  // A draft acquired or released its write lock without changing Run history.
+  codeWriteOnly?: true
+}
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
 export type NotebookRunSummary = Omit<

@@ -485,6 +485,7 @@ describe('preload bridge — public surface inventory', () => {
       'network.onSystemResumed',
       'notebook.abortCodeCell',
       'notebook.appendCodeCell',
+      'notebook.backgroundTasks',
       'notebook.beginCodeCell',
       'notebook.cancelBackgroundRun',
       'notebook.execute',

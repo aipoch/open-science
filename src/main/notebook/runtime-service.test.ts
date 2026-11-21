@@ -2963,7 +2963,10 @@ describe('notebook runtime service', () => {
       repository: new NotebookRunRepository(root),
       callbacks: {
         onNotebookAvailable: (event) => notifications.push(`available:${event.sessionId}`),
-        onNotebookChanged: (event) => notifications.push(`changed:${event.sessionId}`)
+        onNotebookChanged: (event) =>
+          notifications.push(
+            `${event.codeAppendOnly ? 'append' : event.codeWriteOnly ? 'write' : 'changed'}:${event.sessionId}`
+          )
       },
       executorFactory: () => ({
         execute: async (request) => ({
@@ -2985,7 +2988,7 @@ describe('notebook runtime service', () => {
       source: 'user'
     })
 
-    expect(notifications).toEqual(['changed:user-session'])
+    expect(notifications).toEqual(['write:user-session'])
 
     const begin = await service.beginCodeCell({
       projectId: 'default-project',
@@ -3015,11 +3018,11 @@ describe('notebook runtime service', () => {
     })
 
     expect(notifications).toEqual([
-      'changed:user-session',
+      'write:user-session',
       'available:agent-session',
-      'changed:agent-session',
-      'changed:agent-session',
-      'changed:agent-session',
+      'write:agent-session',
+      'append:agent-session',
+      'write:agent-session',
       'changed:agent-session',
       'changed:agent-session',
       'changed:agent-session'
