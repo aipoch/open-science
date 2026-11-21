@@ -2230,6 +2230,40 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(refreshedSidecar.runs['current-run']).toBeUndefined()
   })
 
+  it('keeps lazy environment manifests cache-stable', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-lazy-manifest-cache-'))
+    temporaryRoots.push(storageRoot)
+    const rootRun = {
+      ...run('run-1', 'define-output', "output_path = 'figures/chart.png'", 1),
+      environmentCapture: { state: 'available' as const, manifestChecksum: 'a'.repeat(64) }
+    }
+    const runs: NotebookRunRecord[] = [rootRun]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: rootRun,
+      interpreter: unusedPython
+    })
+    runs.push({
+      ...run('current-run', 'save-output', 'plt.savefig(output_path)', 2),
+      status: 'running'
+    })
+    repository.readSessionRuns.mockClear()
+
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      currentRunId: 'current-run',
+      language: 'python',
+      environment: 'default-python',
+      kernelEpochId: 'epoch-1'
+    })
+
+    expect(repository.readSessionRuns).toHaveBeenCalledTimes(1)
+    expect(repository.readSessionRuns).toHaveBeenCalledWith('default-project', 'session-1')
+  })
+
   it('projects a persisted strict wrapper and invalidates it after its dependency is rebound', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-wrapper-context-'))
     temporaryRoots.push(storageRoot)

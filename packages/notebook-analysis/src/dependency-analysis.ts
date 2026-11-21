@@ -1546,6 +1546,12 @@ const boundedFileContext = (
   }
 }
 
+const environmentManifestChecksumForAnalysis = (run: NotebookRunRecord): unknown =>
+  run.environmentManifestChecksum ??
+  (run.environmentCapture?.state === 'available' || run.environmentCapture?.state === 'partial'
+    ? run.environmentCapture.manifestChecksum
+    : run.environmentManifest?.executionContext)
+
 const checksumFor = (run: NotebookRunRecord): string =>
   createHash('sha256')
     .update(
@@ -1561,7 +1567,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.cwdAfter,
         run.script,
         run.fileEvidence?.checksum,
-        run.environmentManifest?.executionContext,
+        environmentManifestChecksumForAnalysis(run),
         run.helperEvidenceStatus,
         run.helperModules?.map(
           ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
@@ -1731,7 +1737,7 @@ const projectionChecksumFor = ({ run, facts, fileAccess }: AnalyzedNotebookRun):
         run.kernelEpochId,
         run.status,
         run.kernelDispatched,
-        run.environmentManifest?.executionContext,
+        environmentManifestChecksumForAnalysis(run),
         facts,
         fileAccess,
         run.workingFiles.map(({ relativePath, generationId, checksum, change, createdByRunId }) => [

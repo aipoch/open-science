@@ -1934,7 +1934,7 @@ class NotebookRunRepository {
     await Promise.all(
       document.runs.map(async (run) => {
         const manifest = run.environmentManifest
-        const checksum = run.environmentManifestChecksum
+        const checksum = environmentManifestChecksumForRun(run)
         if (!manifest || !checksum) return
         if (!digestPattern.test(checksum)) {
           throw new Error(`Notebook Environment manifest reference is invalid: ${checksum}`)
@@ -1987,7 +1987,7 @@ class NotebookRunRepository {
     const header = encodeRunDocumentDataPaths({ ...document, runs: [] }, this.storageRoot)
     const runs = await this.records.write(directory, document.runs, (run) =>
       encodeNotebookRunDataPaths(
-        run.environmentManifestChecksum ? withoutEnvironmentManifest(run) : run,
+        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run,
         this.storageRoot
       )
     )
@@ -2001,7 +2001,7 @@ class NotebookRunRepository {
     const cachedDocument = {
       ...document,
       runs: document.runs.map((run) =>
-        run.environmentManifestChecksum ? withoutEnvironmentManifest(run) : run
+        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
       )
     }
     this.rememberDocument(filePath, {

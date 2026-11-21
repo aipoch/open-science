@@ -260,13 +260,14 @@ describe('notebook run repository', () => {
         kernelKind: 'python',
         environment: 'default-python',
         environmentCapture: { state: 'available', manifestChecksum: checksum },
-        environmentManifest: manifest,
-        environmentManifestChecksum: checksum
+        environmentManifest: manifest
       })
     })
 
     const raw = JSON.parse(await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8'))
-    expect(raw.runs[0]).toMatchObject({ environmentManifestChecksum: checksum })
+    expect(raw.runs[0]).toMatchObject({
+      environmentCapture: { state: 'available', manifestChecksum: checksum }
+    })
     expect(raw.runs[0]).not.toHaveProperty('environmentManifest')
 
     const sidecarPath = join(
