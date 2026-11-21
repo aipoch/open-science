@@ -435,7 +435,9 @@ test('expanding the workbench moves an active composer with its draft', async ({
   await expect(dialog.getByRole('textbox', instruction)).toHaveValue('Keep these instructions')
   await expect(left.getByRole('textbox', instruction)).toHaveCount(0)
   await expect.poll(() => imageSelectionAlignmentError(page, true)).toBeLessThanOrEqual(2)
-  await pauseDialogAnimation.evaluate((style) => style.remove())
+  await pauseDialogAnimation.evaluate((style) => {
+    style.parentNode?.removeChild(style)
+  })
   await dialog.evaluate((node) => Promise.all(node.getAnimations().map(({ finished }) => finished)))
   await expect.poll(() => imageSelectionAlignmentError(page, true)).toBeLessThanOrEqual(2)
   await page.screenshot({ path: 'test-results/image-edit-expanded-workbench.png' })
