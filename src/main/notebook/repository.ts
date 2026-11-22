@@ -134,6 +134,15 @@ type SessionInitialization = Omit<LaneHistory, 'runs'> & {
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'status' | 'fileEvidence'>[]
 }
 
+// Positions refer to the authoritative manifest. Only append and in-place lifecycle transitions
+// may operate on the remaining Runs; complete history readers never receive this projection.
+type DetachedRuns = {
+  slots: Map<number, RunReference>
+  submissionIds: Set<string>
+  hasBackgroundRuns: boolean
+  bytes: number
+}
+
 type LaneSummary = {
   notebookSessionRoot: string
   workspaceCwd: string
@@ -373,7 +382,6 @@ type TransitionNotebookRunRequest = AppendNotebookRunRequest & {
 }
 
 type NotebookRunMutationResult = {
-  document: NotebookRunDocument
   run: NotebookRunRecord
 }
 type NotebookRunLookupResult = Readonly<{
@@ -1103,6 +1111,11 @@ class NotebookRunRepository {
     string,
     { identity: DocumentFileIdentity; summary: LaneSummary }
   >()
+  private readonly lifecycleViews = new WeakMap<
+    LaneSummary,
+    { remaining: NotebookRunDocument; detached: DetachedRuns }
+  >()
+
   private readonly historyBodies = new WeakMap<
     NotebookRunRecord,
     {
@@ -1480,10 +1493,11 @@ class NotebookRunRepository {
     const run = ownRun(request.lane, request.run)
     let admitted = false
     let canonicalRun: NotebookRunRecord | undefined
-    const document = await this.mutate(
+    await this.mutateLifecycle(
       request.projectId,
       request.sessionId,
       request.lane,
+      (detached) => detached.submissionIds.has(run.submissionIdentity!),
       (current) => {
         const existing = current.runs.find(
           (candidate) => candidate.submissionIdentity === run.submissionIdentity
@@ -1502,7 +1516,7 @@ class NotebookRunRepository {
       }
     )
     if (!canonicalRun) throw new Error('Notebook Run admission did not resolve a canonical Run.')
-    return { document, run: canonicalRun, admitted }
+    return { run: canonicalRun, admitted }
   }
 
   async findRunBySubmission(
@@ -1575,10 +1589,12 @@ class NotebookRunRepository {
     const requestedRun = ownRun(request.lane, request.run)
     let transitioned = false
     let canonicalRun: NotebookRunRecord | undefined
-    const document = await this.mutate(
+    await this.mutateLifecycle(
       request.projectId,
       request.sessionId,
       request.lane,
+      (detached) =>
+        Array.from(detached.slots.values()).some((ref) => ref.runId === requestedRun.runId),
       (current) => {
         const index = current.runs.findIndex((candidate) => candidate.runId === requestedRun.runId)
         if (index === -1) throw new Error(`Notebook run not found: ${requestedRun.runId}`)
@@ -1614,7 +1630,7 @@ class NotebookRunRepository {
       }
     )
     if (!canonicalRun) throw new Error(`Notebook run not found: ${requestedRun.runId}`)
-    return { document, run: canonicalRun, transitioned }
+    return { run: canonicalRun, transitioned }
   }
 
   // Cancellation is orthogonal intent, not a primary-state transition. Persist it while a Run is
@@ -2317,35 +2333,55 @@ class NotebookRunRepository {
     lane: NotebookLaneIdentity,
     transform: (document: NotebookRunDocument) => NotebookRunDocument
   ): Promise<NotebookRunDocument> {
-    const operation = this.saveQueue.then(async () => {
+    return this.enqueueSave(async () => {
       const document = await this.loadExisting(projectId, sessionId, lane)
-      const nextDocument = transform(document)
-
-      if (nextDocument !== document) await this.persist(nextDocument)
-
-      return nextDocument
+      const next = transform(document)
+      if (next !== document) await this.persist(next)
+      return next
     })
+  }
 
-    // Keep later saves moving even if this turn failed (bad transform or a write failure) and
-    // surfaced to its caller.
+  private async mutateLifecycle(
+    projectId: string,
+    sessionId: string,
+    lane: NotebookLaneIdentity,
+    needsDetachedRun: (detached: DetachedRuns) => boolean,
+    transform: (document: NotebookRunDocument) => NotebookRunDocument
+  ): Promise<void> {
+    await this.enqueueSave(async () => {
+      const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      const entry = this.laneSummaries.get(path)
+      const view = entry && this.lifecycleViews.get(entry.summary)
+      if (
+        entry &&
+        view &&
+        !needsDetachedRun(view.detached) &&
+        sameDocumentFileIdentity(entry.identity, await statIfPresent(path)) &&
+        !(await this.hasRecoveryCandidate(path)) &&
+        (await this.records.unchanged(dirname(path), Array.from(view.detached.slots.values()))) &&
+        sameDocumentFileIdentity(entry.identity, await statIfPresent(path))
+      ) {
+        const next = transform(view.remaining)
+        if (next !== view.remaining) await this.persist(next, view.detached, entry.summary.rows)
+        return
+      }
+      const document = await this.loadExisting(projectId, sessionId, lane)
+      const next = transform(document)
+      if (next !== document) await this.persist(next)
+    })
+  }
+
+  private enqueueSave<T>(save: () => Promise<T>): Promise<T> {
+    const operation = this.saveQueue.then(save)
     this.saveQueue = operation.then(
       () => undefined,
       () => undefined
     )
-
     return operation
   }
 
-  // Queues an unconditional write, used by loadOrCreate's ENOENT branch where there is nothing to
-  // read-modify (the file doesn't exist yet, so there is no stale-read race to guard against).
-  private async writeDocument(document: NotebookRunDocument): Promise<void> {
-    const operation = this.saveQueue.then(() => this.persist(document))
-
-    this.saveQueue = operation.then(
-      () => undefined,
-      () => undefined
-    )
-    await operation
+  private writeDocument(document: NotebookRunDocument): Promise<void> {
+    return this.enqueueSave(() => this.persist(document))
   }
 
   private rememberLaneSummary(
@@ -2412,6 +2448,50 @@ class NotebookRunRepository {
       }
       if (history.runs.length === runs.length) summary.history = history
     }
+    if (oversizedRecords && !summary.history && identity.size <= MAX_LANE_SUMMARY_BYTES) {
+      const slots = new Map<number, RunReference>()
+      const submissionIds = new Set<string>()
+      const remaining = { ...document, runs: [] as NotebookRunRecord[] }
+      let hasBackgroundRuns = false
+      let detachedBytes = 0
+      let bytes = estimateReplayBytes(remaining)
+      for (const [index, stored] of oversizedRecords.entries()) {
+        const run = document.runs[index]
+        if (isNotebookRunReference(stored)) {
+          // The ordinary writer must first publish any embedded legacy Environment manifest.
+          if (run.environmentManifest) break
+          slots.set(index, stored)
+          if (run.submissionIdentity) submissionIds.add(run.submissionIdentity)
+          hasBackgroundRuns ||= run.executionMode === 'background'
+          const cost =
+            estimateReplayBytes(stored) + 96 + Buffer.byteLength(run.submissionIdentity ?? '')
+          bytes += cost
+          detachedBytes += cost
+        } else {
+          remaining.runs.push(run)
+          bytes += estimateReplayBytes(run)
+        }
+        if (bytes > MAX_LANE_SUMMARY_BYTES) break
+      }
+      if (
+        bytes <= MAX_LANE_SUMMARY_BYTES &&
+        slots.size &&
+        slots.size + remaining.runs.length === document.runs.length
+      ) {
+        this.lifecycleViews.set(summary, {
+          remaining,
+          detached: { slots, submissionIds, hasBackgroundRuns, bytes: detachedBytes }
+        })
+      }
+    }
+    this.storeLaneSummary(filePath, identity, summary)
+  }
+
+  private storeLaneSummary(
+    filePath: string,
+    identity: DocumentFileIdentity,
+    summary: LaneSummary
+  ): void {
     this.laneSummaries.delete(filePath)
     if (this.laneSummaries.size >= MAX_DOCUMENT_CACHE_ENTRIES) {
       const oldest = this.laneSummaries.keys().next().value
@@ -2491,7 +2571,11 @@ class NotebookRunRepository {
 
   // Writes one document to disk via a temp file + atomic rename. Always invoked from inside the
   // saveQueue chain (mutate() or writeDocument() above), never called directly.
-  private async persist(document: NotebookRunDocument): Promise<void> {
+  private async persist(
+    document: NotebookRunDocument,
+    detached?: DetachedRuns,
+    previousRows?: ReplayRunIndex[]
+  ): Promise<void> {
     const directory = document.notebookSessionRoot
     const filePath = join(directory, NOTEBOOK_RUN_FILE)
 
@@ -2521,9 +2605,18 @@ class NotebookRunRepository {
         environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
       )
     }
-    const runs = await this.records.write(directory, cachedDocument.runs, (run) =>
+    const remaining = await this.records.write(directory, cachedDocument.runs, (run) =>
       encodeNotebookRunDataPaths(run, this.storageRoot)
     )
+    // Transitions retain positions and admission appends at the end. Reinsert untouched records
+    // in their original slots before publishing the same complete manifest.
+    let cursor = 0
+    const runs = detached
+      ? Array.from(
+          { length: detached.slots.size + remaining.length },
+          (_, index) => detached.slots.get(index) ?? remaining[cursor++]
+        )
+      : remaining
     const encoded = {
       ...header,
       version: runs.some(isNotebookRunReference) ? 2 : 1,
@@ -2531,6 +2624,35 @@ class NotebookRunRepository {
     }
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
+    if (detached) {
+      const summary: LaneSummary = {
+        notebookSessionRoot: directory,
+        workspaceCwd: document.workspaceCwd,
+        hasBackgroundRuns:
+          detached.hasBackgroundRuns ||
+          cachedDocument.runs.some((run) => run.executionMode === 'background')
+      }
+      if (previousRows) {
+        let next = 0
+        const rows = runs.map((_, index) =>
+          detached.slots.has(index)
+            ? previousRows[index]
+            : indexReplayRun(cachedDocument.runs[next++])
+        )
+        if (estimateReplayBytes(rows) + estimateReplayBytes(summary) <= MAX_LANE_SUMMARY_BYTES)
+          summary.rows = rows
+      }
+      // A new external body must be validated by the ordinary reader before reuse.
+      if (
+        !remaining.some(isNotebookRunReference) &&
+        fileInfo.size <= MAX_LANE_SUMMARY_BYTES &&
+        estimateReplayBytes(cachedDocument) + detached.bytes <= MAX_LANE_SUMMARY_BYTES
+      ) {
+        this.lifecycleViews.set(summary, { remaining: cachedDocument, detached })
+      }
+      this.storeLaneSummary(filePath, fileInfo, summary)
+      return
+    }
     const weight =
       fileInfo.size +
       runs.reduce((bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0), 0)

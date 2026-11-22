@@ -577,7 +577,7 @@ describe('notebook run repository', () => {
 
     expect(first.admitted).toBe(true)
     expect(repeated).toMatchObject({ admitted: false, run: { runId: 'run-1' } })
-    expect(repeated.document.runs).toHaveLength(1)
+    expect(await repository.readSessionRunIndex('default-project', 'session-1')).toHaveLength(1)
   })
 
   it('rejects reuse of a submission identity with a different fingerprint', async () => {
@@ -2673,4 +2673,81 @@ it('counts external record bytes against the document cache budget and upgrades 
   await expect(reader.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
     'corrupt'
   )
+})
+
+it('retains verified external records in place across concurrent admission and terminal CAS', async () => {
+  const root = await createStorageRoot()
+  const scope = { projectId: 'default-project', sessionId: 'session-1' }
+  const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-1')
+  const request = { ...scope, lane }
+  const writer = new NotebookRunRepository(root)
+  const document = await writer.loadOrCreate({ ...request, workspaceCwd: root })
+  const path = join(document.notebookSessionRoot, 'run.json')
+  const old = admittedRun({
+    runId: 'old',
+    submissionIdentity: 'old-submission',
+    status: 'completed',
+    script: 'x'.repeat(300 * 1024),
+    text: { stdout: 'x'.repeat(32 * 1024 * 1024), stderr: '', traceback: '', plain: [] }
+  })
+  const tiny = (id: string): NotebookRunRecord =>
+    admittedRun({ runId: id, submissionIdentity: id, status: 'completed' })
+  for (const run of [tiny('left'), old, tiny('right')]) await writer.appendRun({ ...request, run })
+  const reference = JSON.parse(await readFile(path, 'utf8')).runs[1]
+  const body = join(document.notebookSessionRoot, '.run-records', reference.sha256 + '.json')
+
+  const reader = new NotebookRunRepository(root)
+  await reader.findExisting(scope.projectId, scope.sessionId, lane)
+  const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+  try {
+    const run = admittedRun()
+    const admissions = await Promise.all(
+      [1, 2].map(() => reader.appendOrGetRun({ ...request, run }))
+    )
+    expect(admissions.map((result) => result.admitted)).toEqual([true, false])
+    await reader.transitionRun({
+      ...request,
+      expectedStatus: 'queued',
+      run: { ...run, status: 'running' }
+    })
+    const [winner, late] = await Promise.all([
+      reader.commitTerminalRun({
+        ...request,
+        expectedStatus: 'running',
+        run: { ...run, status: 'completed' }
+      }),
+      reader.transitionRun({
+        ...request,
+        expectedStatus: 'queued',
+        run: { ...run, status: 'cancelled' }
+      })
+    ])
+    expect(winner.run.status).toBe('completed')
+    expect(late.transitioned).toBe(false)
+    expect(reads).not.toHaveBeenCalled()
+    const stored = JSON.parse(await readFile(path, 'utf8'))
+    expect(stored.runs.map((entry: NotebookRunRecord) => entry.runId)).toEqual([
+      'left',
+      'old',
+      'right',
+      run.runId
+    ])
+    expect(stored.runs[1]).toEqual(reference)
+    expect(stored.runs[3].status).toBe('completed')
+    await expect(
+      reader.appendOrGetRun({
+        ...request,
+        run: {
+          ...run,
+          submissionIdentity: old.submissionIdentity,
+          submissionFingerprint: 'different'
+        }
+      })
+    ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
+    await writeFile(body, Buffer.alloc(reference.bytes, 32))
+    await expect(reader.appendOrGetRun({ ...request, run })).rejects.toThrow('corrupt')
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(stored)
+  } finally {
+    reads.mockRestore()
+  }
 })
