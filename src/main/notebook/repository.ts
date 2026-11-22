@@ -197,7 +197,11 @@ class NotebookRunRecordStorage {
   private readonly reads = new AsyncLocalStorage<RecordReadScope>()
 
   async withinHistoryRead<T>(root: string, read: () => Promise<T>): Promise<T> {
-    const scope: RecordReadScope = { root, records: new Map() }
+    const parent = this.reads.getStore()
+    const scope: RecordReadScope = {
+      root,
+      records: (parent?.root === root ? parent.records : undefined) ?? new Map()
+    }
     return this.reads.run(scope, async () => {
       try {
         return await read()
@@ -1504,7 +1508,8 @@ class NotebookRunRepository {
     const document =
       snapshot && (await this.cachedLaneSummary(path)) === entry?.summary
         ? snapshot
-        : await this.findExisting(projectId, sessionId, lane)
+        : ((await this.readDetachedHistory(projectId, sessionId, lane)) ??
+          (await this.findExisting(projectId, sessionId, lane)))
     if (!document) return this.loadOrCreate(request)
     await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
     return document
@@ -2347,10 +2352,13 @@ class NotebookRunRepository {
     }
     const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
     const before = await statIfPresent(path)
-    let document = await this.loadExisting(projectId, sessionId, lane)
-    if (document.runs.some((run) => run.status === 'queued' || run.status === 'running')) {
-      document = await this.reconcileInterruptedRuns(projectId, sessionId, lane)
-    }
+    // The queued reconciliation reopens the manifest and can reuse unchanged, verified bodies.
+    const document = await this.withinHistoryRead(projectId, sessionId, async () => {
+      const current = await this.loadExisting(projectId, sessionId, lane)
+      return current.runs.some((run) => run.status === 'queued' || run.status === 'running')
+        ? this.reconcileInterruptedRuns(projectId, sessionId, lane)
+        : current
+    })
     // The persisted Run documents are the durable source of truth for terminal delivery. Replay
     // their bounded current history on every startup so a transient delivery-store failure cannot
     // permanently strand an outcome. The delivery repository de-duplicates pending and consumed

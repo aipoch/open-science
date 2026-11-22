@@ -2700,14 +2700,20 @@ it('retains verified external records in place across concurrent admission and t
   })
   const tiny = (id: string): NotebookRunRecord =>
     admittedRun({ runId: id, submissionIdentity: id, status: 'completed' })
-  for (const run of [tiny('left'), old, tiny('right')]) await writer.appendRun({ ...request, run })
+  const queued = admittedRun({ runId: 'right', submissionIdentity: 'right' })
+  for (const run of [tiny('left'), old, queued]) await writer.appendRun({ ...request, run })
   const reference = JSON.parse(await readFile(path, 'utf8')).runs[1]
   const body = join(document.notebookSessionRoot, '.run-records', reference.sha256 + '.json')
 
   const reader = new NotebookRunRepository(root)
-  await reader.findExisting(scope.projectId, scope.sessionId, lane)
   const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
   try {
+    await reader.withinHistoryRead(scope.projectId, scope.sessionId, async () => {
+      await reader.recoverAllRunLifecycles()
+      await reader.findExisting(scope.projectId, scope.sessionId, lane)
+    })
+    expect(reads.mock.calls.filter(([path]) => path === body)).toHaveLength(1)
+    reads.mockClear()
     const run = admittedRun({ cwdBefore: '/workspace', environment: undefined })
     const admissions = await Promise.all(
       [1, 2].map(() => reader.appendOrGetRun({ ...request, run }))
@@ -2718,6 +2724,15 @@ it('retains verified external records in place across concurrent admission and t
       expectedStatus: 'queued',
       run: { ...run, status: 'running' }
     })
+    const initializing = { ...request, workspaceCwd: root }
+    const initialized = await reader.loadSessionInitialization(initializing)
+    expect(initialized.runs.map(({ runId, status }) => [runId, status])).toEqual([
+      ['left', 'completed'],
+      [old.runId, 'completed'],
+      [queued.runId, 'interrupted'],
+      [run.runId, 'running']
+    ])
+    expect(reads).not.toHaveBeenCalled()
     const bindings = {
       python: {
         language: 'python',
@@ -2790,6 +2805,7 @@ it('retains verified external records in place across concurrent admission and t
       })
     ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
     await writeFile(body, Buffer.alloc(reference.bytes, 32))
+    await expect(reader.loadSessionInitialization(initializing)).rejects.toThrow('corrupt')
     expect(
       await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, {
         limit: 1,
