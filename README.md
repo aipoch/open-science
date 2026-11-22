@@ -51,18 +51,18 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.3.2 updates
+### 💡 AIPOCH Open-Science v1.3.3 updates
 
-_November 19, 2026_
+_November 21, 2026_
 
-- **Lighter long conversations**: Streamed replies stop accumulating hidden entries, and conversation bodies you are not viewing are reclaimed once they are safely saved — large sessions stay responsive without losing your place.
-- **Kilo Gateway**: Add Kilo as an official provider with or without an API key — an anonymous catalog refresh shows the free models your connection is eligible for, and onboarding can skip the provider step to decide later.
-- **Image model catalogs**: Refresh the bundled model list for official OpenAI, MiniMax, Bailian, and Volcengine Ark image services before you save, keeping your active model when it is still available.
-- **Reliable first agent messages**: Fresh default Agent, Claude Code, and Codex conversations no longer fail before their first model request, and the built-in Agent starts scheduled sessions with their intended prompt.
-- **PDF translation keeps the layout**: Wrapped titles, captions, definitions, and mathematical statements are recovered in reading order, and formulas, links, and graphics stay in their original places.
-- **Clearer download failures**: The home screen names the specific reason a use-case download failed — a missing manifest, unavailable package, timeout, network, server, verification, disk-full, or storage problem.
+- **Automatic updates**: On macOS, an eligible update can install itself when you quit the app; on Windows and Linux, an update can be prepared for the next launch while you work — background downloads require an unrestricted network and storage room, and the manual path stays available.
+- **Built-in Agent by default**: New projects and sessions start with the built-in Open-Science Agent everywhere, including clean CLI and SDK installs; external agent runtimes install on demand only when you choose them.
+- **A leaner app**: The installed desktop is smaller on macOS and Windows, and the bundled offline npm runtime is compiled for Node 22 instead of shipping over a thousand loose package files.
+- **Unified image editing**: Editing instructions live in the conversation composer, and hover or keyboard actions enter editing from any preview with version navigation throughout.
+- **Failures explain themselves**: Request, loading, import, and notebook failures now name what actually happened, and stopped runs are distinguished from work that never answered.
+- **Settings shortcuts restored**: Skills, Specialists, and Connectors are back in Settings, each opening its category and returning to where you were.
 
-[View the full v1.3.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.2)
+[View the full v1.3.3 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 

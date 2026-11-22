@@ -130,6 +130,13 @@ Kilo connection afterwards go to Kilo like any other provider connection. Checki
 image service's model catalog (OpenAI, MiniMax, Bailian, or Volcengine Ark) sends that connection's
 credentials to the provider to list its image models; run it only for connections you configured.
 
+Choosing an external agent framework downloads its runtime from an npm registry — the default
+registry, with a documented mirror fallback — through the app's managed installer, which verifies
+the download before use. The managed Claude and OpenCode installers resolve the runtime's latest
+published version, while the managed Codex and CodeBuddy installers use pinned versions and the Pi
+installer installs its checked-in lockfile dependencies; pinned and lockfile-managed runtimes
+update only with an app release. The built-in Agent performs no such download.
+
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
 IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
 remote HTTP configurations remain editable but cannot supply a running model until corrected.
