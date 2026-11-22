@@ -19,6 +19,7 @@ export const isPrivatePackageValue = (value: string): boolean => {
 // names containing sensitive words, which is deliberately a broader policy.
 const credentialKeyPatterns = [
   /^(?:apiSecret|api_secret|api-secret|API_SECRET)$/,
+  /^(?:oauth|oidc)[_-]?signatures?$/i,
   /^(?:auth|authentication|authorization|bearer|cookies?|credentials?|passwords?|passphrases?|passwd|pat|secrets?|tokens?)$/i,
   /^(?:(?:api|access|private|secret)[_-]?keys?|(?:aws[_-]?)?secret[_-]?access[_-]?key|(?:client|jwt|signing)[_-]?secrets?)$/i,
   /^(?:proxy[_-]?authorization|set[_-]?cookie|x[_-]?(?:api[_-]?key|auth[_-]?token|amz[_-]?security[_-]?token))$/i,
@@ -33,6 +34,7 @@ const qualifiedCredentialSuffixes = [
   /_(?:passwords?|passwd|passphrases?)$/,
   /_(?:(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key)$/,
   /_(?:api|client|jwt|signing)_?secrets?$/,
+  /_(?:oauth|oidc)_?signatures?$/,
   /_rpc_?tokens?$/,
   /(?:^|_)headers?_(?:authorization|proxy_authorization|cookies?|set_cookie)$/,
   /(?:^|_)(?:aws|auth|authentication|oauth|oidc)_session_?tokens?$/
@@ -307,7 +309,9 @@ const findPackageTextMatch = (
           const value = decodeQuery(rawValue)
           const credentialParameter =
             isCredentialKey(key) ||
-            /^(?:key|username|sig|signature|x-(?:amz|goog)-signature)$/i.test(key)
+            /^(?:key|username|sig|signature|(?:oauth|oidc)[_-]?signature|x-(?:amz|goog)-signature)$/i.test(
+              key
+            )
           if (
             (credentialParameter && privatePart(value)) ||
             decodedCredential(

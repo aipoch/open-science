@@ -896,6 +896,8 @@ it.each([
   'req.headers.authorization',
   'JWT_SECRET',
   'tenantSigningSecret',
+  'oauth_signature',
+  'oidcSignature',
   'openai_api_key',
   'db_password',
   'warehouseAPIKey',
