@@ -137,12 +137,16 @@ function MemoryCheckDetails({
                 : undefined
             })
           })}
-          {row(t('Remaining capacity threshold'), (r) =>
-            r.remainingThresholdRatio?.toLocaleString(i18n?.language, {
+          {row(t('Remaining capacity threshold'), (r) => {
+            if (r.remainingThresholdRatio === undefined) return undefined
+            const percent = r.remainingThresholdRatio.toLocaleString(i18n?.language, {
               style: 'percent',
               maximumFractionDigits: 2
             })
-          )}
+            return r.reason === 'windows-physical-low' && r.totalBytes !== undefined
+              ? `${bytes(r.remainingThresholdRatio * r.totalBytes)} (${percent})`
+              : percent
+          })}
           {row(t('Available RAM / total'), (r) =>
             r.availableBytes !== undefined && r.totalBytes !== undefined
               ? `${bytes(r.availableBytes)} / ${bytes(r.totalBytes)}`

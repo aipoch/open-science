@@ -412,7 +412,15 @@ export class MemoryPolicyService {
       return { code: 'healthy' }
     }
 
-    const signals: Array<{ ratio: number; reason: MemoryPolicyReason; high?: boolean }> = []
+    const windows = sample.platform === 'win32'
+    const enter = windows ? this.policy.windowsEnterRatio : this.policy.linuxEnterRatio
+    const exit = windows ? this.policy.windowsExitRatio : this.policy.linuxExitRatio
+    const signals: Array<{
+      ratio: number
+      enter: number
+      exit: number
+      reason: MemoryPolicyReason
+    }> = []
     if (
       !validBytes(facts.totalBytes) ||
       facts.totalBytes === 0 ||
@@ -424,8 +432,11 @@ export class MemoryPolicyService {
         'Physical memory counters are incomplete or invalid.'
       )
     }
+    const caps = windows ? this.policy.windowsPhysicalCaps : undefined
     signals.push({
       ratio: facts.availableBytes / facts.totalBytes,
+      enter: caps ? Math.min(enter, caps.enterBytes / facts.totalBytes) : enter,
+      exit: caps ? Math.min(exit, caps.exitBytes / facts.totalBytes) : exit,
       reason: pressureReason(
         sample.platform === 'win32' ? 'windows-physical-low' : 'linux-memory-low'
       )
@@ -444,6 +455,8 @@ export class MemoryPolicyService {
       }
       signals.push({
         ratio: (facts.commitLimitBytes - facts.committedBytes) / facts.commitLimitBytes,
+        enter,
+        exit,
         reason: pressureReason(
           sample.platform === 'win32' ? 'windows-commit-low' : 'linux-commit-low'
         )
@@ -477,24 +490,21 @@ export class MemoryPolicyService {
                 kind === 'high' ? 'linux-cgroup-high' : 'linux-cgroup-low',
                 constraint.path
               ),
-              high: kind === 'high'
+              enter: kind === 'high' ? 0 : enter,
+              exit: kind === 'high' ? 0.2 : exit
             })
           }
         }
       }
     }
-    const enter =
-      sample.platform === 'win32' ? this.policy.windowsEnterRatio : this.policy.linuxEnterRatio
-    const exit =
-      sample.platform === 'win32' ? this.policy.windowsExitRatio : this.policy.linuxExitRatio
-    const entering = signals.find((signal) => signal.ratio <= (signal.high ? 0 : enter))
+    const entering = signals.find((signal) => signal.ratio <= signal.enter)
     if (entering) {
       state.pressure = true
-      return { ...entering.reason, remainingThresholdRatio: entering.high ? 0 : enter }
+      return { ...entering.reason, remainingThresholdRatio: entering.enter }
     }
     if (state.pressure) {
-      const holding = signals.find((signal) => signal.ratio <= (signal.high ? 0.2 : exit))
-      if (holding) return { ...holding.reason, remainingThresholdRatio: holding.high ? 0.2 : exit }
+      const holding = signals.find((signal) => signal.ratio <= signal.exit)
+      if (holding) return { ...holding.reason, remainingThresholdRatio: holding.exit }
     }
     state.pressure = false
     return { code: 'healthy' }
