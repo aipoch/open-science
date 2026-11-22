@@ -448,13 +448,20 @@ jobs:
           # matrix keeps the same selective coverage while the trusted script rolls forward.
           if ! grep -q '^groups=.' "$GITHUB_OUTPUT"; then
             GITHUB_OUTPUT="$GITHUB_OUTPUT" node --input-type=module <<'NODE'
-            import { appendFileSync, readFileSync } from 'node:fs'
+            import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 
             const output = readFileSync(process.env.GITHUB_OUTPUT, 'utf8')
             const grep = output.split('\n').find((line) => line.startsWith('grep='))?.slice(5) ?? ''
+            const selected = grep || '@pr-mainline-(projects|conversation|files|notebook|windows)(\\s|$)'
             const groups =
-              grep.match(/@pr-mainline-\(([^)]+)\)/)?.[1]?.split('|') ??
-              [grep.match(/@pr-mainline-([a-z]+)/)?.[1]].filter(Boolean)
+              selected.match(/@pr-mainline-\(([^)]+)\)/)?.[1]?.split('|') ??
+              [selected.match(/@pr-mainline-([a-z]+)/)?.[1]].filter(Boolean)
+            writeFileSync(
+              process.env.GITHUB_OUTPUT,
+              /^grep=/m.test(output)
+                ? output.replace(/^grep=.*$/m, `grep=${selected}`)
+                : `${output}grep=${selected}\n`
+            )
             appendFileSync(
               process.env.GITHUB_OUTPUT,
               `groups=${JSON.stringify(groups.length ? groups : ['projects', 'conversation', 'files', 'notebook', 'windows'])}\n`
