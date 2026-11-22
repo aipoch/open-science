@@ -459,7 +459,7 @@ jobs:
               process.env.GITHUB_OUTPUT,
               `groups=${JSON.stringify(groups.length ? groups : ['projects', 'conversation', 'files', 'notebook', 'windows'])}\n`
             )
-            NODE
+          NODE
           fi
           # Package documentation can retain domain checks while the focused selector skips Markdown.
           # Preserve every mainline group if the plan still selects the Windows E2E job.
