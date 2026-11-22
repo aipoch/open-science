@@ -102,29 +102,42 @@ export function forwardLinuxAppImageLaunch(
     const deliver = installed && installed.ino === target.ino && installed.dev === target.dev
     // An external replacement cannot inherit this installation's document or link.
     if (installed && !deliver) return
+    if (!installed) {
+      const [launcher] = inspectOwnedLinuxAppImageLauncher()
+      if (!launcher) return
+      const running = statSync('/proc/' + launcher + '/exe', { bigint: true })
+      if (target.ino !== running.ino || target.dev !== running.dev) return
+    }
     const env = { ...process.env }
     delete env.APPDIR
     delete env.APPIMAGE
     delete env.APPIMAGE_EXIT_AFTER_INSTALL
     delete env.APPIMAGE_SILENT_INSTALL
     if (!deliver && requests.length) env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED = '1'
-    const child = spawn(
-      '/bin/sh',
-      [
-        '-c',
-        'read -r _; [ "$1" -ef /proc/self/fd/3 ] || exit 1; exec 3<&-; exec "$@"',
-        'open-science',
-        image,
-        ...startupArgs,
-        ...(deliver ? requests : [])
-      ],
-      {
-        cwd: dirname(image),
-        detached: true,
-        env,
-        stdio: ['pipe', 'ignore', 'ignore', descriptor]
-      }
-    )
+    // AppRun itself uses /usr/bin/env bash. Keep the interpreter's command line fixed.
+    // Separate environment entries preserve whitespace, quotes and newlines in paths and URLs.
+    const args = [image, ...startupArgs, ...(deliver ? requests : [])]
+    for (const [index, arg] of args.entries()) env['OPEN_SCIENCE_HANDOFF_ARG_' + index] = arg
+    env.OPEN_SCIENCE_HANDOFF_ARG_COUNT = String(args.length)
+    const launch = [
+      'IFS= read -r _',
+      'args=()',
+      'for ((i=0; i<OPEN_SCIENCE_HANDOFF_ARG_COUNT; i++)); do',
+      '  key="OPEN_SCIENCE_HANDOFF_ARG_$i"',
+      '  args+=("${!key}")',
+      '  unset "$key"',
+      'done',
+      'unset OPEN_SCIENCE_HANDOFF_ARG_COUNT',
+      '[ "${args[0]}" -ef /proc/self/fd/3 ] || exit 1',
+      'exec 3<&-',
+      'exec "${args[@]}"'
+    ].join('\n')
+    const child = spawn('/usr/bin/env', ['bash', '-p', '-c', launch], {
+      cwd: dirname(image),
+      detached: true,
+      env,
+      stdio: ['pipe', 'ignore', 'ignore', descriptor]
+    })
     child.once('error', (error) => {
       createLogger('update').error(
         'Linux AppImage relaunch failed',
