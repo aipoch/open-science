@@ -71,12 +71,16 @@ const windowsProcessBirth = (pid: number): string | undefined => {
     : undefined
 }
 
+const windowsProcessBirthIfLive = (pid: number): string | undefined => {
+  if (!windowsProcessIsAlive(pid)) return undefined
+  const birth = windowsProcessBirth(pid)
+  if (birth !== undefined) return birth
+  if (!windowsProcessIsAlive(pid)) return undefined
+  throw new Error(`Electron crash simulation cannot read the birth identity for PID ${pid}.`)
+}
+
 const windowsProcessIdentityMatches = (pid: number, birth: string): boolean => {
-  if (!windowsProcessIsAlive(pid)) return false
-  const currentBirth = windowsProcessBirth(pid)
-  if (currentBirth === undefined)
-    throw new Error(`Electron crash simulation cannot read the birth identity for PID ${pid}.`)
-  return currentBirth === birth
+  return windowsProcessBirthIfLive(pid) === birth
 }
 type E2eWindowMode = 'hidden' | 'normal'
 
@@ -1950,6 +1954,19 @@ class ElectronAppHarness implements ElectronApp {
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
+    if (process.platform === 'win32' && !child.pid)
+      throw new Error('Electron crash simulation has no launcher PID.')
+    const launcherBirth =
+      process.platform === 'win32' && child.pid ? windowsProcessBirthIfLive(child.pid) : undefined
+    if (
+      process.platform === 'win32' &&
+      child.pid &&
+      launcherBirth === undefined &&
+      windowsProcessIsAlive(child.pid)
+    )
+      throw new Error(
+        `Electron crash simulation cannot capture the launcher birth identity for PID ${child.pid}.`
+      )
     await this.stopElectronTrace(application)
     const windowsProcesses =
       process.platform === 'win32'
@@ -1981,14 +1998,8 @@ class ElectronAppHarness implements ElectronApp {
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
     if (windowsProcesses) {
-      if (!child.pid) throw new Error('Electron crash simulation has no launcher PID.')
       const owned = new Map(windowsProcesses)
-      const launcherBirth = windowsProcessBirth(child.pid)
-      if (launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
-      else if (windowsProcessIsAlive(child.pid))
-        throw new Error(
-          `Electron crash simulation cannot capture the launcher birth identity for PID ${child.pid}.`
-        )
+      if (child.pid && launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
       const deadline = Date.now() + 10_000
       // An intermediate launcher can exit before taskkill reaches every captured descendant.
       await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
@@ -2001,12 +2012,16 @@ class ElectronAppHarness implements ElectronApp {
         const discovered = new Map<number, string>()
         for (const { pid, ppid } of observed) {
           if (owned.has(pid) || !liveOwned.has(ppid)) continue
-          if (!windowsProcessIsAlive(pid)) continue
-          const birth = windowsProcessBirth(pid)
-          if (birth === undefined)
-            throw new Error(
-              `Electron crash simulation cannot read the birth identity for PID ${pid}.`
-            )
+          const birth = windowsProcessBirthIfLive(pid)
+          if (birth === undefined) continue
+          const current = listWindowsProcesses().find(
+            (candidate) => candidate.pid === pid && candidate.ppid === ppid
+          )
+          if (!current) continue
+          const parentBirth = owned.get(ppid)
+          if (parentBirth === undefined || !windowsProcessIdentityMatches(ppid, parentBirth))
+            continue
+          if (!windowsProcessIdentityMatches(pid, birth)) continue
           owned.set(pid, birth)
           discovered.set(pid, birth)
         }
