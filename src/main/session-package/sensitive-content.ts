@@ -310,7 +310,7 @@ const findPackageTextMatch = (
           const value = decodeQuery(rawValue)
           const credentialParameter =
             isCredentialKey(key) ||
-            /^(?:key|username|sig|signature|(?:oauth|oidc)[_-]?signature|x-(?:amz|goog)-signature)$/i.test(
+            /^(?:key|username|sig|signature|(?:oauth|oidc)[_-]?signature|(?:sig|signature)(?:[_-]?value)?|x-(?:amz|goog)-signature)$/i.test(
               key
             )
           if (

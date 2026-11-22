@@ -669,6 +669,8 @@ it('checks export metadata values independently of their field names', () => {
   expect(
     findSensitivePackageText('https://example.org/#next_page_token=Bearer%20opaque')
   ).toBeDefined()
+  for (const key of ['signature_value', 'sig-value'])
+    expect(findSensitivePackageText('https://example.org/?' + key + '=opaque')).toBeDefined()
   expect(findSensitivePackageText('authMan["password"]="private-value"')?.label).toBe('password')
   expect(findSensitivePackageText(`page_token=${cursor}&password=private-value`)?.label).toBe(
     'password'
