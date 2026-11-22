@@ -266,6 +266,7 @@ jobs:
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
           sudo apt-get update
           sudo apt-get install --yes gnome-keyring dbus-user-session libfuse2t64 zlib1g-dev ./dist/*.deb
+          grep -Fx deb /opt/Open-Science/resources/package-type
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
             --installed-executable "/opt/Open-Science/open-science" \
