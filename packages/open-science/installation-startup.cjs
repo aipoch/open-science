@@ -44,6 +44,16 @@ function installationRootForEntry(entryPath) {
 }
 const REGISTRATION_NAME = /^([\da-f-]{36})\.(json|sqlite)$/
 const MAX_REAPED_PER_PASS = 200
+const installationHelperFlags = Object.freeze([
+  '--internal-agent-acp',
+  '--open-science-artifact-mcp',
+  '--open-science-image-mcp',
+  '--open-science-notebook-mcp',
+  '--open-science-reviewer-mcp-proxy',
+  '--open-science-skill-import-mcp',
+  '--open-science-skill-runtime-mcp',
+  '--open-science-plan-mcp'
+])
 // Caller MUST hold the coordinator lock: registrations are only created, probed and reclaimed under
 // it, so a free kernel lock here means the owner is gone and nobody can re-open the file meanwhile.
 // The pair is removed json first, so a reader never sees a registration without its lifetime lock.
@@ -116,18 +126,9 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwne
       throw new Error('Installation update requires recovery before starting Open-Science.')
     reapStaleRegistrations(directory, DatabaseSync)
     let owner
-    const helperFlags = [
-      '--internal-agent-acp',
-      '--open-science-artifact-mcp',
-      '--open-science-notebook-mcp',
-      '--open-science-reviewer-mcp-proxy',
-      '--open-science-skill-import-mcp',
-      '--open-science-skill-runtime-mcp',
-      '--open-science-plan-mcp'
-    ]
     if (
       helperOwner ||
-      (helperFlags.some((flag) => process.argv.includes(flag)) &&
+      (installationHelperFlags.some((flag) => process.argv.includes(flag)) &&
         process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
     ) {
       const candidate = helperOwner ?? JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
@@ -204,4 +205,9 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwne
   }
 }
 
-module.exports = { installationRootForEntry, protectInstallationStartup, reapStaleRegistrations }
+module.exports = {
+  installationHelperFlags,
+  installationRootForEntry,
+  protectInstallationStartup,
+  reapStaleRegistrations
+}
