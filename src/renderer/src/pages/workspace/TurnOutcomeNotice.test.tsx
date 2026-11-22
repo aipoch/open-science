@@ -84,7 +84,7 @@ describe('turn outcome notice action ownership', () => {
       failure: {
         category,
         ...(category === 'service' ? { responseMessage: body } : {}),
-        diagnostics: { code: '-32603', raw: 'Internal error: ' + body }
+        diagnostics: { raw: 'Internal error: ' + body }
       }
     })
 
