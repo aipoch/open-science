@@ -25,6 +25,7 @@ const boundary = vi.hoisted(() => ({
   mainEvaluate: vi.fn(),
   terminateByIdentity: vi.fn(),
   processTable: vi.fn(),
+  processBirthIdentity: vi.fn(),
   rendererFailure: vi.fn(),
   ready: vi.fn(),
   settingsWait: vi.fn(),
@@ -58,6 +59,9 @@ vi.mock('../src/main/process-tree-windows', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/main/process-tree-windows')>()),
   terminateWindowsProcessesByIdentity: boundary.terminateByIdentity
 }))
+vi.mock('../src/main/process-birth-identity', () => ({
+  processBirthIdentity: boundary.processBirthIdentity
+}))
 vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
   RendererFailureGate: class {
     observe = async (): Promise<void> => undefined
@@ -84,6 +88,9 @@ beforeEach(() => {
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
   boundary.processTable.mockReset()
+  boundary.processBirthIdentity.mockImplementation((pid: number) =>
+    pid === 12346 ? 'windows-creation-time:135411000000000000' : undefined
+  )
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
     const logs = join(root, 'logs')
@@ -386,13 +393,13 @@ it.each(
   [
     { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
     { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
-    { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: false },
+    { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: true },
     { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
     {
       name: 'a new grandchild survived',
       complete: true,
       survivors: [[12347, 12346]],
-      succeeds: false
+      succeeds: true
     },
     { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
   ].flatMap((scenario) => [true, false].map((reaped) => ({ ...scenario, reaped })))
