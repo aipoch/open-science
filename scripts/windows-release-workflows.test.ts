@@ -962,6 +962,17 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
+  it('publishes the verified Windows version-pair patch for every release', () => {
+    const release = readWorkflow('release.yml')
+    const delta = findStep(release.jobs.publish, 'Generate verified Windows version-pair patch')
+
+    expect(delta.if).toBeUndefined()
+    expect(delta).toMatchObject({
+      env: { GH_TOKEN: '${{ github.token }}' },
+      run: 'bash build/windows-delta/release.sh artifacts'
+    })
+  })
+
   it('records unsigned Windows update diagnostics without blocking publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = readWorkflow('windows-upgrade-smoke.yml').jobs['windows-upgrade-smoke']
