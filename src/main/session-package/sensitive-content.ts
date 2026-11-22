@@ -84,6 +84,50 @@ const jsonStringMembers = /("(?:\\.|[^"\\])*")(?:\s*:\s*("(?:\\.|[^"\\])*"))?/g
 // A quote after a backslash cannot open a string in a JSON document. A scan
 // window starting inside a string can otherwise read escaped quotes as new members.
 const structuredStringMembers = new RegExp('(?<!\\\\)' + jsonStringMembers.source, 'g')
+const structuredCredentialHint =
+  /(?:api|auth|bearer|cookie|credential|password|passphrase|passwd|pat|secret|token|access|private|oauth|oidc|key|signature)/i
+const escapedAsciiHint = /\\u00(?:[2-7][0-9a-f])/i
+const credentialValueHint =
+  /(?:\b(?:gh[pousr]_\w+|github_pat_\w+|AKIA[0-9A-Z]+|eyJ[0-9A-Za-z_-]+|sk-[0-9A-Za-z_-]+)|\bBearer\b)/i
+const credentialScanHint = /(?:[a-z][a-z0-9+.-]*:(?:\\?\/){2}|[?&#][^=&\s]+=[^&\s]+)/i
+const structuredCredentialWords = [
+  'api',
+  'auth',
+  'bearer',
+  'cookie',
+  'credential',
+  'password',
+  'passphrase',
+  'passwd',
+  'pat',
+  'secret',
+  'token',
+  'access',
+  'private',
+  'oauth',
+  'oidc',
+  'key',
+  'signature'
+]
+
+const mayContainStructuredCredential = (text: string): boolean =>
+  structuredCredentialHint.test(text) || escapedAsciiHint.test(text)
+
+const mayContainCredential = (text: string): boolean => {
+  if (text.length > 16 * 1024) {
+    const lower = text.toLowerCase()
+    if (structuredCredentialWords.some((word) => lower.includes(word))) return true
+    if (lower.includes('://') || lower.includes('?') || lower.includes('#') || lower.includes('&'))
+      return true
+    if (lower.includes('\\u00') && escapedAsciiHint.test(text)) return true
+    return credentialValueHint.test(text)
+  }
+  return (
+    mayContainStructuredCredential(text) ||
+    credentialValueHint.test(text) ||
+    credentialScanHint.test(text)
+  )
+}
 
 export type PackageSensitiveContentSource = {
   storageKey: string
@@ -594,6 +638,7 @@ const scanPackageText = (
   complete: boolean,
   inspectEncodedValues: boolean
 ): PackageTextMatch | undefined => {
+  if (!mayContainCredential(text)) return undefined
   if (!complete) return findPackageTextMatch(text, false, true, '', inspectEncodedValues)
   const syntax = new PackageJsonSyntax()
   syntax.write(text)
@@ -648,6 +693,7 @@ export class PackageTextScanner {
   private stringTail = ''
   private pendingAssignment = ''
   private encoded?: TextFinding
+  private scanCredentialTail = false
 
   private inspectString(
     source: string,
@@ -660,6 +706,11 @@ export class PackageTextScanner {
     const raw = this.stringTail + source
     offset -= this.stringTail.length
     const safe = raw.slice(0, raw.length - pendingEscape)
+    if (!this.pendingAssignment && !mayContainCredential(safe)) {
+      this.pendingAssignment = ''
+      this.stringTail = closed ? '' : raw.slice(-8192)
+      return
+    }
     const escaped = safe.includes('\\')
     const value: string = escaped ? JSON.parse('"' + safe + '"') : safe
     const cut = closed ? value.length : retainedWindowStart(value)
@@ -717,8 +768,9 @@ export class PackageTextScanner {
       const match = findPackageTextMatch(text, complete, jsonMetadata, this.beforeTail)
       return match ? { text, match, offset: this.offset - this.tail.length } : undefined
     }
-    this.original ??= inspect(false)
-    this.structured ??= inspect(true)
+    this.scanCredentialTail ||= mayContainCredential(text)
+    if (!this.original && this.scanCredentialTail) this.original = inspect(false)
+    if (!this.structured && this.scanCredentialTail) this.structured = inspect(true)
     this.offset += decoded.length
     const start = retainedWindowStart(text)
     if (start > 0) this.beforeTail = (this.beforeTail + text.slice(0, start)).slice(-512)
