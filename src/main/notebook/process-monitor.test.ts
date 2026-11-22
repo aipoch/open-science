@@ -43,6 +43,15 @@ describe('Notebook process monitor prototype', () => {
     const snapshot = await monitor.snapshot()
     expect(snapshot.host.memoryTotalBytes).toBeGreaterThan(0)
     expect(snapshot.host.cpuCount).toBeGreaterThan(0)
+    const { memoryCommittedBytes, memoryCommitLimitBytes } = snapshot.host
+    if (
+      process.platform === 'win32' &&
+      memoryCommittedBytes !== undefined &&
+      memoryCommitLimitBytes !== undefined
+    ) {
+      expect(memoryCommittedBytes).toBeGreaterThan(0)
+      expect(memoryCommitLimitBytes).toBeGreaterThanOrEqual(memoryCommittedBytes)
+    }
     expect(snapshot.instances[0].pid).toBe(child.pid)
     if (process.platform !== 'win32') {
       expect(snapshot.processMetricsAvailable).toBe(true)

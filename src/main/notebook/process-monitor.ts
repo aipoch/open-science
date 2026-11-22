@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { cpus, freemem, hostname, platform, totalmem, uptime } from 'node:os'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'
+import type { WindowsResourceSample } from '@aipoch/process-tree-native'
 import type {
   NotebookProcessMonitorSnapshot,
   NotebookProcessObservation,
@@ -31,13 +32,42 @@ export type MonitoredInterpreter = MonitoredKernelProcess & {
 }
 
 type ProcessSample = NotebookProcessObservation['processes'][number] & { cpuSeconds?: number }
+type ProcessSamples = {
+  processes: ProcessSample[]
+  windowsSystem?: WindowsResourceSample['system']
+}
+
 const run = promisify(execFile)
 const nativeRequire = createRequire(import.meta.url)
 const validBytes = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 
-async function hostMemory(): Promise<{ totalBytes: number; usedBytes: number }> {
+type HostMemory = {
+  totalBytes: number
+  usedBytes: number
+  committedBytes?: number
+  commitLimitBytes?: number
+}
+
+async function hostMemory(windowsSystem?: WindowsResourceSample['system']): Promise<HostMemory> {
   const fallbackTotalBytes = totalmem()
+  if (
+    process.platform === 'win32' &&
+    windowsSystem &&
+    validBytes(windowsSystem.totalPhysicalBytes) &&
+    validBytes(windowsSystem.availableBytes) &&
+    windowsSystem.availableBytes <= windowsSystem.totalPhysicalBytes &&
+    validBytes(windowsSystem.committedBytes) &&
+    validBytes(windowsSystem.commitLimitBytes) &&
+    windowsSystem.committedBytes <= windowsSystem.commitLimitBytes
+  ) {
+    return {
+      totalBytes: windowsSystem.totalPhysicalBytes,
+      usedBytes: windowsSystem.totalPhysicalBytes - windowsSystem.availableBytes,
+      committedBytes: windowsSystem.committedBytes,
+      commitLimitBytes: windowsSystem.commitLimitBytes
+    }
+  }
   if (process.platform === 'darwin') {
     try {
       const native = nativeRequire(
@@ -70,39 +100,43 @@ const cpuTimes = (): { idle: number; total: number } =>
     { idle: 0, total: 0 }
   )
 
-// Display-only enumeration. These numbers never grant permission to signal a process.
-async function processSamples(): Promise<ProcessSample[]> {
+async function processSamples(): Promise<ProcessSamples> {
   if (process.platform === 'win32') {
     const native = nativeRequire(
       '@aipoch/process-tree-native'
     ) as typeof import('@aipoch/process-tree-native')
     const result = await native.sampleWindowsResources(true, [])
     if (!result.supported || !result.complete) throw new Error('Process sample is incomplete.')
-    return result.processes.map((item) => ({
-      pid: item.pid,
-      parentPid: item.parentPid,
-      command: '',
-      memoryBytes: item.workingSetBytes
-    }))
+    return {
+      processes: result.processes.map((item) => ({
+        pid: item.pid,
+        parentPid: item.parentPid,
+        command: '',
+        memoryBytes: item.workingSetBytes
+      })),
+      windowsSystem: result.system
+    }
   }
   const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,rss=,time=,comm='], {
     timeout: 2500,
     maxBuffer: 4 * 1024 * 1024
   })
-  return stdout.split('\n').flatMap((line) => {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d:.-]+)\s+(.+)$/)
-    return match
-      ? [
-          {
-            pid: Number(match[1]),
-            parentPid: Number(match[2]),
-            memoryBytes: Number(match[3]) * 1024,
-            command: basename(match[5]),
-            cpuSeconds: parseProcessCpuTime(match[4])
-          }
-        ]
-      : []
-  })
+  return {
+    processes: stdout.split('\n').flatMap((line) => {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d:.-]+)\s+(.+)$/)
+      return match
+        ? [
+            {
+              pid: Number(match[1]),
+              parentPid: Number(match[2]),
+              memoryBytes: Number(match[3]) * 1024,
+              command: basename(match[5]),
+              cpuSeconds: parseProcessCpuTime(match[4])
+            }
+          ]
+        : []
+    })
+  }
 }
 
 export function parseProcessCpuTime(value: string): number {
@@ -208,10 +242,14 @@ export class NotebookProcessMonitor {
 
   private async sample(): Promise<NotebookProcessMonitorSnapshot> {
     let available = true
-    const samples = await processSamples().catch(() => {
+    let sampled: ProcessSamples
+    try {
+      sampled = await processSamples()
+    } catch {
       available = false
-      return []
-    })
+      sampled = { processes: [] }
+    }
+    const samples = sampled.processes
     const currentCpu = cpuTimes()
     const elapsed = currentCpu.total - this.previousCpu.total
     const cpuPercent =
@@ -280,7 +318,7 @@ export class NotebookProcessMonitor {
       }
     })
     this.previousProcesses = nextProcesses
-    const memory = await hostMemory()
+    const memory = await hostMemory(sampled.windowsSystem)
     return {
       sampledAt: Date.now(),
       host: {
@@ -290,6 +328,12 @@ export class NotebookProcessMonitor {
         cpuPercent,
         memoryTotalBytes: memory.totalBytes,
         memoryUsedBytes: memory.usedBytes,
+        ...(memory.committedBytes !== undefined && memory.commitLimitBytes !== undefined
+          ? {
+              memoryCommittedBytes: memory.committedBytes,
+              memoryCommitLimitBytes: memory.commitLimitBytes
+            }
+          : {}),
         uptimeSeconds: uptime()
       },
       processMetricsAvailable: available,
