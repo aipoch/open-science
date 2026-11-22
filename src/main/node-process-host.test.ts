@@ -3,6 +3,17 @@ import { toApplicationCommandErrorEnvelope } from '../shared/application-command
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nodeRuntimeEnvironment, nodeRuntimeEnvironmentEntries } from './node-process-host'
 import { isRuntimeHelper } from './runtime-helper'
+import { HARNESS_ACP_ARG } from './harness-acp/config'
+import {
+  ARTIFACT_MCP_SERVER_ARG,
+  IMAGE_MCP_SERVER_ARG,
+  NOTEBOOK_MCP_SERVER_ARG,
+  PLAN_MCP_SERVER_ARG,
+  REVIEWER_MCP_PROXY_ARG,
+  SKILL_IMPORT_MCP_SERVER_ARG,
+  SKILL_RUNTIME_MCP_SERVER_ARG
+} from './mcp-server-args'
+import { installationHelperFlags } from '../../packages/open-science/installation-startup.cjs'
 
 const electronVersion = Object.getOwnPropertyDescriptor(process.versions, 'electron')
 afterEach(() => {
@@ -60,5 +71,19 @@ describe('helper host inheritance', () => {
     expect(isRuntimeHelper(['node', 'entry', '--serve=44100'])).toBe(false)
     expect(isRuntimeHelper(['--open-science-notebook-mcp-extra'])).toBe(false)
     expect(isRuntimeHelper(['--open-science-notebook-mcp'])).toBe(true)
+  })
+  it('keeps startup protection and runtime helper flags aligned', () => {
+    expect(installationHelperFlags).toEqual([
+      HARNESS_ACP_ARG,
+      ARTIFACT_MCP_SERVER_ARG,
+      IMAGE_MCP_SERVER_ARG,
+      NOTEBOOK_MCP_SERVER_ARG,
+      REVIEWER_MCP_PROXY_ARG,
+      SKILL_IMPORT_MCP_SERVER_ARG,
+      SKILL_RUNTIME_MCP_SERVER_ARG,
+      PLAN_MCP_SERVER_ARG
+    ])
+    for (const flag of installationHelperFlags)
+      expect(isRuntimeHelper(['node', 'entry', flag])).toBe(true)
   })
 })
