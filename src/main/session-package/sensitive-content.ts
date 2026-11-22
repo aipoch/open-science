@@ -718,7 +718,7 @@ export class PackageTextScanner {
       return match ? { text, match, offset: this.offset - this.tail.length } : undefined
     }
     this.original ??= inspect(false)
-    if (this.original) this.structured ??= inspect(true)
+    this.structured ??= inspect(true)
     this.offset += decoded.length
     const start = retainedWindowStart(text)
     if (start > 0) this.beforeTail = (this.beforeTail + text.slice(0, start)).slice(-512)

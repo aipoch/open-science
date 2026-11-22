@@ -763,6 +763,14 @@ it('keeps a decoded assignment through whitespace across reads in the same JSON 
   }
 })
 
+it('scans complete escaped JSON strings even without a raw candidate', () => {
+  const text = String.raw`{"notes":["\u0067hp_syntheticprivatevalue"]}`
+  expect(findSensitivePackageText(text)).toBeDefined()
+  const scanner = new PackageTextScanner()
+  scanner.write(text)
+  expect(scanner.finish()).toBeDefined()
+})
+
 it('recognizes the value type inside JSON quoted in a long string', () => {
   const chunk = 64 * 1024
   for (const tokens of [123, 'opaque']) {
