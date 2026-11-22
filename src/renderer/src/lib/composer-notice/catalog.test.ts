@@ -80,6 +80,28 @@ it('shows only the recorded code when the request has no diagnostic body', () =>
   ).toBe('code: -32603')
 })
 
+it('keeps protocol metadata when the turn error is used as fallback detail', () => {
+  const failure: ClassifiedFailure = {
+    category: 'configuration',
+    reason: 'configuration/model-unavailable',
+    diagnostics: {
+      status: 400,
+      protocol: 'chat-completions',
+      requestId: 'request-id',
+      providerExcerpt: 'Provider rejected the request',
+      raw: 'Provider HTTP 400'
+    }
+  }
+  const details = formatNoticeDiagnostics(
+    { id: 'failure', source: 'turn', occurredAt: 0, failure },
+    'Model configuration needs attention',
+    'The selected model is unavailable. Select another model in Settings.'
+  ).details
+  expect(details).toContain('status: 400\n')
+  expect(details).toContain('protocol: chat-completions\n')
+  expect(details).toContain('requestId: request-id')
+})
+
 it.each<[ClassifiedFailure, string]>([
   [
     {

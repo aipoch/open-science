@@ -341,5 +341,5 @@ export const formatNoticeDiagnostics = (
   // Local operations may use their recovery instructions as the entire diagnostic.
   const localInstructions =
     notice.source === 'operation' && !notice.summary && diagnostic === description
-  return { details: responseDetail ?? (localInstructions ? fullText : diagnosticText), fullText }
+  return { details: localInstructions ? fullText : diagnosticText, fullText }
 }
