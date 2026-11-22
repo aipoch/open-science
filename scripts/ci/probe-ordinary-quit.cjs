@@ -57,15 +57,38 @@ async function main(){
  const screenshot = process.env.QA_BANNER_SCREEN
  if (screenshot) fs.chmodSync(image, 0o555)
  const oldPid=await desk.evaluate(()=>process.pid)
- const overlap=process.env.QA_OPEN_KIND?.startsWith('during-')
- const kind=process.env.QA_OPEN_KIND?.replace(/^during-/,'')
- if(overlap) {
+ const scenario=process.env.QA_OPEN_KIND || ''
+ const early=scenario==='early-file', cancel=scenario==='cancel-file'
+ const overlap=early || cancel || scenario.startsWith('during-')
+ const kind=scenario.replace(/^(during|early|cancel)-/,'')
+ if(overlap && !early && !cancel) {
    // Keep the real renderer active briefly so a second desktop invocation can reach the old PID.
    // Actual save requests, acknowledgements and the normal quit code remain untouched.
    await page.evaluate(()=>setTimeout(()=>{const end=performance.now()+1100;while(performance.now()<end){}},20))
  }
  await desk.evaluate(({app},root)=>{
    const fs=process.mainModule.require('node:fs')
+   if(process.env.QA_OPEN_KIND==='early-file'){
+     const quit=app.quit.bind(app)
+     let calls=0
+     app.quit=()=>{if(++calls===2) return setTimeout(()=>{fs.writeFileSync(root+'/resume','1');quit()},2200);return quit()}
+     app.once('second-instance',()=>{if(!fs.existsSync(root+'/resume'))fs.writeFileSync(root+'/early','1')})
+   }
+   if(process.env.QA_OPEN_KIND==='cancel-file'){
+     // Supply an active-work inspection fixture. The Desktop's confirmation, user choice,
+     // activation queue, runtime and package presentation stay on their production paths.
+     const parse=JSON.parse
+     JSON.parse=function(raw,...args){
+       const frame=parse.call(this,raw,...args)
+       if(typeof raw==='string' && raw.includes('"reviewerActive":false') && raw.includes('"fingerprint"')){
+         const walk=v=>{if(!v || typeof v!=='object')return
+           if(typeof v.fingerprint==='string' && Array.isArray(v.sessions) && v.reviewerActive===false)v.reviewerActive=true
+           else Object.values(v).forEach(walk)
+         };walk(frame)
+       }
+       return frame
+     }
+   }
    app.once('before-quit',()=>fs.writeFileSync(root+'/quitting','1'))
    app.once('second-instance',()=>fs.writeFileSync(root+'/relayed','1'))
    setTimeout(()=>app.quit(),5)
@@ -73,14 +96,30 @@ async function main(){
  if(overlap) {
    for(let i=0;i<500&&!fs.existsSync(root+'/quitting');i++)await sleep(10)
    assert.ok(fs.existsSync(root+'/quitting') && fs.existsSync('/proc/'+oldPid))
+   if(cancel)await page.getByRole('alertdialog').getByRole('button',{name:'Cancel',exact:true}).waitFor({timeout:15000})
    entry.open(kind)
    console.log('Desktop association requested during ordinary quit:',kind)
+ }
+ if(cancel){
+   for(let i=0;i<500&&!fs.existsSync(root+'/relayed');i++)await sleep(10)
+   assert.ok(fs.existsSync(root+'/relayed'),'old desktop must receive file during confirmation')
+   const expected='Desktop handoff.science'
+   const before=await page.evaluate(()=>window.api.packagePresentation.getState())
+   assert.ok(before?.importFilename!==expected && !before?.pendingImports?.some(p=>p.filename===expected))
+   await page.getByRole('alertdialog').getByRole('button',{name:'Cancel',exact:true}).click()
+   await page.waitForFunction(async name=>{const s=await window.api.packagePresentation.getState();return s?.importFilename===name || s?.pendingImports?.some(p=>p.filename===name)},expected,{timeout:20000})
+   assert.equal(await desk.evaluate(({app})=>app.getVersion()),'1.3.1')
+   assert.equal(await desk.evaluate(()=>process.pid),oldPid)
+   assert.equal(fs.statSync(image).size,fs.statSync(candidate).size)
+   console.log('Cancelled real quit confirmation: same A process received the deferred file after Cancel')
+   await desk.evaluate(({app})=>{setTimeout(()=>app.exit(0),1)});server.close();return
  }
  for(let i=0;fs.existsSync('/proc/'+oldPid)&&i<900;i++)await sleep(100)
  assert.ok(!fs.existsSync('/proc/'+oldPid),'ordinary quit timed out')
  console.log('old PID exited',oldPid,'bytes at original path',fs.statSync(image).size,'expected B',file.size)
  if(kind) {
    if(overlap) {
+     if(early) assert.ok(fs.existsSync(root+'/early'),'file must reach A before quit reentry')
      assert.ok(fs.existsSync(root+'/relayed'), 'old desktop must receive the overlapping request')
      if (screenshot) {
        assert.notEqual(fs.statSync(image).size,file.size)

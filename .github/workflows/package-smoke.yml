@@ -86,7 +86,7 @@ jobs:
           gh release download v1.3.2 -p "aipoch-open-science-1.3.2-linux-$ARCH.AppImage" -p "$FEED" -D "$dir"
           chmod u+x dist/*.AppImage
           unset GH_TOKEN
-          kinds=(ordinary file link during-file during-link)
+          kinds=(ordinary file link during-file during-link early-file cancel-file)
           if [[ "$OVERLAP_ONLY" = true ]]; then kinds=(during-file during-link); fi
           failed=0
           for kind in "${kinds[@]}"; do
