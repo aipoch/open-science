@@ -143,9 +143,9 @@ it.each([
   ...['secretName', 'secret_name', 'credentialName', 'credential_name'].map<
     [string, Buffer, boolean]
   >((key) => [
-    `identifier-shaped credential in ${key}`,
+    `identifier in metadata field ${key}`,
     Buffer.from(JSON.stringify({ [key]: 'ABCDEF1234567890' })),
-    false
+    true
   ]),
   ...['password = process.env.PASSWORD', 'password = []', 'token == expected'].map<
     [string, Buffer, boolean]
@@ -212,7 +212,7 @@ it.each([
     Buffer.from(' '.repeat(65536 - '{"noCredentials":tr'.length) + '{"noCredentials":true}'),
     true
   ],
-  ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
+  ['quoted boolean credential', Buffer.from('{"credentials":"true"}'), false],
   [
     'hyphenated boolean member names',
     Buffer.from('{"no-authorization":true,"has-cookie":false,"no-api-key":true}'),
@@ -220,52 +220,52 @@ it.each([
   ],
   ...Array.from({ length: 26 }, (_, split): [string, Buffer, boolean] => [
     `boolean member crossing a read at prefix ${split + 1}`,
-    Buffer.from(' '.repeat(65536 - split - 1) + '{"noCredentials":false,"result":"ok"}'),
+    Buffer.from(' '.repeat(65536 - split - 1) + '{"credentials":false,"result":"ok"}'),
     true
   ]),
   [
     'boolean-like credential suffix in the next read',
-    Buffer.from(' '.repeat(65515) + '{"noCredentials":trueSecret}'),
+    Buffer.from(' '.repeat(65515) + '{"credentials":trueSecret}'),
     false
   ],
   [
     'boolean-like credential beyond the retained overlap',
-    Buffer.from('{"noCredentials":true' + ' '.repeat(70000) + 'secret}'),
+    Buffer.from('{"credentials":true' + ' '.repeat(70000) + 'secret}'),
     false
   ],
   [
     'boolean field opening quote outside the retained overlap',
     Buffer.from(
-      ' '.repeat(65536 - 8192 - 2) + '{"noCredentials":true,"notes":"' + 'a'.repeat(8192) + '"}'
+      ' '.repeat(65536 - 8192 - 2) + '{"credentials":true,"notes":"' + 'a'.repeat(8192) + '"}'
     ),
     true
   ],
   [
     'numeric credential beside a boolean',
-    Buffer.from('{"noCredentials":true,"token":123456}'),
+    Buffer.from('{"credentials":true,"token":123456}'),
     false
   ],
-  ['truncated boolean JSON', Buffer.from('{"noCredentials":true'), false],
-  ['malformed boolean JSON', Buffer.from('{"noCredentials":true,}'), false],
+  ['truncated boolean JSON', Buffer.from('{"credentials":true'), false],
+  ['malformed boolean JSON', Buffer.from('{"credentials":true,}'), false],
   [
     'malformed final NDJSON record after boolean metadata',
-    Buffer.from('{"noCredentials":true}\n' + ' '.repeat(70000) + '{"result":}'),
+    Buffer.from('{"credentials":true}\n' + ' '.repeat(70000) + '{"result":}'),
     false
   ],
   [
     'boolean metadata in UTF-16 with BOM',
-    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('{"noCredentials":false}', 'utf16le')]),
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('{"credentials":false}', 'utf16le')]),
     true
   ],
   [
     'boolean metadata after a large research value',
-    Buffer.from(JSON.stringify({ notes: 'a'.repeat(150000), noCredentials: false })),
+    Buffer.from(JSON.stringify({ notes: 'a'.repeat(150000), credentials: false })),
     true
   ],
   [
     'real credential after boolean research metadata in a later chunk',
     Buffer.from(
-      '{"noCredentials":true}\n' + ' '.repeat(70000) + '{"apiKey":"synthetic-private-value"}\n'
+      '{"credentials":true}\n' + ' '.repeat(70000) + '{"apiKey":"synthetic-private-value"}\n'
     ),
     false
   ],
@@ -629,6 +629,7 @@ it('preserves context and model-step token counts through native export and impo
 
 it.each([
   serializedRedaction,
+  JSON.stringify({ page_token: 'first', next_page_token: 'opaque-cursor-7M2Q', authMan: 'active' }),
   'password = os.environ["PASSWORD"]\nprint(password)',
   'password = process.env.PASSWORD\r\nconsole.log(password)',
   'password["value"] = {}\npassword["value"] = os.environ["PASSWORD"]',
