@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as durableFiles from '@aipoch/durable-files'
 
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookEnvironmentManifest, NotebookRunRecord } from '../../shared/notebook'
@@ -235,6 +236,34 @@ describe('notebook run repository', () => {
     expect(history.find((run) => run.runId === 'legacy-failure')).not.toHaveProperty(
       'executionStarted'
     )
+  })
+
+  it('keeps a published large Run file when only the kernel status changes after environment capture', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const scope = { projectId: 'project', sessionId: 'session' }
+    const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session')
+    const document = await repository.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+    const { manifest, checksum } = completedEnvironmentManifest()
+    await repository.appendRun({
+      ...scope,
+      lane,
+      run: admittedRun({
+        status: 'completed',
+        environmentManifest: manifest,
+        environmentCapture: { state: 'available', manifestChecksum: checksum },
+        text: { stdout: 'x'.repeat(1024 * 1024), stderr: '', traceback: '', plain: [] }
+      })
+    })
+    const writes = vi.spyOn(durableFiles, 'writeDurableJsonFile')
+    try {
+      await repository.updateKernelStatus({ ...scope, lane, status: 'restarting' })
+      expect(writes.mock.calls.map(([file]) => file)).toEqual([
+        join(document.notebookSessionRoot, 'run.json')
+      ])
+    } finally {
+      writes.mockRestore()
+    }
   })
 
   it('persists environment manifests as checksum-addressed sidecars and hydrates targeted reads', async () => {
@@ -2579,9 +2608,20 @@ it('counts external record bytes against the document cache budget and upgrades 
   expect(cache.documentCacheBytes).toBe(0)
   expect(cache.documentCache.size).toBe(0)
   const reader = new NotebookRunRepository(root)
-  expect(
-    (await reader.findExisting(scope.projectId, scope.sessionId))?.runs[0].text.stdout.length
-  ).toBe(33 * 1024 * 1024)
+  const bodyReads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+  try {
+    const [full, header, initialization] = await Promise.all([
+      reader.findExisting(scope.projectId, scope.sessionId),
+      reader.findReferenceHeader(scope.projectId, scope.sessionId),
+      reader.loadSessionInitialization({ ...scope, lane, workspaceCwd: root })
+    ])
+    expect(full?.runs[0].text.stdout.length).toBe(33 * 1024 * 1024)
+    expect(header?.workspaceCwd).toBe(root)
+    expect(initialization.runs).toHaveLength(1)
+    expect(bodyReads).toHaveBeenCalledTimes(1)
+  } finally {
+    bodyReads.mockRestore()
+  }
   // Metadata remains usable if only an oversized record disappears. Opening the body still fails.
   const manifest = JSON.parse(await readFile(path, 'utf8'))
   await rm(join(document.notebookSessionRoot, '.run-records', manifest.runs[0].sha256 + '.json'))
@@ -2594,6 +2634,9 @@ it('counts external record bytes against the document cache budget and upgrades 
   expect(await reader.hasCachedForegroundOnlyHistory(scope.projectId, scope.sessionId, lane)).toBe(
     true
   )
+  expect(
+    (await reader.loadSessionInitialization({ ...scope, lane, workspaceCwd: root })).runs
+  ).toMatchObject([{ runId: 'run-1', status: 'completed' }])
   const target = { limit: 0, runIds: ['run-1'], lane }
   expect(
     await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
@@ -2615,6 +2658,11 @@ it('counts external record bytes against the document cache budget and upgrades 
   expect(
     await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
   ).toBeUndefined()
+  // A replaced manifest must invalidate initialization metadata as well as full-document reads.
+  await writeFile(path, JSON.stringify({ ...manifest, updatedAt: manifest.updatedAt + 1 }))
+  await expect(
+    reader.loadSessionInitialization({ ...scope, lane, workspaceCwd: root })
+  ).rejects.toThrow('corrupt')
   await expect(reader.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
     'corrupt'
   )

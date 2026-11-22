@@ -126,7 +126,13 @@ type RecordReadScope = {
   records?: Map<string, { info: DocumentFileIdentity; run: NotebookRunRecord }>
 }
 
-type LaneHistory = Pick<NotebookRunDocument, 'notebookSessionRoot' | 'kernel' | 'runs'>
+type LaneHistory = Pick<
+  NotebookRunDocument,
+  'notebookSessionRoot' | 'dataRoot' | 'kernel' | 'runtimeBindings' | 'runs'
+>
+type SessionInitialization = Omit<LaneHistory, 'runs'> & {
+  runs: readonly Pick<NotebookRunRecord, 'runId' | 'status' | 'fileEvidence'>[]
+}
 
 type LaneSummary = {
   notebookSessionRoot: string
@@ -1028,6 +1034,13 @@ class NotebookRunRepository {
     DocumentFileIdentity & { weight: number; document: NotebookRunDocument }
   >()
   private documentCacheBytes = 0
+  private readonly pendingDocumentReads = new Map<
+    string,
+    {
+      identity: DocumentFileIdentity
+      result: Promise<{ document: NotebookRunDocument; stable: boolean }>
+    }
+  >()
   // Keep metadata after an oversized document is released. Cap even unusual IDs or very long histories.
   private readonly laneSummaries = new Map<
     string,
@@ -1282,6 +1295,30 @@ class NotebookRunRepository {
       // A missing record is corruption, never an absent Notebook that may be recreated.
       throw new CorruptNotebookDocumentError()
     }
+  }
+
+  // Session initialization needs evidence and lifecycle metadata from recovery, including every Run.
+  async loadSessionInitialization(
+    request: Pick<
+      LoadNotebookRunDocumentRequest,
+      'projectId' | 'sessionId' | 'workspaceCwd' | 'lane'
+    >
+  ): Promise<SessionInitialization> {
+    const { projectId, sessionId, lane } = request
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    if (await this.hasRecoveryCandidate(path)) return this.loadOrCreate(request)
+    const entry = this.laneSummaries.get(path)
+    const full = this.documentCache.get(path)
+    const snapshot =
+      entry?.summary.history ??
+      (entry && full && sameDocumentFileIdentity(entry.identity, full) ? full.document : undefined)
+    const document =
+      snapshot && (await this.cachedLaneSummary(path)) === entry?.summary
+        ? snapshot
+        : await this.findExisting(projectId, sessionId, lane)
+    if (!document) return this.loadOrCreate(request)
+    await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
+    return document
   }
 
   // Loads an existing history file or creates the directory skeleton and first run.json.
@@ -1996,60 +2033,80 @@ class NotebookRunRepository {
         this.documentCache.set(filePath, cached)
         return cached.document
       }
-      const read = await readDurableJsonFile(filePath, (contents) => {
-        const document = decodeNotebookDocument(contents)
-        assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
-        assertStoredNotebookDocumentShape(document)
-        return document
-      })
-      if (read.status === 'missing') throw new Error(`Notebook document disappeared: ${filePath}`)
-      // Decode before normalization for the same reason as loadOrCreate above.
-      const hydrated = await this.hydrate(filePath, read.value)
-      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
-
-      const normalized = normalizeDocument(
-        this.storageRoot,
-        {
-          projectId: safeProjectId,
-          sessionId: safeSessionId,
-          lane
-        },
-        decoded
-      )
-      this.records.remember(normalized.runs, read.value.runs, dirname(filePath))
-      const currentInfo = await stat(filePath)
-      if (!sameDocumentFileIdentity(fileInfo, currentInfo)) {
-        // An atomic replacement landed between read and stat. Retry once so old bytes can never be
-        // cached under the replacement file's identity; under continuous writes, return this valid
-        // snapshot without caching it and let the next caller observe the latest document.
-        if (attempt + 1 < MAX_DOCUMENT_READ_ATTEMPTS) continue
-        return normalized
+      // Reference lookup and recovery can arrive together before either has populated the cache.
+      let read = this.pendingDocumentReads.get(filePath)
+      if (!read || !sameDocumentFileIdentity(read.identity, fileInfo)) {
+        read = {
+          identity: fileInfo,
+          result: this.readDocumentVersion(filePath, fileInfo, safeProjectId, safeSessionId, lane)
+        }
+        this.pendingDocumentReads.set(filePath, read)
       }
-      const weight =
-        currentInfo.size +
-        read.value.runs.reduce(
-          (bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0),
-          0
-        )
-      this.rememberLaneSummary(
-        filePath,
-        currentInfo,
-        normalized,
-        true,
-        weight > MAX_DOCUMENT_CACHE_BYTES ? read.value.runs : undefined
-      )
-      this.rememberDocument(filePath, {
-        mtimeMs: currentInfo.mtimeMs,
-        ctimeMs: currentInfo.ctimeMs,
-        size: currentInfo.size,
-        ino: currentInfo.ino,
-        weight,
-        document: normalized
-      })
-      return normalized
+      try {
+        const { document, stable } = await read.result
+        if (stable || attempt + 1 === MAX_DOCUMENT_READ_ATTEMPTS) return document
+      } finally {
+        if (this.pendingDocumentReads.get(filePath) === read)
+          this.pendingDocumentReads.delete(filePath)
+      }
     }
-
     throw new Error(`Failed to read notebook document: ${filePath}`)
+  }
+
+  private async readDocumentVersion(
+    filePath: string,
+    fileInfo: DocumentFileIdentity,
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity
+  ): Promise<{ document: NotebookRunDocument; stable: boolean }> {
+    const read = await readDurableJsonFile(filePath, (contents) => {
+      const document = decodeNotebookDocument(contents)
+      assertNotebookDocumentOwnership(document, projectId, sessionId)
+      assertStoredNotebookDocumentShape(document)
+      return document
+    })
+    if (read.status === 'missing') throw new Error(`Notebook document disappeared: ${filePath}`)
+    // Decode before normalization for the same reason as loadOrCreate above.
+    const hydrated = await this.hydrate(filePath, read.value)
+    const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+
+    const normalized = normalizeDocument(
+      this.storageRoot,
+      {
+        projectId,
+        sessionId,
+        lane
+      },
+      decoded
+    )
+    this.records.remember(normalized.runs, read.value.runs, dirname(filePath))
+    const currentInfo = await stat(filePath)
+    if (!sameDocumentFileIdentity(fileInfo, currentInfo)) {
+      return { document: normalized, stable: false }
+    }
+    const weight =
+      currentInfo.size +
+      read.value.runs.reduce(
+        (bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0),
+        0
+      )
+    this.rememberLaneSummary(
+      filePath,
+      currentInfo,
+      normalized,
+      true,
+      weight > MAX_DOCUMENT_CACHE_BYTES ? read.value.runs : undefined
+    )
+    this.rememberDocument(filePath, {
+      mtimeMs: currentInfo.mtimeMs,
+      ctimeMs: currentInfo.ctimeMs,
+      size: currentInfo.size,
+      ino: currentInfo.ino,
+      weight,
+      document: normalized
+    })
+    return { document: normalized, stable: true }
   }
 
   private async recoverLane(
@@ -2229,6 +2286,8 @@ class NotebookRunRepository {
     if (oversizedRecords?.some(isNotebookRunReference)) {
       const history = {
         notebookSessionRoot: document.notebookSessionRoot,
+        dataRoot: document.dataRoot,
+        runtimeBindings: document.runtimeBindings,
         kernel: document.kernel,
         runs: [] as NotebookRunRecord[]
       }
@@ -2353,11 +2412,15 @@ class NotebookRunRepository {
     // portable "$DATA/..." paths that survive a data-root relocation.
     await this.publishEnvironmentManifests(document)
     const header = encodeRunDocumentDataPaths({ ...document, runs: [] }, this.storageRoot)
-    const runs = await this.records.write(directory, document.runs, (run) =>
-      encodeNotebookRunDataPaths(
-        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run,
-        this.storageRoot
+    // Keep the reference on the same sidecar-free Run object that subsequent mutations will use.
+    const cachedDocument = {
+      ...document,
+      runs: document.runs.map((run) =>
+        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
       )
+    }
+    const runs = await this.records.write(directory, cachedDocument.runs, (run) =>
+      encodeNotebookRunDataPaths(run, this.storageRoot)
     )
     const encoded = {
       ...header,
@@ -2366,12 +2429,6 @@ class NotebookRunRepository {
     }
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
-    const cachedDocument = {
-      ...document,
-      runs: document.runs.map((run) =>
-        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
-      )
-    }
     this.rememberLaneSummary(filePath, fileInfo, cachedDocument, false)
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
