@@ -748,7 +748,6 @@ export const installAppLifecycle = (
             }
           }
           releaseSettingsInstallAdmission()
-          deps.resumePendingLaunchAfterCancelledQuit?.()
           shutdownStarted = false
           quitConfirmed = false
           confirmedSettingsInstallId = undefined
@@ -768,20 +767,11 @@ export const installAppLifecycle = (
             showMainWindow()
             const disconnectedQuitHandled = ordinaryQuit && deps.handleDisconnectedQuit?.()
             if (backendFailure && !disconnectedQuitHandled) deps.onQuitError?.(backendFailure)
+            let choice: CloseConfirmChoice = 'cancel'
             if (persistenceFailureNeedsConsent && !disconnectedQuitHandled && !confirmInFlight) {
               confirmInFlight = true
               try {
-                let choice: CloseConfirmChoice
-                try {
-                  choice = await confirmClose('persistence-failed', [])
-                } finally {
-                  confirmInFlight = false
-                }
-                if (choice === 'retry') requestConfirmedQuit()
-                else if (choice === 'force-quit') {
-                  forceQuitAfterPersistenceFailure = true
-                  requestConfirmedQuit()
-                }
+                choice = await confirmClose('persistence-failed', [])
               } catch (error) {
                 try {
                   deps.log?.error(
@@ -791,8 +781,14 @@ export const installAppLifecycle = (
                 } catch {
                   // A failed confirmation keeps the app open; diagnostics remain best-effort.
                 }
+              } finally {
+                confirmInFlight = false
               }
             }
+            if (choice === 'retry' || choice === 'force-quit') {
+              forceQuitAfterPersistenceFailure = choice === 'force-quit'
+              requestConfirmedQuit()
+            } else deps.resumePendingLaunchAfterCancelledQuit?.()
           }
         } else {
           await finishShutdown(cleanOrdinaryQuit && !systemShutdownRequested)
