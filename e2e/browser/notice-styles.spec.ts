@@ -107,6 +107,13 @@ for (const width of [320, 1000]) {
     await page.getByRole('button', { name: 'Environment and storage errors', exact: true }).click()
     const environment = page.getByTestId('env-status-banner')
     const storage = page.getByTestId('session-persistence-alert')
+    const stack = page.locator('[data-bottom-notice-stack]')
+    expect(
+      await stack.evaluate((el) => {
+        const style = getComputedStyle(el)
+        return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+      })
+    ).toEqual(['12px', '12px', '12px', '12px'])
     const envBounds = (await environment.boundingBox())!
     const storageBounds = (await storage.boundingBox())!
     expect(envBounds.x + envBounds.width).toBe(width - 12)

@@ -119,7 +119,7 @@ const ActionToastStack = ({
 const BottomNoticeStack = ({ children }: { children: ReactNode }): React.JSX.Element => (
   <div
     data-bottom-notice-stack
-    className="pointer-events-none fixed bottom-3 right-3 z-toast flex max-h-[calc(100svh-24px)] w-[min(420px,calc(100vw-24px))] flex-col gap-2 overflow-y-auto [&_[data-bottom-notice]]:static [&_[data-bottom-notice]]:w-full [&_[data-bottom-notice]]:max-w-none [&_[data-bottom-notice]]:shrink-0"
+    className="pointer-events-none fixed right-0 bottom-0 z-toast flex max-h-svh w-[min(444px,100vw)] flex-col gap-2 overflow-y-auto p-3 [&_[data-bottom-notice]]:static [&_[data-bottom-notice]]:w-full [&_[data-bottom-notice]]:max-w-none [&_[data-bottom-notice]]:shrink-0"
   >
     {children}
   </div>
