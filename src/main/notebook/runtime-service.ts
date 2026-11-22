@@ -547,6 +547,13 @@ class NotebookRuntimeService {
     this.executionIntents.adopt(scope, sessionId)
   }
 
+  finishPendingRunDeletion(scope: {
+    projectId?: string
+    sessionIds?: readonly string[]
+  }): Promise<void> {
+    return this.repository.finishPendingRunDeletion(scope)
+  }
+
   forgetDeletedExecutionIntents(deletion: NotebookExecutionIntentDeletion): void {
     this.executionIntents.forgetDeleted(deletion)
   }
@@ -3503,10 +3510,13 @@ class NotebookRuntimeService {
                 )
               if (this.shellProcessOwnership.hasReceipts())
                 await this.shellProcessOwnership.recover()
+              await this.repository.checkpointPendingRuns()
               await options.afterShutdown!()
             }
           : undefined
       )
+      if (!options?.afterShutdown && shell.reaped && sessions.reaped)
+        await this.repository.checkpointPendingRuns()
       if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
         try {
           this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
@@ -3587,7 +3597,7 @@ class NotebookRuntimeService {
         }
       )
     const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal])
-      .then(([shutdownResult, recoveryResult, idleResult]) => {
+      .then(async ([shutdownResult, recoveryResult, idleResult]) => {
         const failures = [shutdownResult, recoveryResult, idleResult]
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason)
@@ -3598,7 +3608,9 @@ class NotebookRuntimeService {
             'Multiple notebook runtime resources failed to dispose.'
           )
         }
-        return (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        const result = (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        if (result.reaped) await this.repository.checkpointPendingRuns()
+        return result
       })
       .finally(async () => {
         const policy = await this.memoryPolicyPromise?.catch(() => undefined)

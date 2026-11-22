@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as durableFiles from '@aipoch/durable-files'
 
@@ -158,6 +158,323 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('recovers a pending Run once after its complete checkpoint survives a failed cleanup', async () => {
+    const root = await createStorageRoot()
+    const projectId = 'project',
+      sessionId = 'session'
+    const lane = createFrameNotebookLane(projectId, sessionId, 'child')
+    const request = { projectId, sessionId, lane }
+    const writer = new NotebookRunRepository(root),
+      reader = new NotebookRunRepository(root)
+    const doc = await writer.loadOrCreate({ ...request, workspaceCwd: root })
+    const manifest = join(doc.notebookSessionRoot, 'run.json')
+    const old = Array.from({ length: 32 }, (_, i) =>
+      admittedRun({
+        runId: 'old-' + i,
+        submissionIdentity: 'old-' + i,
+        status: 'completed',
+        script: 'x'.repeat(36 * 1024)
+      })
+    )
+    const base = { ...JSON.parse(await readFile(manifest, 'utf8')), runs: old }
+    await writeFile(manifest, JSON.stringify(base))
+    const run = admittedRun()
+    const receipts = await Promise.all(
+      [writer, reader].map((repo) => repo.appendOrGetRun({ ...request, run }))
+    )
+    expect(receipts.map((r) => r.admitted).sort()).toEqual([false, true])
+    await writer.transitionRun({
+      ...request,
+      expectedStatus: 'queued',
+      run: { ...run, status: 'running' }
+    })
+    const liveTemp = join(
+      doc.notebookSessionRoot,
+      '.pending-runs',
+      `32.json.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+    )
+    await writeFile(liveTemp, '{')
+    expect((await reader.findExisting(projectId, sessionId, lane))?.runs.at(-1)?.status).toBe(
+      'running'
+    )
+    expect(await readFile(liveTemp, 'utf8')).toBe('{')
+    await rm(liveTemp)
+    expect(JSON.parse(await readFile(manifest, 'utf8'))).toEqual(base)
+    const hot = join(doc.notebookSessionRoot, '.pending-runs'),
+      name = '32.json'
+    const pending = await readFile(join(hot, name))
+    await new NotebookRunRepository(root).recoverAllRunLifecycles()
+    await mkdir(hot)
+    await writeFile(join(hot, name), pending)
+    const fresh = new NotebookRunRepository(root)
+    await fresh.recoverAllRunLifecycles()
+    const saved = JSON.parse(await readFile(manifest, 'utf8'))
+    expect(saved.version).toBe(1)
+    expect(saved.runs.map((row: NotebookRunRecord) => row.runId)).toEqual([
+      ...old.map((r) => r.runId),
+      run.runId
+    ])
+    expect(saved.runs.at(-1).status).toBe('interrupted')
+    await expect(stat(hot)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await fresh.appendOrGetRun({ ...request, run })).admitted).toBe(false)
+  })
+  it('retains the manifest and hot slot if a referenced terminal result is damaged', async () => {
+    const root = await createStorageRoot()
+    const repo = new NotebookRunRepository(root)
+    const request = {
+      projectId: 'p',
+      sessionId: 's',
+      lane: createRootNotebookLane('p', 's', 'root-frame-s')
+    }
+    const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
+    const manifest = join(doc.notebookSessionRoot, 'run.json')
+    const base = JSON.parse(await readFile(manifest, 'utf8'))
+    const run = admittedRun()
+    base.runs = Array.from({ length: 32 }, (_, i) =>
+      admittedRun({
+        runId: 'old-' + i,
+        submissionIdentity: 'old-' + i,
+        status: 'completed',
+        script: 'x'.repeat(34000)
+      })
+    )
+    const original = JSON.stringify(base)
+    await writeFile(manifest, original)
+    await repo.appendOrGetRun({ ...request, run })
+    await repo.transitionRun({
+      ...request,
+      expectedStatus: 'queued',
+      run: { ...run, status: 'running' }
+    })
+    const output = 'x'.repeat(125000)
+    await repo.commitTerminalRun({
+      ...request,
+      expectedStatus: 'running',
+      run: { ...run, status: 'completed', endedAt: 2, text: { ...run.text, stdout: output } }
+    })
+    const slot = join(doc.notebookSessionRoot, '.pending-runs', '32.json')
+    const entry = JSON.parse(await readFile(slot, 'utf8'))
+    expect(entry.run).toMatchObject({ storage: 'file', runId: run.runId })
+    const record = join(doc.notebookSessionRoot, '.run-records', entry.run.sha256 + '.json')
+    const body = await readFile(record, 'utf8')
+    await writeFile(record, body.replace('xxx', 'yyy'))
+    await expect(repo.checkpointPendingRuns()).rejects.toThrow(/checkpoint/i)
+    expect(await readFile(manifest, 'utf8')).toBe(original)
+    expect(JSON.parse(await readFile(slot, 'utf8'))).toEqual(entry)
+    await writeFile(record, body)
+    const reader = new NotebookRunRepository(root)
+    await reader.recoverAllRunLifecycles()
+    const recovered = await reader.findExisting('p', 's', request.lane)
+    expect(recovered?.runs.at(-1)?.text.stdout).toBe(output)
+    expect(JSON.parse(await readFile(manifest, 'utf8')).runs.at(-1)).toEqual(entry.run)
+  })
+
+  it('keeps new lifecycle writes off a large mixed manifest and verifies its external body', async () => {
+    const root = await createStorageRoot()
+    const lane = createFrameNotebookLane('p', 's', 'f')
+    const request = { projectId: 'p', sessionId: 's', lane }
+    const repo = new NotebookRunRepository(root)
+    const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
+    const manifest = join(doc.notebookSessionRoot, 'run.json')
+    const base = JSON.parse(await readFile(manifest, 'utf8'))
+    const stdout = 'x'.repeat(60_000)
+    base.runs = Array.from({ length: 600 }, (_, i) =>
+      admittedRun({
+        runId: 'old-' + i,
+        submissionIdentity: 'old-' + i,
+        text: { stdout, stderr: '', traceback: '', plain: [] },
+        status: 'completed'
+      })
+    )
+    await writeFile(manifest, JSON.stringify(base))
+    const external = { ...base.runs[0], script: 'x'.repeat(180_000) }
+    await repo.updateRun({ ...request, run: external })
+    const before = await stat(manifest, { bigint: true })
+    const run = admittedRun()
+    await repo.appendOrGetRun({ ...request, run })
+    await repo.transitionRun({
+      ...request,
+      expectedStatus: 'queued',
+      run: { ...run, status: 'running' }
+    })
+    await repo.requestRunCancellation({ ...request, run, requestedAt: 2, reason: 'user-requested' })
+    await repo.commitTerminalRun({
+      ...request,
+      expectedStatus: 'running',
+      run: { ...run, status: 'cancelled', endedAt: 3 }
+    })
+    const reads = vi.spyOn(durableFiles, 'readDurableJsonFile')
+    try {
+      expect(await repo.hasCachedForegroundOnlyHistory('p', 's', lane)).toBe(true)
+      const selected = await repo.readCachedHistoryWindow('p', 's', {
+        limit: 0,
+        runIds: ['old-0', 'old-599', run.runId],
+        lane
+      })
+      expect(selected?.window.runs.map((row) => [row.runId, row.text.stdout])).toEqual(
+        expect.arrayContaining([
+          ['old-0', stdout],
+          ['old-599', stdout],
+          [run.runId, '']
+        ])
+      )
+      expect(
+        await repo.readCachedHistoryWindow('p', 's', {
+          limit: 0,
+          runIds: ['old-1'],
+          lane
+        })
+      ).toBeUndefined()
+
+      const index = await repo.readSessionRunIndex('p', 's')
+      expect(index.find((row) => row.runId === 'old-0')).toMatchObject({
+        hasOutput: true,
+        detailBytes: expect.any(Number)
+      })
+      expect(index.find((row) => row.runId === 'old-0')!.detailBytes).toBeGreaterThan(400000)
+      const initialized = await repo.loadSessionInitialization({ ...request, workspaceCwd: root })
+      expect(initialized.runs).toHaveLength(601)
+      const evidence = await repo.readCachedHistoryWindow('p', 's', {
+        limit: 0,
+        runIds: [run.runId],
+        lane,
+        evidenceOnly: true
+      })
+      expect(evidence?.window.runs[0]?.cancellationReason).toBe('user-requested')
+      await repo.loadSessionKernel({ ...request, workspaceCwd: root })
+      expect((await repo.readLaneAnalysisRuns('p', 's', lane)).at(-1)?.status).toBe('cancelled')
+      const task = admittedRun({
+        runId: 'background',
+        submissionIdentity: 'background',
+        executionMode: 'background',
+        startedAt: 5
+      })
+      await repo.appendOrGetRun({ ...request, run: task })
+      expect((await repo.findRun('p', 's', lane, { runId: task.runId }))?.run.runId).toBe(
+        task.runId
+      )
+      const tasks = await repo.readCachedHistoryWindow('p', 's', {
+        limit: 100,
+        runIds: [],
+        lane,
+        backgroundTaskMetadata: true
+      })
+      expect(tasks?.window.runs.map((row) => row.runId)).toEqual([task.runId])
+      expect(reads.mock.calls.some(([path]) => path === manifest)).toBe(false)
+    } finally {
+      reads.mockRestore()
+    }
+    const after = await stat(manifest, { bigint: true })
+    expect([after.ino, after.mtimeNs, after.size]).toEqual([
+      before.ino,
+      before.mtimeNs,
+      before.size
+    ])
+    await repo.checkpointPendingRuns()
+    const fresh = new NotebookRunRepository(root)
+    const saved = await fresh.findExisting('p', 's', lane)
+    expect(saved?.runs[0].script).toBe(external.script)
+    expect(saved?.runs.find((row) => row.runId === run.runId)).toMatchObject({
+      status: 'cancelled',
+      cancellationReason: 'user-requested',
+      cancellationRequestedAt: 2
+    })
+    const records = join(doc.notebookSessionRoot, '.run-records')
+    const [file] = await readdir(records)
+    await writeFile(join(records, file), 'broken')
+    await expect(
+      fresh.appendOrGetRun({
+        ...request,
+        run: admittedRun({ runId: 'next', submissionIdentity: 'next' })
+      })
+    ).rejects.toThrow(/corrupt/i)
+  })
+
+  it.each([
+    [`0.json.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`, '{'],
+    ['0.json', '{'],
+    ['.DS_Store', 'unrelated'],
+    ['0.json.invalid.tmp', 'unrecognized'],
+    ['0.json.1699999999999-1.tmp', 'x'.repeat(65537)]
+  ])('isolates a damaged pending lane containing %s during recovery', async (name, contents) => {
+    const root = await createStorageRoot()
+    const repo = new NotebookRunRepository(root)
+    const [bad, good] = ['a', 'b'].map((id) => ({
+      projectId: 'p',
+      sessionId: id,
+      lane: createRootNotebookLane('p', id, 'root-frame-' + id)
+    }))
+    const damaged = await repo.loadOrCreate({ ...bad, workspaceCwd: root })
+    const hot = join(damaged.notebookSessionRoot, '.pending-runs')
+    await mkdir(hot)
+    await writeFile(join(hot, name), contents)
+    await repo.loadOrCreate({ ...good, workspaceCwd: root })
+    await repo.appendRun({
+      ...good,
+      run: admittedRun({ status: 'running', executionMode: 'background' })
+    })
+    const fresh = new NotebookRunRepository(root)
+    const recovered = await fresh.recoverAllRunLifecycles()
+    expect(recovered.map((item) => [item.sessionId, item.run.status])).toEqual([
+      ['b', 'interrupted']
+    ])
+    await expect(fresh.appendOrGetRun({ ...bad, run: admittedRun() })).rejects.toThrow()
+    expect(await readFile(join(hot, name), 'utf8')).toBe(contents)
+    const secondWriter = new NotebookRunRepository(root)
+    await expect(
+      secondWriter.commitTerminalRun({
+        ...bad,
+        run: admittedRun({ status: 'completed', endedAt: 3 }),
+        expectedStatus: 'running'
+      })
+    ).rejects.toThrow()
+    await expect(
+      stat(join(damaged.notebookSessionRoot, '.run-terminal-outbox'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(secondWriter.checkpointPendingRuns()).rejects.toThrow('checkpoints incomplete')
+    await rm(join(hot, name))
+    await expect(secondWriter.appendOrGetRun({ ...bad, run: admittedRun() })).rejects.toThrow()
+    await fresh.recoverAllRunLifecycles()
+    expect((await secondWriter.appendOrGetRun({ ...bad, run: admittedRun() })).admitted).toBe(true)
+    await secondWriter.checkpointPendingRuns()
+  })
+
+  it('checkpoints a healthy sibling even when the first pending lane cannot be merged', async () => {
+    const root = await createStorageRoot()
+    const writer = new NotebookRunRepository(root)
+    const manifests: string[] = []
+    for (const sessionId of ['bad', 'good']) {
+      const lane = createRootNotebookLane('p', sessionId, 'root-frame-' + sessionId)
+      const request = { projectId: 'p', sessionId, lane }
+      const doc = await writer.loadOrCreate({ ...request, workspaceCwd: root })
+      const manifest = join(doc.notebookSessionRoot, 'run.json')
+      manifests.push(manifest)
+      const base = JSON.parse(await readFile(manifest, 'utf8'))
+      base.runs = Array.from({ length: 32 }, (_, i) =>
+        admittedRun({
+          runId: 'old-' + i,
+          submissionIdentity: 'old-' + i,
+          status: 'completed',
+          script: 'x'.repeat(34000)
+        })
+      )
+      await writeFile(manifest, JSON.stringify(base))
+      await writer.appendOrGetRun({ ...request, run: admittedRun() })
+    }
+    const stray = join(dirname(manifests[0]), '.pending-runs', '.DS_Store')
+    await writeFile(stray, 'unrelated')
+    const other = new NotebookRunRepository(root)
+    await expect(other.checkpointPendingRuns()).rejects.toThrow('checkpoints incomplete')
+    const counts = await Promise.all(
+      manifests.map(async (path) => JSON.parse(await readFile(path, 'utf8')).runs.length)
+    )
+    expect(counts).toEqual([32, 33])
+    await rm(stray)
+    await other.recoverAllRunLifecycles()
+    await writer.checkpointPendingRuns()
+    expect(JSON.parse(await readFile(manifests[0], 'utf8')).runs.at(-1).status).toBe('interrupted')
+  })
+
   it.each([
     { kernelKind: 'bash', exitCode: -1, readable: true },
     { kernelKind: 'bash', exitCode: -2147483648, readable: true },
@@ -2559,6 +2876,71 @@ describe('large immutable Notebook records', () => {
     }
   })
 
+  it('batches new Runs when external output puts a small manifest over the cache budget', async () => {
+    const root = await createStorageRoot()
+    const repo = new NotebookRunRepository(root)
+    const request = { projectId: 'p', sessionId: 's', lane: createFrameNotebookLane('p', 's', 'f') }
+    const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
+    await repo.appendRun({
+      ...request,
+      run: admittedRun({
+        status: 'completed',
+        text: { ...admittedRun().text, stdout: 'x'.repeat(33 * 1024 * 1024) }
+      })
+    })
+    const manifest = join(doc.notebookSessionRoot, 'run.json')
+    // The inline rows exceed the bounded lifecycle view while the manifest stays below 1 MiB.
+    const seed = JSON.parse(await readFile(manifest, 'utf8'))
+    for (let i = 0; i < 6; i++) {
+      seed.runs.push(
+        admittedRun({
+          runId: 'inline-' + i,
+          submissionIdentity: 'inline-' + i,
+          startedAt: i + 2,
+          status: 'completed',
+          text: { ...admittedRun().text, stdout: 'y'.repeat(60000) }
+        })
+      )
+    }
+    const before = JSON.stringify(seed)
+    await writeFile(manifest, before)
+    const reader = new NotebookRunRepository(root)
+    await reader.findExisting('p', 's', request.lane)
+    const beforeIndex = await reader.readSessionRunIndex('p', 's')
+    const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+    try {
+      const page = await reader.readCachedHistoryWindow('p', 's', {
+        limit: 2,
+        runIds: [],
+        lane: request.lane
+      })
+      expect(page?.window.runs.map((r) => [r.runId, r.text.stdout])).toEqual(
+        seed.runs.slice(-2).map((r: NotebookRunRecord) => [r.runId, r.text.stdout])
+      )
+      const run = admittedRun({ runId: 'new', submissionIdentity: 'new' })
+      expect((await reader.appendOrGetRun({ ...request, run })).admitted).toBe(true)
+      expect(await readFile(manifest, 'utf8')).toBe(before)
+      await reader.checkpointPendingRuns()
+      expect(
+        (await reader.readSessionRunIndex('p', 's')).filter((row) => row.runId !== run.runId)
+      ).toEqual(beforeIndex)
+      expect(
+        reads.mock.calls.some(
+          ([path]) => dirname(path) === join(doc.notebookSessionRoot, '.run-records')
+        )
+      ).toBe(false)
+    } finally {
+      reads.mockRestore()
+    }
+    const saved = JSON.parse(await readFile(manifest, 'utf8'))
+    expect(saved.runs[0]).toEqual(seed.runs[0])
+    expect(saved.runs.slice(1, -1).map((r: NotebookRunRecord) => r.text)).toEqual(
+      seed.runs.slice(1).map((r: NotebookRunRecord) => r.text)
+    )
+    const ids = saved.runs.map((row: NotebookRunRecord) => row.runId)
+    expect(ids).toEqual([...seed.runs.map((row: NotebookRunRecord) => row.runId), 'new'])
+  })
+
   it.each(['missing', 'corrupt', 'path'] as const)(
     'rejects a %s record without recreating the document',
     async (failure) => {
@@ -2628,12 +3010,14 @@ it('invalidates a foreground-only summary when another writer adds a background 
   }
   await reader.readSessionRunIndex('project', 'session')
   expect(await reader.hasCachedForegroundOnlyHistory('project', 'session', rootLane)).toBe(true)
-  await writer.appendRun({
+  const writing = writer.appendRun({
     ...scope,
     lane: child,
     run: admittedRun({ agentFrameId: 'child', executionMode: 'background' })
   })
-  expect(await reader.hasCachedForegroundOnlyHistory('project', 'session', rootLane)).toBe(false)
+  const foreground = reader.hasCachedForegroundOnlyHistory('project', 'session', rootLane)
+  await writing
+  expect(await foreground).toBe(false)
   expect(await reader.readSessionRunIndex('project', 'session')).toMatchObject([
     { runId: 'run-1', agentFrameId: 'child' }
   ])

@@ -364,12 +364,22 @@ describe('notebook runtime service', () => {
 
   it('holds session creation behind a folder policy commit and releases admission after failure', async () => {
     const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
     const service = new NotebookRuntimeService({
+      repository,
       memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project'
     })
+    const commit = vi.fn(async () => {})
+    vi.spyOn(repository, 'checkpointPendingRuns').mockRejectedValueOnce(
+      new Error('checkpoint failed')
+    )
+    await expect(service.shutdownAll({ afterShutdown: commit })).rejects.toThrow(
+      'checkpoint failed'
+    )
+    expect(commit).not.toHaveBeenCalled()
     const started = createDeferred<void>()
     const release = createDeferred<void>()
     const change = service.shutdownAll({

@@ -183,7 +183,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     frameId?: string,
     before?: NotebookRunCursor,
     session?: Session,
-    budget?: { bytes: number; includeRecent: boolean }
+    budget?: { bytes: number; includeRecent: boolean },
+    evidenceOnly = false
   ): Promise<NotebookHistorySnapshot> {
     const trim = budget && !runIds.length && frameId === undefined ? budget : undefined
     const cached = await this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
@@ -192,6 +193,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       frameId,
       before,
       lane: session?.lane,
+      ...(evidenceOnly ? { evidenceOnly: true } : {}),
       retain: trim && this.runBudget(trim.includeRecent, trim.bytes)
     })
     if (cached) return cached
@@ -223,7 +225,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       [runId],
       undefined,
       undefined,
-      session
+      session,
+      undefined,
+      true
     )
     const run = window.runs.find((item) => item.runId === runId)
     if (!run) return null
@@ -249,24 +253,25 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     sessionId: string,
     session?: Session
   ): Promise<NotebookBackgroundTaskSnapshot> {
-    if (
-      await this.options.repository.hasCachedForegroundOnlyHistory(
-        projectId,
-        sessionId,
-        session?.lane
-      )
-    )
-      return { runs: [] }
-    const cached = await this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
-      limit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
-      runIds: [],
-      lane: session?.lane,
-      backgroundTaskMetadata: true,
-      retain: this.runBudget(true, DEFAULT_HISTORY_BYTES)
-    })
-    let window = cached?.window
+    const foregroundOnly = (): Promise<boolean> =>
+      this.options.repository.hasCachedForegroundOnlyHistory(projectId, sessionId, session?.lane)
+    if (await foregroundOnly()) return { runs: [] }
+    const readCached = (): Promise<NotebookHistorySnapshot | undefined> =>
+      this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
+        limit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
+        runIds: [],
+        lane: session?.lane,
+        backgroundTaskMetadata: true,
+        retain: this.runBudget(true, DEFAULT_HISTORY_BYTES)
+      })
+    let window = (await readCached())?.window
+    if (!window && session) {
+      // Loading the kernel waits for pending writes, including updates to background Runs.
+      await this.loadSessionKernel(session)
+      if (await foregroundOnly()) return { runs: [] }
+      window = (await readCached())?.window
+    }
     if (!window) {
-      if (session) await this.loadSessionKernel(session)
       window = await this.options.repository.readSessionRunWindow(
         projectId,
         sessionId,
@@ -496,7 +501,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   toRunSummaryFromDocument(
-    document: NotebookRunDocument,
+    document: Pick<NotebookRunDocument, 'notebookSessionRoot' | 'dataRoot' | 'kernel'>,
     run: NotebookRunRecord
   ): NotebookRunSummary {
     const inputFiles = (run.inputFiles ?? []).map((input) => {

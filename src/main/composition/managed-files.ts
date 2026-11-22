@@ -94,7 +94,9 @@ export function composeManagedFiles({
 } {
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
-  const notebookRepository = new NotebookRunRepository(resolveDataRoot())
+  const notebookRepository = new NotebookRunRepository(resolveDataRoot(), () =>
+    sessionRepository.deletedSessionScopes()
+  )
   const notebookDependencyAnalyzer = createNotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
     repository: notebookRepository

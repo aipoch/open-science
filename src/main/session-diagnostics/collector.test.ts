@@ -310,6 +310,47 @@ describe('session diagnostics isolated collector', () => {
       'session.json'
     ])
   })
+  it('marks a Notebook snapshot partial when a checkpoint replaces the manifest after reading', async () => {
+    const input = await fixture()
+    const root = join(input.dataRoot, 'notebooks/project/session')
+    const path = join(root, 'run.json'),
+      hot = join(root, '.pending-runs')
+    await mkdir(hot, { recursive: true })
+    const base = { projectId: 'project', sessionId: 'session', runs: [{ runId: 'old' }] }
+    const run = { runId: 'latest' }
+    await writeFile(path, JSON.stringify(base))
+    await writeFile(
+      join(hot, '1.json'),
+      JSON.stringify({
+        projectId: 'project',
+        sessionId: 'session',
+        frameId: null,
+        slot: 1,
+        updatedAt: 2,
+        run
+      })
+    )
+    const original = fsPromises.lstat
+    let merged = false
+    vi.spyOn(fsPromises, 'lstat').mockImplementation(
+      async (...args: Parameters<typeof original>) => {
+        if (args[0] === hot && !merged) {
+          merged = true
+          await writeFile(path + '.new', JSON.stringify({ ...base, runs: [...base.runs, run] }))
+          await fsPromises.rename(path + '.new', path)
+          await rm(hot, { recursive: true })
+        }
+        return original(...args)
+      }
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['notebook'] })
+    expect(merged).toBe(true)
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    await expect(stat(join(input.directory!, 'content/notebook/run.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
   it('exports fixed Notebook root and frame histories plus a stored-settings environment projection', async () => {
     const input = await fixture()
     const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
@@ -579,12 +620,35 @@ describe('session diagnostics isolated collector', () => {
       })
     )
 
+    const pendingBody = JSON.stringify({ ...run, runId: 'pending-large' })
+    const pendingHash = createHash('sha256').update(pendingBody).digest('hex')
+    await writeFile(join(notebookRoot, '.run-records', pendingHash + '.json'), pendingBody)
+    await mkdir(join(notebookRoot, '.pending-runs'))
+    await writeFile(
+      join(notebookRoot, '.pending-runs', '1.json'),
+      JSON.stringify({
+        projectId: 'project',
+        sessionId: 'session',
+        frameId: null,
+        slot: 1,
+        updatedAt: 2,
+        run: {
+          storage: 'file',
+          runId: 'pending-large',
+          sha256: pendingHash,
+          bytes: Buffer.byteLength(pendingBody)
+        }
+      })
+    )
+
     const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['notebook'] })
 
     expect(result).toMatchObject({ kind: 'archive', partial: false })
     const exported = JSON.parse(
       await readFile(join(input.directory!, 'content/notebook/run.json'), 'utf8')
     )
+    expect(exported.runs).toHaveLength(2)
+    expect(exported.runs[1].environmentManifestChecksum).toBe(manifestChecksum)
     expect(exported.runs[0].environmentManifestChecksum).toBe(manifestChecksum)
     await expect(
       readFile(

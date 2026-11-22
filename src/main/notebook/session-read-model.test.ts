@@ -150,6 +150,23 @@ describe('NotebookSessionReadModel', () => {
     await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
   })
 
+  it('reuses the foreground summary populated during live kernel loading', async () => {
+    const root = await createRoot()
+    const session = makeSession(root)
+    const { projectId, sessionId, lane } = session
+    const writer = new NotebookRunRepository(root)
+    await writer.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: root })
+    await writer.appendRun({ projectId, sessionId, lane, run: makeRun() })
+
+    const reader = new NotebookRunRepository(root)
+    const history = vi.spyOn(reader, 'readSessionRunWindow')
+    const model = makeReadModel(root, session, reader)
+    await expect(model.backgroundTasks(projectId, sessionId, session)).resolves.toEqual({
+      runs: []
+    })
+    expect(history).not.toHaveBeenCalled()
+  })
+
   it('projects only visible background task metadata within the same byte window', async () => {
     root = await createRoot()
     const repository = new NotebookRunRepository(root)
@@ -205,8 +222,12 @@ describe('NotebookSessionReadModel', () => {
       }
     })
     const repository = new NotebookRunRepository(storageRoot)
-    await repository.findExisting(scope.projectId, scope.sessionId, lane)
-    const model = makeReadModel(storageRoot, undefined, repository)
+    const session = { ...makeSession(storageRoot), ...scope, lane }
+    const model = makeReadModel(storageRoot, session, repository)
+    const history = vi.spyOn(repository, 'readSessionRunWindow')
+    const initial = await model.backgroundTasks(scope.projectId, scope.sessionId, session)
+    expect(initial.runs.map((row) => row.runId)).toEqual(['latest'])
+    expect(history).not.toHaveBeenCalled()
     const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
     try {
       expect(

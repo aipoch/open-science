@@ -1865,6 +1865,10 @@ class SessionRepository {
   }
 
   // Removes a single session file.
+  async deletedSessionScopes(): Promise<Map<string, boolean>> {
+    return this.projection?.deletedSessionScopes() ?? new Map()
+  }
+
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.deleteSessionNow(projectId, sessionId)
