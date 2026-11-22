@@ -1,6 +1,7 @@
 import { imageTaskEvidenceMatches } from '../../shared/image-task'
 import { validateResearchFilms } from './research-films'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PackageProgress, SessionPackageManifest } from '../../shared/session-package'
@@ -26,6 +27,41 @@ import { installPackageReproducibility, validatePackageReproducibility } from '.
 import { validatePackageRoCrateMetadata } from './ro-crate'
 import { assertNoExcludedContentCopies, validateExcludedFiles } from './selection'
 import { validatePackageWebEvidence } from './web-evidence'
+
+// A validation database contains only the current schema until package rows are published into it.
+// Build that immutable seed once per process, then copy it into each isolated validation directory.
+// This keeps every validation independent while avoiding a full migration walk for every import.
+let validationDatabaseSeed: Promise<string> | undefined
+const validationDatabaseSeedRoots = new Set<string>()
+
+process.once('exit', () => {
+  for (const root of validationDatabaseSeedRoots) rmSync(root, { recursive: true, force: true })
+})
+
+const getValidationDatabaseSeed = (): Promise<string> => {
+  if (!validationDatabaseSeed) {
+    const pending = (async () => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-package-validation-seed-'))
+      validationDatabaseSeedRoots.add(root)
+      const client = createProjectDbClient(root)
+      try {
+        await migrateApplicationDatabase(client)
+        await client.$disconnect()
+        return join(root, 'open-science.db')
+      } catch (error) {
+        await client.$disconnect().catch(() => undefined)
+        validationDatabaseSeedRoots.delete(root)
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        throw error
+      }
+    })()
+    validationDatabaseSeed = pending
+    pending.catch(() => {
+      if (validationDatabaseSeed === pending) validationDatabaseSeed = undefined
+    })
+  }
+  return validationDatabaseSeed
+}
 
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
@@ -224,8 +260,8 @@ export const validatePackageRecords = async (
       if (records.imageTasks?.length) throw new Error('Image task source Version is missing.')
       return
     }
+    await copyFile(await getValidationDatabaseSeed(), join(root, 'open-science.db'))
     client = createProjectDbClient(root)
-    await migrateApplicationDatabase(client)
     reportValidation(0.6)
     const projectIds = new Set([manifest.source.projectId])
     for (const rows of Object.values(records.tables))
@@ -326,7 +362,7 @@ export const validatePackageRecords = async (
     try {
       await client?.$disconnect()
     } finally {
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }
 }
