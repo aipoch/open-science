@@ -8,7 +8,7 @@ const ENDPOINT_INVALID =
 const AUTH =
   /invalid[_ -]api[_ -]key|api key (?:is )?missing|authentication[_ -](?:fails?|failed|error)|unauthorized|token[_ -]expired/i
 const BILLING =
-  /insufficient[_ -]quota|quota[_ -]exceeded|billing[_ -](?:error|limit|quota|balance)|credit balance (?:is )?too low|usage_limit_reached|subscription_sharing_usage_limit_exceeded/i
+  /insufficient[_ -](?:quota|balance)|quota[_ -]exceeded|billing[_ -](?:error|limit|quota|balance)|credit balance (?:is )?too low|usage_limit_reached|subscription_sharing_usage_limit_exceeded/i
 const CONTEXT =
   /media[_\s-]?unstrippable|request[_\s-]?(?:entity[_\s-]?)?too[_\s-]?large|maximum context length|context[_\s-]?(?:length|window)[_\s-]?exceeded|prompt is too long/i
 const NETWORK =
@@ -44,6 +44,8 @@ export const recognizeProvider: Recognizer = ({
       provider_error: 'service/provider-error'
     } as const
     if (status === 413 || code === 'context_length_exceeded') return undefined
+    if (status === 402)
+      return { category: 'configuration', reason: 'configuration/billing', diagnostics: {} }
     const reason =
       status === 401 || status === 403
         ? 'configuration/auth-failed'
@@ -54,13 +56,15 @@ export const recognizeProvider: Recognizer = ({
           : status !== undefined && status >= 500 && status <= 599
             ? 'service/unavailable'
             : (reasons[code as keyof typeof reasons] ??
-              (adapterCode === 'network'
-                ? phase === 'stream'
-                  ? 'service/response-interrupted'
-                  : 'service/connection-failed'
-                : adapterCode === 'protocol' && phase !== 'provider'
-                  ? 'service/response-invalid'
-                  : 'service/provider-error'))
+              (status === 400 || status === 422
+                ? 'configuration/request-invalid'
+                : adapterCode === 'network'
+                  ? phase === 'stream'
+                    ? 'service/response-interrupted'
+                    : 'service/connection-failed'
+                  : adapterCode === 'protocol' && phase !== 'provider'
+                    ? 'service/response-invalid'
+                    : 'service/provider-error'))
     return {
       category: reason.startsWith('configuration/') ? 'configuration' : 'service',
       reason,
@@ -91,6 +95,8 @@ export const recognizeProvider: Recognizer = ({
   if (status === 413) return undefined
   if (status === 401 || status === 403)
     return { category: 'configuration', reason: 'configuration/auth-failed', diagnostics: {} }
+  if (status === 402)
+    return { category: 'configuration', reason: 'configuration/billing', diagnostics: {} }
   if (status === 429)
     return billingCode
       ? { category: 'configuration', reason: 'configuration/billing', diagnostics: {} }

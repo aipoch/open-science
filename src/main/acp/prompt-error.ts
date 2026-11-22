@@ -402,11 +402,13 @@ export const collectPromptFailureFacts = (
   const bareEnvelope = untaggedRequest && /^Internal error:\s*\{/i.test(text)
   const summarizedUpstream =
     bareEnvelope && upstream?.type === 'upstream_error' && providerErrorExcerpt(upstream.text)
+  const typedUpstreamStatus = upstream?.type === 'upstream_error' && upstream.status !== undefined
   const providerWrapper =
     untaggedRequest &&
     (apiWrapper ||
       isClaudeProviderApiError(error) ||
       summarizedUpstream ||
+      typedUpstreamStatus ||
       (bareEnvelope && upstream?.type === 'invalid_upstream_response') ||
       (upstream?.type && NOT_FOUND_PATTERN.test(upstream.type)))
   const authenticationFailure = isAgentAuthenticationFailure(error)
@@ -419,7 +421,8 @@ export const collectPromptFailureFacts = (
   // Only its typed envelope, inside a confirmed provider failure, can restore the original status.
   const status =
     origin === 'provider' &&
-    (transportStatus === 400 || (transportStatus === undefined && summarizedUpstream)) &&
+    (transportStatus === 400 ||
+      (transportStatus === undefined && (summarizedUpstream || typedUpstreamStatus))) &&
     upstream?.status !== undefined
       ? upstream.status
       : transportStatus
@@ -436,6 +439,8 @@ export const collectPromptFailureFacts = (
     providerResponse && !/^internal error[.:]?$/i.test(responseText.trim())
       ? (excerpt ?? safeProviderErrorDetail(responseText))
       : undefined
+  // `upstream_error` only identifies the bridge wrapper. The nested HTTP status and bounded message
+  // carry the actionable provider facts, so do not persist the generic wrapper as the error code.
   const code =
     origin === 'agent-runtime' && top.code === -32002
       ? top.code
@@ -447,7 +452,7 @@ export const collectPromptFailureFacts = (
             ? 'quota_exceeded'
             : data.codexErrorInfo === 'serverOverloaded'
               ? 'overloaded_error'
-              : (upstream?.type ??
+              : ((upstream?.type === 'upstream_error' ? undefined : upstream?.type) ??
                 (!isProviderErrorKind(error) && data.errorKind !== 'unknown'
                   ? data.errorKind
                   : undefined) ??

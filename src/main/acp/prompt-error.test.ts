@@ -471,6 +471,7 @@ describe('compatibility bridge upstream status preservation', () => {
   for (const path of ['codex-bridge', 'claude-code'] as const) {
     it.each([
       [401, 'configuration'],
+      [402, 'configuration'],
       [403, 'configuration'],
       [404, 'service'],
       [413, 'input']
@@ -521,6 +522,51 @@ describe('compatibility bridge upstream status preservation', () => {
     expect(failure.diagnostics.status).toBe(400)
     expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_PROMPT|user@example.test/)
   })
+
+  it('classifies an untagged upstream billing envelope by its HTTP status', () => {
+    const body = JSON.stringify({
+      error: {
+        type: 'upstream_error',
+        message: 'Insufficient Balance (request_id: request-402)',
+        status: 402
+      }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError(body, { errorKind: 'unknown' }))
+    )
+    expect(failure).toMatchObject({
+      category: 'configuration',
+      reason: 'configuration/billing',
+      responseMessage: 'Insufficient Balance (request_id: request-402)',
+      diagnostics: { status: 402 }
+    })
+    expect(failure.diagnostics.code).toBeUndefined()
+    expect(failure.diagnostics.raw).toContain('"type":"upstream_error"')
+    expect(failure.diagnostics.raw).toContain('Insufficient Balance')
+  })
+
+  it.each([
+    [400, 'configuration', 'configuration/request-invalid'],
+    [401, 'configuration', 'configuration/auth-failed'],
+    [402, 'configuration', 'configuration/billing'],
+    [403, 'configuration', 'configuration/auth-failed'],
+    [404, 'service', 'service/provider-error'],
+    [413, 'input', 'input/context-overflow'],
+    [422, 'configuration', 'configuration/request-invalid'],
+    [429, 'service', 'service/rate-limited'],
+    [500, 'service', 'service/unavailable']
+  ] as const)(
+    'uses an explicit upstream HTTP status %i for classification',
+    (status, category, reason) => {
+      const body = JSON.stringify({
+        error: { type: 'upstream_error', message: 'Provider request failed', status }
+      })
+      const failure = classifyFailure(
+        collectPromptFailureFacts(agentError(body, { errorKind: 'unknown' }))
+      )
+      expect(failure).toMatchObject({ category, reason, diagnostics: { status } })
+    }
+  )
 
   it('attributes a confirmed upstream stack error to the model service', () => {
     const body = JSON.stringify({
