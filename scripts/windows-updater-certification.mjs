@@ -502,33 +502,78 @@ const waitForInstalledApplicationsToExit = (installDirectory, env) =>
     { env: { ...env, OPEN_SCIENCE_SMOKE_INSTALL_DIR: installDirectory } }
   )
 
-// The isolated profile survives both shortcut launches. Keep only this launch's scan records,
+// The isolated profile survives successive launches. Keep only this launch's records,
 // including any that rotated while NSIS handed off to the new desktop.
-const readOccupancyScans = async (env, since) => {
+const readShortcutEvidence = async (env, since) => {
   const directory = join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs')
   const scans = []
+  const decisions = []
   for (const name of await readdir(directory)) {
     if (!/^main(?:\.\d+)?\.log$/.test(name)) continue
     const lines = (await readFile(join(directory, name), 'utf8')).split('\n').slice(0, -1)
     for (const line of lines) {
-      if (!line.includes('Windows installation occupancy inspected')) continue
-      const { t, scope, msg, data } = JSON.parse(line)
       if (
-        scope === 'update' &&
-        msg === 'Windows installation occupancy inspected' &&
-        Date.parse(t) >= since
-      ) {
+        !line.includes('Windows installation occupancy inspected') &&
+        !line.includes('"windows-prepared-update"')
+      )
+        continue
+      const { t, scope, msg, data } = JSON.parse(line)
+      if (!(Date.parse(t) >= since)) continue
+      if (scope === 'windows-prepared-update') decisions.push({ t, msg, data })
+      if (scope === 'update' && msg === 'Windows installation occupancy inspected') {
         const { fileCount, resourceCount, enumMs, rmMs, durationMs } = data
         scans.push({ t, fileCount, resourceCount, enumMs, rmMs, durationMs })
       }
     }
   }
-  return scans.sort((a, b) => a.t.localeCompare(b.t))
+  const byTime = (a, b) => a.t.localeCompare(b.t)
+  return { scans: scans.sort(byTime), decisions: decisions.sort(byTime) }
+}
+
+const waitForBlockersToExit = (pids) =>
+  waitFor(
+    `shortcut blockers ${pids.join(', ')} to exit`,
+    () =>
+      pids.every((pid) => {
+        try {
+          process.kill(pid, 0)
+          return false
+        } catch (error) {
+          if (error.code === 'ESRCH') return true
+          throw error
+        }
+      }),
+    30_000
+  )
+
+const certifyShortcutVersion = async (launch, expectedVersion, released) => {
+  let observation = await launch()
+  if (released && observation.current === released.previousVersion && observation.scans.length) {
+    const last = observation.decisions.at(-1)
+    const data = last?.data
+    const pids = Array.isArray(data?.blockers) ? data.blockers.map((blocker) => blocker?.pid) : []
+    if (
+      last?.msg === 'Prepared update deferred at startup' &&
+      data?.reason === 'installation-busy' &&
+      data.detail === 'foreign-process' &&
+      pids.length &&
+      pids.every((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== released.holderPid)
+    ) {
+      console.log('Released shortcut deferred by a different file holder:', JSON.stringify(last))
+      await released.waitForExit(pids)
+      observation = await launch()
+    }
+  }
+  if (observation.current !== expectedVersion)
+    throw new Error(
+      `Shortcut opened ${observation.current}, expected ${expectedVersion}. Handoff decisions: ${JSON.stringify(observation.decisions)}`
+    )
+  return observation.scans
 }
 
 // Launch the installer-created link itself. Its unchanged target and the version reported by
 // the healthy renderer distinguish activation from a harness that launched the staged exe.
-const probeInstalledShortcut = async (installDirectory, env, expectedVersion) => {
+const launchInstalledShortcut = async (installDirectory, env, expectedVersion) => {
   const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
   await rm(portFile, { force: true })
   const startedAt = Date.now()
@@ -567,21 +612,8 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
       async () => (await window.api?.databaseStartup.getState())?.phase === 'ready'
     )
     const { current } = await page.evaluate(() => window.api.update.getStatus())
-    const scans = await readOccupancyScans(env, startedAt)
+    const { scans, decisions } = await readShortcutEvidence(env, startedAt)
     console.log('Shortcut occupancy scans:', JSON.stringify({ expectedVersion, current, scans }))
-    if (current !== expectedVersion) {
-      const log = await readFile(
-        join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs', 'main.log'),
-        'utf8'
-      ).catch(() => '')
-      const decisions = log
-        .split('\n')
-        .filter((line) => line.includes('"windows-prepared-update"'))
-        .slice(-8)
-      throw new Error(
-        `Shortcut opened ${current}, expected ${expectedVersion}. Handoff decisions: ${decisions.join('\n')}`
-      )
-    }
     // The database can already be ready while the renderer is still hydrating. Quit from the
     // interactive home screen so its normal persistence and confirmation handlers are mounted.
     await page
@@ -611,11 +643,18 @@ const probeInstalledShortcut = async (installDirectory, env, expectedVersion) =>
         { cause: error }
       )
     }
-    return scans
+    return { current, scans, decisions }
   } finally {
     await browser.close()
   }
 }
+
+const probeInstalledShortcut = (installDirectory, env, expectedVersion, released) =>
+  certifyShortcutVersion(
+    () => launchInstalledShortcut(installDirectory, env, expectedVersion),
+    expectedVersion,
+    released
+  )
 
 const runElectronUpdater = async ({
   executable,
@@ -1284,7 +1323,8 @@ const main = async () => {
       successor.shortcutOccupancyScans.released = await probeInstalledShortcut(
         installDirectory,
         env,
-        currentVersion
+        currentVersion,
+        { previousVersion, holderPid: child.pid, waitForExit: waitForBlockersToExit }
       )
       if (!successor.shortcutOccupancyScans.released.length)
         throw new Error('The update must recheck occupancy after the holder exits.')
@@ -1404,6 +1444,7 @@ if (invokedAsScript) {
 }
 
 export {
+  certifyShortcutVersion,
   applyWithOccupancyRecheck,
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
