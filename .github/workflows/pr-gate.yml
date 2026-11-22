@@ -456,11 +456,13 @@ jobs:
             const groups =
               selected.match(/@pr-mainline-\(([^)]+)\)/)?.[1]?.split('|') ??
               [selected.match(/@pr-mainline-([a-z]+)/)?.[1]].filter(Boolean)
+            const lines = output.split('\n')
+            const grepIndex = lines.findIndex((line) => line.startsWith('grep='))
+            if (grepIndex >= 0) lines[grepIndex] = `grep=${selected}`
+            else lines.push(`grep=${selected}`)
             writeFileSync(
               process.env.GITHUB_OUTPUT,
-              /^grep=/m.test(output)
-                ? output.replace(/^grep=.*$/m, `grep=${selected}`)
-                : `${output}grep=${selected}\n`
+              lines.join('\n') + (output.endsWith('\n') ? '' : '\n')
             )
             appendFileSync(
               process.env.GITHUB_OUTPUT,
