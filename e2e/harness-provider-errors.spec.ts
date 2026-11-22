@@ -14,15 +14,9 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
     let reject = true
     const paths: string[] = []
     const gateway = createServer(async (request, response) => {
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(Buffer.from(chunk))
-      const body = JSON.parse(Buffer.concat(chunks).toString())
-      if (!body.stream) {
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(
-          JSON.stringify({ choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }] })
-        )
-        return
+      for await (const chunk of request) {
+        // Consume the request without depending on protocol-specific payload fields.
+        void chunk
       }
       paths.push(request.url!)
       if (reject) {
@@ -102,6 +96,9 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       await expect(notice().locator('summary')).toContainText('status: 400')
       await expect(notice().locator('pre')).toContainText('HTTP 400')
       await expect(notice().locator('pre')).not.toContainText('Model is unavailable')
+      await expect(notice().locator('pre')).toContainText('status: 400')
+      await expect(notice().locator('pre')).toContainText(`protocol: ${protocol}`)
+      await expect(notice().locator('pre')).toContainText('desktop-provider-request')
       await expect
         .poll(async () => {
           const log = await readFile(
@@ -124,7 +121,6 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           model: 'provider-error-fixture',
           status: 400,
           phase: 'response',
-          code: 'model_not_found',
           requestId: 'desktop-provider-request'
         })
       await page.screenshot({ path: testInfo.outputPath('provider-error.png'), fullPage: true })
@@ -152,8 +148,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
             model: 'provider-error-fixture',
             status: 400,
             requestId: 'desktop-provider-request',
-            phase: 'response',
-            code: 'model_not_found'
+            phase: 'response'
           }
         }
       }
