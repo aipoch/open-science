@@ -59,7 +59,7 @@ const ActionToast = ({
         if (!event.currentTarget.contains(event.relatedTarget)) setFocusedWithin(false)
       }}
       className={cn(
-        'pointer-events-auto fixed inset-x-3 top-3 mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-dialog',
+        'pointer-events-auto fixed inset-x-3 top-3 mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-notice',
         detail ? 'rounded-2xl' : noticeSurfaceClassName,
         !detail && [noticeCapsuleClassName, 'w-fit max-w-[min(24rem,calc(100vw-1.5rem))]'],
         className

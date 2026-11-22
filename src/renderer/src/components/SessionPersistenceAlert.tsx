@@ -51,7 +51,7 @@ const SessionPersistenceAlertContent = ({
       className={cn(
         inline
           ? 'pointer-events-auto w-full'
-          : 'pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))] max-h-[calc(100svh-24px)] overflow-y-auto shadow-sm',
+          : 'pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))]',
         className
       )}
     >
@@ -61,6 +61,7 @@ const SessionPersistenceAlertContent = ({
         tone={variant === 'info' ? 'teal' : variant === 'warning' ? 'amber' : 'red'}
         title={title}
         description={message}
+        className={!inline ? 'shadow-notice' : undefined}
         dismissButton={
           dismiss
             ? {

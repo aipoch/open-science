@@ -108,6 +108,10 @@ for (const width of [320, 1000]) {
     const environment = page.getByTestId('env-status-banner')
     const storage = page.getByTestId('session-persistence-alert')
     const stack = page.locator('[data-bottom-notice-stack]')
+    expect(await environment.getAttribute('class')).toContain('shadow-notice')
+    expect(await storage.locator('[data-notice-level]').getAttribute('class')).toContain(
+      'shadow-notice'
+    )
     expect(
       await stack.evaluate((el) => {
         const style = getComputedStyle(el)

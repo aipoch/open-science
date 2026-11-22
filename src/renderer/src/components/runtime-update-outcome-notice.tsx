@@ -73,7 +73,7 @@ export const InterruptedUpdateOpenNotice = ({
   const message = t('The update did not finish. Reopen your file or link after updating.')
   if (platform === 'linux')
     return (
-      <div data-bottom-notice className="pointer-events-auto shadow-sm">
+      <div data-bottom-notice className="pointer-events-auto rounded-2xl shadow-notice">
         <ErrorNotice
           role="status"
           level="info"
