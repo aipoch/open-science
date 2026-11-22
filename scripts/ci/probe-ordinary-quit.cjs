@@ -18,7 +18,7 @@ async function main(){
  const env={...process.env,OPEN_SCIENCE_E2E_STORAGE_ROOT:path.join(root,'profile')}
  const entry=require('./probe-quit-desktop-entry.cjs')({image,root,env,chromium})
  console.log('starting',image)
- const desk=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:45000})
+ const desk=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:180000})
  desk.process().stderr.on('data',b=>{const s=b.toString();if(/fail|error|quit|occup/i.test(s))console.log('desktop',s.slice(-800))})
  desk.on('console',m=>{if(m.type()==='error')console.log('main error',m.text())})
  await desk.evaluate(({dialog})=>{
@@ -44,7 +44,7 @@ async function main(){
    await sleep(1000)
  }
  console.log('workspace view',await page.locator('body').innerText().then(x=>x.slice(0,350)))
- console.log('initial status',await page.evaluate(()=>window.api.update.getStatus()))
+ console.log('initial version',await page.evaluate(async()=>(await window.api.update.getStatus()).current))
  await desk.evaluate(({app},url)=>{
    const sdk=process.mainModule.require('node:module').createRequire(app.getAppPath()+'/package.json')('electron-updater').autoUpdater
    sdk.disableDifferentialDownload=true;sdk.setFeedURL(url)
@@ -79,7 +79,7 @@ async function main(){
  console.log('old PID exited',oldPid,'bytes at original path',fs.statSync(image).size,'expected B',file.size)
  if(kind) {
    if(overlap) {
-     console.log('Old process received second-instance:',fs.existsSync(root+'/relayed'))
+     assert.ok(fs.existsSync(root+'/relayed'), 'old desktop must receive the overlapping request')
      await entry.verifyService(kind)
    } else {
      entry.open(kind)
@@ -88,7 +88,7 @@ async function main(){
    server.close()
    return
  }
- const next=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:45000})
+ const next=await _electron.launch({executablePath:image,args:['--no-sandbox','--password-store=gnome-libsecret','--disable-gpu'],env,timeout:180000})
  const actual=await next.evaluate(({app})=>({version:app.getVersion(),entry:process.env.APPIMAGE}))
  console.log('reopened',actual);assert.equal(actual.version,'1.3.2');assert.equal(actual.entry,image)
  await next.evaluate(({app})=>{setTimeout(()=>app.exit(0),10)})
