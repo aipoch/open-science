@@ -297,6 +297,7 @@ export async function reclaimInstalledWindowsUpdates(
 }
 
 const coldLaunchScanBudgetMs = 10_000
+const blockerCacheMs = 60_000
 
 /** A cached blocker can only defer installation. Its exit or PID reuse always requires a fresh scan. */
 export async function checkColdLaunchOccupancy(
@@ -306,8 +307,20 @@ export async function checkColdLaunchOccupancy(
   for (const name of await fs.readdir(stage)) {
     const match = /^occupant-(\d+)-(\d+)$/.exec(name)
     if (!match) continue
-    if (windowsProcessStartTicks(Number(match[1])) === match[2]) return false
-    await fs.rm(join(stage, name), { force: true })
+    const marker = join(stage, name)
+    // A long-lived process can close its file while keeping the same PID and creation time.
+    const info = await fs.lstat(marker).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    if (!info) continue
+    const ageMs = Date.now() - Math.floor(info.mtimeMs)
+    if (
+      ageMs >= 0 &&
+      ageMs < blockerCacheMs &&
+      windowsProcessStartTicks(Number(match[1])) === match[2]
+    )
+      return false
+    await fs.rm(marker, { force: true })
   }
 
   const controller = new AbortController()
