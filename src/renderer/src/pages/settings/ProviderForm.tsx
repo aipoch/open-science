@@ -1164,6 +1164,26 @@ const ProviderForm = ({
 
             return (
               <div className="space-y-1.5">
+                {catalog?.options.inputs?.map((input) => (
+                  <div key={input.id} className="space-y-1.5">
+                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>
+                      {t('Workspace ID')}
+                    </label>
+                    <Input
+                      id={`catalog-${input.id}`}
+                      value={value.catalogParameters?.[input.id] ?? ''}
+                      disabled={disabled || isRefreshingModels}
+                      onChange={(event) =>
+                        onChange({
+                          catalogParameters: {
+                            ...value.catalogParameters,
+                            [input.id]: event.target.value
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                ))}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
@@ -1198,26 +1218,6 @@ const ProviderForm = ({
                     </button>
                   ) : null}
                 </div>
-                {catalog?.options.inputs?.map((input) => (
-                  <div key={input.id} className="space-y-1.5">
-                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>
-                      {t('Workspace ID')}
-                    </label>
-                    <Input
-                      id={`catalog-${input.id}`}
-                      value={value.catalogParameters?.[input.id] ?? ''}
-                      disabled={disabled || isRefreshingModels}
-                      onChange={(event) =>
-                        onChange({
-                          catalogParameters: {
-                            ...value.catalogParameters,
-                            [input.id]: event.target.value
-                          }
-                        })
-                      }
-                    />
-                  </div>
-                ))}
                 {disabledReason ? (
                   <p className="text-xs text-muted-foreground">{disabledReason}</p>
                 ) : null}

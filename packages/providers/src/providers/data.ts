@@ -288,6 +288,12 @@ const definitions: readonly OfficialVendor[] = [
     // contains image, audio, video, embedding, and other models outside this chat-provider surface.
     models: [
       {
+        id: 'qwen4-max-preview',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
         id: 'qwen3.8-max',
         contextWindow: 983_616,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
@@ -323,6 +329,7 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     responsesModels: [
+      'qwen4-max-preview',
       'qwen3.8-max',
       'qwen4-max',
       'qwen3.7-plus',
@@ -333,6 +340,7 @@ const definitions: readonly OfficialVendor[] = [
     ],
     multimodal: {
       multimodalModels: [
+        'qwen4-max-preview',
         'qwen3.8-max',
         'qwen4-max',
         'qwen3.7-plus',

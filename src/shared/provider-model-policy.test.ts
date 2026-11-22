@@ -63,7 +63,7 @@ it.each([
   ['tencenttokenplan', undefined, 'glm-5.2'],
   ['apodex', undefined, 'apodex-1.1'],
   ['stepfun', undefined, 'step-5-preview'],
-  ['bailian', undefined, 'qwen3.8-max'],
+  ['bailian', undefined, 'qwen4-max-preview'],
   ['bailianplan', undefined, 'qwen4-max-preview'],
   ['stepplan', undefined, 'step-5-preview']
 ] as const)('preserves the initial model for %s/%s', (vendor, region, expected) => {

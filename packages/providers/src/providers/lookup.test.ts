@@ -1226,6 +1226,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('bailian')).toBe(true)
     expect(resolveVendorApiEndpoints(bailianId)).toEqual(['messages', 'chat-completions'])
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max-preview')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.7-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.6-flash')).toBe(true)
@@ -1256,6 +1257,7 @@ describe('provider registry', () => {
     expect(
       getOfficialVendor(bailianId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
+      { id: 'qwen4-max-preview', contextWindow: 1_000_000 },
       { id: 'qwen3.8-max', contextWindow: 983_616 },
       { id: 'qwen4-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
@@ -1354,6 +1356,9 @@ describe('provider registry', () => {
     }
 
     expect(getVendorModelReasoningCapability('bailian', 'qwen3.8-max')).toEqual(expectedProfile)
+    expect(getVendorModelReasoningCapability('bailian', 'qwen4-max-preview')).toEqual(
+      expectedProfile
+    )
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen4-max')).toEqual({
       supported: true,
       values: ['low', 'high', 'xhigh']
