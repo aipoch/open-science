@@ -48,6 +48,7 @@ const normalizeFieldName = (key: string): string =>
     .toLowerCase()
 
 const isCredentialKey = (key: string): boolean => {
+  key = key.trim().replace(/\s+/g, '_')
   if (!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(key)) return false
   // A value wrapper inherits the underlying field's meaning. Strip one complete
   // word, preserving spelling for the exact credential rules below.
@@ -374,7 +375,7 @@ const findPackageTextMatch = (
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(
-    /(?:\\+[rn]|\b)([a-z][a-z0-9_.-]*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_.-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*(?:["']\s*)?[:=]\s*)/gi
+    /(?:\\+[rn]|\b)([a-z][a-z0-9_.-]*(?:[ \t]+[a-z][a-z0-9_.-]*)*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_.-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*(?:["']\s*)?[:=]\s*)/gi
   )) {
     // A literal indexed write can identify a credential inside an ordinary object.
     let key = match[1]

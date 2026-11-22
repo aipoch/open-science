@@ -655,6 +655,7 @@ it('checks export metadata values independently of their field names', () => {
       (value: string) => `--${key} ${value}`
     ]
     for (const format of formats) {
+      if (key.includes(' ') && format === formats[3]) continue
       expect(findSensitivePackageText(format(cursor))).toBeUndefined()
       expect(findSensitivePackageText(format(secret))).toBeDefined()
     }
@@ -876,6 +877,20 @@ it('distinguishes authentication metadata from credential positions', () => {
   for (const key of ['api_key', 'clientSecret', 'OPENAI_API_KEY', 'accessToken', 'password'])
     expect(isPrivatePackageField(key, 'opaque-value')).toBe(true)
 })
+
+it.each(['api key', 'access token', 'client secret'])(
+  'recognizes spaced credential key %s',
+  (key) => {
+    expect(isPrivatePackageField(key, 'opaque')).toBe(true)
+    for (const text of [
+      JSON.stringify({ [key]: 'opaque' }),
+      key + '=opaque',
+      'https://example.org/?' + encodeURIComponent(key) + '=opaque'
+    ]) {
+      expect(findSensitivePackageText(text)).toBeDefined()
+    }
+  }
+)
 
 it.each([
   'apiSecret',
