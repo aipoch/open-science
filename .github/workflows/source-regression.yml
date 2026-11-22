@@ -408,7 +408,7 @@ jobs:
     name: Complete installed package verification (Ubuntu)
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

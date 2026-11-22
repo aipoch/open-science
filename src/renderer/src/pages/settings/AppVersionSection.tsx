@@ -306,7 +306,7 @@ const AppVersionSection = ({
           <div className="mt-5 divide-y divide-border overflow-hidden rounded-lg border border-border bg-card empty:hidden">
             {statusLine && (
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   {status.error || status.state === 'error' ? (
                     <InlineNotice level="error" role="alert">
                       {statusLine}

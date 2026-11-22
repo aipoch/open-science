@@ -11,11 +11,10 @@ Only unstable identity fields were replaced to make it safe to commit:
 - `session.cwd`: `/legacy/workspace`
 
 The test replaces those two fields again at runtime with the project and directory it creates.
-It also supplies the fake provider's `agentConfiguration` at seed time because 1.0.8 did not
-persist that binding; without it the current renderer would perform a metadata-only normalization
-write on a read-only open. That field is not present in this checked-in file. No message, graph,
-timestamp, or legacy envelope field was regenerated or passed through the current
-`createSessionFile` encoder.
+It supplies the fake provider's `agentConfiguration` so the test can continue the conversation.
+Opening the session may materialize the defaults `description: ""` and `filesRevision: 0` and
+increment `session.revision` once. The test compares the complete document after the renderer
+flushes, including the original messages, branch graph, timestamps, and envelope version.
 
 Original archived sample SHA-256:
 `336e6d4250d6847179c6d2afd65fd7be4241fa3f337bb806af322877d39adf59`.

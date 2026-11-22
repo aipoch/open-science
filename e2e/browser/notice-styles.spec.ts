@@ -330,16 +330,15 @@ for (const width of [320, 375, 768, 1280]) {
       const layout = await error.evaluate((node) => {
         const notice = node.closest('section')!
         const column = notice.parentElement!
-        const label = column.parentElement!
+        const row = column.parentElement!
+        const rowStyle = getComputedStyle(row)
         const icon = notice.querySelector('svg')!.getBoundingClientRect()
         const text = node.getBoundingClientRect()
         const style = getComputedStyle(notice)
         return {
           columnWidth: column.clientWidth,
           availableWidth:
-            label.clientWidth -
-            label.firstElementChild!.getBoundingClientRect().width -
-            parseFloat(getComputedStyle(label).columnGap),
+            row.clientWidth - parseFloat(rowStyle.paddingLeft) - parseFloat(rowStyle.paddingRight),
           border: style.borderTopWidth,
           padding: style.padding,
           iconOffset: icon.y - text.y,

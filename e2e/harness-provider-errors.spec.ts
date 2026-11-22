@@ -98,9 +98,10 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       )
       await expect(notice()).not.toContainText('An unexpected application error occurred')
       await notice().locator('summary').click()
-      await expect(notice().locator('pre')).toContainText('model_not_found')
+      await expect(notice().locator('summary')).toContainText('model: provider-error-fixture')
+      await expect(notice().locator('summary')).toContainText('status: 400')
+      await expect(notice().locator('pre')).toContainText('HTTP 400')
       await expect(notice().locator('pre')).not.toContainText('Model is unavailable')
-      await expect(notice().locator('pre')).toContainText('desktop-provider-request')
       await expect
         .poll(async () => {
           const log = await readFile(
