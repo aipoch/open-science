@@ -2070,16 +2070,22 @@ async function startDesktop(): Promise<void> {
     detectActiveSessions: () => work?.sessions ?? [],
     hasActiveReviewerWork: () => work?.reviewerActive ?? false,
     getActiveSettingsInstallId: () => work?.settingsInstallId,
-    holdSettingsInstallAdmission: () => {
-      if (
-        process.platform === 'linux' &&
-        process.env.APPIMAGE &&
-        currentApplicationShutdownTrigger() === 'quit'
-      ) {
-        const offer = update.getStatus()
-        if (offer.automaticDownloads && offer.state === 'ready' && !offer.recovery)
-          quittingImageLaunch = { requested: false, args: new Set() }
+    holdPendingLaunchOnQuit: () => {
+      if (process.platform !== 'linux' || !process.env.APPIMAGE || quittingImageLaunch) return
+      const offer = update.getStatus()
+      if (offer.automaticDownloads && offer.state === 'ready' && !offer.recovery)
+        quittingImageLaunch = { requested: false, args: new Set() }
+    },
+    resumePendingLaunchAfterCancelledQuit: () => {
+      const deferred = quittingImageLaunch
+      quittingImageLaunch = undefined
+      if (!deferred?.requested) return
+      for (const entry of deferred.args) {
+        if (!browserImports.receive(entry)) packageFiles.receive(entry)
       }
+      showMainWindow?.()
+    },
+    holdSettingsInstallAdmission: () => {
       recovery!.setClosing(true)
       if (
         !runtimeStopped &&
@@ -2091,14 +2097,6 @@ async function startDesktop(): Promise<void> {
       else admission = Promise.resolve()
       void admission.catch(() => undefined)
       return () => {
-        const deferred = quittingImageLaunch
-        quittingImageLaunch = undefined
-        if (deferred?.requested) {
-          for (const entry of deferred.args) {
-            if (!browserImports.receive(entry)) packageFiles.receive(entry)
-          }
-          showMainWindow?.()
-        }
         recovery!.setClosing(false)
         if (
           !runtimeStopped &&

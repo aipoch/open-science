@@ -95,6 +95,8 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
+  holdPendingLaunchOnQuit?: () => void
+  resumePendingLaunchAfterCancelledQuit?: () => void
   forwardPendingLaunchOnExit?: () => void
   beforeExit?: (
     cleanOrdinaryQuit: boolean
@@ -403,6 +405,9 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
+    // A second launch can arrive while the first quit is refreshing work or awaiting consent.
+    if (trigger === 'quit' && !event.defaultPrevented && !confirmInFlight)
+      deps.holdPendingLaunchOnQuit?.()
     if (deps.refreshQuitState && !refreshedQuitBoundary && !event.defaultPrevented) {
       event.preventDefault()
       if (refreshingQuitBoundary) return
@@ -429,6 +434,7 @@ export const installAppLifecycle = (
             }
             await finishShutdown()
           } else {
+            deps.resumePendingLaunchAfterCancelledQuit?.()
             deps.onQuitError?.(error)
           }
         })
@@ -447,6 +453,7 @@ export const installAppLifecycle = (
       // because the migration guard owns cancelling/joining the move and then reissues app.quit().
       if (trigger !== 'system') {
         clearApplicationShutdownTrigger()
+        deps.resumePendingLaunchAfterCancelledQuit?.()
         systemShutdownRequested = false
       }
       quitConfirmed = false
@@ -482,6 +489,10 @@ export const installAppLifecycle = (
         let choice: CloseConfirmChoice
         try {
           choice = await confirmResearchClose('quit', deps.detectActiveSessions())
+        } catch (error) {
+          deps.resumePendingLaunchAfterCancelledQuit?.()
+          deps.onQuitError?.(error)
+          return
         } finally {
           // app.quit() synchronously reenters before-quit. Release this confirmation first so a
           // changed-work warning can open, without an old finally clearing its new admission latch.
@@ -491,6 +502,7 @@ export const installAppLifecycle = (
           requestConfirmedQuit(settingsInstallAtConfirmation)
           return
         }
+        deps.resumePendingLaunchAfterCancelledQuit?.()
         // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
         // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
         // window so the app the user chose to keep stays reachable. Gate on a window that existed
@@ -736,6 +748,7 @@ export const installAppLifecycle = (
             }
           }
           releaseSettingsInstallAdmission()
+          deps.resumePendingLaunchAfterCancelledQuit?.()
           shutdownStarted = false
           quitConfirmed = false
           confirmedSettingsInstallId = undefined
