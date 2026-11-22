@@ -150,9 +150,9 @@ describe('scheduled failure tracking issues', () => {
 
   it('ignores an older run after a newer scheduled run completes', async () => {
     const f = fixture({ issues: [trackingIssue], completedRuns: [{ id: 102 }] })
-    expect(await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure' })).toEqual({
-      action: 'none'
-    })
+    expect(
+      await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure', ignoreStaleRuns: true })
+    ).toEqual({ action: 'none' })
     expect(f.issues.createComment).not.toHaveBeenCalled()
     expect(f.issues.update).not.toHaveBeenCalled()
     expect(f.issues.create).not.toHaveBeenCalled()

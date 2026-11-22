@@ -463,5 +463,6 @@ jobs:
               runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
               headSha: context.sha,
               conclusion: process.env.CONCLUSION,
+              ignoreStaleRuns: true,
               log: core.info
             })

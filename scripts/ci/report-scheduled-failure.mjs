@@ -76,12 +76,13 @@ export async function reportScheduledOutcome({
   conclusion,
   failureDetails,
   label = DEFAULT_LABEL,
+  ignoreStaleRuns = false,
   log = console.log
 }) {
   if (!['success', 'failure'].includes(conclusion)) {
     throw new Error(`Unsupported conclusion: ${conclusion}`)
   }
-  if (await hasNewerCompletedRun({ github, repo, workflowFile, runId })) {
+  if (ignoreStaleRuns && (await hasNewerCompletedRun({ github, repo, workflowFile, runId }))) {
     log(`Ignoring stale scheduled run ${runId} for ${workflowName}`)
     return { action: 'none' }
   }

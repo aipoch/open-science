@@ -442,6 +442,11 @@ describe('independent source regression', () => {
       'cancel-in-progress': "${{ github.event_name != 'schedule' }}"
     })
     expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+    expect(
+      scheduled.jobs.report.steps.find(
+        ({ name }) => name === 'Open, refresh, or close the tracking issue'
+      )?.with?.script
+    ).toContain('ignoreStaleRuns: true')
     expect(scheduled.jobs.report.concurrency).toEqual({
       group: 'source-regression-report',
       'cancel-in-progress': false
