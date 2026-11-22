@@ -41,9 +41,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: source-regression-${{ github.event_name }}-${{ github.ref }}
-  # GitHub can delay the twice-daily schedule enough for runs to overlap. Keep both scheduled
-  # coverage rounds, while manual diagnostics still replace an older manual run.
+  # GitHub can delay the twice-daily schedule enough for runs to overlap. Scheduled runs use their
+  # own group so both coverage rounds can run, while manual diagnostics still replace old manual runs.
+  group: source-regression-${{ github.event_name }}-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:

@@ -436,7 +436,8 @@ describe('independent source regression', () => {
       "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
     )
     expect(scheduled.concurrency).toEqual({
-      group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
+      group:
+        "source-regression-${{ github.event_name }}-${{ github.event_name == 'schedule' && github.run_id || github.ref }}",
       'cancel-in-progress': "${{ github.event_name != 'schedule' }}"
     })
     expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
