@@ -166,8 +166,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  private loadSessionDocument(session: Session): Promise<NotebookRunDocument> {
-    return this.options.repository.loadOrCreate({
+  private loadSessionKernel(session: Session): Promise<NotebookKernelMetadata> {
+    return this.options.repository.loadSessionKernel({
       projectId: session.projectId,
       sessionId: session.sessionId,
       workspaceCwd: session.cwd,
@@ -195,7 +195,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       retain: trim && this.runBudget(trim.includeRecent, trim.bytes)
     })
     if (cached) return cached
-    const kernel = session ? (await this.loadSessionDocument(session)).kernel : undefined
+    const kernel = session ? await this.loadSessionKernel(session) : undefined
     const window = await this.options.repository.readSessionRunWindow(
       projectId,
       sessionId,
@@ -266,7 +266,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     })
     let window = cached?.window
     if (!window) {
-      if (session) await this.loadSessionDocument(session)
+      if (session) await this.loadSessionKernel(session)
       window = await this.options.repository.readSessionRunWindow(
         projectId,
         sessionId,

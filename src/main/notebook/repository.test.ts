@@ -346,6 +346,47 @@ describe('notebook run repository', () => {
     expect(corrupt.runs[0]).not.toHaveProperty('environmentManifest')
   })
 
+  it('publishes and loads shared environment evidence once per operation', async () => {
+    const root = await createStorageRoot()
+    const scope = { projectId: 'project', sessionId: 'session' }
+    const lane = createRootNotebookLane('project', 'session', 'root-frame-session')
+    const writer = new NotebookRunRepository(root)
+    const doc = await writer.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+    const path = join(doc.notebookSessionRoot, 'run.json')
+    const legacy = JSON.parse(await readFile(path, 'utf8'))
+    const { manifest, checksum } = completedEnvironmentManifest()
+    legacy.runs = ['a', 'b'].map((runId) =>
+      admittedRun({
+        runId,
+        status: 'completed',
+        environmentManifest: manifest,
+        environmentManifestChecksum: checksum
+      })
+    )
+    await writeFile(path, JSON.stringify(legacy))
+    const sidecar = join(root, 'runtime', 'provenance', 'environment-manifests', checksum + '.json')
+    const writes = vi.spyOn(durableFiles, 'writeDurableJsonFile')
+    const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+    try {
+      await writer.updateKernelStatus({ ...scope, lane, status: 'idle' })
+      expect(writes.mock.calls.filter(([file]) => file === sidecar)).toHaveLength(1)
+      const rows = await writer.readAnalysisRuns('project', 'session', {
+        includeEnvironmentManifests: true
+      })
+      expect(reads.mock.calls.filter(([file]) => file === sidecar)).toHaveLength(1)
+      expect(rows.map((run) => run.environmentManifest)).toEqual([manifest, manifest])
+      expect(rows[0].environmentManifest?.packages).not.toBe(rows[1].environmentManifest?.packages)
+      legacy.runs[1].environmentManifest = { ...manifest, complete: false }
+      await writeFile(path, JSON.stringify(legacy))
+      await expect(writer.updateKernelStatus({ ...scope, lane, status: 'idle' })).rejects.toThrow(
+        'checksum mismatch'
+      )
+    } finally {
+      reads.mockRestore()
+      writes.mockRestore()
+    }
+  })
+
   it('preserves valid history with more than 32 loaded helper modules', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -2541,6 +2582,17 @@ describe('large immutable Notebook records', () => {
         `${manifest.runs[0].sha256}.json`
       )
       const reopened = new NotebookRunRepository(root)
+      const reader = new NotebookRunRepository(root)
+      await reader.findExisting(scope.projectId, scope.sessionId, lane)
+      const request = { ...scope, lane, workspaceCwd: root }
+      const expectedKernel = (await reopened.loadOrCreate(request)).kernel
+      const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+      try {
+        expect(await reader.loadSessionKernel(request)).toEqual(expectedKernel)
+        expect(reads).not.toHaveBeenCalled()
+      } finally {
+        reads.mockRestore()
+      }
       await reopened.withinHistoryRead(scope.projectId, scope.sessionId, async () => {
         await reopened.loadOrCreate({ ...scope, lane, workspaceCwd: root })
         if (failure === 'missing') await rm(recordPath)
@@ -2550,6 +2602,7 @@ describe('large immutable Notebook records', () => {
           manifest.runs[0].sha256 = '../../outside'
           await writeFile(manifestPath, JSON.stringify(manifest))
         }
+        await expect(reader.loadSessionKernel(request)).rejects.toThrow('corrupt')
         const bytes = await readFile(manifestPath, 'utf8')
         await expect(reopened.findExisting(scope.projectId, scope.sessionId)).rejects.toThrow(
           'corrupt'

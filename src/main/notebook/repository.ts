@@ -177,13 +177,22 @@ class NotebookRunRecordStorage {
 
   private readonly verifiedFiles = new WeakMap<RunReference, DocumentFileIdentity>()
 
-  async unchanged(root: string, references: RunReference[]): Promise<boolean> {
+  async unchanged(
+    root: string,
+    references: RunReference[],
+    verifyUnseen = false
+  ): Promise<boolean> {
     if (!references.length) return true
     try {
       const directory = await this.directory(root)
       for (const ref of references) {
         const known = this.verifiedFiles.get(ref)
-        if (!known) return false
+        if (!known) {
+          if (!verifyUnseen) return false
+          // A newly published result has no read identity yet. Verify its content once.
+          await this.read(root, [ref])
+          continue
+        }
         const current = await lstat(join(directory, `${ref.sha256}.json`))
         if (!current.isFile() || !sameDocumentFileIdentity(known, current)) return false
       }
@@ -1309,6 +1318,7 @@ class NotebookRunRepository {
     const requested = new Set(runIds)
     const window = selectRunWindow(cached.documents, sessionId, limit, requested, frameId, before)
     const runs: NotebookRunRecord[] = []
+    const hydrate = this.environmentManifestReader(requested)
     // Older foreground rows cannot change which newer background tasks fit the byte limit.
     const first = query.backgroundTaskMetadata
       ? window.runs.findIndex((run) => run.executionMode === 'background')
@@ -1335,7 +1345,7 @@ class NotebookRunRepository {
           return undefined
         }
       }
-      run = await this.withRunEnvironmentManifest(run, requested)
+      run = await hydrate(run)
       if (retain && !retain(run, index, window.runs.length, omittedBytes) && runs.length > 0) {
         const { runId, startedAt } = runs[runs.length - 1]
         window.historyPage = { hasEarlierRuns: true, oldestCursor: { runId, startedAt } }
@@ -1367,9 +1377,8 @@ class NotebookRunRepository {
     const runs = lanes
       .flat()
       .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
-    return options.includeEnvironmentManifests
-      ? Promise.all(runs.map((run) => this.withRunEnvironmentManifest(run)))
-      : runs
+    if (!options.includeEnvironmentManifests) return runs
+    return Promise.all(runs.map(this.environmentManifestReader()))
   }
 
   // One physical lane in manifest order. A corrupt history must reach the admission caller.
@@ -1479,7 +1488,7 @@ class NotebookRunRepository {
     for (const document of await this.readSessionDocuments(projectId, sessionId)) {
       const run = this.runIndex(document).byId.get(runId)
       if (!run) continue
-      const hydrated = await this.withEnvironmentManifests(document, [run], new Set([runId]))
+      const hydrated = await this.withEnvironmentManifests(document, [run])
       return hydrated.runs[0]
     }
     return undefined
@@ -1535,6 +1544,26 @@ class NotebookRunRepository {
     if (!document) return this.loadOrCreate(request)
     await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
     return document
+  }
+
+  // Live history queries need the active kernel and staging directory, even for an empty page.
+  async loadSessionKernel(
+    request: LoadNotebookRunDocumentRequest
+  ): Promise<NotebookKernelMetadata> {
+    const { projectId, sessionId, lane } = request
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const full = this.documentCache.get(path)
+    if (full && lane) {
+      const refs =
+        full.weight > full.size ? this.records.referencesFor(dirname(path), full.document.runs) : []
+      if (await this.laneFilesUnchanged(path, full, refs, { verifyUnseen: true })) {
+        assertNotebookDocumentShape(full.document)
+        await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
+        // A freshly published header can still contain the pre-normalized termination status.
+        return normalizeDocument(this.storageRoot, request, { ...full.document, runs: [] }).kernel
+      }
+    }
+    return (await this.loadOrCreate(request)).kernel
   }
 
   // Loads an existing history file or creates the directory skeleton and first run.json.
@@ -2076,7 +2105,10 @@ class NotebookRunRepository {
       this.loadExisting(projectId, sessionId, lane)
     )
     if (!options.includeEnvironmentManifests) return documents
-    return Promise.all(documents.map((document) => this.withEnvironmentManifests(document)))
+    const hydrate = this.environmentManifestReader()
+    return Promise.all(
+      documents.map((document) => this.withEnvironmentManifests(document, document.runs, hydrate))
+    )
   }
 
   private async readSessionLaneValues<T>(
@@ -2132,26 +2164,31 @@ class NotebookRunRepository {
   private async withEnvironmentManifests(
     document: NotebookRunDocument,
     runs: readonly NotebookRunRecord[] = document.runs,
-    includeRunIds?: ReadonlySet<string>
+    hydrate = this.environmentManifestReader()
   ): Promise<NotebookRunDocument> {
-    const hydratedRuns = await Promise.all(
-      runs.map((run) => this.withRunEnvironmentManifest(run, includeRunIds))
-    )
-    return { ...document, runs: hydratedRuns }
+    return { ...document, runs: await Promise.all(runs.map(hydrate)) }
   }
 
-  private async withRunEnvironmentManifest(
-    run: NotebookRunRecord,
+  private environmentManifestReader(
     includeRunIds?: ReadonlySet<string>
-  ): Promise<NotebookRunRecord> {
-    if (includeRunIds && !includeRunIds.has(run.runId)) {
-      return environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
+  ): (run: NotebookRunRecord) => Promise<NotebookRunRecord> {
+    const manifests = new Map<string, Promise<NotebookEnvironmentManifest | undefined>>()
+    return async (run) => {
+      if (includeRunIds && !includeRunIds.has(run.runId)) {
+        return environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
+      }
+      if (run.environmentManifest) return run
+      const checksum = environmentManifestChecksumForRun(run)
+      if (!checksum) return run
+      const pending = manifests.get(checksum)
+      const loading = pending ?? readEnvironmentManifest(this.storageRoot, checksum)
+      if (!pending) manifests.set(checksum, loading)
+      const manifest = await loading
+      // Runs returned to callers keep independently mutable evidence.
+      return manifest
+        ? { ...run, environmentManifest: pending ? structuredClone(manifest) : manifest }
+        : run
     }
-    if (run.environmentManifest) return run
-    const checksum = environmentManifestChecksumForRun(run)
-    if (!checksum) return run
-    const manifest = await readEnvironmentManifest(this.storageRoot, checksum)
-    return manifest ? { ...run, environmentManifest: manifest } : run
   }
 
   // History views may infer a missing root identity from the physical root document. Its path
@@ -2200,17 +2237,15 @@ class NotebookRunRepository {
   ): Promise<HistoryWindow> {
     const rawDocuments = await this.readSessionDocuments(projectId, sessionId)
     const requestedRunIds = new Set(includeRunIds)
+    const hydrate = this.environmentManifestReader(requestedRunIds)
     const documents = await Promise.all(
-      rawDocuments.map(async (document) => ({
-        ...document,
-        runs: (
-          await this.withEnvironmentManifests(
-            document,
-            this.historyRuns(document, projectId, sessionId),
-            requestedRunIds
-          )
-        ).runs
-      }))
+      rawDocuments.map((document) =>
+        this.withEnvironmentManifests(
+          document,
+          this.historyRuns(document, projectId, sessionId),
+          hydrate
+        )
+      )
     )
     return selectRunWindow(
       documents,
@@ -2464,12 +2499,13 @@ class NotebookRunRepository {
   private async laneFilesUnchanged(
     path: string,
     identity: DocumentFileIdentity,
-    refs: RunReference[]
+    refs: RunReference[],
+    { verifyUnseen = false } = {}
   ): Promise<boolean> {
     return (
       sameDocumentFileIdentity(identity, await statIfPresent(path)) &&
       !(await this.hasRecoveryCandidate(path)) &&
-      (await this.records.unchanged(dirname(path), refs)) &&
+      (await this.records.unchanged(dirname(path), refs, verifyUnseen)) &&
       sameDocumentFileIdentity(identity, await statIfPresent(path))
     )
   }
@@ -2682,20 +2718,22 @@ class NotebookRunRepository {
   }
 
   private async publishEnvironmentManifests(document: NotebookRunDocument): Promise<void> {
+    const manifests = new Map<string, string>()
+    for (const run of document.runs) {
+      const manifest = run.environmentManifest
+      const checksum = environmentManifestChecksumForRun(run)
+      if (!manifest || !checksum) continue
+      if (!digestPattern.test(checksum)) {
+        throw new Error(`Notebook Environment manifest reference is invalid: ${checksum}`)
+      }
+      const serialized = serializeEnvironmentManifest(manifest)
+      if (digest(serialized) !== checksum) {
+        throw new Error(`Notebook Environment manifest checksum mismatch: ${checksum}`)
+      }
+      if (!this.publishedEnvironmentManifests.has(checksum)) manifests.set(checksum, serialized)
+    }
     await Promise.all(
-      document.runs.map(async (run) => {
-        const manifest = run.environmentManifest
-        const checksum = environmentManifestChecksumForRun(run)
-        if (!manifest || !checksum) return
-        if (!digestPattern.test(checksum)) {
-          throw new Error(`Notebook Environment manifest reference is invalid: ${checksum}`)
-        }
-        const serialized = serializeEnvironmentManifest(manifest)
-        if (digest(serialized) !== checksum) {
-          throw new Error(`Notebook Environment manifest checksum mismatch: ${checksum}`)
-        }
-        const key = `${this.storageRoot}\0${checksum}`
-        if (this.publishedEnvironmentManifests.has(key)) return
+      Array.from(manifests, async ([checksum, serialized]) => {
         const path = environmentManifestPath(this.storageRoot, checksum)
         try {
           const existing = await readFile(path, 'utf8')
@@ -2706,7 +2744,7 @@ class NotebookRunRepository {
           if (!isMissingFileError(error)) throw error
           await writeDurableJsonFile(path, serialized)
         }
-        this.publishedEnvironmentManifests.add(key)
+        this.publishedEnvironmentManifests.add(checksum)
       })
     )
   }
