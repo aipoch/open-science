@@ -1,7 +1,7 @@
 diff --git a/node_modules/electron-updater/out/AppImageUpdater.js b/node_modules/electron-updater/out/AppImageUpdater.js
 --- a/node_modules/electron-updater/out/AppImageUpdater.js
 +++ b/node_modules/electron-updater/out/AppImageUpdater.js
-@@ -77,28 +77,14 @@
+@@ -77,28 +77,21 @@
          if (!path.isAbsolute(appImageFile) || appImageFile.includes("\0")) {
              throw (0, builder_util_runtime_1.newError)(`APPIMAGE env is not a valid absolute path: "${appImageFile}"`, "ERR_UPDATER_OLD_FILE_NOT_FOUND");
          }
@@ -29,7 +29,14 @@ diff --git a/node_modules/electron-updater/out/AppImageUpdater.js b/node_modules
 -            this.emit("appimage-filename-updated", destination);
 -        }
 +        // Keep existing desktop entries, MIME handlers and scripts pointing at the installed path.
-+        (0, child_process_1.execFileSync)("/usr/bin/mv", ["-fT", "--", installerPath, destination]);
++        try {
++            (0, fs_1.renameSync)(installerPath, destination);
++        }
++        catch (error) {
++            if (error.code !== "EXDEV")
++                throw error;
++            (0, child_process_1.execFileSync)("mv", ["-fT", "--", installerPath, destination]);
++        }
          const env = {
              ...process.env,
              APPIMAGE_SILENT_INSTALL: "true",
