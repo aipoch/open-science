@@ -16,6 +16,7 @@ type CurrentNotebookTerminal = Readonly<{
 // This is a visible decision and the current mounted editor, never a saved execution or code.
 export const useNotebookMemoryNoticeStore = create<{
   rejection?: NotebookMemoryRejectedEvent
+  latestCheck?: NotebookMemoryRejectedEvent['memory']
   terminal?: CurrentNotebookTerminal
   rejectedTerminalId?: string
   pressure?: NotebookMemoryPolicyChangedEvent
@@ -24,11 +25,21 @@ export const useNotebookMemoryNoticeStore = create<{
 }>(() => ({ dismissedPressureScopes: [], dismissedRefusalIds: [] }))
 
 export const presentNotebookMemoryRejection = (rejection: NotebookMemoryRejectedEvent): void => {
-  const { terminal, dismissedRefusalIds } = useNotebookMemoryNoticeStore.getState()
-  if (rejection.refusalId && dismissedRefusalIds.includes(rejection.refusalId)) return
+  const {
+    terminal,
+    dismissedRefusalIds,
+    rejection: current
+  } = useNotebookMemoryNoticeStore.getState()
+  if (
+    rejection.refusalId &&
+    (current?.refusalId === rejection.refusalId ||
+      dismissedRefusalIds.includes(rejection.refusalId))
+  )
+    return
   const terminalRejection = rejection.source === 'user' && rejection.inputKind === 'terminal'
   useNotebookMemoryNoticeStore.setState({
     rejection,
+    latestCheck: undefined,
     rejectedTerminalId:
       terminalRejection &&
       terminal?.projectId === rejection.projectId &&
@@ -52,6 +63,7 @@ export const dismissNotebookMemoryRejection = (): void => {
   const { rejection, dismissedRefusalIds } = useNotebookMemoryNoticeStore.getState()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
+    latestCheck: undefined,
     rejectedTerminalId: undefined,
     dismissedRefusalIds: rejection?.refusalId
       ? [...dismissedRefusalIds.slice(-63), rejection.refusalId]
@@ -71,6 +83,20 @@ export const dismissNotebookMemoryPressure = (): void => {
   })
 }
 
+export const recordNotebookMemoryCheck = (
+  rejection: NotebookMemoryRejectedEvent,
+  memory: NotebookMemoryRejectedEvent['memory']
+): void => {
+  const state = useNotebookMemoryNoticeStore.getState()
+  if (
+    state.rejection === rejection &&
+    memory.executionScope === rejection.memory.executionScope &&
+    memory.checkedAt >= (state.latestCheck ?? rejection.memory).checkedAt
+  ) {
+    useNotebookMemoryNoticeStore.setState({ latestCheck: memory })
+  }
+}
+
 export const observeNotebookMemoryPolicy = (event: NotebookMemoryPolicyChangedEvent): void => {
   const state = useNotebookMemoryNoticeStore.getState()
   const scope = event.memory.executionScope
@@ -78,11 +104,9 @@ export const observeNotebookMemoryPolicy = (event: NotebookMemoryPolicyChangedEv
     event.memory.status === 'healthy'
       ? state.dismissedPressureScopes.filter((entry) => entry !== scope)
       : state.dismissedPressureScopes
+  if (state.rejection) recordNotebookMemoryCheck(state.rejection, event.memory)
   useNotebookMemoryNoticeStore.setState({
     dismissedPressureScopes,
-    ...(state.rejection?.memory.executionScope === scope
-      ? { rejection: { ...state.rejection, memory: event.memory } }
-      : {}),
     pressure:
       event.hasLiveResources &&
       event.memory.status === 'pressured' &&

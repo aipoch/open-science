@@ -508,6 +508,7 @@ const projectNotebookMemoryPolicyState = (
 ): NotebookMemoryPolicyState => ({
   status: state.status,
   reason: state.reason.code,
+  remainingThresholdRatio: state.reason.remainingThresholdRatio,
   detail: state.reason.detail,
   source: state.source,
   executionScope: state.executionScope,

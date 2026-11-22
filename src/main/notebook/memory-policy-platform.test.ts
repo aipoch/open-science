@@ -27,7 +27,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
     await expect(service.getState()).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-physical-low' }
+      reason: { code: 'windows-physical-low', remainingThresholdRatio: 0.1 }
     })
     expect(sampleWindowsResources).toHaveBeenCalledWith(false, [])
     current = windowsSample({
@@ -38,7 +38,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
     await expect(service.getState({ force: true })).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-commit-low' }
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.2 }
     })
     current = windowsSample({
       totalPhysicalBytes: 1000,

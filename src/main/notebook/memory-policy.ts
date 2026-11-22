@@ -37,6 +37,7 @@ export type MemoryPolicySample = {
 
 export type MemoryPolicyReason = {
   code: string
+  remainingThresholdRatio?: number
   detail?: string
   // A local limit cannot authorize reclamation in unrelated cgroups.
   pressureScope?: 'host' | 'execution-domain'
@@ -493,11 +494,11 @@ export class MemoryPolicyService {
     const entering = signals.find((signal) => signal.ratio <= (signal.high ? 0 : enter))
     if (entering) {
       state.pressure = true
-      return entering.reason
+      return { ...entering.reason, remainingThresholdRatio: entering.high ? 0 : enter }
     }
     if (state.pressure) {
       const holding = signals.find((signal) => signal.ratio <= (signal.high ? 0.2 : exit))
-      if (holding) return holding.reason
+      if (holding) return { ...holding.reason, remainingThresholdRatio: holding.high ? 0.2 : exit }
     }
     state.pressure = false
     return { code: 'healthy' }

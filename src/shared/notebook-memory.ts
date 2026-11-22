@@ -2,6 +2,7 @@
 export type NotebookMemoryPolicyState = Readonly<{
   status: 'healthy' | 'pressured' | 'unavailable'
   reason: string
+  remainingThresholdRatio?: number
   detail?: string
   source: string
   executionScope: string

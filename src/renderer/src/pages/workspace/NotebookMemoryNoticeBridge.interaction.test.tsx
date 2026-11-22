@@ -33,6 +33,7 @@ beforeEach(() => {
   unsubscribeMemoryPolicy.mockReset()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
+    latestCheck: undefined,
     terminal: undefined,
     dismissedRefusalIds: [],
     dismissedPressureScopes: [],
@@ -271,7 +272,9 @@ it('refreshes visible policy with one request in flight and stops polling after 
         source: 'agent',
         memory: {
           status: 'pressured',
-          reason: 'low',
+          availableBytes: 512 * 1024 ** 2,
+          totalBytes: 8 * 1024 ** 3,
+          reason: 'linux-memory-low',
           source: 'linux-procfs',
           executionScope: 'linux:host',
           checkedAt: 1
@@ -285,6 +288,8 @@ it('refreshes visible policy with one request in flight and stops polling after 
       finish({
         status: 'healthy',
         reason: 'recovered',
+        availableBytes: 3 * 1024 ** 3,
+        totalBytes: 8 * 1024 ** 3,
         source: 'linux-procfs',
         executionScope: 'linux:host',
         checkedAt: 2
@@ -292,6 +297,10 @@ it('refreshes visible policy with one request in flight and stops polling after 
     )
     expect(
       screen.getByText('Memory has recovered. Execution still requires your choice.')
+    ).toBeTruthy()
+    await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+    expect(
+      screen.getByRole('row', { name: 'Available RAM / total 512 MiB / 8 GiB 3 GiB / 8 GiB' })
     ).toBeTruthy()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
     await act(async () => vi.advanceTimersByTimeAsync(20_000))
