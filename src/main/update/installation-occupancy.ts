@@ -108,6 +108,29 @@ function installationPsArgs(): string[] {
   return ['-axo', process.platform === 'darwin' ? 'pid=,comm=' : 'pid=,command=']
 }
 
+// Extract-and-run uses one shared directory per image. A second launcher can remove it
+// while this Desktop is alive. procfs still identifies the mapped executable and its parent.
+function deletedLinuxExtraction(): string | undefined {
+  const directory = process.env.APPDIR
+  if (
+    process.platform !== 'linux' ||
+    !directory ||
+    !process.env.APPIMAGE ||
+    dirname(process.execPath) !== directory
+  )
+    return undefined
+  try {
+    if (
+      readlinkSync('/proc/self/exe') === process.execPath + ' (deleted)' &&
+      readlinkSync(`/proc/${process.ppid}/exe`) === realpathSync(process.env.APPIMAGE)
+    )
+      return directory
+  } catch {
+    // Unproven ownership must not exempt a process.
+  }
+  return undefined
+}
+
 function installationPsOccupants(
   stdout: string,
   installationRoot: string,
@@ -122,7 +145,7 @@ function installationPsOccupants(
     process.env.APPDIR &&
     realpathSync(process.env.APPIMAGE) === installationRoot
   )
-    roots.push(realpathSync(process.env.APPDIR))
+    roots.push(deletedLinuxExtraction() ?? realpathSync(process.env.APPDIR))
   for (const line of stdout.split('\n')) {
     signal?.throwIfAborted()
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
@@ -431,6 +454,7 @@ function appImagePipes(pid: number, writeEnd: boolean, image?: string): string[]
 export function inspectOwnedLinuxAppImageLauncher(): number[] {
   if (process.platform !== 'linux' || !process.env.APPIMAGE || !process.env.APPDIR) return []
   try {
+    if (deletedLinuxExtraction()) return [process.ppid]
     const mount = realpathSync(process.env.APPDIR)
     const image = realpathSync(process.env.APPIMAGE)
     if (!realpathSync(process.execPath).startsWith(mount + sep)) return []
@@ -473,7 +497,9 @@ export function inspectOwnedLinuxZygoteProcesses(): number[] {
   })
   if (result.status !== 0)
     throw new UpdateLifecycleError('installation-busy', 'Zygote ownership could not be inspected.')
-  const executable = realpathSync(process.execPath)
+  const executable = deletedLinuxExtraction()
+    ? readlinkSync('/proc/self/exe')
+    : realpathSync(process.execPath)
   const candidates = result.stdout.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
     return match ? [{ pid: Number(match[1]), parent: Number(match[2]) }] : []
@@ -540,14 +566,15 @@ export function inspectOwnedCrashpadProcesses(options: {
       return undefined
     }
   }
-  const executable = canonical(
-    join(
-      options.installationRoot,
-      process.platform === 'darwin'
-        ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
-        : 'chrome_crashpad_handler'
-    )
+  const handler = join(
+    options.installationRoot,
+    process.platform === 'darwin'
+      ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+      : 'chrome_crashpad_handler'
   )
+  const deleted =
+    process.platform === 'linux' && deletedLinuxExtraction() === options.installationRoot
+  const executable = deleted ? handler : canonical(handler)
   const database = canonical(options.crashDumpsPath)
   if (!executable || !database || !options.instanceId) return []
   const commands = read('comm')
@@ -559,7 +586,7 @@ export function inspectOwnedCrashpadProcesses(options: {
         return []
       }
     }
-    if (canonical(command) !== executable) return []
+    if (deleted ? command !== handler + ' (deleted)' : canonical(command) !== executable) return []
     let args: string[] | null
     try {
       // Startup recovery must remain reachable when the native component is missing or damaged.
@@ -575,7 +602,8 @@ export function inspectOwnedCrashpadProcesses(options: {
     } catch {
       return []
     }
-    if (!args?.length || canonical(args[0]) !== executable) return []
+    if (!args?.length || (deleted ? args[0] !== handler : canonical(args[0]) !== executable))
+      return []
     const databases = args.filter((arg) => arg.startsWith('--database='))
     const instances = args.filter((arg) => arg.startsWith('--annotation=openScienceInstance='))
     return databases.length === 1 &&

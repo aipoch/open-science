@@ -1,4 +1,16 @@
-import { constants, accessSync, lstatSync, renameSync, statSync } from 'node:fs'
+import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
+import { spawn } from 'node:child_process'
+import {
+  constants,
+  accessSync,
+  closeSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  renameSync,
+  statSync,
+  type BigIntStats
+} from 'node:fs'
 import { dirname } from 'node:path'
 import { isNewer } from '../../shared/update'
 import { currentApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -7,6 +19,8 @@ import { inspectOwnedLinuxAppImageLauncher } from './installation-occupancy'
 import { inspectInstallationAvailability } from './installation-protection'
 import type { UpdateStrategy } from './strategy'
 
+type ImageIdentity = Pick<BigIntStats, 'dev' | 'ino'>
+
 /** Rename the verified SDK file under the existing installation coordinator, before releasing
  * the desktop lock. A different cache filesystem retains the package for explicit installation. */
 export async function applyLinuxAppImageOnQuit(
@@ -14,7 +28,7 @@ export async function applyLinuxAppImageOnQuit(
   image: string,
   allowedProcessIds: () => number[],
   signal: AbortSignal
-): Promise<boolean> {
+): Promise<ImageIdentity | undefined> {
   const ready = strategy.getStatus()
   if (
     !ready.automaticDownloads ||
@@ -26,7 +40,7 @@ export async function applyLinuxAppImageOnQuit(
     !ready.artifactSha512 ||
     (await strategy.getInstaller())?.format !== 'appimage'
   )
-    return false
+    return undefined
   const archive = ready.localPath
   const before = lstatSync(archive, { bigint: true })
   const original = lstatSync(image, { bigint: true })
@@ -37,14 +51,14 @@ export async function applyLinuxAppImageOnQuit(
     before.ino === original.ino ||
     (before.mode & 0o111n) === 0n
   )
-    return false
+    return undefined
   // APPIMAGE is inherited by child processes. Bind replacement to the actual outer executable.
   const [launcher] = inspectOwnedLinuxAppImageLauncher()
-  if (!launcher) return false
+  if (!launcher) return undefined
   const running = statSync('/proc/' + launcher + '/exe', { bigint: true })
-  if (running.dev !== original.dev || running.ino !== original.ino) return false
+  if (running.dev !== original.dev || running.ino !== original.ino) return undefined
   await verifyArtifactChecksum(archive, ready.artifactSha512, signal)
-  let installed = false
+  let installed: ImageIdentity | undefined
   await inspectInstallationAvailability(
     {
       installationRoot: image,
@@ -65,10 +79,60 @@ export async function applyLinuxAppImageOnQuit(
         accessSync(image, constants.W_OK)
         accessSync(dirname(image), constants.W_OK | constants.X_OK)
         renameSync(archive, image)
-        installed = true
+        installed = { dev: source.dev, ino: source.ino }
       }
     },
     signal
   )
   return installed
+}
+
+// Electron's relaunch helper lives inside the old AppImage. A system shell can wait
+// for the old Desktop to close its descriptors even after that mount has disappeared.
+export function forwardLinuxAppImageLaunch(
+  image: string,
+  startupArgs: string[],
+  requests: string[],
+  installed: ImageIdentity | undefined
+): void {
+  const descriptor = openSync(image, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const target = fstatSync(descriptor, { bigint: true })
+    if (!target.isFile()) return
+    const deliver = installed && installed.ino === target.ino && installed.dev === target.dev
+    // An external replacement cannot inherit this installation's document or link.
+    if (installed && !deliver) return
+    const env = { ...process.env }
+    delete env.APPDIR
+    delete env.APPIMAGE
+    delete env.APPIMAGE_EXIT_AFTER_INSTALL
+    delete env.APPIMAGE_SILENT_INSTALL
+    if (!deliver && requests.length) env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED = '1'
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        'read -r _; [ "$1" -ef /proc/self/fd/3 ] || exit 1; exec 3<&-; exec "$@"',
+        'open-science',
+        image,
+        ...startupArgs,
+        ...(deliver ? requests : [])
+      ],
+      {
+        cwd: dirname(image),
+        detached: true,
+        env,
+        stdio: ['pipe', 'ignore', 'ignore', descriptor]
+      }
+    )
+    child.once('error', (error) => {
+      createLogger('update').error(
+        'Linux AppImage relaunch failed',
+        runtimeChildProcessErrorFields(error)
+      )
+    })
+    child.unref()
+  } finally {
+    closeSync(descriptor)
+  }
 }
