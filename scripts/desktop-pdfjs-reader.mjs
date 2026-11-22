@@ -1,12 +1,24 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { open } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export function withDesktopCMaps(getDocument, ranges, entryUrl) {
   const directory = new URL('../../cmaps/', entryUrl)
   const directoryPath = fileURLToPath(directory)
   const archive = new URL('character-maps.bin', directory)
+  const isDesktopCMapDirectory = (value) => {
+    const matchesPath = (candidate) => relative(resolve(directoryPath), resolve(candidate)) === ''
+    if (value === directory.href) return true
+    if (value.startsWith('file:')) {
+      try {
+        return matchesPath(fileURLToPath(new URL(value)))
+      } catch {
+        return false
+      }
+    }
+    return isAbsolute(value) && matchesPath(value)
+  }
 
   class PackedCMapReader {
     async fetch({ name }) {
@@ -36,7 +48,7 @@ export function withDesktopCMaps(getDocument, ranges, entryUrl) {
       !source.CMapReaderFactory &&
       source.cMapPacked !== false &&
       source.useWorkerFetch !== true &&
-      (url === directory.href || (isAbsolute(url) && relative(directoryPath, url) === ''))
+      isDesktopCMapDirectory(url)
     ) {
       return getDocument({ ...source, CMapReaderFactory: PackedCMapReader, useWorkerFetch: false })
     }

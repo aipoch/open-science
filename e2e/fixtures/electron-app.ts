@@ -41,6 +41,7 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { listWindowsProcesses, windowsProcessIsAlive } from '../../src/main/windows-process-query'
 import { terminateWindowsProcessesByIdentity } from '../../src/main/process-tree-windows'
+import { processBirthIdentity } from '../../src/main/process-birth-identity'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
@@ -1966,14 +1967,18 @@ class ElectronAppHarness implements ElectronApp {
     if (windowsProcesses) {
       if (!child.pid) throw new Error('Electron crash simulation has no launcher PID.')
       const owned = new Map(windowsProcesses)
-      const before = new Set([child.pid, ...owned.keys()])
       const deadline = Date.now() + 10_000
       // An intermediate launcher can exit before taskkill reaches every captured descendant.
       await terminateWindowsProcessesByIdentity(owned, deadline)
       for (;;) {
-        const remaining = listWindowsProcesses().filter(
-          ({ pid, ppid }) => (before.has(pid) || before.has(ppid)) && windowsProcessIsAlive(pid)
-        )
+        const remaining = listWindowsProcesses().filter(({ pid }) => {
+          const birth = owned.get(pid)
+          return (
+            birth !== undefined &&
+            windowsProcessIsAlive(pid) &&
+            processBirthIdentity(pid) === `windows-creation-time:${birth}`
+          )
+        })
         if (remaining.length === 0) {
           reaped = true
           break
