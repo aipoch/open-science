@@ -8964,7 +8964,7 @@
     "Restarting": "Перезапускается",
     "Active kernels": "Активные ядра",
     "No active kernels": "Нет активных ядер",
-    "System memory, including caches": "Системная память, включая кеши",
+    "System memory, excluding caches": "Системная память без кешей",
     "Updates every 3 seconds": "Обновление каждые 3 секунды",
     "Stop · free ~{{memory}}": "Остановить · освободить ~{{memory}}",
     "Process memory is estimated for each tree. Processes from previous app runs are not listed.": "Память оценивается для каждого дерева процессов. Процессы от предыдущих запусков приложения не показаны.",

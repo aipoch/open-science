@@ -464,7 +464,7 @@ export function ComputeProcessMonitor({
                     {host?.cpuPercent === undefined ? '—' : `${host.cpuPercent.toFixed(1)}%`}
                   </strong>
                 </span>
-                <span className="whitespace-nowrap" title={t('System memory, including caches')}>
+                <span className="whitespace-nowrap" title={t('System memory, excluding caches')}>
                   {t('Memory usage')}{' '}
                   <strong className="ml-1 font-medium tabular-nums text-foreground">
                     {host

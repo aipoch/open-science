@@ -8466,7 +8466,7 @@
     "Restarting": "다시 시작 중",
     "Active kernels": "활성 커널",
     "No active kernels": "활성 커널이 없습니다",
-    "System memory, including caches": "캐시를 포함한 시스템 메모리",
+    "System memory, excluding caches": "캐시를 제외한 시스템 메모리",
     "Process tree": "프로세스 트리",
     "Updates every 3 seconds": "3초마다 업데이트",
     "Stop · free ~{{memory}}": "중지 · 약 {{memory}} 확보",

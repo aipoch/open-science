@@ -78,6 +78,17 @@ export type DarwinMemoryPressureSample = {
 }
 /** Current read-only sysctl snapshot. Missing/unknown levels are never healthy evidence. */
 export function sampleDarwinMemoryPressure(): Promise<DarwinMemoryPressureSample>
+export type DarwinMemoryUsageSample = {
+  supported: boolean
+  complete: boolean
+  totalBytes?: number
+  usedBytes?: number
+  freeBytes?: number
+  cachedBytes?: number
+  error?: number
+}
+/** Current Activity Monitor-style memory counters from macOS VM statistics. */
+export function sampleDarwinMemoryUsage(): DarwinMemoryUsageSample
 /** Native Dispatch notification; a subscription alone does not establish the current level. */
 export function subscribeDarwinMemoryPressure(
   listener: (event: { pressureLevel: number; eventSequence: number }) => void
