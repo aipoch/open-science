@@ -52,7 +52,7 @@ export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [visible, setVisible] = useState(
     () =>
-      window.api?.platform === 'darwin' &&
+      (window.api?.platform === 'darwin' || window.api?.platform === 'linux') &&
       window.location.protocol === 'file:' &&
       window.location.hash === '#update-open-interrupted'
   )
