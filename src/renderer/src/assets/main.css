@@ -1648,3 +1648,17 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     visibility: visible;
   }
 }
+
+/* Keep a long line at its target width while the panel reveals it. In the
+   variables view only the primary column's share of the width change applies.
+   Round both widths alike so a flex subpixel cannot trigger a second text layout. */
+.notebook-large-text-output {
+  width: var(
+    --notebook-output-drag-width,
+    round(
+      nearest,
+      100% + var(--notebook-opening-extra-width, 0px) * var(--notebook-output-pane-share, 1),
+      1px
+    )
+  );
+}

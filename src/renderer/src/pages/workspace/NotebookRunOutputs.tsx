@@ -156,11 +156,7 @@ const OutputTextBlock = ({
   // Freeze the container during a divider drag. Changing the pre's own width invalidates
   // its line layout at pointer-down even when the measured width is identical.
   return (
-    <div
-      className={
-        large ? 'notebook-large-text-output w-[var(--notebook-output-drag-width,auto)]' : undefined
-      }
-    >
+    <div className={large ? 'notebook-large-text-output' : undefined}>
       <pre
         data-testid={testId}
         className={`${notebookOutputTextClassName} ${tone} ${large ? '[content-visibility:auto] [contain-intrinsic-block-size:auto_16rem]' : ''}`}

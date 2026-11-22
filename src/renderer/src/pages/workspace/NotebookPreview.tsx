@@ -589,7 +589,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     previewActiveItemId,
     notebookItemInWorkbench
   })
-  const cellsViewportRef = useFollowScrollBottom(followEnabled && !history?.loading)
   const terminalViewportRef = useFollowScrollBottom(followEnabled)
   // An explicit environment selection wins; otherwise show the latest historical environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
@@ -920,6 +919,11 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     ? frameRuns.find((run) => run.runId === item.notebookRunId)
     : undefined
 
+  const cellsViewportRef = useFollowScrollBottom(followEnabled && !history?.loading, {
+    resetKey: focusedRun && JSON.stringify([focusedRun.runId, item.notebookRunFocusRequest ?? 0]),
+    followOnReset: !focusedRun
+  })
+
   const loadHistory = useCallback(
     async (target: { cursor?: NotebookRunCursor; runId?: string }): Promise<void> => {
       if (
@@ -1051,7 +1055,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     return () => window.clearTimeout(timer)
   }, [focusedRun, item.notebookRunFocusRequest, notebookRequestKey])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!item.notebookRunId || !visibleRuns.some((run) => run.runId === item.notebookRunId)) return
     const requestKey = `${item.notebookRunId}:${item.notebookRunFocusRequest ?? 0}`
     if (lastFocusedRunRequest.current === requestKey) return
@@ -2051,7 +2055,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
             <div
               className={cn(
                 'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
-                showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
+                showVariables && activeDataLanguage
+                  ? 'hidden [--notebook-output-pane-share:0.6] @min-[55rem]/notebook:flex'
+                  : 'flex'
               )}
               data-testid="notebook-primary-view"
             >
