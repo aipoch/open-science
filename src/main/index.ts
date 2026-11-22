@@ -97,7 +97,7 @@ import {
   planMacUpdateOnQuit
 } from './update/mac-background-update'
 import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
-import { applyLinuxAppImageOnQuit } from './update/linux-appimage-quit'
+import { applyLinuxAppImageOnQuit, forwardLinuxAppImageLaunch } from './update/linux-appimage-quit'
 import { loadLinuxBackgroundDownloads } from './update/linux-background-download'
 import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
@@ -250,7 +250,8 @@ const buildZoomSafeApplicationMenu = (
 async function startDesktop(): Promise<void> {
   // Consume the native sender's one-launch signal before starting any child processes.
   let updateOpenInterrupted =
-    process.platform === 'darwin' && process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED === '1'
+    (process.platform === 'darwin' || process.platform === 'linux') &&
+    process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED === '1'
   delete process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
@@ -1982,6 +1983,7 @@ async function startDesktop(): Promise<void> {
   })
   const settings = async (): Promise<SettingsSnapshot> =>
     client!.invokeHost('settings:get-settings') as Promise<SettingsSnapshot>
+  let installedLinuxImage: Awaited<ReturnType<typeof applyLinuxAppImageOnQuit>>
   let quitStoppedService = false
   let work: DesktopShutdownWork | undefined
   let admission: Promise<unknown> = Promise.resolve()
@@ -2188,10 +2190,12 @@ async function startDesktop(): Promise<void> {
     },
     forwardPendingLaunchOnExit: () => {
       if (quittingImageLaunch?.requested && process.env.APPIMAGE) {
-        app.relaunch({
-          execPath: process.env.APPIMAGE,
-          args: [...credentialArgs, ...quittingImageLaunch.args]
-        })
+        forwardLinuxAppImageLaunch(
+          process.env.APPIMAGE,
+          [...credentialArgs, ...(process.argv.includes('--no-sandbox') ? ['--no-sandbox'] : [])],
+          [...quittingImageLaunch.args],
+          installedLinuxImage
+        )
       }
     },
     beforeExit: async (cleanOrdinaryQuit) => {
@@ -2210,7 +2214,7 @@ async function startDesktop(): Promise<void> {
         return {
           timeoutMs: 10_000,
           run: async () => {
-            await applyLinuxAppImageOnQuit(
+            installedLinuxImage = await applyLinuxAppImageOnQuit(
               update,
               image,
               allowedInstallationProcessIds,
