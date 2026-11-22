@@ -675,8 +675,10 @@ it('checks export metadata values independently of their field names', () => {
     'X-Amz-Credential',
     'X-Goog-Credential',
     'X-Signature'
-  ])
-    expect(findSensitivePackageText('https://example.org/?' + key + '=opaque')).toBeDefined()
+  ]) {
+    expect(findSensitivePackageText('https://example.org/?' + key + '=opaque')).toBeUndefined()
+    expect(findSensitivePackageText('https://example.org/?' + key + '=' + secret)).toBeDefined()
+  }
   expect(findSensitivePackageText('authMan["password"]="private-value"')?.label).toBe('password')
   expect(findSensitivePackageText(`page_token=${cursor}&password=private-value`)?.label).toBe(
     'password'
