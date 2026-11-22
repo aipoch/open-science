@@ -427,7 +427,7 @@ const ApplicationPresentationContent = ({
                 )}
               </Suspense>
               <ActionToastStack>
-                <InterruptedUpdateOpenNotice />
+                <InterruptedUpdateOpenNotice platform="darwin" />
                 {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
                   <SessionPersistenceAlert
                     title={t('Saved conversations could not be loaded')}
@@ -474,6 +474,7 @@ const ApplicationPresentationContent = ({
                 inert={!isBasePresentationActive}
                 aria-hidden={isBasePresentationActive ? undefined : true}
               >
+                <InterruptedUpdateOpenNotice platform="linux" />
                 <EnvStatusBanner
                   ui={startup.environment.ui}
                   onRetry={startup.environment.retry}
