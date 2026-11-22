@@ -312,6 +312,10 @@ await writeFile(
     2
   ) + '\n'
 )
+if (values.desktop) {
+  const { compactDesktopPackageModules } = await import('./desktop-package-modules.mjs')
+  await compactDesktopPackageModules(stage, installed)
+}
 console.log(
   `Staged ${process.platform}/${process.arch} ${values.desktop ? 'desktop' : 'standalone'} artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
 )
