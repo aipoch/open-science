@@ -33,6 +33,34 @@ export type MonitoredInterpreter = MonitoredKernelProcess & {
 type ProcessSample = NotebookProcessObservation['processes'][number] & { cpuSeconds?: number }
 const run = promisify(execFile)
 const nativeRequire = createRequire(import.meta.url)
+const validBytes = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+async function hostMemory(): Promise<{ totalBytes: number; usedBytes: number }> {
+  const fallbackTotalBytes = totalmem()
+  if (process.platform === 'darwin') {
+    try {
+      const native = nativeRequire(
+        '@aipoch/process-tree-native'
+      ) as typeof import('@aipoch/process-tree-native')
+      const sample = native.sampleDarwinMemoryUsage()
+      if (
+        sample.supported &&
+        sample.complete &&
+        validBytes(sample.totalBytes) &&
+        sample.totalBytes > 0 &&
+        validBytes(sample.usedBytes) &&
+        sample.usedBytes <= sample.totalBytes
+      ) {
+        return { totalBytes: sample.totalBytes, usedBytes: sample.usedBytes }
+      }
+    } catch {
+      // Fall back to the portable Node.js counters when the native sampler is unavailable.
+    }
+  }
+  return { totalBytes: fallbackTotalBytes, usedBytes: fallbackTotalBytes - freemem() }
+}
+
 const cpuTimes = (): { idle: number; total: number } =>
   cpus().reduce(
     (sum, cpu) => ({
@@ -252,7 +280,7 @@ export class NotebookProcessMonitor {
       }
     })
     this.previousProcesses = nextProcesses
-    const memoryTotalBytes = totalmem()
+    const memory = await hostMemory()
     return {
       sampledAt: Date.now(),
       host: {
@@ -260,8 +288,8 @@ export class NotebookProcessMonitor {
         platform: platform(),
         cpuCount: cpus().length,
         cpuPercent,
-        memoryTotalBytes,
-        memoryUsedBytes: memoryTotalBytes - freemem(),
+        memoryTotalBytes: memory.totalBytes,
+        memoryUsedBytes: memory.usedBytes,
         uptimeSeconds: uptime()
       },
       processMetricsAvailable: available,

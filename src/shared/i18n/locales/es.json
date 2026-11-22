@@ -8814,7 +8814,7 @@
     "Restarting": "Reiniciando",
     "Active kernels": "Kernels activos",
     "No active kernels": "No hay kernels activos",
-    "System memory, including caches": "Memoria del sistema, incluidas las cachés",
+    "System memory, excluding caches": "Memoria del sistema, sin cachés",
     "Process tree": "Árbol de procesos",
     "Updates every 3 seconds": "Actualizar cada 3 segundos",
     "Stop · free ~{{memory}}": "Detener · liberar ~{{memory}}",

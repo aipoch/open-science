@@ -32,6 +32,26 @@ test('reads a current macOS pressure level or returns explicit unsupported evide
   }
 })
 
+test('reads Activity Monitor-style macOS memory counters or explicit unsupported evidence', () => {
+  assert.equal(typeof native.sampleDarwinMemoryUsage, 'function')
+  const result = native.sampleDarwinMemoryUsage()
+  if (process.platform !== 'darwin') {
+    assert.equal(result.supported, false)
+    assert.equal(result.complete, false)
+    return
+  }
+  assert.equal(result.supported, true)
+  assert.equal(result.complete, true)
+  assert.ok(Number.isSafeInteger(result.totalBytes))
+  assert.ok(Number.isSafeInteger(result.usedBytes))
+  assert.ok(Number.isSafeInteger(result.freeBytes))
+  assert.ok(Number.isSafeInteger(result.cachedBytes))
+  assert.ok(result.usedBytes <= result.totalBytes)
+  assert.ok(
+    result.freeBytes + result.cachedBytes + result.usedBytes >= result.totalBytes - 16 * 1024
+  )
+})
+
 test('an active unreferenced subscription permits clean runtime shutdown', () => {
   const child = spawnSync(
     process.execPath,

@@ -8468,7 +8468,7 @@
     "Restarting": "正在重启",
     "Active kernels": "活跃内核",
     "No active kernels": "没有活跃内核",
-    "System memory, including caches": "系统内存，包含缓存",
+    "System memory, excluding caches": "系统内存，不含缓存",
     "Process tree": "进程树",
     "Updates every 3 seconds": "每 3 秒更新",
     "Stop · free ~{{memory}}": "停止 · 预计释放 {{memory}}",

@@ -8468,7 +8468,7 @@
     "Restarting": "再起動中",
     "Active kernels": "アクティブなカーネル",
     "No active kernels": "アクティブなカーネルはありません",
-    "System memory, including caches": "キャッシュを含むシステムメモリ",
+    "System memory, excluding caches": "キャッシュを除くシステムメモリ",
     "Process tree": "プロセスツリー",
     "Updates every 3 seconds": "3秒ごとに更新",
     "Stop · free ~{{memory}}": "停止 · 約 {{memory}} を解放",

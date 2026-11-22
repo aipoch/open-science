@@ -8637,7 +8637,7 @@
     "Restarting": "Wird neu gestartet",
     "Active kernels": "Aktive Kernel",
     "No active kernels": "Keine aktiven Kernel",
-    "System memory, including caches": "Systemspeicher einschließlich Caches",
+    "System memory, excluding caches": "Systemspeicher ohne Caches",
     "Process tree": "Prozessbaum",
     "Updates every 3 seconds": "Aktualisierung alle 3 Sekunden",
     "Stop · free ~{{memory}}": "Stoppen · ~{{memory}} freigeben",

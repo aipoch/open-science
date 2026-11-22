@@ -8468,7 +8468,7 @@
     "Restarting": "正在重新啟動",
     "Active kernels": "作用中的核心",
     "No active kernels": "沒有作用中的核心",
-    "System memory, including caches": "系統記憶體，包含快取",
+    "System memory, excluding caches": "系統記憶體，不含快取",
     "Process tree": "處理程序樹",
     "Updates every 3 seconds": "每 3 秒更新",
     "Stop · free ~{{memory}}": "停止 · 預計釋放 {{memory}}",
