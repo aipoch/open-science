@@ -1300,8 +1300,8 @@ describe('provider registry', () => {
     )
     expect(getVendorModelIds(planId, 'global')).toEqual(getVendorModelIds(planId, 'china'))
     expect(getVendorModelIds(planId)).toEqual([
-      'qwen3.8-max',
       'qwen4-max-preview',
+      'qwen3.8-max',
       'qwen4-max',
       'auto',
       'qwen3.8-flash',

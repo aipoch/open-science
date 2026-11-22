@@ -64,7 +64,7 @@ it.each([
   ['apodex', undefined, 'apodex-1.1'],
   ['stepfun', undefined, 'step-5-preview'],
   ['bailian', undefined, 'qwen3.8-max'],
-  ['bailianplan', undefined, 'qwen3.8-max'],
+  ['bailianplan', undefined, 'qwen4-max-preview'],
   ['stepplan', undefined, 'step-5-preview']
 ] as const)('preserves the initial model for %s/%s', (vendor, region, expected) => {
   expect(defaultVendorModel(vendor, region)).toBe(expected)

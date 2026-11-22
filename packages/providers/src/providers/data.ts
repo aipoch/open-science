@@ -372,15 +372,15 @@ const definitions: readonly OfficialVendor[] = [
     // General-purpose chat models listed by both the Beijing and Singapore Token Plans.
     models: [
       {
-        id: 'qwen3.8-max',
-        contextWindow: 983_616,
-        maxOutputTokens: 131_072,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
-      },
-      {
         id: 'qwen4-max-preview',
         contextWindow: 1_000_000,
         maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
+        id: 'qwen3.8-max',
+        contextWindow: 983_616,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
