@@ -102,6 +102,7 @@
         "scripts/windows-signing-policy.test.ts",
         "scripts/stage-backend.mjs",
         "scripts/desktop-film-compiler.mjs",
+        "scripts/desktop-package-modules.mjs",
         "scripts/pack-web-assets.mjs",
         "scripts/stage-npm-release.mjs",
         "scripts/stage-npm-release.test.ts",

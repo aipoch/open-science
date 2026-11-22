@@ -166,6 +166,8 @@
     "scripts/wsl2-build-flags.d.mts",
     "scripts/stage-backend.mjs",
     "scripts/desktop-film-compiler.mjs",
+    "scripts/desktop-package-modules.mjs",
+    "scripts/desktop-package-modules.d.mts",
     "scripts/desktop-film-compiler.d.mts",
     "scripts/pack-web-assets.mjs",
     "scripts/pack-web-assets.d.mts",

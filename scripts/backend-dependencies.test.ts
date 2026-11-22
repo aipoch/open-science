@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { externalAcpAvailable } from '../test/acp-agent-runtime'
+import { compactDesktopPackageModules } from './desktop-package-modules.mjs'
 import {
   assertBackendImports,
   backendDependencyIncludes,
@@ -36,6 +37,65 @@ import {
 it('stages dynamically loaded connector providers in the desktop backend', () => {
   expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
   expect(desktopExternalClosure(process.cwd())).toContain('diff')
+})
+
+it('bundles desktop JS while preserving incoming type references and ambient declarations', async () => {
+  const stage = await mkdtemp(join(tmpdir(), 'desktop-module-stage-'))
+  const pkg = join(stage, 'node_modules/@aipoch/pdf-translation')
+  const dist = join(pkg, 'dist')
+  try {
+    await mkdir(dist, { recursive: true })
+    await writeFile(
+      join(pkg, 'package.json'),
+      JSON.stringify({
+        name: '@aipoch/pdf-translation',
+        type: 'module',
+        exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } }
+      })
+    )
+    for (const [file, contents] of Object.entries({
+      'index.js': "export { answer } from './internal.js'",
+      'internal.js': 'export const answer = 42',
+      'checkpoint-store.js': 'export {}',
+      'local-contract.js': 'export {}',
+      'index.d.ts': "export type { Answer } from './public.js'",
+      'public.d.ts': 'export type Answer = number',
+      'internal.d.ts': 'export declare const answer: number',
+      'referenced.d.ts': 'export type External = string',
+      'ambient.d.ts': 'interface DesktopGlobal {}'
+    }))
+      await writeFile(join(dist, file), contents)
+    await writeFile(
+      join(stage, 'consumer.d.ts'),
+      "export type { External } from './node_modules/@aipoch/pdf-translation/dist/referenced.js'"
+    )
+    await compactDesktopPackageModules(stage, new Map([[pkg, '1']]))
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import { answer } from '@aipoch/pdf-translation'; console.log(answer)"
+      ],
+      { cwd: stage }
+    )
+    expect(stdout.trim()).toBe('42')
+    const files = await readdir(dist)
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'index.d.ts',
+        'public.d.ts',
+        'referenced.d.ts',
+        'ambient.d.ts',
+        'local-contract.js',
+        'checkpoint-store.js'
+      ])
+    )
+    expect(files).not.toContain('internal.d.ts')
+    expect(files).not.toContain('internal.js')
+  } finally {
+    await rm(stage, { recursive: true, force: true })
+  }
 })
 
 describe('generated native Prisma payload', () => {
@@ -362,7 +422,7 @@ describe('desktop-only dependency contents', () => {
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       // These helpers take explicit staging roots and resolve their build tools from the checkout.
-      for (const name of ['pack-web-assets', 'desktop-film-compiler']) {
+      for (const name of ['pack-web-assets', 'desktop-film-compiler', 'desktop-package-modules']) {
         const helper = pathToFileURL(join(process.cwd(), 'scripts', name + '.mjs')).href
         await put(`scripts/${name}.mjs`, `export * from ${JSON.stringify(helper)}`)
       }
