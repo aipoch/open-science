@@ -19,9 +19,9 @@ type NotebookMemoryPolicyConfigResult = Readonly<{
 }>
 
 const DEFAULT_NOTEBOOK_MEMORY_POLICY: NotebookMemoryPolicy = Object.freeze({
-  windowsEnterRatio: 0.1,
-  windowsExitRatio: 0.2,
-  windowsPhysicalCaps: Object.freeze({ enterBytes: 800 * 1024 ** 2, exitBytes: 1024 ** 3 }),
+  windowsEnterRatio: 0.05,
+  windowsExitRatio: 0.1,
+  windowsPhysicalCaps: Object.freeze({ enterBytes: 400 * 1024 ** 2, exitBytes: 800 * 1024 ** 2 }),
   linuxEnterRatio: 0.1,
   linuxExitRatio: 0.2,
   macNormalRecoveryMs: 20_000
