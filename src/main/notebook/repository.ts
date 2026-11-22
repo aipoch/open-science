@@ -137,6 +137,7 @@ type SessionInitialization = Omit<LaneHistory, 'runs'> & {
 // Positions refer to the authoritative manifest. Only append and in-place lifecycle transitions
 // may operate on the remaining Runs; complete history readers never receive this projection.
 type DetachedRuns = {
+  analysis?: Map<number, NotebookRunRecord>
   slots: Map<number, RunReference>
   submissionIds: Set<string>
   hasBackgroundRuns: boolean
@@ -326,6 +327,7 @@ const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
 const RUN_TERMINAL_OUTBOX_DIR = '.run-terminal-outbox'
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
+const MAX_ANALYSIS_METADATA_BYTES = 1024 * 1024
 const MAX_LANE_SUMMARY_BYTES = 256 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
 const log = createLogger('notebook:persistence')
@@ -1319,13 +1321,57 @@ class NotebookRunRepository {
     options: ReadSessionRunsOptions = {}
   ): Promise<NotebookRunRecord[]> {
     const cached = await this.cachedHistory(projectId, sessionId)
-    if (!cached) return this.readSessionRuns(projectId, sessionId, options)
-    const runs = cached.documents
-      .flatMap((document) => document.runs)
+    const lanes = cached
+      ? cached.documents.map((doc) => doc.runs)
+      : await this.readSessionLaneValues(projectId, sessionId, (lane) =>
+          this.readLaneAnalysisRuns(projectId, sessionId, lane)
+        )
+    const runs = lanes
+      .flat()
       .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
     return options.includeEnvironmentManifests
       ? Promise.all(runs.map((run) => this.withRunEnvironmentManifest(run)))
       : runs
+  }
+
+  private async readLaneAnalysisRuns(
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity
+  ): Promise<NotebookRunRecord[]> {
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const entry = this.laneSummaries.get(path)
+    const view = entry && this.lifecycleViews.get(entry.summary)
+    const analysis = view?.detached.analysis
+    if (
+      entry &&
+      view &&
+      analysis &&
+      (await this.detachedFilesUnchanged(path, entry.identity, view.detached))
+    ) {
+      // Newly published inline Runs still have their in-memory shape. Apply the same
+      // portable-path and JSON normalization as reopening their bounded manifest.
+      const encoded = encodeRunDocumentDataPaths(view.remaining, this.storageRoot)
+      const inline = normalizeDocument(
+        this.storageRoot,
+        { projectId, sessionId, lane },
+        decodeRunDocumentDataPaths(
+          JSON.parse(JSON.stringify(encoded)) as NotebookRunDocument,
+          this.storageRoot
+        )
+      )
+      let nextInline = 0
+      const runs = Array.from(
+        { length: analysis.size + view.remaining.runs.length },
+        (_, index) => analysis.get(index) ?? inline.runs[nextInline++]
+      )
+      return this.historyRuns({ ...view.remaining, runs }, projectId, sessionId)
+    }
+    return this.historyRuns(
+      await this.loadExisting(projectId, sessionId, lane),
+      projectId,
+      sessionId
+    )
   }
 
   async hasCachedForegroundOnlyHistory(
@@ -2341,6 +2387,19 @@ class NotebookRunRepository {
     })
   }
 
+  private async detachedFilesUnchanged(
+    path: string,
+    identity: DocumentFileIdentity,
+    detached: DetachedRuns
+  ): Promise<boolean> {
+    return (
+      sameDocumentFileIdentity(identity, await statIfPresent(path)) &&
+      !(await this.hasRecoveryCandidate(path)) &&
+      (await this.records.unchanged(dirname(path), Array.from(detached.slots.values()))) &&
+      sameDocumentFileIdentity(identity, await statIfPresent(path))
+    )
+  }
+
   private async mutateLifecycle(
     projectId: string,
     sessionId: string,
@@ -2356,10 +2415,7 @@ class NotebookRunRepository {
         entry &&
         view &&
         !needsDetachedRun(view.detached) &&
-        sameDocumentFileIdentity(entry.identity, await statIfPresent(path)) &&
-        !(await this.hasRecoveryCandidate(path)) &&
-        (await this.records.unchanged(dirname(path), Array.from(view.detached.slots.values()))) &&
-        sameDocumentFileIdentity(entry.identity, await statIfPresent(path))
+        (await this.detachedFilesUnchanged(path, entry.identity, view.detached))
       ) {
         const next = transform(view.remaining)
         if (next !== view.remaining) await this.persist(next, view.detached, entry.summary.rows)
@@ -2478,10 +2534,23 @@ class NotebookRunRepository {
         slots.size &&
         slots.size + remaining.runs.length === document.runs.length
       ) {
-        this.lifecycleViews.set(summary, {
-          remaining,
-          detached: { slots, submissionIds, hasBackgroundRuns, bytes: detachedBytes }
-        })
+        const detached: DetachedRuns = {
+          slots,
+          submissionIds,
+          hasBackgroundRuns,
+          bytes: detachedBytes
+        }
+        // Keep only validated immutable inputs. The same slots survive admission and terminal writes.
+        const analysis = new Map<number, NotebookRunRecord>()
+        let analysisBytes = 0
+        for (const index of slots.keys()) {
+          const row = { ...document.runs[index], text: emptyText(), outputs: [] }
+          analysisBytes += estimateReplayBytes(row) + 32
+          if (analysisBytes > MAX_ANALYSIS_METADATA_BYTES) break
+          analysis.set(index, row)
+        }
+        if (analysis.size === slots.size) detached.analysis = analysis
+        this.lifecycleViews.set(summary, { remaining, detached })
       }
     }
     this.storeLaneSummary(filePath, identity, summary)

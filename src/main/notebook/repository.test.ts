@@ -2683,7 +2683,10 @@ it('retains verified external records in place across concurrent admission and t
   const writer = new NotebookRunRepository(root)
   const document = await writer.loadOrCreate({ ...request, workspaceCwd: root })
   const path = join(document.notebookSessionRoot, 'run.json')
+  const { manifest, checksum } = completedEnvironmentManifest()
   const old = admittedRun({
+    environmentManifest: manifest,
+    environmentManifestChecksum: checksum,
     runId: 'old',
     submissionIdentity: 'old-submission',
     status: 'completed',
@@ -2700,7 +2703,7 @@ it('retains verified external records in place across concurrent admission and t
   await reader.findExisting(scope.projectId, scope.sessionId, lane)
   const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
   try {
-    const run = admittedRun()
+    const run = admittedRun({ cwdBefore: '/workspace', environment: undefined })
     const admissions = await Promise.all(
       [1, 2].map(() => reader.appendOrGetRun({ ...request, run }))
     )
@@ -2734,6 +2737,17 @@ it('retains verified external records in place across concurrent admission and t
     ])
     expect(stored.runs[1]).toEqual(reference)
     expect(stored.runs[3].status).toBe('completed')
+    const args = [scope.projectId, scope.sessionId, { includeEnvironmentManifests: true }] as const
+    const full = await new NotebookRunRepository(root).readSessionRuns(...args)
+    reads.mockClear()
+    const analysis = await reader.readAnalysisRuns(...args)
+    expect(analysis).toStrictEqual(
+      full.map((row) =>
+        row.runId === old.runId ? { ...row, text: admittedRun().text, outputs: [] } : row
+      )
+    )
+    expect(analysis.find((row) => row.runId === old.runId)?.environmentManifest).toEqual(manifest)
+    expect(reads.mock.calls.map(([path]) => path)).not.toContain(body)
     await expect(
       reader.appendOrGetRun({
         ...request,
@@ -2746,6 +2760,7 @@ it('retains verified external records in place across concurrent admission and t
     ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
     await writeFile(body, Buffer.alloc(reference.bytes, 32))
     await expect(reader.appendOrGetRun({ ...request, run })).rejects.toThrow('corrupt')
+    expect(await reader.readAnalysisRuns(scope.projectId, scope.sessionId)).toEqual([])
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(stored)
   } finally {
     reads.mockRestore()
