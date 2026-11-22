@@ -106,8 +106,8 @@ describe('ComposerMessageQueue', () => {
         )
       )
       const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
-      expect(trigger.textContent).toContain('Needs attention: 1')
-      expect(trigger.textContent?.includes('Not saved')).toBe(!messageAppended)
+      expect(trigger.textContent).toContain('Queue (1)')
+      expect(trigger.textContent).not.toContain('Not saved')
       expect(trigger.querySelector('[role="status"]')?.textContent).toContain('Needs attention: 1')
       expect(container.querySelector('[data-queue-error]')).toBeNull()
       click(trigger)
@@ -119,7 +119,6 @@ describe('ComposerMessageQueue', () => {
       } else {
         expect(details).toBeNull()
       }
-      expect(container.textContent?.includes('Unsaved queued messages: 1.')).toBe(!messageAppended)
     }
   )
 
@@ -188,7 +187,7 @@ describe('ComposerMessageQueue', () => {
 
     const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
     expect(trigger.parentElement?.dataset.testid).toBe('notebook-bar')
-    expect(trigger.textContent).toContain('Not saved')
+    expect(trigger.textContent).toContain('Queue (1)')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('[data-testid="composer-queue-item"]')).toBeNull()
     click(trigger)
@@ -197,6 +196,7 @@ describe('ComposerMessageQueue', () => {
     expect(
       container.querySelector('[data-testid="composer"] [data-testid="composer-queue-item"]')
     ).not.toBeNull()
+    expect(container.querySelector('[title="Drag or use arrow keys to reorder"]')).toBeNull()
     const preview = container.querySelector('p[title]')!
     expect(preview.textContent).toContain('Analyze the next sample')
     expect(preview.className).toContain('truncate')
