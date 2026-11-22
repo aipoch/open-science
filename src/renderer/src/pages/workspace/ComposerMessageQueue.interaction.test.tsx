@@ -55,9 +55,30 @@ const QueueHarness = (
 }
 
 describe('ComposerMessageQueue', () => {
-  it.each([false, true])(
-    'announces failed work while collapsed (appended: %s)',
-    (messageAppended) => {
+  it.each([
+    [
+      false,
+      'The queued message was not admitted.',
+      'This message is still in the queue and has not been sent.'
+    ],
+    [
+      false,
+      'Authentication required',
+      'Check your model sign-in or API key before sending this message.'
+    ],
+    [
+      false,
+      'ApplicationCommandError: offline',
+      'Could not confirm delivery. Check the conversation before sending again.'
+    ],
+    [
+      true,
+      'The queued message was not admitted.',
+      'Could not confirm delivery. Check the conversation before sending again.'
+    ]
+  ] as const)(
+    'explains a queued failure when expanded (appended: %s, detail: %s)',
+    (messageAppended, detail, expected) => {
       container = document.createElement('div')
       root = createRoot(container)
       act(() =>
@@ -70,7 +91,7 @@ describe('ComposerMessageQueue', () => {
                 attachmentCount: 0,
                 phase: 'error',
                 messageAppended,
-                error: { kind: 'send', detail: 'offline' }
+                error: { kind: 'send', detail }
               }
             ]}
             announcement="Message added to queue."
@@ -85,13 +106,19 @@ describe('ComposerMessageQueue', () => {
         )
       )
       const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
-      expect(trigger.textContent).toContain('Needs attention: 1')
-      expect(trigger.textContent?.includes('Not saved')).toBe(!messageAppended)
+      expect(trigger.textContent).toContain('Queue (1)')
+      expect(trigger.textContent).not.toContain('Not saved')
       expect(trigger.querySelector('[role="status"]')?.textContent).toContain('Needs attention: 1')
       expect(container.querySelector('[data-queue-error]')).toBeNull()
       click(trigger)
-      expect(container.querySelector('[data-queue-error]')?.textContent).toContain('offline')
-      expect(container.textContent?.includes('Unsent messages: 1.')).toBe(!messageAppended)
+      expect(container.querySelector('[data-queue-error]')?.textContent).toBe(expected)
+      const details = container.querySelector('details')
+      if (detail.startsWith('ApplicationCommandError') || messageAppended) {
+        expect(details?.open).toBe(false)
+        expect(details?.textContent).toContain(detail)
+      } else {
+        expect(details).toBeNull()
+      }
     }
   )
 
@@ -160,7 +187,7 @@ describe('ComposerMessageQueue', () => {
 
     const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
     expect(trigger.parentElement?.dataset.testid).toBe('notebook-bar')
-    expect(trigger.textContent).toContain('Not saved')
+    expect(trigger.textContent).toContain('Queue (1)')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('[data-testid="composer-queue-item"]')).toBeNull()
     click(trigger)
@@ -169,6 +196,7 @@ describe('ComposerMessageQueue', () => {
     expect(
       container.querySelector('[data-testid="composer"] [data-testid="composer-queue-item"]')
     ).not.toBeNull()
+    expect(container.querySelector('[title="Drag or use arrow keys to reorder"]')).toBeNull()
     const preview = container.querySelector('p[title]')!
     expect(preview.textContent).toContain('Analyze the next sample')
     expect(preview.className).toContain('truncate')
