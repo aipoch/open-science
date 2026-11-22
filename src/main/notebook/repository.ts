@@ -2947,9 +2947,9 @@ class NotebookRunRepository {
     stored: StoredNotebookRun[]
   ): void {
     this.pendingViews.delete(path)
-    // A bounded lifecycle view already preserves cold references across manifest writes.
+    // A manifest smaller than a hot slot can keep using the bounded lifecycle writer.
     const summary = this.laneSummaries.get(path)?.summary
-    if (summary && this.lifecycleViews.has(summary)) return
+    if (identity.size <= PENDING_RUN_BYTES && summary && this.lifecycleViews.has(summary)) return
     const references = stored.filter(isNotebookRunReference)
     const tail = { ...document, runs: document.runs.slice(coldCount) }
     if (estimateReplayBytes({ ...tail, runs: [] }) > MAX_LANE_SUMMARY_BYTES) return
@@ -3564,7 +3564,11 @@ class NotebookRunRepository {
       // A new external Run can outgrow the lifecycle view. Carry the verified cold
       // metadata into the next admission so the following Run need not reload every body.
       const coldAnalysis = detached.analysis
-      if (oversized && coldAnalysis && !this.lifecycleViews.has(summary)) {
+      if (
+        oversized &&
+        coldAnalysis &&
+        (fileInfo.size > PENDING_RUN_BYTES || !this.lifecycleViews.has(summary))
+      ) {
         let inline = 0
         const metadata = runs.map(
           (_, index) => coldAnalysis.get(index) ?? cachedDocument.runs[inline++]

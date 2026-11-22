@@ -2876,22 +2876,27 @@ describe('large immutable Notebook records', () => {
     }
   })
 
-  it('batches new Runs when external output puts a small manifest over the cache budget', async () => {
+  it.each([2, 6])('batches large history with %i inline rows', async (inlineCount) => {
     const root = await createStorageRoot()
     const repo = new NotebookRunRepository(root)
-    const request = { projectId: 'p', sessionId: 's', lane: createFrameNotebookLane('p', 's', 'f') }
+    const request = {
+      projectId: 'p',
+      sessionId: 's',
+      lane: createFrameNotebookLane('p', 's', 'f')
+    }
     const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
     await repo.appendRun({
       ...request,
       run: admittedRun({
         status: 'completed',
+        script: inlineCount === 2 ? 's'.repeat(300000) : 'print(1)',
         text: { ...admittedRun().text, stdout: 'x'.repeat(33 * 1024 * 1024) }
       })
     })
     const manifest = join(doc.notebookSessionRoot, 'run.json')
-    // The inline rows exceed the bounded lifecycle view while the manifest stays below 1 MiB.
+    // Two inline rows fit the lifecycle view; six exceed its budget.
     const seed = JSON.parse(await readFile(manifest, 'utf8'))
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < inlineCount; i++) {
       seed.runs.push(
         admittedRun({
           runId: 'inline-' + i,
@@ -2902,10 +2907,11 @@ describe('large immutable Notebook records', () => {
         })
       )
     }
-    const before = JSON.stringify(seed)
-    await writeFile(manifest, before)
+    await writeFile(manifest, JSON.stringify(seed))
     const reader = new NotebookRunRepository(root)
     await reader.findExisting('p', 's', request.lane)
+    if (inlineCount === 2) await reader.setRuntimeBindings('p', 's', {}, request.lane)
+    const before = await readFile(manifest, 'utf8')
     const beforeIndex = await reader.readSessionRunIndex('p', 's')
     const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
     try {
