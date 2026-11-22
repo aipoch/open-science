@@ -57,7 +57,7 @@ it.each([
 })
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
-  expect(workflow.on.schedule).toEqual([{ cron: '17 18 * * *' }])
+  expect(workflow.on.schedule).toEqual([{ cron: '17 11 * * *' }])
   expect(workflow.on.workflow_dispatch).toEqual({
     inputs: {
       workspace_test_pattern: {

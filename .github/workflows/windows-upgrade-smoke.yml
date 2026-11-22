@@ -4,7 +4,7 @@ name: Windows Upgrade Smoke
 # stable Release workflow. A failure is intentionally red here and can be rerun for the same tag.
 on:
   schedule:
-    - cron: '23 19 * * *'
+    - cron: '13 12 * * *' # UTC; 20:13 Asia/Singapore
   repository_dispatch:
     types:
       - windows-upgrade-smoke

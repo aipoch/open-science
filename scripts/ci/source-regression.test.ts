@@ -40,7 +40,7 @@ type Job = {
 type Workflow = {
   on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
   permissions: Record<string, string>
-  concurrency: { group: string; 'cancel-in-progress': boolean }
+  concurrency: { group: string; 'cancel-in-progress': boolean | string }
   jobs: Record<string, Job>
 }
 const scheduled = load(readFileSync('.github/workflows/source-regression.yml', 'utf8')) as Workflow
@@ -409,7 +409,7 @@ describe('independent source regression', () => {
   })
 
   it('retains both daily rounds and diagnostic modes without publication', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 11,23 * * *' }])
     const dispatch = scheduled.on.workflow_dispatch as {
       inputs: { mode: { options: string[] }; shard: { options: string[] } }
     }
@@ -437,7 +437,7 @@ describe('independent source regression', () => {
     )
     expect(scheduled.concurrency).toEqual({
       group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
-      'cancel-in-progress': true
+      'cancel-in-progress': "${{ github.event_name != 'schedule' }}"
     })
     expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
   })

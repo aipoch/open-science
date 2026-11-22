@@ -319,7 +319,7 @@ describe('release and scheduled workflow topology', () => {
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 16 * * *' }])
+    expect(schedule).toEqual([{ cron: '47 10 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
       options: [
@@ -443,7 +443,7 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 19 * * *' }])
+    expect(schedule).toEqual([{ cron: '53 11 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
       options: ['smoke', 'soak', 'package-macos-arm64']
@@ -501,7 +501,7 @@ describe('release and scheduled workflow topology', () => {
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 15 * * *' }])
+    expect(schedule).toEqual([{ cron: '17 10 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({

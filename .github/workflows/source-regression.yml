@@ -4,7 +4,7 @@ name: Source Regression
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '37 5,17 * * *' # UTC; 01:37 and 13:37 Asia/Singapore
+    - cron: '37 11,23 * * *' # UTC; 19:37 and 07:37 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
@@ -42,7 +42,9 @@ permissions:
 
 concurrency:
   group: source-regression-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  # GitHub can delay the twice-daily schedule enough for runs to overlap. Keep both scheduled
+  # coverage rounds, while manual diagnostics still replace an older manual run.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   static_impact:
