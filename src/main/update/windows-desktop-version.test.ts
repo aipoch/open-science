@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -99,7 +108,7 @@ it('selects the SDK package alongside a claimed older package and reclaims both 
   expect(await readdir(root)).toEqual([])
 })
 
-it('skips the scan while a known holder lives and rechecks after exit or PID reuse', async ({
+it('reuses only recent blocker observations and rechecks after expiry, exit or PID reuse', async ({
   onTestFinished
 }) => {
   const stage = await mkdtemp(join(tmpdir(), 'prepared-holders-'))
@@ -130,7 +139,13 @@ it('skips the scan while a known holder lives and rechecks after exit or PID reu
   identities.delete(3)
   expect(await checkColdLaunchOccupancy(stage, scan)).toBe(false)
   expect(scan).toHaveBeenCalledTimes(1)
+  const old = new Date(Date.now() - 60_000)
+  await utimes(join(stage, 'occupant-4-456'), old, old)
+  scan.mockRejectedValueOnce(busy)
+  await expect(checkColdLaunchOccupancy(stage, scan)).rejects.toBe(busy)
+  expect(await checkColdLaunchOccupancy(stage, scan)).toBe(false)
+  expect(scan).toHaveBeenCalledTimes(2)
   identities.set(4, '789')
   expect(await checkColdLaunchOccupancy(stage, scan)).toBe(true)
-  expect(scan).toHaveBeenCalledTimes(2)
+  expect(scan).toHaveBeenCalledTimes(3)
 })

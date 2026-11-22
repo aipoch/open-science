@@ -49,11 +49,13 @@ describe('Windows updater certification', () => {
         scans: ['target scan'],
         decisions: []
       })
-    const waitForExit = vi.fn()
-    const released = { previousVersion: '1.3.3', holderPid: 3576, waitForExit }
+    const waitForRecheck = vi.fn()
+    const released = { previousVersion: '1.3.3', holderPid: 3576, waitForRecheck }
     expect(await certifyShortcutVersion(launch, '1.3.4', released)).toEqual(['target scan'])
-    expect(waitForExit).toHaveBeenCalledExactlyOnceWith([3200])
-    expect(waitForExit.mock.invocationCallOrder[0]).toBeLessThan(launch.mock.invocationCallOrder[1])
+    expect(waitForRecheck).toHaveBeenCalledExactlyOnceWith([3200])
+    expect(waitForRecheck.mock.invocationCallOrder[0]).toBeLessThan(
+      launch.mock.invocationCallOrder[1]
+    )
 
     launch.mockReset().mockResolvedValue(deferred)
     await expect(certifyShortcutVersion(launch, '1.3.4', released)).rejects.toThrow(

@@ -530,21 +530,25 @@ const readShortcutEvidence = async (env, since) => {
   return { scans: scans.sort(byTime), decisions: decisions.sort(byTime) }
 }
 
-const waitForBlockersToExit = (pids) =>
-  waitFor(
-    `shortcut blockers ${pids.join(', ')} to exit`,
-    () =>
-      pids.every((pid) => {
-        try {
-          process.kill(pid, 0)
-          return false
-        } catch (error) {
-          if (error.code === 'ESRCH') return true
-          throw error
-        }
-      }),
-    30_000
+// A new cold launch can recheck on holder exit or after the product's one-minute cache expires.
+const shortcutBlockerCacheMs = 60_000
+const waitForShortcutRecheck = async (pids) => {
+  const deadline = performance.now() + shortcutBlockerCacheMs
+  while (
+    performance.now() < deadline &&
+    pids.some((pid) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch (error) {
+        if (error.code === 'ESRCH') return false
+        if (error.code === 'EPERM') return true
+        throw error
+      }
+    })
   )
+    await delay(250)
+}
 
 const certifyShortcutVersion = async (launch, expectedVersion, released) => {
   let observation = await launch()
@@ -560,7 +564,7 @@ const certifyShortcutVersion = async (launch, expectedVersion, released) => {
       pids.every((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== released.holderPid)
     ) {
       console.log('Released shortcut deferred by a different file holder:', JSON.stringify(last))
-      await released.waitForExit(pids)
+      await released.waitForRecheck(pids)
       observation = await launch()
     }
   }
@@ -1302,6 +1306,7 @@ const main = async () => {
         'Read'
       )
       try {
+        const heldStart = performance.now()
         successor.shortcutOccupancyScans = {
           held: await probeInstalledShortcut(installDirectory, env, previousVersion)
         }
@@ -1312,7 +1317,8 @@ const main = async () => {
         )
         if (
           !successor.shortcutOccupancyScans.held.length ||
-          successor.shortcutOccupancyScans.stillHeld.length
+          (performance.now() - heldStart < shortcutBlockerCacheMs &&
+            successor.shortcutOccupancyScans.stillHeld.length)
         )
           throw new Error(
             'Expected one initial occupancy check and no rescan of the same live holder.'
@@ -1324,7 +1330,7 @@ const main = async () => {
         installDirectory,
         env,
         currentVersion,
-        { previousVersion, holderPid: child.pid, waitForExit: waitForBlockersToExit }
+        { previousVersion, holderPid: child.pid, waitForRecheck: waitForShortcutRecheck }
       )
       if (!successor.shortcutOccupancyScans.released.length)
         throw new Error('The update must recheck occupancy after the holder exits.')
