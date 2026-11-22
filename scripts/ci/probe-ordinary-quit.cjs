@@ -88,8 +88,9 @@ async function main(){
        for (let attempt=0; attempt<30; attempt++) {
          await sleep(1200)
          execFileSync('import',['-window','root',screenshot])
-         const text=execFileSync('tesseract',[screenshot,'stdout'],{encoding:'utf8',stdio:['ignore','pipe','ignore']})
-         if (/update did not finish/i.test(text) && /view updates/i.test(text)) {
+         const toast=execFileSync('convert',[screenshot,'-crop','650x170+315+5','+repage','-resize','200%','png:-'])
+         const text=execFileSync('tesseract',['stdin','stdout','--psm','6'],{input:toast,encoding:'utf8',stdio:['pipe','pipe','ignore']})
+         if (/update did not finish/i.test(text) && /view\s*updates/i.test(text)) {
            console.log('Read-only fallback displayed the interrupted file notice and View updates action')
            server.close()
            return
