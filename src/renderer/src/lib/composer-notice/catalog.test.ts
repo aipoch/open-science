@@ -102,6 +102,30 @@ it('keeps protocol metadata when the turn error is used as fallback detail', () 
   expect(details).toContain('requestId: request-id')
 })
 
+it('keeps an actionable title and body for an explicit provider status', () => {
+  const body = JSON.stringify({
+    error: {
+      type: 'upstream_error',
+      message: 'Insufficient Balance (request_id: request-402)',
+      status: 402
+    }
+  })
+  const failure: ClassifiedFailure = {
+    category: 'configuration',
+    reason: 'configuration/billing',
+    responseMessage: 'Insufficient Balance (request_id: request-402)',
+    diagnostics: { status: 402, raw: body }
+  }
+  expect(noticePresentation(failure).titleKey).toBe('Model provider quota needs attention')
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Model provider quota needs attention',
+      'Check the model provider plan, quota or account balance, then retry.'
+    ).details
+  ).toContain(body)
+})
+
 it.each<[ClassifiedFailure, string]>([
   [
     {

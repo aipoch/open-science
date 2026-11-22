@@ -268,7 +268,9 @@ export const noticePresentation = (
   return {
     ...presentation,
     titleKey:
-      failure.diagnostics.protocol || providerErrorExcerpt(failure.responseMessage)
+      failure.diagnostics.protocol ||
+      (failure.reason === 'configuration/billing' && failure.diagnostics.status === 402) ||
+      providerErrorExcerpt(failure.responseMessage)
         ? presentation.titleKey
         : 'Model provider error',
     feedback: 'none'
