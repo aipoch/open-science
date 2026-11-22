@@ -4,7 +4,7 @@ name: Source Regression
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '37 11,23 * * *' # UTC; 19:37 and 07:37 Asia/Singapore
+    - cron: '37 2,14 * * *' # UTC; 10:37 and 22:37 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:

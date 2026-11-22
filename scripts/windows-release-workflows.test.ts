@@ -320,7 +320,7 @@ describe('post-merge Windows validation', () => {
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toBeUndefined()
-    expect(workflow.on?.schedule).toEqual([{ cron: '47 10 * * *' }])
+    expect(workflow.on?.schedule).toEqual([{ cron: '47 13 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
       options: [

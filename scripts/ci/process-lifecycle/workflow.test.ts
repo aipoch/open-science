@@ -53,7 +53,7 @@ it('discovers the native suite only through its dedicated configuration', () => 
 
 it('runs the three-platform fixed collection daily without an unchanged-SHA bypass', () => {
   expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch'])
-  expect(workflow.on.schedule).toEqual([{ cron: '33 12 * * *' }])
+  expect(workflow.on.schedule).toEqual([{ cron: '33 16 * * *' }])
   expect(workflow.jobs.lifecycle.strategy?.matrix.include.map((row) => row.platform)).toEqual([
     'macos',
     'linux',

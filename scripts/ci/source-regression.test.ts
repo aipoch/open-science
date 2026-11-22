@@ -409,7 +409,7 @@ describe('independent source regression', () => {
   })
 
   it('retains both daily rounds and diagnostic modes without publication', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 11,23 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 2,14 * * *' }])
     const dispatch = scheduled.on.workflow_dispatch as {
       inputs: { mode: { options: string[] }; shard: { options: string[] } }
     }
