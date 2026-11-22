@@ -2683,7 +2683,7 @@ it('counts external record bytes against the document cache budget and upgrades 
 it('retains verified external records in place across concurrent admission and terminal CAS', async () => {
   const root = await createStorageRoot()
   const scope = { projectId: 'default-project', sessionId: 'session-1' }
-  const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-1')
+  const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'adopted-root')
   const request = { ...scope, lane }
   const writer = new NotebookRunRepository(root)
   const document = await writer.loadOrCreate({ ...request, workspaceCwd: root })
@@ -2769,6 +2769,16 @@ it('retains verified external records in place across concurrent admission and t
     )
     expect(analysis.find((row) => row.runId === old.runId)?.environmentManifest).toEqual(manifest)
     expect(reads.mock.calls.map(([path]) => path)).not.toContain(body)
+    const target = { limit: 0, runIds: [old.runId], lane }
+    const cached = await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, target)
+    expect(cached?.window).toStrictEqual(
+      await reopened.readSessionRunWindow(
+        scope.projectId,
+        scope.sessionId,
+        target.limit,
+        target.runIds
+      )
+    )
     await expect(
       reader.appendOrGetRun({
         ...request,
@@ -2780,6 +2790,13 @@ it('retains verified external records in place across concurrent admission and t
       })
     ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
     await writeFile(body, Buffer.alloc(reference.bytes, 32))
+    expect(
+      await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, {
+        limit: 1,
+        runIds: [],
+        lane
+      })
+    ).toBeUndefined()
     await expect(
       reader.setRuntimeBindings(scope.projectId, scope.sessionId, {}, lane)
     ).rejects.toThrow('corrupt')

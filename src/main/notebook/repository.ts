@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookKernelMetadata,
@@ -130,6 +130,7 @@ type LaneHistory = Pick<
   NotebookRunDocument,
   'notebookSessionRoot' | 'dataRoot' | 'kernel' | 'runtimeBindings' | 'runs'
 >
+type HistoryBody = { root: string; ref: RunReference; omittedBytes?: number }
 type SessionInitialization = Omit<LaneHistory, 'runs'> & {
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'status' | 'fileEvidence'>[]
 }
@@ -1118,14 +1119,7 @@ class NotebookRunRepository {
     { remaining: NotebookRunDocument; detached: DetachedRuns }
   >()
 
-  private readonly historyBodies = new WeakMap<
-    NotebookRunRecord,
-    {
-      root: string
-      ref: RunReference
-      omittedBytes?: number
-    }
-  >()
+  private readonly historyBodies = new WeakMap<NotebookRunRecord, HistoryBody>()
   private readonly runIndexes = new WeakMap<
     NotebookRunDocument,
     { rows: ReplayRunIndex[]; byId: Map<string, NotebookRunRecord> }
@@ -1189,14 +1183,16 @@ class NotebookRunRepository {
 
   private async cachedHistory(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    detachedBodies?: Map<NotebookRunRecord, HistoryBody>
   ): Promise<{ summaries: LaneSummary[]; documents: LaneHistory[] } | undefined> {
     const root = getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
     const framesRoot = join(root, 'frames')
     if (
       !Array.from(this.laneSummaries.values()).some(
         ({ summary }) =>
-          summary.history &&
+          (summary.history ||
+            (detachedBodies && this.lifecycleViews.get(summary)?.detached.analysis)) &&
           (summary.notebookSessionRoot === root ||
             dirname(summary.notebookSessionRoot) === framesRoot)
       )
@@ -1204,10 +1200,23 @@ class NotebookRunRepository {
       return undefined
     const summaries = await this.cachedSessionSummaries(projectId, sessionId)
     if (!summaries?.length) return undefined
+    // Mixed cache representations retain the ordinary reader's per-lane recovery behavior.
+    const detachedWindow =
+      detachedBodies && summaries.every((s) => this.lifecycleViews.get(s)?.detached.analysis)
     const documents = []
     for (const summary of summaries) {
       if (summary.history) {
         documents.push(summary.history)
+        continue
+      }
+      if (detachedWindow) {
+        const lane =
+          summary.notebookSessionRoot === root
+            ? undefined
+            : createFrameNotebookLane(projectId, sessionId, basename(summary.notebookSessionRoot))
+        const history = await this.readDetachedHistory(projectId, sessionId, lane, detachedBodies)
+        if (!history) return undefined
+        documents.push(history)
         continue
       }
       // Small sibling lanes can use the repository's existing full-document cache.
@@ -1244,7 +1253,10 @@ class NotebookRunRepository {
     }
   ): Promise<NotebookHistorySnapshot | undefined> {
     const { limit, runIds, frameId, before, lane, retain } = query
-    const cached = await this.cachedHistory(projectId, sessionId)
+    const detachedBodies = query.backgroundTaskMetadata
+      ? undefined
+      : new Map<NotebookRunRecord, HistoryBody>()
+    const cached = await this.cachedHistory(projectId, sessionId, detachedBodies)
     if (!cached) return undefined
     const path = lane && getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
     const kernel = path
@@ -1277,7 +1289,7 @@ class NotebookRunRepository {
     const runs: NotebookRunRecord[] = []
     for (let index = window.runs.length - 1; index >= 0; index--) {
       const row = window.runs[index]
-      const body = this.historyBodies.get(row)
+      const body = this.historyBodies.get(row) ?? detachedBodies?.get(row)
       let run = row
       if (body && !query.backgroundTaskMetadata) {
         try {
@@ -1351,6 +1363,20 @@ class NotebookRunRepository {
       }
       if (await this.laneFilesUnchanged(path, entry.identity, refs)) return history.runs
     }
+    const detached = await this.readDetachedHistory(projectId, sessionId, lane)
+    if (detached) return detached.runs
+    const document = await this.findExisting(projectId, sessionId, lane)
+    return document ? this.historyRuns(document, projectId, sessionId) : []
+  }
+
+  private async readDetachedHistory(
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity,
+    bodies?: Map<NotebookRunRecord, HistoryBody>
+  ): Promise<LaneHistory | undefined> {
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const entry = this.laneSummaries.get(path)
     const view = entry && this.lifecycleViews.get(entry.summary)
     const analysis = view?.detached.analysis
     if (
@@ -1379,10 +1405,15 @@ class NotebookRunRepository {
         { length: analysis.size + view.remaining.runs.length },
         (_, index) => analysis.get(index) ?? inline.runs[nextInline++]
       )
-      return this.historyRuns({ ...view.remaining, runs }, projectId, sessionId)
+      const history = this.historyRuns({ ...inline, runs }, projectId, sessionId)
+      if (bodies) {
+        for (const [index, ref] of view.detached.slots) {
+          bodies.set(history[index], { root: inline.notebookSessionRoot, ref })
+        }
+      }
+      return { ...inline, runs: history }
     }
-    const document = await this.findExisting(projectId, sessionId, lane)
-    return document ? this.historyRuns(document, projectId, sessionId) : []
+    return undefined
   }
 
   async hasCachedForegroundOnlyHistory(
