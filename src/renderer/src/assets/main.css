@@ -428,6 +428,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --shadow-card: var(--shadow-card-value);
   --shadow-card-opaque: var(--shadow-card-opaque-value);
   --shadow-menu: var(--shadow-menu-value);
+  --shadow-notice: var(--shadow-notice-value);
   --shadow-dialog: var(--shadow-dialog-value);
   --shadow-sheet: var(--shadow-sheet-value);
   --z-index-modal: 50;
@@ -453,6 +454,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
   --shadow-card-opaque-value: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
   --shadow-menu-value: 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-notice-value: 0 2px 4px rgb(10 10 10 / 0.08), 0 6px 12px rgb(10 10 10 / 0.08);
   --shadow-dialog-value: 0 8px 32px rgb(10 10 10 / 12%);
   /* Ringless variant of the card elevation for surfaces that must not read as bordered. */
   --shadow-sheet-value: 0 4px 24px rgb(10 10 10 / 0.04);
@@ -572,6 +574,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --shadow-card-value: 0 0 0 1px rgb(0 0 0 / 0.5), 0 4px 24px rgb(0 0 0 / 0.45);
   --shadow-card-opaque-value: 0 0 0 1px rgb(0 0 0 / 0.6), 0 8px 28px rgb(0 0 0 / 0.55);
   --shadow-menu-value: 0 2px 8px rgb(0 0 0 / 0.5);
+  --shadow-notice-value: 0 2px 4px rgb(0 0 0 / 0.42), 0 6px 12px rgb(0 0 0 / 0.45);
   --shadow-dialog-value: 0 8px 32px rgb(0 0 0 / 0.6);
   --shadow-sheet-value: 0 4px 24px rgb(0 0 0 / 0.45);
   --bg-10: hsl(60 3% 10%);
