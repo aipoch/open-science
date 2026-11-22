@@ -62,6 +62,14 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
+const WINDOWS_PROCESS_BIRTH_PREFIX = 'windows-creation-time:'
+
+const windowsProcessBirth = (pid: number): string | undefined => {
+  const identity = processBirthIdentity(pid)
+  return identity?.startsWith(WINDOWS_PROCESS_BIRTH_PREFIX)
+    ? identity.slice(WINDOWS_PROCESS_BIRTH_PREFIX.length)
+    : undefined
+}
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
@@ -1967,16 +1975,31 @@ class ElectronAppHarness implements ElectronApp {
     if (windowsProcesses) {
       if (!child.pid) throw new Error('Electron crash simulation has no launcher PID.')
       const owned = new Map(windowsProcesses)
+      const launcherBirth = windowsProcessBirth(child.pid)
+      if (launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
       const deadline = Date.now() + 10_000
       // An intermediate launcher can exit before taskkill reaches every captured descendant.
-      await terminateWindowsProcessesByIdentity(owned, deadline)
+      await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
       for (;;) {
-        const remaining = listWindowsProcesses().filter(({ pid }) => {
+        const observed = listWindowsProcesses()
+        const liveOwned = new Set<number>()
+        for (const [pid, birth] of owned) {
+          if (windowsProcessIsAlive(pid) && windowsProcessBirth(pid) === birth) liveOwned.add(pid)
+        }
+        const discovered = new Map<number, string>()
+        for (const { pid, ppid } of observed) {
+          if (owned.has(pid) || !liveOwned.has(ppid)) continue
+          const birth = windowsProcessBirth(pid)
+          if (birth !== undefined) {
+            owned.set(pid, birth)
+            discovered.set(pid, birth)
+          }
+        }
+        if (discovered.size) await terminateWindowsProcessesByIdentity(discovered, deadline)
+        const remaining = observed.filter(({ pid }) => {
           const birth = owned.get(pid)
           return (
-            birth !== undefined &&
-            windowsProcessIsAlive(pid) &&
-            processBirthIdentity(pid) === `windows-creation-time:${birth}`
+            birth !== undefined && windowsProcessIsAlive(pid) && windowsProcessBirth(pid) === birth
           )
         })
         if (remaining.length === 0) {

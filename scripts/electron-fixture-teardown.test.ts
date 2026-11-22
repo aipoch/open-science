@@ -89,7 +89,13 @@ beforeEach(() => {
   boundary.reap.mockResolvedValue({ reaped: false })
   boundary.processTable.mockReset()
   boundary.processBirthIdentity.mockImplementation((pid: number) =>
-    pid === 12346 ? 'windows-creation-time:135411000000000000' : undefined
+    pid === 12345
+      ? 'windows-creation-time:135411000000000001'
+      : pid === 12346
+        ? 'windows-creation-time:135411000000000000'
+        : pid === 12347
+          ? 'windows-creation-time:135411000000000002'
+          : undefined
   )
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
@@ -388,17 +394,25 @@ it.each([true, false])(
 )
 
 const capturedBirths = [[12346, '135411000000000000']] as const
+const launcherBirth = '135411000000000001'
+const capturedTree = new Map([[12345, launcherBirth], ...capturedBirths])
 
 it.each(
   [
     { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
     { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
-    { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: true },
+    { name: 'the launcher survived', complete: true, survivors: [[12345, 1]], succeeds: false },
     { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
     {
       name: 'a new grandchild survived',
       complete: true,
       survivors: [[12347, 12346]],
+      succeeds: false
+    },
+    {
+      name: 'an unrelated process survived',
+      complete: true,
+      survivors: [[12348, 7132]],
       succeeds: true
     },
     { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
@@ -431,10 +445,7 @@ it.each(
     await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled(), { timeout: 10_000 })
     await vi.advanceTimersByTimeAsync(10_000)
     await assertion
-    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(
-      new Map(capturedBirths),
-      expect.any(Number)
-    )
+    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(capturedTree, expect.any(Number))
     expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
   }
 )
@@ -464,6 +475,7 @@ it.each([true, false])(
     await vi.advanceTimersByTimeAsync(100)
     await operation
     expect(boundary.launch).toHaveBeenCalledTimes(2)
+    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(capturedTree, expect.any(Number))
   }
 )
 
