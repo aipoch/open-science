@@ -2071,16 +2071,14 @@ async function startDesktop(): Promise<void> {
     hasActiveReviewerWork: () => work?.reviewerActive ?? false,
     getActiveSettingsInstallId: () => work?.settingsInstallId,
     holdSettingsInstallAdmission: () => {
-      const offer = update.getStatus()
       if (
         process.platform === 'linux' &&
         process.env.APPIMAGE &&
-        offer.automaticDownloads &&
-        offer.state === 'ready' &&
-        !offer.recovery &&
         currentApplicationShutdownTrigger() === 'quit'
       ) {
-        quittingImageLaunch = { requested: false, args: new Set() }
+        const offer = update.getStatus()
+        if (offer.automaticDownloads && offer.state === 'ready' && !offer.recovery)
+          quittingImageLaunch = { requested: false, args: new Set() }
       }
       recovery!.setClosing(true)
       if (
