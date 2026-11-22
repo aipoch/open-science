@@ -161,6 +161,8 @@ const setup = (
     Pick<
       AppLifecycleDeps,
       | 'refreshQuitState'
+      | 'holdPendingLaunchOnQuit'
+      | 'resumePendingLaunchAfterCancelledQuit'
       | 'requireCleanBackendShutdown'
       | 'onQuitError'
       | 'handleDisconnectedQuit'
@@ -232,6 +234,8 @@ const setup = (
         return tray as unknown as import('electron').Tray | undefined
       },
       refreshQuitState: overrides.refreshQuitState,
+      holdPendingLaunchOnQuit: overrides.holdPendingLaunchOnQuit,
+      resumePendingLaunchAfterCancelledQuit: overrides.resumePendingLaunchAfterCancelledQuit,
       requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
       onQuitError: overrides.onQuitError,
       handleDisconnectedQuit: overrides.handleDisconnectedQuit,
@@ -2047,6 +2051,25 @@ it('awaits authoritative work before the confirmation and refuses a failed inspe
   await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
   h.app.emit('before-quit')
   await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledOnce())
+})
+
+it('holds a launch during inspection and returns it after cancelled quit confirmation', async () => {
+  const holdPendingLaunchOnQuit = vi.fn()
+  const resumePendingLaunchAfterCancelledQuit = vi.fn()
+  const refreshQuitState = vi.fn(async () => false)
+  const h = setup({
+    holdPendingLaunchOnQuit,
+    resumePendingLaunchAfterCancelledQuit,
+    refreshQuitState,
+    confirmClose: async () => 'cancel'
+  })
+  h.app.emit('before-quit')
+  expect(holdPendingLaunchOnQuit).toHaveBeenCalledBefore(refreshQuitState)
+  await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
+  expect(resumePendingLaunchAfterCancelledQuit).not.toHaveBeenCalled()
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(resumePendingLaunchAfterCancelledQuit).toHaveBeenCalledOnce())
+  expect(h.app.exit).not.toHaveBeenCalled()
 })
 
 const replayQuitSynchronously = (h: Harness): void => {
