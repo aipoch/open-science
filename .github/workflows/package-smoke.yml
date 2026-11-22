@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install --yes libfuse2t64 gnome-keyring dbus-user-session desktop-file-utils shared-mime-info libsecret-tools
+          sudo apt-get install --yes libfuse2t64 gnome-keyring dbus-user-session desktop-file-utils shared-mime-info libsecret-tools imagemagick tesseract-ocr
           export QA_REPO="$PWD"
           dir="$RUNNER_TEMP/release"
           mkdir -p "$dir"
@@ -101,4 +101,15 @@ jobs:
               "${test[@]}" || failed=1
             fi
           done
+          if [[ "$DESKTOP" = native && "$OVERLAP_ONLY" != true ]]; then
+            export QA_BANNER_SCREEN="$RUNNER_TEMP/interrupted-file.png" QA_OPEN_KIND=during-file
+            xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh scripts/ci/probe-quit-session.sh scripts/ci/probe-ordinary-quit.cjs "$PWD"/dist/*.AppImage "$dir" "$FEED" || failed=1
+          fi
           exit "$failed"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always() && inputs.desktop == 'native' && !inputs.overlap_only
+        with:
+          name: interrupted-file-${{ matrix.arch }}
+          path: ${{ runner.temp }}/interrupted-file.png
+          if-no-files-found: warn
+          retention-days: 14

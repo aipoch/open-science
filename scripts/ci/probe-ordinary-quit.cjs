@@ -54,6 +54,8 @@ async function main(){
  console.log('download',ready.state,ready.latest,ready.error,ready.automaticDownloads);assert.equal(ready.state,'ready')
  console.log('ordinary quit entry', await desk.evaluate(({app})=>({version:app.getVersion(),image:process.env.APPIMAGE})))
  console.log('A service state exists',fs.existsSync(path.join(env.OPEN_SCIENCE_E2E_STORAGE_ROOT,'web-service.json')))
+ const screenshot = process.env.QA_BANNER_SCREEN
+ if (screenshot) fs.chmodSync(image, 0o555)
  const oldPid=await desk.evaluate(()=>process.pid)
  const overlap=process.env.QA_OPEN_KIND?.startsWith('during-')
  const kind=process.env.QA_OPEN_KIND?.replace(/^during-/,'')
@@ -80,6 +82,21 @@ async function main(){
  if(kind) {
    if(overlap) {
      assert.ok(fs.existsSync(root+'/relayed'), 'old desktop must receive the overlapping request')
+     if (screenshot) {
+       assert.notEqual(fs.statSync(image).size,file.size)
+       const {execFileSync} = require('node:child_process')
+       for (let attempt=0; attempt<30; attempt++) {
+         await sleep(1200)
+         execFileSync('import',['-window','root',screenshot])
+         const text=execFileSync('tesseract',[screenshot,'stdout'],{encoding:'utf8',stdio:['ignore','pipe','ignore']})
+         if (/update did not finish/i.test(text) && /view updates/i.test(text)) {
+           console.log('Read-only fallback displayed the interrupted file notice and View updates action')
+           server.close()
+           return
+         }
+       }
+       throw Error('Missing interrupted file notice after update permission failure')
+     }
      await entry.verifyService(kind)
    } else {
      entry.open(kind)
