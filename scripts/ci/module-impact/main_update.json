@@ -3,11 +3,14 @@
     "build/mac-open-after-update.m",
     "build/mac-quit-handoff.cjs",
     "build/mac-update-network.c",
+    "src/main/update/linux-background-download.test.ts",
     "src/main/update/mac-background-update.test.ts",
     "src/main/update/mac-quit-handoff.test.ts",
     "src/main/update/windows-desktop-version.test.ts",
     "src/main/update/windows-desktop-version.ts",
     "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
+    "src/main/update/linux-background-download.ts",
     "src/main/update/mac-background-update.ts",
     "src/main/update/mac-quit-handoff.ts",
     "src/main/update/windows-background-download.ts",
@@ -73,6 +76,8 @@
   "interfacePaths": [
     "src/main/update/windows-desktop-version.ts",
     "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
+    "src/main/update/linux-background-download.ts",
     "src/main/update/mac-background-update.ts",
     "src/main/update/mac-quit-handoff.ts",
     "src/main/update/windows-background-download.ts",
@@ -96,6 +101,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/update/linux-background-download.test.ts",
       "src/main/update/mac-background-update.test.ts",
       "src/main/update/mac-quit-handoff.test.ts",
       "src/main/update/windows-desktop-version.test.ts",

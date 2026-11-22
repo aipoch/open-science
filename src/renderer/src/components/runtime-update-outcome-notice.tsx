@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ActionToast } from '@/components/ActionToast'
+import { ErrorNotice } from '@/components/error-notice'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateStatus } from '../../../shared/update'
@@ -48,11 +49,15 @@ const RuntimeUpdateCompletedNotice = ({
   )
 }
 
-export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
+export const InterruptedUpdateOpenNotice = ({
+  platform
+}: {
+  platform: 'darwin' | 'linux'
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [visible, setVisible] = useState(
     () =>
-      window.api?.platform === 'darwin' &&
+      window.api?.platform === platform &&
       window.location.protocol === 'file:' &&
       window.location.hash === '#update-open-interrupted'
   )
@@ -61,15 +66,29 @@ export const InterruptedUpdateOpenNotice = (): React.JSX.Element | null => {
     window.location.replace('#')
     setVisible(false)
   }
+  const viewUpdates = (): void => {
+    dismiss()
+    useSettingsStore.getState().openSettingsToPanel('general')
+  }
+  const message = t('The update did not finish. Reopen your file or link after updating.')
+  if (platform === 'linux')
+    return (
+      <div data-bottom-notice className="pointer-events-auto shadow-sm">
+        <ErrorNotice
+          role="status"
+          level="info"
+          description={message}
+          secondaryButton={{ label: t('View updates'), onClick: viewUpdates }}
+          dismissButton={{ label: t('Dismiss'), onClick: dismiss }}
+        />
+      </div>
+    )
   return (
     <ActionToast
       className="[&>span]:whitespace-normal"
-      title={t('The update did not finish. Reopen your file or link after updating.')}
+      title={message}
       actionLabel={t('View updates')}
-      onAction={() => {
-        dismiss()
-        useSettingsStore.getState().openSettingsToPanel('general')
-      }}
+      onAction={viewUpdates}
       dismissLabel={t('Dismiss')}
       onDismiss={dismiss}
     />

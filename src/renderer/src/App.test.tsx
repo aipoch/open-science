@@ -278,8 +278,10 @@ vi.mock('@/stores/project-store', () => ({
     })
 }))
 vi.mock('@/stores/settings-store', () => ({
-  useSettingsStore: <T,>(selector: (state: typeof mocks.settings) => T): T =>
-    selector(mocks.settings)
+  useSettingsStore: Object.assign(
+    <T,>(selector: (state: typeof mocks.settings) => T): T => selector(mocks.settings),
+    { getState: () => mocks.settings }
+  )
 }))
 vi.mock('@/stores/skill-import-store', () => ({
   useSkillImportStore: <T,>(selector: (state: typeof mocks.skillImport) => T): T =>
@@ -1183,31 +1185,46 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
-  it('dismisses an interrupted macOS open in the workspace and clears its launch marker', async () => {
-    const originalUrl = window.location.href
-    const { jsdom } = globalThis as unknown as {
-      jsdom: { reconfigure: (options: { url: string }) => void }
+  it.each([
+    ['darwin', 'Dismiss'],
+    ['linux', 'Dismiss'],
+    ['linux', 'View updates']
+  ] as const)(
+    'handles an interrupted %s open with %s and clears its launch marker',
+    async (platform, action) => {
+      const originalUrl = window.location.href
+      const { jsdom } = globalThis as unknown as {
+        jsdom: { reconfigure: (options: { url: string }) => void }
+      }
+      try {
+        jsdom.reconfigure({ url: 'file:///app/index.html#update-open-interrupted' })
+        window.api.platform = platform
+        mocks.settings.isLoaded = true
+        await render()
+        const message = Array.from(container.querySelectorAll('[role="status"]')).find((node) =>
+          node.textContent?.includes('Reopen your file or link')
+        )
+        const notice = platform === 'linux' ? message?.closest('[data-bottom-notice]') : message
+        expect(
+          notice?.closest(
+            platform === 'linux' ? '[data-bottom-notice-stack]' : '[data-action-toast-stack]'
+          )
+        ).toBeTruthy()
+        expect(mocks.update.isDialogOpen).toBe(false)
+        const button = Array.from(notice!.querySelectorAll('button')).find(
+          (entry) => entry.getAttribute('aria-label') === action || entry.textContent === action
+        )
+        await act(async () => button!.click())
+        expect(notice!.isConnected).toBe(false)
+        expect(window.location.hash).toBe('')
+        if (action === 'View updates')
+          expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('general')
+        else expect(mocks.settings.openSettingsToPanel).not.toHaveBeenCalled()
+      } finally {
+        jsdom.reconfigure({ url: originalUrl })
+      }
     }
-    try {
-      jsdom.reconfigure({ url: 'file:///app/index.html#update-open-interrupted' })
-      window.api.platform = 'darwin'
-      mocks.settings.isLoaded = true
-      await render()
-      const notice = Array.from(container.querySelectorAll('[role="status"]')).find((node) =>
-        node.textContent?.includes('View updates')
-      )
-      expect(notice?.closest('[data-action-toast-stack]')).toBeTruthy()
-      expect(mocks.update.isDialogOpen).toBe(false)
-      await act(async () =>
-        notice!.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!.click()
-      )
-      expect(notice!.isConnected).toBe(false)
-      expect(window.location.hash).toBe('')
-      expect(mocks.settings.openSettingsToPanel).not.toHaveBeenCalled()
-    } finally {
-      jsdom.reconfigure({ url: originalUrl })
-    }
-  })
+  )
 
   it('loads the update owner on first activation and retains it for its close lifecycle', async () => {
     mocks.settings.isLoaded = true
