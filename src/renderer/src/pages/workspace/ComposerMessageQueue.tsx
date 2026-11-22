@@ -5,6 +5,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { ChevronDown, GripVertical, ListOrdered, Loader2, Pencil, Send, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
@@ -12,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { Button } from '@/components/ui/button'
 
+import type { MessageQueueError } from './composer-contract'
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
@@ -40,25 +42,34 @@ const queueActionClassName =
 const queueTriggerClassName =
   'relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11'
 
-const queueErrorText = (
+const describeQueueError = (
   t: TFunction,
-  error: { kind: 'branch' | 'send' | 'edit' | 'cancel'; detail?: string }
-): string => {
-  const detail = localizeImageAnnotationSourceError(error.detail, t) ?? error.detail ?? ''
-  if (error.kind === 'branch') {
-    return t(
-      'This queued message belongs to another message branch. Return to that branch to send it.'
-    )
+  error: MessageQueueError,
+  messageAppended: boolean | undefined
+): { message: string; detail?: string } => {
+  if (error.kind === 'branch')
+    return {
+      message: t(
+        'This queued message belongs to another message branch. Return to that branch to send it.'
+      )
+    }
+  if (error.kind === 'edit')
+    return { message: t('Clear the composer before editing this queued message.') }
+  if (error.kind === 'cancel')
+    return { message: t('Could not confirm that the run stopped.'), detail: error.detail }
+
+  if (error.detail === 'Authentication required')
+    return { message: t('Check your model sign-in or API key before sending this message.') }
+  const annotation = localizeImageAnnotationSourceError(error.detail, t)
+  if (annotation) return { message: annotation }
+  if (error.detail === undefined)
+    return { message: t('The conversation settings changed. Review this queued message.') }
+  if (!messageAppended && error.detail === 'The queued message was not admitted.')
+    return { message: t('This message is still in the queue and has not been sent.') }
+  return {
+    message: t('Could not confirm delivery. Check the conversation before sending again.'),
+    detail: error.detail
   }
-  if (error.kind === 'edit') return t('Clear the composer before editing this queued message.')
-  if (error.kind === 'cancel') {
-    return t('Could not stop the current run. {{detail}} Try again.', {
-      detail
-    })
-  }
-  return t('Could not send this queued message. {{detail}} Try again.', {
-    detail
-  })
 }
 
 const queueAnnouncementText = (t: TFunction, announcement: string): string => {
@@ -240,13 +251,17 @@ const ComposerMessageQueueContent = ({
         <section className="border-b border-border-200" aria-label={t('Message queue')}>
           {items.some((item) => !item.messageAppended) ? (
             <p className="text-xs text-muted-foreground">
-              {t('Unsent messages: {{number}}. Leaving or reloading this page discards them.', {
-                number: items.filter((item) => !item.messageAppended).length
-              })}
+              {t(
+                'Unsaved queued messages: {{number}}. Leaving or reloading this page discards them.',
+                {
+                  number: items.filter((item) => !item.messageAppended).length
+                }
+              )}
             </p>
           ) : null}
           <ol ref={listRef} id="composer-message-queue-list" className="max-h-36 overflow-y-auto">
             {items.map((item, index) => {
+              const failure = item.error && describeQueueError(t, item.error, item.messageAppended)
               const busy = item.phase === 'interrupting' || item.phase === 'sending'
               const preview = item.text.trim() || t('Attachment message')
               const draggedIndex = items.findIndex((candidate) => candidate.id === draggedId)
@@ -327,13 +342,23 @@ const ComposerMessageQueueContent = ({
                         {t('Attachments: {{count}}', { count: item.attachmentCount })}
                       </p>
                     ) : null}
-                    {item.error ? (
-                      <p
-                        data-queue-error
-                        className="mt-0.5 text-[11px] leading-4 text-status-failure-foreground dark:text-status-failure-dark-foreground"
-                      >
-                        {queueErrorText(t, item.error)}
-                      </p>
+                    {failure ? (
+                      <div className="mt-0.5 text-[11px] leading-4">
+                        <p
+                          data-queue-error
+                          className="text-status-failure-foreground dark:text-status-failure-dark-foreground"
+                        >
+                          {failure.message}
+                        </p>
+                        {failure.detail && (
+                          <details className="text-text-300">
+                            <summary className="cursor-pointer">{t('Error details')}</summary>
+                            <p className="whitespace-pre-wrap break-words">
+                              {redactSensitiveText(failure.detail)}
+                            </p>
+                          </details>
+                        )}
+                      </div>
                     ) : item.deferredUntilIdle ? (
                       <p className="mt-0.5 text-[11px] leading-4 text-text-300">
                         {t('Queued message will send after the current run finishes.')}
