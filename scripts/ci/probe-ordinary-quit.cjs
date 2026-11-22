@@ -53,6 +53,7 @@ async function main(){
  const ready=await page.evaluate(()=>window.api.update.download())
  console.log('download',ready.state,ready.latest,ready.error,ready.automaticDownloads);assert.equal(ready.state,'ready')
  console.log('ordinary quit entry', await desk.evaluate(({app})=>({version:app.getVersion(),image:process.env.APPIMAGE})))
+ console.log('A service state exists',fs.existsSync(path.join(env.OPEN_SCIENCE_E2E_STORAGE_ROOT,'web-service.json')))
  const oldPid=await desk.evaluate(()=>process.pid)
  const overlap=process.env.QA_OPEN_KIND?.startsWith('during-')
  const kind=process.env.QA_OPEN_KIND?.replace(/^during-/,'')
@@ -75,7 +76,7 @@ async function main(){
  }
  for(let i=0;fs.existsSync('/proc/'+oldPid)&&i<900;i++)await sleep(100)
  assert.ok(!fs.existsSync('/proc/'+oldPid),'ordinary quit timed out')
- console.log('old PID exited',oldPid)
+ console.log('old PID exited',oldPid,'bytes at original path',fs.statSync(image).size,'expected B',file.size)
  if(kind) {
    if(overlap) {
      console.log('Old process received second-instance:',fs.existsSync(root+'/relayed'))

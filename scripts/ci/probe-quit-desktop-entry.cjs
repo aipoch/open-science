@@ -53,6 +53,15 @@ module.exports = function registerDesktopEntry({image, root, env, chromium}) {
         }catch{}
         await sleep(150)
       }
+      for(const n of fs.readdirSync('/proc').filter(n=>/^[0-9]+$/.test(n))) {
+        try {
+          const exe=fs.readlinkSync('/proc/'+n+'/exe')
+          if(!exe.endsWith('/open-science') || !fs.readFileSync('/proc/'+n+'/environ','utf8').split('\0').includes('OPEN_SCIENCE_E2E_STORAGE_ROOT='+dir))continue
+          if(fs.readFileSync('/proc/'+n+'/cmdline','utf8').includes('--type='))continue
+          const asar=require('node:module').createRequire(path.join(env.QA_REPO,'package.json'))('@electron/asar')
+          console.log('surviving desktop',n,JSON.parse(asar.extractFile(path.join(path.dirname(exe),'resources/app.asar'),'package.json')).version)
+        }catch{}
+      }
       throw Error('Overlapping desktop open: '+observed)
     },
     async verify(kind) {
