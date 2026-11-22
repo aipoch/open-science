@@ -2718,6 +2718,17 @@ it('retains verified external records in place across concurrent admission and t
       expectedStatus: 'queued',
       run: { ...run, status: 'running' }
     })
+    const bindings = {
+      python: {
+        language: 'python',
+        runtimeId: 'python-test',
+        source: 'external',
+        provenance: 'user-own',
+        interpreterPath: join(root, 'python'),
+        label: 'Test Python',
+        status: 'active'
+      }
+    } as const
     const [winner, late] = await Promise.all([
       reader.commitTerminalRun({
         ...request,
@@ -2728,7 +2739,8 @@ it('retains verified external records in place across concurrent admission and t
         ...request,
         expectedStatus: 'queued',
         run: { ...run, status: 'cancelled' }
-      })
+      }),
+      reader.setRuntimeBindings(scope.projectId, scope.sessionId, bindings, lane)
     ])
     expect(winner.run.status).toBe('completed')
     expect(late.transitioned).toBe(false)
@@ -2743,7 +2755,11 @@ it('retains verified external records in place across concurrent admission and t
     expect(stored.runs[1]).toEqual(reference)
     expect(stored.runs[3].status).toBe('completed')
     const args = [scope.projectId, scope.sessionId, { includeEnvironmentManifests: true }] as const
-    const full = await new NotebookRunRepository(root).readSessionRuns(...args)
+    const reopened = new NotebookRunRepository(root)
+    expect(
+      (await reopened.findExisting(scope.projectId, scope.sessionId, lane))?.runtimeBindings
+    ).toEqual(bindings)
+    const full = await reopened.readSessionRuns(...args)
     reads.mockClear()
     const analysis = await reader.readAnalysisRuns(...args)
     expect(analysis).toStrictEqual(
@@ -2764,6 +2780,9 @@ it('retains verified external records in place across concurrent admission and t
       })
     ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
     await writeFile(body, Buffer.alloc(reference.bytes, 32))
+    await expect(
+      reader.setRuntimeBindings(scope.projectId, scope.sessionId, {}, lane)
+    ).rejects.toThrow('corrupt')
     await expect(reader.appendOrGetRun({ ...request, run })).rejects.toThrow('corrupt')
     await expect(
       reader.readLaneAnalysisRuns(scope.projectId, scope.sessionId, lane)

@@ -1900,12 +1900,14 @@ class NotebookRunRepository {
     sessionId: string,
     bindings: NotebookRuntimeBindings,
     lane: NotebookLaneIdentity
-  ): Promise<NotebookRunDocument> {
-    return this.mutate(projectId, sessionId, lane, (document) => ({
-      ...document,
-      runtimeBindings: bindings,
-      updatedAt: Date.now()
-    }))
+  ): Promise<void> {
+    await this.mutateLifecycle(
+      projectId,
+      sessionId,
+      lane,
+      () => false,
+      (document) => ({ ...document, runtimeBindings: bindings, updatedAt: Date.now() })
+    )
   }
 
   // Crash recovery: on the first load of a session in a fresh process, any run still marked 'running'

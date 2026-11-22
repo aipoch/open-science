@@ -137,7 +137,6 @@ describe.skipIf(process.platform !== 'win32')('Windows managed Python repair and
             runtimeBindings: snapshot
           }
           writeFileSync(persistedPath, JSON.stringify(document))
-          return document
         }
       },
       runtimeSettings: {
