@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
 // Release installers can exceed a gigabyte. Keep hashing bounded without changing the synchronous
@@ -73,4 +74,29 @@ export function validateUpdateFeed(
       throw new Error('Legacy feed fields disagree with files')
   }
   return feed
+}
+
+// electron-builder's external ZIP blockmap describes a single file starting at offset zero.
+export function validateMacBlockmap(bytes, label, zipSize) {
+  try {
+    const map = JSON.parse(gunzipSync(bytes, { maxOutputLength: 32 * 1024 * 1024 }))
+    const [file] = map.files
+    if (
+      map.version === '2' &&
+      map.files.length === 1 &&
+      file.name === 'file' &&
+      file.offset === 0 &&
+      Array.isArray(file.sizes) &&
+      file.sizes.length > 0 &&
+      file.sizes.every((size) => Number.isSafeInteger(size) && size > 0) &&
+      Array.isArray(file.checksums) &&
+      file.sizes.length === file.checksums.length &&
+      file.checksums.every((value) => typeof value === 'string' && value.length > 0) &&
+      (zipSize === undefined || file.sizes.reduce((total, size) => total + size, 0) === zipSize)
+    )
+      return
+  } catch (cause) {
+    throw new Error(`Invalid macOS ZIP blockmap: ${label}`, { cause })
+  }
+  throw new Error(`Invalid macOS ZIP blockmap: ${label}`)
 }

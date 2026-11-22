@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist-assets
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets \
-            --pattern 'SHA256SUMS.txt' --pattern '*.yml'
+            --pattern 'SHA256SUMS.txt' --pattern '*.yml' --pattern '*-mac-*.zip.blockmap'
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
           while IFS=$'\t' read -r name size; do
@@ -253,6 +253,21 @@ jobs:
           [ -d historical-blockmaps ] || exit 0
           node scripts/publish-release-assets.mjs blockmaps historical-blockmaps
 
+      - name: Identify the preceding stable release
+        if: ${{ !inputs.dry_run && inputs.mode == 'promote' }}
+        id: predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          set -euo pipefail
+          previous=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' |
+            sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' | sort -Vu |
+            awk -v target="$VERSION" '$0 == target { print prior; found=1 } {prior=$0} END {if (!found) exit 1}')
+          test -n "$previous"
+          echo "version=$previous" >> "$GITHUB_OUTPUT"
+
       # This command owns versioned uploads and optional monotonic channel promotion together.
       # Its preflight runs before any mutable channel writes; rerun the same version to recover a
       # partial promotion. Never use an older version as an implicit rollback.
@@ -263,5 +278,7 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ref.outputs.version }}
           MODE: ${{ inputs.mode }}
+          PREVIOUS_STABLE: ${{ steps.predecessor.outputs.version }}
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
           BOOTSTRAP_LINUX_ARM64: ${{ inputs.bootstrap_linux_arm64 }}
         run: node scripts/publish-update-channel.mjs

@@ -14,7 +14,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
@@ -709,7 +709,27 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `aipoch-open-science-${version}-mac-arm64.zip`,
       `aipoch-open-science-${version}-mac-x64.zip`
     ]
-    for (const name of macZips) writeFileSync(join(dir, `${name}.blockmap`), `map for ${name}`)
+    const mapBytes = gzipSync(
+      JSON.stringify({
+        version: '2',
+        files: [{ name: 'file', offset: 0, sizes: [19], checksums: ['fixture'] }]
+      })
+    )
+    for (const name of macZips) writeFileSync(join(dir, `${name}.blockmap`), mapBytes)
+    const previousDir = join(channelPrefix, 'releases/0.37.1')
+    mkdirSync(previousDir, { recursive: true })
+    for (const name of macZips) {
+      writeFileSync(join(previousDir, name.replace(version, '0.37.1') + '.blockmap'), mapBytes)
+    }
+    writeFileSync(
+      join(cwd, 'bin', 'curl'),
+      `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path');
+const url = new URL(process.argv.at(-1));
+process.stdout.write(fs.readFileSync(path.join(process.env.TEST_OBJECT_STORE, 'test-bucket', url.pathname)));
+`,
+      { mode: 0o755 }
+    )
     const cliPackages = [
       `open-science-cli_${version}_amd64.deb`,
       `open-science-cli_${version}_arm64.deb`,
@@ -777,6 +797,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
           ...env,
           PATH: `${join(cwd, 'bin')}:${process.env.PATH}`,
           VERSION: version,
+          PREVIOUS_STABLE: '0.37.1',
           MODE: 'promote',
           METADATA_ONLY: 'false',
           DIST_DIR: 'dist-assets',
@@ -797,6 +818,13 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       const result = run(step)
       expect(result.status, `${step}: ${result.stderr}`).toBe(0)
     }
+    const previousIntelMap = join(previousDir, macZips[1].replace(version, '0.37.1') + '.blockmap')
+    unlinkSync(previousIntelMap)
+    expect(run('Sync installers to versioned path').status).not.toBe(0)
+    expect(load(readFileSync(join(channel, 'latest-mac.yml'), 'utf8'))).toMatchObject({
+      version: '0.37.1'
+    })
+    writeFileSync(previousIntelMap, mapBytes)
     const published = run('Sync installers to versioned path')
     expect(published.status, published.stderr).toBe(0)
     const manifest = JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8'))
@@ -814,9 +842,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
     expect(manifest.version).toBe(version)
     const uploaded = readdirSync(join(channel, 'releases', version))
     for (const name of macZips) {
-      expect(readFileSync(join(channel, 'releases', version, `${name}.blockmap`), 'utf8')).toBe(
-        `map for ${name}`
-      )
+      expect(readFileSync(join(channel, 'releases', version, `${name}.blockmap`))).toEqual(mapBytes)
     }
     for (const name of cliPackages) expect(uploaded, name).not.toContain(name)
   }

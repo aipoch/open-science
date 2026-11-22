@@ -259,7 +259,9 @@ jobs:
 
       # Merge build or post-notarization feeds; partial mac artifacts fail before publication.
       - name: Merge mac update feed
-        run: node scripts/merge-mac-feed.mjs artifacts
+        run: |
+          node scripts/merge-mac-feed.mjs artifacts
+          python3 scripts/ci/verify-mac-zip-blockmaps.py artifacts/*-mac-arm64.zip artifacts/*-mac-x64.zip
 
       # A capable installed updater uses this optional pair; older clients still read the same feed.
       - name: Generate verified Windows version-pair patch
