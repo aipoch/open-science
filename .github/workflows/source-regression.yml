@@ -436,6 +436,7 @@ jobs:
       group: source-regression-report
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
       issues: write
     steps:

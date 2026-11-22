@@ -1113,7 +1113,10 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(report).toMatchObject({
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 5,
-      permissions: { contents: 'read', issues: 'write' }
+      permissions:
+        name === 'source-regression.yml'
+          ? { actions: 'read', contents: 'read', issues: 'write' }
+          : { contents: 'read', issues: 'write' }
     })
     expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
     const scheduledJobIds: string[] = []
