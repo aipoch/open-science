@@ -6,15 +6,21 @@ import {
 } from './index.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it } from 'vitest'
 import { moduleOwnershipFromRevisions } from '../check-module-ownership.mjs'
 
 const roots: string[] = []
+const fixtureSeeds = new Map<string, { path: string; base: string }>()
+const dependencySeeds = new Map<string, { path: string; base: string }>()
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+afterAll(() => {
+  for (const seed of [...fixtureSeeds.values(), ...dependencySeeds.values()])
+    rmSync(seed.path, { recursive: true, force: true })
 })
 // Each case creates and commits Git snapshots; allow slow Windows/CI filesystem operations.
 const owner = 'src/owner.ts'
@@ -51,28 +57,44 @@ function fixture(
   }
   manifest.modules.upstream.testFiles.consumer.push(consumer)
   const save = (): void => put('scripts/ci/module-impact.json', JSON.stringify(manifest))
-  git('init', '-q')
-  git('config', 'user.name', 'Fixture')
-  git('config', 'user.email', 'fixture@example.test')
-  if (options.testPath?.startsWith('packages/'))
-    put('packages/client/package.json', JSON.stringify({ name: '@example/client' }))
-  put(owner, 'export const value = 1')
-  put('src/owner.test.ts', "import { value } from './owner'")
-  put('src/independent.ts', 'export const value = 2')
-  put('src/bridge.ts', "export { value } from './owner'")
-  put(consumer, options.baseTest ?? "import { value } from './bridge'")
-  if (/^src\/(?:main|renderer)\//.test(consumer)) {
-    const retained = 'src/main/retained.test.ts'
-    put(retained, 'export {}')
-    manifest.modules.downstream.ownerPaths.push(retained)
-    manifest.modules.downstream.testFiles.owner.push(retained)
+  const seedKey = JSON.stringify([
+    options.runtime ?? false,
+    options.full ?? false,
+    options.baseTest ?? null,
+    options.testPath ?? null
+  ])
+  const cachedSeed = fixtureSeeds.get(seedKey)
+  let base: string
+  if (cachedSeed) {
+    cpSync(cachedSeed.path, root, { recursive: true })
+    base = cachedSeed.base
+  } else {
+    git('init', '-q')
+    git('config', 'user.name', 'Fixture')
+    git('config', 'user.email', 'fixture@example.test')
+    if (options.testPath?.startsWith('packages/'))
+      put('packages/client/package.json', JSON.stringify({ name: '@example/client' }))
+    put(owner, 'export const value = 1')
+    put('src/owner.test.ts', "import { value } from './owner'")
+    put('src/independent.ts', 'export const value = 2')
+    put('src/bridge.ts', "export { value } from './owner'")
+    put(consumer, options.baseTest ?? "import { value } from './bridge'")
+    if (/^src\/(?:main|renderer)\//.test(consumer)) {
+      const retained = 'src/main/retained.test.ts'
+      put(retained, 'export {}')
+      manifest.modules.downstream.ownerPaths.push(retained)
+      manifest.modules.downstream.testFiles.owner.push(retained)
+    }
+    if (options.runtime)
+      put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [owner]: [consumer] }))
+    save()
+    git('add', '.')
+    git('commit', '-qm', 'base')
+    base = git('rev-parse', 'HEAD')
+    const seedPath = mkdtempSync(join(tmpdir(), 'consumer-retirement-seed-'))
+    fixtureSeeds.set(seedKey, { path: seedPath, base })
+    cpSync(root, seedPath, { recursive: true })
   }
-  if (options.runtime)
-    put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [owner]: [consumer] }))
-  save()
-  git('add', '.')
-  git('commit', '-qm', 'base')
-  const base = git('rev-parse', 'HEAD')
   const inspect = (
     testSource = "import { value } from './independent'",
     from = base,
@@ -712,17 +734,32 @@ function dependencyFixture(
     git('commit', '-qm', 'fixture')
     return git('rev-parse', 'HEAD')
   }
-  git('init', '-q')
-  git('config', 'user.name', 'Fixture')
-  git('config', 'user.email', 'fixture@example.test')
-  put(source, options.ownerSource ?? 'export const value = 1')
-  put(test, options.consumerSource ?? 'fetch(dynamicUrl)')
-  put(contract, 'export {}')
-  put(
-    'scripts/ci/module-runtime-consumers.json',
-    JSON.stringify(options.runtime ? { [source]: [test] } : {})
-  )
-  const base = commit()
+  const seedKey = JSON.stringify([
+    options.consumerSource ?? null,
+    options.ownerSource ?? null,
+    options.runtime ?? false
+  ])
+  const cachedSeed = dependencySeeds.get(seedKey)
+  let base: string
+  if (cachedSeed) {
+    cpSync(cachedSeed.path, root, { recursive: true })
+    base = cachedSeed.base
+  } else {
+    git('init', '-q')
+    git('config', 'user.name', 'Fixture')
+    git('config', 'user.email', 'fixture@example.test')
+    put(source, options.ownerSource ?? 'export const value = 1')
+    put(test, options.consumerSource ?? 'fetch(dynamicUrl)')
+    put(contract, 'export {}')
+    put(
+      'scripts/ci/module-runtime-consumers.json',
+      JSON.stringify(options.runtime ? { [source]: [test] } : {})
+    )
+    base = commit()
+    const seedPath = mkdtempSync(join(tmpdir(), 'dependency-consumers-seed-'))
+    dependencySeeds.set(seedKey, { path: seedPath, base })
+    cpSync(root, seedPath, { recursive: true })
+  }
   const inspect = (): ReturnType<typeof moduleOwnershipFromRevisions> =>
     moduleOwnershipFromRevisions(base, commit(), { cwd: root })
   return { manifest, put, inspect, source, test, contract }
