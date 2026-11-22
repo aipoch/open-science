@@ -504,7 +504,7 @@ jobs:
 
       - name: Prepare Codex review runtime
         if: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' }}
-        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1
         with:
           openai-api-key: ${{ steps.codex_auth.outputs.auth_mode == 'api-key' && secrets.OPENAI_API_KEY || '' }}
           responses-api-endpoint: ${{ steps.responses_endpoint.outputs.url }}
