@@ -1179,6 +1179,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify generated test dependencies
+        run: node scripts/check-prisma-client.mjs
       - name: Typecheck sandbox on Windows
         if: ${{ inputs.dry_run != 'windows-process' }}
         run: npm run typecheck:sandbox
@@ -1294,7 +1296,7 @@ jobs:
           VITEST_WINDOWS_FULL_TEST: '1'
         # Exercise the reported failures on a real Windows runner without expanding to its full suite.
         run: >-
-          npm test --
+          npx vitest run
           src/main/database/migration-service.test.ts
           scripts/ci/package-boundaries.test.ts
           src/main/desktop-startup-recovery.test.ts
@@ -1320,7 +1322,7 @@ jobs:
         run: |
           $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
           if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
-          npm test -- packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
+          npx vitest run packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell

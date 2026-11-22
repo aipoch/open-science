@@ -353,6 +353,9 @@ describe('post-merge Windows validation', () => {
       }
     })
     expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(findStep(dependencies, 'Verify generated test dependencies').run).toBe(
+      'node scripts/check-prisma-client.mjs'
+    )
     const dependencySteps = dependencies.steps ?? []
     const dependencyHost = findStep(dependencies, 'Build Windows sandbox native host')
     expect(dependencyHost.run).toBe(
@@ -375,7 +378,7 @@ describe('post-merge Windows validation', () => {
         "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
+      'npx vitest run --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' }}"
