@@ -13,11 +13,13 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { externalAcpAvailable } from '../test/acp-agent-runtime'
 import { compactDesktopPackageModules } from './desktop-package-modules.mjs'
+import { shareDesktopPdfLibPako } from './desktop-pdf-lib.mjs'
 import {
   assertBackendImports,
   backendDependencyIncludes,
@@ -266,10 +268,59 @@ it('preserves unsupported and non-adjacent maps and untouched package versions',
 })
 
 describe('desktop-only dependency contents', () => {
+  it('shares identical PDF compression code without changing backend root resolution', async () => {
+    const stage = await realpath(await mkdtemp(join(tmpdir(), 'desktop-pako-')))
+    const modules = join(stage, 'node_modules')
+    const fonts = join(modules, '@pdf-lib/standard-fonts')
+    const upng = join(modules, '@pdf-lib/upng')
+    const copies = [fonts, upng].map((dir) => join(dir, 'node_modules/pako'))
+    const installed = new Map([
+      [fonts, '1.0.0'],
+      [upng, '1.0.1']
+    ])
+    const resolvePako = (dir: string): string =>
+      createRequire(join(dir, 'index.cjs')).resolve('pako')
+    try {
+      for (const dir of [...copies, join(modules, 'pako')]) {
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, 'index.js'), 'original')
+      }
+      for (const copy of copies) installed.set(copy, '1.0.11')
+      await writeFile(join(copies[1], 'index.js'), 'modified')
+      await shareDesktopPdfLibPako(stage, installed)
+      expect(await readFile(join(copies[1], 'index.js'), 'utf8')).toBe('modified')
+      await writeFile(join(copies[1], 'index.js'), 'original')
+      const sibling = join(modules, '@pdf-lib/another-consumer')
+      installed.set(sibling, '1')
+      await shareDesktopPdfLibPako(stage, installed)
+      expect(await stat(copies[1])).toBeDefined()
+      installed.delete(sibling)
+      await shareDesktopPdfLibPako(stage, installed)
+      const shared = join(modules, '@pdf-lib/node_modules/pako')
+      expect(installed.get(shared)).toBe('1.0.11')
+      for (const dir of [fonts, upng]) expect(resolvePako(dir)).toBe(join(shared, 'index.js'))
+      expect(resolvePako(stage)).toBe(join(modules, 'pako/index.js'))
+    } finally {
+      await rm(stage, { recursive: true, force: true })
+    }
+  })
+
   it.each(['/', '\\'])(
     'prunes audited unused distributions but preserves runtime assets (%s)',
     (separator) => {
       for (const [name, version, removed, retained] of [
+        ['@pdf-lib/standard-fonts', '1.0.0', 'es/Font.js', 'lib/Font.js'],
+        ['@pdf-lib/upng', '1.0.1', 'dist/UPNG.js', 'cjs/UPNG.js'],
+        ['@xmldom/xmldom', '0.8.15', 'lib/.eslintrc.yml', 'lib/dom.js'],
+        ['ajv', '8.20.0', '.runkit_example.js', 'dist/ajv.js'],
+        ['diff', '9.0.0', 'dist/diff.min.js', 'libesm/index.js'],
+        ['fast-uri', '3.1.9', 'benchmark/benchmark.mjs', 'lib/utils.js'],
+        ['is-url', '1.2.4', '.travis.yml', 'index.js'],
+        ['json-schema-traverse', '1.0.0', 'spec/fixtures/schema.js', 'index.js'],
+        ['papaparse', '5.7.0', 'player/player.js', 'papaparse.js'],
+        ['tesseract.js', '6.0.1', 'src/worker/browser/index.js', 'src/worker/node/index.js'],
+        ['tesseract.js', '6.0.1', 'dist/worker.min.js', 'dist/worker.min.js.LICENSE.txt'],
+        ['zlibjs', '0.3.1', 'bin/node-zlib.dev.js', 'bin/node-zlib.js'],
         ['openchemlib', '9.25.0', 'dist/openchemlib.debug.js', 'dist/openchemlib.js'],
         ['tesseract.js-core', '6.1.2', 'tesseract-core.wasm.js', 'tesseract-core.wasm'],
         ['web-tree-sitter', '0.26.13', 'debug/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],

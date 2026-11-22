@@ -259,6 +259,18 @@ export function createDesktopDependencyFilter(manifest) {
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
   const packedPdfJs = usesPackedDesktopPdfJs(manifest)
   const unusedDistributions = {
+    '@pdf-lib/standard-fonts@1.0.0': /^(?:dist|es)\//,
+    '@pdf-lib/upng@1.0.1': /^(?:dist\/|yarn\.lock$)/,
+    '@xmldom/xmldom@0.8.15': /^lib\/\.eslintrc\.yml$/,
+    'ajv@8.20.0': /^\.runkit_example\.js$/,
+    'diff@9.0.0': /^dist\/diff(?:\.min)?\.js$/,
+    'fast-uri@3.1.9': /^(?:\.github\/|benchmark\/|\.gitattributes$|eslint\.config\.js$)/,
+    'is-url@1.2.4': /^\.travis\.yml$/,
+    'json-schema-traverse@1.0.0': /^(?:\.github\/|spec\/|\.eslintrc\.yml$)/,
+    'papaparse@5.7.0': /^(?:\.github\/|player\/|\.eslintrc\.js$|bower\.json$|Gruntfile\.js$)/,
+    'tesseract.js@6.0.1':
+      /^(?:dist\/[^/]+\.js(?:\.map)?$|docs\/|scripts\/|src\/worker(?:-script)?\/browser\/|karma\.conf\.js$)/,
+    'zlibjs@0.3.1': /^bin\/(?:[^/]+\.min\.js|node-zlib\.dev\.js|zlib\.pretty(?:\.dev)?\.js)$/,
     'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
     // The Node OCR worker loads the paired .js and .wasm files for each kernel.
     'tesseract.js-core@6.1.2': /^tesseract-core(?:-simd)?(?:-lstm)?\.wasm\.js$/,
