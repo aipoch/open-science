@@ -20,7 +20,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { packDesktopPdfJs } from './desktop-pdfjs.mjs'
-import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { shareDesktopPdfLibPako, stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
 import { bundleDesktopFilmCompiler } from './desktop-film-compiler.mjs'
 import { packWebAssets } from './pack-web-assets.mjs'
 import { syncFileEvidenceCodec } from './sync-file-evidence-codec.mjs'
@@ -315,6 +315,7 @@ await writeFile(
 if (values.desktop) {
   const { compactDesktopPackageModules } = await import('./desktop-package-modules.mjs')
   await compactDesktopPackageModules(stage, installed)
+  await shareDesktopPdfLibPako(stage, installed)
 }
 console.log(
   `Staged ${process.platform}/${process.arch} ${values.desktop ? 'desktop' : 'standalone'} artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
