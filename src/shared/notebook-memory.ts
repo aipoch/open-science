@@ -1,4 +1,11 @@
 // Live policy/notification data only. These values never belong to run.json or portable packages.
+export type NotebookMemoryCgroupConstraint = {
+  path: string
+  currentBytes: number
+  maxBytes?: number
+  highBytes?: number
+}
+
 export type NotebookMemoryPolicyState = Readonly<{
   status: 'healthy' | 'pressured' | 'unavailable'
   reason: string
@@ -10,6 +17,8 @@ export type NotebookMemoryPolicyState = Readonly<{
   sampleAgeMs?: number
   retryAfterMs?: number
   recoveryRemainingMs?: number
+  limitingCgroupPath?: string
+  cgroupConstraints?: readonly NotebookMemoryCgroupConstraint[]
   pressureLevel?: 'normal' | 'warning' | 'critical'
   availableBytes?: number
   totalBytes?: number

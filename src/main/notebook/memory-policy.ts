@@ -1,3 +1,4 @@
+import type { NotebookMemoryCgroupConstraint } from '../../shared/notebook-memory'
 import { performance } from 'node:perf_hooks'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { DEFAULT_NOTEBOOK_MEMORY_POLICY, type NotebookMemoryPolicy } from './memory-policy-config'
@@ -6,12 +7,7 @@ export type MemoryPressureLevel = 'normal' | 'warning' | 'critical'
 export type MemoryPolicyStatus = 'healthy' | 'pressured' | 'unavailable'
 export type MemoryPolicyPlatform = 'win32' | 'darwin' | 'linux'
 
-export type MemoryCgroupConstraint = {
-  path: string
-  currentBytes: number
-  maxBytes?: number
-  highBytes?: number
-}
+export type MemoryCgroupConstraint = NotebookMemoryCgroupConstraint
 
 export type MemoryPolicyFacts = {
   availableBytes?: number

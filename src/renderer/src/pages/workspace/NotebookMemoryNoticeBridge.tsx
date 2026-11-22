@@ -42,6 +42,17 @@ function MemoryCheckDetails({
     value < 1024 ** 3
       ? `${formatted.format(value / 1024 ** 2)} MiB`
       : `${formatted.format(value / 1024 ** 3)} GiB`
+  // An ancestor can block a healthy-looking leaf. Compare the same group and limit across checks.
+  const cgroupRows = readings
+    .flatMap(({ reason, limitingCgroupPath }) =>
+      limitingCgroupPath && (reason === 'linux-cgroup-high' || reason === 'linux-cgroup-low')
+        ? [{ path: limitingCgroupPath, high: reason === 'linux-cgroup-high' }]
+        : []
+    )
+    .filter(
+      (entry, index, all) =>
+        all.findIndex((other) => other.path === entry.path && other.high === entry.high) === index
+    )
   const result = (reading: MemoryReading): string => {
     if (reading.status === 'healthy') return t('Memory has recovered')
     if (reading.status === 'unavailable') return t('Unavailable')
@@ -49,7 +60,20 @@ function MemoryCheckDetails({
       return t('Low remaining commit capacity')
     if (reading.reason === 'windows-physical-low' || reading.reason === 'linux-memory-low')
       return t('Low available RAM')
-    return t('System memory is under pressure')
+    switch (reading.reason) {
+      case 'mac-memory-warning':
+        return t('Memory pressure warning')
+      case 'mac-memory-critical':
+        return t('Critical memory pressure')
+      case 'mac-memory-recovering':
+        return t('Waiting for stable memory pressure')
+      case 'linux-cgroup-high':
+        return t('cgroup throttling threshold')
+      case 'linux-cgroup-low':
+        return t('Low cgroup memory headroom')
+      default:
+        return t('System memory is under pressure')
+    }
   }
   const row = (
     label: string,
@@ -58,7 +82,7 @@ function MemoryCheckDetails({
     const cells = readings.map(value)
     if (cells.every((cell) => cell === undefined)) return null
     return (
-      <tr className="border-t border-border">
+      <tr key={label} className="border-t border-border">
         <th scope="row" className="py-2 pr-2 text-left font-normal text-muted-foreground">
           {label}
         </th>
@@ -92,6 +116,27 @@ function MemoryCheckDetails({
         <tbody>
           {row(t('Checked at'), (r) => new Date(r.checkedAt).toLocaleTimeString(i18n?.language))}
           {row(t('Status'), result)}
+          {row(t('Recovery time remaining'), (r) =>
+            r.recoveryRemainingMs === undefined
+              ? undefined
+              : Math.ceil(r.recoveryRemainingMs / 1000).toLocaleString(i18n?.language, {
+                  style: 'unit',
+                  unit: 'second',
+                  unitDisplay: 'short'
+                })
+          )}
+          {cgroupRows.map(({ path, high }) => {
+            const metric = high
+              ? t('cgroup usage / throttling limit')
+              : t('cgroup usage / hard limit')
+            return row(cgroupRows.length > 1 ? `${metric} (${path})` : metric, (r) => {
+              const constraint = r.cgroupConstraints?.find((entry) => entry.path === path)
+              const limit = high ? constraint?.highBytes : constraint?.maxBytes
+              return constraint && limit !== undefined
+                ? `${bytes(constraint.currentBytes)} / ${bytes(limit)}`
+                : undefined
+            })
+          })}
           {row(t('Remaining capacity threshold'), (r) =>
             r.remainingThresholdRatio?.toLocaleString(i18n?.language, {
               style: 'percent',

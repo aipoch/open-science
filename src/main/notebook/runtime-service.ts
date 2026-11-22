@@ -516,6 +516,8 @@ const projectNotebookMemoryPolicyState = (
   sampleAgeMs: state.sampleAgeMs,
   retryAfterMs: state.reason.retryAfterMs,
   recoveryRemainingMs: state.reason.recoveryRemainingMs,
+  limitingCgroupPath: state.reason.constraintPath,
+  cgroupConstraints: state.facts?.cgroup?.constraints,
   pressureLevel: state.facts?.pressureLevel,
   availableBytes: state.facts?.availableBytes,
   totalBytes: state.facts?.totalBytes,
