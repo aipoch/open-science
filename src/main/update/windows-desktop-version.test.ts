@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   mkdir,
@@ -15,12 +16,89 @@ import { expect, it, vi } from 'vitest'
 import { UpdateLifecycleError } from '../../shared/update'
 import * as windowsProcesses from '../windows-process-query'
 import {
+  applyPreparedWindowsUpdate,
   checkColdLaunchOccupancy,
   preparedWindowsUpdateId,
   readPreparedWindowsUpdate,
   reclaimInstalledWindowsUpdates,
+  stageWindowsDesktopVersion,
   startWindowsUpdateSupervisor
 } from './windows-desktop-version'
+
+const extract = vi.hoisted(() => vi.fn())
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  return { ...actual, execFile: extract, spawn: vi.fn(actual.spawn) }
+})
+
+it('hands a staged update to the supervisor only after a cached live holder is rechecked', async ({
+  onTestFinished
+}) => {
+  const root = await mkdtemp(join(tmpdir(), 'prepared-launch-'))
+  onTestFinished(async () => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+    await rm(root, { recursive: true, force: true })
+  })
+  vi.stubGlobal('process', Object.create(process, { resourcesPath: { value: root } }))
+  vi.stubEnv('LOCALAPPDATA', root)
+  vi.stubEnv('SystemRoot', process.env.SystemRoot || root)
+  await writeFile(join(root, 'app-update.yml'), 'updaterCacheDirName: cache')
+  const pending = join(root, 'cache', 'pending')
+  await mkdir(pending, { recursive: true })
+  const fileName = 'setup.exe'
+  const sha512 = createHash('sha512').update('downloaded fixture').digest('base64')
+  const current = '1.3.3'
+  await writeFile(join(pending, 'update-info.json'), JSON.stringify({ fileName, sha512 }))
+  extract.mockImplementationOnce((_exe, _args, _options, done) => done(null, ''))
+  await stageWindowsDesktopVersion({
+    state: 'ready',
+    current,
+    latest: '1.3.4',
+    artifactSha512: sha512,
+    localPath: join(pending, fileName)
+  })
+  const id = preparedWindowsUpdateId(await realpath(process.execPath), sha512)
+  const marker = join(root, 'cache', 'open-science-prepared', id, 'occupant-123-456')
+  await writeFile(marker, '')
+  vi.spyOn(windowsProcesses, 'windowsProcessStartTicks').mockReturnValue('456')
+  const checkOccupancy = vi.fn(async () => {})
+  const apply = (): Promise<boolean> =>
+    applyPreparedWindowsUpdate({ current, enabled: async () => true, checkOccupancy })
+  const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  vi.mocked(spawn)
+    .mockClear()
+    .mockImplementationOnce((_exe, _args, options) =>
+      actual.spawn(
+        process.execPath,
+        ['-e', "require('node:fs').writeFileSync(process.env.OPEN_SCIENCE_UPDATE_ACK, '')"],
+        {
+          env: options.env,
+          windowsHide: true,
+          stdio: 'ignore'
+        }
+      )
+    )
+  expect(await apply()).toBe(false)
+  expect(checkOccupancy).not.toHaveBeenCalled()
+  expect(spawn).not.toHaveBeenCalled()
+
+  const old = new Date(Date.now() - 60_000)
+  await utimes(marker, old, old)
+  expect(await apply()).toBe(true)
+  expect(checkOccupancy).toHaveBeenCalledOnce()
+  expect(spawn).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.any(Array),
+    expect.objectContaining({
+      env: expect.objectContaining({
+        OPEN_SCIENCE_PREPARED_ID: id,
+        OPEN_SCIENCE_UPDATE_VERSION: '1.3.4'
+      })
+    })
+  )
+})
 
 it.runIf(process.platform === 'win32')(
   'executes the hidden supervisor and passes launch data literally',
