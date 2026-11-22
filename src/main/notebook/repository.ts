@@ -130,7 +130,7 @@ type LaneHistory = Pick<
   NotebookRunDocument,
   'notebookSessionRoot' | 'dataRoot' | 'kernel' | 'runtimeBindings' | 'runs'
 >
-type HistoryBody = { root: string; ref: RunReference; omittedBytes?: number }
+type HistoryBody = { root: string; ref: RunReference }
 type SessionInitialization = Omit<LaneHistory, 'runs'> & {
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'status' | 'fileEvidence'>[]
 }
@@ -288,15 +288,18 @@ class NotebookRunRecordStorage {
     return stored
   }
 
+  referencesFor(root: string, runs: readonly NotebookRunRecord[]): RunReference[] {
+    return runs.flatMap((run) => {
+      const stored = this.references.get(run)
+      return stored?.directory === root ? stored.ref : []
+    })
+  }
+
   async containsOnlyReferencedFiles(
     root: string,
     runs: readonly NotebookRunRecord[]
   ): Promise<boolean> {
-    const names = new Set<string>()
-    for (const run of runs) {
-      const stored = this.references.get(run)
-      if (stored?.directory === root) names.add(`${stored.ref.sha256}.json`)
-    }
+    const names = new Set(this.referencesFor(root, runs).map((ref) => `${ref.sha256}.json`))
     try {
       const entries = await readdir(await this.directory(root), { withFileTypes: true })
       return entries.every((entry) => !entry.isFile() || names.has(entry.name))
@@ -856,7 +859,20 @@ const normalizeWorkingFiles = (
     }
   })
 
+// Optional provenance keys are often absent. Only populated fields occupy the bounded cache.
+const compactReplayRunIndex = (run: NotebookRunRecord): ReplayRunIndex => {
+  const row = indexReplayRun(run)
+  for (const key of Object.keys(row) as (keyof ReplayRunIndex)[]) {
+    if (row[key] === undefined) delete row[key]
+  }
+  return row
+}
+
 const EMPTY_OUTPUT_BYTES = Buffer.byteLength(JSON.stringify([emptyText(), []]))
+const omittedOutputBytes = (
+  text: NotebookRunRecord['text'],
+  outputs: NotebookRunRecord['outputs']
+): number => Buffer.byteLength(JSON.stringify([text, outputs])) - EMPTY_OUTPUT_BYTES
 
 // Fills active optional run fields while preserving retired historical fields as written. Legacy
 // records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
@@ -1124,6 +1140,7 @@ class NotebookRunRepository {
   >()
 
   private readonly historyBodies = new WeakMap<NotebookRunRecord, HistoryBody>()
+  private readonly backgroundOutputBytes = new WeakMap<RunReference, number>()
   private readonly runIndexes = new WeakMap<
     NotebookRunDocument,
     { rows: ReplayRunIndex[]; byId: Map<string, NotebookRunRecord> }
@@ -1188,7 +1205,8 @@ class NotebookRunRepository {
   private async cachedHistory(
     projectId: string,
     sessionId: string,
-    detachedBodies?: Map<NotebookRunRecord, HistoryBody>
+    detachedBodies?: Map<NotebookRunRecord, HistoryBody>,
+    backgroundTaskMetadata = false
   ): Promise<{ summaries: LaneSummary[]; documents: LaneHistory[] } | undefined> {
     const root = getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
     const framesRoot = join(root, 'frames')
@@ -1204,16 +1222,25 @@ class NotebookRunRepository {
       return undefined
     const summaries = await this.cachedSessionSummaries(projectId, sessionId)
     if (!summaries?.length) return undefined
-    // Mixed cache representations retain the ordinary reader's per-lane recovery behavior.
-    const detachedWindow =
-      detachedBodies && summaries.every((s) => this.lifecycleViews.get(s)?.detached.analysis)
+    const hasDetachedLane =
+      detachedBodies && summaries.some((s) => this.lifecycleViews.get(s)?.detached.analysis)
+    const validateSiblings = backgroundTaskMetadata || hasDetachedLane
     const documents = []
     for (const summary of summaries) {
+      const path = join(summary.notebookSessionRoot, NOTEBOOK_RUN_FILE)
       if (summary.history) {
+        if (validateSiblings) {
+          const refs = summary.history.runs.flatMap((run) => this.historyBodies.get(run)?.ref ?? [])
+          if (
+            (await this.hasRecoveryCandidate(path)) ||
+            !(await this.records.unchanged(summary.notebookSessionRoot, refs))
+          )
+            return undefined
+        }
         documents.push(summary.history)
         continue
       }
-      if (detachedWindow) {
+      if (detachedBodies && this.lifecycleViews.get(summary)?.detached.analysis) {
         const lane =
           summary.notebookSessionRoot === root
             ? undefined
@@ -1224,11 +1251,17 @@ class NotebookRunRepository {
         continue
       }
       // Small sibling lanes can use the repository's existing full-document cache.
-      const path = join(summary.notebookSessionRoot, 'run.json')
       const full = this.documentCache.get(path)
       const cached = this.laneSummaries.get(path)
       if (!full || cached?.summary !== summary || !sameDocumentFileIdentity(cached.identity, full))
         return undefined
+      if (validateSiblings) {
+        if (await this.hasRecoveryCandidate(path)) return undefined
+        if (full.weight > full.size) {
+          const refs = this.records.referencesFor(summary.notebookSessionRoot, full.document.runs)
+          if (!(await this.records.unchanged(summary.notebookSessionRoot, refs))) return undefined
+        }
+      }
       documents.push({
         ...full.document,
         runs: this.historyRuns(full.document, projectId, sessionId)
@@ -1257,10 +1290,13 @@ class NotebookRunRepository {
     }
   ): Promise<NotebookHistorySnapshot | undefined> {
     const { limit, runIds, frameId, before, lane, retain } = query
-    const detachedBodies = query.backgroundTaskMetadata
-      ? undefined
-      : new Map<NotebookRunRecord, HistoryBody>()
-    const cached = await this.cachedHistory(projectId, sessionId, detachedBodies)
+    const detachedBodies = new Map<NotebookRunRecord, HistoryBody>()
+    const cached = await this.cachedHistory(
+      projectId,
+      sessionId,
+      detachedBodies,
+      query.backgroundTaskMetadata
+    )
     if (!cached) return undefined
     const path = lane && getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
     const kernel = path
@@ -1270,51 +1306,37 @@ class NotebookRunRepository {
       if (!kernel || (await this.hasRecoveryCandidate(path))) return undefined
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
     }
-    if (query.backgroundTaskMetadata) {
-      for (const { history } of cached.summaries) {
-        if (!history) return undefined
-        const refs: RunReference[] = []
-        for (const row of history.runs) {
-          const body = this.historyBodies.get(row)
-          if (body) {
-            if (body.omittedBytes === undefined) return undefined
-            refs.push(body.ref)
-          }
-        }
-        if (
-          (await this.hasRecoveryCandidate(join(history.notebookSessionRoot, NOTEBOOK_RUN_FILE))) ||
-          !(await this.records.unchanged(history.notebookSessionRoot, refs))
-        )
-          return undefined
-      }
-    }
     const requested = new Set(runIds)
     const window = selectRunWindow(cached.documents, sessionId, limit, requested, frameId, before)
     const runs: NotebookRunRecord[] = []
-    for (let index = window.runs.length - 1; index >= 0; index--) {
+    // Older foreground rows cannot change which newer background tasks fit the byte limit.
+    const first = query.backgroundTaskMetadata
+      ? window.runs.findIndex((run) => run.executionMode === 'background')
+      : 0
+    for (let index = window.runs.length - 1; first >= 0 && index >= first; index--) {
       const row = window.runs[index]
-      const body = this.historyBodies.get(row) ?? detachedBodies?.get(row)
+      const body = this.historyBodies.get(row) ?? detachedBodies.get(row)
       let run = row
-      if (body && !query.backgroundTaskMetadata) {
+      let omittedBytes =
+        body && query.backgroundTaskMetadata ? this.backgroundOutputBytes.get(body.ref) : undefined
+      if (body && (!query.backgroundTaskMetadata || omittedBytes === undefined)) {
         try {
           const [raw] = await this.records.read(body.root, [body.ref])
-          run = { ...row, text: raw.text ?? emptyText(), outputs: raw.outputs ?? [] }
+          const text = raw.text ?? emptyText()
+          const outputs = raw.outputs ?? []
+          if (query.backgroundTaskMetadata) {
+            omittedBytes = omittedOutputBytes(text, outputs)
+            this.backgroundOutputBytes.set(body.ref, omittedBytes)
+          } else {
+            run = { ...row, text, outputs }
+          }
         } catch {
           // Re-enter normal lane validation so live and imported corruption policies apply.
           return undefined
         }
       }
       run = await this.withRunEnvironmentManifest(run, requested)
-      if (
-        retain &&
-        !retain(
-          run,
-          index,
-          window.runs.length,
-          query.backgroundTaskMetadata ? body?.omittedBytes : undefined
-        ) &&
-        runs.length > 0
-      ) {
+      if (retain && !retain(run, index, window.runs.length, omittedBytes) && runs.length > 0) {
         const { runId, startedAt } = runs[runs.length - 1]
         window.historyPage = { hasEarlierRuns: true, oldestCursor: { runId, startedAt } }
         break
@@ -1442,7 +1464,7 @@ class NotebookRunRepository {
       const summary = await this.cachedLaneSummary(
         getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
       )
-      if (summary?.rows) return summary.rows
+      if (summary?.rows) return summary.rows.map(indexReplayRun)
       return this.runIndex(await this.loadExisting(projectId, sessionId, lane)).rows
     })
     const rows = lanes.flat()
@@ -2520,7 +2542,7 @@ class NotebookRunRepository {
     if (includeIndex) {
       const rows: ReplayRunIndex[] = []
       for (const run of document.runs) {
-        const row = indexReplayRun(run)
+        const row = compactReplayRunIndex(run)
         bytes += estimateReplayBytes(row)
         if (bytes > MAX_LANE_SUMMARY_BYTES) break
         rows.push(row)
@@ -2547,14 +2569,9 @@ class NotebookRunRepository {
           (isNotebookRunReference(ref) ? estimateReplayBytes(ref) + 256 : 0)
         if (bytes > MAX_LANE_SUMMARY_BYTES) break
         if (isNotebookRunReference(ref)) {
-          this.historyBodies.set(entry, {
-            root: document.notebookSessionRoot,
-            ref,
-            // Only background task windows need the exact JSON cost of the omitted output.
-            omittedBytes: summary.hasBackgroundRuns
-              ? Buffer.byteLength(JSON.stringify([run.text, run.outputs])) - EMPTY_OUTPUT_BYTES
-              : undefined
-          })
+          this.historyBodies.set(entry, { root: document.notebookSessionRoot, ref })
+          if (summary.hasBackgroundRuns)
+            this.backgroundOutputBytes.set(ref, omittedOutputBytes(run.text, run.outputs))
         }
         history.runs.push(entry)
       }
@@ -2762,7 +2779,7 @@ class NotebookRunRepository {
         const rows = runs.map((_, index) =>
           detached.slots.has(index)
             ? previousRows[index]
-            : indexReplayRun(cachedDocument.runs[next++])
+            : compactReplayRunIndex(cachedDocument.runs[next++])
         )
         if (estimateReplayBytes(rows) + estimateReplayBytes(summary) <= MAX_LANE_SUMMARY_BYTES)
           summary.rows = rows

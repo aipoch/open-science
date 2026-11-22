@@ -2680,6 +2680,67 @@ it('counts external record bytes against the document cache budget and upgrades 
   )
 })
 
+it('budgets background tasks across Frames without rereading verified output on each poll', async () => {
+  const root = await createStorageRoot()
+  const scope = { projectId: 'project', sessionId: 'session' }
+  const lane = createRootNotebookLane('project', 'session', 'root-frame-session')
+  const child = createFrameNotebookLane('project', 'session', 'child')
+  const writer = new NotebookRunRepository(root)
+  for (const current of [lane, child])
+    await writer.loadOrCreate({ ...scope, lane: current, workspaceCwd: root })
+  const run = admittedRun({
+    runId: 'foreground',
+    status: 'completed',
+    script: '#'.repeat(145 * 1024),
+    text: { ...admittedRun().text, stdout: '中\n"'.repeat(7 * 1024 * 1024) }
+  })
+  await writer.appendRun({ ...scope, lane, run })
+  for (const startedAt of [0, 2]) {
+    await writer.appendRun({
+      ...scope,
+      lane: child,
+      run: admittedRun({
+        runId: 'task-' + startedAt,
+        agentFrameId: 'child',
+        executionMode: 'background',
+        startedAt,
+        status: 'completed'
+      })
+    })
+  }
+  const reader = new NotebookRunRepository(root)
+  const full = await reader.readSessionRuns(scope.projectId, scope.sessionId)
+  const costs = new Map(full.map((row) => [row.runId, Buffer.byteLength(JSON.stringify(row))]))
+  const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+  try {
+    // With one byte less than the complete window, just the older background task falls out.
+    for (const adjustment of [-1, 0]) {
+      let budget = [...costs.values()].reduce((sum, bytes) => sum + bytes, adjustment)
+      const result = await reader.readCachedHistoryWindow(scope.projectId, scope.sessionId, {
+        lane,
+        backgroundTaskMetadata: true,
+        runIds: [],
+        limit: 100,
+        retain(row, _index, _count, omitted = 0) {
+          const bytes = Buffer.byteLength(JSON.stringify(row)) + omitted
+          expect(bytes).toBe(costs.get(row.runId))
+          budget -= bytes
+          return budget >= 0
+        }
+      })
+      expect(
+        result?.window.runs
+          .filter((row) => row.executionMode === 'background')
+          .map((row) => row.runId)
+      ).toEqual(adjustment ? ['task-2'] : ['task-0', 'task-2'])
+      expect(reads).toHaveBeenCalledTimes(adjustment ? 1 : 0)
+      reads.mockClear()
+    }
+  } finally {
+    reads.mockRestore()
+  }
+})
+
 it('retains verified external records in place across concurrent admission and terminal CAS', async () => {
   const root = await createStorageRoot()
   const scope = { projectId: 'default-project', sessionId: 'session-1' }
