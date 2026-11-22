@@ -2349,7 +2349,9 @@ it.each(['quit', 'cancel'] as const)(
       observedWholeService ? ('completed' as const) : ('scope-changed' as const)
     )
     const onQuitError = vi.fn()
+    const resumePendingLaunchAfterCancelledQuit = vi.fn()
     const h = setup({
+      resumePendingLaunchAfterCancelledQuit,
       requireCleanBackendShutdown: true,
       refreshQuitState: async () => {
         const changed = wholeService !== observedWholeService
@@ -2380,10 +2382,12 @@ it.each(['quit', 'cancel'] as const)(
     if (choice === 'quit') {
       await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
       expect(prepareForQuit).toHaveBeenCalledTimes(2)
+      expect(resumePendingLaunchAfterCancelledQuit).not.toHaveBeenCalled()
     } else {
       expect(h.shutdownBackends).not.toHaveBeenCalled()
       expect(h.app.exit).not.toHaveBeenCalled()
       expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(resumePendingLaunchAfterCancelledQuit).toHaveBeenCalledOnce()
     }
   }
 )
