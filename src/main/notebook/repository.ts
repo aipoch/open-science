@@ -1334,20 +1334,34 @@ class NotebookRunRepository {
       : runs
   }
 
-  private async readLaneAnalysisRuns(
+  // One physical lane in manifest order. A corrupt history must reach the admission caller.
+  async readLaneAnalysisRuns(
     projectId: string,
     sessionId: string,
     lane?: NotebookLaneIdentity
   ): Promise<NotebookRunRecord[]> {
     const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
     const entry = this.laneSummaries.get(path)
+    const history = entry?.summary.history
+    if (entry && history) {
+      const refs: RunReference[] = []
+      for (const run of history.runs) {
+        const body = this.historyBodies.get(run)
+        if (body) refs.push(body.ref)
+      }
+      if (await this.laneFilesUnchanged(path, entry.identity, refs)) return history.runs
+    }
     const view = entry && this.lifecycleViews.get(entry.summary)
     const analysis = view?.detached.analysis
     if (
       entry &&
       view &&
       analysis &&
-      (await this.detachedFilesUnchanged(path, entry.identity, view.detached))
+      (await this.laneFilesUnchanged(
+        path,
+        entry.identity,
+        Array.from(view.detached.slots.values())
+      ))
     ) {
       // Newly published inline Runs still have their in-memory shape. Apply the same
       // portable-path and JSON normalization as reopening their bounded manifest.
@@ -1367,11 +1381,8 @@ class NotebookRunRepository {
       )
       return this.historyRuns({ ...view.remaining, runs }, projectId, sessionId)
     }
-    return this.historyRuns(
-      await this.loadExisting(projectId, sessionId, lane),
-      projectId,
-      sessionId
-    )
+    const document = await this.findExisting(projectId, sessionId, lane)
+    return document ? this.historyRuns(document, projectId, sessionId) : []
   }
 
   async hasCachedForegroundOnlyHistory(
@@ -2387,15 +2398,15 @@ class NotebookRunRepository {
     })
   }
 
-  private async detachedFilesUnchanged(
+  private async laneFilesUnchanged(
     path: string,
     identity: DocumentFileIdentity,
-    detached: DetachedRuns
+    refs: RunReference[]
   ): Promise<boolean> {
     return (
       sameDocumentFileIdentity(identity, await statIfPresent(path)) &&
       !(await this.hasRecoveryCandidate(path)) &&
-      (await this.records.unchanged(dirname(path), Array.from(detached.slots.values()))) &&
+      (await this.records.unchanged(dirname(path), refs)) &&
       sameDocumentFileIdentity(identity, await statIfPresent(path))
     )
   }
@@ -2415,7 +2426,11 @@ class NotebookRunRepository {
         entry &&
         view &&
         !needsDetachedRun(view.detached) &&
-        (await this.detachedFilesUnchanged(path, entry.identity, view.detached))
+        (await this.laneFilesUnchanged(
+          path,
+          entry.identity,
+          Array.from(view.detached.slots.values())
+        ))
       ) {
         const next = transform(view.remaining)
         if (next !== view.remaining) await this.persist(next, view.detached, entry.summary.rows)

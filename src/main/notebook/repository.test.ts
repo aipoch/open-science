@@ -2625,6 +2625,8 @@ it('counts external record bytes against the document cache budget and upgrades 
     expect(full?.runs[0].text.stdout.length).toBe(33 * 1024 * 1024)
     expect(header?.workspaceCwd).toBe(root)
     expect(initialization.runs).toHaveLength(1)
+    const review = await reader.readLaneAnalysisRuns(scope.projectId, scope.sessionId, lane)
+    expect(review.map((run) => run.script)).toEqual(full?.runs.map((run) => run.script))
     expect(bodyReads).toHaveBeenCalledTimes(1)
   } finally {
     bodyReads.mockRestore()
@@ -2632,6 +2634,9 @@ it('counts external record bytes against the document cache budget and upgrades 
   // Metadata remains usable if only an oversized record disappears. Opening the body still fails.
   const manifest = JSON.parse(await readFile(path, 'utf8'))
   await rm(join(document.notebookSessionRoot, '.run-records', manifest.runs[0].sha256 + '.json'))
+  await expect(reader.readLaneAnalysisRuns(scope.projectId, scope.sessionId, lane)).rejects.toThrow(
+    'corrupt'
+  )
   expect(await reader.readSessionRunIndex(scope.projectId, scope.sessionId)).toMatchObject([
     { runId: 'run-1' }
   ])
@@ -2760,6 +2765,9 @@ it('retains verified external records in place across concurrent admission and t
     ).rejects.toBeInstanceOf(NotebookRunSubmissionConflictError)
     await writeFile(body, Buffer.alloc(reference.bytes, 32))
     await expect(reader.appendOrGetRun({ ...request, run })).rejects.toThrow('corrupt')
+    await expect(
+      reader.readLaneAnalysisRuns(scope.projectId, scope.sessionId, lane)
+    ).rejects.toThrow('corrupt')
     expect(await reader.readAnalysisRuns(scope.projectId, scope.sessionId)).toEqual([])
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(stored)
   } finally {

@@ -1028,10 +1028,14 @@ class NotebookRuntimeService {
   ): Promise<void> {
     if (!this.executionApproval || (run.source === 'user' && !run.promptMessageId)) return
     signal?.throwIfAborted()
-    const document = run.kernelEpochId
-      ? await this.repository.findExisting(session.projectId, session.sessionId, session.lane)
-      : undefined
-    const previousSources = (document?.runs ?? [])
+    const history = run.kernelEpochId
+      ? await this.repository.readLaneAnalysisRuns(
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+      : []
+    const previousSources = history
       .filter(
         (previous) =>
           previous.runId !== run.runId &&
