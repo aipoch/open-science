@@ -426,6 +426,7 @@ describe('ProviderForm field switching', () => {
     expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>BaiLian</title>')
     expect(container.querySelector('[aria-label="Endpoint"]')?.textContent).toContain('China')
     expect(container.textContent).toContain('qwen3.8-max')
+    expect(container.textContent).toContain('qwen4-max')
   })
 
   it('reuses the bundled Bailian brand mark for Bailian for Plan', () => {

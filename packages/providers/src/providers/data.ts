@@ -9,7 +9,7 @@ import type { OfficialVendor } from './types'
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
 // conservative so a vendor's unrelated model types do not appear in the composer.
-// Output limits are per vendor and model. Sources (2026-11-11): models.dev/api.json,
+// Output limits are per vendor and model. Sources (2026-11-21): models.dev/api.json,
 // openrouter.ai/api/v1/models (top_provider.max_completion_tokens), router.requesty.ai/v1/models
 // (max_output_tokens), and the vendors' published limits. Omit unknown or dynamically routed limits.
 const definitions: readonly OfficialVendor[] = [
@@ -292,6 +292,12 @@ const definitions: readonly OfficialVendor[] = [
         contextWindow: 983_616,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
+      {
+        id: 'qwen4-max',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 262_144,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'xhigh'] }
+      },
       { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
       { id: 'qwen3.7-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-flash', contextWindow: 1_000_000 },
@@ -318,6 +324,7 @@ const definitions: readonly OfficialVendor[] = [
     ],
     responsesModels: [
       'qwen3.8-max',
+      'qwen4-max',
       'qwen3.7-plus',
       'qwen3.7-max',
       'qwen3.7-flash',
@@ -327,6 +334,7 @@ const definitions: readonly OfficialVendor[] = [
     multimodal: {
       multimodalModels: [
         'qwen3.8-max',
+        'qwen4-max',
         'qwen3.7-plus',
         'qwen3.7-flash',
         'qwen3.6-plus',
@@ -360,7 +368,7 @@ const definitions: readonly OfficialVendor[] = [
           'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview'
       }
     ],
-    responsesModels: ['qwen4-max-preview'],
+    responsesModels: ['qwen4-max-preview', 'qwen4-max'],
     // General-purpose chat models listed by both the Beijing and Singapore Token Plans.
     models: [
       {
@@ -374,6 +382,12 @@ const definitions: readonly OfficialVendor[] = [
         contextWindow: 1_000_000,
         maxOutputTokens: 393_216,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
+        id: 'qwen4-max',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 262_144,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'xhigh'] }
       },
       { id: 'auto', contextWindow: 1_000_000, maxOutputTokens: 393_216 },
       {
@@ -431,6 +445,7 @@ const definitions: readonly OfficialVendor[] = [
       multimodalModels: [
         'qwen3.8-max',
         'qwen4-max-preview',
+        'qwen4-max',
         'qwen3.8-flash',
         'deepseek-v4.1-flash',
         'deepseek-v4.1-flash-1017',
