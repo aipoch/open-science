@@ -88,10 +88,13 @@ async function main(){
        for (let attempt=0; attempt<30; attempt++) {
          await sleep(1200)
          execFileSync('import',['-window','root',screenshot])
-         const toast=execFileSync('convert',[screenshot,'-crop','650x170+315+5','+repage','-resize','200%','png:-'])
+         const toast=execFileSync('convert',[screenshot,'-crop','450x200+830+700','+repage','-resize','200%','png:-'])
          const text=execFileSync('tesseract',['stdin','stdout','--psm','6'],{input:toast,encoding:'utf8',stdio:['pipe','pipe','ignore']})
          if (/update did not finish/i.test(text) && /view\s*updates/i.test(text)) {
-           console.log('Read-only fallback displayed the interrupted file notice and View updates action')
+           const toolbar = execFileSync('convert',[screenshot,'-crop','650x170+315+5','+repage','-resize','200%','png:-'])
+           const toolbarText = execFileSync('tesseract',['stdin','stdout','--psm','6'],{input:toolbar,encoding:'utf8',stdio:['pipe','pipe','ignore']})
+           assert.doesNotMatch(toolbarText,/update did not finish/i)
+           console.log('Read-only fallback displayed View updates in the bottom-right notice and left the toolbar clear')
            server.close()
            return
          }
