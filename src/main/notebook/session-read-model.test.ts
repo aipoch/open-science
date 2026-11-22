@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, open, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as durableFiles from '@aipoch/durable-files'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { NotebookSessionReadModel, type NotebookSessionReadSource } from './session-read-model'
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
@@ -182,6 +183,49 @@ describe('NotebookSessionReadModel', () => {
     ])
     foreground.text.stdout = 'x'.repeat(32 * 1024 * 1024)
     await expect(readModel.backgroundTasks('project', 'session')).resolves.toEqual({ runs: [] })
+  })
+
+  it('polls validated large background history without rereading output and falls back if the file changes', async () => {
+    const storageRoot = await createRoot()
+    const scope = { projectId: 'project', sessionId: 'session' }
+    const lane = createFrameNotebookLane('project', 'session', 'worker')
+    const writer = new NotebookRunRepository(storageRoot)
+    const doc = await writer.loadOrCreate({ ...scope, lane, workspaceCwd: storageRoot })
+    const run = makeRun({ executionMode: 'background', agentFrameId: 'worker' })
+    await writer.appendRun({ ...scope, lane, run })
+    // Escaping makes this body exceed the 63 MiB budget when the recent Run is counted twice.
+    await writer.appendRun({
+      ...scope,
+      lane,
+      run: {
+        ...run,
+        runId: 'latest',
+        startedAt: 2,
+        text: { ...run.text, stdout: '"'.repeat(17 * 1024 * 1024) }
+      }
+    })
+    const repository = new NotebookRunRepository(storageRoot)
+    await repository.findExisting(scope.projectId, scope.sessionId, lane)
+    const model = makeReadModel(storageRoot, undefined, repository)
+    const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+    try {
+      expect(
+        (await model.backgroundTasks(scope.projectId, scope.sessionId)).runs.map((r) => r.runId)
+      ).toEqual(['latest'])
+      expect(reads).not.toHaveBeenCalled()
+      const directory = join(doc.notebookSessionRoot, '.run-records')
+      const [file] = await readdir(directory)
+      const handle = await open(join(directory, file), 'r+')
+      try {
+        await handle.write('!', 0, 'utf8')
+      } finally {
+        await handle.close()
+      }
+      expect((await model.backgroundTasks(scope.projectId, scope.sessionId)).runs).toEqual([])
+      expect(reads).toHaveBeenCalled()
+    } finally {
+      reads.mockRestore()
+    }
   })
 
   it('returns only actionable live handoff data and never consults durable storage', async () => {

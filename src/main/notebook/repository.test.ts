@@ -2509,6 +2509,13 @@ describe('large immutable Notebook records', () => {
     expect(recovered?.runs[0].text.stdout).toBe('y'.repeat(1024 * 1024))
     expect(recovered?.runs[1].status).toBe('interrupted')
     expect(recovered?.runs[0].cwdAfter).toBe(root)
+    const reads = vi.spyOn(durableFiles, 'readDurableJsonFile')
+    try {
+      await new NotebookRunRepository(root).recoverAllRunLifecycles()
+      expect(reads.mock.calls.filter(([file]) => file === manifestPath)).toHaveLength(1)
+    } finally {
+      reads.mockRestore()
+    }
   })
 
   it.each(['missing', 'corrupt', 'path'] as const)(

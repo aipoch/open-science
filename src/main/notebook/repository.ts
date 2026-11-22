@@ -164,6 +164,25 @@ class NotebookRunRecordStorage {
     })
   }
 
+  private readonly verifiedFiles = new WeakMap<RunReference, DocumentFileIdentity>()
+
+  async unchanged(root: string, references: RunReference[]): Promise<boolean> {
+    if (!references.length) return true
+    try {
+      const directory = await this.directory(root)
+      for (const ref of references) {
+        const known = this.verifiedFiles.get(ref)
+        if (!known) return false
+        const current = await lstat(join(directory, `${ref.sha256}.json`))
+        if (!current.isFile() || !sameDocumentFileIdentity(known, current)) return false
+      }
+      return true
+    } catch {
+      // The ordinary read below owns corruption handling for live and imported Sessions.
+      return false
+    }
+  }
+
   private readonly reads = new AsyncLocalStorage<RecordReadScope>()
 
   async withinHistoryRead<T>(root: string, read: () => Promise<T>): Promise<T> {
@@ -199,6 +218,7 @@ class NotebookRunRecordStorage {
       const cached = records?.get(path)
       if (cached && sameDocumentFileIdentity(cached.info, info)) {
         if (cached.run.runId !== entry.runId) throw new Error('Notebook record identity mismatch.')
+        this.verifiedFiles.set(entry, cached.info)
         result.push(cached.run)
         continue
       }
@@ -206,7 +226,14 @@ class NotebookRunRecordStorage {
       if (digest(contents) !== entry.sha256) throw new Error('Notebook record checksum mismatch.')
       const run = JSON.parse(contents) as NotebookRunRecord
       if (run?.runId !== entry.runId) throw new Error('Notebook record identity mismatch.')
-      records?.set(path, { info, run })
+      const identity = {
+        size: info.size,
+        ino: info.ino,
+        mtimeMs: info.mtimeMs,
+        ctimeMs: info.ctimeMs
+      }
+      this.verifiedFiles.set(entry, identity)
+      records?.set(path, { info: identity, run })
       result.push(run)
     }
     return result
@@ -244,6 +271,24 @@ class NotebookRunRecordStorage {
       stored.push(ref)
     }
     return stored
+  }
+
+  async containsOnlyReferencedFiles(
+    root: string,
+    runs: readonly NotebookRunRecord[]
+  ): Promise<boolean> {
+    const names = new Set<string>()
+    for (const run of runs) {
+      const stored = this.references.get(run)
+      if (stored?.directory === root) names.add(`${stored.ref.sha256}.json`)
+    }
+    try {
+      const entries = await readdir(await this.directory(root), { withFileTypes: true })
+      return entries.every((entry) => !entry.isFile() || names.has(entry.name))
+    } catch (error) {
+      if (isMissingFileError(error)) return true
+      throw error
+    }
   }
 
   async prune(root: string, runs: StoredNotebookRun[]): Promise<void> {
@@ -284,10 +329,20 @@ type PersistedNotebookDocumentScope = {
   sessionId?: unknown
 }
 
+const statIfPresent = async (path: string): Promise<DocumentFileIdentity | undefined> => {
+  try {
+    return await stat(path)
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined
+    throw error
+  }
+}
+
 const sameDocumentFileIdentity = (
   left: DocumentFileIdentity,
-  right: DocumentFileIdentity
+  right: DocumentFileIdentity | undefined
 ): boolean =>
+  right !== undefined &&
   left.mtimeMs === right.mtimeMs &&
   left.ctimeMs === right.ctimeMs &&
   left.size === right.size &&
@@ -786,6 +841,8 @@ const normalizeWorkingFiles = (
     }
   })
 
+const EMPTY_OUTPUT_BYTES = Buffer.byteLength(JSON.stringify([emptyText(), []]))
+
 // Fills active optional run fields while preserving retired historical fields as written. Legacy
 // records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
 const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => {
@@ -1051,6 +1108,7 @@ class NotebookRunRepository {
     {
       root: string
       ref: RunReference
+      omittedBytes?: number
     }
   >()
   private readonly runIndexes = new WeakMap<
@@ -1076,12 +1134,9 @@ class NotebookRunRepository {
   private async cachedLaneSummary(filePath: string): Promise<LaneSummary | undefined> {
     const cached = this.laneSummaries.get(filePath)
     if (!cached) return undefined
-    try {
-      if (sameDocumentFileIdentity(cached.identity, await stat(filePath))) return cached.summary
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error
-    }
-    return undefined
+    return sameDocumentFileIdentity(cached.identity, await statIfPresent(filePath))
+      ? cached.summary
+      : undefined
   }
 
   private async hasRecoveryCandidate(filePath: string): Promise<boolean> {
@@ -1164,7 +1219,13 @@ class NotebookRunRepository {
       frameId?: string
       before?: NotebookRunCursor
       lane?: NotebookLaneIdentity
-      retain?: (run: NotebookRunRecord, index: number, count: number) => boolean
+      backgroundTaskMetadata?: boolean
+      retain?: (
+        run: NotebookRunRecord,
+        index: number,
+        count: number,
+        omittedBytes?: number
+      ) => boolean
     }
   ): Promise<NotebookHistorySnapshot | undefined> {
     const { limit, runIds, frameId, before, lane, retain } = query
@@ -1178,6 +1239,24 @@ class NotebookRunRepository {
       if (!kernel || (await this.hasRecoveryCandidate(path))) return undefined
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
     }
+    if (query.backgroundTaskMetadata) {
+      for (const { history } of cached.summaries) {
+        if (!history) return undefined
+        const refs: RunReference[] = []
+        for (const row of history.runs) {
+          const body = this.historyBodies.get(row)
+          if (body) {
+            if (body.omittedBytes === undefined) return undefined
+            refs.push(body.ref)
+          }
+        }
+        if (
+          (await this.hasRecoveryCandidate(join(history.notebookSessionRoot, NOTEBOOK_RUN_FILE))) ||
+          !(await this.records.unchanged(history.notebookSessionRoot, refs))
+        )
+          return undefined
+      }
+    }
     const requested = new Set(runIds)
     const window = selectRunWindow(cached.documents, sessionId, limit, requested, frameId, before)
     const runs: NotebookRunRecord[] = []
@@ -1185,7 +1264,7 @@ class NotebookRunRepository {
       const row = window.runs[index]
       const body = this.historyBodies.get(row)
       let run = row
-      if (body) {
+      if (body && !query.backgroundTaskMetadata) {
         try {
           const [raw] = await this.records.read(body.root, [body.ref])
           run = { ...row, text: raw.text ?? emptyText(), outputs: raw.outputs ?? [] }
@@ -1195,7 +1274,16 @@ class NotebookRunRepository {
         }
       }
       run = await this.withRunEnvironmentManifest(run, requested)
-      if (retain && !retain(run, index, window.runs.length) && runs.length > 0) {
+      if (
+        retain &&
+        !retain(
+          run,
+          index,
+          window.runs.length,
+          query.backgroundTaskMetadata ? body?.omittedBytes : undefined
+        ) &&
+        runs.length > 0
+      ) {
         const { runId, startedAt } = runs[runs.length - 1]
         window.historyPage = { hasEarlierRuns: true, oldestCursor: { runId, startedAt } }
         break
@@ -2151,6 +2239,8 @@ class NotebookRunRepository {
       if (result.run.executionMode === 'background') recovered.set(result.run.runId, result.run)
       await rm(factPath, { force: true })
     }
+    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const before = await statIfPresent(path)
     let document = await this.loadExisting(projectId, sessionId, lane)
     if (document.runs.some((run) => run.status === 'queued' || run.status === 'running')) {
       document = await this.reconcileInterruptedRuns(projectId, sessionId, lane)
@@ -2168,12 +2258,20 @@ class NotebookRunRepository {
         recovered.set(run.runId, run)
       }
     }
-    const manifest = await readDurableJsonFile(
-      join(document.notebookSessionRoot, NOTEBOOK_RUN_FILE),
-      decodeNotebookDocument
-    )
-    if (manifest.status === 'found')
-      await this.records.prune(document.notebookSessionRoot, manifest.value.runs)
+    // A clean directory needs no deletion. Reopen the authoritative manifest before any cleanup.
+    const clean =
+      before &&
+      (await this.records.containsOnlyReferencedFiles(
+        document.notebookSessionRoot,
+        document.runs
+      )) &&
+      !(await this.hasRecoveryCandidate(path)) &&
+      sameDocumentFileIdentity(before, await statIfPresent(path))
+    if (!clean) {
+      const manifest = await readDurableJsonFile(path, decodeNotebookDocument)
+      if (manifest.status === 'found')
+        await this.records.prune(document.notebookSessionRoot, manifest.value.runs)
+    }
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
   }
 
@@ -2298,12 +2396,16 @@ class NotebookRunRepository {
         const entry = isNotebookRunReference(ref) ? { ...run, text: emptyText(), outputs: [] } : run
         bytes +=
           estimateReplayBytes(entry) +
-          (isNotebookRunReference(ref) ? estimateReplayBytes(ref) + 128 : 0)
+          (isNotebookRunReference(ref) ? estimateReplayBytes(ref) + 256 : 0)
         if (bytes > MAX_LANE_SUMMARY_BYTES) break
         if (isNotebookRunReference(ref)) {
           this.historyBodies.set(entry, {
             root: document.notebookSessionRoot,
-            ref
+            ref,
+            // Only background task windows need the exact JSON cost of the omitted output.
+            omittedBytes: summary.hasBackgroundRuns
+              ? Buffer.byteLength(JSON.stringify([run.text, run.outputs])) - EMPTY_OUTPUT_BYTES
+              : undefined
           })
         }
         history.runs.push(entry)
@@ -2429,15 +2531,23 @@ class NotebookRunRepository {
     }
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
-    this.rememberLaneSummary(filePath, fileInfo, cachedDocument, false)
+    const weight =
+      fileInfo.size +
+      runs.reduce((bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0), 0)
+    const oversized = weight > MAX_DOCUMENT_CACHE_BYTES
+    this.rememberLaneSummary(
+      filePath,
+      fileInfo,
+      cachedDocument,
+      oversized,
+      oversized ? runs : undefined
+    )
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
       ctimeMs: fileInfo.ctimeMs,
       size: fileInfo.size,
       ino: fileInfo.ino,
-      weight:
-        fileInfo.size +
-        runs.reduce((bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0), 0),
+      weight,
       document: cachedDocument
     })
   }

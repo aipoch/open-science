@@ -257,18 +257,27 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       )
     )
       return { runs: [] }
-    // Live reads keep the same durable validation and initialization as Notebook state.
-    if (session) await this.loadSessionDocument(session)
-    const window = await this.options.repository.readSessionRunWindow(
-      projectId,
-      sessionId,
-      NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
-    )
-    // Applying the byte cap can only remove candidates. An empty selection is already final.
-    if (!window.runs.some((run) => run.executionMode === 'background')) return { runs: [] }
+    const cached = await this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
+      limit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
+      runIds: [],
+      lane: session?.lane,
+      backgroundTaskMetadata: true,
+      retain: this.runBudget(true, DEFAULT_HISTORY_BYTES)
+    })
+    let window = cached?.window
+    if (!window) {
+      if (session) await this.loadSessionDocument(session)
+      window = await this.options.repository.readSessionRunWindow(
+        projectId,
+        sessionId,
+        NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      )
+      if (!window.runs.some((run) => run.executionMode === 'background')) return { runs: [] }
+      window = this.limitRunWindow(window, true)
+    }
     return {
-      runs: this.limitRunWindow(window, true)
-        .runs.filter((run) => run.executionMode === 'background')
+      runs: window.runs
+        .filter((run) => run.executionMode === 'background')
         .map((run) => ({
           runId: run.runId,
           agentFrameId: run.agentFrameId,
@@ -529,8 +538,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   private runBudget(includeRecent: boolean, limit: number) {
     let bytes = 0
-    return (run: NotebookRunRecord, index: number, count: number) => {
-      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(run)))
+    return (run: NotebookRunRecord, index: number, count: number, omittedBytes = 0) => {
+      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(run))) + omittedBytes
       bytes += runBytes * (includeRecent && index >= count - 20 ? 2 : 1)
       return index === count - 1 || bytes <= limit
     }
