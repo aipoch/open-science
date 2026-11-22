@@ -29,7 +29,7 @@ const credentialKeyPatterns = [
 // Business names can end in "token", "session token" or "secret". Only a
 // credential-specific suffix supplies enough evidence to flag an opaque value.
 const credentialToken =
-  /(?:^|[_-])(?:access|api|auth|bearer|id|oauth|personal[_-]?access|private|refresh|secret|security)[_-]?tokens?$/i
+  /(?:^|[_-])(?:access|api|auth|authentication|authorization|bearer|id|oauth|personal[_-]?access|private|refresh|secret|security)[_-]?tokens?$/i
 const qualifiedCredentialSuffixes = [
   /_(?:passwords?|passwd|passphrases?)$/,
   /_(?:(?:api|access|private|secret)_?keys?|access_?key_?id|secret_?access_?key)$/,

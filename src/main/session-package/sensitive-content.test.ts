@@ -913,6 +913,8 @@ it.each([
   'tenantSigningSecret',
   'oauth_signature',
   'oidcSignature',
+  'authenticationToken',
+  'authorizationToken',
   'openai_api_key',
   'db_password',
   'warehouseAPIKey',
