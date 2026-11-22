@@ -72,7 +72,7 @@ on:
       - 'scripts/install-native-components.mjs'
       - 'build/native-components-lock.json'
   schedule:
-    - cron: '23 19 * * *' # UTC; 02:23 the next day in Asia/Saigon
+    - cron: '33 16 * * *' # UTC; 00:33 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:

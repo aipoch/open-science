@@ -4,7 +4,7 @@ name: Windows E2E Regression
 # Scheduled failures share the Mac regression tracking-issue lifecycle, with their own identity.
 on:
   schedule:
-    - cron: '17 18 * * *' # UTC; 02:17 Asia/Singapore
+    - cron: '17 15 * * *' # UTC; 23:17 Asia/Singapore
   workflow_dispatch:
     inputs:
       workspace_test_pattern:

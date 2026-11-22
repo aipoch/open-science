@@ -26,6 +26,7 @@ type Job = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  concurrency?: { group: string; 'cancel-in-progress': boolean | string }
   'runs-on': string
   'continue-on-error'?: boolean
   steps: Step[]
@@ -40,7 +41,7 @@ type Job = {
 type Workflow = {
   on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
   permissions: Record<string, string>
-  concurrency: { group: string; 'cancel-in-progress': boolean }
+  concurrency: { group: string; 'cancel-in-progress': boolean | string }
   jobs: Record<string, Job>
 }
 const scheduled = load(readFileSync('.github/workflows/source-regression.yml', 'utf8')) as Workflow
@@ -409,7 +410,7 @@ describe('independent source regression', () => {
   })
 
   it('retains both daily rounds and diagnostic modes without publication', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 2,14 * * *' }])
     const dispatch = scheduled.on.workflow_dispatch as {
       inputs: { mode: { options: string[] }; shard: { options: string[] } }
     }
@@ -436,10 +437,20 @@ describe('independent source regression', () => {
       "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
     )
     expect(scheduled.concurrency).toEqual({
-      group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
-      'cancel-in-progress': true
+      group:
+        "source-regression-${{ github.event_name }}-${{ github.event_name == 'schedule' && github.run_id || github.ref }}",
+      'cancel-in-progress': "${{ github.event_name != 'schedule' }}"
     })
     expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+    expect(
+      scheduled.jobs.report.steps.find(
+        ({ name }) => name === 'Open, refresh, or close the tracking issue'
+      )?.with?.script
+    ).toContain('ignoreStaleRuns: true')
+    expect(scheduled.jobs.report.concurrency).toEqual({
+      group: 'source-regression-report',
+      'cancel-in-progress': false
+    })
   })
 
   it('builds once and restores the exact producer snapshot and Node version in every Mac job', () => {

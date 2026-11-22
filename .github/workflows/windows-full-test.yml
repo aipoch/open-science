@@ -6,7 +6,7 @@ name: Windows Full Test
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '47 16 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '47 13 * * *' # UTC; 21:47 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:

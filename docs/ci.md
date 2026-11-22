@@ -254,7 +254,7 @@ checkpoint inventory. Failure is recorded before emergency cleanup and cannot be
 These fixtures do not certify installed upgrades, OS reboot, real provider protocols or Electron
 quit/persistence UI; those retain their existing dedicated validation paths.
 
-Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
+Complete Mac Source Regression runs twice daily on `main`, at **10:37 and 22:37 Singapore time**
 (Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into twelve isolated Mac test jobs:
 functional, two workspace shards, presentation (browser/visual/accessibility), delegation, six ordinary
 supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
@@ -270,14 +270,14 @@ and `delegation` select the same production jobs. In `regressions` mode, `shard`
 `2`, `3`, `4`, `5`, `6`, or `all`; `full` always runs all six shards regardless of that diagnostic input.
 Existing focused diagnostic modes remain available and never publish or change scheduled issues.
 PR Gate retains its existing groups and non-capacity selection.
-Windows E2E Regression runs daily at **02:17 Singapore time**
+Windows E2E Regression runs daily at **23:17 Singapore time**
 (Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on six Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
 Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline`, `windows-e2e` and the Windows part of `e2e` run all
 mainline groups. The independent regression workflow is the manual entry point for complete
 Windows E2E. PR Gate never expands Windows E2E to the full suites. The existing WSL development-preview journey remains
 opt-in with its dedicated build and is not claimed as ordinary PR/scheduled coverage. Nightly packaging, Windows Full Test and Runtime Resource
-Soak retain their daily 23:17, 00:47 and 03:23 Singapore schedules and, like Windows E2E Regression,
+Soak now run daily at 20:17, 21:47 and 00:53 Singapore time and, like Windows E2E Regression,
 skip a head that the last successful scheduled run already covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
 be published under the rolling `nightly` tag, and manual runs never count as coverage because
 the runs API cannot report which dispatch mode they selected. Manual runs always execute.
@@ -390,7 +390,7 @@ directly: it lacks the generated platform dependency manifest.
 
 ## Supplemental desktop coverage
 
-Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
+Complete Mac regression and Delegation suites run in Source Regression at 10:37 and 22:37
 Asia/Singapore, as well as focused manual validation. Its manual `presentation` mode runs the real
 Mac browser, visual and accessibility steps without functional, workspace, capacity or Delegation
 suites. Browser and visual outcomes are both collected, and any failure remains blocking.
