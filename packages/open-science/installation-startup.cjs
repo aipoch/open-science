@@ -117,6 +117,7 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwne
     reapStaleRegistrations(directory, DatabaseSync)
     let owner
     const helperFlags = [
+      '--internal-agent-acp',
       '--open-science-artifact-mcp',
       '--open-science-notebook-mcp',
       '--open-science-reviewer-mcp-proxy',

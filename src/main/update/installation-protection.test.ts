@@ -220,6 +220,7 @@ it.each(['home', 'explicit', 'environment', 'e2e'] as const)(
       )
     try {
       for (const flag of [
+        '--internal-agent-acp',
         '--open-science-artifact-mcp',
         '--open-science-notebook-mcp',
         '--open-science-reviewer-mcp-proxy',
