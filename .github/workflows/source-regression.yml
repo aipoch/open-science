@@ -431,6 +431,10 @@ jobs:
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Validation runs may overlap, but updates to the shared tracking issue must be serialized.
+    concurrency:
+      group: source-regression-report
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write

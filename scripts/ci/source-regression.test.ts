@@ -26,6 +26,7 @@ type Job = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  concurrency?: { group: string; 'cancel-in-progress': boolean | string }
   'runs-on': string
   'continue-on-error'?: boolean
   steps: Step[]
@@ -441,6 +442,10 @@ describe('independent source regression', () => {
       'cancel-in-progress': "${{ github.event_name != 'schedule' }}"
     })
     expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+    expect(scheduled.jobs.report.concurrency).toEqual({
+      group: 'source-regression-report',
+      'cancel-in-progress': false
+    })
   })
 
   it('builds once and restores the exact producer snapshot and Node version in every Mac job', () => {
