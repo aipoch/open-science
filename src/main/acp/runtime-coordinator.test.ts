@@ -2833,6 +2833,56 @@ describe('AcpRuntimeCoordinator', () => {
     cancellation.resolve()
   })
 
+  it('preserves a durable question whose provider turn ended before quit preparation', async () => {
+    let fake: ReturnType<typeof createFakeRuntime> | undefined
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          // The turn already settled, so no live prompt interaction remains.
+          activePromptSessions: [],
+          quitBlockingSessions: []
+        })
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      undefined
+    )
+    const runtime = fake!
+    await coordinator.createSession({ cwd: '/workspace' })
+    // The snapshot still lists the session as prompt-in-flight while the durable question stays
+    // pending — the race that made Windows restart recovery render a cancelled question card.
+    runtime.setStateSilently({
+      promptInFlightSessionIds: ['session-1'],
+      pendingElicitations: [
+        {
+          requestId: 'choice-1',
+          sessionId: 'session-1',
+          toolCallId: 'tool-1',
+          message: 'Which dataset?',
+          fields: [],
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-1',
+            promptMessageId: 'prompt-1'
+          }
+        }
+      ]
+    })
+
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+
+    expect(runtime.cancelPrompt).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['prepareForQuit', 'stopAll'],
     ['disconnect', 'stopAll'],

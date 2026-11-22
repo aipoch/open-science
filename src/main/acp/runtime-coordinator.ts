@@ -568,13 +568,24 @@ class AcpRuntimeCoordinator {
     for (const sessionId of durableWaitSessionIds) {
       this.durableQuitDetachedSessionIds.add(sessionId)
     }
+    // A durable question can outlive its provider turn: the live interaction is already gone while
+    // the snapshot still lists the session as prompt-in-flight. Cancel-prompting such a session
+    // would destroy the question that restart recovery is supposed to restore.
+    const durableQuestionSessionIds = new Set(
+      (this.getSnapshot().pendingElicitations ?? [])
+        .filter((request) => request.durable)
+        .map((request) => request.sessionId)
+    )
     const sessionIds = Array.from(
       new Set([
         ...this.activePromptRequests.keys(),
         ...this.pendingPromptStarts.keys(),
         ...this.getSnapshot().promptInFlightSessionIds
       ])
-    ).filter((sessionId) => !durableWaitSessionIds.has(sessionId))
+    ).filter(
+      (sessionId) =>
+        !durableWaitSessionIds.has(sessionId) && !durableQuestionSessionIds.has(sessionId)
+    )
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
