@@ -116,6 +116,8 @@ export const PreviewImageContent = ({
   onTransformEnd?: (zoom: NonNullable<ImageEditorDraft['zoom']>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const imageGenerationSessionId =
+    source === 'artifact' && selectedVersionId ? sessionId : undefined
   const requestKey = usePreviewResourceKey({
     projectId,
     sessionId,
@@ -123,6 +125,7 @@ export const PreviewImageContent = ({
     path,
     managedFileId,
     selectedVersionId,
+    imageGenerationSessionId,
     mimeType,
     size,
     mtimeMs
@@ -138,6 +141,7 @@ export const PreviewImageContent = ({
       selectedVersionId,
       path,
       source,
+      imageGenerationSessionId,
       mimeType,
       size,
       mtimeMs
