@@ -492,6 +492,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Check runtime helper registration
+        run: node scripts/ci/check-installation-helper-registration.mjs
       - name: Install registration toolchain
         # Static source/manifest checks only; no application install or native/package builds.
         run: npm ci --ignore-scripts --no-audit
