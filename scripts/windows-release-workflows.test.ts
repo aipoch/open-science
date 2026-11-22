@@ -965,6 +965,34 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
+  it('publishes the verified Windows version-pair patch for every release', () => {
+    const release = readWorkflow('release.yml')
+    const delta = findStep(release.jobs.publish, 'Generate verified Windows version-pair patch')
+
+    expect(delta.if).toBeUndefined()
+    expect(delta).toMatchObject({
+      env: { GH_TOKEN: '${{ github.token }}' },
+      run: 'bash build/windows-delta/release.sh artifacts'
+    })
+  })
+
+  it('supports a controlled CDN repair for an already published Windows delta', () => {
+    const mirror = readWorkflow('mirror-to-website.yml')
+    const inputs = mirror.on.workflow_dispatch.inputs
+    expect(inputs.windows_delta_repair).toMatchObject({ required: false, default: false })
+    expect(findStep(mirror.jobs.mirror, 'Download Windows delta repair assets').run).toContain(
+      "--pattern '*.wex'"
+    )
+    const repair = findStep(mirror.jobs.mirror, 'Repair Windows version-pair delta')
+    expect(repair).toMatchObject({
+      if: '${{ !inputs.dry_run && inputs.windows_delta_repair }}',
+      run: 'node scripts/repair-windows-delta.mjs'
+    })
+    expect(findStep(mirror.jobs.mirror, 'Sync installers to versioned path').if).toBe(
+      '${{ !inputs.dry_run && !inputs.windows_delta_repair }}'
+    )
+  })
+
   it('records unsigned Windows update diagnostics without blocking publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = readWorkflow('windows-upgrade-smoke.yml').jobs['windows-upgrade-smoke']
@@ -1327,6 +1355,13 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
             required: false,
             type: 'boolean',
             default: false
+          },
+          windows_delta_repair: {
+            description:
+              'Repair the CDN root feed and immutable Windows delta for an already published release',
+            required: false,
+            type: 'boolean',
+            default: false
           }
         }
       }
@@ -1373,13 +1408,15 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(backfill.run).toContain(
       'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
     )
+    expect(findStep(mirror, 'Configure AWS credentials').if).toBe('${{ !inputs.dry_run }}')
     for (const sideEffectStep of [
-      'Configure AWS credentials',
       'Collect historical Windows blockmaps',
       'Backfill historical Windows blockmaps',
       'Sync installers to versioned path'
     ]) {
-      expect(findStep(mirror, sideEffectStep).if).toBe('${{ !inputs.dry_run }}')
+      expect(findStep(mirror, sideEffectStep).if).toBe(
+        '${{ !inputs.dry_run && !inputs.windows_delta_repair }}'
+      )
     }
   })
 
