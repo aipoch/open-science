@@ -4853,7 +4853,9 @@ type ReproducibilityCase = {
   version: { artifactId: string; versionId: string }
   row: { contentStorageKey: string; checksum: string | null }
   request: { projectId: string; appSessionId: string; artifactId: string; versionId: string }
-  store: { getCheckLog: (request: unknown) => Promise<unknown> }
+  store: InstanceType<
+    typeof import('../artifacts/artifact-reproducibility-receipts').ArtifactReproducibilityReceiptStore
+  >
   originalReceipt: { receiptChecksum: string }
   failedAttempt: { attemptId: string }
   batch: unknown
