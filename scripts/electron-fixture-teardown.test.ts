@@ -479,6 +479,25 @@ it.each([true, false])(
   }
 )
 
+it('fails closed when a live owned process birth identity becomes unavailable', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  boundary.reap.mockResolvedValue({ reaped: true })
+  boundary.processTable.mockReturnValue([{ pid: 12346, ppid: 1 }])
+  boundary.processBirthIdentity.mockImplementation((pid: number) =>
+    pid === 12345 ? 'windows-creation-time:135411000000000001' : undefined
+  )
+  const operation = boundary.fixture(
+    { windowMode: 'hidden' },
+    async (app) => {
+      boundary.mainEvaluate.mockResolvedValueOnce(capturedBirths)
+      await app.restartAfterCrash()
+    },
+    { status: 'failed', expectedStatus: 'passed', attach }
+  )
+  await expect(operation).rejects.toThrow('cannot read the birth identity for PID 12346')
+  expect(boundary.launch).toHaveBeenCalledOnce()
+})
+
 it('refuses a Windows crash restart without a complete pre-termination snapshot', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })
   boundary.reap.mockResolvedValue({ reaped: true })
