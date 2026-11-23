@@ -14765,12 +14765,16 @@ describe('v4 runtime bindings & agent tools', () => {
     })
     service.setDefaultEnvProvisioner({ provisionPython, provisionR: async () => undefined })
 
-    const bound = await service.bindRuntime({
+    const write = vi.spyOn(repository, 'setRuntimeBindings')
+    const request = {
       sessionId: 's',
       workspaceCwd: root,
-      language: 'python',
+      language: 'python' as const,
       runtimeId: userPyA.envId
-    })
+    }
+    const bound = await service.bindRuntime(request)
+    expect(await service.bindRuntime(request)).toEqual(bound)
+    expect(write).toHaveBeenCalledTimes(1)
     expect(bound.bindings.python?.runtimeId).toBe(userPyA.envId)
     expect(bound.bindings.python?.source).toBe('external')
 

@@ -1175,7 +1175,7 @@ class NotebookRunRepository {
       coldCount: number
       references: RunReference[]
       coldHasBackgroundRuns: boolean
-      analysis?: NotebookRunRecord[]
+      analysis?: StoredNotebookRun[]
       ids: Set<string>
       submissions: Set<string>
       document: NotebookRunDocument
@@ -1494,15 +1494,28 @@ class NotebookRunRepository {
 
   private async readCompactMetadata(path: string): Promise<NotebookRunDocument | undefined> {
     const compact = this.pendingViews.get(path)
-    if (
-      compact?.analysis &&
-      (await this.laneFilesUnchanged(path, compact.identity, compact.references, {
-        verifyUnseen: true
-      }))
-    ) {
-      return { ...compact.document, runs: [...compact.analysis, ...compact.document.runs] }
+    if (!compact?.analysis) return undefined
+    const { identity, references, analysis, document } = compact
+    if (!(await this.laneFilesUnchanged(path, identity, references, { verifyUnseen: true })))
+      return undefined
+    const deferred = analysis.filter(isNotebookRunReference)
+    const replacements = new Map<RunReference, NotebookRunRecord>()
+    if (deferred.length) {
+      const root = dirname(path)
+      const hydrated = await this.hydrate(path, { ...document, runs: deferred })
+      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+      for (const [i, row] of decoded.runs.entries()) {
+        const run = normalizeRun(root, row)
+        const metadata = { ...run, text: emptyText(), outputs: [] }
+        const { detailBytes, hasOutput } = indexReplayRun(run)
+        this.analysisIndexDetails.set(metadata, { detailBytes, hasOutput })
+        this.historyBodies.set(metadata, { root, ref: deferred[i] })
+        replacements.set(deferred[i], metadata)
+      }
+      if (!sameDocumentFileIdentity(identity, await statIfPresent(path))) return undefined
     }
-    return undefined
+    const cold = analysis.map((row) => (isNotebookRunReference(row) ? replacements.get(row)! : row))
+    return { ...document, runs: [...cold, ...document.runs] }
   }
 
   // One physical lane in manifest order. A corrupt history must reach the admission caller.
@@ -2986,25 +2999,47 @@ class NotebookRunRepository {
     const ids = new Set<string>(),
       submissions = new Set<string>()
     let coldHasBackgroundRuns = false
-    let analysis: NotebookRunRecord[] | undefined = []
-    let analysisBytes = 0
     for (let i = 0; i < coldCount; i++) {
       const run = document.runs[i]
       bytes += 64 + Buffer.byteLength(run.runId) + Buffer.byteLength(run.submissionIdentity ?? '')
       if (bytes > MAX_LANE_SUMMARY_BYTES) return
       coldHasBackgroundRuns ||= run.executionMode === 'background'
-      if (analysis) {
-        const metadata = { ...run, text: emptyText(), outputs: [] }
-        analysisBytes += estimateReplayBytes(metadata) + 96
-        if (analysisBytes <= MAX_ANALYSIS_METADATA_BYTES) {
-          const { detailBytes, hasOutput } =
-            this.analysisIndexDetails.get(run) ?? indexReplayRun(run)
-          this.analysisIndexDetails.set(metadata, { detailBytes, hasOutput })
-          analysis.push(metadata)
-        } else analysis = undefined
-      }
       ids.add(run.runId)
       if (run.submissionIdentity) submissions.add(run.submissionIdentity)
+    }
+    let analysis: StoredNotebookRun[] | undefined = []
+    let analysisBytes = 0
+    let inlineBytes = 0
+    const external: { index: number; cost: number; ref: RunReference }[] = []
+    for (let i = 0; i < coldCount; i++) {
+      const run = document.runs[i]
+      const metadata = { ...run, text: emptyText(), outputs: [] }
+      const cost = estimateReplayBytes(metadata) + 96
+      const ref = stored[i]
+      if (isNotebookRunReference(ref)) {
+        external.push({ index: i, cost, ref })
+      } else {
+        inlineBytes += cost
+        if (inlineBytes > MAX_ANALYSIS_METADATA_BYTES) {
+          analysis = undefined
+          break
+        }
+      }
+      analysis.push(metadata)
+      analysisBytes += cost
+    }
+    if (analysis && analysisBytes > MAX_ANALYSIS_METADATA_BYTES) {
+      // Drop the most resident metadata per byte fetched. Manifest order stays in analysis.
+      external.sort((a, b) => b.cost / b.ref.bytes - a.cost / a.ref.bytes)
+      let deferredBytes = 0
+      for (const { index, cost, ref } of external) {
+        if (deferredBytes + ref.bytes > MAX_ANALYSIS_METADATA_BYTES) continue
+        analysis[index] = ref
+        deferredBytes += ref.bytes
+        analysisBytes -= cost
+        if (analysisBytes <= MAX_ANALYSIS_METADATA_BYTES) break
+      }
+      if (analysisBytes > MAX_ANALYSIS_METADATA_BYTES) analysis = undefined
     }
     if (analysis) {
       // Keep recent inline output only within the remaining metadata budget. External
@@ -3013,21 +3048,25 @@ class NotebookRunRepository {
       let indexed = false
       for (let i = analysis.length - 1; i >= 0; i--) {
         const ref = stored[i]
+        const metadata = analysis[i]
+        if (isNotebookRunReference(metadata)) continue
+        const run = document.runs[i]
+        const { detailBytes, hasOutput } = this.analysisIndexDetails.get(run) ?? indexReplayRun(run)
+        this.analysisIndexDetails.set(metadata, { detailBytes, hasOutput })
         if (isNotebookRunReference(ref)) {
-          this.historyBodies.set(analysis[i], { root: document.notebookSessionRoot, ref })
+          this.historyBodies.set(metadata, { root: document.notebookSessionRoot, ref })
         } else if (analysisBytes < MAX_ANALYSIS_METADATA_BYTES) {
           const { text, outputs } = document.runs[i]
           const output = { text, outputs }
           analysisBytes += estimateReplayBytes(output) + 64
-          if (analysisBytes <= MAX_ANALYSIS_METADATA_BYTES)
-            this.inlineOutputs.set(analysis[i], output)
+          if (analysisBytes <= MAX_ANALYSIS_METADATA_BYTES) this.inlineOutputs.set(metadata, output)
         }
-        if (!isNotebookRunReference(ref) && !this.inlineOutputs.has(analysis[i]) && manifestJson) {
+        if (!isNotebookRunReference(ref) && !this.inlineOutputs.has(metadata) && manifestJson) {
           if (!indexed) {
             inlineFile = indexInlineRuns(path, identity, manifestJson, coldCount)
             indexed = true
           }
-          if (inlineFile) this.inlineSlots.set(analysis[i], { file: inlineFile, index: i })
+          if (inlineFile) this.inlineSlots.set(metadata, { file: inlineFile, index: i })
         }
       }
     }
@@ -3107,7 +3146,6 @@ class NotebookRunRepository {
     }
     let reference: RunReference | undefined
     if (!(await publishPendingRun(path, entry))) {
-      if (run.status === 'queued' || run.status === 'running') return false
       const bytes = Buffer.byteLength(JSON.stringify(encoded))
       const hotReferences = this.records.referencesFor(dirname(path), next.runs.slice(coldCount))
       if (
@@ -3173,6 +3211,7 @@ class NotebookRunRepository {
       bytes: 0
     }
     for (const [index, metadata] of view.analysis.entries()) {
+      if (isNotebookRunReference(metadata)) return false
       const body = this.historyBodies.get(metadata)
       if (body) {
         if (metadata.environmentManifest) return false

@@ -230,7 +230,7 @@ describe('notebook run repository', () => {
     const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
     const manifest = join(doc.notebookSessionRoot, 'run.json')
     const base = JSON.parse(await readFile(manifest, 'utf8'))
-    const run = admittedRun()
+    const run = admittedRun({ script: '#'.repeat(96 * 1024) })
     base.runs = Array.from({ length: 32 }, (_, i) =>
       admittedRun({
         runId: 'old-' + i,
@@ -247,6 +247,9 @@ describe('notebook run repository', () => {
       expectedStatus: 'queued',
       run: { ...run, status: 'running' }
     })
+    const active = await new NotebookRunRepository(root).findExisting('p', 's', request.lane)
+    expect(active?.runs.at(-1)).toMatchObject({ status: 'running', script: run.script })
+    expect(await readFile(manifest, 'utf8')).toBe(original)
     const output = 'x'.repeat(125000)
     await repo.commitTerminalRun({
       ...request,
@@ -2889,6 +2892,69 @@ describe('large immutable Notebook records', () => {
       reads.mockRestore()
     }
   })
+
+  it.each(['inline', 'external'])(
+    'reads long scripts without reopening %s history',
+    async (layout) => {
+      const root = await createStorageRoot()
+      const projectId = 'p'
+      const sessionId = 's'
+      const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-s')
+      const scope = { projectId, sessionId, lane }
+      const repo = new NotebookRunRepository(root)
+      const doc = await repo.loadOrCreate({ ...scope, workspaceCwd: root })
+      const output = admittedRun({
+        runId: 'historical-output',
+        status: 'completed',
+        text: { ...admittedRun().text, stdout: 'x'.repeat(33 * 1024 * 1024) }
+      })
+      if (layout === 'external') await repo.appendRun({ ...scope, run: output })
+      const scripts = ['a'.repeat(320 * 1024), 'b'.repeat(320 * 1024)]
+      for (const [i, script] of scripts.entries()) {
+        await repo.appendRun({
+          ...scope,
+          run: admittedRun({
+            runId: 'source-' + i,
+            script,
+            status: 'completed',
+            text: { ...output.text, stdout: i === 0 ? '' : 'x'.repeat(200 * 1024) }
+          })
+        })
+      }
+      const manifest = join(doc.notebookSessionRoot, 'run.json')
+      const stored = JSON.parse(await readFile(manifest, 'utf8'))
+      if (layout === 'inline') stored.runs.unshift(output)
+      // The reference-heavy fixture still has a manifest just above the 64 KiB hot slot limit.
+      stored.runs.push(
+        admittedRun({
+          runId: 'inline',
+          text: { ...output.text, stdout: 'x'.repeat(65536) },
+          status: 'completed'
+        })
+      )
+      await writeFile(manifest, JSON.stringify(stored))
+      const reader = new NotebookRunRepository(root)
+      await reader.findExisting(projectId, sessionId, lane)
+      const reads = vi.spyOn(durableFiles, 'readDurableJsonFile')
+      const bodies = vi.spyOn(durableFiles, 'readFileWithinLimit')
+      try {
+        const rows = await reader.readLaneAnalysisRuns(projectId, sessionId, lane)
+        expect(
+          rows.filter((run) => run.runId.startsWith('source-')).map((run) => run.script)
+        ).toEqual(scripts)
+        const cheaper = stored.runs.find((row: { runId: string }) => row.runId === 'source-0')
+        expect(bodies.mock.calls.map(([path]) => path)).toEqual([
+          join(doc.notebookSessionRoot, '.run-records', cheaper.sha256 + '.json')
+        ])
+        const index = await reader.readSessionRunIndex(projectId, sessionId)
+        expect(index.find((r) => r.runId === 'source-1')?.scriptCharacters).toBe(scripts[1].length)
+        expect(reads.mock.calls.some(([path]) => path === manifest)).toBe(false)
+      } finally {
+        bodies.mockRestore()
+        reads.mockRestore()
+      }
+    }
+  )
 
   it.each([2, 6])('batches large history with %i inline rows', async (inlineCount) => {
     const root = await createStorageRoot()
