@@ -116,6 +116,8 @@ generation. A controlled delayed EOF verifies that handoff joins reader exit aft
 backend; the production wait is bounded to five seconds and retains the final occupancy check with
 its independent platform budget. Preparing checks allow up to 60 seconds for transient external holders,
 while pinning the backend and reader birth identities so their exit cannot produce a false pass.
+The same source gate also exercises a live registration from another profile and an unreadable live
+registration, preserving the conservative `other-runtime` and recovery-blocking decisions in PRs.
 Other Mac validation runs in merge queue.
 The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
