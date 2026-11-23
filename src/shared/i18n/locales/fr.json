@@ -8225,6 +8225,8 @@
     "{{name}} (PID {{pid}})": "{{name}} (PID {{pid}})",
     "PID {{pid}}": "PID {{pid}}",
     "Open Task Manager": "Ouvrir le Gestionnaire des tâches",
+    "Close the process listed below, then check again.": "Fermez le processus indiqué ci-dessous, puis vérifiez à nouveau.",
+    "Unknown process": "Processus inconnu",
     "Loading earlier messages…": "Chargement des messages précédents…",
     "Retry loading earlier messages": "Réessayer de charger les messages précédents",
     "Load full conversation": "Charger la conversation complète",

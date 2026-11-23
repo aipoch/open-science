@@ -203,8 +203,11 @@ it('shows every blocking process with its PID when installation occupancy is rep
   })
   render()
   const processes = document.querySelector('[data-testid="runtime-blocking-processes"]')
-  expect(processes?.textContent).toContain('node.exe (PID 33996)')
+  expect(processes?.textContent).toContain('node.exe')
+  expect(processes?.textContent).toContain('PID 33996')
   expect(processes?.textContent).toContain('PID 34001')
+  expect(document.body.textContent).toContain('Application files are in use')
+  expect(document.body.textContent).toContain('Close the process listed below, then check again.')
 })
 
 it('shows authoritative task titles and uses guarded workspace navigation', async () => {

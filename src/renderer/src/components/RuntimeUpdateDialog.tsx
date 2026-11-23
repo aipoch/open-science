@@ -103,10 +103,9 @@ export const RuntimeUpdateDialog = ({
     status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
   )
   const blockingProcesses = status.recovery?.blockingProcesses ?? []
-  const canOpenProcessManager =
-    window.api?.platform === 'win32' &&
-    status.reason === 'installation-busy' &&
-    blockingProcesses.length > 0
+  const knownInstallationBlocker =
+    status.reason === 'installation-busy' && blockingProcesses.length > 0
+  const canOpenProcessManager = window.api?.platform === 'win32' && knownInstallationBlocker
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
@@ -376,43 +375,60 @@ export const RuntimeUpdateDialog = ({
                       title={
                         legacyRecords
                           ? t('Old Shell launch records are blocking this update.')
-                          : copy.title
+                          : knownInstallationBlocker
+                            ? t('Application files are in use')
+                            : copy.title
                       }
                       description={
                         legacyRecords
                           ? t(
                               'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
                             )
-                          : copy.description
+                          : knownInstallationBlocker
+                            ? t('Close the process listed below, then check again.')
+                            : copy.description
                       }
                     >
                       {blockingProcesses.length > 0 ? (
                         <ul
                           data-testid="runtime-blocking-processes"
                           aria-label={t('Processes using Open-Science files')}
-                          className="mt-3 space-y-1 text-xs text-muted-foreground"
+                          className="mt-3 space-y-2"
                         >
                           {blockingProcesses.map((process, index) => (
-                            <li key={`${process.pid}-${index}`} className="break-words">
-                              {process.name
-                                ? t('{{name}} (PID {{pid}})', {
-                                    name: process.name,
-                                    pid: process.pid
-                                  })
-                                : t('PID {{pid}}', { pid: process.pid })}
+                            <li
+                              key={`${process.pid}-${index}`}
+                              aria-label={
+                                process.name
+                                  ? t('{{name}} (PID {{pid}})', {
+                                      name: process.name,
+                                      pid: process.pid
+                                    })
+                                  : t('PID {{pid}}', { pid: process.pid })
+                              }
+                              className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/80 bg-muted/35 px-3 py-2 text-xs"
+                            >
+                              <span className="min-w-0 break-all font-mono text-foreground">
+                                {process.name ?? t('Unknown process')}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-muted-foreground">
+                                {t('PID {{pid}}', { pid: process.pid })}
+                              </span>
                             </li>
                           ))}
                         </ul>
                       ) : null}
-                      {!status.error ? (
+                      {!status.error && !knownInstallationBlocker ? (
                         <ManualUpdateFailure manual={manual} status={status} />
                       ) : null}
                       {canOpenProcessManager ? (
-                        <div className="mt-3 flex justify-end">
+                        <div className="mt-3 flex justify-end border-t border-border pt-3">
                           <Button
                             type="button"
                             variant="secondary"
                             size="sm"
+                            data-testid="open-process-manager"
+                            className="min-h-9"
                             onClick={() =>
                               void request(async () => {
                                 await openProcessManager()

@@ -7889,6 +7889,8 @@
     "{{name}} (PID {{pid}})": "{{name}} (PID {{pid}})",
     "PID {{pid}}": "PID {{pid}}",
     "Open Task Manager": "작업 관리자 열기",
+    "Close the process listed below, then check again.": "아래에 표시된 프로세스를 종료한 후 다시 확인하세요.",
+    "Unknown process": "알 수 없는 프로세스",
     "Loading earlier messages…": "이전 메시지 불러오는 중…",
     "Retry loading earlier messages": "이전 메시지 불러오기 재시도",
     "Load full conversation": "전체 대화 불러오기",

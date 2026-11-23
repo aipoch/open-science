@@ -7891,6 +7891,8 @@
     "{{name}} (PID {{pid}})": "{{name}}（PID {{pid}}）",
     "PID {{pid}}": "PID {{pid}}",
     "Open Task Manager": "開啟工作管理員",
+    "Close the process listed below, then check again.": "關閉下方列出的程序，然後重新檢查。",
+    "Unknown process": "未知程序",
     "Loading earlier messages…": "正在載入更早的訊息…",
     "Retry loading earlier messages": "重試載入更早的訊息",
     "Load full conversation": "載入完整對話",

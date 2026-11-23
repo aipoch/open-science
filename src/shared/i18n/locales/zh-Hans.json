@@ -7891,6 +7891,8 @@
     "{{name}} (PID {{pid}})": "{{name}}（PID {{pid}}）",
     "PID {{pid}}": "PID {{pid}}",
     "Open Task Manager": "打开任务管理器",
+    "Close the process listed below, then check again.": "关闭下面列出的进程，然后重新检查。",
+    "Unknown process": "未知进程",
     "Loading earlier messages…": "正在加载更早的消息…",
     "Retry loading earlier messages": "重试加载更早的消息",
     "Load full conversation": "加载完整对话",
