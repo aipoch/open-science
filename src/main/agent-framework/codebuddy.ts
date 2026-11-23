@@ -181,6 +181,7 @@ export const createCodeBuddyFramework = ({
     providerSessionId,
     cwd,
     mcpServers,
+    sessionModel,
     skillRuntimeAllowlist
   }): Promise<void> {
     if (codeBuddySharedSite && !sharedCodeBuddySiteMatches(codeBuddySharedSite))
@@ -190,6 +191,13 @@ export const createCodeBuddyFramework = ({
       cwd,
       mcpServers: narrowSkillRuntimeAcpServers(mcpServers, skillRuntimeAllowlist)
     })
+    if (sessionModel) {
+      await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+        sessionId: providerSessionId,
+        configId: 'model',
+        value: sessionModel
+      })
+    }
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
