@@ -13,6 +13,17 @@ The intended workflow starts with a research Run, uses its Session to identify a
 - Each mode publishes a self-contained, narrated HTML player. The SDK and CLI also export a published player as a narrated landscape MP4.
 - When film review stops generation, a user must be able to understand the failure and communicate revision instructions through an agent. Both public interfaces must support the resulting correction and allow the caller to observe whether it passes review.
 
+## Generation and export workflow
+
+The service publishes the reviewed HTML player before MP4 export. It uses the same stored player for frame capture and narration, so a caller can repeat export without rerunning Film generation.
+
+| Starting point             | CLI workflow                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| An eligible Session branch | Run `film start`, poll `film status` for the intended publication, and pass its `result.id` to `film export`. |
+| A published Film ID        | Run `film export` once. It waits for rendering and saves the verified MP4.                                    |
+
+Use the same Project, Session, branch, and mode throughout. Each `film status` invocation returns a snapshot. An earlier `result` can remain visible while a new attempt is running or has failed. `film download` saves a local HTML copy when requested. [Research Film commands](../packages/open-science/CLI.md#research-films)
+
 ## Baseline
 
 Initial baseline was Open Science 1.3.0 at official commit `69df576af5b2bd1d25bbea2b5d78f99615011e82`. Development branch `feat/research-film-sdk-cli` incorporates the upstream change to advisory narration scoring and best playable candidate selection. [Upstream quality review change](https://github.com/aipoch/open-science/pull/4468)

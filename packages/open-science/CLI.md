@@ -883,15 +883,25 @@ and runs without a browser. MP4 export for either mode uses the same sandboxed b
 open-science run --project <project> --prompt-file ./task.md --wait --json
 open-science film start <session-id> --project <project> --mode research-explanation --install-narration --json
 open-science film status <session-id> --project <project> --mode research-explanation --branch <branch-id> --json
-open-science film download <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --output ./film.html --json
-open-science film export <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --resolution 1080p --output ./film.mp4 --json
 ```
 
 Use `sessionId` from the Run. When `--branch` is omitted, the service selects the active branch.
 When the service returns `branchId`, use it for subsequent calls to keep the same branch selected.
-`film start` returns generation status before a new player is finished. Poll
-`film status` for progress. When the attempt completes, use `result.id` as the film ID. A status
-may include a previously published `result` while a newer attempt is running or has failed.
+`film start` can return before the new player is published. Repeat `film status` to poll for
+progress. When the intended player is published, use its `result.id` as the Film ID. A status may
+include a previously published `result` while a newer attempt is running or has failed.
+
+With a published Film ID, export the MP4 in one command. The service reads its stored HTML player.
+
+```bash
+open-science film export <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --resolution 1080p --output ./film.mp4 --json
+```
+
+Use `film download` when you also want a local HTML copy.
+
+```bash
+open-science film download <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --output ./film.html --json
+```
 
 If validation blocks publication after automatic repairs, `reviewFailure` provides an `attemptId`,
 the review stage, and findings. Discuss the findings with the user and submit their instructions
