@@ -1081,7 +1081,7 @@ const ProviderStep = ({
                                 >
                                   <X
                                     aria-hidden="true"
-                                    className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                                    className="size-3.5 text-status-warning-dark-foreground"
                                   />
                                   {t('Cancel')}
                                 </Button>

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
@@ -1433,5 +1435,33 @@ describe('ProviderStep', () => {
     await act(async () => root.unmount())
     expect(cancelXaiOAuthLogin).toHaveBeenCalledOnce()
     root = createRoot(container)
+  })
+
+  it('keeps the quick-connect action tray translucent over Silk', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const actionRule = css.slice(
+      css.indexOf('.onboarding-provider-card-actions {'),
+      css.indexOf('.onboarding-provider-card-actions small {')
+    )
+
+    expect(actionRule).toContain('backdrop-filter: blur(18px) saturate(1.12);')
+    expect(actionRule).toContain('border-top: 1px solid')
+    expect(actionRule).toContain('background: linear-gradient(transparent')
+  })
+
+  it('uses one provider card treatment across color schemes', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const cardRule = css.slice(
+      css.indexOf('.onboarding-provider-card {'),
+      css.indexOf('.onboarding-provider-card-surface {')
+    )
+
+    expect(cardRule).toContain('--silk-idle-opacity: 0.52;')
+    expect(cardRule).toContain('--silk-hover-opacity: 0.68;')
+    expect(cardRule).toContain('--bg-10: hsl(60 3% 10%);')
+    expect(cardRule).toContain('--primary: oklch(0.72 0.1 184);')
+    expect(cardRule).toContain('background-size: 180% 180%;')
+    expect(css).not.toContain('.dark .onboarding-provider-card {')
+    expect(css).not.toContain('.dark .onboarding-provider-card-actions {')
   })
 })
