@@ -10,7 +10,7 @@ Expose both existing Research Film modes through the public Node SDK and the `op
 The intended workflow starts with a research Run, uses its Session to identify an eligible conversation branch, starts the selected film mode, observes generation and retrieves the resulting film. The existing Run commands cover task submission and waiting.
 
 - Both modes must work with the desktop app closed. A caller can start generation, check progress, recover from a review failure and retrieve the result through the SDK or CLI.
-- The initial deliverable for each mode is a self-contained, narrated HTML player. MP4 is deferred.
+- Each mode publishes a self-contained, narrated HTML player. The SDK and CLI also export a published player as a narrated landscape MP4.
 - When film review stops generation, a user must be able to understand the failure and communicate revision instructions through an agent. Both public interfaces must support the resulting correction and allow the caller to observe whether it passes review.
 
 ## Baseline
@@ -21,7 +21,7 @@ At the baseline commit, Research Film generation and MP4 export were desktop ope
 
 ## Review and correction
 
-The baseline pipeline supported bounded automatic repairs and desktop checkpoint recovery. This branch exposes failed review diagnostics and revision requests through the SDK and CLI. Headless explanation uses a sandboxed Chromium browser for HTML checks and uses drawings when a live Session app would require interactive approval. MP4 export continues through the desktop app. [Baseline film authoring and review](https://github.com/aipoch/open-science/blob/69df576af5b2bd1d25bbea2b5d78f99615011e82/packages/research-film/src/authoring.ts#L352-L490) · [Research Film commands](../packages/open-science/CLI.md#research-films)
+The baseline pipeline supported bounded automatic repairs and desktop checkpoint recovery. This branch exposes failed review diagnostics and revision requests through the SDK and CLI. Headless explanation uses a sandboxed Chromium browser for HTML checks and uses drawings when a live Session app would require interactive approval. [Baseline film authoring and review](https://github.com/aipoch/open-science/blob/69df576af5b2bd1d25bbea2b5d78f99615011e82/packages/research-film/src/authoring.ts#L352-L490) · [Research Film commands](../packages/open-science/CLI.md#research-films)
 
 ### Feedback flow
 
@@ -38,4 +38,5 @@ Research explanation reports an advisory narration score from 0 to 9 when availa
 - With the desktop application closed, start each film mode for a scoped conversation branch, check progress and download the self-contained HTML player using the SDK or CLI. The explanation flow uses a sandboxed local Chromium browser for portrait and landscape checks. Replay keeps the existing evidence-order validation.
 - Inject a blocking validation failure and recover its stage, attempt ID and findings after reconnecting. Submit feedback for that exact attempt, confirm the author receives it and verify the new player is eligible under the mode's review rules before publication. A stale attempt returns `film_review_conflict`. A second failure provides a new attempt ID and findings.
 - A failed revision leaves an earlier published player available. Downloads require the published film ID and return the HTML as an attachment. Public status and error diagnostics hide native filesystem paths, and the pending draft remains private.
+- Export each published Film ID to MP4 with the desktop closed. Frame capture runs in sandboxed Chromium with network access blocked. The existing FFmpeg encoder and ffprobe verifier check the final video and audio before streaming. An interrupted export leaves any existing destination file intact.
 - Use the matching local service profile with bearer authentication. An explanation requires a sandbox-capable Chrome, Chromium or Microsoft Edge installation. Both modes require the existing narration model and an eligible source branch.

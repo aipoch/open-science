@@ -1068,7 +1068,10 @@ export const createApplicationModules = async (
       )
     },
     taskAgent: agentWorkflows.taskAgent,
-    taskResearchFilms: researchFilm.researchVideoPresentation,
+    taskResearchFilms: {
+      ...researchFilm.researchVideoPresentation,
+      renderMp4: researchFilm.headlessFilmExport.render
+    },
     taskControls: {
       specialists: {
         resolve: (reference) =>

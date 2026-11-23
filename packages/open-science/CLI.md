@@ -871,18 +871,20 @@ Create a self-contained, narrated HTML player from a Session branch. Use
 `--mode research-explanation` to explain a completed research response or `--mode operation-replay`
 to present the branch's recorded evidence. Both modes run through the local service with the desktop
 app closed. Use the same profile as the original Run. On first use, `--install-narration` explicitly
-authorizes the service to download the local narration model. The desktop app handles MP4 export.
+authorizes the service to download the local narration model.
 
 Research explanation needs Chrome, Chromium, or Microsoft Edge for headless HTML verification.
 Set `OPEN_SCIENCE_RESEARCH_FILM_BROWSER` to an absolute browser executable path before starting
-the service if the browser cannot be detected. Operation replay uses recorded evidence and runs
-without a browser on the server. [Headless browser setup](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#headless-research-film-review)
+the service if the browser cannot be detected. Operation replay generation uses recorded evidence
+and runs without a browser. MP4 export for either mode uses the same sandboxed browser.
+[Headless browser setup](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#headless-research-film-review)
 
 ```bash
 open-science run --project <project> --prompt-file ./task.md --wait --json
 open-science film start <session-id> --project <project> --mode research-explanation --install-narration --json
 open-science film status <session-id> --project <project> --mode research-explanation --branch <branch-id> --json
 open-science film download <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --output ./film.html --json
+open-science film export <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --resolution 1080p --output ./film.mp4 --json
 ```
 
 Use `sessionId` from the Run. When `--branch` is omitted, the service selects the active branch.
@@ -916,15 +918,20 @@ layout defects. Required screenplay structure and player integrity checks still 
 `--advisory-narration-review` remains accepted on `film start` and `film revise` for compatibility.
 Operation replay uses its own recorded-evidence checks and rejects the flag.
 
-`film download` writes the selected published HTML player. An interrupted download leaves any
-existing destination file intact. The Node SDK uses `startResearchFilm`, `getResearchFilmStatus`,
-`reviseResearchFilm`, `cancelResearchFilm`, and `downloadResearchFilm` for the same workflow.
-These commands require local bearer authentication on a service with the `research-film-html`
-capability. `connectToOpenScience` discovers the local service and configures bearer authentication.
-An older service may report a missing Task API endpoint. A stale review attempt returns
-`film_review_conflict`.
-Check the current `reviewFailure` before submitting feedback again. A missing published film
-returns `film_not_found` with exit code `4`.
+`film download` writes the published HTML player. `film export` renders the same Film ID to a
+narrated landscape MP4 without generating it again. Select `--resolution 720p` (default), `1080p`,
+or `4k`. Export uses system FFmpeg and ffprobe or the service's managed copies. Include
+`--install-export-tools` to authorize the managed download when needed. The command waits for
+rendering and download. Press Ctrl+C to cancel, or set `--timeout-ms` to override the two-hour
+default. An interrupted export starts over on retry and leaves any existing destination intact.
+
+The Node SDK provides `startResearchFilm`, `getResearchFilmStatus`, `reviseResearchFilm`,
+`cancelResearchFilm`, `downloadResearchFilm`, and `exportResearchFilm`. These commands use local
+bearer authentication. The service advertises `research-film-html` for generation and HTML
+downloads and `research-film-mp4` for MP4 export. `connectToOpenScience` discovers the local
+service and configures authentication. An older service may report a missing Task API endpoint.
+A stale review attempt returns `film_review_conflict`. Check the current `reviewFailure` before
+submitting feedback again. A missing published film returns `film_not_found` with exit code `4`.
 
 ## Literature
 

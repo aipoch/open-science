@@ -308,7 +308,14 @@ for compatibility. Operation replay uses its own recorded-evidence checks.
 Once the current attempt has published a player, use
 `downloadResearchFilm({ ...branch, filmId: status.result.id })` to receive the HTML `Response`.
 While an attempt is active or failed, `status.result` may still describe an earlier published
-player. The CLI provides an atomic download to a caller-chosen file.
+player.
+
+`exportResearchFilm({ ...branch, filmId: status.result.id, resolution: '1080p' })` renders that
+published Film to a narrated landscape MP4 and returns a `video/mp4` `Response`. Both modes use
+sandboxed Chromium and FFmpeg for export. Choose `720p` (default), `1080p`, or `4k`. Set
+`installExportTools: true` to authorize a managed FFmpeg and ffprobe download if needed. Supply a
+request `signal` to cancel export or `timeoutMs` to override the two-hour default. The CLI saves
+HTML and MP4 atomically to a caller-chosen file.
 
 ### Automation new-session defaults
 

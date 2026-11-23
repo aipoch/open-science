@@ -2,6 +2,7 @@ import {
   redactAbsoluteDiagnosticPaths,
   redactRuntimeDiagnosticText
 } from '@aipoch/diagnostics/node'
+import { researchVideoResolutionSchema } from '@aipoch/research-film/contracts'
 import { constants } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { z } from 'zod'
@@ -14,6 +15,10 @@ import {
   type ResearchVideoPresentation,
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
+import {
+  ResearchFilmMp4Error,
+  type createHeadlessResearchFilmExport
+} from '../research-video/headless-export'
 import type { createResearchVideoPresentationOwner } from '../research-video/presentation'
 import { TaskRunnerError as TaskApiError } from '../tasks/task-runner'
 
@@ -27,11 +32,17 @@ const startSchema = generationScopeSchema.extend({
 })
 const revisionSchema = generationScopeSchema.extend(researchFilmRevisionSchema.shape)
 const playerSchema = scopeSchema.extend({ filmId: z.string().uuid() })
+const exportSchema = playerSchema.extend({
+  resolution: researchVideoResolutionSchema.default('720p'),
+  installExportTools: z.boolean().default(false)
+})
 
 export type TaskResearchFilmPort = Pick<
   ReturnType<typeof createResearchVideoPresentationOwner>,
   'start' | 'status' | 'cancel'
->
+> & {
+  renderMp4?: ReturnType<typeof createHeadlessResearchFilmExport>['render']
+}
 
 type PublicResearchFilmStatus = Omit<
   ResearchVideoPresentationStatus,
@@ -41,14 +52,20 @@ type PublicResearchFilmStatus = Omit<
 }
 
 type FilmStatusAction = (request: unknown) => Promise<PublicResearchFilmStatus>
-type OpenFilmPlayer = { handle: FileHandle; size: number; filename: string }
+export type TaskResearchFilmDownload = {
+  handle: FileHandle
+  size: number
+  filename: string
+  dispose(): Promise<void>
+}
 
 export type TaskResearchFilmApi = {
   start: FilmStatusAction
   status: FilmStatusAction
   revise: FilmStatusAction
   cancel: FilmStatusAction
-  openPlayer(request: unknown): Promise<OpenFilmPlayer>
+  openPlayer(request: unknown): Promise<TaskResearchFilmDownload>
+  openMp4?(request: unknown, signal: AbortSignal): Promise<TaskResearchFilmDownload>
 }
 
 function parseRequest<T>(schema: z.ZodType<T>, raw: unknown): T {
@@ -124,6 +141,45 @@ async function runFilmOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export function createTaskResearchFilmApi(owner: TaskResearchFilmPort): TaskResearchFilmApi {
+  const openPublishedFilm = async ({
+    filmId,
+    ...request
+  }: z.infer<typeof playerSchema>): Promise<{
+    handle: FileHandle
+    size: number
+    title: string
+  }> => {
+    const status = await runFilmOperation(() => owner.status(request))
+    if (status.generationBlock === 'unavailable' || status.result?.id !== filmId) {
+      throw new TaskApiError('film_not_found', 'The requested Research Film player is unavailable.')
+    }
+    const handle = await open(
+      status.result.playerPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' || error.code === 'ELOOP') {
+        throw new TaskApiError(
+          'film_not_found',
+          'The requested Research Film player is unavailable.'
+        )
+      }
+      throw error
+    })
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || !info.size) {
+        throw new TaskApiError(
+          'film_not_found',
+          'The requested Research Film player is unavailable.'
+        )
+      }
+      return { handle, size: info.size, title: status.result.title }
+    } catch (error) {
+      await handle.close()
+      throw error
+    }
+  }
+  const renderMp4 = owner.renderMp4
   return {
     start(raw: unknown) {
       const request = parseRequest(startSchema, raw)
@@ -157,43 +213,41 @@ export function createTaskResearchFilmApi(owner: TaskResearchFilmPort): TaskRese
       })
     },
     async openPlayer(raw: unknown) {
-      const { filmId, ...request } = parseRequest(playerSchema, raw)
-      const status = await runFilmOperation(() => owner.status(request))
-      if (status.generationBlock === 'unavailable' || status.result?.id !== filmId) {
-        throw new TaskApiError(
-          'film_not_found',
-          'The requested Research Film player is unavailable.'
-        )
+      const { handle, size, title } = await openPublishedFilm(parseRequest(playerSchema, raw))
+      return {
+        handle,
+        size,
+        filename: researchVideoFilename(title, 'html'),
+        dispose: () => handle.close()
       }
-      const handle = await open(
-        status.result.playerPath,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-      ).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' || error.code === 'ELOOP') {
+    },
+    ...(renderMp4 && {
+      async openMp4(raw: unknown, signal: AbortSignal): Promise<TaskResearchFilmDownload> {
+        const { resolution, installExportTools, ...request } = parseRequest(exportSchema, raw)
+        signal.throwIfAborted()
+        const { handle: player, size, title } = await openPublishedFilm(request)
+        let result: Awaited<ReturnType<typeof renderMp4>> | undefined
+        try {
+          result = await renderMp4({ player, size, resolution, installExportTools }, signal)
+          return { ...result, filename: researchVideoFilename(title, 'mp4') }
+        } catch (error) {
+          signal.throwIfAborted()
+          if (error instanceof ResearchFilmMp4Error) {
+            throw new TaskApiError(error.code, publicFilmDiagnostic(error.message))
+          }
           throw new TaskApiError(
-            'film_not_found',
-            'The requested Research Film player is unavailable.'
+            'film_export_failed',
+            publicFilmDiagnostic(
+              error instanceof Error ? error.message : 'Research Film MP4 export failed.'
+            )
           )
+        } finally {
+          await player.close().catch(async (error: unknown) => {
+            await result?.dispose()
+            throw error
+          })
         }
-        throw error
-      })
-      try {
-        const info = await handle.stat()
-        if (!info.isFile() || !info.size) {
-          throw new TaskApiError(
-            'film_not_found',
-            'The requested Research Film player is unavailable.'
-          )
-        }
-        return {
-          handle,
-          size: info.size,
-          filename: researchVideoFilename(status.result.title, 'html')
-        }
-      } catch (error) {
-        await handle.close()
-        throw error
       }
-    }
+    })
   }
 }

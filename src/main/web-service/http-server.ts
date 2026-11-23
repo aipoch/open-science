@@ -78,6 +78,7 @@ import {
 import { authenticateRequest, persistAuthCookie } from './auth'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import type { TaskResearchFilmDownload } from './research-film-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
@@ -619,12 +620,14 @@ const readJsonBody = async (
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'submission_unavailable') return 503
   if (error.code === 'unsupported_capability') return 501
+  if (error.code === 'film_export_failed') return 500
   if (error.code === 'submission_conflict' || error.code === 'session_read_only') return 409
   if (error.code === 'invalid_request') return 400
   if (error.code === 'invalid_configuration') return 400
   if (
     error.code === 'session_busy' ||
     error.code === 'film_busy' ||
+    error.code === 'film_export_tools_unavailable' ||
     error.code === 'film_review_conflict' ||
     error.code === 'session_revision_conflict' ||
     error.code === 'project_conflict' ||
@@ -1021,6 +1024,28 @@ const artifactContentResponseOverrides = (
   }
 }
 
+const streamFilmDownload = async (
+  response: ServerResponse,
+  film: TaskResearchFilmDownload,
+  contentType: 'text/html; charset=utf-8' | 'video/mp4'
+): Promise<true> => {
+  try {
+    if (response.destroyed) return true
+    response.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(film.filename)}`,
+      'content-length': film.size,
+      'content-security-policy': "sandbox; default-src 'none'",
+      'content-type': contentType,
+      'x-content-type-options': 'nosniff'
+    })
+    await pipeline(film.handle.createReadStream(), response)
+    return true
+  } finally {
+    await film.dispose()
+  }
+}
+
 const handleTaskApiRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -1049,21 +1074,33 @@ const handleTaskApiRequest = async (
         const action = url.pathname.slice(RESEARCH_FILM_ROUTE.length)
         if (action === 'player' && request.method === 'GET') {
           const player = await films.openPlayer(Object.fromEntries(url.searchParams))
+          return await streamFilmDownload(response, player, 'text/html; charset=utf-8')
+        }
+        if (action === 'export' && request.method === 'POST') {
+          if (!films.openMp4)
+            throw new TaskApiError(
+              'unsupported_capability',
+              'Research Film MP4 export is unavailable.'
+            )
+          const controller = new AbortController()
+          const disconnect = (): void => {
+            if (!response.writableFinished)
+              controller.abort(new Error('Film download disconnected.'))
+          }
+          response.once('close', disconnect)
           try {
             if (response.destroyed) return true
-            response.writeHead(200, {
-              'cache-control': 'no-store',
-              'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(player.filename)}`,
-              'content-length': player.size,
-              'content-security-policy': "sandbox; default-src 'none'",
-              'content-type': 'text/html; charset=utf-8',
-              'x-content-type-options': 'nosniff'
-            })
-            await pipeline(player.handle.createReadStream(), response)
+            const body = await readJsonBody(
+              request,
+              response,
+              requestBodyBudgetRegistry,
+              requestBodyClientId
+            )
+            const film = await films.openMp4(body, controller.signal)
+            return await streamFilmDownload(response, film, 'video/mp4')
           } finally {
-            await player.handle.close()
+            response.off('close', disconnect)
           }
-          return true
         }
         if (
           request.method === 'POST' &&
@@ -1673,7 +1710,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
                   ? ['durable-submissions', 'run-otel-traces']
                   : []),
-                ...(auth.localBearer && options.tasks.researchFilms ? ['research-film-html'] : [])
+                ...(auth.localBearer && options.tasks.researchFilms ? ['research-film-html'] : []),
+                ...(auth.localBearer && options.tasks.researchFilms?.openMp4
+                  ? ['research-film-mp4']
+                  : [])
               ]
             : [],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,

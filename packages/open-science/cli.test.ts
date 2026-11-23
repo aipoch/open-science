@@ -51,7 +51,10 @@ describe('Research Film CLI', () => {
       '--feedback-file',
       'feedback.md'
     ],
-    ['download', ...scopeArgs, '--output', 'film.html']
+    ['download', ...scopeArgs, '--output', 'film.html'],
+    ['download', ...scopeArgs, '--output', 'film.html', '--resolution', '1080p'],
+    ['export', ...scopeArgs, '--film-id', 'film-1'],
+    ['export', ...scopeArgs, '--film-id', 'film-1', '--output', 'film.mp4', '--resolution', '1440p']
   ])('rejects incompatible or incomplete options for %s', (...argv) => {
     expect(() => parseCliArgs(['film', ...argv])).toThrow(CliUsageError)
   })
@@ -152,6 +155,76 @@ describe('Research Film CLI', () => {
     expect(log).toHaveBeenLastCalledWith(
       JSON.stringify({ filmId: 'film-1', output: resolve('film.html') })
     )
+  })
+
+  it('exports a published film with the requested resolution and encoder installation consent', async () => {
+    const video = new Response(new Uint8Array([0, 1, 2, 3]))
+    const exportResearchFilm = vi.fn().mockResolvedValue(video)
+    const writeDownload = vi.fn().mockResolvedValue(undefined)
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'film',
+        'export',
+        ...scopeArgs,
+        '--branch',
+        'branch-1',
+        '--film-id',
+        'film-1',
+        '--output',
+        'film.mp4',
+        '--resolution',
+        '1080p',
+        '--install-export-tools',
+        '--timeout-ms',
+        '80000',
+        '--json'
+      ]),
+      { connect: async () => ({ listProjects, exportResearchFilm }), writeDownload, log }
+    )
+    expect(exportResearchFilm).toHaveBeenCalledExactlyOnceWith(
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        branchId: 'branch-1',
+        mode: 'research-explanation',
+        filmId: 'film-1',
+        resolution: '1080p',
+        installExportTools: true
+      },
+      { timeoutMs: 80_000, signal: expect.any(AbortSignal) }
+    )
+    expect(writeDownload).toHaveBeenCalledExactlyOnceWith(video, 'film.mp4', {
+      signal: exportResearchFilm.mock.calls[0][1].signal
+    })
+    expect(log).toHaveBeenLastCalledWith(
+      JSON.stringify({ filmId: 'film-1', output: resolve('film.mp4') })
+    )
+  })
+
+  it('aborts the export request on Ctrl+C and removes its signal handler', async () => {
+    const started = Promise.withResolvers<void>()
+    const exportResearchFilm = vi.fn(
+      async (_request: unknown, { signal }: { signal: AbortSignal }) => {
+        return new Promise<Response>((_, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          started.resolve()
+        })
+      }
+    )
+    const listenerCount = process.listenerCount('SIGINT')
+    const writeDownload = vi.fn()
+    const exporting = runTaskCommand(
+      parseCliArgs(['film', 'export', ...scopeArgs, '--film-id', 'film-1', '--output', 'film.mp4']),
+      { connect: async () => ({ listProjects, exportResearchFilm }), writeDownload, log: vi.fn() }
+    )
+    await started.promise
+    const cancelled = expect(exporting).rejects.toMatchObject({ code: 'cancelled', exitCode: 130 })
+    process.emit('SIGINT')
+    await cancelled
+    expect(exportResearchFilm.mock.calls[0][0]).not.toHaveProperty('installExportTools')
+    expect(writeDownload).not.toHaveBeenCalled()
+    expect(process.listenerCount('SIGINT')).toBe(listenerCount)
   })
 })
 

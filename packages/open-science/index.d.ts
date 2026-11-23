@@ -566,6 +566,8 @@ export type FormattedReferences = {
 
 export type ResearchFilmMode = 'research-explanation' | 'operation-replay'
 
+export type ResearchFilmResolution = '720p' | '1080p' | '4k'
+
 export type ResearchFilmScope = {
   projectId: string
   sessionId: string
@@ -840,6 +842,17 @@ export class OpenScienceClient {
   /** Downloads the exact HTML player identified by the published result. */
   downloadResearchFilm(
     request: ResearchFilmScope & { filmId: string },
+    options?: RequestOptions
+  ): Promise<Response>
+  /** Render a published Film as a landscape MP4. Aborting the request cancels rendering. */
+  exportResearchFilm(
+    request: ResearchFilmScope & {
+      filmId: string
+      /** Defaults to 720p. */
+      resolution?: ResearchFilmResolution
+      /** Explicitly authorize a managed FFmpeg and ffprobe download when needed. */
+      installExportTools?: boolean
+    },
     options?: RequestOptions
   ): Promise<Response>
   /** Searches the global Literature library, optionally limited to one Project. */

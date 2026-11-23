@@ -7,6 +7,8 @@ const defaultSleep = (milliseconds) =>
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const PACKAGE_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000
+const FILM_EXPORT_TIMEOUT_MS = 2 * 60 * 60 * 1_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
 const EVENT_RECONNECT_DELAY_MS = 100
 const MAX_BUFFERED_EVENTS = 1_024
@@ -650,6 +652,36 @@ export class OpenScienceClient {
     return this.#download(`/api/v1/research-films/player?${query}`, options)
   }
 
+  async exportResearchFilm(request, options) {
+    const timeoutMs = options?.timeoutMs ?? FILM_EXPORT_TIMEOUT_MS
+    if (timeoutMs > MAX_TIMER_DELAY_MS) {
+      throw new RangeError(`MP4 export timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}.`)
+    }
+    try {
+      return await this.#download(
+        '/api/v1/research-films/export',
+        { ...options, timeoutMs },
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(request)
+        }
+      )
+    } catch (error) {
+      if (
+        error instanceof OpenScienceApiError &&
+        error.status === 404 &&
+        error.code === 'not_found'
+      ) {
+        throw new OpenScienceApiError(
+          'This Open-Science service does not support Research Film MP4 export. Update the service.',
+          { code: 'unsupported_capability', status: error.status }
+        )
+      }
+      throw error
+    }
+  }
+
   searchLiterature({ query, projectId, offset, limit } = {}, options) {
     return callLiteratureRpc(
       this,
@@ -816,7 +848,7 @@ export class OpenScienceClient {
     return this.#download(`/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`, options)
   }
 
-  async #download(path, { signal, timeoutMs } = {}) {
+  async #download(path, { signal, timeoutMs } = {}, request = {}) {
     const lifecycle = createRequestLifecycle({
       defaultTimeoutMs: this.requestTimeoutMs,
       signal,
@@ -824,7 +856,8 @@ export class OpenScienceClient {
     })
     try {
       const response = await this.fetch(`${this.baseUrl}${path}`, {
-        headers: { authorization: `Bearer ${this.token}` },
+        ...request,
+        headers: { ...request.headers, authorization: `Bearer ${this.token}` },
         signal: lifecycle.signal
       })
       if (!response.ok) {

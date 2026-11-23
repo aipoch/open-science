@@ -1,13 +1,15 @@
 import type { FilmVisualIssue } from '@aipoch/research-film/contracts'
 import { buildResearchVideoPlayer, researchFilmResources } from '@aipoch/research-film'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { exportResearchVideoMp4 } from '@aipoch/research-film/export'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   assertHeadlessResearchFilmReady,
   checkHeadlessResearchFilmHtml,
-  locateResearchFilmBrowser
+  locateResearchFilmBrowser,
+  renderHeadlessResearchFilmMp4
 } from './headless-review'
 import { FilmDraftVisualError } from './player-review'
 
@@ -15,6 +17,11 @@ const browser = process.env.OPEN_SCIENCE_TEST_FILM_BROWSER
 const browserVariable = 'OPEN_SCIENCE_RESEARCH_FILM_BROWSER'
 const browserTest = browser ? it : it.skip
 const marker = '<meta name="open-science-research-video" content="1">'
+
+vi.mock('@aipoch/research-film/export', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/research-film/export')>()),
+  exportResearchVideoMp4: vi.fn()
+}))
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -90,6 +97,54 @@ browserTest(
     const failed = checkPlayer("throw new Error('Untrusted draft text')")
     await expect(failed).rejects.toBeInstanceOf(FilmDraftVisualError)
     await expect(failed).rejects.toThrow('The player did not produce a valid layout review.')
+  },
+  25_000
+)
+
+browserTest(
+  'supplies a sandboxed 720p frame and the embedded narration to the MP4 encoder',
+  async () => {
+    vi.stubEnv(browserVariable, browser)
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-film-mp4-'))
+    const audio = Buffer.from('RIFF test narration')
+    const html = `${marker}<body><script>
+      const mode = new URL(location.href).searchParams;
+      window.__ready = { W: 1920, H: 1080, duration: 2 };
+      window.VIDEO_ASSETS = { 'mix.wav': 'data:audio/wav;base64,${audio.toString('base64')}' };
+      window.__seek = (seconds) => {
+        if (seconds !== 1 || !mode.has('render') || mode.get('ar') !== '16x9' ||
+            innerWidth !== 1920 || innerHeight !== 1080 || navigator.onLine || window.RTCPeerConnection)
+          throw new Error('Unexpected film capture settings');
+        document.body.style.background = 'blue';
+      };
+    </script></body>`
+    const encoderPath = join(directory, 'ffmpeg')
+    const probePath = join(directory, 'ffprobe')
+    const encode = vi.mocked(exportResearchVideoMp4).mockImplementationOnce(async (options) => {
+      expect(options).toMatchObject({
+        encoderPath,
+        probePath,
+        width: 1280,
+        height: 720,
+        duration: 2
+      })
+      expect(await readFile(options.audioPath)).toEqual(audio)
+      const frame = Buffer.from(await options.renderer.capture(1, options.signal))
+      expect(frame.readUInt32BE(16)).toBe(1280)
+      expect(frame.readUInt32BE(20)).toBe(720)
+      await writeFile(options.outputPath, 'verified video')
+    })
+    try {
+      const outputPath = await renderHeadlessResearchFilmMp4(
+        { html, directory, resolution: '720p', encoderPath, probePath },
+        new AbortController().signal
+      )
+      expect(encode).toHaveBeenCalledOnce()
+      expect(outputPath).toBe(join(directory, 'video.mp4'))
+      expect(await readFile(outputPath, 'utf8')).toBe('verified video')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   },
   25_000
 )

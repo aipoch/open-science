@@ -119,6 +119,54 @@ describe('OpenScienceClient', () => {
     ])
   })
 
+  it('streams an authenticated MP4 export from the requested published film', async () => {
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      branchId: 'branch',
+      mode: 'operation-replay',
+      filmId: 'film-id',
+      resolution: '4k',
+      installExportTools: true
+    } as const
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () =>
+        new Response(new Uint8Array([0, 1, 2, 3]), { headers: { 'content-type': 'video/mp4' } })
+    )
+    const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'token', fetch })
+    const video = await client.exportResearchFilm(request)
+    expect(video.headers.get('content-type')).toBe('video/mp4')
+    expect(new Uint8Array(await video.arrayBuffer())).toEqual(new Uint8Array([0, 1, 2, 3]))
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('http://localhost/api/v1/research-films/export', {
+      method: 'POST',
+      headers: { authorization: 'Bearer token', 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: expect.any(AbortSignal)
+    })
+  })
+
+  it('distinguishes older services from a missing published film', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(response(404, { error: { code: 'not_found' } }))
+      .mockResolvedValueOnce(response(404, { error: { code: 'film_not_found' } }))
+    const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'token', fetch })
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      mode: 'research-explanation',
+      filmId: 'film-id'
+    } as const
+    await expect(client.exportResearchFilm(request)).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      status: 404
+    })
+    await expect(client.exportResearchFilm(request)).rejects.toMatchObject({
+      code: 'film_not_found',
+      status: 404
+    })
+  })
+
   it('retains the receipt identity when the deadline expires just after admission', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(0)
     try {
@@ -303,6 +351,7 @@ describe('OpenScienceClient', () => {
         'reviseResearchFilm',
         'cancelResearchFilm',
         'downloadResearchFilm',
+        'exportResearchFilm',
         'searchLiterature',
         'getLiteratureItem',
         'listCitationStyles',

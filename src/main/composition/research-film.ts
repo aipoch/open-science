@@ -58,6 +58,7 @@ import {
   RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
 } from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
+import { createHeadlessResearchFilmExport } from '../research-video/headless-export'
 import {
   assertHeadlessResearchFilmReady,
   checkHeadlessResearchFilmHtml
@@ -122,6 +123,7 @@ export async function composeResearchFilm({
   videoExportModels: ReturnType<typeof createLocalModelOwner>
   videoExportTools: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   researchVideoPresentation: ReturnType<typeof createResearchVideoPresentationOwner>
+  headlessFilmExport: ReturnType<typeof createHeadlessResearchFilmExport>
 }> {
   const researchNarrationModels = createLocalModelOwner({
     namespace: 'research-narration',
@@ -143,6 +145,12 @@ export async function composeResearchFilm({
     dispose: () => owner.close()
   }))
   const videoExportTools = createVideoExportTools(videoExportModels)
+  const headlessFilmExport = createHeadlessResearchFilmExport(videoExportTools, videoExportModels)
+  await modules.add({ headlessFilmExport }, ({ headlessFilmExport: owner }) => ({
+    name: 'headless-film-export',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
   const resources = researchFilmResources()
   const researchVideoEngineDirectory = resources.stageDirectory
   const scriptStandard = await readFile(join(resources.authoringDirectory, 'SCRIPT.md'), 'utf8')
@@ -557,5 +565,11 @@ export async function composeResearchFilm({
       await Promise.all([owner.close(), researchVideoInference.shutdown()])
     }
   }))
-  return { researchNarrationModels, videoExportModels, videoExportTools, researchVideoPresentation }
+  return {
+    researchNarrationModels,
+    videoExportModels,
+    videoExportTools,
+    researchVideoPresentation,
+    headlessFilmExport
+  }
 }

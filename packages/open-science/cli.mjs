@@ -92,6 +92,7 @@ Commands:
   film revise <session-id> --project <id-or-name> --mode <mode> --attempt-id <id> (--feedback <text> | --feedback-file <path>) [--advisory-narration-review]
   film cancel <session-id> --project <id-or-name> --mode <mode>
   film download <session-id> --project <id-or-name> --mode <mode> --film-id <id> --output <path>
+  film export <session-id> --project <id-or-name> --mode <mode> --film-id <id> --output <path> [--resolution <resolution>] [--install-export-tools]
   literature search [query] [--project <id-or-name>] [--limit <n>] [--offset <n>]
   literature show <item-id>
   literature styles
@@ -145,7 +146,7 @@ Options:
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Bound startup, run waiting, package transfer, or a film request
-  --output <path>        Destination path (session export, artifacts download, film download)
+  --output <path>        Destination path (session export, artifacts download, film download or export)
   --mode <mode>          Film mode: research-explanation or operation-replay
   --branch <id>          Conversation branch (film commands; defaults to the active branch)
   --install-narration    Explicitly allow installation of the local narration model (film start)
@@ -153,7 +154,9 @@ Options:
   --advisory-narration-review  Compatibility flag for default advisory scoring (research explanation only)
   --attempt-id <id>      Review failure attempt to revise (film revise)
   --feedback-file <path> Read revision feedback from a UTF-8 file (film revise)
-  --film-id <id>         Published HTML player ID (film download)
+  --film-id <id>         Published Film ID (film download or export)
+  --resolution <value>  MP4 resolution: 720p (default), 1080p, or 4k (film export)
+  --install-export-tools  Explicitly allow installation of FFmpeg and ffprobe (film export)
   --style <style-id>     Citation style (literature format)
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
   --limit <n>            Page size, 1-100 (literature search)
@@ -231,7 +234,8 @@ const FILM_VALUE_OPTIONS = {
   '--branch': 'branchId',
   '--attempt-id': 'attemptId',
   '--feedback-file': 'feedbackFile',
-  '--film-id': 'filmId'
+  '--film-id': 'filmId',
+  '--resolution': 'filmResolution'
 }
 
 const FILM_SHARED_OPTIONS = [
@@ -250,7 +254,8 @@ const FILM_ACTION_OPTIONS = new Map([
   ['status', []],
   ['revise', ['--attempt-id', '--feedback', '--feedback-file', '--advisory-narration-review']],
   ['cancel', []],
-  ['download', ['--film-id', '--output']]
+  ['download', ['--film-id', '--output']],
+  ['export', ['--film-id', '--output', '--resolution', '--install-export-tools']]
 ])
 
 const TASK_COMMANDS = new Set([
@@ -339,6 +344,7 @@ const POSITIONAL_LIMITS = new Map([
   ['film revise', 1],
   ['film cancel', 1],
   ['film download', 1],
+  ['film export', 1],
   ['literature show', 1],
   ['literature styles', 0],
   ['literature lookup', 1],
@@ -417,6 +423,7 @@ export const parseCliArgs = (argv) => {
       )
     }
     if (filmOptions && arg === '--install-narration') options.installNarration = true
+    else if (filmOptions && arg === '--install-export-tools') options.installExportTools = true
     else if (filmOptions && arg === '--resume') options.resume = true
     else if (filmOptions && arg === '--advisory-narration-review')
       options.narrationReview = 'advisory'
@@ -527,7 +534,7 @@ export const parseCliArgs = (argv) => {
   }
   if (filmOptions) {
     if (!FILM_ACTION_OPTIONS.has(subcommand))
-      throw new CliUsageError('Use film start, status, revise, cancel, or download.')
+      throw new CliUsageError('Use film start, status, revise, cancel, download, or export.')
     assertPositionalLimit(command, subcommand, positionals)
     if (!positionals[0]?.trim() || !options.project?.trim())
       throw new CliUsageError('Film commands require a session ID and --project.')
@@ -545,8 +552,17 @@ export const parseCliArgs = (argv) => {
         'Film revision requires --attempt-id and exactly one feedback source.'
       )
     }
-    if (subcommand === 'download' && (!options.filmId?.trim() || !options.output?.trim()))
-      throw new CliUsageError('Film download requires --film-id and --output.')
+    if (
+      (subcommand === 'download' || subcommand === 'export') &&
+      (!options.filmId?.trim() || !options.output?.trim())
+    ) {
+      throw new CliUsageError(`Film ${subcommand} requires --film-id and --output.`)
+    }
+    if (
+      options.filmResolution !== undefined &&
+      !['720p', '1080p', '4k'].includes(options.filmResolution)
+    )
+      throw new CliUsageError('--resolution must be 720p, 1080p, or 4k.')
     return parsed
   }
   if (options.revision !== undefined) {
@@ -1424,7 +1440,7 @@ const resolveDownloadOutput = async (output) => {
   throw new Error(`Too many symbolic links in artifact output: ${output}`)
 }
 
-const writeDownload = async (response, output) => {
+const writeDownload = async (response, output, { signal } = {}) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
   const destination = await resolveDownloadOutput(output)
   const existingMode = await stat(destination).then(
@@ -1441,9 +1457,11 @@ const writeDownload = async (response, output) => {
       createWriteStream(temporaryOutput, {
         flags: 'wx',
         ...(existingMode === undefined ? {} : { mode: existingMode })
-      })
+      }),
+      { signal }
     )
     if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
+    signal?.throwIfAborted()
     await rename(temporaryOutput, destination)
   } finally {
     await rm(temporaryOutput, { force: true }).catch(() => undefined)
@@ -2156,6 +2174,39 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         )
         await deps.writeDownload(response, options.output)
         result = { filmId: options.filmId, output: resolve(options.output) }
+        break
+      }
+      case 'export': {
+        const controller = new AbortController()
+        const interrupt = () =>
+          controller.abort(
+            Object.assign(new Error('Film export cancelled.'), {
+              code: 'cancelled',
+              exitCode: 130
+            })
+          )
+        process.once('SIGINT', interrupt)
+        try {
+          const response = await client.exportResearchFilm(
+            {
+              ...scope,
+              filmId: options.filmId,
+              ...(options.filmResolution === undefined
+                ? {}
+                : { resolution: options.filmResolution }),
+              ...(options.installExportTools ? { installExportTools: true } : {})
+            },
+            { ...requestOptions, signal: controller.signal }
+          )
+          await deps.writeDownload(response, options.output, { signal: controller.signal })
+          result = { filmId: options.filmId, output: resolve(options.output) }
+        } catch (error) {
+          controller.signal.throwIfAborted()
+          controller.abort()
+          throw error
+        } finally {
+          process.off('SIGINT', interrupt)
+        }
         break
       }
     }

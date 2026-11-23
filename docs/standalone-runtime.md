@@ -456,6 +456,13 @@ and landscape drawing and text layout. After bounded visual repairs, the generat
 best playable candidate with remaining layout defects. Operation replay uses its frozen evidence and
 does not require a browser on the generation host.
 
+### Headless Research Film MP4 export
+
+MP4 export for either published film mode uses the same browser setup for frame capture and requires
+FFmpeg with H.264 and AAC support and a matching ffprobe. The service uses the system tools on its
+`PATH` or its managed video export components. Use `film export --install-export-tools` to authorize
+installation when managed components are available for the platform. [Research Film commands](../packages/open-science/CLI.md#research-films)
+
 ## Historical compatibility requiring review
 
 The [release compatibility policy](compatibility.md) defines stable interfaces and the direction

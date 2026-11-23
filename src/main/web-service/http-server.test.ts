@@ -8,7 +8,7 @@ import { RemoteSessionPairingManager } from '../remote-access/pairing'
 import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
@@ -49,7 +49,8 @@ import {
   type RunningWebServer
 } from './http-server'
 import { HeadlessTaskApi, TaskApiError } from './task-api'
-import { createTaskResearchFilmApi } from './research-film-api'
+import { createTaskResearchFilmApi, type TaskResearchFilmPort } from './research-film-api'
+import { ResearchFilmMp4Error } from '../research-video/headless-export'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -123,6 +124,9 @@ it('exposes a local Film review and player workflow without exposing host paths'
   const playerPath = join(root, 'player.html')
   const html = '<!doctype html><title>Research Film</title>'
   await writeFile(playerPath, html)
+  const mp4Path = join(root, 'fixture.mp4')
+  const mp4 = Buffer.from('verified-mp4-fixture')
+  await writeFile(mp4Path, mp4)
   const filmId = '2de8caa6-e865-4e34-8a30-9b98ffac6d82'
   const attemptId = 'bbf1c96c-45a7-47f4-97c7-8854bbe76e91'
   const scope = {
@@ -145,6 +149,19 @@ it('exposes a local Film review and player workflow without exposing host paths'
         : { generationBlock: 'unavailable' }
   )
   const cancel = vi.fn()
+  const disposeMp4 = vi.fn()
+  const renderMp4 = vi.fn<NonNullable<TaskResearchFilmPort['renderMp4']>>(async (input) => {
+    expect(await input.player.readFile('utf8')).toBe(html)
+    const handle = await open(mp4Path)
+    return {
+      handle,
+      size: mp4.length,
+      async dispose() {
+        await handle.close()
+        disposeMp4()
+      }
+    }
+  })
   const server = await startTestWebHttpServer({
     host: '127.0.0.1',
     port: 0,
@@ -155,7 +172,7 @@ it('exposes a local Film review and player workflow without exposing host paths'
       runWithCallerContext,
       supportsSubmissions: () => true,
       subscribeProgress: vi.fn(() => vi.fn()),
-      researchFilms: createTaskResearchFilmApi({ start, status, cancel })
+      researchFilms: createTaskResearchFilmApi({ start, status, cancel, renderMp4 })
     } as never,
     externalAccess: {
       authorizeHttp: async () => authorizedExternalAccess(),
@@ -182,12 +199,18 @@ it('exposes a local Film review and player workflow without exposing host paths'
   const bootstrap = new URL('/api/bootstrap', base)
   const local = await (await fetch(bootstrap, { headers })).json()
   expect(local.taskCapabilities).toEqual(
-    expect.arrayContaining(['durable-submissions', 'run-otel-traces', 'research-film-html'])
+    expect.arrayContaining([
+      'durable-submissions',
+      'run-otel-traces',
+      'research-film-html',
+      'research-film-mp4'
+    ])
   )
   const remote = await (await fetch(bootstrap)).json()
   expect(remote.webCallerLocation).toBe('remote')
   expect(remote.taskCapabilities).not.toContain('run-otel-traces')
   expect(remote.taskCapabilities).not.toContain('research-film-html')
+  expect(remote.taskCapabilities).not.toContain('research-film-mp4')
 
   expect((await post('start', scope, false)).status).toBe(403)
   expect((await post('start', { ...scope, headless: false })).status).toBe(400)
@@ -334,6 +357,52 @@ it('exposes a local Film review and player workflow without exposing host paths'
   const client = new OpenScienceClient({ baseUrl: new URL(base).origin, token: 'test-token' })
   expect(await client.getResearchFilmStatus(scope)).toMatchObject({ reviewFailure })
   expect(await (await client.downloadResearchFilm({ ...scope, filmId })).text()).toBe(html)
+
+  const exportRequest = { ...scope, filmId }
+  expect((await post('export', exportRequest, false)).status).toBe(403)
+  expect((await post('export', { ...exportRequest, filmId: attemptId })).status).toBe(404)
+  expect((await post('export', { ...exportRequest, resolution: '1440p' })).status).toBe(400)
+  expect(renderMp4).not.toHaveBeenCalled()
+  const video = await client.exportResearchFilm(exportRequest)
+  expect(video.headers.get('content-type')).toBe('video/mp4')
+  expect(video.headers.get('content-disposition')).toContain('.mp4')
+  expect(Buffer.from(await video.arrayBuffer())).toEqual(mp4)
+  expect(renderMp4).toHaveBeenLastCalledWith(
+    {
+      player: expect.anything(),
+      size: Buffer.byteLength(html),
+      resolution: '720p',
+      installExportTools: false
+    },
+    expect.any(AbortSignal)
+  )
+  await vi.waitFor(() => expect(disposeMp4).toHaveBeenCalledOnce())
+
+  renderMp4.mockRejectedValueOnce(
+    new ResearchFilmMp4Error('film_export_tools_unavailable', 'FFmpeg is unavailable.')
+  )
+  const unavailable = await post('export', { ...exportRequest, installExportTools: true })
+  expect(unavailable.status).toBe(409)
+  expect(await unavailable.json()).toEqual({
+    error: { code: 'film_export_tools_unavailable', message: 'FFmpeg is unavailable.' }
+  })
+  expect(renderMp4.mock.lastCall?.[0].installExportTools).toBe(true)
+
+  const startedExport = Promise.withResolvers<void>()
+  const disconnected = Promise.withResolvers<void>()
+  renderMp4.mockImplementationOnce(async (_input, signal) => {
+    signal.addEventListener('abort', () => disconnected.resolve(), { once: true })
+    startedExport.resolve()
+    await disconnected.promise
+    throw signal.reason
+  })
+  const controller = new AbortController()
+  const pending = client.exportResearchFilm(exportRequest, { signal: controller.signal })
+  const rejection = expect(pending).rejects.toBeDefined()
+  await startedExport.promise
+  controller.abort()
+  await rejection
+  await disconnected.promise
 })
 const startBudgetTestServer = async (
   requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,

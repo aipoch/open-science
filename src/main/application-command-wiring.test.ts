@@ -589,7 +589,7 @@ describe('production application command wiring', () => {
     expect(nodeEntrySource).toContain('runtime.applicationCommands.desktop')
     expect(compact(ipcSource)).toContain('taskControls: {')
     expect(compact(ipcSource)).toContain(
-      'taskResearchFilms: researchFilm.researchVideoPresentation'
+      'taskResearchFilms: { ...researchFilm.researchVideoPresentation, renderMp4: researchFilm.headlessFilmExport.render }'
     )
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
@@ -675,7 +675,10 @@ vi.mock('./composition/desktop-utilities', () => ({
   composeDesktopUtilities: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/research-film', () => ({
-  composeResearchFilm: vi.fn(() => rootFixture.owners)
+  composeResearchFilm: vi.fn(() => ({
+    ...rootFixture.owners,
+    headlessFilmExport: { render: vi.fn() }
+  }))
 }))
 vi.mock('./composition/document-reading', () => ({
   composeDocumentReading: vi.fn(() => rootFixture.owners)
