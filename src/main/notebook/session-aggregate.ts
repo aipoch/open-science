@@ -117,6 +117,7 @@ export type NotebookSessionExecutionRequest = {
   isOutputDirectoryCurrent?: () => boolean
   projectFolderRoot?: string
   projectFolderStageRoot?: string
+  projectFolderReturnCwd?: string
   // Host-only cleanup capability, invoked after this exact kernel tree is confirmed reaped.
   onProjectFolderStageReaped?: () => Promise<void>
   projectFolderPermissionPrompts?: 'none'

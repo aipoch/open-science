@@ -438,6 +438,7 @@ export class ProjectFolderStagedFiles {
       directory: string
       paths: readonly string[]
       outputs?: readonly string[]
+      relativeCwd?: string
     }
   ): Promise<ProjectFolderStage> {
     await this.storage.verify()
@@ -455,6 +456,12 @@ export class ProjectFolderStagedFiles {
     try {
       const stage = await this.stage({ ...input, directory: dirname(placeholder) })
       this.stages.get(stage)!.preparation = preparation
+      if (input.relativeCwd) {
+        const cwd = await safePath(stage.folder, input.relativeCwd)
+        if (!(await lstat(cwd)).isDirectory())
+          throw new Error('Project working directory is unsafe.')
+        await safePath(stage.directory, join(input.relativeCwd, 'placeholder'), true)
+      }
       for (const output of input.outputs ?? []) {
         const parent = dirname(safeRelative(output))
         if (parent === '.') continue

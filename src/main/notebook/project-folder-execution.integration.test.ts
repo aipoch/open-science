@@ -109,6 +109,50 @@ it('uses the Project cwd directly and retains independent approval for a precise
   await expect(readFile(join(h.folder, 'raw.csv'), 'utf8')).resolves.toBe('a,b\n1,2\n')
 })
 
+it('reviews and undoes a file replacement from a project subdirectory', async () => {
+  const h = await fixture()
+  const subdir = join(h.folder, 'samples', 'batch')
+  const target = join(subdir, 'raw.csv')
+  const relativePath = join('samples', 'batch', 'raw.csv')
+  await mkdir(subdir, { recursive: true })
+  await writeFile(target, 'original nested data')
+  const edit = (runId: string): Promise<NotebookSessionExecutionResult> =>
+    h.execute.execute(
+      { ...h.request, cwd: subdir, runId, code: 'open("raw.csv", "w").write("candidate")' },
+      async (prepared) => {
+        expect(prepared.projectFolderStageRoot).toBeDefined()
+        expect(prepared.cwd).toBe(join(prepared.projectFolderStageRoot!, 'samples', 'batch'))
+        expect(prepared.projectFolderReturnCwd).toBe(subdir)
+        expect(prepared.unfrozenInputPaths).toEqual(['data/samples/batch/raw.csv'])
+        const stagedTarget = join(prepared.cwd, 'raw.csv')
+        await expect(readFile(stagedTarget, 'utf8')).resolves.toBe('original nested data')
+        await writeFile(stagedTarget, 'candidate')
+        await expect(readFile(target, 'utf8')).resolves.toBe('original nested data')
+        return result(subdir)
+      }
+    )
+
+  h.approve.mockResolvedValueOnce(false)
+  expect((await edit('nested-rejected')).projectFolderChanges).toMatchObject([
+    { relativePath, operation: 'replace', requiresConfirmation: true, state: 'rejected' }
+  ])
+  await expect(readFile(target, 'utf8')).resolves.toBe('original nested data')
+
+  const applied = await edit('nested-approved')
+  expect(applied.projectFolderInputs).toMatchObject([{ relativePath: 'samples/batch/raw.csv' }])
+  expect(applied.projectFolderChanges).toMatchObject([
+    { relativePath, operation: 'replace', requiresConfirmation: true, state: 'applied' }
+  ])
+  await expect(readFile(target, 'utf8')).resolves.toBe('candidate')
+  await h.files.revert(
+    { projectId: 'project-1', sessionId: 'session-1' },
+    applied.projectFolderChanges![0].id
+  )
+  await expect(readFile(target, 'utf8')).resolves.toBe('original nested data')
+  await expect(readFile(join(h.folder, 'raw.csv'), 'utf8')).resolves.toBe('a,b\n1,2\n')
+  await expect(readdir(join(h.dataRoot, '.project-preparations'))).resolves.toEqual([])
+})
+
 it('uses fresh per-run copies across approved and rejected edits and preserves created-file identity', async () => {
   const h = await fixture()
   const edit = (
@@ -240,6 +284,20 @@ it('never falls back to direct overwrite when selected independent staging fails
   await expect(readFile(join(h.folder, 'raw.csv'), 'utf8')).resolves.toBe('a,b\n1,2\n')
 })
 
+it('rejects an unsupported precise target in a project subdirectory before dispatch', async () => {
+  const h = await fixture()
+  const subdir = join(h.folder, 'source')
+  await mkdir(join(subdir, 'directory'), { recursive: true })
+  const invoke = vi.fn(async () => result(h.dataRoot))
+  await expect(
+    h.execute.execute(
+      { ...h.request, cwd: subdir, code: 'open("directory", "w").write("candidate")' },
+      invoke
+    )
+  ).rejects.toMatchObject({ reason: 'unsupported-path' })
+  expect(invoke).not.toHaveBeenCalled()
+})
+
 it('keeps dynamic execution available and retains managed-only behavior', async () => {
   const h = await fixture()
   const invoke = vi.fn<
@@ -368,6 +426,30 @@ it.skipIf(process.env.RUN_PROJECT_FOLDER_NATIVE !== '1' || process.platform === 
         await expect(readFile(join(outputRoot, 'combined.txt'), 'utf8')).resolves.toBe(
           'a,b\n1,2\nsubdirectory input'
         )
+        if (kind === 'python') {
+          h.approve.mockResolvedValueOnce(false)
+          const third = await h.execute.execute(
+            {
+              ...request,
+              runId: 'replace-nested-3',
+              cwd: second.cwdAfter,
+              code: 'open("child.csv", "w").write("candidate")'
+            },
+            (prepared) => executor.execute(prepared)
+          )
+          expect(third.status, JSON.stringify(third)).toBe('completed')
+          expect(third.cwdAfter).toBe(subdir)
+          expect(third.projectFolderChanges).toMatchObject([
+            {
+              relativePath: join('source', 'child.csv'),
+              state: 'rejected',
+              requiresConfirmation: true
+            }
+          ])
+          await expect(readFile(join(subdir, 'child.csv'), 'utf8')).resolves.toBe(
+            'subdirectory input'
+          )
+        }
       }
       await expect(readFile(join(h.folder, 'result.csv'), 'utf8')).resolves.toBe('old root input')
       await expect(readFile(join(h.folder, 'raw.csv'), 'utf8')).resolves.toBe('a,b\n1,2\n')

@@ -752,13 +752,16 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Preparation copies are released only after this exact process has left the directory, or its
   // owned tree is confirmed reaped. Failure to establish that proof retains the managed bytes.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
+    const directory = request.projectFolderReturnCwd ?? request.projectFolderRoot
     try {
       const result = await this.executeRequest(request)
       if (!request.projectFolderStageRoot) return result
-      const released = await this.leaveProjectPreparation(request)
+      const released = await this.leaveProjectPreparation(request, directory)
+      // The kernel can be back in its Project even when another owned process still needs the copy.
+      const restored = released || this.preparationOwners.get(request)?.cwd === directory
       return {
         ...result,
-        ...(released ? { cwdAfter: request.projectFolderRoot! } : {}),
+        ...(restored && directory ? { cwdAfter: directory } : {}),
         projectFolderStageReleased: released
       }
     } catch (error) {
@@ -769,24 +772,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
         Object.isExtensible(error)
       )
         Object.assign(error, {
-          projectFolderStageReleased: await this.leaveProjectPreparation(request)
+          projectFolderStageReleased: await this.leaveProjectPreparation(request, directory)
         })
       throw error
     }
   }
 
-  private async leaveProjectPreparation(request: NotebookExecutionRequest): Promise<boolean> {
+  private async leaveProjectPreparation(
+    request: NotebookExecutionRequest,
+    directory: string | undefined
+  ): Promise<boolean> {
     const proc = this.preparationOwners.get(request)
     if (!proc) return false
     try {
       if (proc.treeReaped) return true
-      if (
-        this.procs.get(proc.key) === proc &&
-        proc.alive &&
-        !proc.pending &&
-        request.projectFolderRoot
-      ) {
-        const directory = request.projectFolderRoot
+      if (this.procs.get(proc.key) === proc && proc.alive && !proc.pending && directory) {
         const position = await this.sendRequest(
           proc,
           randomUUID(),
