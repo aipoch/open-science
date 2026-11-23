@@ -50,6 +50,7 @@ import {
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
   withDelegatedChildContext
 } from './production-framework-runtime'
+import { CODEX_DELEGATION_AUDITED_RUNTIME } from './codex-execution'
 
 import { DelegatedProcessOwnership } from './process-ownership'
 
@@ -670,6 +671,7 @@ describe('production delegated framework runtime bridge', () => {
     const frameworks = createProductionDelegatedFrameworkRuntime({
       capacity: 1,
       dataRoot,
+      codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
       runtime: { settingsService: {} } as never,
       notebookRpcServer: () => ({ issueDelegatedNotebookConnection }) as never,
       readSession: async () => delegatedSession('codex')
@@ -827,6 +829,7 @@ describe('production delegated framework runtime bridge', () => {
     const frameworks = createProductionDelegatedFrameworkRuntime({
       capacity: 3,
       dataRoot: '/data',
+      codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
       runtime: {
         settingsService: {
           async resolveAgentBackend({ frameworkId }: { frameworkId: AgentFrameworkId }) {

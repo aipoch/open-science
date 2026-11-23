@@ -35,6 +35,7 @@ import {
   type PreparedProductionFrameworkScope,
   type ProductionDelegatedFrameworks
 } from './production-frameworks'
+import type { CodexRuntimeIdentity } from './codex-execution'
 
 type ProductionFrameworkRuntimeOptions = Readonly<{
   capacity: number
@@ -50,6 +51,7 @@ type ProductionFrameworkRuntimeOptions = Readonly<{
     | 'delegatedWork'
     | 'preparedSkills'
   >
+  codexRuntime?: CodexRuntimeIdentity
   notebookRpcServer(): NotebookLocalRpcServer
   readSession(key: SessionKey): Promise<PersistedChatSession | undefined>
   resolvePermissionProfile?(sessionId: string): PermissionProfileId | undefined
@@ -525,6 +527,7 @@ const createProductionDelegatedFrameworkRuntime = (
 
       return {
         frameworkId,
+        ...(options.codexRuntime ? { codexRuntime: options.codexRuntime } : {}),
         assertProviderAvailable,
         prepare,
         createRuntime
