@@ -676,7 +676,7 @@ const SessionRow = memo(function SessionRow({
           role="img"
           aria-label={filmActivityLabel}
           title={filmActivityLabel}
-          className="relative z-[2] inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-session-running/10 text-session-running"
+          className="relative z-[2] mr-7 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-session-running/10 text-session-running"
         >
           <Video className="size-3.5" aria-hidden="true" />
         </span>

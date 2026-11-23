@@ -56,6 +56,12 @@ const missingRuntime =
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
 
+const filmInProgress = (status: ResearchVideoPresentationStatus | undefined): boolean =>
+  !!(
+    status?.narrationDownload ||
+    (status?.progress && !['completed', 'failed', 'cancelled'].includes(status.progress.phase))
+  )
+
 // Keep the settled deadline until the actual desktop request settles, including across remounts.
 const filmStatusReads = new Map<
   string,
@@ -222,14 +228,21 @@ function ResearchVideoModeButton({
     Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
   >({})
   const [selectedMode, setMode] = useState<ResearchFilmMode>()
+  const [viewedFilm, setViewedFilm] = useState<ResearchVideoPresentationRequest>()
+  const viewedBranchId = viewedFilm ? viewedFilm.branchId : branchId
+  const preferredMode = selectedMode ?? initialMode
+  const runningMode = filmInProgress(statuses[preferredMode])
+    ? preferredMode
+    : filmModes.find((candidate) => filmInProgress(statuses[candidate]))
   const mode =
+    runningMode ??
     selectedMode ??
     (preferSavedFilm && !statuses[initialMode]?.result
       ? (filmModes.find((candidate) => statuses[candidate]?.result) ?? initialMode)
       : initialMode)
 
   const [open, setOpen] = useState(Boolean(onDismiss))
-  const request = filmRequest(projectId, sessionId, branchId, mode)
+  const request = filmRequest(projectId, sessionId, viewedBranchId, mode)
   const deletionScope = mode
   const [deletionTarget, setDeletionTarget] = useState<string>()
   const confirmDeletion = deletionTarget === deletionScope
@@ -270,6 +283,13 @@ function ResearchVideoModeButton({
     'operation-replay': 0
   })
   const live = useRef(true)
+  const resetFilmScope = (): void => {
+    for (const candidate of filmModes) statusVersion.current[candidate]++
+    setStatuses({})
+    setErrors({})
+    setReadErrors({})
+    setModel(undefined)
+  }
   const setStatus = (next: ResearchVideoPresentationStatus): void => {
     statusVersion.current[mode]++
     setReadErrors((current) =>
@@ -347,9 +367,14 @@ function ResearchVideoModeButton({
   const statusReadFailure = !failure && readErrors[mode]
   const preflight = status.preflightError
   const knownPreflight = preflight && Object.hasOwn(preflightMessages, preflight)
+  const ownRunningFilm =
+    status.blockingSession?.projectId === projectId &&
+    status.blockingSession.sessionId === sessionId
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
-    : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
+    : ownRunningFilm
+      ? t('Research film in progress')
+      : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
   const diagnostic = blocked
     ? !busy && !status.generationBlock && !knownPreflight && preflight
     : failure || statusReadFailure
@@ -360,7 +385,7 @@ function ResearchVideoModeButton({
     status.preflightError !== RESEARCH_FILM_BUSY_MESSAGE &&
     knownPreflight
   const blockingSession =
-    !status.generationBlock && preflight === RESEARCH_FILM_BUSY_MESSAGE
+    !status.generationBlock && !ownRunningFilm && preflight === RESEARCH_FILM_BUSY_MESSAGE
       ? status.blockingSession
       : undefined
   const loadingTrigger =
@@ -393,19 +418,19 @@ function ResearchVideoModeButton({
   )
   const desktop = isDesktopRenderer()
   const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
-  const watching = Object.values(statuses).some(
-    (next) =>
-      next.narrationDownload ||
-      (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
-  )
+  const watching = Object.values(statuses).some(filmInProgress)
   const pollingDelay = useEffectEvent((next: ResearchVideoPresentationStatus): number =>
-    next.narrationDownload ||
-    (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
-      ? 750
-      : open
-        ? 5_000
-        : 30_000
+    filmInProgress(next) ? 750 : open ? 5_000 : 30_000
   )
+  const followRunningFilm = useEffectEvent((next: ResearchVideoPresentationStatus): boolean => {
+    const target = next.blockingSession
+    if (!open || target?.projectId !== projectId || target.sessionId !== sessionId) return false
+    setMode(target.mode ?? 'research-explanation')
+    if (target.branchId === viewedBranchId) return false
+    resetFilmScope()
+    setViewedFilm(target)
+    return true
+  })
   useEffect(() => {
     if (!desktop) return
     live.current = true
@@ -414,7 +439,7 @@ function ResearchVideoModeButton({
     const stopPolling = filmModes.map((target) => {
       let timer: ReturnType<typeof setTimeout>
       let failures = 0
-      const targetRequest = filmRequest(projectId, sessionId, branchId, target)
+      const targetRequest = filmRequest(projectId, sessionId, viewedBranchId, target)
       const poll = async (): Promise<void> => {
         const version = statusVersion.current[target]
         let delay = 750
@@ -426,7 +451,7 @@ function ResearchVideoModeButton({
             subscribed && wasInstalling(target) && !next.narrationDownload
               ? await window.api.localModels.getSnapshot('research-narration')
               : undefined
-          if (subscribed && version === statusVersion.current[target]) {
+          if (subscribed && version === statusVersion.current[target] && !followRunningFilm(next)) {
             setReadErrors((current) =>
               current[target] === undefined ? current : { ...current, [target]: undefined }
             )
@@ -455,13 +480,13 @@ function ResearchVideoModeButton({
       subscribed = false
       stopPolling.forEach((stop) => stop())
     }
-  }, [projectId, sessionId, branchId, desktop, open, watching])
+  }, [projectId, sessionId, viewedBranchId, desktop, open, watching])
   const checkSelectedReadiness = useEffectEvent(() => {
     let current = true
     const version = ++statusVersion.current[mode]
     void readFilmStatus(request, true)
       .then((next) => {
-        if (current && version === statusVersion.current[mode]) {
+        if (current && version === statusVersion.current[mode] && !followRunningFilm(next)) {
           setStatus(next)
           setError(undefined)
         }
@@ -480,7 +505,7 @@ function ResearchVideoModeButton({
   useEffect(() => {
     if (open && desktop) return checkSelectedReadiness()
     return undefined
-  }, [open, desktop])
+  }, [open, desktop, viewedBranchId])
   const selectMode = (next: ResearchFilmMode): void => {
     if (next === mode) return
     wasDeleting.current = false
@@ -644,6 +669,10 @@ function ResearchVideoModeButton({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
+            if (viewedFilm) {
+              resetFilmScope()
+              setViewedFilm(undefined)
+            }
             triggerRef.current?.querySelector('button')?.focus()
             onDismiss?.()
             if (settingsAfterClose.current) {

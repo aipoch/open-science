@@ -112,6 +112,12 @@ export function createResearchVideoPresentationOwner(options: {
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   checkReadiness?: (signal?: AbortSignal) => Promise<void>
   onActivityChanged?: (sessions: readonly ResearchVideoActiveSession[]) => void
+  onOutcome?: (outcome: {
+    invocationId: string
+    projectId: string
+    sessionId: string
+    outcome: 'completed' | 'failed'
+  }) => void
   models: Pick<
     ReturnType<typeof createLocalModelOwner>,
     'acquireUse' | 'getSnapshot' | 'installForUse'
@@ -151,6 +157,7 @@ export function createResearchVideoPresentationOwner(options: {
   let active:
     | {
         key: string
+        request: ResearchVideoPresentationRequest
         controller: AbortController
         prepared: Promise<void>
         activity?: ResearchVideoActiveSession
@@ -222,7 +229,7 @@ export function createResearchVideoPresentationOwner(options: {
     if (block === 'unavailable') return { generationBlock: block }
     if (active && active.key !== key) {
       state.preflightError = RESEARCH_FILM_BUSY_MESSAGE
-      if (active.activity) state.blockingSession = { ...active.activity }
+      if (!active.blockedStatus) state.blockingSession = { ...active.request }
     }
     if (installingKey === key) state.narrationDownload = await options.models.getSnapshot()
     signal.throwIfAborted()
@@ -381,6 +388,14 @@ export function createResearchVideoPresentationOwner(options: {
     const diskController = new AbortController()
     const signal = AbortSignal.any([callerSignal, diskController.signal])
     const invocationId = randomUUID()
+    const reportOutcome = (outcome: 'completed' | 'failed'): void => {
+      options.onOutcome?.({
+        invocationId,
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        outcome
+      })
+    }
     const startedAt = Date.now()
     const started = performance.now()
     const stageMs: Record<string, number> = {}
@@ -564,6 +579,7 @@ export function createResearchVideoPresentationOwner(options: {
             errorCategory: 'installation-incomplete'
           })
           states.set(key, { error: 'Narration installation did not finish. Retry to continue.' })
+          reportOutcome('failed')
           return
         }
         const scope = { ...request, branchId: source.provenance.branchId }
@@ -835,6 +851,7 @@ export function createResearchVideoPresentationOwner(options: {
         playerPath: join(outputJob, 'output', 'player.html'),
         sourcePath: join(outputJob, 'output', 'sources.zip')
       }
+      reportOutcome('completed')
       // Publication already committed. Do not start more I/O after a timeout.
       if (diskFailure) {
         states.delete(key)
@@ -895,6 +912,8 @@ export function createResearchVideoPresentationOwner(options: {
             }
       if (!diskFailure) states.set(key, failureStatus)
       reportActivity(false)
+      if ((admitted || installingKey === key) && !cancelled && !completedResult)
+        reportOutcome('failed')
       if (buildUnconfirmed) {
         park(error, failureStatus, 'build')
         // The thread can still touch the pending job. Keep the lifecycle reservation alive so
@@ -1074,7 +1093,7 @@ export function createResearchVideoPresentationOwner(options: {
           attempts.delete(done)
         })
       attempts.add(done)
-      active = { key, controller, prepared }
+      active = { key, request, controller, prepared }
       await prepared
       return status(request)
     },

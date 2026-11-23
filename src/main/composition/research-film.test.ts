@@ -289,6 +289,7 @@ it.each(outcomes)(
       sessionPackageService: { readResearchFilm: vi.fn() },
       researchFilmLifecycle: createResearchFilmLifecycle({ dataRoot: () => mocks.root }),
       applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: vi.fn()
     }
     const runtime = await composeApplicationRuntime(async (modules) =>
@@ -664,6 +665,7 @@ it.each([
         })
       },
       applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: recordUsage
     } as unknown as Parameters<typeof composeResearchFilm>[0])
   )

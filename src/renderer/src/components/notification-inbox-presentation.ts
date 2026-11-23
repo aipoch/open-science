@@ -1,4 +1,7 @@
-import type { NotificationInboxItem } from '../../../shared/notifications'
+import {
+  RESEARCH_FILM_NOTIFICATION_PREFIX,
+  type NotificationInboxItem
+} from '../../../shared/notifications'
 import { isHiddenControlMessage, isHumanUserMessage } from '../../../shared/session-persistence'
 import type { Project } from '../../../shared/projects'
 import type { ChatSession } from '@/stores/session-store-contract'
@@ -37,7 +40,8 @@ const resolveDetailPreview = (
   notification: NotificationInboxItem,
   session: ChatSession | undefined
 ): string | undefined => {
-  if (!session) return undefined
+  if (!session || notification.dedupeKey.startsWith(RESEARCH_FILM_NOTIFICATION_PREFIX))
+    return undefined
 
   if (notification.source === 'agent-question') {
     const question = (Array.isArray(session.activities) ? session.activities : [])?.find(

@@ -50,6 +50,10 @@ import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
 import {
+  runTaskNotificationInBackground,
+  type TaskNotificationService
+} from '../notifications/task-notifications'
+import {
   RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
   RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
 } from '../../shared/research-video-presentation'
@@ -90,6 +94,7 @@ export async function composeResearchFilm({
   recordAuxiliaryUsage,
   translate = englishNativeTranslator,
   applicationEvents,
+  taskNotifications,
   modules
 }: {
   configRoot: string
@@ -105,6 +110,7 @@ export async function composeResearchFilm({
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
   applicationEvents: Pick<ApplicationEvents, 'publish'>
+  taskNotifications: Pick<TaskNotificationService, 'handleResearchFilmOutcome'>
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -390,6 +396,11 @@ export async function composeResearchFilm({
   const researchVideoPresentation = createResearchVideoPresentationOwner({
     onActivityChanged: (sessions) =>
       applicationEvents.publish('research-video:activity-changed', sessions),
+    onOutcome: (outcome) =>
+      runTaskNotificationInBackground(
+        () => taskNotifications.handleResearchFilmOutcome(outcome),
+        (error) => filmLog.warn('film notification failed', diagnosticErrorFields(error))
+      ),
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,

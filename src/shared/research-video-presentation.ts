@@ -46,7 +46,7 @@ export type ResearchVideoPresentationStatus = {
   filmStep?: number
   narrationDownload?: LocalModelSnapshot
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
-  blockingSession?: ResearchVideoActiveSession
+  blockingSession?: ResearchVideoPresentationRequest
   progress?: ResearchVideoProgress
   result?: ResearchVideoPresentation
   error?: string

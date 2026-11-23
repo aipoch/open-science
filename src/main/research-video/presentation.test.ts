@@ -245,9 +245,11 @@ it('projects admitted Film work for both modes and clears it on completion or ca
     })
   )
   const changes: Array<readonly ResearchVideoActiveSession[]> = []
+  const onOutcome = vi.fn()
   const owner = createResearchVideoPresentationOwner({
     ...f.options,
     writeReplay,
+    onOutcome,
     onActivityChanged: (sessions) => changes.push(sessions)
   })
   const generate = f.options.generate.getMockImplementation()!
@@ -274,6 +276,11 @@ it('projects admitted Film work for both modes and clears it on completion or ca
     await vi.waitFor(() => expect(owner.activeSessions()).toEqual([]))
     expect(changes.at(-1)).toEqual([])
     expect((await owner.status(replay)).blockingSession).toBeUndefined()
+    expect(onOutcome).toHaveBeenCalledExactlyOnceWith({
+      ...request,
+      invocationId: expect.any(String),
+      outcome: 'completed'
+    })
 
     f.options.generate.mockImplementation(async (input, signal) => {
       await Promise.race([
@@ -286,12 +293,14 @@ it('projects admitted Film work for both modes and clears it on completion or ca
     })
     await owner.start(replay)
     expect(owner.activeSessions()).toEqual([request])
+    expect((await owner.status(request)).blockingSession).toEqual(replay)
     owner.cancel(replay)
     expect(owner.activeSessions()).toEqual([])
     expect(changes.at(-1)).toEqual([])
     await vi.waitFor(async () =>
       expect((await owner.status(replay)).progress?.phase).toBe('cancelled')
     )
+    expect(onOutcome).toHaveBeenCalledOnce()
   } finally {
     explanationGate.resolve()
     replayGate.resolve()
@@ -302,6 +311,7 @@ it('projects admitted Film work for both modes and clears it on completion or ca
 it('clears the Film activity projection when authoring fails', async () => {
   const f = await fixture()
   const changes: Array<readonly ResearchVideoActiveSession[]> = []
+  const onOutcome = vi.fn()
   const authoring = Promise.withResolvers<void>()
   f.options.writeScreenplay.mockImplementation(async () => {
     await authoring.promise
@@ -309,6 +319,7 @@ it('clears the Film activity projection when authoring fails', async () => {
   })
   const owner = createResearchVideoPresentationOwner({
     ...f.options,
+    onOutcome,
     onActivityChanged: (sessions) => changes.push(sessions)
   })
 
@@ -321,6 +332,11 @@ it('clears the Film activity projection when authoring fails', async () => {
     )
     await vi.waitFor(() => expect(owner.activeSessions()).toEqual([]))
     expect(changes.at(-1)).toEqual([])
+    expect(onOutcome).toHaveBeenCalledExactlyOnceWith({
+      ...request,
+      invocationId: expect.any(String),
+      outcome: 'failed'
+    })
   } finally {
     authoring.resolve()
     await owner.close()

@@ -126,6 +126,25 @@ it('opens the conversation generating the other film from the busy notice', asyn
   expect(document.querySelector('[role="dialog"]')).toBeNull()
 })
 
+it.each(['branch', 'other-branch'])(
+  'reopens the running replay from the same conversation on %s',
+  async (branchId) => {
+    const replay = { ...request, branchId, mode: 'operation-replay' as const }
+    api.researchVideo.status.mockImplementation(async (scope) =>
+      scope?.mode === replay.mode && scope.branchId === replay.branchId
+        ? { progress: { phase: 'writing', startedAt: Date.now() } }
+        : { preflightError: RESEARCH_FILM_BUSY_MESSAGE, blockingSession: replay }
+    )
+
+    await click('Generate research film')
+    expect(document.body.textContent).toContain('Writing research film…')
+    expect(document.body.textContent).not.toContain(RESEARCH_FILM_BUSY_MESSAGE)
+    expect(document.body.textContent).not.toContain('Go to conversation')
+    await click('Cancel')
+    expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(replay)
+  }
+)
+
 it('continues a checkpoint without waiting for the narration model', async () => {
   status = { canResume: true, preflightError: 'Runtime unavailable' }
   snapshot = { ...snapshot, availability: 'notInstalled' }
