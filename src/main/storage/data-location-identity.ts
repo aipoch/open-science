@@ -1,5 +1,5 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 type LocationIdentityDependencies = {
   platform?: NodeJS.Platform
@@ -22,6 +22,27 @@ export const dataLocationIdentity = (
     return `path:${dependencies.realpath(root)}`
   const info = dependencies.stat(root)
   return info.ino > 0n ? `inode:${info.dev}:${info.ino}` : `path:${dependencies.realpath(root)}`
+}
+
+export function sameProjectFolderSpelling(saved: string, canonical: string): boolean {
+  if (saved === canonical) return true
+  if (saved.toLowerCase() !== canonical.toLowerCase()) return false
+  const original = lstatSync(saved, { bigint: true })
+  const current = lstatSync(canonical, { bigint: true })
+  if (
+    !original.isDirectory() ||
+    !current.isDirectory() ||
+    original.ino === 0n ||
+    original.dev !== current.dev ||
+    original.ino !== current.ino
+  )
+    return false
+  // Bindings were canonical at admission. A replacement link anywhere in the saved path
+  // is a rebinding, even when the target has the same folded spelling.
+  for (let path = dirname(saved); ; path = dirname(path)) {
+    if (lstatSync(path).isSymbolicLink()) return false
+    if (dirname(path) === path) return true
+  }
 }
 
 export const PROJECT_RECORD_DIRECTORY = '.open-science'
@@ -109,7 +130,8 @@ export function getProjectRecordRoot(storageRoot: string, projectId: string): st
   const route = getProjectRecordRoute(storageRoot, projectId)
   if (!route) return undefined
   const folder = realpathSync.native(route.folder)
-  if (folder !== route.folder) throw new Error('Project record folder binding changed on disk.')
+  if (!sameProjectFolderSpelling(route.folder, folder))
+    throw new Error('Project record folder binding changed on disk.')
   const manifest = readProjectRecordManifest(folder)
   if (!manifest || manifest.projectId !== projectId)
     throw new Error('Project record identity is missing or does not match.')

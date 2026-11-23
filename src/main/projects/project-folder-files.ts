@@ -10,7 +10,7 @@ import type {
   ProjectFolderListing,
   ReadProjectFolderPreviewRequest
 } from '../../shared/project-folder-files'
-import { getProjectRecordRoot } from '../storage/data-location-identity'
+import { getProjectRecordRoot, sameProjectFolderSpelling } from '../storage/data-location-identity'
 import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
 import { readExactRange, type ManagedPreviewTrustedLease } from '../managed-preview-resources'
 
@@ -88,7 +88,8 @@ export class ProjectFolderFiles {
       )
     try {
       const canonical = await realpath(root)
-      if (canonical !== root) throw new Error('The bound folder now points to another location.')
+      if (!sameProjectFolderSpelling(root, canonical))
+        throw new Error('The bound folder now points to another location.')
       if (!(await stat(canonical)).isDirectory())
         throw new Error('The bound path is not a directory.')
       this.assertRecordBinding(projectId, canonical)
@@ -342,8 +343,10 @@ export class ProjectFolderFiles {
         current.ctimeNs === snapshot.ctimeNs
       const verifyUnchanged = async (): Promise<void> => {
         this.assertRecordBinding(projectId, root)
+        const savedRoot = (await this.getProject(projectId))?.rootPath
         if (
-          (await this.getProject(projectId))?.rootPath !== root ||
+          !savedRoot ||
+          !sameProjectFolderSpelling(savedRoot, root) ||
           (await this.target(root, relativePath)) !== path ||
           !matches(await stat(path, { bigint: true })) ||
           !matches(await file.stat({ bigint: true }))

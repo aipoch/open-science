@@ -17,6 +17,7 @@ import { projectSessionDefaultsSchema } from '../../shared/session-configuration
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { deletePdfAnnotations } from '../pdf-annotations/repository'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
+import { sameProjectFolderSpelling } from '../storage/data-location-identity'
 import { isSessionPackagePending } from '../storage/session-package-state'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
@@ -41,8 +42,7 @@ import {
 import {
   assertProjectFolderAvailable,
   projectFolderFailure,
-  projectFolderWarnings,
-  sameProjectFolderSpelling
+  projectFolderWarnings
 } from './project-folder-binding'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
@@ -238,7 +238,7 @@ class ProjectRepository {
     }
     const path = await this.prepareFolder(project.rootPath, 'target')
     // A saved canonical directory must not silently follow a replacement symlink/ancestor.
-    if (!(await sameProjectFolderSpelling(project.rootPath, path)))
+    if (!sameProjectFolderSpelling(project.rootPath, path))
       throw new ApplicationCommandError(
         'project-folder-unavailable',
         `Project folder binding changed on disk.\nSaved folder: ${project.rootPath}\nResolved folder: ${path}`
@@ -262,7 +262,7 @@ class ProjectRepository {
         getProjectRecordRoot(storageRoot, projectId)
       }
     }
-    return project.rootPath
+    return path
   }
 
   async checkFolder(request: { projectId: string }): Promise<ProjectFolderValidationResult | null> {

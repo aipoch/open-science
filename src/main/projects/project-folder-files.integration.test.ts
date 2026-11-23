@@ -18,7 +18,7 @@ import { createProjectHandlers } from './ipc'
 import type { ProjectHandlers } from './ipc'
 import { createProjectDbClient } from './prisma-client'
 import { ProjectFolderFiles } from './project-folder-files'
-import { initializeProjectRecordStorage } from './record-storage'
+import { getProjectRecordRoute, initializeProjectRecordStorage } from './record-storage'
 import { ProjectRepository } from './repository'
 
 const openInterception = vi.hoisted(() => ({
@@ -219,6 +219,49 @@ describe('Project folder file authority', () => {
     await expect(folders.readFolderPreview({ projectId, relativePath })).rejects.toMatchObject(
       unavailable
     )
+  })
+
+  it('lists and previews files after a case-only rename before the record route is refreshed', async () => {
+    const storageRoot = join(root, 'data')
+    await initializeProjectRecordStorage(storageRoot, folder, {
+      format: 'open-science-project',
+      version: 2,
+      outputLayout: 'session-v1',
+      projectId,
+      name: 'Research',
+      createdAt: 1
+    })
+    const folders = new ProjectFolderFiles(
+      (id) => repository.get(id),
+      () => storageRoot
+    )
+    await mkdir(join(folder, 'analysis'))
+    await writeFile(join(folder, 'analysis', 'raw.csv'), 'a,b\n1,2')
+    const renamed = join(root, 'PROJECT')
+    await rename(folder, join(root, 'temporary'))
+    await rename(join(root, 'temporary'), renamed)
+
+    const listing = { projectId, relativePath: 'analysis', limit: 10 }
+    const oldStillResolves = await realpath(folder).then(
+      () => true,
+      () => false
+    )
+    if (!oldStillResolves) {
+      await expect(folders.listFolder(listing)).rejects.toMatchObject({
+        code: 'project-folder-not-found'
+      })
+      return
+    }
+
+    expect(getProjectRecordRoute(storageRoot, projectId)?.folder).toBe(folder)
+    await expect(folders.listFolder(listing)).resolves.toMatchObject({
+      path: join(renamed, 'analysis'),
+      entries: [{ name: 'raw.csv' }]
+    })
+    await expect(
+      folders.readFolderPreview({ projectId, relativePath: 'analysis/raw.csv' })
+    ).resolves.toMatchObject({ content: 'a,b\n1,2', truncated: false })
+    await expect(repository.assertProjectFolderHealthy(projectId)).resolves.toBe(renamed)
   })
 
   it('rejects an opened file if an attacker swaps its parent before the open completes', async () => {

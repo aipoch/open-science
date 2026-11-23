@@ -20,7 +20,8 @@ import { createProjectDbClient } from './prisma-client'
 import { ProjectRepository } from './repository'
 import { createAcpCreateSessionWorkflow } from '../acp/create-session-workflow'
 import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
-import { projectFolderWarnings, sameProjectFolderSpelling } from './project-folder-binding'
+import { sameProjectFolderSpelling } from '../storage/data-location-identity'
+import { projectFolderWarnings } from './project-folder-binding'
 
 describe('Project folder binding authority', () => {
   const database = registerDatabaseFixture()
@@ -505,10 +506,10 @@ describe('Project folder binding authority', () => {
       () => false
     )
     if (oldResolves) {
-      expect(await sameProjectFolderSpelling(folder, upper)).toBe(true)
+      expect(sameProjectFolderSpelling(folder, upper)).toBe(true)
     } else {
       await mkdir(folder)
-      expect(await sameProjectFolderSpelling(folder, upper)).toBe(false)
+      expect(sameProjectFolderSpelling(folder, upper)).toBe(false)
     }
     const child = join(upper, 'child')
     await mkdir(child)
@@ -520,7 +521,7 @@ describe('Project folder binding authority', () => {
       process.platform === 'win32' ? 'junction' : 'dir'
     )
     const canonical = await realpath(join(folder, 'child'))
-    expect(await sameProjectFolderSpelling(join(folder, 'child'), canonical)).toBe(false)
+    expect(sameProjectFolderSpelling(join(folder, 'child'), canonical)).toBe(false)
   })
   it('allocates a distinct managed provider directory for bound projects containing AGENTS.md', async () => {
     const folder = join(root, 'project')

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
-import { lstat, realpath, stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { ApplicationCommandError } from '../../shared/application-command-contract'
@@ -65,32 +65,6 @@ async function location(
     }
   }
   return { own: [...own], ancestors }
-}
-
-export async function sameProjectFolderSpelling(
-  saved: string,
-  canonical: string
-): Promise<boolean> {
-  if (saved === canonical) return true
-  if (saved.toLowerCase() !== canonical.toLowerCase()) return false
-  const [original, current] = await Promise.all([
-    lstat(saved, { bigint: true }),
-    lstat(canonical, { bigint: true })
-  ])
-  if (
-    !original.isDirectory() ||
-    !current.isDirectory() ||
-    original.ino === 0n ||
-    original.dev !== current.dev ||
-    original.ino !== current.ino
-  )
-    return false
-  // Bindings were canonical at admission. A new symbolic ancestor is a rebinding, even if its
-  // target happens to have the same folded spelling; case folding alone never grants identity.
-  for (let path = saved; ; path = dirname(path)) {
-    if ((await lstat(path)).isSymbolicLink()) return false
-    if (dirname(path) === path) return true
-  }
 }
 
 export async function assertProjectFolderAvailable(
