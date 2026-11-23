@@ -17,7 +17,6 @@ export type DesktopSurfaceFactories = {
   registerApplicationCommandElectronAdapter: (typeof import('./application-command-electron-adapter'))['registerApplicationCommandElectronAdapter']
   registerStorageIpcHandlers: (typeof import('./storage/ipc'))['registerStorageIpcHandlers']
   registerUpdateIpcHandlers: (typeof import('./update/ipc'))['registerUpdateIpcHandlers']
-  openSystemProcessManager: () => Promise<boolean>
   registerNotebookEnvIpcHandlers: (typeof import('./notebook/env-ipc'))['registerNotebookEnvIpcHandlers']
   createOfficePreviewElectronSurfaces: (typeof import('./ipc-surfaces/office-preview'))['createOfficePreviewElectronSurfaces']
   installManagedPreviewElectronAdapter: (typeof import('./managed-preview-ipc'))['installManagedPreviewElectronAdapter']
@@ -148,8 +147,6 @@ export const registerUpdateIpcHandlers = (
   ...args: Parameters<DesktopSurfaceFactories['registerUpdateIpcHandlers']>
 ): ReturnType<DesktopSurfaceFactories['registerUpdateIpcHandlers']> =>
   desktop().registerUpdateIpcHandlers(...args)
-
-export const openSystemProcessManager = (): Promise<boolean> => desktop().openSystemProcessManager()
 
 export const registerNotebookEnvIpcHandlers = (
   ...args: Parameters<DesktopSurfaceFactories['registerNotebookEnvIpcHandlers']>

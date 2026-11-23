@@ -8,7 +8,6 @@ import type {
   UpdateStatus
 } from '../../shared/update'
 import type { UpdateStrategy } from './strategy'
-import { openSystemProcessManager } from '../desktop-surface-declarations'
 type UpdateCommandOwner = Readonly<{
   getAppInfo: () => AppInfo
   recheck: () => Promise<UpdateStatus>
@@ -23,7 +22,10 @@ type UpdateCommandOwner = Readonly<{
   openProcessManager?: () => Promise<boolean>
 }>
 
-const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner => ({
+const createUpdateCommandOwner = (
+  strategy: UpdateStrategy,
+  openProcessManager?: () => Promise<boolean>
+): UpdateCommandOwner => ({
   getAppInfo: (): AppInfo => ({
     name: APP.name,
     version: strategy.getStatus().current,
@@ -38,7 +40,7 @@ const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner 
   download: (options) => strategy.download(options),
   cancel: () => strategy.cancel(),
   apply: (options) => strategy.apply(options),
-  openProcessManager: () => openSystemProcessManager()
+  ...(openProcessManager ? { openProcessManager } : {})
 })
 
 export { createUpdateCommandOwner }
