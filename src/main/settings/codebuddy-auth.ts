@@ -93,6 +93,11 @@ const readModelReasoningEfforts = (option: unknown): ModelReasoningEffort[] => {
   return []
 }
 
+const readModelId = (value: unknown): unknown => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return (value as Record<string, unknown>).modelId
+}
+
 // Keep credentials and vendor auth responses on the CLI side of the settings IPC boundary.
 export async function runCodeBuddyAuth(
   executable: string,
@@ -237,7 +242,7 @@ export async function runCodeBuddyAuth(
       const values = collectSelectValues(select?.options).filter(validId)
       const ids = values.length
         ? values
-        : (session.models?.availableModels ?? []).map((m) => m?.modelId).filter(validId)
+        : (session.models?.availableModels ?? []).map(readModelId).filter(validId)
       if (!ids.length) return { authenticated: true }
       const current = values.length ? select?.currentValue : session.models?.currentModelId
       const model = current && ids.includes(current) ? current : ids[0]
@@ -253,10 +258,7 @@ export async function runCodeBuddyAuth(
         if (typeof modelId === 'string' && efforts.length) modelReasoningEfforts[modelId] = efforts
       }
       for (const entry of session.models?.availableModels ?? []) {
-        const modelId =
-          entry && typeof entry === 'object' && !Array.isArray(entry)
-            ? (entry as Record<string, unknown>).modelId
-            : undefined
+        const modelId = readModelId(entry)
         const efforts = readModelReasoningEfforts(entry)
         if (
           typeof modelId === 'string' &&
