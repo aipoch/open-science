@@ -83,14 +83,8 @@ function publicStatus(status: ResearchVideoPresentationStatus): PublicResearchFi
       'The Research Film Session or branch is unavailable.'
     )
   }
-  const {
-    result,
-    error,
-    preflightError,
-    reviewFailure,
-    blockingSession: _blockingSession,
-    ...rest
-  } = status
+  const { result, error, preflightError, reviewFailure, ...rest } = status
+  delete rest.blockingSession
   const state = {
     ...rest,
     ...(error === undefined ? {} : { error: publicFilmDiagnostic(error) }),
