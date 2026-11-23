@@ -95,6 +95,16 @@ const commandsFrom = (
           ok: true,
           next: { runtime: ['runtime', 'install', 'codex', '--json'], provider: ['codex', 'login'] }
         }
+      if (channel === 'sessions:list' || channel === 'sessions:load-one') {
+        const result = (await invoke('sessions:load-all', invocation.callerContext, [])) as {
+          sessions: PersistedChatSession[]
+        }
+        if (channel === 'sessions:list') return result
+        const request = args[0] as { projectId: string; sessionId: string }
+        return result.sessions.find(
+          (session) => session.id === request.sessionId && session.projectId === request.projectId
+        )
+      }
       try {
         const result = await invoke(channel, invocation.callerContext, args)
         if (channel === 'sessions:load-all') {
@@ -272,6 +282,81 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('reads and updates one Session without hydrating 232 unrelated transcripts', async () => {
+    let target: PersistedChatSession = {
+      id: 'target',
+      projectId: project.id,
+      title: 'Target',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      artifacts: [
+        {
+          id: 'download',
+          artifactId: 'file',
+          versionId: 'version',
+          kind: 'managed-file',
+          path: '/report.csv',
+          name: 'report.csv'
+        }
+      ],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const invoke = vi.fn(async (channel, invocation) => {
+      if (channel === 'sessions:list')
+        return {
+          sessions: [
+            ...Array.from({ length: 232 }, (_, index) => ({
+              id: `unrelated-${index}`,
+              projectId: project.id,
+              artifactCount: 0
+            })),
+            { id: target.id, projectId: target.projectId, artifactCount: 1 }
+          ]
+        }
+      if (channel === 'sessions:load-one') {
+        expect(invocation.args).toEqual([{ projectId: target.projectId, sessionId: target.id }])
+        return structuredClone(target)
+      }
+      if (channel === 'preview-resources:acquire')
+        return { id: 'resource', url: 'preview://resource', size: 12 }
+      if (channel === 'preview-resources:release') return undefined
+      if (channel === 'settings:get-settings') return taskSettings
+      if (channel === 'sessions:update-configuration') {
+        expect(invocation.args[1]).toBe(target.revision)
+        target = { ...invocation.args[0], revision: target.revision! + 1 }
+        return structuredClone(target)
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: createAgent()
+    })
+    try {
+      await expect(api.listArtifacts(target.id)).resolves.toEqual(target.artifacts)
+      await expect(api.getSessionConfiguration(target.id)).resolves.toMatchObject({ revision: 1 })
+      await expect(
+        api.updateSessionConfiguration(target.id, {
+          expectedRevision: 1,
+          memoryEnabled: false
+        })
+      ).resolves.toMatchObject({ revision: 2, persisted: { memoryEnabled: false } })
+      const download = await api.acquireArtifact('download')
+      expect(download).toMatchObject({ name: 'report.csv', size: 12 })
+      await download.release()
+      await expect(api.getSession('missing')).rejects.toMatchObject({ code: 'session_not_found' })
+      await expect(api.acquireArtifact('missing')).rejects.toMatchObject({
+        code: 'artifact_not_found'
+      })
+      expect(invoke.mock.calls.some(([channel]) => channel === 'sessions:load-all')).toBe(false)
+    } finally {
+      await api.dispose()
+    }
+  })
+
   it('projects the registered Agent runtimes without exposing executable paths', async () => {
     const settings = {
       ...taskSettings,

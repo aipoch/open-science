@@ -20,7 +20,10 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import type { PersistedArtifact } from '../../shared/session-message-contract'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  ListSessionSummariesResult
+} from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type {
   AddCustomServerRequest,
@@ -119,6 +122,28 @@ class HeadlessTaskApi {
           ) as Promise<Project>
       },
       sessions: {
+        findArtifact: async (artifactId) => {
+          const catalog = (await this.invoke('sessions:list')) as ListSessionSummariesResult
+          for (const summary of catalog.sessions) {
+            if (summary.artifactCount === 0) continue
+            const session = (await this.invoke('sessions:load-one', {
+              projectId: summary.projectId,
+              sessionId: summary.id
+            })) as PersistedChatSession | undefined
+            const artifact = session?.artifacts?.find((item) => item.id === artifactId)
+            if (session && artifact) return { session, artifact }
+          }
+          return undefined
+        },
+        find: async (sessionId) => {
+          const catalog = (await this.invoke('sessions:list')) as ListSessionSummariesResult
+          const summary = catalog.sessions.find((session) => session.id === sessionId)
+          if (!summary) return undefined
+          return this.invoke('sessions:load-one', {
+            projectId: summary.projectId,
+            sessionId
+          }) as Promise<PersistedChatSession | undefined>
+        },
         list: async () => {
           const result = (await this.invoke('sessions:load-all')) as {
             sessions: PersistedChatSession[]

@@ -161,6 +161,14 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     return structuredClone(current)
   }
   const defaultSessions: TaskSessionPort = {
+    findArtifact: async (artifactId) => {
+      for (const session of await defaultSessions.list()) {
+        const artifact = session.artifacts?.find((item) => item.id === artifactId)
+        if (artifact) return { session, artifact }
+      }
+      return undefined
+    },
+    find: async (id) => (await defaultSessions.list()).find((session) => session.id === id),
     list: async () => {
       const loaded = (await overrides.sessions?.list?.()) ?? []
       for (const value of loaded) sessions.set(value.id, structuredClone(value))
@@ -432,6 +440,11 @@ describe('TaskRunner', () => {
         now,
         sessions: {
           list: async () => (await coordinator.loadAll()).sessions,
+          find: async (sessionId) => {
+            const projectId = await coordinator.sessionProjectId(sessionId)
+            return projectId ? coordinator.readSessionSnapshot(projectId, sessionId) : undefined
+          },
+          findArtifact: async () => undefined,
           save: (candidate) => coordinator.saveSession(candidate, {}, { taskRunCommit: true }),
           bindSession: (request) => coordinator.bindTaskSession(request),
           admitTurn: (request) => coordinator.admitTaskTurn(request),
@@ -7229,6 +7242,11 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
       },
       sessions: {
         list: async () => (await coordinator.loadAll()).sessions,
+        find: async (sessionId) => {
+          const projectId = await coordinator.sessionProjectId(sessionId)
+          return projectId ? coordinator.readSessionSnapshot(projectId, sessionId) : undefined
+        },
+        findArtifact: async () => undefined,
         save: (session: PersistedChatSession) =>
           coordinator.saveSession(session, {}, { taskRunCommit: true }),
         bindSession: (request) => coordinator.bindTaskSession(request),
