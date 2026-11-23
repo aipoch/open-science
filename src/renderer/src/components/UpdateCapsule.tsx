@@ -87,8 +87,7 @@ const UpdateCapsule = ({
   const [focusAttentionCycle, setFocusAttentionCycle] = useState(0)
   const lastAttentionAtRef = useRef(0)
 
-  const drawsAttention =
-    !status.automaticDownloads && (status.state === 'available' || status.state === 'ready')
+  const drawsAttention = status.state === 'available' || status.state === 'ready'
 
   useEffect(() => {
     if (!drawsAttention) return
