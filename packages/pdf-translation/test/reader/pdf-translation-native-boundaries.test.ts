@@ -202,6 +202,57 @@ it('separates stacked centered authors from the affiliation in a distinct face',
   expect(ordinary?.originalStrings).toContain('Sam Sample')
 })
 
+it('keeps a run of centered numbered affiliations on separate rows', () => {
+  const addresses = [
+    'Department of Applied Science, Sample University, Elm City, Country',
+    'Laboratory for Sensor Research, Sample University, Elm City, Country',
+    'North Survey Office, 24 Elm Road, Elm City, Country',
+    'Field Measurements Group, 12 Oak Street, Oak City, Country'
+  ]
+  const input = addresses.flatMap((address, index) => {
+    const y = 632 - index * 11.5
+    const x = [97, 90, 96, 89][index]
+    return [
+      item(String(index + 1), x, y + 2.8, 3.6, 'Index', 6, false),
+      item(address, x + 4.1, y, 612 - (x + 4.1) * 2, 'Address', 8)
+    ]
+  })
+  const units = extract(input)
+  expect(units.map((unit) => unit.source)).toEqual(
+    addresses.map((address, index) => `${index + 1}${address}`)
+  )
+  expect(units.map((unit) => unit.items.length)).toEqual([2, 2, 2, 2])
+})
+
+it.each([true, false])(
+  'separates centered author and affiliation rows in native order before a confirmed abstract (%s)',
+  (confirmed) => {
+    const centered = (text: string, y: number, width: number, font = 'Body', size = 12) =>
+      item(text, (612 - width) / 2, y, width, font, size)
+    const metadata = [
+      centered('Patterns in Finite Collections', 666, 215, 'Title', 17),
+      centered('Ivy Example', 636, 90),
+      centered('Department of Statistics, North Institute', 622, 273),
+      centered('Sam Sample', 602, 48),
+      centered('School of Environmental Science, West Research College', 588, 338),
+      centered('March 8, 2042', 564, 82)
+    ]
+    const units = extract([
+      ...metadata,
+      centered(confirmed ? 'Abstract' : 'Overview', 528, 44, 'Heading', 10),
+      ...body(470).map((row) => item(row.str, 72, row.transform[5], 468, 'Prose', 11))
+    ])
+    if (confirmed) {
+      expect(units.slice(0, metadata.length).map((unit) => unit.originalStrings)).toEqual(
+        metadata.map((row) => [row.str])
+      )
+    } else {
+      const affiliation = units.find((unit) => unit.originalStrings.includes(metadata[2].str))
+      expect(affiliation?.originalStrings).toContain(metadata[4].str)
+    }
+  }
+)
+
 it.each([0, 8])('preserves referenced names on an aligned equation label column (%s)', (offset) => {
   const items = [
     item('The first equation follows by direct substitution.', 70, 580, 240, 'Body', 11),
@@ -271,4 +322,43 @@ it.each([0, 4])('keeps infinity over a native summation with a lowered limit (%s
   expect(label?.items).toEqual(['1:2'])
   expect(label?.sourceOnly).toBe(offset ? undefined : true)
   expect(label?.preserve).toBe(offset ? undefined : 'formula')
+})
+
+it.each([0, 5])('keeps an institution name across acknowledgements columns (%s)', (offset) => {
+  const input = [
+    item('Figure 1. The independent panels show both observations.', 51, 408, 510, 'Caption', 9),
+    item('ACKNOWLEDGEMENTS', 112, 382, 120, 'Body', 10),
+    item('We thank the independent reviewers for their suggestions.', 51, 366, 242, 'Body', 10),
+    item('The data archive is maintained by the team at no charge.', 51, 353.5, 242, 'Body', 10),
+    item('Work on the open collection is supported by Data Systems,', 51, 341, 242, 'Body', 10),
+    item('the operator of Cedar National', 51, 328.5, 242, 'Body', 10),
+    item(
+      'Laboratory (Cedar). The archive supports this research.',
+      319,
+      382 + offset,
+      242,
+      'Body',
+      10
+    ),
+    item(
+      'The archived records are available for all researchers.',
+      319,
+      369.5 + offset,
+      242,
+      'Body',
+      10
+    ),
+    item('We thank the software maintainers.', 319, 357 + offset, 141, 'Body', 10),
+    item('REFERENCES', 272, 290, 68, 'Body', 10),
+    item('Bell, A., & Reed, J. 2024, The Sample Journal, 1, 8', 51, 270, 215, 'Reference', 9),
+    item('Grant, C., & Park, S. 2025, Example Journal, 2, 16', 51, 256, 211, 'Reference', 9),
+    item('Song, D., & Lane, K. 2025, Example Journal, 2, 24', 319, 270, 215, 'Reference', 9)
+  ]
+  const units = extract(input)
+  const source = units.find((unit) => unit.source.startsWith('We thank the independent reviewers'))
+  expect(source?.source.includes('operator of Cedar National Laboratory (Cedar).')).toBe(
+    offset === 0
+  )
+  expect(source?.fragments.length).toBe(offset === 0 ? 2 : 1)
+  expect(units.find((unit) => unit.source === 'REFERENCES')?.preserve).toBe('reference')
 })

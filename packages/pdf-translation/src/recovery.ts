@@ -24,6 +24,7 @@ export function pdfTranslationHasCommentary(source: string, translation: string)
     /\]<\][A-Za-z][\w-]*\[>\[/gu,
     /<\s*\/?\s*(?:source|translation)\s*>/giu,
     /(?:^|\n)\s*(?:User|Assistant|System)\s*[:：]/gu,
+    /(?:^|\n)\s*\{\s*(?:"assistant"\s*[:：]|assistant\s+")/gu,
     /\b(?:requiredNumericLiterals|retryFeedback|nearbySourceUnits)\b/gu,
     /(?:^|\n)\s*(?:Wait[,!]?\s*)?I need to (?:recheck|correct|rethink|translate)\b[^\n]*/giu,
     /(?:^|\n)\s*Let me (?:correct|recheck|translate)\b[^\n]*/giu,
@@ -387,7 +388,7 @@ function ordinaryAcademicHeading(source: string): string | undefined {
     .replace(/\s+/gu, ' ')
     .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
   const ordinary =
-    /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|funding information|ethical considerations|ablation study|related work|computation details|target simulations|(?:\d{1,3}\.?\s+)?limitations? and (?:outlook|future work))$/iu.test(
+    /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|funding information|ethical considerations|ablation study|related work|computation details|target simulations|brightness simulation|sky predictions|future plans|(?:\d{1,3}\.?\s+)?limitations? and (?:outlook|future work))$/iu.test(
       heading
     ) ||
     /^(?:(?:assessing|evaluating|measuring) (?:computational )?modell?ing skills|(?:systematically )?(?:analy[sz]ing|examining|unfolding) common errors|closing remarks|observations and data reduction|results? and discussions?|boundary conditions?|conclusions? and scope)$/iu.test(
@@ -406,7 +407,7 @@ function isOrdinaryScientificLabel(source: string): boolean {
   // Complete descriptive labels only; a containing organization or method
   // name cannot borrow an exemption from an ordinary word.
   if (
-    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints|polari[sz]ation controller|sampling positions?)$/iu.test(
+    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints|polari[sz]ation controller|sampling positions?|scan (?:number|count))$/iu.test(
       source
     )
   )

@@ -235,9 +235,17 @@ const countScales: Record<string, number> = {
   万亿: 1000000000000,
   萬億: 1000000000000
 }
+// Keep a large power atomic. NFKC alone would join a raised exponent to its base.
+const largeScientificPower = String.raw`(?<![\p{Script=Latin}\p{N}.,])(\d+(?:\.\d+)?)\s*[×·]\s*10(?:\^(1[3-9]|[2-9]\d)|(¹[³⁴⁵⁶⁷⁸⁹]|[²³⁴⁵⁶⁷⁸⁹][⁰¹²³⁴⁵⁶⁷⁸⁹]))(?![\p{N}\^⁺⁻]|[.,]\p{N})`
+
 const numericLiterals = (text: string): string[] =>
   text
     .replaceAll('，', ' ')
+    .replace(
+      new RegExp(largeScientificPower, 'gu'),
+      (_, coefficient: string, exponent: string, raised: string) =>
+        `${coefficient}×10^${exponent ?? raised.normalize('NFKC')}`
+    )
     .replace(/\d{1,3}(?:[\u00a0\u202f]\d{3})+/g, (value) => value.replace(/[\u00a0\u202f]/g, ''))
     // Read powers before NFKC flattens raised digits. Only exact integer counts
     // can share the existing million/万 equivalence; never infer a lost exponent.
@@ -265,7 +273,10 @@ const numericLiterals = (text: string): string[] =>
       }
     )
     .match(
-      /\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)|\d{1,3}(?:\.\d{3})+(?:,\d+)?(?!\d)|\d+(?:[.,]\d+)?/g
+      new RegExp(
+        String.raw`${largeScientificPower}|\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)|\d{1,3}(?:\.\d{3})+(?:,\d+)?(?!\d)|\d+(?:[.,]\d+)?`,
+        'gu'
+      )
     ) ?? []
 
 const canonicalNumber = (value: string): string => {
@@ -351,7 +362,10 @@ const protectNumericPhrases = (
   const phrases: string[] = []
   const sourceTags = new Set(source.match(/<\/?[A-Za-z][^<>]*>/g) ?? [])
   const protectedSource = source.replace(
-    /(?<![\p{L}\p{N}])\p{Nd}+(?:[.,]\p{Nd}+)*[ \t]+[\p{L}][\p{L}\p{M}-]*|\p{N}+(?:[.,]\p{N}+)*/gu,
+    new RegExp(
+      String.raw`${largeScientificPower}|(?<![\p{L}\p{N}])\p{Nd}+(?:[.,]\p{Nd}+)*[ \t]+[\p{L}][\p{L}\p{M}-]*|\p{N}+(?:[.,]\p{N}+)*`,
+      'gu'
+    ),
     (phrase) => {
       const tag = `${name}${phrases.length}`
       phrases.push(phrase)
