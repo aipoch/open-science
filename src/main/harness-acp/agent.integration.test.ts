@@ -22,6 +22,7 @@ import { createJournalAgentStore } from '@aipoch/agent-harness'
 import { createHarnessAcpAgent } from './agent'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_OWNER,
   HARNESS_TOOL_LESS
@@ -427,10 +428,15 @@ it('sends task-only instructions without a tool catalog on the provider wire', a
   const created = await a.connection.agent.request(acp.methods.agent.session.new, {
     cwd: a.directory,
     mcpServers: [],
-    _meta: { [HARNESS_INSTRUCTIONS]: 'Translate faithfully.', [HARNESS_TOOL_LESS]: true }
+    _meta: {
+      [HARNESS_INSTRUCTIONS]: 'Translate faithfully.',
+      [HARNESS_TOOL_LESS]: true,
+      [HARNESS_EPHEMERAL_SESSION]: true
+    }
   })
   await prompt(a.connection, created.sessionId, 'Cell')
   expect(model.requests).toHaveLength(1)
+  expect(await readdir(a.directory)).toEqual([])
   expect(model.requests[0]).not.toHaveProperty('max_tokens')
   expect(model.requests[0].tools ?? []).toEqual([])
   expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])

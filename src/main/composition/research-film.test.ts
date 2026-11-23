@@ -676,7 +676,7 @@ it.each([
     )
   try {
     expect(mocks.runnerOptions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ requireConfirmedCleanup: true })
+      expect.objectContaining({ requireConfirmedCleanup: true, allowCodeBuddySubscription: true })
     )
     mocks.run.mockResolvedValue(response)
     if (scenario === 'provider-cancelled')

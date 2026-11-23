@@ -143,6 +143,7 @@ export async function composeResearchFilm({
     profileNamespace: 'research-video',
     requireConfirmedCleanup: true,
     allowNativeCodexSubscription: true,
+    allowCodeBuddySubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
