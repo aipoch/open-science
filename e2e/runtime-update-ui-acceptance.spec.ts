@@ -340,8 +340,10 @@ test('captures all runtime update states in isolated Electron (presentation-only
       if (id === 'S36') {
         await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
         const dialog = page.getByTestId('runtime-update-dialog')
-        await expect(dialog).toContainText('Another app is using Open-Science files')
-        await expect(dialog).toContainText('Quit the other app, then recheck.')
+        // Known installation blockers render the occupancy copy and process list (#4614).
+        await expect(dialog).toContainText('Application files are in use')
+        await expect(dialog).toContainText('Close the process listed below, then check again.')
+        await expect(dialog.getByTestId('runtime-blocking-processes')).toContainText('PID 4218')
         await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
         await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
       }
