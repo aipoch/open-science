@@ -8650,7 +8650,6 @@
     "Use an account instead": "Utiliser un compte à la place",
     "Have an API key?": "Vous avez une clé API?",
     "Continue with {{provider}}": "Continuer avec {{provider}}",
-    "Skip for now, explore first": "Ignorer pour le moment et explorer d’abord",
     "Providers converge into Agent frameworks, then into the Open-Science logo": "Les fournisseurs convergent vers des frameworks d'agents, puis vers le logo Open-Science",
     "Welcome to Open-Science.": "Bienvenue dans Open-Science.",
     "An open-source, local-first AI research workbench.": "Un espace de recherche IA open source et local par défaut.",

@@ -8,7 +8,7 @@ import { OnboardingWizard } from './OnboardingWizard'
 import {
   clickButton,
   fillRequiredProviderFields,
-  readyClaudeState,
+  readyBuiltInState,
   resetOnboardingStores,
   storageInfo,
   codexReadyState,
@@ -22,7 +22,7 @@ let root: Root
 beforeEach(() => {
   resetOnboardingStores()
   stubWindowApi()
-  readyClaudeState()
+  readyBuiltInState()
   vi.useFakeTimers()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -194,13 +194,15 @@ describe('Onboarding entry flow', () => {
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
   })
 
-  it('keeps the current default after an invalid quick key and Skip', async () => {
+  it('provisions free Kilo after an invalid quick key and Skip', async () => {
     const setActiveProvider = vi.fn()
+    const addOnboardingKiloProvider = vi.fn().mockResolvedValue(undefined)
     const saveValidatedProvider = vi
       .fn()
       .mockResolvedValue({ validation: { ok: false, category: 'auth', status: 401 } })
     useSettingsStore.setState({
       activeProviderId: 'working',
+      addOnboardingKiloProvider,
       saveValidatedProvider,
       setActiveProvider
     })
@@ -212,9 +214,9 @@ describe('Onboarding entry flow', () => {
     await act(async () => fireEvent.submit(key.form!))
     expect(saveValidatedProvider).toHaveBeenCalledOnce()
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/401|auth/i)
-    await clickButton(/Skip for now/)
+    await clickButton(/free Kilo models/)
+    expect(addOnboardingKiloProvider).toHaveBeenCalledOnce()
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
-    expect(useSettingsStore.getState().activeProviderId).toBe('working')
     expect(useSettingsStore.getState().saveAndActivateProvider).not.toHaveBeenCalled()
     expect(setActiveProvider).not.toHaveBeenCalled()
   })

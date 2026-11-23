@@ -202,6 +202,7 @@ const OnboardingWizard = ({
 
   const envInit = useNotebookEnvStore((s) => s.init)
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
+  const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
 
   const [step, setStep] = useState<WizardStep>('environment')
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
@@ -305,6 +306,7 @@ const OnboardingWizard = ({
     setIsSkipping(true)
     setSkipError(undefined)
     try {
+      await addOnboardingKiloProvider()
       await completeOnboarding()
     } catch (error) {
       setSkipError(
@@ -315,7 +317,7 @@ const OnboardingWizard = ({
       )
       setIsSkipping(false)
     }
-  }, [completeOnboarding, isSkipping, t])
+  }, [addOnboardingKiloProvider, completeOnboarding, isSkipping, t])
 
   const handleAdvancedProviderAdvance = useCallback(
     (method: 'account' | 'api-key' = 'api-key'): void => {

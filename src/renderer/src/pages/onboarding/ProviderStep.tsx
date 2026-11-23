@@ -1167,7 +1167,7 @@ const ProviderStep = ({
                 disabled={isSaving || entryIsSkipping}
               >
                 <span aria-hidden="true">↗</span>
-                {t('Skip for now, explore first')}
+                {t('Skip to access free Kilo models.')}
               </Button>
               <Button
                 type="button"

@@ -8304,7 +8304,6 @@
     "Use an account instead": "대신 계정 사용",
     "Have an API key?": "API 키가 있나요?",
     "Continue with {{provider}}": "{{provider}}로 계속",
-    "Skip for now, explore first": "지금 건너뛰고 먼저 탐색",
     "Providers converge into Agent frameworks, then into the Open-Science logo": "모델 제공업체가 에이전트 프레임워크로 모인 뒤 Open-Science 로고로 모입니다",
     "Welcome to Open-Science.": "Open-Science에 오신 것을 환영합니다.",
     "An open-source, local-first AI research workbench.": "오픈 소스이자 로컬 우선인 AI 연구 작업 공간입니다.",

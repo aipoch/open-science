@@ -8306,7 +8306,6 @@
     "Use an account instead": "改用帳戶",
     "Have an API key?": "已有 API 金鑰？",
     "Continue with {{provider}}": "使用 {{provider}} 繼續",
-    "Skip for now, explore first": "暫時略過，先探索",
     "Providers converge into Agent frameworks, then into the Open-Science logo": "供應商匯聚為智能體框架，最終匯聚成 Open-Science 標誌",
     "Welcome to Open-Science.": "歡迎使用 Open-Science。",
     "An open-source, local-first AI research workbench.": "開源、本機優先的 AI 科研工作台。",

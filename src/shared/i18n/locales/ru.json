@@ -8799,7 +8799,6 @@
     "Use an account instead": "Использовать аккаунт",
     "Have an API key?": "Есть API-ключ?",
     "Continue with {{provider}}": "Продолжить с {{provider}}",
-    "Skip for now, explore first": "Пропустить и сначала изучить",
     "Providers converge into Agent frameworks, then into the Open-Science logo": "Поставщики сходятся в фреймворки агентов, а затем в логотип Open-Science",
     "Welcome to Open-Science.": "Добро пожаловать в Open-Science.",
     "An open-source, local-first AI research workbench.": "Открытая локальная рабочая среда ИИ для исследований.",

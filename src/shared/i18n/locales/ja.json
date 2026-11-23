@@ -8306,7 +8306,6 @@
     "Use an account instead": "アカウントを使う",
     "Have an API key?": "API キーをお持ちですか？",
     "Continue with {{provider}}": "{{provider}} で続行",
-    "Skip for now, explore first": "今はスキップして先に探索",
     "Providers converge into Agent frameworks, then into the Open-Science logo": "プロバイダーがエージェントフレームワークに集まり、Open-Science のロゴへと集約されます",
     "Welcome to Open-Science.": "Open-Science へようこそ。",
     "An open-source, local-first AI research workbench.": "オープンソースでローカル優先の AI 研究ワークベンチです。",
