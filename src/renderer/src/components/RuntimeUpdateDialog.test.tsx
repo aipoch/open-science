@@ -188,6 +188,25 @@ it('preserves exact-token legacy record recovery on the structured update surfac
   expect(apply).toHaveBeenCalledWith({ legacyShellRecoveryToken: 'records-snapshot' })
 })
 
+it('shows every blocking process with its PID when installation occupancy is reported', () => {
+  useUpdateStore.setState({
+    status: {
+      state: 'ready',
+      current: '1.3.2',
+      latest: '1.3.3',
+      reason: 'installation-busy',
+      recovery: r({
+        detail: 'foreign-process',
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      })
+    }
+  })
+  render()
+  const processes = document.querySelector('[data-testid="runtime-blocking-processes"]')
+  expect(processes?.textContent).toContain('node.exe (PID 33996)')
+  expect(processes?.textContent).toContain('PID 34001')
+})
+
 it('shows authoritative task titles and uses guarded workspace navigation', async () => {
   const { useNavigationStore } = await import('@/stores/navigation-store')
   const originalNavigate = useNavigationStore.getState().openSession

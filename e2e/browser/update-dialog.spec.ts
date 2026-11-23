@@ -405,6 +405,51 @@ test('offers manual links in check failure prose and preserves retry without rel
   await expect(dialog.getByTestId('manual-update-links')).toBeVisible()
 })
 
+test('shows blocking process names and PIDs in the update notice', async ({ page }, testInfo) => {
+  await page.goto('/update-dialog.html?continuous&short')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: {
+          setStatus(status: {
+            state: 'ready'
+            reason: 'installation-busy'
+            recovery: {
+              phase: 'preparing'
+              runtime: 'running'
+              installation: 'unchanged'
+              canCancel: true
+              canRetryInstall: false
+              canRecover: false
+              detail: 'foreign-process'
+              blockingProcesses: { pid: number; name?: string }[]
+            }
+          }): void
+        }
+      }
+    ).updateFixture
+    fixture.setStatus({
+      state: 'ready',
+      reason: 'installation-busy',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false,
+        detail: 'foreign-process',
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      }
+    })
+  })
+  const dialog = page.getByRole('dialog')
+  const processes = dialog.getByTestId('runtime-blocking-processes')
+  await expect(processes).toContainText('node.exe (PID 33996)')
+  await expect(processes).toContainText('PID 34001')
+  await page.screenshot({ path: testInfo.outputPath('update-blocking-processes.png') })
+})
+
 for (const query of ['continuous&stage=downloading', 'short']) {
   test(`returns from instructions when Escape arrives during Back autofocus (${query})`, async ({
     page

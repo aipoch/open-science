@@ -93,6 +93,7 @@ export const RuntimeUpdateDialog = ({
     status.recovery?.detail === 'occupancy-unknown',
     status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
   )
+  const blockingProcesses = status.recovery?.blockingProcesses ?? []
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
@@ -372,6 +373,24 @@ export const RuntimeUpdateDialog = ({
                           : copy.description
                       }
                     >
+                      {blockingProcesses.length > 0 ? (
+                        <ul
+                          data-testid="runtime-blocking-processes"
+                          aria-label={t('Processes using Open-Science files')}
+                          className="mt-3 space-y-1 text-xs text-muted-foreground"
+                        >
+                          {blockingProcesses.map((process, index) => (
+                            <li key={`${process.pid}-${index}`} className="break-words">
+                              {process.name
+                                ? t('{{name}} (PID {{pid}})', {
+                                    name: process.name,
+                                    pid: process.pid
+                                  })
+                                : t('PID {{pid}}', { pid: process.pid })}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                       {!status.error ? (
                         <ManualUpdateFailure manual={manual} status={status} />
                       ) : null}
