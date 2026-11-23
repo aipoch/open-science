@@ -684,3 +684,57 @@ test.each([
     JSON.stringify(units)
   )
 })
+
+test.each(['adjacent rows', 'standalone statistic', 'shifted operator'])(
+  'keeps a t test inside its native prose only when the rows are continuous: %s',
+  (variant) => {
+    const native = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({ ...item(str, x, y, width, hasEOL), fontName, fontVertical: false })
+    const statistic = (opening: string, suffix: string, y: number): PdfLayoutTextItem[] => [
+      native(opening, 40, y, 22, 'body'),
+      native('SD', 62, y, 13, 'italic'),
+      native('= 0.81,', 77, y, 32, 'body'),
+      native('t', 111, y, 4, 'italic'),
+      native('(9) = 2.7,', 115, y, 47, 'body'),
+      native('p', 164, y, 5, 'italic'),
+      native(suffix, 171, y, 169, 'body', true)
+    ]
+    const rows = [
+      native(
+        variant === 'standalone statistic'
+          ? 'The previous trial ended without collecting new measurements.'
+          : 'The volunteers reported higher scores for clear instructions',
+        40,
+        100,
+        300,
+        'body',
+        true
+      ),
+      ...statistic('(', '< .03), followed by the result for written', 112),
+      ...statistic('feedback (', '< .02), which was the second highest result', 124),
+      native('and remained consistent throughout the study.', 40, 136, 225, 'body', true)
+    ]
+    if (variant === 'shifted operator') rows[6].transform[5] += 2
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items: rows }]
+    })
+    const owner = units.find((unit) => unit.items.includes('1:0'))
+    if (variant === 'adjacent rows') {
+      assert.equal(units.length, 1, JSON.stringify(units))
+      assert.ok(!owner?.sourceOnly)
+      assert.deepEqual(
+        owner?.items,
+        rows.map((_, index) => `1:${index}`)
+      )
+      assert.match(owner?.source ?? '', /p < \.03\), followed .* p < \.02\), which/u)
+    } else {
+      assert.ok(owner && !owner.items.includes('1:7'), JSON.stringify(units))
+    }
+  }
+)

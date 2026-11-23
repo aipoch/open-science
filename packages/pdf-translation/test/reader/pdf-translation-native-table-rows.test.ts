@@ -1334,3 +1334,45 @@ test.each([true, false])(
     assert.ok(units.some((unit) => unit.source.startsWith('The observations') && !unit.sourceOnly))
   }
 )
+
+test('abbreviated identifiers stay literal only on the proven timestamp table rails', () => {
+  const native = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    end = false
+  ): PdfLayoutTextItem => ({
+    ...item(text, x, y, width, 9, end),
+    fontVertical: false
+  })
+  const headers = ['Record', 'Time (UTC)', 'Speed', 'Angle', 'Offset'],
+    keys = ['QA172B...', 'RB285C...', 'TC396D...'],
+    rails = [120, 175, 260, 320, 380],
+    heading = headers.map((name, col) => native(name, rails[col], 150, 32, col === 4)),
+    rows = (drift: boolean): PdfLayoutTextItem[] =>
+      keys.flatMap((key, row) =>
+        [key, `2024-03-0${row + 1} 09:30`, '12.345', '67.89', '+12.345'].map((value, col) =>
+          native(
+            value,
+            rails[col] + (drift && row === 1 && col === 1 ? 5 : 0),
+            163 + row * 13,
+            [42, 65, 25, 23, 28][col],
+            col === 4
+          )
+        )
+      )
+  const caption = native('Table 1. Readings from the three sessions.', 72, 225, 320, true)
+  const standalone = native('WD458E...', 120, 340, 42, true)
+  for (const drift of [false, true]) {
+    const blocks = extract([...heading, ...rows(drift), caption, standalone])
+    for (const key of keys) {
+      const block = blocks.find(({ source }) => source === key)
+      assert.ok(block?.tableCell, JSON.stringify(blocks))
+      assert.equal(block.preserve, drift ? undefined : 'literal')
+      assert.equal(block.sourceOnly, drift ? undefined : true)
+    }
+    assert.equal(blocks.find(({ source }) => source === headers[0])?.sourceOnly, undefined)
+    assert.equal(blocks.find(({ source }) => source === standalone.str)?.sourceOnly, undefined)
+  }
+})

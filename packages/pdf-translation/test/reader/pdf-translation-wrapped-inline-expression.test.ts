@@ -300,3 +300,127 @@ it.each([false, true])('keeps the period with the inline set it ends (gap=%s)', 
   const block = pages[0].blocks.find((candidate) => candidate.id === owner?.fragments[0].id)
   expect(block?.lines.map((line) => line.items.length)).toEqual([12, 1, 1])
 })
+
+it.each(['aligned', 'shifted row', 'different argument'] as const)(
+  'keeps a coordinated function declaration across a native body wrap: %s',
+  (shape) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = false
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      dir: 'ltr',
+      width,
+      height: 10,
+      transform: [10, 0, 0, 10, x, y],
+      fontName,
+      fontAscent: 0.76,
+      fontDescent: -0.24,
+      fontVertical: false,
+      hasEOL
+    })
+    const shift = shape === 'shifted row' ? 4 : 0
+    const secondRow = (
+      str: string,
+      x: number,
+      width: number,
+      face?: string,
+      eol?: boolean
+    ): PdfLayoutPage['items'][number] => item(str, x + shift, 637, width, face, eol)
+    const argument = shape === 'different argument' ? 'R' : 'Q'
+    const items = [
+      item(
+        'We describe methods used to validate repeated observations. For a sample',
+        80,
+        650,
+        350
+      ),
+      item('Q', 433, 650, 7, 'Math'),
+      item(', let', 440, 650, 14),
+      item('F', 458, 650, 7, 'Math'),
+      item('(', 467, 650, 4, 'Delimiter'),
+      item('Q', 471, 650, 7, 'Math'),
+      item(')', 478, 650, 4, 'Delimiter', true),
+      secondRow('and', 80, 17),
+      secondRow('H', 100, 7, 'Math'),
+      secondRow('(', 107, 4, 'Delimiter'),
+      secondRow(argument, 111, 7, 'Math'),
+      secondRow(')', 118, 4, 'Delimiter'),
+      secondRow('respectively denote the measured value and the estimated value of', 125, 288),
+      secondRow('Q', 416, 7, 'Math'),
+      secondRow('.', 423, 3, 'Body', true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }]
+    })
+    const lead = units.find((unit) => unit.items.includes('1:0'))
+    expect(units.flatMap((unit) => unit.items)).toEqual(items.map((_, index) => `1:${index}`))
+    if (shape === 'aligned') {
+      expect(units).toHaveLength(1)
+      expect(lead?.source).toContain('and H(Q) respectively denote')
+      expect(lead?.sourceOnly).not.toBe(true)
+    } else {
+      expect(lead?.items).not.toContain('1:12')
+    }
+  }
+)
+
+it.each([0, 4])('retains a wrapped dimension in its body paragraph (offset=%s)', (offset) => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    hasEOL = false
+  ): PdfLayoutPage['items'][number] => ({
+    str,
+    width,
+    height: 10,
+    dir: 'ltr',
+    fontName,
+    hasEOL,
+    fontVertical: false,
+    fontAscent: 0.79,
+    fontDescent: -0.21,
+    transform: [10, 0, 0, 10, x, y]
+  })
+  const items = [
+    item(
+      'A reference path contains each sample in the interior of the',
+      72,
+      690,
+      468,
+      'Body',
+      true
+    ),
+    item('central (', 72 + offset, 677.5, 33),
+    item('q', 105 + offset, 677.5, 6, 'Variable'),
+    item('−', 113 + offset, 677.5, 7, 'Operator'),
+    item(
+      '3)-cube. Each trial follows the original sequence, and then it',
+      122 + offset,
+      677.5,
+      418,
+      'Body',
+      true
+    ),
+    item('ends with a short comparison across the recorded samples.', 72, 665, 320, 'Body', true)
+  ]
+  const { units } = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  expect(units.flatMap((unit) => unit.items)).toEqual(items.map((_, index) => `1:${index}`))
+  if (offset) {
+    expect(units.find((unit) => unit.source === 'central (q −')?.sourceOnly).toBe(true)
+  } else {
+    expect(units.map((unit) => unit.source)).toEqual([
+      'A reference path contains each sample in the interior of the central (q − 3)-cube. Each trial follows the original sequence, and then it ends with a short comparison across the recorded samples.'
+    ])
+    expect(units[0].sourceOnly).toBeUndefined()
+  }
+})

@@ -1,0 +1,3 @@
+{"name": "serialization-rounding", "shift": 0.006, "expected": "ready"}
+{"name": "moved-run", "shift": 0.02, "expected": "error"}
+{"name": "extra-copy", "shift": 0.006, "duplicate": true, "expected": "error"}

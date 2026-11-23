@@ -130,3 +130,58 @@ it.each([false, true])(
     )
   }
 )
+
+it.each(['aligned', 'shifted-index'])(
+  'retains a limit operator with a protected stacked quotient (%s)',
+  (mode) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      height = 9,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y],
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      hasEOL
+    })
+    const shift = mode === 'shifted-index' ? 3 : 0
+    const items = [
+      item('We start by evaluating the following expression', 70, 475, 220, 'Body', 9, true),
+      item('(4)', 70, 453, 18),
+      item('lim', 168, 453, 13),
+      item('', 167 + shift, 447.3, 0, 'Index', 0, true),
+      item('φ', 167 + shift, 447.3, 3.5, 'Index', 6),
+      item('→', 170.7 + shift, 447.3, 7.3, 'Arrow', 6),
+      item('0', 178 + shift, 447.3, 4, 'Index', 6),
+      item('', 184.5, 458.8, 0, 'Body', 0, true),
+      item('sin', 184.5, 458.8, 11.3),
+      item(' ', 195.8, 458.8, 1.5, 'Body', 0),
+      item('φ', 197.3, 458.8, 4.3, 'Math', 9, true),
+      item('φ', 191, 446.9, 4.3, 'Math'),
+      item('= 1', 205.7, 453, 14.2),
+      item('.', 219.9, 453, 2.6, 'Math'),
+      item('', 70, 431.5, 0, 'Body', 0, true),
+      item('This completes the preliminary calculation.', 70, 431.5, 200, 'Body', 9, true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const operator = units.find((unit) => unit.items.includes('1:2'))
+    expect(operator).toMatchObject({ source: 'lim', items: ['1:2'] })
+    expect(operator?.sourceOnly).toBe(mode === 'aligned' ? true : undefined)
+    expect(operator?.preserve).toBe(mode === 'aligned' ? 'formula' : undefined)
+    expect(units.flatMap((unit) => unit.items).toSorted()).toEqual(
+      items.flatMap(({ str }, index) => (str.trim() ? [`1:${index}`] : [])).toSorted()
+    )
+  }
+)
