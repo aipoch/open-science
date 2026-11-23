@@ -53,18 +53,17 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-### 💡 AIPOCH Open-Science v1.3.3 更新
+### 💡 AIPOCH Open-Science v1.3.4 更新
 
-_2026 年 11 月 21 日_
+_2026 年 11 月 22 日_
 
-- **自動更新**：在 macOS 上，符合條件的更新可在你退出應用程式時自行安裝；在 Windows 和 Linux 上，更新可在你的工作過程中為下次啟動預備——背景下載需要不受限制的網路與儲存空間，手動更新路徑依然保留。
-- **內建 Agent 成為預設**：新專案與新工作階段在任何地方（包含全新安裝的 CLI 與 SDK）皆以內建 Open-Science Agent 啟動；外部 Agent 執行環境只在你選用時才按需安裝。
-- **更精簡的應用程式**：macOS 與 Windows 上的安裝檔案更小，內建離線 npm 執行環境改為以 Node 22 編譯，不再隨附一千多個鬆散的套件檔案。
-- **統一的圖像編輯**：編輯指令位於對話輸入列中，從任何預覽皆可透過滑鼠停駐或鍵盤操作進入編輯，全程支援版本瀏覽。
-- **失敗會說明原因**：請求、載入、匯入與 Notebook 失敗現在會指明實際發生的狀況，並區分已停止的執行與從未回應的工作。
-- **設定捷徑回來了**：Skills、Specialists 與 Connectors 重新回到「設定」中，各自開啟所屬類別，並返回你原先所在的位置。
+- **看見內建 Agent 的內部**：專案可選擇啟用 Agent 追蹤，將對話回合、模型請求與工具執行的相關 span 匯出至你自行託管的 OTLP/HTTP 接收端，擷取細節由你掌控。
+- **Windows 更新不再卡住**：內建 Agent 執行時，應用程式內更新不再停滯；穩定版 Windows 更新也恢復以精簡的安裝程式差量套用。
+- **長 Notebook 歷程保持快速**：啟動與完成 Run、選取結果、開啟預覽時，不再重新讀取整個歷程。
+- **可信賴的記憶體讀數**：macOS 上的 Compute 摘要現在與活動監視器一致；Windows 上則顯示認可記憶體相對於其上限的情況。
+- **CodeBuddy 推理強度**：強度選擇器現在只提供所選 CodeBuddy 模型實際支援的層級。
 
-[查看 v1.3.3 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[查看 v1.3.4 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
