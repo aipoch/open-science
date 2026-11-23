@@ -41,6 +41,7 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { listWindowsProcesses, windowsProcessIsAlive } from '../../src/main/windows-process-query'
 import { terminateWindowsProcessesByIdentity } from '../../src/main/process-tree-windows'
+import { processBirthIdentity } from '../../src/main/process-birth-identity'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
@@ -61,6 +62,26 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
+const WINDOWS_PROCESS_BIRTH_PREFIX = 'windows-creation-time:'
+
+const windowsProcessBirth = (pid: number): string | undefined => {
+  const identity = processBirthIdentity(pid)
+  return identity?.startsWith(WINDOWS_PROCESS_BIRTH_PREFIX)
+    ? identity.slice(WINDOWS_PROCESS_BIRTH_PREFIX.length)
+    : undefined
+}
+
+const windowsProcessBirthIfLive = (pid: number): string | undefined => {
+  if (!windowsProcessIsAlive(pid)) return undefined
+  const birth = windowsProcessBirth(pid)
+  if (birth !== undefined) return birth
+  if (!windowsProcessIsAlive(pid)) return undefined
+  throw new Error(`Electron crash simulation cannot read the birth identity for PID ${pid}.`)
+}
+
+const windowsProcessIdentityMatches = (pid: number, birth: string): boolean => {
+  return windowsProcessBirthIfLive(pid) === birth
+}
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
@@ -1933,6 +1954,19 @@ class ElectronAppHarness implements ElectronApp {
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
+    if (process.platform === 'win32' && !child.pid)
+      throw new Error('Electron crash simulation has no launcher PID.')
+    const launcherBirth =
+      process.platform === 'win32' && child.pid ? windowsProcessBirthIfLive(child.pid) : undefined
+    if (
+      process.platform === 'win32' &&
+      child.pid &&
+      launcherBirth === undefined &&
+      windowsProcessIsAlive(child.pid)
+    )
+      throw new Error(
+        `Electron crash simulation cannot capture the launcher birth identity for PID ${child.pid}.`
+      )
     await this.stopElectronTrace(application)
     const windowsProcesses =
       process.platform === 'win32'
@@ -1964,16 +1998,38 @@ class ElectronAppHarness implements ElectronApp {
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
     if (windowsProcesses) {
-      if (!child.pid) throw new Error('Electron crash simulation has no launcher PID.')
       const owned = new Map(windowsProcesses)
-      const before = new Set([child.pid, ...owned.keys()])
+      if (child.pid && launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
       const deadline = Date.now() + 10_000
       // An intermediate launcher can exit before taskkill reaches every captured descendant.
-      await terminateWindowsProcessesByIdentity(owned, deadline)
+      await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
       for (;;) {
-        const remaining = listWindowsProcesses().filter(
-          ({ pid, ppid }) => (before.has(pid) || before.has(ppid)) && windowsProcessIsAlive(pid)
-        )
+        const observed = listWindowsProcesses()
+        const liveOwned = new Set<number>()
+        for (const [pid, birth] of owned) {
+          if (windowsProcessIdentityMatches(pid, birth)) liveOwned.add(pid)
+        }
+        const discovered = new Map<number, string>()
+        for (const { pid, ppid } of observed) {
+          if (owned.has(pid) || !liveOwned.has(ppid)) continue
+          const birth = windowsProcessBirthIfLive(pid)
+          if (birth === undefined) continue
+          const current = listWindowsProcesses().find(
+            (candidate) => candidate.pid === pid && candidate.ppid === ppid
+          )
+          if (!current) continue
+          const parentBirth = owned.get(ppid)
+          if (parentBirth === undefined || !windowsProcessIdentityMatches(ppid, parentBirth))
+            continue
+          if (!windowsProcessIdentityMatches(pid, birth)) continue
+          owned.set(pid, birth)
+          discovered.set(pid, birth)
+        }
+        if (discovered.size) await terminateWindowsProcessesByIdentity(discovered, deadline)
+        const remaining = observed.filter(({ pid }) => {
+          const birth = owned.get(pid)
+          return birth !== undefined && windowsProcessIdentityMatches(pid, birth)
+        })
         if (remaining.length === 0) {
           reaped = true
           break
