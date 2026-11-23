@@ -25,6 +25,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import type { NotebookEnvironmentOperations } from './environment-operations'
 import { boundedFailureDiagnostic } from './failure-diagnostic'
+import { notebookLaneKey } from './lane-identity'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
 import { NotebookPackageAdmissionOwner } from './package-admission'
@@ -56,7 +57,7 @@ type NotebookPackageOperationsOptions = {
   locale: string
   mirrorProbe?: ProbeDeps
   resolvePackageMirror?: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
-  ensureRecovered: () => Promise<void>
+  ensureRecovered: (laneKey?: string) => Promise<void>
   loadSession: (request: NotebookSessionRequest) => Promise<PackageSession>
   findSession: (sessionId: string) => PackageSession | undefined
   sessions: () => Iterable<PackageSession>
@@ -165,8 +166,11 @@ class NotebookPackageOperations {
   }
 
   async inspect(request: InspectPackagesRequest): Promise<InspectPackagesResult> {
-    await this.options.ensureRecovered()
     const session = await this.options.loadSession(request)
+    // Package inspection is read-only and does not claim a persistent kernel process. Scope
+    // recovery to this Session so an unresolved receipt in another lane cannot block metadata
+    // inspection while exact kernel admission remains fenced by the executor.
+    await this.options.ensureRecovered(notebookLaneKey(session.lane))
     const binding = session.runtimeBinding(request.language)
     const environmentName =
       binding?.source === 'managed' && binding.envName

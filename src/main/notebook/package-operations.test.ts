@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { PackageMirror } from '../../shared/mirror'
-import { createRootNotebookLane } from './lane-identity'
+import { createRootNotebookLane, notebookLaneKey } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
 import { installPackages } from '@aipoch/environment'
 import { compactManagePackagesResult } from './mcp-server'
@@ -445,6 +445,7 @@ describe('NotebookPackageOperations', () => {
     })
     expect(sharedCalls).toEqual([['inspection', 'analysis']])
     expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).toHaveBeenCalledWith(notebookLaneKey(activeSession.lane))
   })
 
   it('keeps external inspection behind notebook execution approval', async () => {

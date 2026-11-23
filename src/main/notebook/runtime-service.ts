@@ -1335,7 +1335,7 @@ class NotebookRuntimeService {
       locale: options.locale ?? DEFAULT_LOCALE,
       mirrorProbe: options.mirrorProbe,
       resolvePackageMirror: options.getPackageMirror,
-      ensureRecovered: () => this.ensureRecovered(),
+      ensureRecovered: (laneKey) => this.ensureRecovered(laneKey),
       loadSession: (request) => this.sessionLifecycle.ensure(request),
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       sessions: () => this.sessions.values(),
