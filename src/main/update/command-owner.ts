@@ -8,7 +8,7 @@ import type {
   UpdateStatus
 } from '../../shared/update'
 import type { UpdateStrategy } from './strategy'
-import { openSystemProcessManager } from '../system-process-manager'
+import { openSystemProcessManager } from '../desktop-surface-declarations'
 type UpdateCommandOwner = Readonly<{
   getAppInfo: () => AppInfo
   recheck: () => Promise<UpdateStatus>

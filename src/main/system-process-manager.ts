@@ -1,4 +1,3 @@
-import { shell } from 'electron'
 import { win32 } from 'node:path'
 
 type OpenProcessManagerPath = (path: string) => Promise<string>
@@ -6,12 +5,11 @@ type OpenProcessManagerPath = (path: string) => Promise<string>
 const processManagerPath = (platform: NodeJS.Platform, windowsRoot: string): string | undefined =>
   platform === 'win32' ? win32.join(windowsRoot, 'System32', 'Taskmgr.exe') : undefined
 
-const openWithDesktopShell: OpenProcessManagerPath = (path) => shell.openPath(path)
-
 export const openSystemProcessManager = async (
   platform: NodeJS.Platform = process.platform,
-  openPath: OpenProcessManagerPath = openWithDesktopShell
+  openPath?: OpenProcessManagerPath
 ): Promise<boolean> => {
+  if (!openPath) return false
   const path = processManagerPath(
     platform,
     process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows'

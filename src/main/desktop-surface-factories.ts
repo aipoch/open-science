@@ -21,6 +21,8 @@ import { createSessionPersistenceElectronSurface } from './ipc-surfaces/session-
 import { createUploadElectronSurface } from './ipc-surfaces/uploads'
 import { createSpecialistElectronSurface } from './ipc-surfaces/specialist'
 import { bindDesktopSurfaceFactories } from './desktop-surface-declarations'
+import { shell } from 'electron'
+import { openSystemProcessManager as openSystemProcessManagerCore } from './system-process-manager'
 
 export const bindElectronSurfaceFactories = (): void => bindDesktopSurfaceFactories(factories)
 
@@ -39,6 +41,8 @@ const factories = {
   registerApplicationCommandElectronAdapter,
   registerStorageIpcHandlers,
   registerUpdateIpcHandlers,
+  openSystemProcessManager: () =>
+    openSystemProcessManagerCore(process.platform, (path) => shell.openPath(path)),
   registerNotebookEnvIpcHandlers,
   createOfficePreviewElectronSurfaces,
   installManagedPreviewElectronAdapter,
