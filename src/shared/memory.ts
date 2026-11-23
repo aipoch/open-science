@@ -246,6 +246,7 @@ export const memoryAgentRememberMcpOutputSchema = z
       }
     }
   })
+  .meta({ $schema: undefined })
 
 export type MemoryEntryView = z.infer<typeof memoryEntryViewSchema>
 export type MemoryCategoryView = z.infer<typeof memoryCategoryViewSchema>

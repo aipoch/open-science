@@ -584,7 +584,7 @@ describe('notebook MCP server config', () => {
     expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
-  it('publishes remember_memory with a root object output schema', async () => {
+  it('publishes object output schemas compatible with the default MCP dialect', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -601,9 +601,11 @@ describe('notebook MCP server config', () => {
 
     try {
       const { tools } = await client.listTools()
-      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
-
-      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+      for (const name of ['list_authorized_directories', 'remember_memory']) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema
+        expect(schema).toMatchObject({ type: 'object' })
+        expect(schema).not.toHaveProperty('$schema')
+      }
     } finally {
       await client.close()
       await server.close()
