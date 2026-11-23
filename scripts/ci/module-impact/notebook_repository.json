@@ -1,13 +1,17 @@
 {
   "ownerPaths": [
     "src/main/notebook/conditional-restore-script.ts",
+    "src/main/notebook/inline-run-window.test.ts",
+    "src/main/notebook/inline-run-window.ts",
     "src/main/notebook/input-staging.test.ts",
     "src/main/notebook/input-staging.ts",
+    "src/main/notebook/pending-run-files.ts",
     "src/main/notebook/repository.test.ts",
     "src/main/notebook/repository.ts",
     "src/main/notebook/run-document-data-path-codec.ts",
     "src/main/notebook/run-document-data-paths.test.ts",
-    "src/main/notebook/run-document-data-paths.ts"
+    "src/main/notebook/run-document-data-paths.ts",
+    "src/main/notebook/run-record-reference.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-file-evidence.ts",
@@ -33,10 +37,12 @@
     "src/main/notebook/mcp-server.ts",
     "src/main/notebook/mirror-probe.ts",
     "src/main/notebook/native-shell-certification.ts",
+    "src/main/notebook/pending-run-files.ts",
     "src/main/notebook/prompt-input-materialization.ts",
     "src/main/notebook/repository.ts",
     "src/main/notebook/run-document-data-path-codec.ts",
     "src/main/notebook/run-document-data-paths.ts",
+    "src/main/notebook/run-record-reference.ts",
     "src/main/notebook/run-terminalization.ts",
     "src/main/notebook/save-ipynb-all.ts",
     "src/main/notebook/scientific-replay.test-support.ts",
@@ -52,6 +58,7 @@
   ],
   "testFiles": {
     "owner": [
+      "src/main/notebook/inline-run-window.test.ts",
       "src/main/notebook/input-staging.test.ts",
       "src/main/notebook/repository.test.ts",
       "src/main/notebook/run-document-data-paths.test.ts"
@@ -363,6 +370,7 @@
       "src/main/session-package/desktop-composition.test.ts",
       "src/main/session-package/desktop.test.ts",
       "src/main/session-package/export-validation.test.ts",
+      "src/main/session-diagnostics/collector.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/inspection-worker.integration.test.ts",
       "src/main/session-package/literature.test.ts",
@@ -569,7 +577,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "consumerModules": [],
+  "consumerModules": ["main_session_package", "session_diagnostics"],
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime",
   "fullTestReason": "Externalized Notebook run records add checksum verification and expand the persistence and archive contracts. Retain full CI validation until the expanded boundary is reviewed."
