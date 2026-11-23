@@ -599,6 +599,11 @@ describe('provider registry', () => {
     expect(getOfficialVendor('glmcodingplan')?.models).toContainEqual(expected)
   })
 
+  it.each(['zhipu', 'glmcodingplan'] as const)('lists GLM-5.4 with vision for %s', (vendor) => {
+    expect(getVendorModelContextWindow(vendor, 'glm-5.4')).toBe(1_000_000)
+    expect(isVendorModelMultimodal(vendor, 'glm-5.4')).toBe(true)
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['messages', 'chat-completions'])
@@ -617,7 +622,6 @@ describe('provider registry', () => {
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
 
-    // The coding plan omits the older vision variant but serves the natively multimodal Flash model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
