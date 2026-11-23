@@ -1494,6 +1494,15 @@ describe('PR Gate workflow', () => {
     expect(steps.indexOf(generate!)).toBe(steps.indexOf(guard!) - 1)
   })
 
+  it('runs runtime helper registration before the unconditional registration suite', () => {
+    const job = workflow.jobs.registration
+    const guard = job.steps?.find(({ name }) => name === 'Check runtime helper registration')
+    const install = job.steps?.find(({ name }) => name === 'Install registration toolchain')
+    expect(guard?.run).toBe('node scripts/ci/check-installation-helper-registration.mjs')
+    expect(job.needs).toBeUndefined()
+    expect(job.steps?.indexOf(guard!)).toBeLessThan(job.steps?.indexOf(install!))
+  })
+
   it('runs manifest-reading contracts as a blocking check for registration and full plans', () => {
     const step = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Check module registration policy and architecture contracts'

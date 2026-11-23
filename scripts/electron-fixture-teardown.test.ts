@@ -25,6 +25,7 @@ const boundary = vi.hoisted(() => ({
   mainEvaluate: vi.fn(),
   terminateByIdentity: vi.fn(),
   processTable: vi.fn(),
+  processBirthIdentity: vi.fn(),
   rendererFailure: vi.fn(),
   ready: vi.fn(),
   settingsWait: vi.fn(),
@@ -58,6 +59,9 @@ vi.mock('../src/main/process-tree-windows', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/main/process-tree-windows')>()),
   terminateWindowsProcessesByIdentity: boundary.terminateByIdentity
 }))
+vi.mock('../src/main/process-birth-identity', () => ({
+  processBirthIdentity: boundary.processBirthIdentity
+}))
 vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
   RendererFailureGate: class {
     observe = async (): Promise<void> => undefined
@@ -84,6 +88,15 @@ beforeEach(() => {
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
   boundary.processTable.mockReset()
+  boundary.processBirthIdentity.mockImplementation((pid: number) =>
+    pid === 12345
+      ? 'windows-creation-time:135411000000000001'
+      : pid === 12346
+        ? 'windows-creation-time:135411000000000000'
+        : pid === 12347
+          ? 'windows-creation-time:135411000000000002'
+          : undefined
+  )
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
     const logs = join(root, 'logs')
@@ -381,18 +394,26 @@ it.each([true, false])(
 )
 
 const capturedBirths = [[12346, '135411000000000000']] as const
+const launcherBirth = '135411000000000001'
+const capturedTree = new Map([[12345, launcherBirth], ...capturedBirths])
 
 it.each(
   [
     { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
     { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
-    { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: false },
+    { name: 'the launcher survived', complete: true, survivors: [[12345, 1]], succeeds: false },
     { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
     {
       name: 'a new grandchild survived',
       complete: true,
       survivors: [[12347, 12346]],
       succeeds: false
+    },
+    {
+      name: 'an unrelated process survived',
+      complete: true,
+      survivors: [[12348, 7132]],
+      succeeds: true
     },
     { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
   ].flatMap((scenario) => [true, false].map((reaped) => ({ ...scenario, reaped })))
@@ -424,10 +445,7 @@ it.each(
     await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled(), { timeout: 10_000 })
     await vi.advanceTimersByTimeAsync(10_000)
     await assertion
-    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(
-      new Map(capturedBirths),
-      expect.any(Number)
-    )
+    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(capturedTree, expect.any(Number))
     expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
   }
 )
@@ -457,8 +475,28 @@ it.each([true, false])(
     await vi.advanceTimersByTimeAsync(100)
     await operation
     expect(boundary.launch).toHaveBeenCalledTimes(2)
+    expect(boundary.terminateByIdentity).toHaveBeenCalledWith(capturedTree, expect.any(Number))
   }
 )
+
+it('fails closed when a live owned process birth identity becomes unavailable', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  boundary.reap.mockResolvedValue({ reaped: true })
+  boundary.processTable.mockReturnValue([{ pid: 12346, ppid: 1 }])
+  boundary.processBirthIdentity.mockImplementation((pid: number) =>
+    pid === 12345 ? 'windows-creation-time:135411000000000001' : undefined
+  )
+  const operation = boundary.fixture(
+    { windowMode: 'hidden' },
+    async (app) => {
+      boundary.mainEvaluate.mockResolvedValueOnce(capturedBirths)
+      await app.restartAfterCrash()
+    },
+    { status: 'failed', expectedStatus: 'passed', attach }
+  )
+  await expect(operation).rejects.toThrow('cannot read the birth identity for PID 12346')
+  expect(boundary.launch).toHaveBeenCalledOnce()
+})
 
 it('refuses a Windows crash restart without a complete pre-termination snapshot', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })

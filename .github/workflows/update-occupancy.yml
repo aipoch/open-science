@@ -36,6 +36,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify runtime helper registration
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: node scripts/ci/check-installation-helper-registration.mjs
       - name: Install dependencies
         if: inputs.platform == 'all' || inputs.platform == matrix.platform
         run: node scripts/ci/npm-ci.mjs
