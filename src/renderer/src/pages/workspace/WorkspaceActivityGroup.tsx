@@ -339,7 +339,6 @@ const WorkspaceActivityGroup = ({
   const remainingCount = visiblePhases.filter(
     (phase) => phase === 'executing' || phase === 'awaiting-approval'
   ).length
-  const failedCount = visiblePhases.filter((phase) => phase === 'failed').length
 
   // Expanding or collapsing is a reading interaction, not message navigation.
   const handleToggleRow = useCallback(
@@ -375,15 +374,7 @@ const WorkspaceActivityGroup = ({
           )}
           meta={
             <>
-              {remainingCount > 0
-                ? t('{{count}} steps remaining', {
-                    count: remainingCount,
-                    defaultValue_one: '{{count}} step remaining'
-                  })
-                : formatStepCount(visibleActivities, permission, notebookRunsById, t)}
-              {remainingCount > 0 && failedCount > 0
-                ? ` · ${t('{{count}} failed', { count: failedCount })}`
-                : null}
+              {formatStepCount(visibleActivities, permission, notebookRunsById, t, remainingCount)}
               {(isExpanded || remainingCount === 0) &&
               !phases.some(({ phase }) => phase === 'awaiting-approval') ? (
                 <>
