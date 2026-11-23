@@ -377,11 +377,13 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.model = model
   if (type === 'custom') {
     if (isLocalProviderPresetId(value.localPresetId)) provider.localPresetId = value.localPresetId
-    if (contextWindow !== undefined) provider.contextWindow = contextWindow
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
   }
-  if (vendorId === 'vectrust' && provider.manualConnection && contextWindow !== undefined)
+  if (
+    contextWindow !== undefined &&
+    (type === 'custom' || provider.cloudflare || provider.manualConnection)
+  )
     provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {

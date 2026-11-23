@@ -495,9 +495,10 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
-  // Custom model token limits. `null` explicitly clears a saved override; omitted leaves it unchanged
-  // on partial edits. A provider with no context override resolves to 200k at runtime.
+  // Optional window for a custom gateway or manually configured official model. Null clears it.
+  // A partial edit retains the saved window only while the manual model and route still match.
   contextWindow?: number | null
+  // Custom model limits. Null clears an override; omission preserves it on partial edits.
   maxInputTokens?: number | null
   maxOutputTokens?: number | null
   supportsImageInput?: boolean

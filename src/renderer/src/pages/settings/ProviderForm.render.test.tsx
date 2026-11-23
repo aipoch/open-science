@@ -313,6 +313,41 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
   })
 
+  it.each([
+    ['cloudflare-ai-gateway', '@cf/openai/gpt-oss-120b'],
+    ['aws-bedrock', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0']
+  ])('shows credentials followed by the bundled catalog for %s', (vendorId, modelId) => {
+    render(createEmptyProviderFormValue(providerKindPatch(`official:${vendorId}`)))
+    const key = container.querySelector('#provider-key')!
+    const heading = [...container.querySelectorAll('span')].find(
+      (span) => span.textContent === 'Supported models'
+    )!
+    const disclosures = container.querySelectorAll<HTMLButtonElement>(
+      'button[aria-controls="provider-advanced-settings"]'
+    )
+
+    expect(disclosures).toHaveLength(1)
+    const [disclosure] = disclosures
+    expect(key.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      heading.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(container.textContent).toContain(modelId)
+    expect(container.textContent).not.toContain('Refresh model list')
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('#provider-model')).toBeNull()
+    expect(container.querySelector('#provider-manual-location')).toBeNull()
+    expect(container.querySelector('#provider-manual-format')).toBeNull()
+    expect(container.querySelector('#provider-cloudflare-mode')).toBeNull()
+    expect(container.querySelector('#provider-manual-context-window')).toBeNull()
+
+    act(() => disclosure.click())
+    expect(container.querySelector('#provider-advanced-settings #provider-model')).not.toBeNull()
+    expect(
+      container.querySelector('#provider-advanced-settings #provider-manual-context-window')
+    ).not.toBeNull()
+  })
+
   it('shows the Vectrust API format up front and selects models directly from the shortlist', () => {
     const onChange = vi.fn()
     render(createEmptyProviderFormValue(providerKindPatch('official:vectrust')), { onChange })
@@ -333,6 +368,17 @@ describe('ProviderForm field switching', () => {
         ?.click()
     })
     expect(onChange).toHaveBeenCalledWith({ model: 'glm-5.3', contextWindow: '' })
+  })
+
+  it('shows the required Foundry resource and deployment with the API key', () => {
+    render(createEmptyProviderFormValue(providerKindPatch('official:microsoft-foundry')))
+    const location = container.querySelector('#provider-manual-location')!
+    const key = container.querySelector('#provider-key')!
+    const deployment = container.querySelector('[aria-label="Deployment name"]')!
+    expect(location.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(key.compareDocumentPosition(deployment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('#provider-manual-format')).toBeNull()
+    expect(container.querySelector('#provider-manual-context-window')).toBeNull()
   })
 
   it('opens Advanced settings when saved model limits would otherwise be hidden', () => {

@@ -470,9 +470,13 @@ class ProviderRuntimeProjectionOwner {
     descriptor: CatalogModel | undefined,
     key: string | undefined
   ): ResolvedProvider {
+    // Catalog entries bind the context window to the selected model, including pinned sessions.
     if (vendorId === 'cloudflare-ai-gateway') {
       if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
-      return resolveCloudflareGateway(provider.cloudflare, model, key)
+      return {
+        ...resolveCloudflareGateway(provider.cloudflare, model, key),
+        contextWindow: descriptor.contextWindow
+      }
     }
     if (manualProviderDefinition(vendorId)) {
       if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }

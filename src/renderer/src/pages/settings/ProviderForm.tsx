@@ -2,9 +2,13 @@ import { sameLocalProviderCredentialScope } from '../../../../shared/local-provi
 import {
   manualProviderDefinition,
   manualProviderPresetModels,
+  resolveManualProviderConnection,
   sameManualProviderCredentialScope
 } from '../../../../shared/manual-provider'
-import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
+import {
+  CLOUDFLARE_GATEWAY_MODELS,
+  DEFAULT_CLOUDFLARE_GATEWAY
+} from '../../../../shared/cloudflare-gateway'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   isCatalogModelAvailable,
@@ -59,6 +63,7 @@ import {
   PROVIDER_KINDS,
   localModelPresetPatch,
   providerFormApiEndpoints,
+  providerFormPublishedContextWindow,
   providerKindPatch,
   selectedKindKey,
   type ProviderFormErrors,
@@ -291,26 +296,28 @@ const TokenLimitField = ({
       onChange={(event) => onValueChange(event.target.value)}
       className="tabular-nums"
     />
-    <div role="group" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-1">
-      {presets.map((preset) => {
-        const selected = value === String(preset)
-        return (
-          <button
-            key={preset}
-            type="button"
-            aria-pressed={selected}
-            disabled={disabled}
-            onClick={() => onValueChange(String(preset))}
-            className={cn(
-              'min-h-7 rounded-md border border-transparent px-2 text-xs tabular-nums text-muted-foreground outline-none transition-[color,background-color,border-color,transform] duration-150 motion-reduce:transition-none active:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:bg-muted [@media(hover:hover)]:hover:text-foreground',
-              selected && 'border-border bg-muted text-foreground'
-            )}
-          >
-            {tokenPresetLabel(preset)}
-          </button>
-        )
-      })}
-    </div>
+    {presets.length > 0 && (
+      <div role="group" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-1">
+        {presets.map((preset) => {
+          const selected = value === String(preset)
+          return (
+            <button
+              key={preset}
+              type="button"
+              aria-pressed={selected}
+              disabled={disabled}
+              onClick={() => onValueChange(String(preset))}
+              className={cn(
+                'min-h-7 rounded-md border border-transparent px-2 text-xs tabular-nums text-muted-foreground outline-none transition-[color,background-color,border-color,transform] duration-150 motion-reduce:transition-none active:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:bg-muted [@media(hover:hover)]:hover:text-foreground',
+                selected && 'border-border bg-muted text-foreground'
+              )}
+            >
+              {tokenPresetLabel(preset)}
+            </button>
+          )
+        })}
+      </div>
+    )}
     {error ? (
       <p id={`${id}-error`} className={fieldErrorClassName} role="alert">
         {t(error)}
@@ -319,10 +326,9 @@ const TokenLimitField = ({
   </div>
 )
 
-// Provider fields switch by type: pick a type first, then reveal its options. Custom exposes an
-// Anthropic-compatible gateway/key/model; an official vendor exposes a key (+ region) and picks a
-// model from the registry catalog. Stored plaintext keys are never rendered; users can reveal only
-// a replacement key currently held in this form draft.
+// The form shares credential and model fields across custom, official, and preset connections.
+// Local presets keep the custom transport; cloud forms collect the coordinates their vendor needs.
+// The reveal control applies only to newly typed credentials held in the current draft.
 const ProviderForm = ({
   value,
   onChange,
@@ -394,14 +400,17 @@ const ProviderForm = ({
       ? t('Endpoint')
       : t('Region')
   const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
-  const presetModels = manualConnection
-    ? manualProviderPresetModels(vendor?.id, manualConnection)
-    : []
+  const presetModels = cloudflare
+    ? CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]
+    : manualConnection
+      ? manualProviderPresetModels(vendor?.id, manualConnection)
+      : []
   const configuredModel = value.model.trim()
-  const visibleModelIds =
-    configuredModel && !presetModels.includes(configuredModel)
-      ? [configuredModel, ...presetModels]
-      : presetModels
+  const extraModel =
+    configuredModel && !presetModels.includes(configuredModel) ? [configuredModel] : []
+  const visibleModelIds = isVectrust
+    ? [...extraModel, ...presetModels]
+    : [...presetModels, ...extraModel]
   const keyLabel = cloudflare
     ? cloudflare.mode === 'rest'
       ? t('Cloudflare API token')
@@ -409,12 +418,14 @@ const ProviderForm = ({
     : t('API key')
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
-      value.codexTransport !== 'auto' ||
-      value.supportsImageInput ||
-      value.reasoningEffortPreset !== 'unsupported' ||
-      Boolean(value.contextWindow.trim()) ||
-      Boolean(value.maxInputTokens.trim()) ||
-      Boolean(value.maxOutputTokens.trim())
+      !cloudflare &&
+      !manualProvider &&
+      (value.codexTransport !== 'auto' ||
+        value.supportsImageInput ||
+        value.reasoningEffortPreset !== 'unsupported' ||
+        Boolean(value.contextWindow.trim()) ||
+        Boolean(value.maxInputTokens.trim()) ||
+        Boolean(value.maxOutputTokens.trim()))
   )
   const [localModelOpen, setLocalModelOpen] = useState(loopbackCustomGateway)
   const selectedLocalPreset = value.localPresetId
@@ -445,7 +456,13 @@ const ProviderForm = ({
     advancedOpen ||
     Boolean(errors.contextWindow) ||
     Boolean(errors.maxInputTokens) ||
-    Boolean(errors.maxOutputTokens)
+    Boolean(errors.maxOutputTokens) ||
+    Boolean((cloudflare || manualProvider) && !isFoundry && (errors.location || errors.model))
+  const advancedSettingsProps = {
+    expanded: advancedVisible,
+    label: t('Advanced settings'),
+    onToggle: () => setAdvancedOpen((open) => !open)
+  }
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
@@ -465,6 +482,29 @@ const ProviderForm = ({
     })
   }
 
+  const publishedContextWindow = providerFormPublishedContextWindow(value)
+  const manualContextWindowField = (
+    <TokenLimitField
+      id="provider-manual-context-window"
+      label={t('Context window')}
+      help={t('Total tokens shared by the request and response.')}
+      value={publishedContextWindow?.toString() ?? value.contextWindow}
+      presets={[]}
+      disabled={disabled || publishedContextWindow !== undefined}
+      error={errors.contextWindow}
+      onValueChange={(contextWindow) => onChange({ contextWindow })}
+      t={t}
+    />
+  )
+  const changeModel = (model: string): void =>
+    onChange({
+      model,
+      ...((cloudflare || manualProvider) &&
+        model.trim() !== configuredModel && {
+          contextWindow: ''
+        })
+    })
+
   const modelField = (
     <div className="space-y-1.5">
       <label className={fieldLabelClassName} htmlFor="provider-model">
@@ -482,13 +522,13 @@ const ProviderForm = ({
         placeholder={
           cloudflare
             ? cloudflare.mode === 'rest'
-              ? 'openai/gpt-4.1'
+              ? '@cf/openai/gpt-oss-120b'
               : 'claude-sonnet-4-5'
             : manualProvider
               ? undefined
               : t('e.g. deepseek-v4-flash')
         }
-        onChange={(event) => onChange({ model: event.target.value })}
+        onChange={(event) => changeModel(event.target.value)}
       />
       {errors.model ? (
         <p id="provider-model-error" className={fieldErrorClassName} role="alert">
@@ -496,6 +536,15 @@ const ProviderForm = ({
         </p>
       ) : null}
     </div>
+  )
+
+  const apiFormatHelp = (
+    <FieldHelp
+      label={t('API format')}
+      content={t(
+        'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
+      )}
+    />
   )
 
   const keyField = (
@@ -518,6 +567,15 @@ const ProviderForm = ({
                 <span className="block text-bg-000/80">
                   {fileCredentialNotice ?? t(securityCopyKeys.description)}
                 </span>
+                {cloudflare ? (
+                  <span className="block text-bg-000/80">
+                    {cloudflare.mode === 'rest'
+                      ? t('Use a token with Workers AI Read permission.')
+                      : t(
+                          'Use an AI Gateway Run token. Configure stored credentials or Unified Billing in Cloudflare.'
+                        )}
+                  </span>
+                ) : null}
                 {loopbackCustomGateway ? (
                   <span className="block text-bg-000/80">
                     {t('Local model servers do not require an API key.')}
@@ -592,19 +650,16 @@ const ProviderForm = ({
     </div>
   )
 
-  const changeVectrustModel = (model: string): void =>
-    onChange({ model, ...(model !== configuredModel && { contextWindow: '' }) })
-
   const presetModelList = visibleModelIds.length ? (
     <div className="space-y-1.5">
       <span className={fieldLabelClassName}>{t('Supported models')}</span>
       <SupportedModelTags
         models={visibleModelIds.map((id) => ({ id }))}
         selectedModel={configuredModel}
-        onSelect={changeVectrustModel}
+        onSelect={isVectrust ? changeModel : undefined}
         disabled={disabled}
       />
-      {errors.model ? (
+      {isVectrust && errors.model ? (
         <p className={fieldErrorClassName} role="alert">
           {t(errors.model)}
         </p>
@@ -624,7 +679,10 @@ const ProviderForm = ({
             value={manualConnection.location}
             disabled={disabled}
             onValueChange={(location) =>
-              onChange({ manualConnection: { ...manualConnection, location } })
+              onChange({
+                manualConnection: { ...manualConnection, location },
+                ...(!isVectrust && { contextWindow: '' })
+              })
             }
           >
             <SelectTrigger id="provider-manual-location" aria-label={manualLocationLabel}>
@@ -649,8 +707,21 @@ const ProviderForm = ({
             disabled={disabled}
             onChange={(event) => {
               const next = { ...manualConnection, location: event.target.value }
+              if (isFoundry && value.vendorId) {
+                const vendorId = value.vendorId
+                if (!resolveManualProviderConnection(vendorId, next)) {
+                  const protocol = manualProvider.protocols.find((protocol) =>
+                    resolveManualProviderConnection(vendorId, { ...next, protocol })
+                  )
+                  if (protocol) next.protocol = protocol
+                }
+              }
+              const models = manualProviderPresetModels(value.vendorId, next)
               onChange({
                 manualConnection: next,
+                contextWindow: '',
+                ...((!configuredModel || presetModels.includes(configuredModel)) &&
+                  !models.includes(configuredModel) && { model: models[0] ?? '' }),
                 ...(!sameManualProviderCredentialScope(value.vendorId, manualConnection, next) && {
                   key: ''
                 })
@@ -673,14 +744,7 @@ const ProviderForm = ({
           <label className={fieldLabelClassName} htmlFor="provider-manual-format">
             {t('API format')}
           </label>
-          {isVectrust ? (
-            <FieldHelp
-              label={t('API format')}
-              content={t(
-                'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
-              )}
-            />
-          ) : null}
+          {apiFormatHelp}
         </div>
         <Select
           value={manualConnection.protocol}
@@ -689,17 +753,14 @@ const ProviderForm = ({
             const protocol = manualProvider.protocols.find((option) => option === nextProtocol)
             if (!protocol) return
             const next = { ...manualConnection, protocol }
-            if (!isVectrust) {
-              onChange({ manualConnection: next, model: '' })
-              return
-            }
             const models = manualProviderPresetModels(value.vendorId, next)
             const keepModel =
+              isFoundry ||
               models.includes(configuredModel) ||
-              (configuredModel && !presetModels.includes(configuredModel))
+              (isVectrust && configuredModel && !presetModels.includes(configuredModel))
             onChange({
               manualConnection: next,
-              ...(!keepModel && { contextWindow: '' }),
+              ...((!isVectrust || !keepModel) && { contextWindow: '' }),
               model: keepModel ? value.model : (models[0] ?? '')
             })
           }}
@@ -738,9 +799,10 @@ const ProviderForm = ({
         <Select
           value={selectedKey}
           disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
-          onValueChange={(key) =>
+          onValueChange={(key) => {
+            setAdvancedOpen(false)
             onChange(providerKindPatch(key, defaultCustomApiEndpoint, framework?.supportedApiTypes))
-          }
+          }}
         >
           <SelectTrigger aria-label={t('Provider type')}>
             <span className="flex items-center gap-2">
@@ -1095,12 +1157,7 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
               <span className={fieldLabelClassName}>{t('API format')}</span>
-              <FieldHelp
-                label={t('API format')}
-                content={t(
-                  'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
-                )}
-              />
+              {apiFormatHelp}
             </div>
             <Select
               value={value.apiEndpoint}
@@ -1347,34 +1404,6 @@ const ProviderForm = ({
         </>
       ) : cloudflare ? (
         <>
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-cloudflare-mode">
-              {t('Connection mode')}
-            </label>
-            <Select
-              value={cloudflare.mode}
-              onValueChange={(mode) => {
-                if (mode === 'rest' || mode === 'anthropic')
-                  onChange({ cloudflare: { ...cloudflare, mode }, model: '', key: '' })
-              }}
-              disabled={disabled}
-            >
-              <SelectTrigger id="provider-cloudflare-mode" aria-label={t('Connection mode')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="rest">{t('Cloudflare REST API')}</SelectItem>
-                <SelectItem value="anthropic">{t('Anthropic Messages')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {cloudflare.mode === 'rest'
-                ? t('Use a token with Workers AI Read permission.')
-                : t(
-                    'Use an AI Gateway Run token. Configure stored credentials or Unified Billing in Cloudflare.'
-                  )}
-            </p>
-          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {(['accountId', 'gatewayId'] as const).map((field) => {
               const inputId = `provider-cloudflare-${field}`
@@ -1395,7 +1424,8 @@ const ProviderForm = ({
                     onChange={(event) =>
                       onChange({
                         cloudflare: { ...cloudflare, [field]: event.target.value },
-                        key: ''
+                        key: '',
+                        contextWindow: ''
                       })
                     }
                   />
@@ -1408,8 +1438,39 @@ const ProviderForm = ({
               )
             })}
           </div>
-          {modelField}
           {keyField}
+          {presetModelList}
+          <SettingsDisclosure {...advancedSettingsProps}>
+            <div className="space-y-1.5">
+              <label className={fieldLabelClassName} htmlFor="provider-cloudflare-mode">
+                {t('Connection mode')}
+              </label>
+              <Select
+                value={cloudflare.mode}
+                onValueChange={(mode) => {
+                  // Workers AI and the Anthropic gateway use different tokens and model IDs.
+                  if (mode === 'rest' || mode === 'anthropic')
+                    onChange({
+                      cloudflare: { ...cloudflare, mode },
+                      model: CLOUDFLARE_GATEWAY_MODELS[mode][0],
+                      key: '',
+                      contextWindow: ''
+                    })
+                }}
+                disabled={disabled}
+              >
+                <SelectTrigger id="provider-cloudflare-mode" aria-label={t('Connection mode')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="rest">{t('Cloudflare REST API')}</SelectItem>
+                  <SelectItem value="anthropic">{t('Anthropic Messages')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {modelField}
+            {manualContextWindowField}
+          </SettingsDisclosure>
         </>
       ) : isVectrust ? (
         <>
@@ -1420,10 +1481,15 @@ const ProviderForm = ({
         </>
       ) : manualProvider && manualConnection ? (
         <>
-          {manualLocationField}
-          {manualFormatField}
-          {modelField}
+          {isFoundry && manualLocationField}
           {keyField}
+          {isFoundry ? modelField : presetModelList}
+          <SettingsDisclosure {...advancedSettingsProps}>
+            {!isFoundry && manualLocationField}
+            {manualFormatField}
+            {!isFoundry && modelField}
+            {manualContextWindowField}
+          </SettingsDisclosure>
         </>
       ) : isOfficial ? (
         <>

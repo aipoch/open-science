@@ -2,10 +2,12 @@ import {
   manualProviderDefaultContextWindow,
   manualProviderDefinition,
   manualProviderPresetModels,
+  publishedManualProviderContextWindow,
   resolveManualProviderConnection,
   type ManualProviderConnection
 } from './manual-provider'
 import {
+  CLOUDFLARE_GATEWAY_MODELS,
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
   type CloudflareGateway
@@ -85,12 +87,15 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   if (vendorId === 'cloudflare-ai-gateway') {
     const { cloudflare, model } = source
     if (!cloudflare || !model) return []
-    return [
-      {
-        id: model,
-        routes: { [cloudflareGatewayProtocol(cloudflare.mode)]: cloudflareGatewayBase(cloudflare) }
-      }
-    ]
+    const protocol = cloudflareGatewayProtocol(cloudflare.mode)
+    const ids = new Set([model, ...CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]])
+    return Array.from(ids, (id) => ({
+      id,
+      contextWindow:
+        publishedManualProviderContextWindow(vendorId, protocol, id) ??
+        (id === model ? source.contextWindow : undefined),
+      routes: { [protocol]: cloudflareGatewayBase(cloudflare) }
+    }))
   }
   const manualProvider = manualProviderDefinition(vendorId)
   if (manualProvider) {
@@ -104,6 +109,7 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     return Array.from(ids, (id) => ({
       id,
       contextWindow:
+        publishedManualProviderContextWindow(vendorId, protocol, id) ??
         (id === source.model ? source.contextWindow : undefined) ??
         manualProviderDefaultContextWindow(vendorId, id),
       routes: { [protocol]: resolved.baseUrl }

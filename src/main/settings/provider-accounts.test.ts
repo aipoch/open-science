@@ -55,6 +55,63 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('uses published and deployment context windows after reopening saved providers', async () => {
+    const cloudflare = {
+      id: 'workers-ai',
+      type: 'official',
+      vendorId: 'cloudflare-ai-gateway',
+      cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'research', mode: 'rest' },
+      model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      key: 'test-cloudflare-key'
+    } as const
+    const foundry = {
+      id: 'foundry',
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      model: 'deployment-opaque-id',
+      contextWindow: 96_000,
+      key: 'test-foundry-key'
+    } as const
+
+    await module.upsertProvider(cloudflare)
+    await module.upsertProvider(foundry)
+    const stored = async (id: string) =>
+      (await new SettingsRepository(dir).getSettings()).providers.find((p) => p.id === id)!
+    expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(24_000)
+    const workers = await stored(cloudflare.id)
+    expect(module.resolveActiveModel(workers, '@cf/openai/gpt-oss-20b')).toBe(
+      '@cf/openai/gpt-oss-20b'
+    )
+    expect(module.resolveProvider(workers, '@cf/openai/gpt-oss-20b')).toMatchObject({
+      apiEndpoints: ['chat-completions'],
+      contextWindow: 128_000
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBe(96_000)
+
+    await module.upsertProvider({
+      ...cloudflare,
+      key: undefined,
+      model: '@cf/openai/gpt-oss-120b'
+    })
+    expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(128_000)
+
+    await module.upsertProvider({
+      ...foundry,
+      contextWindow: undefined,
+      key: undefined,
+      name: 'Renamed'
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBe(96_000)
+    await module.upsertProvider({
+      ...foundry,
+      contextWindow: undefined,
+      key: undefined,
+      model: 'another-deployment'
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBeUndefined()
+  })
+
   it('resolves Vectrust context defaults for the selected protocol and retains a saved override', async () => {
     const provider = {
       id: 'vectrust',

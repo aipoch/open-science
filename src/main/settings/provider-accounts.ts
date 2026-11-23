@@ -492,11 +492,12 @@ class ProviderAccountsModule {
         provider.manualConnection = resolved.connection
         provider.model = model
       }
-      if (vendorId === 'vectrust') {
+      if (provider.cloudflare || provider.manualConnection) {
         // The override belongs to the selected model and deployment, even when a key is reusable.
         const priorContextWindow =
           vendorId === existing?.vendorId &&
           provider.model === existing.model &&
+          sameCloudflareGateway(provider.cloudflare, existing.cloudflare) &&
           sameManualProviderConnection(provider.manualConnection, existing.manualConnection)
             ? existing.contextWindow
             : undefined

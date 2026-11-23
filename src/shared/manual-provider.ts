@@ -17,7 +17,7 @@ type ManualProviderDefinition = Readonly<{
   baseUrl: (location: string, protocol: ModelProtocol) => string
 }>
 
-/** 接受资源名或匹配当前协议的公有云推理 URI。 */
+/** Accept a resource name or a public-cloud inference URI matching the selected protocol. */
 function parseFoundryLocation(location: string, protocol: ModelProtocol): string | undefined {
   const resourceName = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
   const serviceHost = 'services.ai.azure.com'
@@ -151,7 +151,11 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
   'aws-bedrock': {
     defaultConnection: { location: 'us-east-1', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
-    // 商业分区的 Region 只能构成固定 Bedrock 域名中的一个标签。
+    models: {
+      messages: ['us.anthropic.claude-sonnet-4-5-20250929-v1:0'],
+      'chat-completions': ['openai.gpt-oss-120b-1:0', 'openai.gpt-oss-20b-1:0']
+    },
+    // A commercial AWS region must fit in one label of the Bedrock hostname.
     parseLocation: (location) =>
       /^(?:us|ca|eu|ap|sa|me|af|il|mx)-[a-z]+-[1-9][0-9]?$/.test(location) ? location : undefined,
     baseUrl: (region, protocol) =>
@@ -177,10 +181,49 @@ export function manualProviderPresetModels(
   connection: ManualProviderConnection
 ): readonly string[] {
   const definition = manualProviderDefinition(vendorId)
+  // Bedrock availability and inference profiles vary by AWS region.
+  if (
+    vendorId === 'aws-bedrock' &&
+    connection.location.trim().toLowerCase() !== definition?.defaultConnection.location
+  )
+    return []
   return definition?.models?.[connection.protocol] ?? []
 }
 
-/** 从供应商规则解析地址，持久化数据只保存公共定位字段和协议。 */
+export const supportsManualProviderContextWindow = (
+  vendorId: OfficialVendorId | undefined
+): boolean => vendorId === 'cloudflare-ai-gateway' || Boolean(manualProviderDefinition(vendorId))
+
+/** Use published limits only for the exact model IDs exposed by the selected route. */
+export function publishedManualProviderContextWindow(
+  vendorId: OfficialVendorId | undefined,
+  protocol: ModelProtocol | undefined,
+  model: string | undefined
+): number | undefined {
+  if (vendorId === 'cloudflare-ai-gateway') {
+    if (protocol === 'chat-completions') {
+      // Workers AI publishes its own limits, which can differ from the original weights.
+      if (model === '@cf/meta/llama-3.3-70b-instruct-fp8-fast') return 24_000
+      if (model === '@cf/openai/gpt-oss-120b' || model === '@cf/openai/gpt-oss-20b') return 128_000
+    }
+    if (protocol === 'messages' && model === 'claude-sonnet-4-5') return 200_000
+  }
+  if (vendorId === 'aws-bedrock') {
+    if (
+      protocol === 'chat-completions' &&
+      (model === 'openai.gpt-oss-120b-1:0' || model === 'openai.gpt-oss-20b-1:0')
+    )
+      return 128_000
+    if (
+      protocol === 'messages' &&
+      /^(?:(?:us|eu|au|jp|global)\.)?anthropic\.claude-sonnet-4-5-20250929-v1:0$/.test(model ?? '')
+    )
+      return 200_000
+  }
+  return undefined
+}
+
+/** Derive the endpoint from the vendor rules and persist only the public location and protocol. */
 export function resolveManualProviderConnection(vendorId: OfficialVendorId, value: unknown) {
   const definition = manualProviderDefinition(vendorId)
   if (!definition || !value || typeof value !== 'object') return undefined

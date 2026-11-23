@@ -5,10 +5,13 @@ import {
 import {
   manualProviderDefinition,
   manualProviderPresetModels,
+  publishedManualProviderContextWindow,
   resolveManualProviderConnection,
+  supportsManualProviderContextWindow,
   type ManualProviderConnection
 } from '../../../../shared/manual-provider'
 import {
+  CLOUDFLARE_GATEWAY_MODELS,
   DEFAULT_CLOUDFLARE_GATEWAY,
   cloudflareGatewayProtocol,
   validCloudflareAccountId,
@@ -165,15 +168,20 @@ export const localModelPresetPatch = (
   }
 }
 
-// An explicit null clears a saved override.
+// An explicit null clears a saved override. The form uses published limits for exact model IDs.
 export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits => {
   const contextWindow = value.contextWindow.trim() ? Number(value.contextWindow) : null
-  if (value.type === 'official' && value.vendorId === 'vectrust') return { contextWindow }
-  return value.type === 'custom'
+  if (value.type === 'custom') {
+    return {
+      contextWindow,
+      maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
+      maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
+    }
+  }
+  return value.type === 'official' && supportsManualProviderContextWindow(value.vendorId)
     ? {
-        contextWindow,
-        maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
-        maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
+        contextWindow:
+          providerFormPublishedContextWindow(value) === undefined ? contextWindow : null
       }
     : {}
 }
@@ -204,6 +212,15 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtoco
   if (value.type === 'xai-subscription') return ['messages', 'chat-completions', 'responses']
   return [value.apiEndpoint]
 }
+
+export const providerFormPublishedContextWindow = (value: ProviderFormValue): number | undefined =>
+  value.type === 'official' && supportsManualProviderContextWindow(value.vendorId)
+    ? publishedManualProviderContextWindow(
+        value.vendorId,
+        providerFormApiEndpoints(value)[0],
+        value.model.trim()
+      )
+    : undefined
 
 // Before an official provider is saved, select the first model that speaks a protocol the active
 // framework consumes directly. If none does, keep the vendor default so the normal compatibility
@@ -332,6 +349,14 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
+  }
+  if (
+    value.type === 'official' &&
+    supportsManualProviderContextWindow(value.vendorId) &&
+    providerFormPublishedContextWindow(value) === undefined &&
+    positiveWholeNumberError(value.contextWindow)
+  ) {
+    errors.contextWindow = 'Context window must be a positive whole number of tokens.'
   }
   if (
     (value.type === 'custom' || value.type === 'official') &&
@@ -540,17 +565,26 @@ export const providerKindPatch = (
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
     const manualProvider = manualProviderDefinition(vendorId)
-    const manualConnection =
-      vendorId === 'vectrust' && manualProvider
+    const cloudflare =
+      vendorId === 'cloudflare-ai-gateway'
         ? {
-            ...manualProvider.defaultConnection,
-            protocol: supportedApiTypes?.includes(manualProvider.defaultConnection.protocol)
-              ? manualProvider.defaultConnection.protocol
-              : (manualProvider.protocols.find((protocol) =>
-                  supportedApiTypes?.includes(protocol)
-                ) ?? manualProvider.defaultConnection.protocol)
+            ...DEFAULT_CLOUDFLARE_GATEWAY,
+            mode:
+              supportedApiTypes?.includes('messages') &&
+              !supportedApiTypes.includes('chat-completions')
+                ? ('anthropic' as const)
+                : DEFAULT_CLOUDFLARE_GATEWAY.mode
           }
-        : manualProvider?.defaultConnection
+        : undefined
+    const manualConnection = manualProvider
+      ? {
+          ...manualProvider.defaultConnection,
+          protocol: supportedApiTypes?.includes(manualProvider.defaultConnection.protocol)
+            ? manualProvider.defaultConnection.protocol
+            : (manualProvider.protocols.find((protocol) => supportedApiTypes?.includes(protocol)) ??
+              manualProvider.defaultConnection.protocol)
+        }
+      : undefined
 
     return {
       ...reset,
@@ -558,12 +592,11 @@ export const providerKindPatch = (
       name: vendor?.label,
       vendorId,
       region: vendor?.regions?.[0]?.id,
-      ...(vendorId === 'cloudflare-ai-gateway' && { cloudflare: DEFAULT_CLOUDFLARE_GATEWAY }),
-      ...(manualConnection && { manualConnection }),
-      ...(vendorId === 'vectrust' &&
-        manualConnection && {
-          model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
-        })
+      ...(cloudflare && { cloudflare, model: CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode][0] }),
+      ...(manualConnection && {
+        manualConnection,
+        model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
+      })
     }
   }
 
