@@ -196,6 +196,13 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "Upload image": "Загрузить изображение",
+    "or": "или",
+    "Paste an image URL and press Enter": "Вставьте URL изображения и нажмите Enter",
+    "Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.": "Выберите изображение PNG, JPEG, GIF или WebP размером до 1 МиБ.",
+    "Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.": "Прочитай выделенный фрагмент с помощью {{readTool}} (дескриптор: {{handle}}). Для правок предложи замену в Markdown с помощью {{proposeTool}}. Не редактируй файл напрямую.",
+    "Review replacement": "Проверить замену",
+    "The selected passage is no longer available.": "Выбранный фрагмент больше недоступен.",
     "Pros": "Преимущества",
     "Cons": "Ограничения",
     "The conversation changed. Reopen the image editor and try again.": "Диалог изменился. Откройте редактор изображений заново и повторите попытку.",

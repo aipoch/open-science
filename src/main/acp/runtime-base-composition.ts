@@ -229,6 +229,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     plan: options.plan,
     sideChat: options.sideChat,
     wslSetupSessions: options.wslSetupSessions,
+    markdown: options.markdown,
     pptx: options.pptx
       ? {
           handlerFor: (appSessionId, projectId) => ({

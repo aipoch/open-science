@@ -1,4 +1,5 @@
 import { registerPermissionGrantIpcAdapter } from '../permission-grants/ipc'
+import { registerMarkdownEditIpc } from '../markdown-edit/ipc'
 import { registerLocalFsIpcHandlers } from '../local-fs/ipc'
 import { registerManagedFileVersionIpcHandlers } from '../managed-file-versions/ipc'
 import { registerPreviewStateIpcHandlers } from '../projects/ipc'
@@ -26,9 +27,10 @@ export const createCoreElectronSurfaces = (
   createElectronSurfaceAdapter('project-files', () =>
     registerProjectFilesIpcHandlers(...dependencies.projectFiles)
   ),
-  createElectronSurfaceAdapter('managed-file-versions', () =>
+  createElectronSurfaceAdapter('managed-file-versions', () => {
     registerManagedFileVersionIpcHandlers(dependencies.managedFileVersionHandlers)
-  ),
+    registerMarkdownEditIpc()
+  }),
   createElectronSurfaceAdapter('local-fs', () =>
     registerLocalFsIpcHandlers(dependencies.localFsService)
   ),

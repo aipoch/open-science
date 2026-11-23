@@ -31,11 +31,13 @@ import {
 import { createMarkdownEditor, markdownElementPlugins } from './markdown-editor'
 import { MarkdownSelectionToolbar } from './MarkdownSelectionToolbar'
 import { MarkdownBlockElement } from './MarkdownBlockElement'
-import { MarkdownAgentPrompt, type MarkdownAgentRequest } from './MarkdownAgentPrompt'
+import type { MarkdownAgentRequest } from './MarkdownAgentPrompt'
+import { MarkdownAgentReview, type MarkdownReplacement } from './MarkdownAgentReview'
 import type { MarkdownDocumentSelection } from './markdown-selection'
 import { getMarkdownListItemAtCaret, indentMarkdownListItem } from './markdown-list-transforms'
 
 export type MarkdownEditorSurfaceProps = Readonly<{
+  replacement?: MarkdownReplacement
   source: string
   sourceFormat?: MarkdownSourceFormat
   disabled?: boolean
@@ -67,8 +69,10 @@ const MarkdownEditorCanvas = memo(
     onChange,
     onSendSelection,
     onSubmitRequest,
+    replacement,
     onFlush
   }: Readonly<{
+    replacement?: MarkdownReplacement
     editor: PlateEditor
     disabled: boolean
     onChange: (value: Value) => void
@@ -80,7 +84,11 @@ const MarkdownEditorCanvas = memo(
       <div>
         <TooltipProvider>
           <Plate editor={editor} onValueChange={({ value }) => onChange(value as Value)}>
-            <MarkdownAgentPrompt onSubmitRequest={onSubmitRequest} disabled={disabled} />
+            <MarkdownAgentReview
+              onSubmitRequest={onSubmitRequest}
+              replacement={replacement}
+              disabled={disabled}
+            />
             {disabled ? null : <MarkdownSelectionToolbar onSendSelection={onSendSelection} />}
             <PlateContent
               data-testid="markdown-plate-editor"
@@ -124,6 +132,7 @@ export const MarkdownEditorSurface = forwardRef<
   (
     {
       source,
+      replacement,
       sourceFormat,
       disabled = false,
       onChange,
@@ -231,6 +240,7 @@ export const MarkdownEditorSurface = forwardRef<
         data-testid="markdown-editor-surface"
       >
         <MarkdownEditorCanvas
+          replacement={replacement}
           editor={editor}
           disabled={disabled}
           onChange={queueRichChange}

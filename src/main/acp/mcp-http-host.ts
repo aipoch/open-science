@@ -54,7 +54,8 @@ const SERVER_KINDS = [
   'schedule',
   'library',
   'literature',
-  'pptx'
+  'pptx',
+  'markdown'
 ] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
@@ -75,6 +76,7 @@ type SessionEntry = {
   hostMessage?: HostMessageMcpHandler
   library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
   literature?: { handler: LiteratureMcpHandler; token: symbol }
+  markdown?: { projectId: string }
   pptx?: { handler: PptxMcpHandler; token: symbol }
 }
 
@@ -89,6 +91,7 @@ const RECEIPT_AUTHORITY_KEYS = {
   schedule: 'schedule',
   library: 'library',
   literature: 'literature',
+  markdown: 'markdown',
   pptx: 'pptx'
 } as const
 const receiptAuthority = (entry: SessionEntry | undefined, kind: ServerKind): unknown =>
@@ -325,6 +328,12 @@ class AgentMcpHttpHost {
     }
   }
 
+  registerMarkdown(routingId: string, projectId: string): void {
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.markdown = { projectId }
+    this.sessions.set(routingId, entry)
+  }
+
   registerPptx(routingId: string, handler: PptxMcpHandler): () => void {
     const entry = this.sessions.get(routingId) ?? {}
     const token = Symbol('pptx')
@@ -466,6 +475,11 @@ class AgentMcpHttpHost {
       return entry.schedule && entry.schedule.token === routeToken
         ? entry.schedule.server()
         : undefined
+    if (kind === 'markdown') {
+      if (!entry.markdown) return undefined
+      const { createMarkdownMcpServer } = await import('../markdown-edit/mcp-server')
+      return createMarkdownMcpServer(entry.markdown.projectId)
+    }
     if (kind === 'pptx') {
       if (!entry.pptx) return undefined
       const { createPptxMcpServer } = await import('../pptx-edit/mcp-server')
@@ -533,7 +547,9 @@ class AgentMcpHttpHost {
         import('@modelcontextprotocol/sdk/types.js')
       ])
 
-    if (this.receipts) {
+    // Selection handles and their content are ephemeral: never persist or replay tool receipts.
+    const receipts = kind === 'markdown' ? undefined : this.receipts
+    if (receipts) {
       server.server.registerCapabilities({ experimental: { [HARNESS_RECEIPTS]: {} } })
     }
     // Long-running Notebook/Plan/Image calls need SSE to deliver progress while work is pending.
@@ -614,7 +630,7 @@ class AgentMcpHttpHost {
             })
           : undefined
       if (response.destroyed) return
-      if (this.receipts && isJSONRPCRequest(body)) {
+      if (receipts && isJSONRPCRequest(body)) {
         const scope = registered?.receiptScopes?.[kind]
         const current = (): boolean =>
           this.sessions.get(routingId) === registered &&
@@ -622,7 +638,7 @@ class AgentMcpHttpHost {
           registered?.receiptScopes?.[kind] === scope
         if (body.method === HARNESS_RECEIPT_METHOD) {
           if (!scope) throw new Error('Tool receipt scope is unavailable')
-          const result = await this.receipts.read(scope, receiptQuerySchema.parse(body.params))
+          const result = await receipts.read(scope, receiptQuerySchema.parse(body.params))
           if (!current()) throw new Error('Tool receipt scope was revoked')
           writeJson(response, 200, { jsonrpc: '2.0', id: body.id, result })
           return
@@ -636,12 +652,12 @@ class AgentMcpHttpHost {
             name: body.params?.name,
             arguments: body.params?.arguments ?? {}
           })
-          await this.receipts.begin(scope, query)
+          await receipts.begin(scope, query)
           if (!current()) throw new Error('Tool receipt scope was revoked')
           const send = transport.send.bind(transport)
           transport.send = async (message, options) => {
             if ('id' in message && message.id === body.id && 'result' in message) {
-              await this.receipts!.complete(scope, query, message.result)
+              await receipts.complete(scope, query, message.result)
             }
             await send(message, options)
           }

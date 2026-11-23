@@ -43,14 +43,15 @@ describe('Markdown document selection bridge', () => {
     expect(annotation ? sanitizeAnnotations([annotation]) : []).toEqual([annotation])
   })
 
-  it('fails closed for an ambiguous or oversized selection', async () => {
-    await expect(
-      createMarkdownDocumentDraftAnnotation({
-        ...input,
-        markdown: 'same same',
-        selection: { quote: 'same' }
-      })
-    ).resolves.toBeUndefined()
+  it('keeps ambiguous quotes without inventing offsets and rejects oversized selections', async () => {
+    const ambiguous = await createMarkdownDocumentDraftAnnotation({
+      ...input,
+      markdown: 'same same',
+      selection: { quote: 'same' }
+    })
+    expect(ambiguous?.quote).toBe('same')
+    expect(ambiguous).not.toHaveProperty('anchor')
+    expect(sanitizeAnnotations([ambiguous])).toEqual([ambiguous])
 
     await expect(
       createMarkdownDocumentDraftAnnotation({

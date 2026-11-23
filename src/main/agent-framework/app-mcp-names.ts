@@ -96,6 +96,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     ]
   },
   {
+    canonicalName: 'open-science-markdown',
+    openCodeName: 'open_science_markdown',
+    tools: ['read_selection', 'propose_replacement']
+  },
+  {
     canonicalName: 'open-science-pptx',
     openCodeName: 'open_science_pptx',
     tools: ['read_pptx_outline', 'propose_pptx_operations']

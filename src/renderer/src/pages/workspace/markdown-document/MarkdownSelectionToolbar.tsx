@@ -10,7 +10,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ElementApi, RangeApi, type TRange } from 'platejs'
+import { serializeMarkdownDocument } from './markdown-codec'
+import { ElementApi, RangeApi, type TRange, type Value } from 'platejs'
 import { useEditorRef, useEditorSelector } from 'platejs/react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
@@ -75,7 +76,15 @@ export const MarkdownSelectionToolbar = ({
   const [popup, setPopup] = useState<'link' | 'comment'>()
   const [url, setUrl] = useState('')
   const [note, setNote] = useState('')
-  const [error, setError] = useState<string>()
+  const [failure, setFailure] = useState<{ range: TRange; message: string }>()
+  const error =
+    failure && selection && RangeApi.equals(failure.range, selection) ? failure.message : undefined
+  const setError = (message?: string, range = savedRange.current): void => {
+    setFailure(message && range ? { range, message } : undefined)
+  }
+  useEffect(() => {
+    if (failure && selection && !RangeApi.equals(failure.range, selection)) setFailure(undefined)
+  }, [selection, failure])
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
@@ -186,19 +195,34 @@ export const MarkdownSelectionToolbar = ({
     if (!onSendSelection || !savedRange.current || pending) return
     const range = savedRange.current
     const quote = editor.api.string(range)
-    if (!quote.trim()) return
     setPending(true)
     setError(undefined)
     try {
-      const accepted = await onSendSelection({ quote }, comment ? note.trim() : undefined)
+      const [start, end] = RangeApi.edges(range)
+      const crossBlock = start.path[0] !== end.path[0]
+      let fragment: string | undefined
+      try {
+        fragment = serializeMarkdownDocument(editor.api.fragment(range) as Value).replace(/\n$/, '')
+      } catch {
+        // Some custom nodes have no Markdown representation; selected text is still usable.
+      }
+      const text = quote.trim() ? quote : fragment
+      if (!text?.trim()) {
+        setError(t('Selection action failed'), range)
+        return
+      }
+      const accepted = await onSendSelection(
+        { quote: text, fragment, crossBlock },
+        comment ? note.trim() : undefined
+      )
       if (accepted) {
         // Finish this selection without focusing the editor or disturbing a newer selection.
         if (editor.selection === range) editor.tf.collapse({ edge: 'end' })
         setPopup(undefined)
         setNote('')
-      } else setError(t(comment ? 'Comment failed' : 'Selection action failed'))
+      } else setError(t(comment ? 'Comment failed' : 'Selection action failed'), range)
     } catch {
-      setError(t(comment ? 'Comment failed' : 'Selection action failed'))
+      setError(t(comment ? 'Comment failed' : 'Selection action failed'), range)
     } finally {
       setPending(false)
     }
@@ -254,162 +278,168 @@ export const MarkdownSelectionToolbar = ({
         role="toolbar"
         aria-label={t('Markdown formatting')}
         data-testid="markdown-floating-toolbar"
-        className="absolute z-50 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-0.5 rounded-lg border border-border bg-background p-1 shadow-md"
+        className="absolute z-50 max-w-[calc(100%-1rem)] rounded-lg border border-border bg-background p-1 shadow-md"
         style={{ left: position.left, top: position.top }}
       >
-        <Action label={t('Bold')} id="markdown-selection-action-bold" onClick={() => mark('bold')}>
-          <Bold aria-hidden="true" />
-        </Action>
-        <Action
-          label={t('Italic')}
-          id="markdown-selection-action-italic"
-          onClick={() => mark('italic')}
-        >
-          <Italic aria-hidden="true" />
-        </Action>
-        <Action
-          label={t('Strikethrough')}
-          id="markdown-selection-action-strikethrough"
-          onClick={() => mark('strikethrough')}
-        >
-          <Strikethrough aria-hidden="true" />
-        </Action>
-        <Action
-          label={t('Inline code')}
-          id="markdown-selection-action-inline-code"
-          onClick={() => mark('code')}
-        >
-          <Code2 aria-hidden="true" />
-        </Action>
-        <Popover
-          open={popup === 'link'}
-          onOpenChange={(open) => {
-            if (!open) setPopup(undefined)
-          }}
-        >
-          <PopoverAnchor asChild>
-            <span>
-              <Action label={t('Link')} id="markdown-selection-action-link" onClick={openLink}>
-                <LinkIcon aria-hidden="true" />
-              </Action>
-            </span>
-          </PopoverAnchor>
-          <PopoverContent
-            container={position.owner}
-            data-markdown-selection-popover
-            data-testid="markdown-link-popover"
-            className="w-72"
-            onCloseAutoFocus={(event) => {
-              event.preventDefault()
-              if (restore()) editor.tf.focus()
+        <div className="flex flex-wrap items-center gap-0.5">
+          <Action
+            label={t('Bold')}
+            id="markdown-selection-action-bold"
+            onClick={() => mark('bold')}
+          >
+            <Bold aria-hidden="true" />
+          </Action>
+          <Action
+            label={t('Italic')}
+            id="markdown-selection-action-italic"
+            onClick={() => mark('italic')}
+          >
+            <Italic aria-hidden="true" />
+          </Action>
+          <Action
+            label={t('Strikethrough')}
+            id="markdown-selection-action-strikethrough"
+            onClick={() => mark('strikethrough')}
+          >
+            <Strikethrough aria-hidden="true" />
+          </Action>
+          <Action
+            label={t('Inline code')}
+            id="markdown-selection-action-inline-code"
+            onClick={() => mark('code')}
+          >
+            <Code2 aria-hidden="true" />
+          </Action>
+          <Popover
+            open={popup === 'link'}
+            onOpenChange={(open) => {
+              if (!open) setPopup(undefined)
             }}
           >
-            <form
-              className="space-y-2"
-              onSubmit={(event) => {
+            <PopoverAnchor asChild>
+              <span>
+                <Action label={t('Link')} id="markdown-selection-action-link" onClick={openLink}>
+                  <LinkIcon aria-hidden="true" />
+                </Action>
+              </span>
+            </PopoverAnchor>
+            <PopoverContent
+              container={position.owner}
+              data-markdown-selection-popover
+              data-testid="markdown-link-popover"
+              className="w-72"
+              onCloseAutoFocus={(event) => {
                 event.preventDefault()
-                applyLink()
+                if (restore()) editor.tf.focus()
               }}
             >
-              <Input
-                autoFocus
-                aria-label={t('Link URL')}
-                data-testid="markdown-link-url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-              />
-              <div className="flex gap-2">
-                <Button type="submit" size="sm" data-testid="markdown-link-apply">
-                  {t('Apply link')}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  data-testid="markdown-link-remove"
-                  onClick={() => applyLink(true)}
-                >
-                  {t('Remove link')}
-                </Button>
-              </div>
-              {error ? <ErrorNotice inline role="alert" title={error} /> : null}
-            </form>
-          </PopoverContent>
-        </Popover>
-        <Popover
-          open={popup === 'comment'}
-          onOpenChange={(open) => {
-            if (!open && !pending) setPopup(undefined)
-          }}
-        >
-          <PopoverAnchor asChild>
-            <span>
-              <Action
-                label={t('Comment on selection')}
-                id="markdown-selection-action-comment"
-                disabled={!onSendSelection || pending}
-                onClick={() => {
-                  setPopup('comment')
-                  setError(undefined)
+              <form
+                className="space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  applyLink()
                 }}
               >
-                <MessageSquare aria-hidden="true" />
-              </Action>
-            </span>
-          </PopoverAnchor>
-          <PopoverContent
-            container={position.owner}
-            data-markdown-selection-popover
-            data-testid="markdown-comment-popover"
-            className="w-72"
+                <Input
+                  autoFocus
+                  aria-label={t('Link URL')}
+                  data-testid="markdown-link-url"
+                  value={url}
+                  onChange={(event) => setUrl(event.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" data-testid="markdown-link-apply">
+                    {t('Apply link')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    data-testid="markdown-link-remove"
+                    onClick={() => applyLink(true)}
+                  >
+                    {t('Remove link')}
+                  </Button>
+                </div>
+                {error ? <ErrorNotice inline role="alert" title={error} /> : null}
+              </form>
+            </PopoverContent>
+          </Popover>
+          <Popover
+            open={popup === 'comment'}
+            onOpenChange={(open) => {
+              if (!open && !pending) setPopup(undefined)
+            }}
           >
-            <form
-              className="space-y-2"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void send(true)
-              }}
+            <PopoverAnchor asChild>
+              <span>
+                <Action
+                  label={t('Comment on selection')}
+                  id="markdown-selection-action-comment"
+                  disabled={!onSendSelection || pending}
+                  onClick={() => {
+                    setPopup('comment')
+                    setError(undefined)
+                  }}
+                >
+                  <MessageSquare aria-hidden="true" />
+                </Action>
+              </span>
+            </PopoverAnchor>
+            <PopoverContent
+              container={position.owner}
+              data-markdown-selection-popover
+              data-testid="markdown-comment-popover"
+              className="w-72"
             >
-              <Input
-                autoFocus
-                aria-label={t('Comment note')}
-                data-testid="markdown-comment-note"
-                value={note}
-                maxLength={ANNOTATION_LIMITS.note}
-                disabled={pending}
-                onChange={(event) => setNote(event.target.value)}
-              />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={pending || !note.trim()}
-                data-testid="markdown-comment-submit"
+              <form
+                className="space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void send(true)
+                }}
               >
-                {t('Send comment')}
-              </Button>
-              {error ? <ErrorNotice inline role="alert" title={error} /> : null}
-            </form>
-          </PopoverContent>
-        </Popover>
-        <Action
-          label={t('Copy selection')}
-          id="markdown-selection-action-copy"
-          onClick={() => void copy()}
-        >
-          <Copy aria-hidden="true" />
-        </Action>
-        {onSendSelection ? (
+                <Input
+                  autoFocus
+                  aria-label={t('Comment note')}
+                  data-testid="markdown-comment-note"
+                  value={note}
+                  maxLength={ANNOTATION_LIMITS.note}
+                  disabled={pending}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={pending || !note.trim()}
+                  data-testid="markdown-comment-submit"
+                >
+                  {t('Send comment')}
+                </Button>
+                {error ? <ErrorNotice inline role="alert" title={error} /> : null}
+              </form>
+            </PopoverContent>
+          </Popover>
           <Action
-            label={t('Send selection to conversation')}
-            id="markdown-selection-action-send"
-            disabled={pending}
-            onClick={() => void send()}
+            label={t('Copy selection')}
+            id="markdown-selection-action-copy"
+            onClick={() => void copy()}
           >
-            <Send aria-hidden="true" />
+            <Copy aria-hidden="true" />
           </Action>
-        ) : null}
+          {onSendSelection ? (
+            <Action
+              label={t('Send selection to conversation')}
+              id="markdown-selection-action-send"
+              disabled={pending}
+              onClick={() => void send()}
+            >
+              <Send aria-hidden="true" />
+            </Action>
+          ) : null}
+        </div>
         {error && !popup ? (
-          <div data-testid="markdown-selection-error">
+          <div className="min-w-0" data-testid="markdown-selection-error">
             <ErrorNotice inline role="alert" title={error} />
           </div>
         ) : null}

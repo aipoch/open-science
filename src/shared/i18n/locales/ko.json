@@ -193,6 +193,13 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "Upload image": "이미지 업로드",
+    "or": "또는",
+    "Paste an image URL and press Enter": "이미지 URL을 붙여넣고 Enter 키를 누르세요",
+    "Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.": "1 MiB 이하의 PNG, JPEG, GIF 또는 WebP 이미지를 선택하세요.",
+    "Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.": "{{readTool}}(핸들: {{handle}})으로 선택한 부분을 읽어 주세요. 수정하려면 {{proposeTool}}로 대체할 Markdown을 제출하고 파일을 직접 편집하지 마세요.",
+    "Review replacement": "교체 내용 검토",
+    "The selected passage is no longer available.": "선택한 구절을 더 이상 사용할 수 없습니다.",
     "Pros": "장점",
     "Cons": "제약",
     "The conversation changed. Reopen the image editor and try again.": "대화가 변경되었습니다. 이미지 편집기를 다시 열고 재시도하세요.",

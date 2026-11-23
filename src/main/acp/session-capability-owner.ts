@@ -49,6 +49,7 @@ import {
   HOST_MESSAGE_MCP_SERVER_NAME,
   HOST_SEND_MESSAGE_TOOL_NAME
 } from '../side-chat/host-message-mcp-server'
+import { MARKDOWN_MCP_SERVER_NAME } from '../markdown-edit/mcp-server'
 import { PPTX_MCP_SERVER_NAME, type PptxMcpHandler } from '../pptx-edit/mcp-server'
 import type { AgentMcpHttpHost, ServerKind } from './mcp-http-host'
 import {
@@ -71,6 +72,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'schedule',
   'literature-library',
   'literature',
+  'markdown',
   'pptx',
   'host-agents',
   'host-skills',
@@ -315,6 +317,7 @@ type SessionCapabilityOwnerOptions = {
       workspaceCwd: string
     ) => LiteratureLibraryMcpHandler
   }>
+  markdown?: boolean
   pptx?: Readonly<{
     handlerFor: (appSessionId: string, projectId: string) => PptxMcpHandler
   }>
@@ -725,6 +728,7 @@ export class AcpSessionCapabilityOwner {
             literature: routingIds.literature,
             library: routingIds.literature,
             schedule: routingIds.literature,
+            markdown: routingIds.literature,
             pptx: routingIds.literature,
             skills: skillRuntimeRoutingId
           }
@@ -1030,6 +1034,23 @@ export class AcpSessionCapabilityOwner {
         headers: [{ name: 'authorization', value: `Bearer ${token}` }]
       })
     }
+    if (
+      this.options.markdown &&
+      policyAllowsSessionCapability(request.policy, 'markdown') &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const routingId = request.routingIds.literature
+      host.registerMarkdown(routingId, request.projectId)
+      servers.push({
+        type: 'http',
+        name: MARKDOWN_MCP_SERVER_NAME,
+        url: host.urlFor('markdown', routingId),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      })
+    }
     const modelFacingServers = servers.map((server) => {
       const name = (server as { name?: unknown }).name
       if (typeof name !== 'string') return server
@@ -1056,6 +1077,7 @@ export class AcpSessionCapabilityOwner {
     if (canonicalMcpServerNames.includes(LITERATURE_LIBRARY_MCP_SERVER_NAME)) {
       capabilities.push('literature-library')
     }
+    if (canonicalMcpServerNames.includes(MARKDOWN_MCP_SERVER_NAME)) capabilities.push('markdown')
     if (canonicalMcpServerNames.includes(PPTX_MCP_SERVER_NAME)) capabilities.push('pptx')
     if (canonicalMcpServerNames.includes(HOST_MESSAGE_MCP_SERVER_NAME)) {
       capabilities.push('host-message')
@@ -1140,6 +1162,7 @@ export class AcpSessionCapabilityOwner {
               }
             : false,
           skillImport: capabilities.includes('skill-import'),
+          markdown: capabilities.includes('markdown'),
           pptx: capabilities.includes('pptx'),
           literature: literatureAllowed
             ? {
@@ -1159,6 +1182,7 @@ export class AcpSessionCapabilityOwner {
           namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_LIBRARY_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_MCP_SERVER_NAME),
+          namespaceFor(MARKDOWN_MCP_SERVER_NAME),
           namespaceFor(PPTX_MCP_SERVER_NAME)
         ]
       : []
@@ -1241,6 +1265,9 @@ export class AcpSessionCapabilityOwner {
           routingId,
           this.options.library.handlerFor(appSessionId, projectId, workspaceCwd)
         )
+      }
+      if (descriptor.capabilities.includes('markdown') && this.options.markdown) {
+        this.options.mcpHttpHost.registerMarkdown(routingId, projectId)
       }
       if (descriptor.capabilities.includes('pptx') && this.options.pptx) {
         this.options.mcpHttpHost.registerPptx(
@@ -1471,6 +1498,7 @@ export class AcpSessionCapabilityOwner {
     if (descriptor.capabilities.includes('literature')) ownedServers.add(LITERATURE_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('literature-library'))
       ownedServers.add(LITERATURE_LIBRARY_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('markdown')) ownedServers.add(MARKDOWN_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('pptx')) ownedServers.add(PPTX_MCP_SERVER_NAME)
     for (const identity of appMcpToolIdentities()) {
       const slash = identity.indexOf('/')

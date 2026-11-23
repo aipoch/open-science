@@ -185,6 +185,7 @@ export type AcpRuntimeOptions = {
       input: LiteratureReadDocumentRequest
     }) => Promise<unknown>
   }>
+  markdown?: boolean
   pptx?: Readonly<{
     agent: import('../pptx-edit/agent-handler').PptxAgentHandler
   }>

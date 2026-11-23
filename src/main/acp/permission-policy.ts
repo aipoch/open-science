@@ -327,6 +327,8 @@ const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-literature/list_pdf_annotations',
   'open-science-literature/locate_pdf_annotation_target',
   'open-science-literature/create_pdf_annotation',
+  'open-science-markdown/read_selection',
+  'open-science-markdown/propose_replacement',
   'open-science-pptx/read_pptx_outline',
   'open-science-pptx/propose_pptx_operations'
 ])
@@ -341,6 +343,7 @@ export const isSchedulePermissionTool = (identity: string | undefined): boolean 
 const LIBRARY_READ_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-literature/list_pdf_annotations',
   'open-science-literature/locate_pdf_annotation_target',
+  'open-science-markdown/read_selection',
   'open-science-pptx/read_pptx_outline'
 ])
 

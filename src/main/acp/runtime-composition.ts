@@ -505,6 +505,7 @@ const createAcpRuntime = ({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
         }),
         wslSetupSessions,
+        markdown: true,
         ...(pptxAgent ? { pptx: { agent: pptxAgent } } : {}),
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {

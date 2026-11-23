@@ -117,6 +117,7 @@ import {
 import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
 import type { MarkdownDocumentSelection } from './markdown-document/markdown-selection'
 import type { MarkdownEditorSurfaceHandle } from './markdown-document/MarkdownEditorSurface'
+import { useMarkdownEditRequest } from './use-markdown-edit-request'
 import type { MarkdownAgentRequest } from './markdown-document/MarkdownAgentPrompt'
 import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
 import { createMarkdownDocumentDraftAnnotation } from './markdown-document/markdown-selection'
@@ -875,6 +876,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
     const projectId = previewItem.projectId ?? activeProjectId
     const previewIdentityKey = `${previewItem.projectId ?? ''}:${previewItem.source ?? 'artifact'}:${previewItem.id}:${previewItem.managedFileId ?? ''}:${previewItem.artifactId ?? ''}:${previewItem.selectedVersionId ?? ''}:${previewItem.path}`
+    const markdownEditRequest = useMarkdownEditRequest(
+      JSON.stringify([projectId, itemIdentityKey, mode, markdownEditorRevision])
+    )
     const managedWorkflow = useManagedVersionWorkflow({
       item: previewItem,
       sourceItem,
@@ -1784,9 +1788,27 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
 
     const sendDocumentRequest = async ({
       instruction,
-      selection
+      selection,
+      selectionMarkdown,
+      selectionToken
     }: MarkdownAgentRequest): Promise<boolean> => {
       if (!onSendDocumentRequest || !projectId || !editBaseline) return false
+      if (selectionToken && selectionMarkdown && window.api.markdownEdits) {
+        const sent = await markdownEditRequest.submit(
+          projectId,
+          selectionToken,
+          selectionMarkdown,
+          (handle) =>
+            onSendDocumentRequest({
+              projectId,
+              text: `${instruction}\n\n${t('Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.', { handle, readTool: 'read_selection', proposeTool: 'propose_replacement' })}`,
+              annotations: []
+            })
+        )
+        if (!sent && mountedRef.current)
+          setEditError(t('This selection could not be added to the conversation.'))
+        return sent
+      }
       const markdown = markdownEditorRef.current?.flush() ?? draft
       // Use the in-memory draft, not the last saved file. Asking a question never saves it.
       const text = `${instruction}\n\n${editBaseline.item.name}\n${editBaseline.item.path}\n\n${selection?.quote ?? markdown}`
@@ -2356,6 +2378,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                           <MarkdownEditorSurface
                             ref={markdownEditorRef}
                             key={markdownEditorRevision}
+                            replacement={markdownEditRequest.replacement}
                             source={draft}
                             sourceFormat={editBaseline?.textFormat}
                             disabled={saving}

@@ -20,6 +20,7 @@ import {
   TextQuote,
   Trash2
 } from 'lucide-react'
+import { ErrorNotice } from '@/components/error-notice'
 import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react'
 import { NodeApi, RangeApi, type TElement } from 'platejs'
 import {
@@ -356,21 +357,100 @@ const ImageEditor = ({
         )
         .join('')
     : ''
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [draftUrl, setDraftUrl] = useState('')
+  const [error, setError] = useState('')
+  const embedded = /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(url)
+  if (!url)
+    return (
+      <div
+        contentEditable={false}
+        className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <ImageIcon aria-hidden="true" className="size-5 shrink-0" />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={readOnly}
+            onClick={() => fileInput.current?.click()}
+          >
+            {t('Upload image')}
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            hidden
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (!file) return
+              const invalid = t('Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.')
+              if (
+                !/^image\/(png|jpeg|gif|webp)$/.test(file.type) ||
+                file.size > 1024 * 1024 ||
+                !file.size
+              ) {
+                setError(invalid)
+                return
+              }
+              const reader = new FileReader()
+              reader.onload = () => {
+                const at = editor.api.findPath(element)
+                if (at && typeof reader.result === 'string')
+                  editor.tf.setNodes({ url: reader.result, caption: [{ text: file.name }] }, { at })
+              }
+              reader.onerror = () => setError(invalid)
+              reader.readAsDataURL(file)
+            }}
+          />
+          <span>{t('or')}</span>
+          <Input
+            aria-label={t('Image URL')}
+            placeholder={t('Paste an image URL and press Enter')}
+            disabled={readOnly}
+            value={draftUrl}
+            className="h-8 min-w-32 flex-1"
+            onChange={(event) => {
+              setDraftUrl(event.target.value)
+              setError('')
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              event.stopPropagation()
+              const next = draftUrl.trim()
+              if (!isSafeRemoteImageUrl(next)) {
+                setError(t('Enter a safe http(s) URL'))
+                return
+              }
+              setLoadedUrl(next)
+              editor.tf.setNodes({ url: next }, { at: path })
+            }}
+          />
+        </div>
+        {error && <ErrorNotice inline role="alert" title={error} />}
+      </div>
+    )
   const safe = isSafeRemoteImageUrl(url)
   return (
     <div
       contentEditable={false}
       className="space-y-2 rounded border border-border bg-muted/30 p-2 text-xs"
     >
-      <Input
-        aria-label={t('Image URL')}
-        value={url}
-        disabled={readOnly}
-        onChange={(event) => {
-          setLoadedUrl(undefined)
-          editor.tf.setNodes({ url: event.target.value }, { at: path })
-        }}
-      />
+      {!embedded && (
+        <Input
+          aria-label={t('Image URL')}
+          value={url}
+          disabled={readOnly}
+          onChange={(event) => {
+            setLoadedUrl(undefined)
+            editor.tf.setNodes({ url: event.target.value }, { at: path })
+          }}
+        />
+      )}
       <Input
         aria-label={t('Image alt text')}
         value={alt}
@@ -379,7 +459,7 @@ const ImageEditor = ({
           editor.tf.setNodes({ caption: [{ text: event.target.value }] }, { at: path })
         }
       />
-      {safe && loadedUrl === url ? (
+      {embedded || (safe && loadedUrl === url) ? (
         <img
           src={url}
           alt={alt}
@@ -533,7 +613,7 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     dropdown: t('Dropdown')
   }
   const placeholderText =
-    caretInElement && !['ul', 'ol', 'li'].includes(type) && !NodeApi.string(element)
+    caretInElement && !['ul', 'ol', 'li', 'img'].includes(type) && !NodeApi.string(element)
       ? placeholderKind
         ? placeholderLabels[placeholderKind]
         : type === 'p'

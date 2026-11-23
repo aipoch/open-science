@@ -30,6 +30,7 @@ import {
   type ElectronRuntimeAdapterInterfaces
 } from '../runtime-electron-wiring'
 import { disposeIpcHandlerRegistry, ipcMainHandle } from '../ipc-handler-registry'
+import { markdownEditStore } from '../markdown-edit/store'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 
 const fixture = (): {
@@ -112,7 +113,7 @@ describe('core Electron production composition', () => {
     ).install()
     const disposed: string[] = []
     const runtime = await compose(dependencies, disposed)
-    expect(native.handlers.size).toBe(33) // 32 production channels plus the independently owned one.
+    expect(native.handlers.size).toBe(34) // 33 production channels plus the independently owned one.
     const event = { sender: { id: 42 } } as Parameters<Parameters<IpcMain['handle']>[1]>[0]
     const request = { projectId: 'project', fileId: 'file' }
     for (const channel of [
@@ -136,6 +137,25 @@ describe('core Electron production composition', () => {
     expect(disposed).toEqual(['second', 'first'])
     expect([...native.handlers.keys()]).toEqual(['test:external'])
     await external.uninstall()
+  })
+
+  it('delivers one proposal only to the window owning the selected draft', async () => {
+    const runtime = await compose(fixture().dependencies, [])
+    const send = vi.fn()
+    const event = { sender: { id: 42, send } } as unknown as Parameters<
+      Parameters<IpcMain['handle']>[1]
+    >[0]
+    const foreign = { sender: { id: 43 } } as typeof event
+    const handle = await native.handlers.get('markdown-edits:open')!(event, 'project', 'draft only')
+    await native.handlers.get('markdown-edits:close')!(foreign, handle)
+    expect(markdownEditStore.read('project', handle)).toBe('draft only')
+    markdownEditStore.propose('project', handle, 'revised')
+    expect(send).toHaveBeenCalledExactlyOnceWith('markdown-edits:replacement', {
+      handle,
+      markdown: 'revised'
+    })
+    expect(() => markdownEditStore.read('project', handle)).toThrow()
+    await runtime.dispose()
   })
 
   it.each([

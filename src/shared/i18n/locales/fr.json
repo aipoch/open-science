@@ -195,6 +195,13 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "Upload image": "Téléverser une image",
+    "or": "ou",
+    "Paste an image URL and press Enter": "Collez l’URL d’une image et appuyez sur Entrée",
+    "Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.": "Choisissez une image PNG, JPEG, GIF ou WebP de 1 Mio maximum.",
+    "Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.": "Lis ma sélection avec {{readTool}} (identifiant : {{handle}}). Pour la modifier, propose le Markdown de remplacement avec {{proposeTool}}. Ne modifie pas directement le fichier.",
+    "Review replacement": "Vérifier le remplacement",
+    "The selected passage is no longer available.": "Le passage sélectionné n’est plus disponible.",
     "Pros": "Avantages",
     "Cons": "Limites",
     "The conversation changed. Reopen the image editor and try again.": "La conversation a changé. Rouvrez l’éditeur d’images et réessayez.",

@@ -153,6 +153,85 @@ test('inline agent request sends the unsaved document without saving it', async 
   await expect(editor).toContainText('Unsaved evidence')
 })
 
+test('selected passage replacement stays in review until accepted and can be undone', async ({
+  page
+}) => {
+  await page.goto('/preview-edit-recovery.html?success')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.click()
+  await editor.press('ControlOrMeta+a')
+  await expect(page.getByTestId('markdown-floating-toolbar')).toBeVisible()
+  await page.getByRole('button', { name: 'Ask agent', exact: true }).click()
+  await expect(page.getByTestId('markdown-agent-prompt').locator('blockquote')).toHaveText(
+    'Current'
+  )
+  await page
+    .getByRole('textbox', { name: 'Tell the agent what to write or edit' })
+    .fill('Rewrite this passage')
+  await page.getByRole('button', { name: 'Send to conversation', exact: true }).click()
+  const review = page.getByRole('region', { name: 'Review replacement' })
+  await expect(review).toBeVisible()
+  await expect(editor).toContainText('Current')
+  await expect(editor).not.toContainText('Revised')
+  await review.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect(editor.locator('strong')).toHaveText('evidence')
+  await editor.press('ControlOrMeta+z')
+  await expect(editor).toContainText('Current')
+  await expect(editor).not.toContainText('Revised')
+  expect(await page.evaluate(() => window.previewEditRecovery.saves)).toHaveLength(0)
+})
+
+test('attaches the selected table even when Markdown spacing differs', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?table')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('th').first().click()
+  await editor.press('ControlOrMeta+a')
+  await page.getByTestId('markdown-selection-action-send').click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.annotations[0]), { timeout: 2500 })
+    .toMatchObject({ quote: expect.stringMatching(/项目[\s\S]+内容[\s\S]+统计[\s\S]+检验/) })
+})
+
+test('sends two formatted paragraphs from the floating toolbar', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?success&multi')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('p').first().click()
+  await editor.press('ControlOrMeta+a')
+  await page.getByTestId('markdown-selection-action-send').click()
+  await expect
+    .poll(() => page.evaluate(() => window.previewEditRecovery.annotations.length), {
+      timeout: 2500
+    })
+    .toBe(1)
+  expect(await page.evaluate(() => window.previewEditRecovery.annotations[0])).toMatchObject({
+    quote: '第一段包含**重点**。\n\n第二段继续说明。'
+  })
+  await expect(page.getByTestId('markdown-floating-toolbar')).toBeHidden()
+})
+
+test('keeps the Chinese send error on its own row', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?multi&reject-selection&locale=zh-Hans')
+  const editor = page.getByTestId('markdown-plate-editor')
+  await editor.locator('p').first().click()
+  await editor.press('ControlOrMeta+a')
+  const send = page.getByTestId('markdown-selection-action-send')
+  await send.click()
+  const error = page.getByTestId('markdown-selection-error')
+  await expect(error).toBeVisible()
+  const geometry = await error.evaluate((element) => {
+    const button = document.querySelector('[data-testid="markdown-selection-action-send"]')!
+    return {
+      gap: element.getBoundingClientRect().top - button.getBoundingClientRect().bottom,
+      width: element.getBoundingClientRect().width
+    }
+  })
+  expect(geometry.gap).toBeGreaterThanOrEqual(0)
+  expect(geometry.width).toBeGreaterThan(150)
+  await editor.locator('p').last().dblclick()
+  await expect(page.getByTestId('markdown-floating-toolbar')).toBeVisible()
+  await expect(error).toBeHidden({ timeout: 2500 })
+})
+
 test('sending a selection dismisses its toolbar after attaching the quote', async ({ page }) => {
   await page.goto('/preview-edit-recovery.html?success')
   const editor = page.getByTestId('markdown-plate-editor')
@@ -716,10 +795,12 @@ test('table, date, image and dropdown option editing remain manual drafts', asyn
     fetches++
     await route.abort()
   })
-  await page.getByLabel('Image URL', { exact: true }).fill('https://example.org/diagram.png')
-  await page.getByLabel('Image alt text', { exact: true }).fill('Diagram')
+  await expect(page.getByRole('button', { name: 'Upload image' })).toBeVisible()
+  const imageUrl = page.getByPlaceholder('Paste an image URL and press Enter')
+  await imageUrl.fill('https://example.org/diagram.png')
   expect(fetches).toBe(0)
-  await page.getByRole('button', { name: 'Load image', exact: true }).click()
+  await imageUrl.press('Enter')
+  await page.getByLabel('Image alt text', { exact: true }).fill('Diagram')
   await expect.poll(() => fetches).toBe(1)
   await editor.locator('h1').hover()
   await editor.getByRole('button', { name: 'Insert block', exact: true }).first().click()

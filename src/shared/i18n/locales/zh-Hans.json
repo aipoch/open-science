@@ -193,6 +193,13 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。"
   },
   "renderer": {
+    "Upload image": "上传图片",
+    "or": "或",
+    "Paste an image URL and press Enter": "粘贴图片网址后按回车键",
+    "Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.": "请选择不超过 1 MiB 的 PNG、JPEG、GIF 或 WebP 图片。",
+    "Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.": "请用 {{readTool}}（句柄：{{handle}}）读取我的选区。如需修改，请用 {{proposeTool}} 提交替换后的 Markdown，不要直接编辑文件。",
+    "Review replacement": "审阅替换内容",
+    "The selected passage is no longer available.": "所选段落已不可用。",
     "Pros": "优点",
     "Cons": "缺点",
     "The conversation changed. Reopen the image editor and try again.": "对话已更改。请重新打开图片编辑器后重试。",

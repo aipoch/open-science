@@ -1,5 +1,5 @@
 import { ArrowUp, Pencil, X } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RangeApi, type TRange } from 'platejs'
 import { useEditorRef } from 'platejs/react'
@@ -13,6 +13,8 @@ import type { MarkdownDocumentSelection } from './markdown-selection'
 
 export type MarkdownAgentRequest = {
   instruction: string
+  selectionMarkdown?: string
+  selectionToken?: string
   selection?: MarkdownDocumentSelection
 }
 
@@ -20,12 +22,23 @@ export const MarkdownAgentPrompt = ({
   onSubmitRequest,
   disabled = false
 }: {
-  onSubmitRequest?: (request: MarkdownAgentRequest) => Promise<boolean>
+  onSubmitRequest?: (request: MarkdownAgentRequest, range: TRange | null) => Promise<boolean>
   disabled?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const editor = useEditorRef()
-  const [context, setContext] = useState<{ range: TRange | null; quote?: string }>()
+  const [context, setContext] = useState<{
+    range: TRange | null
+    value: typeof editor.children
+    quote?: string
+  }>()
+  const pointerContext = useRef<typeof context>(undefined)
+  const readContext = (): NonNullable<typeof context> => {
+    const range = editor.selection
+    const quote =
+      range && !RangeApi.isCollapsed(range) ? editor.api.string(range).trim() : undefined
+    return { range, value: editor.children, quote: quote || undefined }
+  }
   const [instruction, setInstruction] = useState('')
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -34,7 +47,7 @@ export const MarkdownAgentPrompt = ({
     const range = context?.range
     setContext(undefined)
     setFailed(false)
-    if (range) editor.tf.select(range)
+    if (range && context.value === editor.children) editor.tf.select(range)
     editor.tf.focus()
   }
 
@@ -50,18 +63,21 @@ export const MarkdownAgentPrompt = ({
                 size="icon-xs"
                 aria-label={t('Ask agent')}
                 disabled={pending || disabled}
+                onPointerDownCapture={() => {
+                  pointerContext.current = readContext()
+                }}
+                onPointerCancel={() => {
+                  pointerContext.current = undefined
+                }}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
+                onClick={(event) => {
+                  const snapshot = event.detail > 0 ? pointerContext.current : undefined
+                  pointerContext.current = undefined
                   if (context) {
                     close()
                     return
                   }
-                  const range = editor.selection
-                  const quote =
-                    range && !RangeApi.isCollapsed(range)
-                      ? editor.api.string(range).trim()
-                      : undefined
-                  setContext({ range, quote: quote || undefined })
+                  setContext(snapshot ?? readContext())
                   setFailed(false)
                 }}
               >
@@ -89,10 +105,17 @@ export const MarkdownAgentPrompt = ({
             setPending(true)
             setFailed(false)
             try {
-              const accepted = await onSubmitRequest({
-                instruction: instruction.trim(),
-                ...(context.quote ? { selection: { quote: context.quote } } : {})
-              })
+              if (context.range && context.value !== editor.children) {
+                setFailed(true)
+                return
+              }
+              const accepted = await onSubmitRequest(
+                {
+                  instruction: instruction.trim(),
+                  ...(context.quote ? { selection: { quote: context.quote } } : {})
+                },
+                context.range
+              )
               if (accepted) {
                 setInstruction('')
                 setContext(undefined)

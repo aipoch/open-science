@@ -36,6 +36,9 @@ const registrations: Record<
   "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
   "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
   "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',
+  // A project-bound handle grants access to one selection; proposals remain in memory.
+  "markdown-edit/mcp-server.ts:'read_selection'": 'allow_once',
+  "markdown-edit/mcp-server.ts:'propose_replacement'": 'allow_once',
   // PPTX tools never save: propose only stages a draft that the user must accept in the preview.
   "pptx-edit/mcp-server.ts:'read_pptx_outline'": 'allow_once',
   "pptx-edit/mcp-server.ts:'propose_pptx_operations'": 'allow_once',
@@ -190,6 +193,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
 
+        'markdown-edit/mcp-server.ts':
+          '9d69546d1a6bee254815adcd62b6869169a5b8dbce613a254b8eeffa2ec8d744',
         // Reviewed: propose_pptx_operations only stages a draft; saving needs a user accept in the preview.
         'pptx-edit/mcp-server.ts':
           '3bd949c59a19ad322a31d9c3274600e5d4c46023ffe5190115952c8029bda4bb',

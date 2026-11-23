@@ -136,6 +136,21 @@ export const localFsGetRootsContracts = {
 } as const
 
 export const managedFileVersionsCancelDiffContracts = {
+  'markdownEdits.open': callable<(projectId: string, markdown: string) => Promise<string>>()(
+    'managed-file-versions',
+    ['markdown-edits:open', ELECTRON],
+    { optionalRoot: true }
+  ),
+  'markdownEdits.close': callable<(handle: string) => Promise<void>>()(
+    'managed-file-versions',
+    ['markdown-edits:close', ELECTRON],
+    { optionalRoot: true }
+  ),
+  'markdownEdits.onReplacement': callable<
+    (listener: AcpListener<{ handle: string; markdown: string }>) => RemoveListener
+  >()('managed-file-versions', ['markdown-edits:replacement', ELECTRON_EVENT], {
+    optionalRoot: true
+  }),
   'managedFileVersions.cancelDiff': callable<
     (
       request: ManagedFileVersionCancelDiffRequest

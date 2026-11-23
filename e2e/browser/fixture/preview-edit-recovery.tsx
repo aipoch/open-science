@@ -19,7 +19,11 @@ const text = new URLSearchParams(location.search).has('footnotes')
         ''
       ) +
       'Choose this passage for formatting.\n'
-    : '# Current\n'
+    : new URLSearchParams(location.search).has('table')
+      ? '|项目|内容|\n|---|---|\n|统计|样本 *t* 检验|\n'
+      : new URLSearchParams(location.search).has('multi')
+        ? '第一段包含**重点**。\n\n第二段继续说明。\n'
+        : '# Current\n'
 const version = {
   id: 'v1',
   source: 'upload' as const,
@@ -54,7 +58,18 @@ const saves: ManagedFileVersionSaveTextEditRequest[] = []
 const requests: DocumentConversationRequest[] = []
 const annotations: Annotation[] = []
 Object.assign(window, { previewEditRecovery: { saves, requests, annotations } })
+let deliver: ((event: { handle: string; markdown: string }) => void) | undefined
 window.api = {
+  markdownEdits: {
+    open: async () => 'fixture-selection',
+    close: async () => {},
+    onReplacement: (listener: typeof deliver) => {
+      deliver = listener
+      return () => {
+        deliver = undefined
+      }
+    }
+  },
   previewResources: transport,
   managedFileVersions: {
     inspect: async () => ({ ok: true, value: inspect }),
@@ -106,9 +121,14 @@ void Promise.resolve(prepareI18nLocale(locale)).then(() => {
         onClose={() => {}}
         onSendDocumentRequest={async (request) => {
           requests.push(request)
+          if (request.text.includes('fixture-selection')) {
+            deliver?.({ handle: 'fixture-selection', markdown: 'Revised **evidence**' })
+          }
           return true
         }}
         onAddAnnotation={(annotation) => {
+          if (new URLSearchParams(location.search).has('reject-selection'))
+            return 'visual-model-required'
           annotations.push(annotation)
           return undefined
         }}

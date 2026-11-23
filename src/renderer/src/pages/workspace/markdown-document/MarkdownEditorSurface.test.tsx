@@ -357,6 +357,80 @@ describe('MarkdownEditorSurface', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['accept', 'reject', 'stale document', 'wrong token', 'unsupported'] as const)(
+    'reviews a replacement without touching the draft: %s',
+    async (action) => {
+      const source = 'Left **same** and **same** right.\n'
+      const onChange = vi.fn()
+      const onDirtyChange = vi.fn()
+      const onSubmitRequest = vi.fn().mockResolvedValue(true)
+      const onDismiss = vi.fn()
+      const props = { source, onChange, onDirtyChange, onSubmitRequest }
+      const view = render(<MarkdownEditorSurface {...props} />)
+      const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+      await act(async () =>
+        editor.tf.select({
+          anchor: { path: [0, 3], offset: 4 },
+          focus: { path: [0, 3], offset: 0 }
+        })
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask agent' }))
+      await act(async () => editor.tf.select({ path: [0, 1], offset: 0 }))
+      fireEvent.change(
+        screen.getByRole('textbox', { name: 'Tell the agent what to write or edit' }),
+        { target: { value: 'Replace' } }
+      )
+      fireEvent.submit(screen.getByTestId('markdown-agent-prompt'))
+      await waitFor(() => expect(screen.queryByTestId('markdown-agent-prompt')).toBeNull())
+      const request = onSubmitRequest.mock.calls[0][0]
+      expect(request.selectionMarkdown).toBe('**same**\n')
+      const markdown = action === 'unsupported' ? '<details>no</details>' : '*new*\n\nnext'
+      const replacement = {
+        markdown,
+        onDismiss,
+        token: action === 'wrong token' ? 'earlier-request' : request.selectionToken
+      }
+      view.rerender(<MarkdownEditorSurface {...props} replacement={replacement} />)
+      const accept = screen.getByRole('button', { name: 'Accept' })
+      expect(onDirtyChange).not.toHaveBeenCalled()
+      expect(onChange).not.toHaveBeenCalled()
+      if (action === 'stale document') {
+        await act(async () => editor.tf.insertText('x'))
+        await waitFor(() => expect(accept).toHaveProperty('disabled', true))
+      } else if (action === 'wrong token' || action === 'unsupported') {
+        expect(screen.getByRole('alert')).toBeTruthy()
+        expect(accept).toHaveProperty('disabled', true)
+      } else if (action === 'reject') {
+        fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+        expect(onDismiss).toHaveBeenCalledOnce()
+        expect(onDirtyChange).not.toHaveBeenCalled()
+        expect(onChange).not.toHaveBeenCalled()
+      } else {
+        expect(view.container.querySelector('ins')).not.toBeNull()
+        fireEvent.click(accept)
+        expect(onDismiss).toHaveBeenCalledOnce()
+        await waitFor(() =>
+          expect(onChange).toHaveBeenLastCalledWith('Left **same** and _new_\n\nnext right.\n')
+        )
+        await act(async () => editor.tf.undo())
+        await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(source))
+      }
+    }
+  )
+
+  it('keeps the selection from pointerdown when Ask agent is clicked', async () => {
+    render(<MarkdownEditorSurface source="Current" onChange={vi.fn()} />)
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    await act(async () => editor.tf.select(editor.api.range([])))
+    const ask = screen.getByRole('button', { name: 'Ask agent' })
+    fireEvent.pointerDown(ask, { button: 0 })
+    await act(async () => editor.tf.collapse({ edge: 'end' }))
+    fireEvent.click(ask, { detail: 1 })
+    expect(
+      screen.getByTestId('markdown-agent-prompt').querySelector('blockquote')?.textContent
+    ).toBe('Current')
+  })
+
   it('sends the selected text with the instruction and retains rejected input', async () => {
     const submit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     const onChange = vi.fn()
@@ -378,7 +452,9 @@ describe('MarkdownEditorSurface', () => {
     await waitFor(() =>
       expect(submit).toHaveBeenCalledWith({
         instruction: 'Explain the selection',
-        selection: { quote: 'selected' }
+        selection: { quote: 'selected' },
+        selectionMarkdown: 'selected\n',
+        selectionToken: expect.any(String)
       })
     )
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())

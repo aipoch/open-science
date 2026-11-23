@@ -203,6 +203,7 @@ describe('ACP Runtime base composition', () => {
       let handler: LiteratureLibraryMcpHandler | undefined
       const host = {
         ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+        registerMarkdown: vi.fn(),
         registerLiteratureLibrary: vi.fn((_id: string, next: LiteratureLibraryMcpHandler) => {
           handler = next
         }),
@@ -221,6 +222,7 @@ describe('ACP Runtime base composition', () => {
         appVersion: 'test',
         defaultCwd: '/workspace',
         mcpHttpHost: host,
+        markdown: true,
         literatureLibrary: {
           acquirePdf,
           searchLibrary: vi.fn(),
@@ -240,6 +242,7 @@ describe('ACP Runtime base composition', () => {
         sessionCwd: '/workspace',
         projectId: 'project-1'
       })
+      expect(host.registerMarkdown).toHaveBeenCalledWith('session-1', 'project-1')
       const candidate = {
         item: { title: 'A paper' },
         source: { provider: 'crossref', rawMetadata: {} }

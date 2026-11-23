@@ -5,6 +5,8 @@ import { markdownSelectionAnchor } from './markdown-codec'
 
 export type MarkdownDocumentSelection = Readonly<{
   quote: string
+  fragment?: string
+  crossBlock?: boolean
   prefix?: string
   suffix?: string
 }>
@@ -45,24 +47,41 @@ export const createMarkdownDocumentDraftAnnotation = async (
 ): Promise<TextAnnotation | undefined> => {
   const { selection } = input
   if (!selection.quote || selection.quote.length > ANNOTATION_LIMITS.quote) return undefined
-  const anchor = markdownSelectionAnchor(
-    input.markdown,
-    selection.quote,
-    selection.prefix,
-    selection.suffix
+  // Slate's plain range string concatenates adjacent blocks and drops inline marks.
+  // Never match that concatenation elsewhere in the document for a cross-block range.
+  const fragment = selection.fragment?.replace(
+    /\n/g,
+    input.markdown.includes('\r\n') ? '\r\n' : '\n'
   )
-  if (!anchor) return undefined
+  const candidates = selection.crossBlock ? [fragment] : [selection.quote, fragment]
+  const anchor = candidates.reduce<ReturnType<typeof markdownSelectionAnchor>>(
+    (found, candidate) =>
+      found ??
+      (candidate && candidate.length <= ANNOTATION_LIMITS.quote
+        ? markdownSelectionAnchor(input.markdown, candidate, selection.prefix, selection.suffix)
+        : undefined),
+    undefined
+  )
+  // A citation carries the selected content even when the Markdown serializer normalizes
+  // table padding, list markers, or emphasis. Only advertise offsets for an exact match.
+  const quote = anchor
+    ? input.markdown.slice(anchor.start, anchor.end)
+    : fragment?.trim() && fragment.length <= ANNOTATION_LIMITS.quote
+      ? fragment
+      : selection.quote
   const checksum = await checksumForMarkdown(input.markdown)
   return {
     id: createAnnotationId(),
     kind: 'text',
     target: 'agent',
-    quote: selection.quote,
-    anchor: {
-      position: { start: anchor.start, end: anchor.end },
-      ...(anchor.prefix ? { prefix: anchor.prefix } : {}),
-      ...(anchor.suffix ? { suffix: anchor.suffix } : {})
-    },
+    quote,
+    ...(anchor && {
+      anchor: {
+        position: { start: anchor.start, end: anchor.end },
+        ...(anchor.prefix ? { prefix: anchor.prefix } : {}),
+        ...(anchor.suffix ? { suffix: anchor.suffix } : {})
+      }
+    }),
     source: {
       kind: 'document-draft',
       projectId: input.projectId,

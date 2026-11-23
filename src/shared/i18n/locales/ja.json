@@ -193,6 +193,13 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "Upload image": "画像をアップロード",
+    "or": "または",
+    "Paste an image URL and press Enter": "画像の URL を貼り付けて Enter キーを押す",
+    "Choose a PNG, JPEG, GIF or WebP image up to 1 MiB.": "1 MiB 以下の PNG、JPEG、GIF、WebP 画像を選択してください。",
+    "Read my selection with {{readTool}} (handle: {{handle}}). For edits, submit the replacement Markdown with {{proposeTool}}. Do not edit the file directly.": "{{readTool}}（ハンドル：{{handle}}）で選択範囲を読み取ってください。編集する場合は {{proposeTool}} で置換後の Markdown を提出し、ファイルを直接編集しないでください。",
+    "Review replacement": "置換内容を確認",
+    "The selected passage is no longer available.": "選択した箇所は使用できなくなりました。",
     "Pros": "利点",
     "Cons": "制約",
     "The conversation changed. Reopen the image editor and try again.": "会話が変更されました。画像エディターを開き直して、もう一度お試しください。",

@@ -52,6 +52,8 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-literature/list_pdf_annotations',
     'mcp:open-science-literature/locate_pdf_annotation_target',
     'mcp:open-science-literature/create_pdf_annotation',
+    'mcp:open-science-markdown/read_selection',
+    'mcp:open-science-markdown/propose_replacement',
     'mcp:open-science-pptx/read_pptx_outline',
     'mcp:open-science-pptx/propose_pptx_operations'
   ],
