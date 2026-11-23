@@ -352,10 +352,10 @@ function datedClosingReference(source, translation, label, offset) {
         .map((item) => [
           item[1]
             .normalize('NFC')
-            .replace(/\s*(?:et\s*al\.|等人?)$/u, ':et-al')
-            .replace(/\s*(?:&|\band\s+|[和与與])\s*/gu, '&')
-            .trim()
-            .replace(/\s+/gu, ' '),
+            .replace(/\s+/gu, ' ')
+            .replace(/ ?(?:et ?al\.|等人?)$/u, ':et-al')
+            .replace(/ ?(?:&|\band |[和与與]) ?/gu, '&')
+            .trim(),
           item[2]
         ])
         .map((item) => item.join(':'))
@@ -490,26 +490,44 @@ export function translatedPdfDatedReportFootnote(source, translation, label, off
 function translatedThesaurusKeyword(source, translation, label, offset, uri) {
   const id = /^https?:\/\/astrothesaurus\.org\/uat\/([1-9]\d{0,4})$/u.exec(uri ?? '')?.[1]
   if (!id || ![source, translation].some((row) => row.startsWith('Keywords:'))) return null
-  const terms = (row) => [
-    ...row.matchAll(
-      /(?:^[\p{L} ]{1,30}[:：]|—)\s*(\p{L}[\p{L}\p{M} ’'-]*?\s*(?:\((\d{1,5})\)|（(\d{1,5})）))(?=\s*(?:—|$))/dgu
-    )
-  ]
+  const terms = (row) => {
+    const result = []
+    let offset = 0
+    for (const segment of row.split('—')) {
+      const start = offset
+      offset += segment.length + 1
+      const prefix = start === 0 ? /^[\p{L} ]{1,30}[:：]/u.exec(segment) : null
+      if (start === 0 && !prefix) continue
+      const raw = segment.slice(prefix?.[0].length ?? 0),
+        trimmed = raw.trimStart(),
+        text = trimmed.trimEnd(),
+        number = /(?:\((\d{1,5})\)|（(\d{1,5})）)$/u.exec(text)
+      if (!number || !/^\p{L}[\p{L}\p{M} ’'-]*$/u.test(text.slice(0, number.index).trimEnd()))
+        continue
+      result.push({
+        id: number[1] ?? number[2],
+        start: start + segment.length - trimmed.length,
+        text
+      })
+    }
+    return result
+  }
   const before = terms(source),
     after = terms(translation),
-    ids = before.map((term) => term[2] ?? term[3]),
+    ids = before.map((term) => term.id),
     occurrence = ids.indexOf(id)
   if (
     ids.length < 2 ||
     new Set(ids).size !== ids.length ||
     before.length !== after.length ||
-    !after.every((term, i) => (term[2] ?? term[3]) === ids[i]) ||
+    !after.every((term, i) => term.id === ids[i]) ||
     occurrence < 0 ||
-    before[occurrence][1] !== label ||
-    before[occurrence].indices[1][0] !== offset
+    before[occurrence].text !== label ||
+    before[occurrence].start !== offset
   )
     return null
-  return { start: after[occurrence].indices[1][0], text: after[occurrence][1] }
+  const { start, text } = after[occurrence]
+  return { start, text }
 }
 
 // An ACM self-reference can link only the page count beside its unchanged DOI.

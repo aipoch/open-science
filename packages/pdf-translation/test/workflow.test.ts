@@ -2265,6 +2265,24 @@ describe('large scientific powers', () => {
     }
   })
 
+  it('checks unitless powers without losing distinct values or their multiplicity', async () => {
+    const h = setup()
+    const source = 'The estimated counts were 2.5 × 10²⁶ and 2.6 × 10²⁶.'
+    const requestSource = { ...input, sources: [source] }
+    const { operationId } = await h.owner.begin(requestSource, h.caller.lease)
+    h.runner.run.mockResolvedValue({
+      text: '估计计数为 2.5 × 10^26 和 2.5 × 10^26。',
+      stopReason: 'end_turn'
+    })
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).rejects.toMatchObject({ code: 'incomplete-output' })
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+    }
+  })
+
   it('keeps the full quantity inside its retry marker', async () => {
     const h = setup()
     h.runner.run
