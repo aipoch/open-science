@@ -7,7 +7,7 @@
 
 ## ⚠️ Scope & Safety
 
-- **Die Agenten-Ablaufverfolgung sendet Daten an einen von Ihnen konfigurierten Empfänger.** Die Ablaufverfolgung ist deaktiviert, bis ein Projekt sie einschaltet, und die Bereiche — Turn-Struktur, Modellanfragen und Werkzeugausführungen in Ihrer gewählten Detailtiefe — gehen ausschließlich an den in der Startkonfiguration der App gesetzten OTLP/HTTP-Endpunkt, niemals an einen dienstbetriebenen Dienst der App. Wählen Sie einen Empfänger, den Sie kontrollieren, und prüfen Sie die Erfassungsschalter, bevor Sie die Ablaufverfolgung auf gemeinsam genutzten Rechnern aktivieren. Siehe [Empfänger von Daten](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
+- **Die Agenten-Ablaufverfolgung sendet Daten an einen von Ihnen konfigurierten Empfänger.** Die projektbezogene Ablaufverfolgung ist standardmäßig deaktiviert und beginnt erst, wenn ein Projekt sie einschaltet; für einen einzelnen CLI-Lauf ist `--otel-traces` (oder `otelTraces: true` im SDK) eine ausdrückliche Opt-in-Entscheidung pro Lauf, die ohne den Projektschalter auskommt. In beiden Fällen gehen die Bereiche — Turn-Struktur, Modellanfragen und Werkzeugausführungen in Ihrer gewählten Detailtiefe — ausschließlich an den in der Startkonfiguration der App gesetzten OTLP/HTTP-Endpunkt, niemals an einen dienstbetriebenen Dienst der App. Wählen Sie einen Empfänger, den Sie kontrollieren, und prüfen Sie die Erfassungsschalter, bevor Sie die Ablaufverfolgung auf gemeinsam genutzten Rechnern aktivieren. Siehe [Empfänger von Daten](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 Danksagungen
 
 - Danke an alle, die Probleme mit Updates, Notebooks und der Speicherüberwachung in [Discord](https://discord.gg/zxQAYjReRv), auf [X](https://x.com/aipoch_ai) und in den [Discussions](https://github.com/aipoch/open-science/discussions) gemeldet haben.
+- Danke an [@wen2zhou](https://github.com/wen2zhou) für die projektbezogene Agenten-Ablaufverfolgung und die laufbezogene CLI-Ablaufverfolgung ([#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618)).

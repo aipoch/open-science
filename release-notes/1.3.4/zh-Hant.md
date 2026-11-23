@@ -7,7 +7,7 @@
 
 ## ⚠️ 範圍與安全
 
-- **Agent 追蹤會將資料傳送到你設定的接收端。** 追蹤在專案啟用前維持關閉，span——依你所選擷取細節記錄的對話回合結構、模型請求與工具執行——只會傳送至應用程式啟動設定中設定的 OTLP/HTTP 端點，絕不送往應用程式營運的服務。請選擇你掌控的接收端，並在共用機器上啟用追蹤之前檢視擷取開關。請參閱[資料接收方](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)。（#4514）
+- **Agent 追蹤會將資料傳送到你設定的接收端。** 專案追蹤預設為關閉，僅在專案啟用後才開始；若是單次 CLI Run，`--otel-traces`（或在 SDK 中設為 `otelTraces: true`）則是明確的逐次執行選擇加入，不需要專案開關。兩種情況下，span——依你所選擷取細節記錄的對話回合結構、模型請求與工具執行——都只會傳送至應用程式啟動設定中設定的 OTLP/HTTP 端點，絕不送往應用程式營運的服務。請選擇你掌控的接收端，並在共用機器上啟用追蹤之前檢視擷取開關。請參閱[資料接收方](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)。（#4514）
 
 ## 🚀 新功能
 
@@ -31,3 +31,4 @@
 ## 🙏 致謝
 
 - 感謝大家在 [Discord](https://discord.gg/zxQAYjReRv)、[X](https://x.com/aipoch_ai) 與 [Discussions](https://github.com/aipoch/open-science/discussions) 回報更新、Notebook 與記憶體監控相關的問題。
+- 感謝 [@wen2zhou](https://github.com/wen2zhou) 提供專案範圍的 Agent 追蹤與逐次執行的 CLI 追蹤貢獻（[#4514](https://github.com/aipoch/open-science/pull/4514)、[#4618](https://github.com/aipoch/open-science/pull/4618)）。

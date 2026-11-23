@@ -7,7 +7,7 @@
 
 ## ⚠️ 범위와 안전
 
-- **Agent 추적은 설정한 수신자로 데이터를 보냅니다.** 추적은 프로젝트가 켜기 전까지 비활성화되어 있고, 스팬 — 턴 구조, 모델 요청, 선택한 캡처 수준의 도구 실행 — 은 앱이 운영하는 서비스가 아니라 앱의 시작 설정에 지정된 OTLP/HTTP 엔드포인트로만 전달됩니다. 직접 제어하는 수신자를 선택하고, 공유 기기에서 추적을 켜기 전에 캡처 설정을 검토하세요. [데이터 수신자](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)를 참조하세요. (#4514)
+- **Agent 추적은 설정한 수신자로 데이터를 보냅니다.** 프로젝트 추적은 기본적으로 비활성화되어 있고 프로젝트가 켜야만 시작되며, 단일 CLI Run의 경우 `--otel-traces`(또는 SDK에서 `otelTraces: true`)는 프로젝트 스위치 없이도 작동하는 명시적인 실행 단위 옵트인입니다. 두 경우 모두 스팬 — 턴 구조, 모델 요청, 선택한 캡처 수준의 도구 실행 — 은 앱이 운영하는 서비스가 아니라 앱의 시작 설정에 지정된 OTLP/HTTP 엔드포인트로만 전달됩니다. 직접 제어하는 수신자를 선택하고, 공유 기기에서 추적을 켜기 전에 캡처 설정을 검토하세요. [데이터 수신자](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)를 참조하세요. (#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 감사의 말
 
 - [Discord](https://discord.gg/zxQAYjReRv), [X](https://x.com/aipoch_ai), [Discussions](https://github.com/aipoch/open-science/discussions)에서 업데이트, Notebook, 메모리 모니터링 문제를 보고해 주신 모든 분께 감사드립니다.
+- [@wen2zhou](https://github.com/wen2zhou) 님께 감사드립니다. 프로젝트 범위 Agent 추적과 실행 단위 CLI 추적([#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618))을 기여해 주셨습니다.

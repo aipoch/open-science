@@ -7,7 +7,7 @@
 
 ## ⚠️ 范围与安全
 
-- **Agent 追踪会将数据发送到你配置的接收端。** 追踪默认关闭，直到项目主动启用；span——回合结构、模型请求与你所选捕获细节下的工具执行——只发往应用启动配置中设置的 OTLP/HTTP 端点，绝不发往应用运营的服务。请选择你掌控的接收端，并在共享机器上启用追踪前检查各捕获开关。参见[数据接收方](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)。(#4514)
+- **Agent 追踪会将数据发送到你配置的接收端。** 项目级追踪默认关闭，仅在项目主动启用后才会开始；而单次 CLI Run 可通过 `--otel-traces`（或 SDK 中的 `otelTraces: true`）显式按次开启，无需项目开关。两种情况下，span——回合结构、模型请求与你所选捕获细节下的工具执行——都只发往应用启动配置中设置的 OTLP/HTTP 端点，绝不发往应用运营的服务。请选择你掌控的接收端，并在共享机器上启用追踪前检查各捕获开关。参见[数据接收方](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)。(#4514)
 
 ## 🚀 新功能
 
@@ -31,3 +31,4 @@
 ## 🙏 致谢
 
 - 感谢所有在 [Discord](https://discord.gg/zxQAYjReRv)、[X](https://x.com/aipoch_ai) 和 [Discussions](https://github.com/aipoch/open-science/discussions) 中反馈更新、Notebook 与内存监控问题的用户。
+- 感谢 [@wen2zhou](https://github.com/wen2zhou) 贡献项目级 Agent 追踪与按次开启的 CLI 追踪（[#4514](https://github.com/aipoch/open-science/pull/4514)、[#4618](https://github.com/aipoch/open-science/pull/4618)）。

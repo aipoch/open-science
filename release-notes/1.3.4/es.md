@@ -7,7 +7,7 @@
 
 ## ⚠️ Alcance y seguridad
 
-- **El rastreo del Agent envía datos a un receptor que usted configura.** El rastreo está desactivado hasta que un proyecto lo habilita, y las trazas —estructura de turnos, solicitudes de modelo y ejecuciones de herramientas con el nivel de detalle elegido— solo van al punto final OTLP/HTTP definido en la configuración de lanzamiento de la aplicación, nunca a un servicio operado por la aplicación. Elija un receptor que usted controle y revise los interruptores de captura antes de activar el rastreo en equipos compartidos. Consulte [receptores de datos](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
+- **El rastreo del Agent envía datos a un receptor que usted configura.** El rastreo del proyecto está desactivado de forma predeterminada y solo se inicia cuando un proyecto lo habilita; para una única ejecución de la CLI, `--otel-traces` (o `otelTraces: true` en el SDK) es una opción explícita por ejecución que no requiere el interruptor del proyecto. En ambos casos, las trazas —estructura de turnos, solicitudes de modelo y ejecuciones de herramientas con el nivel de detalle elegido— solo van al punto final OTLP/HTTP definido en la configuración de lanzamiento de la aplicación, nunca a un servicio operado por la aplicación. Elija un receptor que usted controle y revise los interruptores de captura antes de activar el rastreo en equipos compartidos. Consulte [receptores de datos](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 Agradecimientos
 
 - Gracias a todos los que reportan problemas de actualizaciones, de Notebook y de supervisión de memoria en [Discord](https://discord.gg/zxQAYjReRv), [X](https://x.com/aipoch_ai) y [Discussions](https://github.com/aipoch/open-science/discussions).
+- Gracias a [@wen2zhou](https://github.com/wen2zhou) por las contribuciones de rastreo del Agent del ámbito del proyecto y de rastreo por ejecución en la CLI ([#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618)).

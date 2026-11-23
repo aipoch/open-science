@@ -7,7 +7,7 @@
 
 ## ⚠️ 適用範囲と安全性
 
-- **Agent トレーシングは設定したレシーバーにデータを送信します。** トレーシングはプロジェクトが有効にするまでオフのままで、スパン — ターンの構造、モデルリクエスト、選択した捕捉詳細度でのツール実行 — はアプリの起動設定で指定された OTLP/HTTP エンドポイントにのみ送信され、アプリが運用するサービスには送信されません。自分が管理するレシーバーを選び、共有マシンでトレーシングを有効にする前に捕捉スイッチを確認してください。[データの受領者](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)を参照してください。(#4514)
+- **Agent トレーシングは設定したレシーバーにデータを送信します。** プロジェクトのトレーシングは既定でオフのままで、プロジェクトが有効にした場合にのみ開始されます。単一の CLI Run では、`--otel-traces`（または SDK での `otelTraces: true`）が明示的な実行単位ごとのオプトインであり、プロジェクトのスイッチは必要ありません。いずれの場合も、スパン — ターンの構造、モデルリクエスト、選択した捕捉詳細度でのツール実行 — はアプリの起動設定で指定された OTLP/HTTP エンドポイントにのみ送信され、アプリが運用するサービスには送信されません。自分が管理するレシーバーを選び、共有マシンでトレーシングを有効にする前に捕捉スイッチを確認してください。[データの受領者](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients)を参照してください。(#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 謝辞
 
 - [Discord](https://discord.gg/zxQAYjReRv)、[X](https://x.com/aipoch_ai)、[Discussions](https://github.com/aipoch/open-science/discussions)で、アップデート、Notebook、メモリ監視に関する問題を報告してくださったすべての方に感謝します。
+- プロジェクトスコープの Agent トレーシングと実行単位の CLI トレーシングの貢献（[#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618)）について、[@wen2zhou](https://github.com/wen2zhou) に感謝します。

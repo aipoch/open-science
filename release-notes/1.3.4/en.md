@@ -7,7 +7,7 @@
 
 ## ⚠️ Scope & Safety
 
-- **Agent tracing sends data to a receiver you configure.** Tracing is off until a project enables it, and spans — turn structure, model requests, and tool executions at your chosen capture detail — go only to the OTLP/HTTP endpoint set in the app's launch configuration, never to an app-operated service. Choose a receiver you control and review the capture switches before enabling tracing on shared machines. See [data recipients](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
+- **Agent tracing sends data to a receiver you configure.** Project tracing is off by default and only starts when a project enables it; for a single CLI Run, `--otel-traces` (or `otelTraces: true` in the SDK) is an explicit per-run opt-in that does not require the project switch. In both cases the spans — turn structure, model requests, and tool executions at your chosen capture detail — go only to the OTLP/HTTP endpoint set in the app's launch configuration, never to an app-operated service. Choose a receiver you control and review the capture switches before enabling tracing on shared machines. See [data recipients](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 Acknowledgements
 
 - Thanks to everyone reporting update, Notebook, and memory-monitoring issues in [Discord](https://discord.gg/zxQAYjReRv), [X](https://x.com/aipoch_ai), and [Discussions](https://github.com/aipoch/open-science/discussions).
+- Thanks to [@wen2zhou](https://github.com/wen2zhou) for the project-scoped Agent tracing and per-run CLI tracing contributions ([#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618)).

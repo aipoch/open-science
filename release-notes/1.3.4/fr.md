@@ -7,7 +7,7 @@
 
 ## ⚠️ Portée et sécurité
 
-- **Le traçage de l'Agent envoie des données vers un récepteur que vous configurez.** Le traçage est désactivé tant qu'un projet ne l'active pas, et les spans — la structure des tours, les requêtes de modèle et les exécutions d'outils selon le niveau de détail choisi — ne vont qu'au point de terminaison OTLP/HTTP défini dans la configuration de lancement de l'application, jamais vers un service exploité par l'application. Choisissez un récepteur que vous contrôlez et examinez les commutateurs de capture avant d'activer le traçage sur des machines partagées. Voir [les destinataires de données](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
+- **Le traçage de l'Agent envoie des données vers un récepteur que vous configurez.** Le traçage de projet est désactivé par défaut et ne démarre que lorsqu'un projet l'active ; pour une exécution CLI unique, le drapeau `--otel-traces` (ou `otelTraces: true` dans le SDK) est une option explicite par exécution qui ne requiert pas le commutateur de projet. Dans les deux cas, les spans — la structure des tours, les requêtes de modèle et les exécutions d'outils selon le niveau de détail choisi — ne vont qu'au point de terminaison OTLP/HTTP défini dans la configuration de lancement de l'application, jamais vers un service exploité par l'application. Choisissez un récepteur que vous contrôlez et examinez les commutateurs de capture avant d'activer le traçage sur des machines partagées. Voir [les destinataires de données](https://github.com/aipoch/open-science/blob/v1.3.4/docs/security.md#data-recipients). (#4514)
 
 ## 🚀 New Features
 
@@ -31,3 +31,4 @@
 ## 🙏 Remerciements
 
 - Merci à tous ceux qui signalent des problèmes de mise à jour, de Notebook et de surveillance de la mémoire sur [Discord](https://discord.gg/zxQAYjReRv), [X](https://x.com/aipoch_ai) et [Discussions](https://github.com/aipoch/open-science/discussions).
+- Merci à [@wen2zhou](https://github.com/wen2zhou) pour les contributions au traçage de l'Agent par projet et au traçage CLI par exécution ([#4514](https://github.com/aipoch/open-science/pull/4514), [#4618](https://github.com/aipoch/open-science/pull/4618)).
