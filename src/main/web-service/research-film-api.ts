@@ -15,7 +15,7 @@ import {
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
 import type { createResearchVideoPresentationOwner } from '../research-video/presentation'
-import { TaskApiError } from './task-api'
+import { TaskRunnerError as TaskApiError } from '../tasks/task-runner'
 
 const scopeSchema = researchVideoPresentationRequestSchema.extend({ mode: researchFilmModeSchema })
 const generationScopeSchema = scopeSchema.extend({
