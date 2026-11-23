@@ -143,6 +143,9 @@ export async function composeImageTasks({
                   runtimeSegmentId: null,
                   promptMessageId: null,
                   imageTaskId: request.id,
+                  ...(source.sourceKind === 'artifact-version'
+                    ? { lineageId: source.sourceFileId }
+                    : {}),
                   ...content,
                   contentType
                 })

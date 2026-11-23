@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import * as acp from '@agentclientprotocol/sdk'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import type {
   CodeBuddyAccountRequest,
   CodeBuddyAuthMode,
@@ -21,7 +22,81 @@ import {
 } from './codebuddy-profile'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
-type AccountSnapshot = { authenticated: boolean; model?: string; models?: string[] }
+export type CodeBuddyModelReasoningEfforts = Record<string, ModelReasoningEffort[]>
+
+type AccountSnapshot = {
+  authenticated: boolean
+  model?: string
+  models?: string[]
+  modelReasoningEfforts?: CodeBuddyModelReasoningEfforts
+}
+
+const MODEL_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra'
+]
+
+const isModelReasoningEffort = (value: unknown): value is ModelReasoningEffort =>
+  typeof value === 'string' && MODEL_REASONING_EFFORTS.includes(value as ModelReasoningEffort)
+
+const collectSelectEntries = (options: unknown): Record<string, unknown>[] => {
+  if (!Array.isArray(options)) return []
+  const entries: Record<string, unknown>[] = []
+  for (const option of options) {
+    if (!option || typeof option !== 'object') continue
+    const record = option as Record<string, unknown>
+    if (typeof record.value === 'string') entries.push(record)
+    if (Array.isArray(record.options)) entries.push(...collectSelectEntries(record.options))
+  }
+  return entries
+}
+
+const readEffortValues = (value: unknown): ModelReasoningEffort[] => {
+  if (!Array.isArray(value)) return []
+  return [
+    ...new Set(
+      value.flatMap((entry) => {
+        if (isModelReasoningEffort(entry)) return [entry]
+        if (entry && typeof entry === 'object') {
+          const candidate = (entry as { value?: unknown }).value
+          return isModelReasoningEffort(candidate) ? [candidate] : []
+        }
+        return []
+      })
+    )
+  ]
+}
+
+const readModelReasoningEfforts = (option: unknown): ModelReasoningEffort[] => {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return []
+  const optionRecord = option as Record<string, unknown>
+  const metadata = optionRecord._meta
+  const metadataRecord =
+    metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : undefined
+  const candidates = [
+    optionRecord.effortOptions,
+    metadataRecord?.effortOptions,
+    metadataRecord?.['codebuddy.ai/effortOptions'],
+    metadataRecord?.supportedEfforts,
+    metadataRecord?.['codebuddy.ai/supportedEfforts']
+  ]
+  for (const candidate of candidates) {
+    const values = readEffortValues(candidate)
+    if (values.length) return values
+  }
+  return []
+}
+
+const readModelId = (value: unknown): unknown => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return (value as Record<string, unknown>).modelId
+}
 
 // Keep credentials and vendor auth responses on the CLI side of the settings IPC boundary.
 export async function runCodeBuddyAuth(
@@ -139,7 +214,10 @@ export async function runCodeBuddyAuth(
       const session = await Promise.race([
         connection.agent.request<
           acp.NewSessionResponse & {
-            models?: { currentModelId?: string; availableModels?: { modelId: string }[] }
+            models?: {
+              currentModelId?: string
+              availableModels?: unknown[]
+            }
           }
         >('session/new', { cwd, mcpServers: [] }),
         new Promise<never>((_, reject) => {
@@ -153,6 +231,10 @@ export async function runCodeBuddyAuth(
         (entry) => entry.type === 'select' && (entry.category === 'model' || entry.id === 'model')
       )
       const select = option?.type === 'select' ? option : undefined
+      const effortOption = session.configOptions?.find(
+        (entry) =>
+          entry.type === 'select' && (entry.category === 'thought_level' || entry.id === 'effort')
+      )
       const validId = (id: unknown): id is string =>
         typeof id === 'string' &&
         !!id.trim() &&
@@ -160,12 +242,40 @@ export async function runCodeBuddyAuth(
       const values = collectSelectValues(select?.options).filter(validId)
       const ids = values.length
         ? values
-        : (session.models?.availableModels ?? []).map((m) => m?.modelId).filter(validId)
+        : (session.models?.availableModels ?? []).map(readModelId).filter(validId)
       if (!ids.length) return { authenticated: true }
       const current = values.length ? select?.currentValue : session.models?.currentModelId
       const model = current && ids.includes(current) ? current : ids[0]
       const models = [...new Set([model, ...ids])].slice(0, PROVIDER_RESOURCE_LIMITS.fetchedModels)
-      return { authenticated: true, model, models }
+      const effortValues =
+        effortOption?.type === 'select'
+          ? collectSelectValues(effortOption.options).filter(isModelReasoningEffort)
+          : []
+      const modelReasoningEfforts: Record<string, ModelReasoningEffort[]> = {}
+      for (const entry of collectSelectEntries(select?.options)) {
+        const modelId = entry.value
+        const efforts = readModelReasoningEfforts(entry)
+        if (typeof modelId === 'string' && efforts.length) modelReasoningEfforts[modelId] = efforts
+      }
+      for (const entry of session.models?.availableModels ?? []) {
+        const modelId = readModelId(entry)
+        const efforts = readModelReasoningEfforts(entry)
+        if (
+          typeof modelId === 'string' &&
+          efforts.length &&
+          modelReasoningEfforts[modelId] === undefined
+        )
+          modelReasoningEfforts[modelId] = efforts
+      }
+      if (model && effortValues.length && !modelReasoningEfforts[model]) {
+        modelReasoningEfforts[model] = [...new Set(effortValues)]
+      }
+      return {
+        authenticated: true,
+        model,
+        models,
+        ...(Object.keys(modelReasoningEfforts).length ? { modelReasoningEfforts } : {})
+      }
     }
     return await Promise.race([operate(), stopped])
   } catch {

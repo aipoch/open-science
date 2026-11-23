@@ -171,6 +171,35 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'Low', 'Medium', 'High', 'XHigh', 'Ultra'])
   })
 
+  it('uses the selected CodeBuddy model capability catalog', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'codebuddy-cn',
+      activeModel: 'hy4-preview',
+      providers: [
+        {
+          id: 'codebuddy-cn',
+          type: 'codebuddy-subscription',
+          name: 'CodeBuddy (China)',
+          models: ['hy4-preview', 'deepseek-v4'],
+          modelReasoningEfforts: { 'hy4-preview': ['high'] },
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('[role="radio"]')).map((element) =>
+        element.textContent?.trim()
+      )
+    ).toEqual(['Default', 'High'])
+  })
+
   it('shows the documented thinking switch for MiniMax-M3', async () => {
     useSettingsStore.setState({
       activeProviderId: 'minimax',

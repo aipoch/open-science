@@ -38,6 +38,7 @@ type NotebookEnvironmentLifecycleDeps = {
   platform?: NodeJS.Platform
   projectProgress: (progress: ProvisionProgress) => void
   recoveryStatus?: () => import('@aipoch/environment/contracts').NotebookRecoveryStatus
+  waitForStatusRecovery?: () => Promise<void>
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
   onRepairStarting?: (
@@ -75,7 +76,7 @@ const createUnavailableLifecycle = (
 ): NotebookEnvironmentLifecycle => ({
   status: () =>
     withDataRootWrite(async () => {
-      await deps.waitForRecovery?.()
+      await (deps.waitForStatusRecovery ?? deps.waitForRecovery)?.()
       return {
         pythonReady: false,
         rReady: false,
@@ -104,7 +105,7 @@ const createNotebookEnvironmentLifecycle = (
 
   const status = (): Promise<ProvisionStatus> =>
     withDataRootWrite(async () => {
-      if (deps.waitForRecovery) await deps.waitForRecovery()
+      await (deps.waitForStatusRecovery ?? deps.waitForRecovery)?.()
       const status = await provisioner.status()
       return { ...status, ...(deps.recoveryStatus ? { recovery: deps.recoveryStatus() } : {}) }
     })

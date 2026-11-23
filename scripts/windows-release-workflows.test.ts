@@ -204,7 +204,7 @@ describe('post-merge Windows validation', () => {
   it('prepares the bundled runtime before Windows consumers and snapshot publication', () => {
     const consumers = [
       ['pr-gate.yml', 'windows_core', 'Test Windows notebook shell behavior'],
-      ['pr-gate.yml', 'windows_e2e', 'Run mainline journeys'],
+      ['pr-gate.yml', 'windows_e2e_setup', 'Pack E2E setup'],
       ['windows-e2e-regression.yml', 'windows_e2e_setup', 'Pack E2E setup'],
       ['windows-full-test.yml', 'windows_dependencies', 'Pack dependencies'],
       ['runtime-resource-soak.yml', 'runtime_resource_soak', 'Record runtime resource profile']
@@ -320,7 +320,7 @@ describe('post-merge Windows validation', () => {
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toBeUndefined()
-    expect(workflow.on?.schedule).toEqual([{ cron: '47 16 * * *' }])
+    expect(workflow.on?.schedule).toEqual([{ cron: '47 13 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
       options: [
@@ -353,6 +353,9 @@ describe('post-merge Windows validation', () => {
       }
     })
     expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(findStep(dependencies, 'Verify generated test dependencies').run).toBe(
+      'node scripts/check-prisma-client.mjs'
+    )
     const dependencySteps = dependencies.steps ?? []
     const dependencyHost = findStep(dependencies, 'Build Windows sandbox native host')
     expect(dependencyHost.run).toBe(
@@ -375,7 +378,7 @@ describe('post-merge Windows validation', () => {
         "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
+      'npx vitest run --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' }}"
@@ -441,7 +444,9 @@ describe('post-merge Windows validation', () => {
     const install = findStep(job, 'Install Windows package for AppContainer certification')
 
     expect(job['continue-on-error']).toBeUndefined()
-    expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
+    expect(smoke.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}"
+    )
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(20)
     expect(install.run).toContain(
@@ -540,7 +545,9 @@ describe('post-merge Windows validation', () => {
       'run-id': '${{ inputs.artifact_run_id || github.run_id }}',
       'github-token': '${{ github.token }}'
     })
-    expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
+    expect(linux.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'linux' }}"
+    )
     expect(evidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
     expect(uploadEvidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
   })
@@ -767,11 +774,13 @@ describe('post-merge Windows validation', () => {
     expect(smoke.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
     expect(downloadPackage.with?.path).toBe('dist')
-    expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
+    expect(macos.if).toBe(
+      "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'mac' }}"
+    )
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(windowsSignature).toMatchObject({
-      if: "${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}",
+      if: "${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' && inputs.require_windows_signing }}",
       env: { AZURE_SIGNING_PUBLISHER: '${{ vars.AZURE_SIGNING_PUBLISHER }}' },
       run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist'
     })
@@ -823,12 +832,11 @@ describe('post-merge Windows validation', () => {
       include:
         '${{ fromJSON(inputs.architecture == \'arm64\' && \'[{"arch":"arm64","os":"macos-15"}]\' || inputs.architecture == \'x64\' && \'[{"arch":"x64","os":"macos-15-intel"}]\' || \'[{"arch":"arm64","os":"macos-15"},{"arch":"x64","os":"macos-15-intel"}]\') }}'
     })
-    expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
+    expect(refreshedMacosEvidence.run).toContain('release-certification-evidence.mjs refresh')
+    expect(refreshedMacosEvidence.run).toContain('--artifact-dir mac')
     expect(refreshedMacosEvidence.run).toContain(
-      '--database-migration-certification mac/database-migration-certification.json'
+      '--output "mac/certification-macos-${{ matrix.arch }}.json"'
     )
-    expect(refreshedMacosEvidence.run).toContain('--electron-p0 not-applicable')
-    expect(refreshedMacosEvidence.run).toContain('--visual-regression not-applicable')
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
     expect(notarizeDryRun.with?.certified_build).toBe(false)
     expect(notarize.steps?.indexOf(refreshedMacosEvidence)).toBeGreaterThan(
@@ -854,7 +862,8 @@ describe('post-merge Windows validation', () => {
       'package-smoke',
       'notarize-mac',
       'cli-artifacts',
-      'linux-cli-packages'
+      'linux-cli-packages',
+      'windows-upgrade'
     ])
     expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(nightly.jobs['package-smoke']).toMatchObject({
@@ -954,6 +963,34 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => /^npm run build:web\b/.test(command))).toBe(false)
     expect(commands).not.toContain('npm run build')
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
+  })
+
+  it('publishes the verified Windows version-pair patch for every release', () => {
+    const release = readWorkflow('release.yml')
+    const delta = findStep(release.jobs.publish, 'Generate verified Windows version-pair patch')
+
+    expect(delta.if).toBeUndefined()
+    expect(delta).toMatchObject({
+      env: { GH_TOKEN: '${{ github.token }}' },
+      run: 'bash build/windows-delta/release.sh artifacts'
+    })
+  })
+
+  it('supports a controlled CDN repair for an already published Windows delta', () => {
+    const mirror = readWorkflow('mirror-to-website.yml')
+    const inputs = mirror.on.workflow_dispatch.inputs
+    expect(inputs.windows_delta_repair).toMatchObject({ required: false, default: false })
+    expect(findStep(mirror.jobs.mirror, 'Download Windows delta repair assets').run).toContain(
+      "--pattern '*.wex'"
+    )
+    const repair = findStep(mirror.jobs.mirror, 'Repair Windows version-pair delta')
+    expect(repair).toMatchObject({
+      if: '${{ !inputs.dry_run && inputs.windows_delta_repair }}',
+      run: 'node scripts/repair-windows-delta.mjs'
+    })
+    expect(findStep(mirror.jobs.mirror, 'Sync installers to versioned path').if).toBe(
+      '${{ !inputs.dry_run && !inputs.windows_delta_repair }}'
+    )
   })
 
   it('records unsigned Windows update diagnostics without blocking publishing', () => {
@@ -1070,7 +1107,8 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'package-smoke',
       'notarize-mac',
       'cli-artifacts',
-      'linux-cli-packages'
+      'linux-cli-packages',
+      'windows-upgrade'
     ])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
@@ -1317,6 +1355,13 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
             required: false,
             type: 'boolean',
             default: false
+          },
+          windows_delta_repair: {
+            description:
+              'Repair the CDN root feed and immutable Windows delta for an already published release',
+            required: false,
+            type: 'boolean',
+            default: false
           }
         }
       }
@@ -1363,13 +1408,15 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(backfill.run).toContain(
       'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
     )
+    expect(findStep(mirror, 'Configure AWS credentials').if).toBe('${{ !inputs.dry_run }}')
     for (const sideEffectStep of [
-      'Configure AWS credentials',
       'Collect historical Windows blockmaps',
       'Backfill historical Windows blockmaps',
       'Sync installers to versioned path'
     ]) {
-      expect(findStep(mirror, sideEffectStep).if).toBe('${{ !inputs.dry_run }}')
+      expect(findStep(mirror, sideEffectStep).if).toBe(
+        '${{ !inputs.dry_run && !inputs.windows_delta_repair }}'
+      )
     }
   })
 

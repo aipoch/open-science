@@ -110,10 +110,18 @@ const canonicalValue = (value: string): string => {
     return String(Number(value.replace(/[.,]/gu, '')))
   return String(Number(value.replace(',', '.')))
 }
-const canonicalUnit = (value: string): string =>
+const splitUnit = (value: string): string[] =>
   value
     // Percentage words contain "per", "por" or "प्रति" without denoting a ratio.
     .split(/\s*(?:\/|\b(?:per|por)\b(?!\s+(?:cent(?:o)?|ciento)\b)|प्रति(?!शत)|لكل|每)\s*/iu)
+const quantityMatches = (text: string): RegExpMatchArray[] =>
+  [...text.matchAll(quantity)].filter((match) =>
+    // The SI symbol for a metre is case-sensitive. Capital M can be a
+    // variable or denote molarity, neither of which represents a length.
+    splitUnit(match[2]).every((part) => !/^M(?:\^?[23])?$/u.test(part.trim()))
+  )
+const canonicalUnit = (value: string): string =>
+  splitUnit(value)
     .map((part) => {
       const power = part.match(/\^?([23])$/u)?.[1] ?? ''
       const base = part.replace(/\^?[23]$/u, '').trim()
@@ -124,12 +132,12 @@ const canonicalUnit = (value: string): string =>
 type Quantity = { value: string; unit: string }
 /** Original spelling for content-first literal preservation, without semantic normalization. */
 export function pdfTranslationNumericUnitLiterals(source: string): string[] {
-  return [...source.matchAll(quantity)].map((match) => match[0])
+  return quantityMatches(source).map((match) => match[0])
 }
 function quantities(input: string): Quantity[] {
   const text = normalize(input)
   const result: Quantity[] = []
-  for (const match of text.matchAll(quantity)) {
+  for (const match of quantityMatches(text)) {
     const boundUnit = canonicalUnit(match[2])
     result.push({ value: canonicalValue(match[1]), unit: boundUnit })
     // Shared units in an explicit range/list apply to each endpoint (5–10 mg,

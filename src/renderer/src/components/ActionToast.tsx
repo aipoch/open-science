@@ -59,7 +59,7 @@ const ActionToast = ({
         if (!event.currentTarget.contains(event.relatedTarget)) setFocusedWithin(false)
       }}
       className={cn(
-        'pointer-events-auto fixed inset-x-3 top-3 mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-dialog',
+        'pointer-events-auto fixed inset-x-3 top-3 mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-notice',
         detail ? 'rounded-2xl' : noticeSurfaceClassName,
         !detail && [noticeCapsuleClassName, 'w-fit max-w-[min(24rem,calc(100vw-1.5rem))]'],
         className
@@ -119,7 +119,7 @@ const ActionToastStack = ({
 const BottomNoticeStack = ({ children }: { children: ReactNode }): React.JSX.Element => (
   <div
     data-bottom-notice-stack
-    className="pointer-events-none fixed bottom-3 right-3 z-toast flex max-h-[calc(100svh-24px)] w-[min(420px,calc(100vw-24px))] flex-col gap-2 overflow-y-auto [&_[data-bottom-notice]]:static [&_[data-bottom-notice]]:w-full [&_[data-bottom-notice]]:max-w-none [&_[data-bottom-notice]]:shrink-0"
+    className="pointer-events-none fixed right-0 bottom-0 z-toast flex max-h-svh w-[min(444px,100vw)] flex-col gap-2 overflow-y-auto p-3 [&_[data-bottom-notice]]:static [&_[data-bottom-notice]]:w-full [&_[data-bottom-notice]]:max-w-none [&_[data-bottom-notice]]:shrink-0"
   >
     {children}
   </div>

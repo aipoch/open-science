@@ -53,18 +53,17 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.3.0 更新
+### 💡 AIPOCH Open-Science v1.3.4 更新
 
-_2026 年 11 月 18 日_
+_2026 年 11 月 22 日_
 
-- **定时研究任务**：设置周期性或一次性计划，自动启动会话和 Notebook 任务——每次运行都在工作区中打开并保留独立记录。
-- **图像生成与编辑**：使用已配置的提供商生成图像，并通过后续编辑迭代；每个版本都可对比、回溯和复用。
-- **可编辑的演示文稿**：PowerPoint 文件可直接编辑文本——字体、字号、颜色和对齐——幻灯片结构保持不变。
-- **影片重放**：将影片操作重放到新分支并获得独立输出，从会话菜单直接打开影片，生成前即可查看 token 用量。
-- **更智能的代理提问**：代理请求输入时，各选项会说明取舍，让你了解后果后再做决定。
-- **可靠性与速度**：长会话历史增量持久化，中断的影片与打包传输可自行恢复，Windows 安装与更新更精简，应用启动更快进入项目。
+- **看清内置 Agent 的内部**：项目可选择开启 Agent 追踪，将回合、模型请求与工具执行彼此关联的 span 导出到你自行托管的 OTLP/HTTP 接收端，捕获细节由你掌控。
+- **Windows 更新不再受阻**：内置 Agent 运行时，应用内更新不再停滞；Windows 稳定版更新重新以紧凑的安装器增量包形式应用。
+- **长 Notebook 历史保持快速**：启动与结束 Run、选择结果、打开预览都不再重新读取整个历史。
+- **值得信赖的内存读数**：Compute 摘要现在在 macOS 上与活动监视器一致，在 Windows 上显示已提交内存相对其上限。
+- **CodeBuddy 推理档位**：档位选择器现在只提供所选 CodeBuddy 模型实际支持的级别。
 
-[查看 v1.3.0 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[查看 v1.3.4 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ _2026 年 11 月 18 日_
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 软件包     |
 
 安装前的校验方法见[验证下载](../../SECURITY.md#verifying-your-download)。
+
+在 Windows 10/11 x64 上，可以从 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) 安装桌面应用，也可以在 PowerShell 中使用 WinGet 安装。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+各分发渠道提供的版本可能不同。详情见[安装和更新指南](https://aipoch.com/docs/guides/installation/)。
 
 macOS 用户也可以通过 [Homebrew](https://brew.sh) 安装：
 
@@ -172,6 +179,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 根据文献回答问题 | LitQA2-FullText        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 综合带引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | ASI-Bench              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 复现 ML/NLP 实验 | AstaBench SUPER-Expert | 使用 DeepSeek Flash/Max 在 45 题本地测试中取得 **46.30%** output_match/mean。                                                               |
 | 执行科研工作流   | TB-Science 0.1         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
 | 分析生物医学数据 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
 | 复现已发表的结果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
@@ -182,7 +190,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 
 **评测范围：** 报告涵盖 2026 年 8 月至 11 月、使用所列模型与数据划分开展的本地或内部测试，并未针对当前版本重新运行。参考成绩是历史快照，并非实时排名。不同基准系列的分数不能直接比较，数值差距不代表统计显著性。
 
-评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
+评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。另见 [SUPER-Expert 本地测试报告](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)。
 
 [CORE-Bench-Hard · 复现评测报告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

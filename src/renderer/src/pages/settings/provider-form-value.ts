@@ -5,6 +5,7 @@ import {
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
+  type CatalogSnapshot,
   type ModelProtocol,
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -17,7 +18,7 @@ import {
   getOfficialVendorModelIds
 } from '../../../../shared/provider-model-policy'
 import {
-  customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-url-policy'
@@ -257,7 +258,7 @@ const positiveWholeNumberError = (value: string): boolean => {
 // requirement, so the user can leave the key blank to keep it.
 export const getProviderFormErrors = (
   value: ProviderFormValue,
-  options: { hasStoredKey?: boolean } = {}
+  options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
 
@@ -277,18 +278,14 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
-    // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
-    // remote gateway requires one.
-    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
-      errors.key = 'API key is required.'
-    }
-  } else if (value.type === 'official') {
-    // No model is chosen at add time: the vendor catalog + the global model selection cover that.
-    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
-  } else if (value.type === 'claude-isolated') {
-    // claude-isolated has no add-time fields: the type alone provisions the provider card, and the
-    // token paste lives in a separate sign-in modal (loginIsolatedClaude). Rejecting here would
-    // block the renderer from even creating the record, which contradicts the UX.
+  }
+  if (
+    (value.type === 'custom' || value.type === 'official') &&
+    !value.key.trim() &&
+    !options.hasStoredKey &&
+    !providerAllowsAnonymousAccess({ ...value, modelCatalog: options.modelCatalog })
+  ) {
+    errors.key = 'API key is required.'
   }
 
   return errors
@@ -314,6 +311,7 @@ export type ProviderKindDescriptionKey =
   | 'Use an existing Claude profile or sign in with a separate Open-Science profile.'
   | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
+  | 'Free models work without an API key.'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
 
 // Group headers shown in the provider-type picker and dropdown, in display order. The two
@@ -377,7 +375,9 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    descriptionKey: 'API key — models provided',
+    descriptionKey: vendor.supportsAnonymousAccess
+      ? 'Free models work without an API key.'
+      : 'API key — models provided',
     group: 'api'
   })),
   {
@@ -387,6 +387,37 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     group: 'other'
   }
 ]
+
+export type ProviderKindAvailability = {
+  // Desktop CodeBuddy accounts; undefined hides them. Listed ids are already added and stay disabled.
+  codeBuddyProviders?: readonly string[]
+  showCodexSubscriptions?: boolean
+  showClaudeIsolated?: boolean
+}
+
+// Whether a provider kind is offered for the active framework. The type dropdown and the Add provider
+// picker share this so both surfaces list the same kinds.
+export const isProviderKindAvailable = (
+  kind: ProviderKind,
+  { codeBuddyProviders, showCodexSubscriptions, showClaudeIsolated }: ProviderKindAvailability
+): boolean => {
+  if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
+  // Codex and the built-in Agent share the app-owned subscription sign-in.
+  if (kind.group === 'codex' && !showCodexSubscriptions) return false
+  // The Claude subscription section mirrors it: gate on Claude Code being active, the only
+  // framework that speaks the app-owned bearer token.
+  if (kind.group === 'claude' && !showClaudeIsolated) return false
+  return true
+}
+
+// Local model presets are offered as their own provider kinds in the Add provider picker. Each one
+// opens a custom gateway seeded with that preset.
+export const LOCAL_MODEL_KIND_PREFIX = 'local:'
+
+export const localModelPresetForKindKey = (key: string): LocalModelPreset | undefined =>
+  key.startsWith(LOCAL_MODEL_KIND_PREFIX)
+    ? LOCAL_MODEL_PRESETS.find((preset) => preset.id === key.slice(LOCAL_MODEL_KIND_PREFIX.length))
+    : undefined
 
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching to custom clears vendor-only fields and applies the
@@ -459,6 +490,17 @@ export const providerKindPatch = (
       name: vendor?.label,
       vendorId,
       region: vendor?.regions?.[0]?.id
+    }
+  }
+
+  const localPreset = localModelPresetForKindKey(key)
+  if (localPreset) {
+    return {
+      ...reset,
+      type: 'custom',
+      name: localPreset.label,
+      baseUrl: localPreset.baseUrl,
+      apiEndpoint: 'chat-completions'
     }
   }
 

@@ -201,6 +201,29 @@ describe('desktop projection of application commands and events', () => {
     }
   )
 
+  it('opens a complete history page larger than one desktop frame', async () => {
+    const channel = 'sessions:load-history-page'
+    const page = {
+      complete: true,
+      session: { messages: [{ content: 'x'.repeat(16 * 1024 * 1024) }] }
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      events: new ApplicationEventHub(),
+      commands: { commandNames: () => [channel], invoke: async () => page }
+    })
+    cleanups.push(server.close)
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanups.push(async () => client.close())
+    await expect(
+      client.invoke(randomUUID(), channel, [{ projectId: 'project', sessionId: 'history' }])
+    ).resolves.toEqual(page)
+  })
+
   it.each([undefined, null, false, 0])(
     'preserves the command result %s for renderer and host callers',
     async (result) => {

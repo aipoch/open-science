@@ -1,9 +1,8 @@
-import { createRequire } from 'node:module'
 import { posix } from 'node:path'
 import { transformSync, types as t, type PluginObj } from '@babel/core'
+import commonJs from '@babel/plugin-transform-modules-commonjs'
 import { unzipSync, strFromU8 } from 'fflate'
 
-const commonJs = createRequire(import.meta.url).resolve('@babel/plugin-transform-modules-commonjs')
 export type SessionAppDescription = {
   name: string
   modules: number

@@ -141,11 +141,20 @@ export const toAvailableUpdateStatus = ({
   ...(applyKind === undefined ? {} : { applyKind })
 })
 
+export interface DownloadPreference {
+  readonly enabled: boolean
+  setEnabled(enabled: boolean): void
+  stageForNextLaunch?(status: UpdateStatus): Promise<void>
+}
+
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
 // UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both
 // broadcast the same UpdateStatus. See create-strategy.ts for how the host is routed.
 export interface UpdateStrategy {
+  setAutomaticDownloads?(enabled: boolean): Promise<UpdateStatus>
+  getBackgroundDownloadOffer?(): UpdateStatus | undefined
+  downloadInBackground?(version: string): Promise<UpdateStatus>
   publishLifecycleStatus?(status: Partial<UpdateStatus>): void
   recheck?(): Promise<UpdateStatus>
   recover?(): Promise<UpdateStatus>

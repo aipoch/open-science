@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
-import { test } from './fixtures/electron-app'
+import { test, type ElectronApp } from './fixtures/electron-app'
 import {
   installSessionOutcomeFault,
   holdOutcomeAdmission,
@@ -340,12 +340,7 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
     await expect
       .poll(async () => outcomeFor(await sessionForPrompt(page, early), early))
       .toMatchObject({ kind: 'completed' })
-    const latest =
-      latestKind === 'cancelled'
-        ? HOLD_PROMPT
-        : latestKind === 'interrupted'
-          ? 'Stream the long scroll journey.'
-          : FAILURE_PROMPT
+    const latest = latestKind === 'legacy-failed' ? FAILURE_PROMPT : HOLD_PROMPT
     await submit(page, latest)
     if (latestKind === 'cancelled') {
       await expect(
@@ -356,11 +351,12 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
         .poll(async () => outcomeFor(await sessionForPrompt(page, latest), latest))
         .toMatchObject({ kind: 'cancelled' })
     } else if (latestKind === 'interrupted') {
-      await expect(page.getByText('Segment 1 paragraph 0.', { exact: false })).toBeVisible()
+      await expect(
+        page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+      ).toBeVisible()
       const snapshot = await sessionForPrompt(page, latest)
       expect(snapshot.status).toBe('running')
-      await expect.poll(async () => (await sessionForPrompt(page, latest)).status).toBe('idle')
-      page = await app.restartWithSessionFixture(snapshot)
+      page = await app.restartAfterCrash({ force: true })
       await page
         .getByRole('region', { name: 'Recent sessions' })
         .getByRole('button', { name: snapshot.title })
@@ -628,13 +624,13 @@ test('interrupted recovery keeps exact Resume during a new prompt preparation', 
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page, 'Interrupted new prompt preparation')
-  const prompt = 'Stream the long scroll journey.'
+  const prompt = HOLD_PROMPT
   await submit(page, prompt)
-  await expect(page.getByText('Segment 1 paragraph 0.', { exact: false })).toBeVisible()
-  const snapshot = await sessionForPrompt(page, prompt)
-  expect(snapshot.status).toBe('running')
-  await expect.poll(async () => (await sessionForPrompt(page, prompt)).status).toBe('idle')
-  page = await app.restartWithSessionFixture(snapshot)
+  await expect(
+    page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+  ).toBeVisible()
+  expect((await sessionForPrompt(page, prompt)).status).toBe('running')
+  page = await app.restartAfterCrash({ force: true })
   await page
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', { name: prompt })
@@ -1015,5 +1011,123 @@ test('keeps a prepared message after a real pre-admission crash without inventin
     expect(outcomeFor(await sessionForPrompt(page, prompt), prompt)).toBeUndefined()
   } finally {
     await gate.restore()
+  }
+})
+
+const openMemoryProject = async (app: ElectronApp): Promise<Page> => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.evaluate(async () => {
+    await window.api.memory.setEnabled({ enabled: true })
+    await window.api.settings.setDefaultPermissionProfile({ profile: 'ask' })
+  })
+  await createProject(page, '授权拒绝测试')
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+  return page
+}
+
+test('explains a denied save in the original turn when the agent stops without a reply', async ({
+  app
+}, testInfo) => {
+  const page = await openMemoryProject(app)
+  const composer = page.getByRole('textbox', { name: '输入任何内容' })
+  const send = page.getByRole('button', { name: '发送消息', exact: true })
+  const memoryBefore = await page.evaluate(() => window.api.memory.snapshot())
+  const card = page.getByTestId('permission-card')
+  const denySavingMemory = async (): Promise<void> => {
+    await composer.fill('请把测试用的周报格式保存到项目记忆里。')
+    await send.click()
+    await expect(card).toBeVisible()
+    await card.getByTestId('deny-button').click()
+    await expect(card).toHaveCount(0)
+  }
+
+  await denySavingMemory()
+  const notice = page.getByText('授权已被拒绝，相关操作未执行。', { exact: true })
+  await expect(notice).toBeVisible()
+  await expect(page.getByText('已保存周报格式。', { exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+  await page.screenshot({ path: testInfo.outputPath('memory-denied.png'), animations: 'disabled' })
+
+  await composer.fill('你好')
+  await send.click()
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await expect(notice).toBeVisible()
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+  await page.screenshot({
+    path: testInfo.outputPath('after-follow-up.png'),
+    animations: 'disabled'
+  })
+
+  await denySavingMemory()
+  await expect(notice).toHaveCount(2)
+  await page.getByRole('button', { name: '恢复会话', exact: true }).click()
+  await expect(
+    page.getByText('保存记忆的授权被拒绝，这次没有保存。', { exact: true })
+  ).toBeVisible()
+  await expect(card).toHaveCount(0)
+  await expect(notice).toHaveCount(1)
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+})
+
+test('keeps both tool results when a read succeeds and a save is refused', async ({
+  app
+}, testInfo) => {
+  const page = await openMemoryProject(app)
+  const composer = page.getByRole('textbox', { name: '输入任何内容' })
+  const send = page.getByRole('button', { name: '发送消息', exact: true })
+  const card = page.getByTestId('permission-card')
+  const notice = page.getByText('授权已被拒绝，相关操作未执行。', { exact: true })
+  const memoryBefore = await page.evaluate(() => window.api.memory.snapshot())
+
+  for (const partialReply of [false, true]) {
+    await composer.fill(
+      '请先读取记忆分类，再把测试用的周报格式保存到项目记忆里。' +
+        (partialReply ? '测试情形：只回复已读部分。' : '')
+    )
+    await send.click()
+    await expect(card).toBeVisible()
+    await card.getByTestId('deny-button').click()
+    await expect(card).toHaveCount(0)
+
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const { sessions } = await window.api.sessions.loadAll()
+          return sessions
+            .flatMap((session) => session.activities ?? [])
+            .filter((activity) => /^e2e-(memory-categories|save-memory)-/.test(activity.id))
+            .map(({ status, toolDisposition }) => ({
+              status,
+              disposition: toolDisposition ?? null
+            }))
+        })
+      )
+      .toEqual(
+        Array.from({ length: partialReply ? 2 : 1 }, () => [
+          { status: 'completed', disposition: null },
+          { status: 'completed', disposition: 'declined' }
+        ]).flat()
+      )
+
+    if (partialReply) {
+      await expect(page.getByText('已读取记忆分类。', { exact: true })).toBeVisible()
+    } else {
+      await expect(notice).toBeVisible()
+    }
+    expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+    const group = page.getByTestId('tool-group').last()
+    const header = group.getByTestId('tool-group-header')
+    await expect(header).toHaveAttribute('aria-expanded', 'false')
+    await expect(header).toContainText('工具活动')
+    await expect(header).toContainText('1 项完成 · 1 项因授权被拒绝而未执行')
+    await page.screenshot({
+      path: testInfo.outputPath(partialReply ? 'partial-reply.png' : 'partial-no-reply.png'),
+      animations: 'disabled'
+    })
+    await header.click()
+    await expect(group.getByText('已被你拒绝', { exact: true })).toBeInViewport({ ratio: 1 })
   }
 })

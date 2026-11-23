@@ -13,6 +13,12 @@ import {
 import { getCustomProviderBaseUrlError } from './provider-url-policy'
 
 const imageOptionId = z.string().trim().min(1).max(128)
+const imageWireModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(/^[a-zA-Z0-9._:/-]+$/)
 const model = z
   .object({
     id: imageOptionId,
@@ -22,30 +28,25 @@ const model = z
         ...Array<keyof typeof IMAGE_MODEL_PRESET_ADAPTERS>
       ]
     ),
-    wireModelId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(256)
-      .regex(/^[a-zA-Z0-9._:/-]+$/),
+    wireModelId: imageWireModelIdSchema,
     label: z.string().trim().min(1).max(128).optional()
   })
   .strict()
-const serviceFields = {
+const targetFields = {
   id: z.string().uuid(),
-  name: z.string().trim().min(1).max(80),
   adapter: z.enum(['minimax', 'openai-images', 'qwen-images', 'seedream']),
   baseUrl: z.string().trim().min(1).max(2048).optional(),
   providerId: imageOptionId.optional(),
-  vendorId: z.enum(['minimax', 'openai', 'bailian', 'volcengine']).optional(),
-  models: z.array(model).min(1).max(16)
+  vendorId: z.enum(['minimax', 'openai', 'bailian', 'volcengine']).optional()
 }
-const usesQwenWorkspace = (service: ImageServiceConfiguration): boolean =>
+const apiKey = z.string().trim().max(16384).optional()
+type ImageServiceTarget = z.infer<z.ZodObject<typeof targetFields>>
+const usesQwenWorkspace = (service: ImageServiceTarget): boolean =>
   service.vendorId === 'bailian' &&
   service.adapter === 'qwen-images' &&
   isQwenWorkspaceBaseUrl(service.baseUrl)
 
-const validService = (service: ImageServiceConfiguration): boolean =>
+const validTarget = (service: ImageServiceTarget): boolean =>
   (!service.vendorId ||
     IMAGE_VENDOR_CATALOG.some(
       (vendor) =>
@@ -53,27 +54,43 @@ const validService = (service: ImageServiceConfiguration): boolean =>
         vendor.adapter === service.adapter &&
         (service.providerId ||
           usesQwenWorkspace(service) ||
-          vendor.regions.some((region) => region.baseUrl === service.baseUrl)) &&
-        service.models.every((model) =>
-          vendor.models.some(
-            (entry) => entry.wireModelId === model.wireModelId && entry.presetId === model.presetId
-          )
-        )
+          vendor.regions.some((region) => region.baseUrl === service.baseUrl))
     )) &&
-  new Set(service.models.map((model) => model.id)).size === service.models.length &&
-  service.models.every(
-    (model) => IMAGE_MODEL_PRESET_ADAPTERS[model.presetId] === service.adapter
-  ) &&
   (service.providerId !== undefined
     ? service.baseUrl === undefined || usesQwenWorkspace(service)
     : Boolean(service.baseUrl && !getCustomProviderBaseUrlError(service.baseUrl)))
-export const imageServiceSchema = z.strictObject(serviceFields).refine(validService)
+
+const validService = (service: ImageServiceConfiguration): boolean =>
+  validTarget(service) &&
+  (!service.vendorId ||
+    service.models.every((model) =>
+      IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === service.vendorId)?.models.some(
+        (entry) => entry.wireModelId === model.wireModelId && entry.presetId === model.presetId
+      )
+    )) &&
+  new Set(service.models.map((model) => model.id)).size === service.models.length &&
+  service.models.every((model) => IMAGE_MODEL_PRESET_ADAPTERS[model.presetId] === service.adapter)
+export const imageServiceSchema = z
+  .strictObject({
+    ...targetFields,
+    name: z.string().trim().min(1).max(80),
+    models: z.array(model).min(1).max(16)
+  })
+  .refine(validService)
+export const imageModelCatalogRequestSchema = z
+  .strictObject({ ...targetFields, apiKey })
+  .refine(
+    (service) =>
+      Boolean(service.vendorId || service.providerId) &&
+      validTarget(service) &&
+      (!service.providerId || service.apiKey === undefined)
+  )
 export const imageModelBindingSchema = z
   .object({ serviceId: z.string().uuid(), modelId: imageOptionId })
   .strict()
 export const imageModelMutationSchema = z.union([
   imageServiceSchema
-    .safeExtend({ kind: z.literal('save'), apiKey: z.string().trim().max(16384).optional() })
+    .safeExtend({ kind: z.literal('save'), apiKey })
     .refine((service) => !service.providerId || service.apiKey === undefined),
   z.object({ kind: z.literal('remove'), id: z.string().uuid() }).strict(),
   z.object({ kind: z.literal('bind'), binding: imageModelBindingSchema.optional() }).strict()

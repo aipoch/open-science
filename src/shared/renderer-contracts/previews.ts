@@ -6,6 +6,7 @@ import type {
   ImageTaskStartResult
 } from '../image-task'
 import type {
+  ResearchVideoActiveSession,
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
@@ -201,6 +202,10 @@ export const previewDeleteContracts = {
       resolution?: ResearchVideoResolution
     }) => Promise<ResearchVideoExportResult>
   >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
+  'researchVideo.activeSessions': callable<() => Promise<readonly ResearchVideoActiveSession[]>>()(
+    'preview-resources',
+    ['research-video:active-sessions', ELECTRON]
+  ),
   'researchVideo.start': callable<
     (request: ResearchVideoStartRequest) => Promise<ResearchVideoPresentationStatus>
   >()('preview-resources', ['research-video:start', ELECTRON]),
@@ -214,6 +219,9 @@ export const previewDeleteContracts = {
     'preview-resources',
     ['research-video:cancel', ELECTRON]
   ),
+  'researchVideo.onActivityChanged': callable<
+    (listener: (sessions: readonly ResearchVideoActiveSession[]) => void) => RemoveListener
+  >()('preview-resources', ['research-video:activity-changed', ELECTRON_EVENT]),
   'previewResources.researchVideoExportProgress': callable<
     (request: { resourceId: string }) => Promise<ResearchVideoProgress | null>
   >()('preview-resources', ['preview-resources:research-video-progress', ELECTRON]),

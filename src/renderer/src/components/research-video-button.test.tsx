@@ -11,10 +11,18 @@ import type {
   ResearchVideoPresentationStatus
 } from '../../../shared/research-video-presentation'
 import { ResearchVideoButton } from './research-video-button'
-import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../../shared/research-video-presentation'
-const { openPreview, removePreview } = vi.hoisted(() => ({
+import {
+  RESEARCH_FILM_BUSY_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE
+} from '../../../shared/research-video-presentation'
+const { openPreview, removePreview, openSession } = vi.hoisted(() => ({
   openPreview: vi.fn(),
-  removePreview: vi.fn()
+  removePreview: vi.fn(),
+  openSession:
+    vi.fn<(projectId: string, id: string, origin: 'user', afterNavigate: () => void) => boolean>()
+}))
+vi.mock('@/stores/navigation-store', () => ({
+  useNavigationStore: { getState: () => ({ openSession }) }
 }))
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -96,6 +104,46 @@ it('chooses a mode before starting without a chat or fork API, and supports canc
   await click('Cancel')
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
+
+it('opens the conversation generating the other film from the busy notice', async () => {
+  status = {
+    preflightError: RESEARCH_FILM_BUSY_MESSAGE,
+    blockingSession: { projectId: 'another-project', sessionId: 'running-film' }
+  }
+  openSession.mockImplementationOnce((_projectId, _id, _origin, afterNavigate) => {
+    afterNavigate()
+    return true
+  })
+  await click('Generate research film')
+  expect(document.body.textContent).toContain(RESEARCH_FILM_BUSY_MESSAGE)
+  await click('Go to conversation')
+  expect(openSession).toHaveBeenCalledExactlyOnceWith(
+    'another-project',
+    'running-film',
+    'user',
+    expect.any(Function)
+  )
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it.each(['branch', 'other-branch'])(
+  'reopens the running replay from the same conversation on %s',
+  async (branchId) => {
+    const replay = { ...request, branchId, mode: 'operation-replay' as const }
+    api.researchVideo.status.mockImplementation(async (scope) =>
+      scope?.mode === replay.mode && scope.branchId === replay.branchId
+        ? { progress: { phase: 'writing', startedAt: Date.now() } }
+        : { preflightError: RESEARCH_FILM_BUSY_MESSAGE, blockingSession: replay }
+    )
+
+    await click('Generate research film')
+    expect(document.body.textContent).toContain('Writing research film…')
+    expect(document.body.textContent).not.toContain(RESEARCH_FILM_BUSY_MESSAGE)
+    expect(document.body.textContent).not.toContain('Go to conversation')
+    await click('Cancel')
+    expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(replay)
+  }
+)
 
 it('continues a checkpoint without waiting for the narration model', async () => {
   status = { canResume: true, preflightError: 'Runtime unavailable' }

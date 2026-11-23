@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookChangedEvent, NotebookRunRecord } from '../../../../shared/notebook'
 import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import {
@@ -158,13 +158,13 @@ const flushLoad = async (): Promise<void> => {
 describe('NotebookPreview follow-bottom', () => {
   it('keeps the current Session cells pinned to new output and pauses after the user scrolls up', async () => {
     let runs = [makeRun({ runId: 'p1', script: 'print(1)' })]
-    let notifyChanged: (sessionId: string) => void = () => undefined
+    let notifyChanged: () => void = () => undefined
 
     window.api = {
       notebook: {
         state: vi.fn(() => Promise.resolve(notebookState(runs))),
-        onChanged: vi.fn((listener: (event: { sessionId: string }) => void) => {
-          notifyChanged = (sessionId) => listener({ sessionId })
+        onChanged: vi.fn((listener: (event: NotebookChangedEvent) => void) => {
+          notifyChanged = () => listener(item.notebook)
           return (): void => undefined
         })
       },
@@ -199,7 +199,7 @@ describe('NotebookPreview follow-bottom', () => {
       scrollTop: 600
     })
     await act(async () => {
-      notifyChanged('session-1')
+      notifyChanged()
       await Promise.resolve()
     })
     await flushLoad()
@@ -217,7 +217,7 @@ describe('NotebookPreview follow-bottom', () => {
       scrollTop: 80
     })
     await act(async () => {
-      notifyChanged('session-1')
+      notifyChanged()
       await Promise.resolve()
     })
     await flushLoad()

@@ -177,6 +177,7 @@ export type ApplicationRuntimeInterfaces = {
     'configureDesktop' | 'syncViewState' | 'handleAppFocus' | 'handleWindowCreated' | 'refreshBadge'
   >
   settingsService: WindowSettingsCapabilities
+  initializeDesktopKiloDefaults: (upgrading: boolean) => Promise<void>
   commitClosePreference: (
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
@@ -391,8 +392,19 @@ export const createApplicationModules = async (
     sessionRepository: sessionFoundation.sessionRepository,
     modules
   })
+  const notifications = composeNotifications({
+    surfaceAdapters,
+    settingsBootstrap,
+    storageStartup,
+    sessionAuthority,
+    notificationDelivery,
+    headless,
+    translate
+  })
   const researchFilm = await composeResearchFilm({
     translate,
+    applicationEvents,
+    taskNotifications: notifications.taskNotifications,
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
@@ -476,15 +488,6 @@ export const createApplicationModules = async (
     ...notebookRuntime,
     ...specialistCatalog,
     modules
-  })
-  const notifications = composeNotifications({
-    surfaceAdapters,
-    settingsBootstrap,
-    storageStartup,
-    sessionAuthority,
-    notificationDelivery,
-    headless,
-    translate
   })
   const connectors = await composeConnectors({
     canRequestDesktopCredential,
@@ -1052,6 +1055,11 @@ export const createApplicationModules = async (
     taskNotifications: notifications.taskNotifications,
     notificationInbox: storageStartup.notificationInbox,
     settingsService: settingsBootstrap.settingsService,
+    initializeDesktopKiloDefaults: async (upgrading) => {
+      const added =
+        await settingsBootstrap.settingsRepository.initializeDesktopKiloDefaults(upgrading)
+      if (added) await settingsBootstrap.settingsSnapshotCommits.projectAfter(Promise.resolve())
+    },
     commitClosePreference: async (preference) => {
       await settingsBootstrap.settingsSnapshotCommits.currentSnapshotAfter(
         settingsBootstrap.settingsService.setClosePreference(preference)
@@ -1084,8 +1092,8 @@ export const createApplicationModules = async (
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
             throw error
-          await sessionProjection.ensureSessionProjection()
-          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
+          // Recovery can return readable sessions while the projection is still incomplete.
+          summaries = (await sessionProjection.ensureSessionProjection()).sessions
         }
         const projects = await sessionPackages.projectRepository.list()
         const projectsById = new Map(

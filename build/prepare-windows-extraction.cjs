@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const { createHash } = require('node:crypto')
 
 function parseEntries(listing) {
   const entries = listing
@@ -70,6 +71,29 @@ function partitionFiles(files) {
   return bins.map((bin) => bin.files)
 }
 
+function writeStagedManifest(archive, destination, extractor, files) {
+  // Hash the actual NSIS archive, including files electron-builder adds after afterSign.
+  const temporary = fs.mkdtempSync(path.join(destination, 'manifest-'))
+  try {
+    execFileSync(extractor, ['x', '-y', '-bd', '-bso0', '-bsp0', '-o' + temporary, archive])
+    const buffer = Buffer.allocUnsafe(256 * 1024)
+    const lines = files.map((entry) => {
+      const hash = createHash('sha256')
+      const file = fs.openSync(path.join(temporary, entry.path), 'r')
+      try {
+        let count
+        while ((count = fs.readSync(file, buffer)) > 0) hash.update(buffer.subarray(0, count))
+      } finally {
+        fs.closeSync(file)
+      }
+      return hash.digest('hex') + '\t' + entry.path
+    })
+    fs.writeFileSync(path.join(destination, 'staged-sha256.txt'), lines.join('\n') + '\n')
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+}
+
 function prepareExtraction(archive, destination, extractor) {
   const list = (args = []) =>
     parseEntries(
@@ -86,6 +110,7 @@ function prepareExtraction(archive, destination, extractor) {
   const partitions = partitionFiles(files)
   assert.deepEqual(partitions.flat().sort(), files.map((entry) => entry.path).sort())
   fs.mkdirSync(destination, { recursive: true })
+  writeStagedManifest(archive, destination, extractor, files)
   const writeList = (name, names) => {
     const file = path.join(destination, name)
     fs.writeFileSync(file, names.length ? names.join('\n') + '\n' : '')

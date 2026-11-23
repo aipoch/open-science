@@ -303,7 +303,8 @@ const makeRunner = async (
   resolved: ResolvedAgentBackend,
   runtime: RuntimeHarnessOptions = {},
   taskOnly = false,
-  preserveModelRoute = false
+  preserveModelRoute = false,
+  allowCodeBuddySubscription = false
 ): Promise<{
   runner: RestrictedInferenceRunner
   resolveTarget: ReturnType<typeof vi.fn>
@@ -318,6 +319,7 @@ const makeRunner = async (
     profileNamespace: 'test-inference',
     taskOnly,
     preserveModelRoute,
+    allowCodeBuddySubscription,
     resolveTarget,
     allowNativeCodexSubscription: true,
     createRuntime: (options) => {
@@ -551,7 +553,7 @@ describe('RestrictedInferenceRunner', () => {
               expect(prepared.args?.[1]).toContain(temporaryRoot!)
           }
         },
-        true
+        framework.id !== 'open-science-agent'
       )
       if (framework.id === 'pi') {
         await writeFile(join(temporaryRoot!, 'models.json'), '{}')
@@ -710,6 +712,40 @@ describe('RestrictedInferenceRunner', () => {
     expect(JSON.stringify(claudeOptions)).not.toContain(projectionRoot)
     expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
   })
+
+  it.each([false, true])(
+    'gates CodeBuddy subscription profiles on task opt-in (%s)',
+    async (allowed) => {
+      const resolved = backend(codeBuddyFramework, { modelRoute: 'codebuddy-subscription' })
+      const { runner } = await makeRunner(
+        resolved,
+        {
+          events: [event({ role: 'assistant', text: 'OK' })],
+          onCreateSession: async (prepared) => {
+            expect(prepared.env.HOME).toBe(resolved.env.HOME)
+            expect(prepared.env.CODEBUDDY_CONFIG_DIR).not.toBe(resolved.env.CODEBUDDY_CONFIG_DIR)
+            expect(await readdir(prepared.env.CODEBUDDY_CONFIG_DIR!)).toEqual(['settings.json'])
+            expect(prepared.args).toEqual(['--tools', ''])
+          }
+        },
+        false,
+        false,
+        allowed
+      )
+      const account = join(temporaryRoot!, 'account')
+      await mkdir(account)
+      await writeFile(join(account, 'settings.json'), '{}')
+      resolved.env = {
+        CODEBUDDY_INTERNET_ENVIRONMENT: 'external',
+        CODEBUDDY_CONFIG_DIR: account,
+        HOME: account
+      }
+      const result = runner.run(runInput({ target: target('codebuddy') }))
+      if (allowed) await expect(result).resolves.toMatchObject({ text: 'OK' })
+      else
+        await expect(result).rejects.toThrow('This task does not support CodeBuddy subscriptions.')
+    }
+  )
 
   it('isolates CodeBuddy configuration and removes native tools from restricted inference', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codebuddy-'))

@@ -79,6 +79,7 @@ export function ImageComposerNotices({
   notices: readonly ComposerNotice[]
   handlers: NoticeActionHandlers
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const titles = useImageErrorTitles(error)
   const needsSettings =
     error?.code === 'NOT_CONFIGURED' ||
@@ -116,7 +117,10 @@ export function ImageComposerNotices({
             : {}),
         ...(task ? { responseMessage: titles[error.code] } : {})
       },
-      ...(!task || unconfirmed ? { summary: { title: titles[error.code] } } : {})
+      summary:
+        !task || unconfirmed
+          ? { title: titles[error.code] }
+          : { title: t('Model provider error'), description: titles[error.code] }
     }
   return (
     <ComposerNoticeSlot

@@ -8,7 +8,7 @@ import { openProjectSession } from './certification/helpers'
 import { readRawOutcomeSession } from './fixtures/session-outcome-fault'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
-import { submitPromptViaUi } from './fixtures/conversation'
+import { expectCompletedAssistant, submitPromptViaUi } from './fixtures/conversation'
 import { openGeneralSettings } from './fixtures/settings-preferences'
 
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
@@ -226,6 +226,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   await createProjectViaUi(page, 'Diagnostic research')
   const prompt = 'Summarize the deterministic fixture.'
   await submitPromptViaUi(page, prompt)
+  await expectCompletedAssistant(page, `Deterministic reply: ${prompt}`, { timeout: 45_000 })
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   const identity = await page.evaluate(async () => {

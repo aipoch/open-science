@@ -25,9 +25,9 @@ are macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; musl Linux and Windo
 supported. Do not omit optional dependencies. If startup reports a missing native package, run
 `npm install --global @aipoch/open-science --include=optional`.
 
-Open the printed authenticated URL to configure an Agent runtime, model provider and optional
-Python/R Notebook runtime, or follow [First-run setup (Codex)](#first-run-setup-codex) from the
-terminal. See the [standalone runtime guide](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#linux-prerequisites)
+The default Open Science Agent is built in. Open the printed authenticated URL to configure a
+model provider and an optional Python/R Notebook runtime, or follow
+[First-run setup](#first-run-setup) from the terminal. See the [standalone runtime guide](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#linux-prerequisites)
 for Linux credential storage and sandbox prerequisites.
 
 ### Locally built standalone tarball
@@ -238,7 +238,27 @@ overall readiness. `next` contains stable action codes such as
 exits with code `0` even when `ready` is false; connection and command failures keep the existing
 nonzero CLI error codes.
 
-## First-run setup (Codex)
+## First-run setup
+
+The built-in Open Science Agent needs a model provider. Use the authenticated Web Settings to
+configure your provider, including Anthropic Messages endpoints, or add an OpenAI API key with
+the CLI.
+
+```bash
+open-science start --no-open
+open-science provider add --type official --vendor openai --model gpt-5.4 \
+  --api-key-env OPENAI_API_KEY --json
+open-science doctor --json
+open-science project create "First review" --json
+open-science run --project "First review" --prompt "Review the evidence in this project" --wait --jsonl
+```
+
+To use Claude Code, Codex, OpenCode, CodeBuddy, or Pi, select the Agent in Settings. Choose
+Install or Repair to download its app-managed runtime from npm. Codex can reuse a compatible
+local CLI and download just its ACP adapter. The CLI also supports installing Codex explicitly
+as shown below.
+
+### Optional Codex setup
 
 Install the npm package, a standalone artifact or a desktop package containing the ordinary Node backend first.
 `init` creates a configuration directory only; `--profile` selects an absolute configuration directory.
@@ -271,8 +291,7 @@ before saving its protected credential reference and validation record. This ini
 If Settings changed the active model, Doctor suggests the selected model; revalidation preserves the
 provider default model and active selection. Different existing credentials,
 providers, or framework selections produce `configuration_conflict`, without overwriting them.
-Later account edits remain in Settings. Other runtime/provider bootstrap combinations are not yet
-supported. Existing run-time selection commands are unchanged.
+Later account edits remain in Settings. CLI API-key bootstrap supports the built-in Agent and Codex.
 
 OpenAlex keys are validated before persistence and Literature Graph enablement. Rejected keys or a
 configuration changed during the probe are not saved. A recognized key may still have exhausted
@@ -584,6 +603,27 @@ The CLI checks host support before starting an unattended Run. An older daemon w
 silently running a task that might wait for a person. Omitting the option retains existing behavior,
 including Desktop/Web approval for unresolved ordinary permissions. There are no ordinary
 `permission list/show/approve` CLI commands. `--return-on-attention` only covers Plan approval.
+
+### OpenTelemetry traces for one Run
+
+```bash
+open-science run --project <project-id> --prompt-file ./task.md --otel-traces --wait
+```
+
+Add `--otel-traces` to trace the built-in Open-Science Agent's turn, including when resuming with
+`--session <id>`. The flag authorizes just this Run, even when Project tracing is off. Omit it to
+use the Project's current setting at dispatch. Project and Session settings are preserved.
+
+Configure the full OTLP/HTTP JSON traces endpoint, authentication and capture switches on the
+backend, then restart it. The Run uses the same destination and capture settings as Agent tracing
+in the app. Depending on those switches, traces can include prompts, model requests and tool
+arguments or results. See [Open-Science Agent traces](https://github.com/aipoch/open-science/blob/main/docs/development-quick-reference.md#open-science-agent-traces).
+
+The CLI requires a local backend with the `run-otel-traces` capability. Selecting a third-party
+Agent or supplying missing or invalid local exporter configuration fails Run preparation.
+After dispatch, delivery failures follow the exporter's usual asynchronous diagnostics and the Run
+continues. With the SDK, pass `otelTraces: true` to `submitRun(requestId, request)` or
+`startRun(request, { requestId })`.
 
 ### Execution controls
 
@@ -1018,7 +1058,7 @@ In the Codex and Claude registration commands below, use
 Other local clients include Aider, Amp, Antigravity, AtomCode, Claude Desktop, Cline, CodeBuddy, Cursor Agent, Devin, Gemini CLI, Grok Build, Hermes, Kilo, Kimi CLI, Kiro CLI, MiMo, Mistral Vibe, OpenClaw, OpenCode, Pi, Qoder CLI, Qwen Code, Raven, Reasonix, Trae CLI, and Vela.
 For these clients, check whether your installed edition can launch a local stdio MCP server.
 If it can, use the npm command above and ask the agent to list your Open-Science projects.
-Clients with local shell access can also use the [Open-Science CLI](#first-run-setup-codex).
+Clients with local shell access can also use the [Open-Science CLI](#optional-codex-setup).
 The directory identifies setup options; individual host sessions still need end-to-end verification.
 
 ### Profiles and installed launchers

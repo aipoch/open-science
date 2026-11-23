@@ -1,3 +1,4 @@
+import { reportWorkspaceOperationError } from '@/lib/acp/workspace-operation-error'
 import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -428,7 +429,11 @@ const useWorkspaceConversationController = (
     // Main stopped using the expired credential. End the visible turn immediately instead of
     // leaving the runtime retrying a 5xx until its own timeout.
     cancelledInFlightSessionRef.current = activeSessionId
-    void runtime.cancelRun(activeSessionId).catch(() => undefined)
+    void runtime
+      .cancelRun(activeSessionId)
+      .catch((error: unknown) =>
+        reportWorkspaceOperationError(activeSessionId, errorMessage(error))
+      )
   }, [activeSessionId, cancelInFlightRun, promptInFlightSessionIds, runtime])
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
@@ -894,11 +899,13 @@ const useWorkspaceConversationController = (
         const session = current.activeSession
         if (!session) return
         const fixLoopCancellation = session.fixLoopActive
-          ? current
-              .abortFixLoop({ projectId: session.projectId, appSessionId: session.id })
-              .catch((error: unknown) => console.warn('Failed to abort fix loop:', error))
+          ? current.abortFixLoop({ projectId: session.projectId, appSessionId: session.id })
           : Promise.resolve()
-        await Promise.all([fixLoopCancellation, current.runtime.cancelRun(session.id)])
+        const results = await Promise.allSettled([
+          fixLoopCancellation,
+          current.runtime.cancelRun(session.id)
+        ])
+        for (const result of results) if (result.status === 'rejected') throw result.reason
       },
       delete: (): void => optionsRef.current.session.actions.confirmDelete()
     }

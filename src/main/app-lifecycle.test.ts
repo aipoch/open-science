@@ -161,6 +161,8 @@ const setup = (
     Pick<
       AppLifecycleDeps,
       | 'refreshQuitState'
+      | 'holdPendingLaunchOnQuit'
+      | 'resumePendingLaunchAfterCancelledQuit'
       | 'requireCleanBackendShutdown'
       | 'onQuitError'
       | 'handleDisconnectedQuit'
@@ -232,6 +234,8 @@ const setup = (
         return tray as unknown as import('electron').Tray | undefined
       },
       refreshQuitState: overrides.refreshQuitState,
+      holdPendingLaunchOnQuit: overrides.holdPendingLaunchOnQuit,
+      resumePendingLaunchAfterCancelledQuit: overrides.resumePendingLaunchAfterCancelledQuit,
       requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
       onQuitError: overrides.onQuitError,
       handleDisconnectedQuit: overrides.handleDisconnectedQuit,
@@ -478,7 +482,7 @@ describe('installAppLifecycle', () => {
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
-    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledWith(true)
     expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
       app.exit.mock.invocationCallOrder[0]
     )
@@ -2049,6 +2053,25 @@ it('awaits authoritative work before the confirmation and refuses a failed inspe
   await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledOnce())
 })
 
+it('holds a launch during inspection and returns it after cancelled quit confirmation', async () => {
+  const holdPendingLaunchOnQuit = vi.fn()
+  const resumePendingLaunchAfterCancelledQuit = vi.fn()
+  const refreshQuitState = vi.fn(async () => false)
+  const h = setup({
+    holdPendingLaunchOnQuit,
+    resumePendingLaunchAfterCancelledQuit,
+    refreshQuitState,
+    confirmClose: async () => 'cancel'
+  })
+  h.app.emit('before-quit')
+  expect(holdPendingLaunchOnQuit).toHaveBeenCalledBefore(refreshQuitState)
+  await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
+  expect(resumePendingLaunchAfterCancelledQuit).not.toHaveBeenCalled()
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(resumePendingLaunchAfterCancelledQuit).toHaveBeenCalledOnce())
+  expect(h.app.exit).not.toHaveBeenCalled()
+})
+
 const replayQuitSynchronously = (h: Harness): void => {
   h.quit.mockImplementation(() => {
     // Reproduce Electron's synchronous reentry, with a cap so a regression fails without hanging.
@@ -2210,6 +2233,28 @@ it('bounds an ordinary exit handoff already in flight when system shutdown arriv
   expect(h.quit).toHaveBeenCalledOnce()
 })
 
+it('gives an admitted native update its own budget and still yields to system shutdown', async () => {
+  vi.useFakeTimers()
+  try {
+    const run = vi.fn(() => new Promise<void>(() => {}))
+    const h = setup({
+      beforeExit: async () => ({ run, timeoutMs: 60_000 }),
+      systemShutdownTimeoutMs: 20
+    })
+    replayQuitSynchronously(h)
+    h.closeOpts[0].requestQuit(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect(h.app.exit).not.toHaveBeenCalled()
+    h.onSystemShutdown()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(h.app.exit).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('refreshes authoritative work before preparing system shutdown', async () => {
   const refreshQuitState = vi.fn(async () => true)
   const prepareForQuit = vi.fn(async () => {
@@ -2304,7 +2349,9 @@ it.each(['quit', 'cancel'] as const)(
       observedWholeService ? ('completed' as const) : ('scope-changed' as const)
     )
     const onQuitError = vi.fn()
+    const resumePendingLaunchAfterCancelledQuit = vi.fn()
     const h = setup({
+      resumePendingLaunchAfterCancelledQuit,
       requireCleanBackendShutdown: true,
       refreshQuitState: async () => {
         const changed = wholeService !== observedWholeService
@@ -2335,10 +2382,12 @@ it.each(['quit', 'cancel'] as const)(
     if (choice === 'quit') {
       await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
       expect(prepareForQuit).toHaveBeenCalledTimes(2)
+      expect(resumePendingLaunchAfterCancelledQuit).not.toHaveBeenCalled()
     } else {
       expect(h.shutdownBackends).not.toHaveBeenCalled()
       expect(h.app.exit).not.toHaveBeenCalled()
       expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(resumePendingLaunchAfterCancelledQuit).toHaveBeenCalledOnce()
     }
   }
 )

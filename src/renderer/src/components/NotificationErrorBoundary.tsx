@@ -87,6 +87,7 @@ const NotificationRecovery = ({
             }
           : undefined
       }
+      className={surface === 'toast' ? 'shadow-notice' : undefined}
     />
   )
   if (surface === 'toast' && dismissedRevision === notificationRevision) return null
@@ -97,7 +98,7 @@ const NotificationRecovery = ({
         data-bottom-notice={surface === 'toast' ? true : undefined}
         className={
           surface === 'toast'
-            ? 'pointer-events-auto fixed bottom-4 right-4 z-toast max-h-[80dvh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto'
+            ? 'pointer-events-auto fixed bottom-4 right-4 z-toast w-80 max-w-[calc(100vw-2rem)]'
             : 'my-1 min-w-0'
         }
       >

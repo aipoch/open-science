@@ -292,7 +292,12 @@
     "src/renderer/src/pages/workspace/image-edit/ImageEditor.test.tsx",
     "src/renderer/src/pages/workspace/image-edit/ImageEditor.tsx",
     "src/renderer/src/pages/workspace/image-edit/image-editor-state.ts",
-    "src/renderer/src/pages/workspace/image-edit/image-edit-context.ts"
+    "src/renderer/src/pages/workspace/image-edit/image-edit-context.ts",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditEntry.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditFloatingTools.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditPending.tsx",
+    "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.tsx",
+    "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -324,7 +329,8 @@
     "src/renderer/src/pages/workspace/previews/useNearViewport.ts",
     "src/renderer/src/pages/workspace/previews/usePreviewResourceGeneration.ts",
     "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.ts",
-    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts"
+    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts",
+    "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -428,7 +434,10 @@
       "src/renderer/src/pages/workspace/previews/use-pptx-edit-session.test.ts",
       "src/renderer/src/pages/workspace/image-edit/ImageEditor.test.tsx"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.test.tsx"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",

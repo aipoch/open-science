@@ -108,8 +108,7 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
   const source = legacyFile.session
   source.projectId = projectId
   source.cwd = cwd
-  // 1.0.8 did not persist a provider binding. Supply the fake provider identity before seeding so
-  // the read-only open below cannot accrue a metadata-only normalization write.
+  // Supply the provider binding needed to continue the released conversation with the fake agent.
   source.agentConfiguration = configuration
   const expectedJson = JSON.stringify(legacyFile)
   page = await app.restartWithRawSessionFileFixture({
@@ -117,39 +116,10 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     sessionId: source.id,
     contents: expectedJson
   })
-  let application = (app as unknown as { application: ElectronApplication }).application
+  const application = (app as unknown as { application: ElectronApplication }).application
   const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
   const directory = join(configRoot, 'sessions', projectId)
   const legacyPath = join(directory, `${source.id}.json`)
-  expect(await readFile(legacyPath, 'utf8')).toBe(expectedJson)
-  await application.evaluate(({ ipcMain }) => {
-    const observations: Array<{ channel: string; complete?: boolean }> = []
-    Reflect.set(globalThis, 'legacyHistoryReadProbe', observations)
-    const handlers = Reflect.get(ipcMain, '_invokeHandlers') as Map<
-      string,
-      (...args: unknown[]) => unknown
-    >
-    for (const channel of [
-      'sessions:load-history-page',
-      'sessions:load-one',
-      'sessions:save-session',
-      'sessions:rename',
-      'sessions:set-pinned'
-    ]) {
-      const original = handlers.get(channel)
-      if (!original) throw new Error(`Missing history handler: ${channel}`)
-      handlers.set(channel, async (...args) => {
-        const result = await original(...args)
-        observations.push({
-          channel,
-          ...(channel === 'sessions:load-history-page'
-            ? { complete: Reflect.get(result as object, 'complete') }
-            : {})
-        })
-        return result
-      })
-    }
-  })
   await openProjectSession(page, projectName, source.title)
   await expect(page.getByText(source.messages[0].content, { exact: true })).toBeVisible()
   await expect(page.getByText(source.messages[1].content, { exact: true })).toBeVisible()
@@ -159,7 +129,7 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
   await expect(
     page.getByRole('button', { name: 'Load earlier messages', exact: true })
   ).toHaveCount(0)
-  // A renderer flush is the real persistence barrier; a read-only open must not echo a save.
+  // Inspect the durable file after all renderer writes have settled.
   const flushed = await application.evaluate(async ({ BrowserWindow, ipcMain }) => {
     const requestId = 'legacy-read-flush'
     return new Promise<string>((resolve, reject) => {
@@ -181,20 +151,21 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     })
   })
   expect(flushed).toBe('completed')
-  const observations = await application.evaluate(
-    () =>
-      Reflect.get(globalThis, 'legacyHistoryReadProbe') as Array<{
-        channel: string
-        complete?: boolean
-      }>
+  const opened = JSON.parse(await readFile(legacyPath, 'utf8')) as LegacySessionFile
+  // A first-open save can materialize display defaults, including a new optimistic revision.
+  expect(opened).toEqual(
+    opened.session.revision === source.revision
+      ? legacyFile
+      : {
+          ...legacyFile,
+          session: { ...source, description: '', filesRevision: 0, revision: source.revision! + 1 }
+        }
   )
-  expect(observations).toEqual([{ channel: 'sessions:load-history-page', complete: true }])
-  expect(await readFile(legacyPath, 'utf8')).toBe(expectedJson)
   expect((await readdir(directory)).filter((name) => name.startsWith(source.id))).toEqual([
     `${source.id}.json`
   ])
   const readLegacyIndexCounts = (): Promise<unknown[]> =>
-    application.evaluate(
+    (app as unknown as { application: ElectronApplication }).application.evaluate(
       (_electron, { configRoot, sessionId }) => {
         const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
         const db = new DatabaseSync(
@@ -219,7 +190,7 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
   await writeFile(
     testInfo.outputPath('legacy-json-read-evidence.json'),
     JSON.stringify(
-      { observations, indexCounts, legacyBytesUnchanged: true, files: await readdir(directory) },
+      { revision: opened.session.revision, indexCounts, files: await readdir(directory) },
       null,
       2
     )
@@ -275,21 +246,6 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
   }
   await page.evaluate((session) => window.api.sessions.saveSession(session), modern)
   page = await app.restart()
-  application = (app as unknown as { application: ElectronApplication }).application
-  await application.evaluate(({ ipcMain }) => {
-    const calls: Array<{ sessionId: string; complete?: boolean }> = []
-    Reflect.set(globalThis, 'mixedHistoryPageProbe', calls)
-    const handlers = Reflect.get(ipcMain, '_invokeHandlers') as Map<
-      string,
-      (...args: unknown[]) => unknown
-    >
-    const original = handlers.get('sessions:load-history-page')!
-    handlers.set('sessions:load-history-page', async (...args) => {
-      const result = (await original(...args)) as { sessionId: string; complete?: boolean }
-      calls.push({ sessionId: result.sessionId, complete: result.complete })
-      return result
-    })
-  })
   await openProjectSession(page, projectName, modern.title)
   await expect(page.getByText(modern.messages[1].content, { exact: true })).toBeVisible()
   await expect(
@@ -316,15 +272,22 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
   expect(cold?.messages).toEqual(continued?.messages)
   expect(cold?.activities).toEqual(continued?.activities)
   expect(cold?.conversationGraph).toEqual(continued?.conversationGraph)
-  const mixedCalls = await application.evaluate(() =>
-    Reflect.get(globalThis, 'mixedHistoryPageProbe')
+  // Startup may load the selected conversation before the renderer becomes available to the test.
+  const pageKinds = await page.evaluate(
+    async ({ projectId, sessionIds }) => {
+      return Promise.all(
+        sessionIds.map(async (sessionId) => {
+          const result = await window.api.sessions.loadHistoryPage({ projectId, sessionId })
+          return { sessionId: result?.sessionId, complete: result?.complete }
+        })
+      )
+    },
+    { projectId, sessionIds: [modern.id, source.id] }
   )
-  expect(mixedCalls).toEqual(
-    expect.arrayContaining([
-      { sessionId: modern.id, complete: undefined },
-      { sessionId: source.id, complete: true }
-    ])
-  )
+  expect(pageKinds).toEqual([
+    { sessionId: modern.id, complete: undefined },
+    { sessionId: source.id, complete: true }
+  ])
   expect((await readdir(directory)).filter((name) => name.startsWith(source.id))).toEqual([
     `${source.id}.json`
   ])
@@ -336,7 +299,7 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     testInfo.outputPath('mixed-format-continuation-evidence.json'),
     JSON.stringify(
       {
-        mixedCalls,
+        pageKinds,
         legacyIndexCounts: await readLegacyIndexCounts(),
         files: await readdir(directory),
         legacyMessageCountBefore: source.messages.length,

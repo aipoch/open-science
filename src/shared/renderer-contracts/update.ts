@@ -8,11 +8,19 @@ import type {
   UpdateStatus
 } from '../update'
 
-import { callable, LOCAL, type RemoveListener, EVENT } from './definition'
+import { callable, ELECTRON, LOCAL, type RemoveListener, EVENT } from './definition'
 
 export const updateApplyContracts = {
+  'update.setAutomaticDownloads': callable<(enabled: boolean) => Promise<UpdateStatus>>()(
+    'update',
+    ['update:set-automatic-downloads', ELECTRON]
+  ),
   'update.recheck': callable<() => Promise<UpdateStatus>>()('update', ['update:recheck', LOCAL]),
   'update.recover': callable<() => Promise<UpdateStatus>>()('update', ['update:recover', LOCAL]),
+  'update.openProcessManager': callable<() => Promise<boolean>>()('update', [
+    'update:open-process-manager',
+    ELECTRON
+  ]),
   'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
     'update:apply',
     LOCAL

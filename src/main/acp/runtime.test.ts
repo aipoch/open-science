@@ -42,7 +42,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+import {
+  ClaudeProtocolFixtureRuntime as AcpRuntime,
+  shortenIdleReleaseWindow
+} from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -62,6 +65,7 @@ import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpContextUsage,
   type AcpPermissionResponse,
+  type AcpPromptRequest,
   type AcpPermissionRequest,
   type AcpRuntimeEvent,
   type AcpStateSnapshot
@@ -77,6 +81,7 @@ import {
   codexFramework,
   createPiFramework,
   getAgentFramework,
+  listAgentFrameworks,
   opencodeFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -630,6 +635,13 @@ const createModes = (
 ): SessionModeState => ({
   currentModeId,
   availableModes: ids.map((id) => ({ id, name: id }))
+})
+
+it('uses Open Science Agent when the runtime has no framework selection', () => {
+  const options = { appVersion: '0.1.0', defaultCwd: '/workspace' }
+  expect(composeAcpRuntimeBaseOwners(options).backendGeneration.current.framework.id).toBe(
+    'open-science-agent'
+  )
 })
 
 const startPendingReviewerRace = async (
@@ -11659,7 +11671,11 @@ describe('ACP runtime session management', () => {
 
     expect(replacementToken).not.toBe(initialToken)
     await expect(callConnector(initialToken)).resolves.toMatchObject({ status: 401 })
-    // A later Provider dispatch gets its own Notebook credential even when it only reads.
+    // The first dispatch activates the fresh native session's installed connection. Only a later
+    // dispatch rotates credentials; it must never try to resume a new empty native history.
+    expect(fakeAgent.resumedSessions).toHaveLength(0)
+    await expect(callConnector(replacementToken)).resolves.toMatchObject({ status: 200 })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'second turn after compaction' })
     const dispatchedToken = getEnvValue(
       fakeAgent.resumedSessions.at(-1)?.mcpServers[0],
       'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'
@@ -11667,7 +11683,7 @@ describe('ACP runtime session management', () => {
     expect(dispatchedToken).not.toBe(replacementToken)
     await expect(callConnector(replacementToken)).resolves.toMatchObject({ status: 401 })
     await expect(callConnector(dispatchedToken)).resolves.toMatchObject({ status: 200 })
-    expect(connectorCall).toHaveBeenCalledOnce()
+    expect(connectorCall).toHaveBeenCalledTimes(2)
   })
 
   it.each([true, false])(
@@ -14067,6 +14083,53 @@ describe('ACP runtime session management', () => {
     ])
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
   })
+
+  it.each(listAgentFrameworks())(
+    'settles an accepted user Stop before late $id output and end_turn',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const release = createDeferred()
+      const dataHome = await mkdtemp(join(tmpdir(), 'acp-user-stop-'))
+      const agent = startFakeAgent(process, ['stop-session'], {
+        onPrompt: () => release.promise,
+        modes: createModes(['agent', 'read-only', 'agent-full-access']),
+        replyForPrompt: () => 'late assistant reply'
+      })
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        framework,
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/test-agent',
+          env: { XDG_DATA_HOME: dataHome },
+          ...(framework.id === 'opencode' ? { opencodeMajorVersion: 1 as const } : {})
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+      try {
+        const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+        const prompt = runtime.sendPrompt({ sessionId, text: 'hold this turn' })
+        const result = expect(prompt).resolves.toMatchObject({ stopReason: 'cancelled' })
+        await vi.waitFor(() => expect(agent.prompts).toHaveLength(1))
+        await runtime.cancelPrompt({ sessionId, userInitiated: true })
+        await vi.waitFor(() => expect(agent.cancelledSessions).toEqual([sessionId]))
+        expect(events.some((event) => event.kind === 'stop')).toBe(false)
+        release.resolve()
+        await result
+        expect(events.filter((event) => event.kind === 'stop')).toMatchObject([
+          { text: 'cancelled' }
+        ])
+        expect(events.some((event) => event.title === ACP_PROMPT_FAILED_EVENT_TITLE)).toBe(false)
+        expect(events.some((event) => event.text?.includes('late assistant reply'))).toBe(false)
+      } finally {
+        release.resolve()
+        await runtime.disconnect()
+        await rm(dataHome, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.each(
     [opencodeFramework, codeBuddyFramework, claudeCodeFramework, codexFramework].flatMap(
@@ -18119,10 +18182,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 0,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Claude Code preserves hyphens in MCP server names in real tool traces, so the permission title
@@ -18165,10 +18231,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 0,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
@@ -18207,10 +18276,13 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'reject-once' }
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 1,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   it('counts reviewer tool calls rejected by the strict gate', async () => {
@@ -18241,10 +18313,13 @@ describe('ACP runtime session management', () => {
     await session.prompt([{ type: 'text', text: 'run a shell command' }])
 
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 1,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   // Regression: Pi Reviewer sessions had no permission correlation context, so every reviewer MCP
@@ -18322,10 +18397,13 @@ describe('ACP runtime session management', () => {
       notebook: rejected,
       native: rejected
     })
-    expect(runtime.disposeReviewerSession(session)).toEqual({
+    const disposition = runtime.disposeReviewerSession(session)
+    expect(disposition).toEqual({
       rejectedToolCalls: 2,
-      reviewerBridgeScoped: undefined
+      reviewerBridgeScoped: undefined,
+      providerClosed: expect.any(Promise)
     })
+    await disposition.providerClosed
   })
 
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {
@@ -27251,6 +27329,30 @@ describe('ACP runtime session management', () => {
     expect(errorEvent?.category).toBe('internal')
   })
 
+  it('keeps unrecognized provider wording out of the prompt failure log', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const message = 'Private account private@example.test echoed PRIVATE_PROMPT'
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw acp.RequestError.internalError({ service: 'provider', status: 503 }, message)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+    const calls = errorLogSpy.mock.calls.filter(([event]) => event === 'prompt failed')
+    expect(calls).toHaveLength(1)
+    expect(JSON.stringify(calls)).not.toMatch(/private@example|PRIVATE_PROMPT/)
+    expect(calls[0]?.[1]).toMatchObject({ reason: 'service/unavailable', error: { status: 503 } })
+  })
+
   it('logs the provider rejection reason (message/code/data) when a prompt fails', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'], {
@@ -27725,7 +27827,11 @@ describe('ACP runtime session management', () => {
           }
         }
       })
-      const sessions = new SessionPersistenceCoordinator(new SessionRepository(root), {
+      const repository = new SessionRepository(root, {
+        hasLiveRuntimeSession: (projectId, sessionId) =>
+          runtime.hasLiveSession(projectId, sessionId)
+      })
+      const sessions = new SessionPersistenceCoordinator(repository, {
         syncSession: async () => [],
         softDeleteSession: async () => 'deleted',
         restoreSession: async () => undefined,
@@ -27774,8 +27880,21 @@ describe('ACP runtime session management', () => {
                   return { providers: [], agentFrameworkId: framework.id, agentFrameworks: [] }
                 case 'sessions:load-all':
                   return sessions.loadAllReadOnly()
-                case 'sessions:save-session':
-                  return sessions.saveSession(arg as PersistedChatSession)
+                case 'sessions:save-session': {
+                  const candidate = arg as PersistedChatSession
+                  const saved = await sessions.saveSession(
+                    candidate,
+                    {},
+                    { taskRunCommit: invocation.callerContext.surface === 'task' }
+                  )
+                  // Recover after the first Task save, before the provider receives its prompt.
+                  const recovered = await sessions.recoverStartupSession(saved.projectId, saved.id)
+                  expect(recovered).toMatchObject({
+                    activeRun: candidate.activeRun,
+                    revision: saved.revision
+                  })
+                  return saved
+                }
                 case 'sessions:stage-task-completion':
                   return sessions.stageTaskCompletion(
                     arg as Parameters<typeof sessions.stageTaskCompletion>[0]
@@ -33964,6 +34083,13 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
           memoryTools,
           executionIntent
         )
+        const prepare = current.prepareInitialExecution!
+        current.prepareInitialExecution = (intent) => {
+          const prepared = prepare(intent)
+          expireNextLease?.()
+          expireNextLease = undefined
+          return prepared
+        }
         return current
       }
     }
@@ -33980,7 +34106,7 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
       { assertCurrent }
     )
     await runtime.sendPrompt(first)
-    expect(agent.resumedSessions).toHaveLength(1)
+    expect(agent.resumedSessions).toHaveLength(0)
     const old = current!
     const run = async (connection: typeof old): Promise<string> => {
       const response = await fetchLocalRpc(
@@ -34014,7 +34140,7 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
         { assertCurrent }
       )
     )
-    expect(agent.resumedSessions).toHaveLength(2)
+    expect(agent.resumedSessions).toHaveLength(1)
     expect(await run(current!)).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
     const task = createAcpTaskAgentPort(
       {
@@ -34056,7 +34182,7 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
         { projectId: 'project', refusalId, assertCurrent }
       )
     )
-    expect(agent.resumedSessions).toHaveLength(4)
+    expect(agent.resumedSessions).toHaveLength(3)
     expect(await run(old)).toContain('Invalid notebook RPC token')
     pressured = true
     expect(await run(current!)).toContain('NOTEBOOK_MEMORY_PRESSURE')
@@ -34327,7 +34453,7 @@ it.each([false, true])(
         )
       ).toBe(originalIntent)
       expect(current!.token).toBe(originalToken)
-      expect(agent.resumedSessions).toHaveLength(1)
+      expect(agent.resumedSessions).toHaveLength(0)
       const sibling = call('healthy()', transportCancellation.signal)
       void sibling.catch(() => undefined)
       await entered.promise
@@ -34341,7 +34467,7 @@ it.each([false, true])(
       expect(stoppedSteer.injected).toBe(true)
       expect(current!.token).toBe(originalToken)
       expect(originalIntent?.refusalId).toEqual(expect.any(String))
-      expect(agent.resumedSessions).toHaveLength(1)
+      expect(agent.resumedSessions).toHaveLength(0)
       pressured = false
       expect(await call('disobedient()')).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
       await vi.waitFor(() => expect(agent.cancelledSessions).toEqual(['notebook-loop-provider']))
@@ -34396,6 +34522,136 @@ it.each([false, true])(
       child.stdin.destroy()
       child.stdout.destroy()
       child.stderr.destroy()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.each(
+  listAgentFrameworks().flatMap(({ id }) =>
+    (['root', 'delegated'] as const).map((path) => ({ frameworkId: id, path }))
+  )
+)(
+  'keeps $frameworkId native history and rotates credentials after its first $path prompt',
+  async ({ frameworkId, path }) => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-first-notebook-intent-'))
+    const child = new FakeAgentProcess()
+    const nativeId = '11111111-1111-4111-8111-111111111111'
+    // These are the real pre-first-turn wire failures captured in issue #4501.
+    const agent = startFakeAgent(child, [nativeId], {
+      supportsResume: true,
+      ...(frameworkId === 'codex'
+        ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only') }
+        : {}),
+      onResumeRequest: () => {
+        if (agent.prompts.length) return
+        if (frameworkId === 'open-science-agent' && agent.closedSessions.length) return
+        if (frameworkId === 'claude-code') throw acp.RequestError.resourceNotFound(nativeId)
+        if (frameworkId !== 'codex' && frameworkId !== 'open-science-agent') return
+        throw new acp.RequestError(-32603, 'Internal error', {
+          details:
+            frameworkId === 'codex'
+              ? `no rollout found for thread id ${nativeId}`
+              : 'Session already attached'
+        })
+      }
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: healthyNotebookMemoryPolicy()
+    })
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const httpHost = new AgentMcpHttpHost()
+    const credentials: string[] = []
+    const inherited = service.createExecutionIntent({
+      projectId: 'project',
+      sessionId: 'root-session'
+    })
+    const delegated =
+      path === 'delegated'
+        ? await rpc.issueDelegatedNotebookConnection({
+            projectId: 'project',
+            sessionId: 'root-session',
+            rootFrameId: 'root',
+            agentFrameId: 'child',
+            attemptId: 'attempt',
+            messageBranchId: 'branch',
+            runtimeSegmentId: 'segment',
+            promptMessageId: 'first-user',
+            workspaceCwd: root,
+            isAttemptWritable: () => true,
+            executionIntent: inherited
+          })
+        : undefined
+    const runtime = new AcpRuntime({
+      mcpHttpHost: httpHost,
+      appVersion: 'test',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...getAgentFramework(frameworkId), spawn: () => asAgentProcess(child) },
+        executablePath: '/agent',
+        env: {}
+      }),
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        ...(!delegated
+          ? {
+              createExecutionIntent: (scope: { projectId: string; sessionId: string }) =>
+                service.createExecutionIntent(scope),
+              currentExecutionIntent: (scope: { projectId: string; sessionId: string }) =>
+                service.currentExecutionIntent(scope)
+            }
+          : {}),
+        registerSessionAlias: (alias, id) => rpc.registerSessionAlias(alias, id),
+        getRpcConnection: async ({ sessionId, projectId, memoryTools, executionIntent }) => {
+          const connection = delegated
+            ? executionIntent
+              ? await delegated.refreshExecutionIntent(executionIntent)
+              : delegated
+            : await rpc.issueSessionConnection(
+                sessionId,
+                projectId,
+                `root-frame-${sessionId}`,
+                memoryTools,
+                executionIntent
+              )
+          credentials.push(connection.token)
+          return connection
+        }
+      }
+    })
+    try {
+      const session = await runtime.createSession({ cwd: root, projectId: 'project' })
+      const request = (text: string, promptMessageId: string): AcpPromptRequest => {
+        const value = { sessionId: session.sessionId, text, provenanceContext: { promptMessageId } }
+        return delegated ? withNotebookExecutionIntent(value, inherited) : value
+      }
+      await runtime.sendPrompt(
+        withNotebookUserOperation(request('hello', 'first-user'), {
+          assertCurrent: () => undefined
+        })
+      )
+      expect(agent.prompts).toHaveLength(1)
+      expect(agent.resumedSessions).toHaveLength(frameworkId === 'codebuddy' ? 1 : 0)
+      expect(credentials).toHaveLength(1)
+      await runtime.sendPrompt(
+        withNotebookUserOperation(request('continue', 'second-user'), {
+          assertCurrent: () => undefined
+        })
+      )
+      expect(agent.prompts).toHaveLength(2)
+      expect(agent.resumedSessions).toHaveLength(frameworkId === 'codebuddy' ? 2 : 1)
+      expect(new Set(credentials).size).toBe(2)
+      expect(runtime.getState().sessionIds).toContain(session.sessionId)
+    } finally {
+      await runtime.shutdownForQuit()
+      await delegated?.revoke()
+      await httpHost.close()
+      await rpc.close()
+      await service.dispose()
       await rm(root, { recursive: true, force: true })
     }
   }

@@ -1027,11 +1027,12 @@ export async function advanceInstallationUpdateAsync(
   return advanceInstallationUpdate(location, operationId, phase, stoppedClean)
 }
 
-/** Read-only occupancy preflight; it neither acquires update admission nor stops any service. */
+/** Inspect occupancy and optionally commit a synchronous replacement while startup admission is locked. */
 export async function inspectInstallationAvailability(
   options: InstallationLocation & {
     runtime?: InstallationRuntime
     allowedProcessIds?: number[] | ((signal?: AbortSignal) => number[] | Promise<number[]>)
+    replaceIfIdle?: () => void
     inspectProcesses?: typeof inspectInstallationProcessesAsync
   },
   signal?: AbortSignal
@@ -1113,6 +1114,10 @@ export async function inspectInstallationAvailability(
         otherRuntimePids: others.map(({ pid }) => pid),
         foreignProcessPids: foreignProcesses
       }
+    } else if (options.replaceIfIdle) {
+      signal?.throwIfAborted()
+      if (readRecord(directory)) throw new Error('An installation operation is already active.')
+      options.replaceIfIdle()
     }
   })
   if (conflict) {

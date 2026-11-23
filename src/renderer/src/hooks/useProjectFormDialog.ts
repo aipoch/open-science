@@ -18,6 +18,7 @@ type ProjectFormDialogProps = {
   descriptionDraft: string
   agentContextDraft: string
   optimizationPromptDraft: string
+  agentTracingDraft?: boolean
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -28,6 +29,7 @@ type ProjectFormDialogProps = {
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
   onOptimizationPromptChange: (value: string) => void
+  onAgentTracingChange?: (enabled: boolean) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -62,6 +64,7 @@ const useProjectFormDialog = (
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [agentContextDraft, setAgentContextDraft] = useState('')
   const [optimizationPromptDraft, setOptimizationPromptDraft] = useState('')
+  const [agentTracingDraft, setAgentTracingDraft] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorDetail, setErrorDetail] = useState<string>()
   const [conflictProject, setConflictProject] = useState<Project>()
@@ -71,7 +74,8 @@ const useProjectFormDialog = (
     name: '',
     description: '',
     agentContext: '',
-    optimizationPrompt: ''
+    optimizationPrompt: '',
+    agentTracing: false
   })
 
   const openCreateDialog = useCallback((): void => {
@@ -82,7 +86,8 @@ const useProjectFormDialog = (
       name: '',
       description: '',
       agentContext: '',
-      optimizationPrompt: ''
+      optimizationPrompt: '',
+      agentTracing: false
     }
     setDiscardConfirmationOpen(false)
     setConflictProject(undefined)
@@ -91,6 +96,7 @@ const useProjectFormDialog = (
     setDescriptionDraft('')
     setAgentContextDraft('')
     setOptimizationPromptDraft('')
+    setAgentTracingDraft(false)
     setFormError(undefined)
     setErrorDetail(undefined)
   }, [isSubmitting])
@@ -104,7 +110,8 @@ const useProjectFormDialog = (
         name: project.name,
         description: project.description,
         agentContext: project.agentContext ?? '',
-        optimizationPrompt: project.optimizationPrompt ?? ''
+        optimizationPrompt: project.optimizationPrompt ?? '',
+        agentTracing: project.sessionDefaults?.agentTracingEnabled === true
       }
       setDiscardConfirmationOpen(false)
       setConflictProject(undefined)
@@ -117,6 +124,7 @@ const useProjectFormDialog = (
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
       setOptimizationPromptDraft(project.optimizationPrompt ?? '')
+      setAgentTracingDraft(initialDraft.current.agentTracing)
       setFormError(undefined)
       setErrorDetail(undefined)
     },
@@ -136,7 +144,8 @@ const useProjectFormDialog = (
       nameDraft !== initialDraft.current.name ||
       descriptionDraft !== initialDraft.current.description ||
       agentContextDraft !== initialDraft.current.agentContext ||
-      optimizationPromptDraft !== initialDraft.current.optimizationPrompt
+      optimizationPromptDraft !== initialDraft.current.optimizationPrompt ||
+      agentTracingDraft !== initialDraft.current.agentTracing
     ) {
       setDiscardConfirmationOpen(true)
       return
@@ -175,7 +184,10 @@ const useProjectFormDialog = (
           description,
           agentContext,
           optimizationPrompt,
-          expectedUpdatedAt: formState.expectedUpdatedAt
+          expectedUpdatedAt: formState.expectedUpdatedAt,
+          ...(agentTracingDraft !== initialDraft.current.agentTracing
+            ? { agentTracingEnabled: agentTracingDraft }
+            : {})
         })
 
     void request
@@ -243,6 +255,7 @@ const useProjectFormDialog = (
       descriptionDraft,
       agentContextDraft,
       optimizationPromptDraft,
+      agentTracingDraft: isEdit ? agentTracingDraft : undefined,
       isSubmitting,
       error: formError,
       errorDetail,
@@ -250,11 +263,16 @@ const useProjectFormDialog = (
       onLoadLatest: conflictProject ? () => openEditDialog(conflictProject) : undefined,
       onKeepDraft: conflictProject
         ? () => {
+            const savedTracing = conflictProject.sessionDefaults?.agentTracingEnabled === true
+            if (agentTracingDraft === initialDraft.current.agentTracing) {
+              setAgentTracingDraft(savedTracing)
+            }
             initialDraft.current = {
               name: conflictProject.name,
               description: conflictProject.description,
               agentContext: conflictProject.agentContext ?? '',
-              optimizationPrompt: conflictProject.optimizationPrompt ?? ''
+              optimizationPrompt: conflictProject.optimizationPrompt ?? '',
+              agentTracing: savedTracing
             }
             setFormState({
               mode: 'edit',
@@ -270,6 +288,7 @@ const useProjectFormDialog = (
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,
       onOptimizationPromptChange: setOptimizationPromptDraft,
+      onAgentTracingChange: setAgentTracingDraft,
       discardConfirmationOpen,
       onKeepEditing: () => setDiscardConfirmationOpen(false),
       onDiscardChanges: closeFormDialog,

@@ -62,4 +62,37 @@ describe('startUpdateScheduler', () => {
 
     expect(strategy.check).toHaveBeenCalledTimes(2)
   })
+
+  it('only admits a still-current offer while the desktop remains in the background', async () => {
+    const strategy = createStrategy()
+    const offer = {
+      state: 'available' as const,
+      current: '1',
+      latest: '2',
+      totalBytes: 100,
+      automaticDownloads: true
+    }
+    const getOffer = vi.fn<NonNullable<UpdateStrategy['getBackgroundDownloadOffer']>>(() => offer)
+    strategy.getBackgroundDownloadOffer = getOffer
+    strategy.downloadInBackground = vi.fn().mockResolvedValue(offer)
+    const isInBackground = vi.fn().mockReturnValue(false)
+    const canDownload = vi.fn().mockResolvedValue(false)
+    const stop = startUpdateScheduler(strategy, undefined, { isInBackground, canDownload })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(canDownload).not.toHaveBeenCalled()
+    isInBackground.mockReturnValue(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(strategy.downloadInBackground).not.toHaveBeenCalled()
+    canDownload.mockImplementationOnce(async () => {
+      getOffer.mockReturnValue(undefined)
+      return true
+    })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(strategy.downloadInBackground).not.toHaveBeenCalled()
+    getOffer.mockReturnValue(offer)
+    canDownload.mockResolvedValue(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(strategy.downloadInBackground).toHaveBeenCalledExactlyOnceWith('2')
+    stop()
+  })
 })

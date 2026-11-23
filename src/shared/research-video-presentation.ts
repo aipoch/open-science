@@ -6,8 +6,8 @@ import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 export const RESEARCH_VIDEO_STATUS_TIMEOUT_MS = 30_000
 export const RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE = 'Research film status timed out. Try again.'
 export const RESEARCH_FILM_BUSY_MESSAGE = 'Another film is being generated. Wait for it to finish.'
-export const RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE =
-  'Research film model request timed out after 5 minutes. Try again.'
+export const RESEARCH_FILM_MODEL_TIMEOUT_MINUTES = 10
+export const RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE = `Research film model request timed out after ${RESEARCH_FILM_MODEL_TIMEOUT_MINUTES} minutes. Try again.`
 
 export const researchFilmModeSchema = z.enum(['research-explanation', 'operation-replay'])
 export type ResearchFilmMode = z.infer<typeof researchFilmModeSchema>
@@ -46,10 +46,17 @@ export type ResearchVideoPresentationStatus = {
   filmStep?: number
   narrationDownload?: LocalModelSnapshot
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
+  blockingSession?: ResearchVideoPresentationRequest
   progress?: ResearchVideoProgress
   result?: ResearchVideoPresentation
   error?: string
   preflightError?: string
+}
+
+/** Read-only projection of admitted Film work for sidebar activity, independent of Session status. */
+export type ResearchVideoActiveSession = {
+  projectId: string
+  sessionId: string
 }
 
 /** One portable display/export name for both formats; internal job paths remain stable. */

@@ -2,6 +2,7 @@ import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-director
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type {
+  AcpCancelPromptRequest,
   AcpPermissionSettlementState,
   AcpRuntimeEvent,
   AcpStateUpdate
@@ -285,8 +286,7 @@ export type AcpRuntimeOptions = {
       | undefined
   }>
   sessionCapabilityPolicy?: SessionCapabilityPolicy
-  // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
-  // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
+  // The agent backend to drive. Defaults to the built-in Open Science Agent.
   framework?: AgentFramework
   // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
   // Absent ⇒ those frameworks run without the corresponding app tooling.
@@ -324,6 +324,7 @@ export type AcpRuntimeOptions = {
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
+  resolveProjectTracing?: (projectId: string) => Promise<boolean>
   // Reads the Session authority's current Compute execution targets at each Turn. The ids are used
   // only to decide whether the fixed execution directive applies; host inventory stays in the
   // runtime host.compute discovery seam.
@@ -477,3 +478,6 @@ export type AcpRuntimePlanOptions = {
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
+
+// Set by the host command entry point, never persisted or sent to the provider.
+export type RuntimeCancelPromptRequest = AcpCancelPromptRequest & { userInitiated?: boolean }

@@ -13,6 +13,12 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'schedule-target-unavailable',
   'schedule-request-conflict',
   'SESSION_HISTORY_CURSOR_STALE',
+  'session-file-missing',
+  'session-file-unreadable',
+  'session-file-corrupt',
+  'session-file-unsupported-version',
+  'session-file-too-large',
+  'response-too-large',
   'desktop-runtime-disconnected',
   'desktop-runtime-not-submitted',
   'literature-metadata-temporarily-unavailable',
@@ -21,6 +27,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'settings-credential-unavailable',
   'session-details-conflict',
   'session-size-limit',
+  'session-package-busy',
   'session-package-source-unavailable',
   'session-package-invalid-archive',
   'session-revision-conflict',
@@ -34,6 +41,9 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'csl-undefined-macro',
   'csl-missing-sections'
 ] as const
+
+export const isSessionReadChannel = (channel: string): boolean =>
+  channel === 'sessions:load-one' || channel === 'sessions:load-history-page'
 
 export type ApplicationCommandErrorCode = (typeof APPLICATION_COMMAND_ERROR_CODES)[number]
 

@@ -1,6 +1,8 @@
 import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { ArchiveAvailabilityError, SessionExportBlockedError } from '../archive/availability-error'
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
@@ -273,27 +275,73 @@ it('leaves the save-location wait while processing files after destination selec
 })
 
 it.each([
+  [new SessionExportBlockedError('permission'), 'permission request'],
+  [new ArchiveAvailabilityError('project-archived'), 'Restore the archived project'],
+  [
+    new Error('Wait for the application handoff to finish before transferring research.'),
+    'application handoff'
+  ]
+] as const)(
+  'reports a blocked export before opening the save picker: %s',
+  async (failure, message) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      reserveExport: async () => {
+        throw failure
+      },
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    try {
+      await expect(desktop.export({ projectId: 'p', sessionId: 's' })).rejects.toThrow(message)
+      expect(desktop.operations.snapshot).toMatchObject({
+        state: 'failed',
+        exportBlocked: true,
+        error: expect.stringContaining(message)
+      })
+      expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)
+
+it.each([
   {
     name: 'unversioned reference',
+    exportMessage:
+      'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.',
     versionId: undefined,
     notebookJson: undefined,
     reason: 'Legacy file references must have immutable Versions before packaging.'
   },
   {
     name: 'missing version',
+    exportMessage:
+      'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.',
     versionId: 'missing-version',
     notebookJson: undefined,
     reason: 'Session or Notebook references missing file evidence.'
   },
   {
     name: 'unrecognized parser failure',
+    exportMessage:
+      'Could not export this session. Try again. If the problem persists, export a diagnostic package from the session menu.',
     versionId: undefined,
     notebookJson: 'private-study-canary private-research-canary',
     reason: undefined
   }
 ])(
   'retains safe preparation diagnostics for $name',
-  async ({ versionId, notebookJson, reason }) => {
+  async ({ versionId, notebookJson, reason, exportMessage }) => {
     const fixture = await createProvenanceTestFixture()
     fixtures.push(fixture)
     initDataRoot(fixture.storageRoot)
@@ -352,7 +400,8 @@ it.each([
     })
     try {
       const failure = await desktop.export(request).catch((error: unknown) => error)
-      if (reason) expect(causeMessages(failure)).toEqual([packageFailureMessage, reason])
+      expect(desktop.operations.snapshot?.exportBlocked).toBe(reason ? true : undefined)
+      if (reason) expect(causeMessages(failure)).toEqual([exportMessage, reason])
       else {
         expect(failure).toBeInstanceOf(Error)
         expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
@@ -361,7 +410,7 @@ it.each([
       expect(desktop.operations.snapshot).toMatchObject({
         state: 'failed',
         progress: { phase: 'preparing' },
-        error: packageFailureMessage
+        error: exportMessage
       })
       expect(desktop.operations.active).toBe(false)
       expect(release).toHaveBeenCalledOnce()
@@ -1136,7 +1185,10 @@ it.each([
           : desktop.import(undefined, undefined, { projectId: 'source' })
       if (failure === 'cancel')
         await expect(pending).resolves.toEqual(kind === 'export' ? { saved: false } : null)
-      else await expect(pending).rejects.toThrow('Could not complete')
+      else
+        await expect(pending).rejects.toThrow(
+          kind === 'export' ? 'not enough space' : 'Could not complete'
+        )
       expect(cancelled).toBe(true)
       expect(release).toHaveBeenCalledOnce()
       expect(openAtRelease).toEqual([0])
@@ -3121,6 +3173,73 @@ it('maps organization upload errors and cleans up staged archives on failure or 
     expect(desktop.operations.snapshot?.state).toBe('cancelled')
     await expect(stat(stagedArchivePath)).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it('reports specific failure reasons on use-case download failures', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const payload = Buffer.from('catalog archive')
+  const manifestEntry = {
+    name: 'catalog',
+    title: 'Catalog',
+    cover: { file_name: 'cover.png' },
+    case: {
+      file_name: 'Catalog.science',
+      bytes: payload.length,
+      sha256: createHash('sha256').update(payload).digest('hex')
+    }
+  }
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json([manifestEntry]))
+    .mockResolvedValueOnce(new Response(Buffer.alloc(payload.length)))
+    .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'))
+    .mockRejectedValueOnce(new Error('unexpected internal failure'))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => undefined
+  })
+  try {
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'failed verification'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'The downloaded example failed verification. Try again shortly.'
+    })
+
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'timed out'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'The example download timed out. Check your connection and try again.'
+    })
+
+    await expect(desktop.import(undefined, 'client', {}, { useCase: 'catalog' })).rejects.toThrow(
+      'Could not download this example. Try again.'
+    )
+    expect(desktop.operations.snapshot).toMatchObject({
+      state: 'failed',
+      useCaseDownload: { slug: 'catalog' },
+      error: 'Could not download this example. Try again.'
+    })
+  } finally {
+    vi.unstubAllGlobals()
     await desktop.close()
     await service.close()
   }

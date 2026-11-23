@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { RESEARCH_FILM_NOTIFICATION_PREFIX } from '../../shared/notifications'
 
 import type {
   NotificationActionState,
@@ -168,7 +169,11 @@ export const createNotificationInboxController = (
     const desktopAtStart = desktop
     const revisionAtStart = viewRevision
     let readAt: number | undefined
-    if (sessionId && (await isAppFocused())) {
+    if (
+      sessionId &&
+      !input.dedupeKey.startsWith(RESEARCH_FILM_NOTIFICATION_PREFIX) &&
+      (await isAppFocused())
+    ) {
       const visible = await confirmVisibleSession(sessionId)
       if (
         (await isAppFocused()) &&
@@ -231,7 +236,7 @@ export const createNotificationInboxController = (
     mutate(() => dependencies.repository.markSessionsRead(sessionIds, now()))
 
   const markVisibleSessionNotificationsRead = (sessionIds: readonly string[]): Promise<void> =>
-    mutate(() => dependencies.repository.markSessionsRead(sessionIds, now()))
+    mutate(() => dependencies.repository.markVisibleSessionsRead(sessionIds, now()))
 
   const markSessionCompletionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionCompletionsRead(sessionIds, now()))

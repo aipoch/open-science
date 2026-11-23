@@ -306,13 +306,21 @@ export async function buildResearchVideoPlayer(options: {
       subjects[entry.name.slice(0, -5)] = drawing
     }
   }
+  const reviewedScore = options.provenance?.scriptScore
+  const score =
+    typeof reviewedScore === 'number' &&
+    Number.isInteger(reviewedScore) &&
+    reviewedScore >= 0 &&
+    reviewedScore <= 9
+      ? reviewedScore
+      : undefined
   const data = {
     meta: {
       title: spec.title,
       case: spec.case,
       profile: spec.profile ?? 'user',
       disclaimer: spec.disclaimer ?? '',
-      ...(options.provenance?.scriptScore === 9 && { scriptScore: 9 })
+      scriptScore: score
     },
     timeline,
     session,
@@ -363,13 +371,13 @@ export async function buildResearchVideoPlayer(options: {
   ])
     scripts += '\n;\n' + (await engine(name))
   // The card travels in the player so old receipt and session-package readers keep their format.
-  const score = options.provenance?.scriptScore === 9 ? '9' : ''
   const app = spec.libs?.length
     ? 'live'
     : options.provenance?.sessionAppSha256 || options.provenance?.sessionAppMode === 'drawn'
       ? 'drawn'
       : ''
-  const card = score || app ? `<!--open-science-film-card:${score}:${app}-->` : ''
+  const card =
+    score !== undefined || app ? `<!--open-science-film-card:${score ?? ''}:${app}-->` : ''
   const inner = `<!doctype html>${card}<html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><meta name="open-science-research-video" content="1"><title>${attr(spec.title)}</title><!-- Third-party licenses: ${notices.join('\n\n').replace(/--/g, '—')} --><style>${css}</style><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></html>`
   const html = inner
 

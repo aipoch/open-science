@@ -621,10 +621,44 @@ describe('NotebookPreview per-kernel tabs', () => {
       expect(window.api.notebook.state).toHaveBeenCalledWith({
         projectId: 'proj',
         sessionId: 'session-1',
-        workspaceCwd: '/tmp/proj'
+        workspaceCwd: '/tmp/proj',
+        previewHistory: true
       })
     }
   )
+
+  it('preserves visible results on a lock read and gives queued Run updates priority', async () => {
+    await mountWithRuns([makeRun({ script: 'print("original")' })])
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    const lock = { cellId: 'cell', writeId: 'writer', source: 'user' as const, startedAt: 1 }
+    const sparse = { ...initial, runs: [], recentRuns: [], cells: [], activeWrite: lock }
+    const notify = vi.mocked(window.api.notebook.onChanged).mock.calls[0][0]
+    const lockEvent = { ...item.notebook, codeWriteOnly: true as const }
+    state.mockResolvedValueOnce(sparse)
+    await act(async () => notify(lockEvent))
+    expect(state.mock.lastCall?.[0].historySummaryFrameId).toBeTruthy()
+    expect(container.textContent).toContain('print("original")')
+    expect(screen.getByRole('button', { name: 'Cancel code reception' })).toBeTruthy()
+
+    let resolveRead!: (value: typeof initial) => void
+    state.mockImplementationOnce(() => new Promise((resolve) => (resolveRead = resolve)))
+    const completed = makeRun({ runId: 'new-run', script: 'print("completed")' })
+    state.mockResolvedValueOnce({ ...initial, runs: [completed] })
+    await act(async () => {
+      notify(lockEvent)
+      notify(item.notebook)
+      notify(lockEvent)
+      resolveRead(sparse)
+    })
+    expect(state.mock.lastCall?.[0]).not.toHaveProperty('historySummaryFrameId')
+    expect(container.textContent).toContain('print("completed")')
+
+    state.mockRejectedValueOnce(new Error('Summary unavailable')).mockResolvedValueOnce(initial)
+    await act(async () => notify(lockEvent))
+    expect(state.mock.lastCall?.[0]).not.toHaveProperty('historySummaryFrameId')
+    expect(container.textContent).toContain('print("original")')
+  })
 
   it('reads history only when the retained Notebook panel is opened', async () => {
     await mountWithRuns([makeRun()], [], {}, 'idle', {}, item, undefined, false)
@@ -636,6 +670,13 @@ describe('NotebookPreview per-kernel tabs', () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('print(1)')
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls.at(-1)![0]({
+        ...item.notebook,
+        codeAppendOnly: true
+      })
+    })
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
 
     await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
     await act(async () => {

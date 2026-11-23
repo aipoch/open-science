@@ -288,6 +288,8 @@ it.each(outcomes)(
       sessionPersistenceCoordinator: { runSessionMutation: vi.fn() },
       sessionPackageService: { readResearchFilm: vi.fn() },
       researchFilmLifecycle: createResearchFilmLifecycle({ dataRoot: () => mocks.root }),
+      applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: vi.fn()
     }
     const runtime = await composeApplicationRuntime(async (modules) =>
@@ -374,7 +376,7 @@ it.each(outcomes)(
         const realTimeout = AbortSignal.timeout
         const timeout = vi
           .spyOn(AbortSignal, 'timeout')
-          .mockImplementation((ms) => (ms === 300_000 ? deadline.signal : realTimeout(ms)))
+          .mockImplementation((ms) => (ms === 10 * 60_000 ? deadline.signal : realTimeout(ms)))
         mocks.run.mockImplementation(
           ({ signal }: { signal: AbortSignal }) =>
             new Promise((_, reject) => {
@@ -478,10 +480,12 @@ it.each(outcomes)(
                 : {})
             })
           )
-          expect(mocks.run).toHaveBeenCalledTimes(target ? 0 : expires ? 2 : 1)
+          expect(mocks.run).toHaveBeenCalledTimes(target ? 0 : expires ? 3 : 1)
           if (!target && expires) {
             const review = JSON.parse(mocks.run.mock.calls[1][0].prompt)
             expect(review.narration[0].id).toBe('hook')
+            // The refused optional review still lets animation authoring start.
+            expect(JSON.parse(mocks.run.mock.calls[2][0].prompt).path).toBe('anims/hook.js')
           }
         } finally {
           timeout?.mockRestore()
@@ -660,6 +664,8 @@ it.each([
           providers: [{ id: 'test', model: 'test', contextWindow: 200_000 }]
         })
       },
+      applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: recordUsage
     } as unknown as Parameters<typeof composeResearchFilm>[0])
   )
@@ -668,13 +674,13 @@ it.each([
   const timeout = vi
     .spyOn(AbortSignal, 'timeout')
     .mockImplementation((ms) =>
-      scenario === 'deadline' && ms === 300_000 && mocks.run.mock.calls.length === 0
+      scenario === 'deadline' && ms === 10 * 60_000 && mocks.run.mock.calls.length === 0
         ? deadline.signal
         : realTimeout(ms)
     )
   try {
     expect(mocks.runnerOptions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ requireConfirmedCleanup: true })
+      expect.objectContaining({ requireConfirmedCleanup: true, allowCodeBuddySubscription: true })
     )
     mocks.run.mockResolvedValue(response)
     if (scenario === 'provider-cancelled')

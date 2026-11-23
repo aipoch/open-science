@@ -795,7 +795,29 @@ it('shows a matching renamed version beyond the initial version page without cha
   expect(document.body.textContent).toContain('Optional files: 0 / 60 selected')
 })
 
+it('shows the reason and Close when export is blocked before packaging', async () => {
+  const error =
+    'Respond to the permission request in the conversation, then export again after the run finishes.'
+  usePackageOperationStore.setState({
+    open: true,
+    operation: {
+      ...snapshot,
+      files: undefined,
+      state: 'failed',
+      progress: { phase: 'preparing' },
+      error,
+      exportBlocked: true
+    }
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(error)
+  expect(document.querySelector('details')).toBeNull()
+  expect(document.body.textContent).not.toContain('Try again')
+  expect(button('Close')).toBeDefined()
+})
+
 it.each([
+  [{ phase: 'preparing' }, 'Preparing package…'],
   [{ phase: 'saving' }, 'Saving package…'],
   [{ phase: 'importing', importStage: 'publish' }, 'Finishing import…']
 ])('retains the failed processing stage %s in the result', async (progress, label) => {
@@ -820,6 +842,7 @@ it.each([
     )
   )
   expect(document.body.textContent).toContain(`Last stage: ${label}`)
+  expect(button('Try again')).toBeDefined()
   const alert = document.querySelector('[role="alert"]')
   expect(alert?.textContent).toContain('Disk full')
   expect(alert?.textContent).not.toContain('Package operation failed')

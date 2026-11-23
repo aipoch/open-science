@@ -129,6 +129,7 @@ describe('NotificationLiveToast', () => {
     expect(toast).not.toBeNull()
     expect(toast?.textContent).toContain('Approval needed')
     expect(toast?.classList.contains('invisible')).toBe(false)
+    expect(toast?.classList.contains('shadow-notice')).toBe(true)
   })
 
   it('N04: removes the shown toast when its target is invalidated without a new sequence', async () => {
@@ -171,6 +172,24 @@ describe('NotificationLiveToast', () => {
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
     await act(async () => useNavigationStore.setState({ view: 'home' }))
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+  })
+
+  it('shows a film outcome for the conversation already open', async () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    useSessionStore.setState({ selectedSessionId: 'session-1' })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        latestSequence: 2,
+        items: [
+          item(2, { dedupeKey: 'research-film:run-1', title: 'Research film ready' }),
+          item(1)
+        ]
+      })
+    })
+    expect(
+      container.querySelector('[data-testid="notification-live-toast"]')?.textContent
+    ).toContain('Research film ready')
   })
 
   it('withdraws a removed lead and does not carry its count into the next arrival', async () => {

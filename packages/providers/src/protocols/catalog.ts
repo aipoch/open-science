@@ -10,6 +10,7 @@ export type CatalogModel = {
   supportsImageInput?: boolean
   supportsTools?: boolean
   supportsReasoning?: boolean
+  supportsAnonymousAccess?: boolean
   reasoningEffort?: ReasoningCapability
   lifecycle?: string
   routes?: Partial<Record<ModelProtocol, string>>
@@ -75,7 +76,7 @@ export type CatalogPagination =
       totalPath: string
     }
 export type CatalogRequestOptions = {
-  auth: 'none' | { header: string; prefix?: string }
+  auth: 'none' | { header: string; prefix?: string; required?: false }
   headers?: Readonly<Record<string, string>>
   inputs?: readonly CatalogInput[]
   itemsPath?: string

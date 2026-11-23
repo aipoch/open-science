@@ -69,7 +69,7 @@ If you can't write the answer and the catch, you don't understand the research y
 
 ## 6 · Rubric: score the draft before `check`
 
-Read only the voice lines, in order, as if there were no picture. Then mark each criterion pass or fail. **Rewrite every line that fails, then score again.** Report the final score to the user with the preview.
+Read only the voice lines, in order, as if there were no picture. Then mark each criterion pass or fail. Each criterion contributes one point to the advisory score shown with the preview.
 
 1. **Spine:** the hook asks one clear question, and the outro's answer line replies to it.
 2. **Catch:** the script has a surprise, tension or twist, and it lands in a result or limit scene.

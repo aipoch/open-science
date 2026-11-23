@@ -191,43 +191,47 @@ class BackgroundResultDeliveryRepository {
     source: BackgroundResultSourceRef
   ): Promise<Readonly<{ delivery: BackgroundResultDelivery; transitioned: boolean }>> {
     const client = await this.getClient()
-    return client.$transaction(async (tx) => {
-      const where = {
-        sourceKind_sourceId: { sourceKind: source.sourceKind, sourceId: source.sourceId }
-      }
-      const existing = await tx.backgroundResultDelivery.findUnique({ where })
-      if (!existing) {
-        const created = await tx.backgroundResultDelivery.create({
+    // Foreground observation competes with notification writes on the same SQLite connection.
+    return client.$transaction(
+      async (tx) => {
+        const where = {
+          sourceKind_sourceId: { sourceKind: source.sourceKind, sourceId: source.sourceId }
+        }
+        const existing = await tx.backgroundResultDelivery.findUnique({ where })
+        if (!existing) {
+          const created = await tx.backgroundResultDelivery.create({
+            data: {
+              id: `${source.sourceKind}:${source.sourceId}`,
+              sourceKind: source.sourceKind,
+              sourceId: source.sourceId,
+              projectId: source.projectId,
+              sessionId: source.sessionId,
+              agentFrameId: source.agentFrameId,
+              state: 'consumed'
+            }
+          })
+          return { delivery: toDelivery(created), transitioned: true }
+        }
+        assertOwnership(existing, source)
+        const changed = await tx.backgroundResultDelivery.updateMany({
+          where: {
+            id: existing.id,
+            state: { in: ['waiting-result', 'pending', 'claimed', 'needs-attention'] }
+          },
           data: {
-            id: `${source.sourceKind}:${source.sourceId}`,
-            sourceKind: source.sourceKind,
-            sourceId: source.sourceId,
-            projectId: source.projectId,
-            sessionId: source.sessionId,
-            agentFrameId: source.agentFrameId,
-            state: 'consumed'
+            state: 'consumed',
+            claimToken: null,
+            claimExpiresAt: null,
+            continuationMessageId: null
           }
         })
-        return { delivery: toDelivery(created), transitioned: true }
-      }
-      assertOwnership(existing, source)
-      const changed = await tx.backgroundResultDelivery.updateMany({
-        where: {
-          id: existing.id,
-          state: { in: ['waiting-result', 'pending', 'claimed', 'needs-attention'] }
-        },
-        data: {
-          state: 'consumed',
-          claimToken: null,
-          claimExpiresAt: null,
-          continuationMessageId: null
-        }
-      })
-      const row = await tx.backgroundResultDelivery.findUniqueOrThrow({
-        where: { id: existing.id }
-      })
-      return { delivery: toDelivery(row), transitioned: changed.count === 1 }
-    })
+        const row = await tx.backgroundResultDelivery.findUniqueOrThrow({
+          where: { id: existing.id }
+        })
+        return { delivery: toDelivery(row), transitioned: changed.count === 1 }
+      },
+      { maxWait: 10_000 }
+    )
   }
 
   async hasDeliveryPath(

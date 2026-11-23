@@ -32,8 +32,10 @@ const createRuntime = (
     throw new Error('Unexpected getResourceRelease call')
   }),
   retryResourceRelease: unavailable('retryResourceRelease'),
+  runEvidence: unavailable('runEvidence'),
   runIndex: unavailable('runIndex'),
   state: unavailable('state'),
+  backgroundTasks: unavailable('backgroundTasks'),
   getMemoryPolicyState: unavailable('getMemoryPolicyState'),
   getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),

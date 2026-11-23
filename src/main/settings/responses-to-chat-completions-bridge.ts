@@ -3,6 +3,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { observeProviderFailure } from './provider-failure-observation'
 import type {
   ResponsesConnection,
@@ -122,6 +123,11 @@ export class ResponsesToChatCompletionsBridge {
       onUnauthorized: (response) =>
         json(response, 401, { error: { message: 'Invalid Responses bridge token' } }),
       onError: (error, response) => {
+        if (error instanceof RangeError && error.message === 'Maximum call stack size exceeded') {
+          log.error('Responses bridge stack overflow', {
+            error: { name: error.name, message: error.message, stack: error.stack }
+          })
+        }
         if (response.headersSent) {
           response.destroy()
           return
@@ -156,6 +162,9 @@ export class ResponsesToChatCompletionsBridge {
           ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
           ...(this.target.reasoningEffortTransport
             ? { reasoningEffortTransport: this.target.reasoningEffortTransport }
+            : {}),
+          ...(this.target.reasoningSupported !== undefined
+            ? { reasoningSupported: this.target.reasoningSupported }
             : {})
         },
         fetchImpl: this.fetchImpl,
@@ -182,6 +191,7 @@ export class ResponsesToChatCompletionsBridge {
       this.target.model !== target.model ||
       this.target.vendorId !== target.vendorId ||
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
+      this.target.reasoningSupported !== target.reasoningSupported ||
       this.target.key !== target.key
     this.target = target
     if (changed) {
@@ -481,6 +491,22 @@ export class ResponsesToChatCompletionsBridge {
       body: chatRequestBody,
       signal: request.signal
     })
+    const logUpstreamFailure = (
+      phase: 'upstream-http' | 'response',
+      message: string,
+      reason?: string
+    ): void => {
+      const excerpt = providerErrorExcerpt(message)
+      const requestId = upstream.headers.get('x-request-id')
+      log.warn('bridge upstream error', {
+        model: chatRequest.model,
+        phase,
+        ...(excerpt ? { error: { message: excerpt } } : {}),
+        status: upstream.status,
+        ...(reason ? { reason } : {}),
+        ...(requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId) ? { requestId } : {})
+      })
+    }
     if (!upstream.ok) {
       const errorBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       await observeProviderFailure(
@@ -490,16 +516,17 @@ export class ResponsesToChatCompletionsBridge {
         errorBody.complete ? errorBody.body.toString('utf8') : undefined
       )
       const message = errorBody.complete
-        ? upstreamErrorMessage(errorBody.body.toString('utf8'), upstream.status)
+        ? upstreamErrorMessage(
+            errorBody.body.toString('utf8'),
+            upstream.status,
+            target.key ? [target.key] : []
+          )
         : `Provider request failed with status ${upstream.status}`
       this.deterministicErrors.remember(replayKey, upstream.status, {
         message,
         upstreamStatus: upstream.status
       })
-      log.warn('bridge upstream error', {
-        upstreamModel: chatRequest.model,
-        status: upstream.status
-      })
+      logUpstreamFailure('upstream-http', message)
       json(response, providerErrorClientStatus(upstream.status), {
         error: {
           type: 'upstream_error',
@@ -509,7 +536,11 @@ export class ResponsesToChatCompletionsBridge {
       })
       return
     }
-    const converted = await turn.convert(upstream)
+    const converted = await turn.convert(upstream).catch((error: unknown) => {
+      if (error instanceof ResponsesProtocolError)
+        logUpstreamFailure('response', error.message, error.type)
+      throw error
+    })
     response.writeHead(converted.status, Object.fromEntries(converted.headers))
     if (converted.body)
       await pipeline(Readable.fromWeb(converted.body as NodeReadableStream<Uint8Array>), response)

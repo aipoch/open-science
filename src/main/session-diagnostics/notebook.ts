@@ -1,5 +1,6 @@
 import { diagnosticText, type DiagnosticTextOptions } from './detail'
 import { redactSensitiveText } from '@aipoch/diagnostics'
+import { createHash } from 'node:crypto'
 
 type RecordValue = Record<string, unknown>
 const record = (value: unknown): RecordValue | undefined =>
@@ -10,6 +11,14 @@ const identity = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value)
 const finiteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
+const environmentManifestShape = (value: RecordValue): boolean =>
+  value.schemaVersion === 1 &&
+  value.captureKind === 'completed-run' &&
+  Array.isArray(value.packages)
+const environmentManifestContents = (value: RecordValue): string =>
+  `${JSON.stringify(value, null, 2)}\n`
+const checksumEnvironmentManifest = (contents: string): string =>
+  createHash('sha256').update(contents).digest('hex')
 
 export type DiagnosticNotebookScope = {
   projectId: string
@@ -139,6 +148,27 @@ export function projectDiagnosticNotebook(
       }
     }
     const projected: RecordValue = {}
+    const capture = record(run.environmentCapture)
+    const environmentManifestChecksum =
+      (typeof run.environmentManifestChecksum === 'string' &&
+        identity(run.environmentManifestChecksum) &&
+        run.environmentManifestChecksum) ||
+      (capture?.state === 'available' || capture?.state === 'partial'
+        ? typeof capture.manifestChecksum === 'string' &&
+          identity(capture.manifestChecksum) &&
+          capture.manifestChecksum
+        : undefined)
+    if (environmentManifestChecksum)
+      projected.environmentManifestChecksum = environmentManifestChecksum
+    const inlineManifest = record(run.environmentManifest)
+    if (
+      inlineManifest &&
+      environmentManifestShape(inlineManifest) &&
+      (!environmentManifestChecksum ||
+        checksumEnvironmentManifest(environmentManifestContents(inlineManifest)) ===
+          environmentManifestChecksum)
+    )
+      projected.environmentManifest = inlineManifest
     if (includeExecutionCode) {
       if (typeof run.script !== 'string') {
         projected.scriptStatus = 'missing'

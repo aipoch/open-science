@@ -7,7 +7,19 @@ import { resolve } from './paths.js'
 import { pathToFileURL } from 'node:url'
 const { engine } = await import(pathToFileURL(resolve('resources/pdfium.mjs')).href)
 
-it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark', 'reordered'])(
+it.each([
+  'complete',
+  'legacy-slot',
+  'latin-modern',
+  'latin-modern-number',
+  'changed-number',
+  'mixed-fonts',
+  'detached',
+  'different-size',
+  'foreign-ink',
+  'missing-mark',
+  'reordered'
+])(
   'moves a separately painted negated equality only as a complete native pair: %s',
   async (kind) => {
     const pdf = await PDFDocument.create(),
@@ -16,6 +28,8 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
       equal = await pdf.embedFont(StandardFonts.Helvetica),
       page = pdf.addPage([320, 200]),
       x = 120,
+      fusedNumber = kind === 'latin-modern-number' || kind === 'changed-number',
+      equality = fusedNumber ? '= 27' : '=',
       shift = (equal.widthOfTextAtSize('=', 10) - slash.widthOfTextAtSize('/', 10)) / 2
     page.drawText('The values u ', { font: prose, x: 40, y: 150, size: 10 })
     page.drawText('/', {
@@ -24,13 +38,25 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
       y: 150,
       size: kind === 'different-size' ? 8 : 10
     })
-    page.drawText('=', { font: equal, x, y: 150, size: 10 })
-    page.drawText(' v differ.', { font: prose, x: 140, y: 150, size: 10 })
+    page.drawText(equality, { font: equal, x, y: 150, size: 10 })
+    page.drawText(fusedNumber ? ' differs.' : ' v differ.', {
+      font: prose,
+      x: fusedNumber ? 145 : 140,
+      y: 150,
+      size: 10
+    })
     if (kind === 'foreign-ink') page.drawText('q', { font: prose, x, y: 150, size: 10 })
     page.drawText('Independent neighbor.', { font: prose, x: 40, y: 100, size: 10 })
     await pdf.flush()
-    const slashFont = pdf.context.lookup(slash.ref, PDFDict)
-    slashFont.set(PDFName.of('BaseFont'), PDFName.of('CMSY10'))
+    const latinModern = kind === 'latin-modern' || kind === 'mixed-fonts' || fusedNumber,
+      legacy = kind === 'legacy-slot',
+      complete =
+        kind === 'complete' || kind === 'latin-modern' || kind === 'latin-modern-number' || legacy,
+      slashFont = pdf.context.lookup(slash.ref, PDFDict)
+    slashFont.set(
+      PDFName.of('BaseFont'),
+      PDFName.of(latinModern ? 'LMMathSymbols10-Regular' : 'CMSY10')
+    )
     slashFont.set(
       PDFName.of('ToUnicode'),
       pdf.context.register(
@@ -39,18 +65,25 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
             '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
             '/CMapName /NativeSlash def /CMapType 2 def ' +
             '1 begincodespacerange <00> <FF> endcodespacerange ' +
-            '1 beginbfchar <2F> <0338> endbfchar ' +
+            `1 beginbfchar <2F> <${legacy ? '0036' : '0338'}> endbfchar ` +
             'endcmap CMapName currentdict /CMap defineresource pop end end'
         )
       )
     )
-    pdf.context.lookup(equal.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMR10'))
+    pdf.context
+      .lookup(equal.ref, PDFDict)
+      .set(
+        PDFName.of('BaseFont'),
+        PDFName.of(kind === 'latin-modern' || fusedNumber ? 'LMRoman10-Regular' : 'CMR10')
+      )
     const data = await pdf.save(),
       registry = new TestCallerRegistry(),
       caller = registry.acquire({ leaseId: 'native-negation' }),
       relation = kind === 'missing-mark' ? '=' : kind === 'reordered' ? '=\u0338' : '\u0338=',
-      source = `The values u \u0338= v differ.${kind === 'foreign-ink' ? ' q' : ''}`,
-      translation = `数值 u ${relation} v 不同。${kind === 'foreign-ink' ? ' q' : ''}`
+      source = `The values u \u0338${equality}${fusedNumber ? ' differs.' : ' v differ.'}${kind === 'foreign-ink' ? ' q' : ''}`,
+      value = fusedNumber ? (kind === 'changed-number' ? ' 270' : ' 27') : ' v',
+      translation = `数值 u ${relation}${value} 不同。${kind === 'foreign-ink' ? ' q' : ''}`
+    const mark = legacy ? '6' : '\u0338'
     const original = getDocument({ data: data.slice(), useSystemFonts: true })
     let target: ReturnType<typeof getDocument> | undefined
     try {
@@ -78,7 +111,7 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
         },
         caller.lease
       )
-      expect(output!.layoutFailures).toHaveLength(kind === 'complete' ? 0 : 1)
+      expect(output!.layoutFailures).toHaveLength(complete ? 0 : 1)
       target = getDocument({ data: output!.data.slice(), useSystemFonts: true })
       const before = (
           await (await (await original.promise).getPage(1)).getTextContent()
@@ -89,13 +122,13 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
       expect(after.find((i) => i.str === 'Independent neighbor.')?.transform).toEqual(
         before.find((i) => i.str === 'Independent neighbor.')?.transform
       )
-      if (kind === 'complete') {
+      if (complete) {
         expect(
           after
             .map((i) => i.str)
             .join('')
             .replace(/\s/gu, '')
-        ).toContain(translation.replace(/\s/gu, ''))
+        ).toContain(translation.replace('\u0338', mark).replace(/\s/gu, ''))
         const native = await engine(),
           input = native.open(data),
           changed = native.open(output!.data),
@@ -105,10 +138,10 @@ it.each(['complete', 'detached', 'different-size', 'foreign-ink', 'missing-mark'
           type Native = { text?: string; bounds: number[] }
           const oldObjects: Native[] = native.objects(oldPage),
             newObjects: Native[] = native.objects(newPage),
-            oldMark = oldObjects.find((o) => o.text?.trim() === '\u0338')!,
-            newMark = newObjects.find((o) => o.text?.trim() === '\u0338')!,
-            oldEqual = oldObjects.find((o) => o.text?.trim() === '=')!,
-            newEqual = newObjects.find((o) => o.text?.trim() === '=')!
+            oldMark = oldObjects.find((o) => o.text?.trim() === mark)!,
+            newMark = newObjects.find((o) => o.text?.trim() === mark)!,
+            oldEqual = oldObjects.find((o) => o.text?.trim() === equality)!,
+            newEqual = newObjects.find((o) => o.text?.trim() === equality)!
           for (const [oldGlyph, newGlyph] of [
             [oldMark, newMark],
             [oldEqual, newEqual]

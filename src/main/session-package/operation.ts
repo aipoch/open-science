@@ -1,4 +1,5 @@
 import type { OrgCaseUploadMetadata } from '../../shared/org-cases'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { withImageTaskSnapshot } from '../image-model/stored-tasks'
@@ -27,6 +28,8 @@ import type {
   SessionPackageImportRequest,
   SensitiveContentEvidence
 } from '../../shared/session-package'
+
+export class PackageExportBlockedError extends Error {}
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
 export class SessionPackageOperation {
@@ -485,7 +488,11 @@ export class SessionPackageOperation {
     downloadSlug?: string,
     exportDestination?: PackageOperationSnapshot['exportDestination']
   ): Promise<T> {
-    if (this.controller) throw new Error('A Session package operation is already in progress.')
+    if (this.controller)
+      throw new ApplicationCommandError(
+        'session-package-busy',
+        'A Session package operation is already in progress.'
+      )
     this.selectedUploadTarget = undefined
     const controller = new AbortController()
     this.controller = controller
@@ -539,6 +546,11 @@ export class SessionPackageOperation {
             : error instanceof Error
               ? error.message
               : String(error),
+        ...(kind === 'export' &&
+        error instanceof PackageExportBlockedError &&
+        !controller.signal.aborted
+          ? { exportBlocked: true as const }
+          : {}),
         ...(sensitiveContent ? { sensitiveContent } : {})
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())

@@ -4,7 +4,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Check, Download, LoaderCircle } from 'lucide-react'
+import { AlertTriangle, Check, Download, ExternalLink, LoaderCircle } from 'lucide-react'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,8 +33,17 @@ export const RuntimeUpdateDialog = ({
   manual?: ManualUpdateController
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
-    useUpdateStore()
+  const {
+    status,
+    isDialogOpen,
+    apply,
+    cancel,
+    recheck,
+    recover,
+    openProcessManager,
+    download,
+    check
+  } = useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
   const [cancelPending, setCancelPending] = useState(false)
   const [dismissedCliToken, setDismissedCliToken] = useState<string>()
@@ -93,6 +102,13 @@ export const RuntimeUpdateDialog = ({
     status.recovery?.detail === 'occupancy-unknown',
     status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
   )
+  const blockingProcesses = status.recovery?.blockingProcesses ?? []
+  const knownInstallationBlocker =
+    status.reason === 'installation-busy' && blockingProcesses.length > 0
+  const canOpenProcessManager =
+    window.api?.platform === 'win32' &&
+    typeof window.api?.update?.openProcessManager === 'function' &&
+    knownInstallationBlocker
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
@@ -158,6 +174,13 @@ export const RuntimeUpdateDialog = ({
       }
     })()
   }
+  const dismissUpdate = (): void => {
+    if (status.backgroundDownload && !status.recovery && status.state === 'downloading') {
+      useUpdateStore.setState({ isDialogOpen: false })
+    } else {
+      cancelUpdate()
+    }
+  }
   const cancelConfirmation = (): void => {
     setLegacyToken(undefined)
     if (cliOpen && cli) {
@@ -197,7 +220,7 @@ export const RuntimeUpdateDialog = ({
           manual.closeGuide()
           return
         }
-        if (!next && !recovery && !cliOpen) cancelUpdate()
+        if (!next && !recovery && !cliOpen) dismissUpdate()
       }}
     >
       <Dialog.Portal>
@@ -237,7 +260,7 @@ export const RuntimeUpdateDialog = ({
               cancelConfirmation()
               return
             }
-            if (!recovery) cancelUpdate()
+            if (!recovery) dismissUpdate()
           }}
         >
           {manual.guideOpen ? <ManualUpdateGuide manual={manual} status={status} /> : null}
@@ -355,17 +378,81 @@ export const RuntimeUpdateDialog = ({
                       title={
                         legacyRecords
                           ? t('Old Shell launch records are blocking this update.')
-                          : copy.title
+                          : knownInstallationBlocker
+                            ? t('Application files are in use')
+                            : copy.title
                       }
                       description={
                         legacyRecords
                           ? t(
                               'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
                             )
-                          : copy.description
+                          : knownInstallationBlocker
+                            ? t('Close the process listed below, then check again.')
+                            : copy.description
                       }
                     >
-                      {!status.error ? (
+                      {blockingProcesses.length > 0 ? (
+                        <ul
+                          data-testid="runtime-blocking-processes"
+                          aria-label={t('Processes using Open-Science files')}
+                          className="mt-3 space-y-2"
+                        >
+                          {blockingProcesses.map((process, index) => (
+                            <li
+                              key={`${process.pid}-${index}`}
+                              aria-label={
+                                process.name
+                                  ? t('{{name}} (PID {{pid}})', {
+                                      name: process.name,
+                                      pid: process.pid
+                                    })
+                                  : t('PID {{pid}}', { pid: process.pid })
+                              }
+                              className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/80 bg-muted/35 px-3 py-2 text-xs"
+                            >
+                              <span className="min-w-0 break-all font-mono text-foreground">
+                                {process.name ?? t('Unknown process')}
+                              </span>
+                              <span className="inline-flex shrink-0 items-center gap-2">
+                                <span className="tabular-nums text-muted-foreground">
+                                  {t('PID {{pid}}', { pid: process.pid })}
+                                </span>
+                                {canOpenProcessManager ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    data-testid="open-process-manager"
+                                    aria-label={t('Open Task Manager to find PID {{pid}}', {
+                                      pid: process.pid
+                                    })}
+                                    title={t('Open Task Manager to find PID {{pid}}', {
+                                      pid: process.pid
+                                    })}
+                                    onClick={() =>
+                                      void request(async () => {
+                                        await openProcessManager()
+                                      })
+                                    }
+                                    disabled={busy}
+                                  >
+                                    {requestPending ? (
+                                      <LoaderCircle
+                                        className="size-4 animate-spin motion-reduce:animate-none"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <ExternalLink className="size-4" aria-hidden="true" />
+                                    )}
+                                  </Button>
+                                ) : null}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {!status.error && !knownInstallationBlocker ? (
                         <ManualUpdateFailure manual={manual} status={status} />
                       ) : null}
                     </ErrorNotice>

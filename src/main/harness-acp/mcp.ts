@@ -19,6 +19,8 @@ import {
   SCHEDULE_INVOCATION_META
 } from '../../shared/session-schedules'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
+import { fetchOverSocket } from '../local-rpc-transport'
+import { readReviewerMcpSocketPath } from '../agent-framework/reviewer-mcp-transport'
 
 /** Connection ownership and permission UX are host policy, not package loop policy. */
 export async function connectHarnessMcp(input: {
@@ -55,12 +57,14 @@ export async function connectHarnessMcp(input: {
       input.signal.throwIfAborted()
       if (!('type' in server) || server.type !== 'http')
         throw new Error('Built-in Agent requires host-provided HTTP MCP servers')
+      const socketPath = readReviewerMcpSocketPath(server)
       const url = new URL(server.url)
       if (
         url.username ||
         url.password ||
         url.hash ||
-        (url.protocol !== 'https:' &&
+        (!socketPath &&
+          url.protocol !== 'https:' &&
           !(url.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)))
       )
         throw new Error('Invalid MCP endpoint')
@@ -68,6 +72,7 @@ export async function connectHarnessMcp(input: {
       clients.push(client)
       await client.connect(
         new StreamableHTTPClientTransport(url, {
+          ...(socketPath ? { fetch: fetchOverSocket(socketPath) } : {}),
           requestInit: {
             headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
             redirect: 'error'

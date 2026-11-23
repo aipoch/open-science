@@ -255,6 +255,12 @@ class UserSkillRepository {
     return this.agentHomeSkills.previewAgentHomeSkill(root, skill, aliases, displayLabel)
   }
 
+  withAgentHomeImportBatch<T>(
+    operation: (importSkill: UserSkillRepository['importAgentHomeSkill']) => Promise<T>
+  ): Promise<T> {
+    return this.agentHomeSkills.withImportBatch(operation)
+  }
+
   async importAgentHomeSkill(
     sourcePath: string,
     skill: AgentHomeSkillRef,

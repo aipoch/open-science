@@ -108,6 +108,29 @@ function installationPsArgs(): string[] {
   return ['-axo', process.platform === 'darwin' ? 'pid=,comm=' : 'pid=,command=']
 }
 
+// Extract-and-run uses one shared directory per image. A second launcher can remove it
+// while this Desktop is alive. procfs still identifies the mapped executable and its parent.
+function deletedLinuxExtraction(): string | undefined {
+  const directory = process.env.APPDIR
+  if (
+    process.platform !== 'linux' ||
+    !directory ||
+    !process.env.APPIMAGE ||
+    dirname(process.execPath) !== directory
+  )
+    return undefined
+  try {
+    if (
+      readlinkSync('/proc/self/exe') === process.execPath + ' (deleted)' &&
+      readlinkSync(`/proc/${process.ppid}/exe`) === realpathSync(process.env.APPIMAGE)
+    )
+      return directory
+  } catch {
+    // Unproven ownership must not exempt a process.
+  }
+  return undefined
+}
+
 function installationPsOccupants(
   stdout: string,
   installationRoot: string,
@@ -122,7 +145,7 @@ function installationPsOccupants(
     process.env.APPDIR &&
     realpathSync(process.env.APPIMAGE) === installationRoot
   )
-    roots.push(realpathSync(process.env.APPDIR))
+    roots.push(deletedLinuxExtraction() ?? realpathSync(process.env.APPDIR))
   for (const line of stdout.split('\n')) {
     signal?.throwIfAborted()
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
@@ -395,8 +418,8 @@ export async function inspectProcessNamesAsync(
 
 // Type-2's pre-fork keepalive pipe survives exec: the payload holds the read end,
 // the daemon the write end. Ignore stdio and pipes with both ends in the same
-// process (Electron creates these too). Ambiguous inherited pipes prove nothing.
-function appImagePipe(pid: number, writeEnd: boolean, image?: string): string | undefined {
+// process (Electron creates these too). Launchers can also leave unrelated inherited pipes.
+function appImagePipes(pid: number, writeEnd: boolean, image?: string): string[] | undefined {
   const root = `/proc/${pid}`
   const reads = new Set<string>()
   const writes = new Set<string>()
@@ -417,20 +440,21 @@ function appImagePipe(pid: number, writeEnd: boolean, image?: string): string | 
     if (!/^pipe:\[\d+\]$/.test(target)) continue
     const flags = /^flags:\s*([0-7]+)$/m.exec(readFileSync(`${root}/fdinfo/${fd}`, 'utf8'))
     if (!flags) return undefined
-    const mode = parseInt(flags[1], 8)
+    // Linux fdinfo includes status/descriptor flags; only O_ACCMODE identifies the pipe end.
+    const mode = parseInt(flags[1], 8) & 3
     if (mode === 0) reads.add(target)
     if (mode === 1) writes.add(target)
   }
   if (writeEnd && (!fuse || !imageOpen)) return undefined
   const ends = writeEnd ? writes : reads
   const peers = writeEnd ? reads : writes
-  const candidates = [...ends].filter((pipe) => !peers.has(pipe))
-  return candidates.length === 1 ? candidates[0] : undefined
+  return [...ends].filter((pipe) => !peers.has(pipe))
 }
 
 export function inspectOwnedLinuxAppImageLauncher(): number[] {
   if (process.platform !== 'linux' || !process.env.APPIMAGE || !process.env.APPDIR) return []
   try {
+    if (deletedLinuxExtraction()) return [process.ppid]
     const mount = realpathSync(process.env.APPDIR)
     const image = realpathSync(process.env.APPIMAGE)
     if (!realpathSync(process.execPath).startsWith(mount + sep)) return []
@@ -438,17 +462,20 @@ export function inspectOwnedLinuxAppImageLauncher(): number[] {
     if (readlinkSync(`/proc/${process.ppid}/exe`) === image) return [process.ppid]
     // Mounted Type-2 payloads inherit the mount directory itself at fd 1023.
     if (readlinkSync('/proc/self/fd/1023') !== mount) return []
-    const pipe = appImagePipe(process.pid, false)
-    if (!pipe) return []
+    const pipes = appImagePipes(process.pid, false)
+    if (!pipes?.length) return []
     const owned: number[] = []
     for (const name of readdirSync('/proc')) {
       if (!/^\d+$/.test(name)) continue
       try {
-        if (
-          readlinkSync(`/proc/${name}/exe`) === image &&
-          appImagePipe(Number(name), true, image) === pipe
+        if (readlinkSync(`/proc/${name}/exe`) !== image) continue
+        const matches = (appImagePipes(Number(name), true, image) ?? []).filter((pipe) =>
+          pipes.includes(pipe)
         )
-          owned.push(Number(name))
+        // Same-direction inherited endpoints prove nothing. Require one opposite endpoint
+        // and one daemon; multiple possible keepalive pipes still receive no exemption.
+        if (matches.length > 1) return []
+        if (matches.length === 1) owned.push(Number(name))
       } catch {
         // Exited or inaccessible processes receive no exemption.
       }
@@ -470,7 +497,9 @@ export function inspectOwnedLinuxZygoteProcesses(): number[] {
   })
   if (result.status !== 0)
     throw new UpdateLifecycleError('installation-busy', 'Zygote ownership could not be inspected.')
-  const executable = realpathSync(process.execPath)
+  const executable = deletedLinuxExtraction()
+    ? readlinkSync('/proc/self/exe')
+    : realpathSync(process.execPath)
   const candidates = result.stdout.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
     return match ? [{ pid: Number(match[1]), parent: Number(match[2]) }] : []
@@ -537,14 +566,15 @@ export function inspectOwnedCrashpadProcesses(options: {
       return undefined
     }
   }
-  const executable = canonical(
-    join(
-      options.installationRoot,
-      process.platform === 'darwin'
-        ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
-        : 'chrome_crashpad_handler'
-    )
+  const handler = join(
+    options.installationRoot,
+    process.platform === 'darwin'
+      ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+      : 'chrome_crashpad_handler'
   )
+  const deleted =
+    process.platform === 'linux' && deletedLinuxExtraction() === options.installationRoot
+  const executable = deleted ? handler : canonical(handler)
   const database = canonical(options.crashDumpsPath)
   if (!executable || !database || !options.instanceId) return []
   const commands = read('comm')
@@ -556,7 +586,7 @@ export function inspectOwnedCrashpadProcesses(options: {
         return []
       }
     }
-    if (canonical(command) !== executable) return []
+    if (deleted ? command !== handler + ' (deleted)' : canonical(command) !== executable) return []
     let args: string[] | null
     try {
       // Startup recovery must remain reachable when the native component is missing or damaged.
@@ -572,7 +602,8 @@ export function inspectOwnedCrashpadProcesses(options: {
     } catch {
       return []
     }
-    if (!args?.length || canonical(args[0]) !== executable) return []
+    if (!args?.length || (deleted ? args[0] !== handler : canonical(args[0]) !== executable))
+      return []
     const databases = args.filter((arg) => arg.startsWith('--database='))
     const instances = args.filter((arg) => arg.startsWith('--annotation=openScienceInstance='))
     return databases.length === 1 &&

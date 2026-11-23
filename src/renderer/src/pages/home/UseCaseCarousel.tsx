@@ -116,6 +116,7 @@ export const UseCaseCarousel = ({
   const [pending, setPending] = useState<string>()
   const operation = usePackageOperationStore((state) => state.operation)
   const useCaseFailure = usePackageOperationStore((state) => state.useCaseFailure)
+  const useCaseFailureMessage = usePackageOperationStore((state) => state.useCaseFailureMessage)
   const useCaseSlug = usePackageOperationStore((state) => state.useCaseSlug)
   const operationActive = packageOperationActive(operation)
   const [cancelFailed, setCancelFailed] = useState(false)
@@ -401,6 +402,12 @@ export const UseCaseCarousel = ({
     const downloading = Boolean(download && operationActive)
     const downloadFailed =
       (download && operation?.state === 'failed') || useCaseFailure === item.slug
+    const downloadError =
+      download && operation?.state === 'failed'
+        ? operation.error
+        : useCaseFailure === item.slug
+          ? useCaseFailureMessage
+          : undefined
     const percent = download?.totalBytes
       ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
       : 0
@@ -461,7 +468,7 @@ export const UseCaseCarousel = ({
               description={
                 cancelFailed && downloading
                   ? t('Could not cancel download. Try again.')
-                  : t('Could not download this example. Try again.')
+                  : (downloadError ?? t('Could not download this example. Try again.'))
               }
               primaryButton={
                 downloadFailed

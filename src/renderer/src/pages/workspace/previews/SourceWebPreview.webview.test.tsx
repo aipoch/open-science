@@ -99,7 +99,9 @@ describe('source webview lifetime', () => {
     await act(async () => {
       blocked?.({ guestId: 12, url: 'http://current.example', navigationId: 2 })
     })
-    expect(container.querySelector('[data-source-preview-error]')).not.toBeNull()
+    expect(container.querySelector('[data-source-preview-error]')?.textContent).toContain(
+      'The link leads to an address that cannot be opened in the sidebar.'
+    )
   })
   it.each(['hidden', 'inert'])(
     'does not restore menu focus into a %s source panel',
@@ -174,6 +176,26 @@ describe('source webview lifetime', () => {
     expect(container.querySelector('webview')).toBe(webview)
     expect(webview.getAttribute('src')).toBe(item.url)
   })
+  it('replaces a terminated guest on retry', async () => {
+    await render()
+    const guest = container.querySelector('webview')!
+    const currentUrl = 'https://example.com/supplement'
+    await act(async () =>
+      fire(guest, 'did-frame-navigate', {
+        isMainFrame: true,
+        url: currentUrl,
+        httpResponseCode: 200
+      })
+    )
+    await act(async () => fire(guest, 'render-process-gone', {}))
+    expect(container.textContent).toContain('The page preview stopped unexpectedly.')
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Try again'
+    )!
+    await act(async () => retry.click())
+    expect(guest.isConnected).toBe(false)
+    expect(container.querySelector('webview')?.getAttribute('src')).toBe(currentUrl)
+  })
   it('ignores aborted and child-frame failures and retains HTTP errors through hash changes', async () => {
     await render()
     const webview = container.querySelector('[data-source-preview-frame]')!
@@ -183,7 +205,7 @@ describe('source webview lifetime', () => {
         isMainFrame: true,
         url: item.url,
         httpResponseCode: 404,
-        httpStatusText: 'Not Found'
+        httpStatusText: 'untrusted reason phrase'
       })
       fire(webview, 'did-navigate-in-page', { url: item.url + '#details', isMainFrame: true })
       fire(webview, 'did-fail-load', { isMainFrame: true, errorCode: -3 })
@@ -192,6 +214,8 @@ describe('source webview lifetime', () => {
     expect(container.querySelector('[data-source-preview-error]')?.textContent).toContain(
       'HTTP 404'
     )
+    expect(container.textContent).toContain('This page was not found. Check the link.')
+    expect(container.textContent).not.toContain('untrusted reason phrase')
     expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
       item.url + '#details'
     )

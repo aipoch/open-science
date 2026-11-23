@@ -7,7 +7,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { PrismaClient } from '@prisma/client'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { createProjectDbClient } from '../projects/prisma-client'
+import { registerDatabaseFixture } from '../database/migrated-database.test-support'
 import { ScheduleRepository } from './repository'
 import {
   ScheduleBusyError,
@@ -26,11 +27,12 @@ import {
   type ScheduleCreateRequest
 } from '../../shared/session-schedules'
 
+const createMigratedDatabase = registerDatabaseFixture()
+
 it('dispatches a scheduled wake with unattended permission policy and the existing admission fence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-unattended-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   try {
-    await migrateApplicationDatabase(db)
     const session = materializeSessionConversationGraph({
       id: 's',
       projectId: 'p',
@@ -108,7 +110,7 @@ it.each([false, true])(
   'retries unreadable Session evidence without pausing or dispatching (independent: %s)',
   async (independent) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-evidence-read-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const read = vi.fn().mockRejectedValue(new Error('Session evidence temporarily unreadable'))
     const loadSession = vi.fn()
     const sendApplicationPrompt = vi.fn()
@@ -127,7 +129,6 @@ it.each([false, true])(
     })
     const owner = new ScheduleDispatcher(async () => db, executor)
     try {
-      await migrateApplicationDatabase(db)
       const at = Date.now() + 60000
       const task = await new ScheduleRepository(async () => db).create({
         target: independent
@@ -197,7 +198,7 @@ it.each([false, true])(
 
 it('bounds background executions across scans and restart while allowing permission waits', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-capacity-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const states = new Map<string, { kind: 'running' | 'succeeded'; waiting?: boolean }>()
   const dispatch = vi.fn(async (work, authorize) => {
@@ -214,7 +215,6 @@ it('bounds background executions across scans and restart while allowing permiss
   const restarted = new ScheduleDispatcher(async () => db, execution)
   const at = Date.now() + 60000
   try {
-    await migrateApplicationDatabase(db)
     for (let i = 0; i < 6; i++)
       await repo.create({
         target: { projectId: 'p', sessionId: 's' + i, agentFrameId: 'f', messageBranchId: 'b' },
@@ -270,7 +270,7 @@ it.each([false, true])(
   'reconciles delayed permission waits before new admissions (restart: %s)',
   async (restart) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-wait-capacity-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const states = new Set<string>()
     const observation = Promise.withResolvers<void>()
@@ -297,7 +297,6 @@ it.each([false, true])(
     const at = Date.now() + 60000
     let scan: Promise<void> | undefined
     try {
-      await migrateApplicationDatabase(db)
       for (let i = 0; i < 5; i++)
         await repo.create({
           target: { projectId: 'p', sessionId: 's' + i, agentFrameId: 'f', messageBranchId: 'b' },
@@ -343,7 +342,7 @@ it.each([false, true])(
 
 it('reuses the reserved conversation across a pre-admission retry and unlinks a deleted run', async () => {
   const root = await mkdtemp(join(tmpdir(), 'independent-schedule-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const at = Date.now() + 60000
   const attempts: (string | null)[] = []
@@ -360,7 +359,6 @@ it('reuses the reserved conversation across a pre-admission retry and unlinks a 
   const first = new ScheduleDispatcher(async () => db, executor)
   const restarted = new ScheduleDispatcher(async () => db, executor)
   try {
-    await migrateApplicationDatabase(db)
     const target = {
       projectId: 'project',
       sessionId: null,
@@ -406,7 +404,7 @@ it('reuses the reserved conversation across a pre-admission retry and unlinks a 
 
 it('claims a due slot once, preserves self-rearm and fences an uncertain restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'schedule-dispatch-'))
-  const database = createProjectDbClient(directory)
+  const database = await createMigratedDatabase(directory)
   const repository = new ScheduleRepository(async () => database)
   const at = Date.now() + 60000
   const request: ScheduleCreateRequest = {
@@ -439,7 +437,6 @@ it('claims a due slot once, preserves self-rearm and fences an uncertain restart
   }
   const dispatcher = new ScheduleDispatcher(async () => database, executor)
   try {
-    await migrateApplicationDatabase(database)
     const schedule = await repository.create(request)
     expect((await repository.create(request)).id).toBe(schedule.id)
     await dispatcher.tick(at)
@@ -483,7 +480,7 @@ it('claims a due slot once, preserves self-rearm and fences an uncertain restart
 
 it('submits a scheduled script to Notebook once and reconciles its receipt without starting an agent', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-script-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repository = new ScheduleRepository(async () => db)
   const execute = vi.fn(async (): Promise<NotebookExecutionResult> => ({
     status: 'completed',
@@ -530,7 +527,6 @@ it('submits a scheduled script to Notebook once and reconciles its receipt witho
   })
   const owner = new ScheduleDispatcher(async () => db, executor)
   try {
-    await migrateApplicationDatabase(db)
     const at = Date.now() + 60000
     const target = {
       projectId: 'p',
@@ -618,7 +614,7 @@ it.each([
   'rearmed one-shot'
 ] as const)('reconciles the latest definition when a running schedule was %s', async (scenario) => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-settlement-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repository = new ScheduleRepository(async () => db)
   const limited = scenario === 'paused at run limit'
   const dispatch = vi.fn<ScheduleExecution['dispatch']>(async (_work, authorize) => {
@@ -633,7 +629,6 @@ it.each([
         : { kind: 'missing' }
   })
   try {
-    await migrateApplicationDatabase(db)
     const at = Date.now() + 60000
     const target = { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' }
     const job = await repository.create({
@@ -737,10 +732,9 @@ it.each([
 
 it('moves only the next recurring slot and preserves pause, revision and run bounds', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-self-time-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   try {
-    await migrateApplicationDatabase(db)
     const at = Date.now() + 60000
     const task = await repo.create({
       requestId: 'request',
@@ -795,7 +789,7 @@ it.each([
   { period: 60, anchor: 180, override: 15, restart: 130, claimed: 15, next: 180 }
 ])('preserves the interval anchor during catch-up: %j', async (timing) => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-catch-up-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const dispatch = vi.fn<ScheduleExecution['dispatch']>(async (_work, authorize) => {
     await authorize()
@@ -807,7 +801,6 @@ it.each([
   })
   const at = Date.now() + 60000
   try {
-    await migrateApplicationDatabase(db)
     const task = await repo.create({
       target: { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' },
       requestId: 'anchor',
@@ -852,7 +845,7 @@ it.each([false, true])(
   'isolates slow evidence and bounds shutdown (live prompt: %s)',
   async (livePrompt) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-slow-evidence-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const gate = Promise.withResolvers<void>()
     const provider = Promise.withResolvers<void>()
@@ -882,7 +875,6 @@ it.each([false, true])(
     const at = Date.now() + 60000
     let scan: Promise<void> | undefined
     try {
-      await migrateApplicationDatabase(db)
       for (let i = 0; i < 2; i++)
         await repo.create({
           target: { projectId: 'p', sessionId: `s${i}`, agentFrameId: 'f', messageBranchId: 'b' },
@@ -948,7 +940,7 @@ it.each(['rejected', 'committed', 'timeout'] as const)(
   'drains the authorization boundary on quit when admission is %s',
   async (scenario) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-quit-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repository = new ScheduleRepository(async () => db)
     const admission = Promise.withResolvers<void>()
     const provider = Promise.withResolvers<void>()
@@ -968,7 +960,6 @@ it.each(['rejected', 'committed', 'timeout'] as const)(
       inspect: async () => ({ kind: committed ? 'running' : 'missing' })
     })
     try {
-      await migrateApplicationDatabase(db)
       const at = Date.now() + 60000
       const task = await repository.create({
         target: { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' },
@@ -1075,7 +1066,7 @@ it.each(['project', 'session'])(
   'releases occupied capacity after deleting the owning %s',
   async (scope) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-delete-capacity-review-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const active = new Set<string>()
     const dispatch = vi.fn<ScheduleExecution['dispatch']>(async (work, authorize) => {
@@ -1094,7 +1085,6 @@ it.each(['project', 'session'])(
       action: { kind: 'run_script' as const, language: 'python' as const, code: 'print(1)' }
     }
     try {
-      await migrateApplicationDatabase(db)
       for (let i = 0; i < 4; i++)
         await repo.create({
           target: {
@@ -1145,7 +1135,7 @@ it.each(['project', 'session'])(
 
 it('retains preparation reservations across scans until authorization', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-preparation-capacity-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const prepared = Promise.withResolvers<void>()
   const dispatch = vi.fn<ScheduleExecution['dispatch']>(async (_work, authorize) => {
@@ -1159,7 +1149,6 @@ it('retains preparation reservations across scans until authorization', async ()
   })
   const at = Date.now() + 60000
   try {
-    await migrateApplicationDatabase(db)
     for (let i = 0; i < 5; i++)
       await repo.create({
         target: { projectId: 'p', sessionId: 's' + i, agentFrameId: 'f', messageBranchId: 'b' },
@@ -1202,7 +1191,7 @@ it.each(['waiting', 'preparing'] as const)(
   'preserves a renamed one-shot while %s without reviving invalidated work',
   async (stage) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-rename-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const preparing = Promise.withResolvers<void>()
     const continuePreparation = Promise.withResolvers<void>()
@@ -1225,7 +1214,6 @@ it.each(['waiting', 'preparing'] as const)(
     const target = { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' }
     const at = Date.now() + 60000
     try {
-      await migrateApplicationDatabase(db)
       const task = await repo.create({
         target,
         requestId: 'once',
@@ -1328,10 +1316,9 @@ it.each(['waiting', 'preparing'] as const)(
 
 it('lists only the latest receipt per task with current runs first and owner scopes intact', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-latest-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   try {
-    await migrateApplicationDatabase(db)
     const action = { kind: 'send_session_message' as const, message: 'Check' }
     await db.sessionSchedule.createMany({
       data: [
@@ -1414,7 +1401,7 @@ it.each(['succeeded', 'failed'] as const)(
   'does not replay a %s slot after clock rollback and resume',
   async (outcome) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-rollback-review-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const dispatch = vi.fn(async () => ({ kind: outcome }))
     const owner = new ScheduleDispatcher(async () => db, {
@@ -1423,7 +1410,6 @@ it.each(['succeeded', 'failed'] as const)(
     })
     const day = Date.parse('2026-11-14T00:00:00Z')
     try {
-      await migrateApplicationDatabase(db)
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(day + 8 * 3600000)
       const task = await repo.create({
@@ -1504,7 +1490,7 @@ it.each(['succeeded', 'failed'] as const)(
 
 it('backs off a failed claim while other tasks run and retries it after the delay', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-claim-retry-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const dispatch = vi.fn(async () => ({ kind: 'succeeded' as const }))
   const owner = new ScheduleDispatcher(async () => db, {
@@ -1512,7 +1498,6 @@ it('backs off a failed claim while other tasks run and retries it after the dela
     dispatch
   })
   try {
-    await migrateApplicationDatabase(db)
     const now = Date.now()
     for (let i = 0; i < 2; i++)
       await repo.create({
@@ -1557,7 +1542,7 @@ it('backs off a failed claim while other tasks run and retries it after the dela
 
 it('does not replay pruned slots after clock rollback and resume', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-retention-review-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const slots: number[] = []
   let settled = Promise.withResolvers<void>()
@@ -1587,7 +1572,6 @@ it('does not replay pruned slots after clock rollback and resume', async () => {
   }
   const start = Date.parse('2026-11-14T08:00:00Z')
   try {
-    await migrateApplicationDatabase(db)
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(start)
     const task = await repo.create({
@@ -1652,7 +1636,7 @@ it.each(['offline', 'preparing'] as const)(
   'expires an unadmitted schedule after its deadline while %s',
   async (scenario) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-deadline-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const start = Date.parse('2026-11-14T08:00:00Z')
     const endAt = start + 65000
@@ -1666,7 +1650,6 @@ it.each(['offline', 'preparing'] as const)(
       dispatch
     })
     try {
-      await migrateApplicationDatabase(db)
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(start)
       const task = await repo.create({
@@ -1710,7 +1693,7 @@ it.each(['offline', 'preparing'] as const)(
 
 it('skips elapsed slots on resume, keeps end bounds and permits explicit one-shot catch-up', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-resume-bounds-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   const owner = new ScheduleDispatcher(async () => db, {
     inspect: async () => ({ kind: 'missing' }),
@@ -1718,7 +1701,6 @@ it('skips elapsed slots on resume, keeps end bounds and permits explicit one-sho
   })
   const start = Date.parse('2026-11-14T08:00:00Z')
   try {
-    await migrateApplicationDatabase(db)
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(start)
     const task = await repo.create({
@@ -1805,7 +1787,7 @@ it.each([4, 36])(
   'recovers capacity across pages with %i permission waits',
   async (waitingCount) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-recovery-capacity-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const dispatch = vi.fn(async () => ({ kind: 'succeeded' as const }))
     let unavailable = false
@@ -1822,7 +1804,6 @@ it.each([4, 36])(
     const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonicNow() + elapsed)
     const at = Date.now() + 60000
     try {
-      await migrateApplicationDatabase(db)
       for (let i = 0; i < waitingCount; i++) {
         const task = await repo.create({
           target: { projectId: 'p', sessionId: 's' + i, agentFrameId: 'f', messageBranchId: 'b' },
@@ -1918,7 +1899,7 @@ it.each(['extend', 'remove'] as const)(
   'rearms an exhausted schedule when its end is explicitly changed: %s',
   async (change) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-end-extension-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const owner = new ScheduleDispatcher(async () => db, {
       inspect: async () => ({ kind: 'missing' }),
@@ -1926,7 +1907,6 @@ it.each(['extend', 'remove'] as const)(
     })
     const at = Date.now() + 60000
     try {
-      await migrateApplicationDatabase(db)
       vi.useFakeTimers({ toFake: ['Date'] })
       const task = await repo.create({
         target: { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' },
@@ -1980,7 +1960,7 @@ it.each(['extend', 'remove'] as const)(
 
 it('persists independent permissions, rejects MCP changes and never overrides a bound session', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-permissions-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repository = new ScheduleRepository(async () => db)
   const target = { projectId: 'p', sessionId: null, agentFrameId: null, messageBranchId: null }
   const draft: ScheduleCreateRequest['draft'] = {
@@ -1989,7 +1969,6 @@ it('persists independent permissions, rejects MCP changes and never overrides a 
     action: { kind: 'send_session_message', message: 'Review' }
   }
   try {
-    await migrateApplicationDatabase(db)
     const created = await repository.create({ target, draft, requestId: 'permissions' })
     expect(created.draft.permissionProfile).toBe('ask')
     const request = {
@@ -2038,7 +2017,7 @@ it('persists independent permissions, rejects MCP changes and never overrides a 
 
 it('persists completion separately from cancellation and never overwrites closure on late settlement', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-finish-reason-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repository = new ScheduleRepository(async () => db)
   const target = { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' }
   const at = Date.now() + 60000
@@ -2058,7 +2037,6 @@ it('persists completion separately from cancellation and never overwrites closur
     }
   })
   try {
-    await migrateApplicationDatabase(db)
     const create = (requestId: string): ReturnType<ScheduleRepository['create']> =>
       repository.create({
         target,
@@ -2133,7 +2111,7 @@ it.each([false, true])(
   'deletes pending work but excludes authorized execution (%s)',
   async (authorized) => {
     const root = await mkdtemp(join(tmpdir(), 'schedule-delete-'))
-    const db = createProjectDbClient(root)
+    const db = await createMigratedDatabase(root)
     const repo = new ScheduleRepository(async () => db)
     const reached = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
@@ -2150,7 +2128,6 @@ it.each([false, true])(
       }
     })
     try {
-      await migrateApplicationDatabase(db)
       const at = Date.now() + 60000
       const target = { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' }
       const task = await repo.create({
@@ -2209,10 +2186,9 @@ it.each([false, true])(
 
 it('pauses archived bindings and deletes Session-owned tasks without deleting independent tasks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-session-lifecycle-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const repo = new ScheduleRepository(async () => db)
   try {
-    await migrateApplicationDatabase(db)
     const draft = {
       name: 'Check results',
       action: { kind: 'send_session_message' as const, message: 'Review the latest results' },
@@ -2274,9 +2250,8 @@ it('pauses archived bindings and deletes Session-owned tasks without deleting in
 
 it('preserves creation idempotency after deletion and restart within the receipt window', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-deletion-replay-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   try {
-    await migrateApplicationDatabase(db)
     const repo = new ScheduleRepository(async () => db)
     const request: ScheduleCreateRequest = {
       target: { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' },
@@ -2315,7 +2290,7 @@ it('preserves creation idempotency after deletion and restart within the receipt
 
 it('reads a coherent task summary while deletion is queued between its queries', async () => {
   const root = await mkdtemp(join(tmpdir(), 'schedule-list-delete-'))
-  const db = createProjectDbClient(root)
+  const db = await createMigratedDatabase(root)
   const read = Promise.withResolvers<void>()
   const resume = Promise.withResolvers<void>()
   let gated = false
@@ -2337,7 +2312,6 @@ it('reads a coherent task summary while deletion is queued between its queries',
   let listing: Promise<unknown> | undefined
   let removal: Promise<unknown> | undefined
   try {
-    await migrateApplicationDatabase(db)
     await db.sessionSchedule.create({
       data: {
         id: 'snapshot',

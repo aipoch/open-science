@@ -1,3 +1,4 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { freshSessionAttachment } from './session-agent-target'
 import { HARNESS_OWNER } from '../harness-acp/config'
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
@@ -151,9 +152,11 @@ export class AcpProviderSessionResumer {
     const connection = this.deps.currentConnection()
     const backend = this.deps.currentBackend()
     if (!attachment || !snapshot || !connection) throw new Error('ACP Session is not attached.')
+    const closeBeforeResume =
+      backend.framework.id === 'codex' || backend.framework.id === 'open-science-agent'
     if (
       !this.deps.resumeCapabilityAdvertised() ||
-      (backend.framework.id === 'codex' && !this.deps.supportsSessionClose())
+      (closeBeforeResume && !this.deps.supportsSessionClose())
     )
       throw new Error(
         'The Agent runtime cannot safely refresh Notebook execution authority. Update or repair the runtime and retry.'
@@ -179,6 +182,7 @@ export class AcpProviderSessionResumer {
             providerSessionId: attachment.providerSessionId,
             cwd: input.cwd,
             mcpServers: input.mcpServers,
+            ...(backend.session.model ? { sessionModel: backend.session.model } : {}),
             ...(input.skillRuntimeAllowlist
               ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
               : {})
@@ -208,33 +212,43 @@ export class AcpProviderSessionResumer {
             sessionOptions: backend.session.options,
             specialistSkills
           })
-          if (backend.framework.id === 'codex') {
-            // Ordinary Codex resume retains old MCP subprocesses, including their old credential.
+          if (closeBeforeResume) {
+            // Codex retains old MCP processes on resume, and the built-in Agent requires an exclusive writer.
             await connection.agent.request(
               acp.methods.agent.session.close,
               { sessionId: attachment.providerSessionId },
               { cancellationSignal: signal }
             )
-            checkpoint()
           }
-          const response = await connection.agent.request(
-            acp.methods.agent.session.resume,
-            {
-              sessionId: attachment.providerSessionId,
-              cwd: input.cwd,
-              mcpServers: [...input.mcpServers],
-              ...setup.metaArg,
-              ...(backend.framework.id === 'open-science-agent'
-                ? {
-                    _meta: {
-                      ...setup.metaArg._meta,
-                      [HARNESS_OWNER]: { projectId: snapshot.projectId, sessionId: input.sessionId }
+          let response: unknown
+          try {
+            checkpoint()
+            response = await connection.agent.request(
+              acp.methods.agent.session.resume,
+              {
+                sessionId: attachment.providerSessionId,
+                cwd: input.cwd,
+                mcpServers: [...input.mcpServers],
+                ...setup.metaArg,
+                ...(backend.framework.id === 'open-science-agent'
+                  ? {
+                      _meta: {
+                        ...setup.metaArg._meta,
+                        [HARNESS_OWNER]: {
+                          projectId: snapshot.projectId,
+                          sessionId: input.sessionId
+                        }
+                      }
                     }
-                  }
-                : {})
-            },
-            { cancellationSignal: signal }
-          )
+                  : {})
+              },
+              { cancellationSignal: signal }
+            )
+          } catch (error) {
+            if (closeBeforeResume && this.deps.registry.detach(attachment, 'connection'))
+              attachment.session.dispose()
+            throw error
+          }
           checkpoint()
           if (
             response &&
@@ -495,6 +509,11 @@ export class AcpProviderSessionResumer {
         const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
         const projectId = request.projectId?.trim() || this.deps.defaultProjectId
         const backend = this.deps.currentBackend()
+        if (requiresTaskRunTracing(request)) {
+          await assertTaskRunTracingReady(backend.framework.id, connection)
+          cancellationSignal.throwIfAborted()
+          this.deps.assertCurrentConnection(connection)
+        }
         if (
           backend.framework.id === 'codex' &&
           backend.session.options?.openScienceSkillRuntime &&
@@ -675,6 +694,12 @@ export class AcpProviderSessionResumer {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
+    if (requiresTaskRunTracing(request)) {
+      await assertTaskRunTracingReady(backend.framework.id, connection)
+      cancellationSignal.throwIfAborted()
+      this.deps.assertCurrentConnection(connection)
+      identity.assertCurrent()
+    }
     if (request.specialistBindingPending === true || freshSessionAttachment in request) {
       if (compatibleOnly) {
         throw new Error('ACP capability reconfiguration requires a compatible provider resume.')

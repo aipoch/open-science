@@ -1,3 +1,4 @@
+export const installationHelperFlags: readonly string[]
 export function installationRootForEntry(entryPath: string): string
 export function protectInstallationStartup(
   entryPath: string,

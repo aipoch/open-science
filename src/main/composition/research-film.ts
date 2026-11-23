@@ -16,6 +16,7 @@ import {
   createVideoExportTools,
   researchFilmResources,
   ResearchFilmOutputLimitError,
+  ResearchFilmDraftError,
   ResearchFilmIncompleteError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
@@ -31,6 +32,7 @@ import {
   extractRestrictedInferenceUsage
 } from '../acp/restricted-inference-runner'
 import type { ApplicationModuleBuilder } from '../application-runtime'
+import type { ApplicationEvents } from '../application-events'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import {
@@ -47,10 +49,15 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
-import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
+import {
+  runTaskNotificationInBackground,
+  type TaskNotificationService
+} from '../notifications/task-notifications'
+import {
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
+} from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
-import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
-import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
@@ -86,6 +93,8 @@ export async function composeResearchFilm({
   previewResources,
   recordAuxiliaryUsage,
   translate = englishNativeTranslator,
+  applicationEvents,
+  taskNotifications,
   modules
 }: {
   configRoot: string
@@ -100,6 +109,8 @@ export async function composeResearchFilm({
   researchFilmLifecycle: ResearchFilmLifecycle
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
+  applicationEvents: Pick<ApplicationEvents, 'publish'>
+  taskNotifications: Pick<TaskNotificationService, 'handleResearchFilmOutcome'>
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -141,6 +152,7 @@ export async function composeResearchFilm({
     profileNamespace: 'research-video',
     requireConfirmedCleanup: true,
     allowNativeCodexSubscription: true,
+    allowCodeBuddySubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
@@ -149,7 +161,6 @@ export async function composeResearchFilm({
   ): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
-    supportsImages: boolean
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
@@ -161,7 +172,6 @@ export async function composeResearchFilm({
     const model = target.model.kind === 'required' ? target.model.id : provider.model
     return {
       target,
-      supportsImages: provider.supportsImageInput,
       budget: researchFilmInputBudget(provider, model),
       count: researchFilmTokenCounter({
         ...target,
@@ -208,8 +218,7 @@ export async function composeResearchFilm({
     source: ResearchVideoSessionSource,
     systemPrompt: string,
     payload: unknown,
-    signal: AbortSignal,
-    images?: AcpMessageImage[]
+    signal: AbortSignal
   ): Promise<string> => {
     signal.throwIfAborted()
     const targetDeadline = AbortSignal.timeout(30_000)
@@ -252,16 +261,14 @@ export async function composeResearchFilm({
               ? 'screenplay'
               : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
                 ? 'script-review'
-                : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
-                  ? 'visual-review'
-                  : 'animation',
+                : 'animation',
         purpose: correction ? 'correction' : undefined,
         frameworkId: target.frameworkId,
         providerId: target.providerId
       }
       try {
         filmLog.info('film model request', fields)
-        const modelDeadline = AbortSignal.timeout(300_000)
+        const modelDeadline = AbortSignal.timeout(RESEARCH_FILM_MODEL_TIMEOUT_MINUTES * 60_000)
         const inferenceSignal = AbortSignal.any([signal, modelDeadline])
         const response = await Promise.resolve()
           .then(() =>
@@ -269,7 +276,6 @@ export async function composeResearchFilm({
               target,
               prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
               systemPrompt,
-              images,
               agentName:
                 source.provenance.mode === 'operation-replay'
                   ? 'Operation replay'
@@ -317,7 +323,10 @@ export async function composeResearchFilm({
                 signal
               )
             signal.throwIfAborted()
-            if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
+            if (timedOut)
+              throw new ResearchFilmDraftError(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, {
+                cause: error
+              })
             throw error
           })
         filmLog.info('film model response', {
@@ -345,6 +354,7 @@ export async function composeResearchFilm({
             signal
           )
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && response.stopReason === 'refusal') return ''
         if (response.stopReason === 'max_tokens')
           throw new ResearchFilmOutputLimitError(
             'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
@@ -365,6 +375,7 @@ export async function composeResearchFilm({
         return response.text
       } catch (error) {
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && error instanceof ResearchFilmDraftError) return ''
         const used = automaticRetries.get(source) ?? 0
         if (!retryable || attempt >= 1 || used >= 2) throw error
         // Reserve synchronously: parallel animation lanes share one allowance.
@@ -383,6 +394,13 @@ export async function composeResearchFilm({
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    onActivityChanged: (sessions) =>
+      applicationEvents.publish('research-video:activity-changed', sessions),
+    onOutcome: (outcome) =>
+      runTaskNotificationInBackground(
+        () => taskNotifications.handleResearchFilmOutcome(outcome),
+        (error) => filmLog.warn('film notification failed', diagnosticErrorFields(error))
+      ),
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,
@@ -494,33 +512,13 @@ export async function composeResearchFilm({
       )
       return result.response === 1
     },
-    reviewPlayer: async (source, htmlPath, spec, signal) => {
+    reviewPlayer: async (_source, htmlPath, _spec, signal) => {
       const check = desktopFileInteraction().checkResearchVideoHtml
       if (!check) throw new Error('The desktop HTML film checker is unavailable.')
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
-      const { issues, frames } = await check({ htmlPath, includeFrames: supportsImages }, signal)
+      const { issues } = await check({ htmlPath, includeFrames: false }, signal)
       signal.throwIfAborted()
-      filmLog.info('film HTML checked', {
-        ...currentFilmAttempt(),
-        issues: issues.length,
-        frames: frames.length
-      })
-      if (issues.length || !supportsImages) return issues
-      if (
-        frames.length !== spec.scenes.length ||
-        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
-      )
-        throw new Error('The desktop returned incomplete film review frames.')
-      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
-        inferResearchVideo(
-          source,
-          FILM_VISUAL_REVIEW_PROMPT,
-          { frames: positions, correction },
-          signal,
-          images
-        )
-      )
+      filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+      return issues
     },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,

@@ -285,6 +285,25 @@ export type ModelRouting =
       model: string
       reasoningEffort: ReasoningEffort
     }
+export type RunRequest = {
+  project: string
+  prompt: string
+  cwd?: string
+  sessionId?: string
+  permissionProfile?: PermissionProfile
+  skillIds?: string[]
+  turnIntent?: TurnIntent
+  /** Deny unresolved human interactions without changing the authorization profile. */
+  permissionPrompts?: 'none'
+  autoReviewEnabled?: boolean
+  specialist?: string
+  delegationPolicy?: DelegationPolicy
+  agentConfiguration?: Partial<AgentConfiguration> & { model?: string | null }
+  memoryEnabled?: boolean
+  computeHostIds?: string[]
+  enabledComputeHostIds?: string[]
+}
+
 export type RequestOptions = {
   /** Use durable admission for startRun. Requires a compatible server. */
   requestId?: string
@@ -685,7 +704,7 @@ export class OpenScienceClient {
   ): Promise<{ projectId: string; sessionId: string } | null>
   submitRun(
     requestId: string,
-    request: Parameters<OpenScienceClient['startRun']>[0],
+    request: RunRequest & { otelTraces?: true },
     options?: RequestOptions
   ): Promise<Submission>
   getSubmission(requestId: string, options?: RequestOptions): Promise<Submission>
@@ -694,26 +713,10 @@ export class OpenScienceClient {
     options?: RequestOptions & { pollIntervalMs?: number }
   ): Promise<Run>
   startRun(
-    request: {
-      project: string
-      prompt: string
-      cwd?: string
-      sessionId?: string
-      permissionProfile?: PermissionProfile
-      skillIds?: string[]
-      turnIntent?: TurnIntent
-      /** Deny unresolved human interactions without changing the authorization profile. */
-      permissionPrompts?: 'none'
-      autoReviewEnabled?: boolean
-      specialist?: string
-      delegationPolicy?: DelegationPolicy
-      agentConfiguration?: Partial<AgentConfiguration> & { model?: string | null }
-      memoryEnabled?: boolean
-      computeHostIds?: string[]
-      enabledComputeHostIds?: string[]
-    },
-    options?: RequestOptions
+    request: RunRequest & { otelTraces?: true },
+    options: RequestOptions & { requestId: string }
   ): Promise<Run>
+  startRun(request: RunRequest & { otelTraces?: never }, options?: RequestOptions): Promise<Run>
   getRun(runId: string, options?: RequestOptions): Promise<Run>
   /** Explicitly cancels the server run and waits for finalization. */
   cancelRun(runId: string, options?: RequestOptions): Promise<Run>
@@ -796,6 +799,7 @@ export class OpenScienceClient {
 }
 
 export function connectToOpenScience(options?: {
+  requireRunTracing?: boolean
   configRoot?: string
   env?: Record<string, string | undefined>
   fetch?: typeof globalThis.fetch

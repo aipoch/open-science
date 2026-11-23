@@ -49,7 +49,12 @@ export function createHarnessNotebookTools(
     authority: Pick<NotebookLocalRpcServer, 'authorizeExecution'>
   }
 ): readonly HarnessTool[] {
-  const bound = structuredClone({ ...environment, release: undefined, deferExecution: undefined })
+  const bound = structuredClone({
+    ...environment,
+    release: undefined,
+    deferExecution: undefined,
+    prepareInitialExecution: undefined
+  })
   const definitions = notebookRpcToolsForEnvironment(bound)
   if (new Set(allowedNames).size !== allowedNames.length) throw new Error('Duplicate harness tool')
   const names = new Set(allowedNames)

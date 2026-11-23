@@ -1,20 +1,63 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
 import type { AgentProcessSpawner } from '../node-process-host'
 
 import { createLogger } from '@aipoch/diagnostics/node'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { resolveBootstrapConfigRoot } from '../storage/config-root'
+import { CLAUDE_ACP_MISSING_MESSAGE } from '../../shared/failure/messages'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { resolveClaudeExecutableForSpawn } from './claude-executable'
 
-const nodeRequire = createRequire(import.meta.url)
 const log = createLogger('agent')
 
-// Resolves the packaged Claude ACP agent entry through Node's module resolver. This is a JS entry
-// executed by Electron-as-Node, not the native claude binary, so it stays bundled with the app.
-const resolveClaudeAgentAcpEntry = (): string =>
-  nodeRequire.resolve('@agentclientprotocol/claude-agent-acp/dist/index.js')
+const packageName = '@agentclientprotocol/claude-agent-acp'
+// Bump the revision when the managed dependency lock or patch changes.
+export const claudeAcpAdapterRevision = '0.70.0-2'
+export const claudeAcpInstallationReceipt = '.open-science-claude-acp'
+export const claudeAcpAdapterPath = 'node_modules/' + packageName + '/dist'
+
+// Only the explicitly installed product runtime lives here. Keep it separate from the native
+// CLI's transaction, which replaces its entire install directory during an update.
+export const managedClaudeAcpRoot = (configRoot: string): string =>
+  join(configRoot, 'claude-code-acp')
+
+export const managedClaudeAcpEntryAt = (root: string): string | undefined => {
+  const entry = join(root, claudeAcpAdapterPath, 'index.js')
+  try {
+    if (
+      readFileSync(join(root, claudeAcpInstallationReceipt), 'utf8') !== claudeAcpAdapterRevision ||
+      !existsSync(entry) ||
+      !existsSync(join(root, claudeAcpAdapterPath, 'open-science-launch.js')) ||
+      !existsSync(join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'))
+    )
+      return undefined
+    return entry
+  } catch {
+    return undefined
+  }
+}
+
+export const resolveClaudeAgentAcpEntry = (configRoot?: string): string => {
+  const host = runtimeMetadataIfConfigured()
+  const root =
+    configRoot ?? (host ? resolveBootstrapConfigRoot(host.homePath, host.packaged) : undefined)
+  const entry = root ? managedClaudeAcpEntryAt(managedClaudeAcpRoot(root)) : undefined
+  if (entry) return entry
+  throw new Error(CLAUDE_ACP_MISSING_MESSAGE)
+}
+
+export const isClaudeAgentAcpAvailable = (configRoot: string): boolean => {
+  try {
+    resolveClaudeAgentAcpEntry(configRoot)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Converts Electron's asar virtual path to the real unpacked location for executable files.
 const toUnpackedAsarPath = (filePath: string): string =>
@@ -74,6 +117,7 @@ export type SpawnClaudeAgentAcpOptions = {
   spawnProcess?: AgentProcessSpawner
   envOverrides?: Record<string, string>
   executablePath?: string
+  adapterEntryPath?: string
 }
 
 // Starts the Claude ACP agent as a child process with pipe-based IO, injecting the active provider's
@@ -81,7 +125,8 @@ export type SpawnClaudeAgentAcpOptions = {
 const spawnClaudeAgentAcp = ({
   envOverrides = {},
   spawnProcess = spawn as AgentProcessSpawner,
-  executablePath
+  executablePath,
+  adapterEntryPath
 }: SpawnClaudeAgentAcpOptions = {}): ChildProcessWithoutNullStreams => {
   if (!executablePath) {
     throw new Error(
@@ -92,7 +137,7 @@ const spawnClaudeAgentAcp = ({
   // Electron is the Node runtime available after packaging; this keeps dev and packaged paths aligned.
   // PATH is augmented with common CLI locations so a Finder-launched (packaged) app — whose PATH omits
   // Homebrew/user bins — can still run claude and the tools it shells out to, instead of hanging.
-  const entryPath = resolveClaudeAgentAcpEntry()
+  const entryPath = adapterEntryPath ?? resolveClaudeAgentAcpEntry()
   // On Windows, a `claude.cmd` shim can't be spawned by the SDK without a shell (spawn EINVAL); resolve
   // it to the underlying cli.js so the SDK runs it via node. Native/Unix executables pass through.
   const resolvedExecutablePath = resolveClaudeExecutableForSpawn(executablePath)
@@ -157,4 +202,4 @@ const spawnClaudeAgentAcp = ({
   return child
 }
 
-export { buildAgentSpawnEnv, resolveClaudeAgentAcpEntry, spawnClaudeAgentAcp, toUnpackedAsarPath }
+export { buildAgentSpawnEnv, spawnClaudeAgentAcp, toUnpackedAsarPath }

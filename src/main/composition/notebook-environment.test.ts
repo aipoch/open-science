@@ -1,4 +1,5 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,7 +19,6 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   createLogger: () => ({ error: mocks.error, info: vi.fn(), warn: vi.fn() }),
   errorLogFields: (error: unknown) => ({ error })
 }))
-vi.mock('../notebook/runtime-service', () => ({ NotebookRuntimeService: class {} }))
 vi.mock('../notebook/environment-production', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../notebook/environment-production')>()),
   createProductionProvisioner: mocks.createProvisioner
@@ -34,6 +34,9 @@ vi.mock('../notebook/env-ipc', () => ({
 
 import type { RuntimeProvisioner } from '@aipoch/environment'
 import { initializeDataRootWriteAvailability } from '../storage/migration-state'
+import { KernelProcessLifecycleOwner } from '../notebook/kernel-process-lifecycle.windows-posix'
+import { NotebookRunRepository } from '../notebook/repository'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { registerNotebookEnvironmentComposition } from './notebook-environment'
 
 type Dependencies = Parameters<typeof registerNotebookEnvironmentComposition>[0]
@@ -54,6 +57,7 @@ const fixture = (): Dependencies => ({
     withEnvLock: vi.fn(async (_name, run) => run()),
     recoverInterruptedOperations: vi.fn().mockResolvedValue(undefined),
     ensureRecovered: vi.fn().mockResolvedValue(undefined),
+    ensureEnvironmentStatusReady: vi.fn().mockResolvedValue(undefined),
     isDefaultEnvRecoveryBlocked: vi.fn().mockReturnValue(false),
     recoveryStatus: vi.fn(),
     prepareRuntimeRepair: vi.fn(),
@@ -90,6 +94,39 @@ beforeEach(() => {
 })
 
 describe('Notebook environment composition', () => {
+  it('reports runtime status while an old Windows kernel receipt still fences environment writes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-runtime-status-'))
+    const previous = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    const intent = previous.beginSpawn({
+      laneKey: 'old-session',
+      processKey: 'python:default-python',
+      kernelEpochId: 'old-epoch'
+    })
+    previous.recordSpawned(intent, { pid: 4242 })
+    const service = new NotebookRuntimeService({
+      platform: 'win32',
+      dataRoot: root,
+      configRoot: root,
+      projectId: 'project',
+      repository: new NotebookRunRepository(root)
+    })
+    try {
+      const lifecycle = await registerNotebookEnvironmentComposition({
+        ...fixture(),
+        provisioningRoot: join(root, 'runtime'),
+        notebookService: service
+      })
+      await expect(lifecycle.status()).resolves.toMatchObject({ pythonReady: true, rReady: true })
+      await expect(lifecycle.provision('python')).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      await expect(lifecycle.repair('python', 'default-python')).rejects.toThrow(
+        'KERNEL_STARTUP_FENCE'
+      )
+    } finally {
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('registers before maintenance, waits for recovery and keeps mirror probing off startup', async () => {
     const deps = fixture()
     const raw = provisioner()

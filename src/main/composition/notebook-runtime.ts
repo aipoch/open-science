@@ -101,8 +101,12 @@ export async function composeNotebookRuntime({
   }
   const notebookApplication = await modules.add(
     {
-      admitSessionWork: (projectId: string, sessionId: string) =>
-        archiveCoordinator.admitSessionWork(projectId, sessionId),
+      admitSessionWork: (projectId: string, sessionId: string, observation?: boolean) =>
+        archiveCoordinator.admitSessionWork(
+          projectId,
+          sessionId,
+          observation ? 'observation' : 'work'
+        ),
       resourceAvailability: archiveCoordinator,
       externalNotebookResources: (scope: { projectId?: string; sessionId?: string }) =>
         artifactReproducibilityAttemptOwnerRef.current?.resources(scope) ?? [],

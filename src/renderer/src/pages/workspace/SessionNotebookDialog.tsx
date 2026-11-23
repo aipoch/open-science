@@ -22,6 +22,7 @@ import type {
   NotebookKernelKind,
   NotebookAgentSummary,
   NotebookRunPage,
+  NotebookRunEvidenceSnapshot,
   NotebookRunRecord
 } from '../../../../shared/notebook'
 import { kernelKindLabel, resolveRunKernelKind } from './notebook-cell-utils'
@@ -65,6 +66,7 @@ type SessionNotebookContentProps = {
   frameLabels?: Readonly<Record<string, string>>
   agentSummaries?: readonly NotebookAgentSummary[]
   onLoadEarlier?: () => void
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -90,6 +92,7 @@ const SessionNotebookContent = ({
   frameLabels = {},
   agentSummaries = [],
   onLoadEarlier,
+  loadRun,
   onClose,
   onExport,
   onExportAll
@@ -427,6 +430,7 @@ const SessionNotebookContent = ({
                       allowFolderAccess={allowFolderAccess}
                       index={index}
                       showInputData={Boolean(projectId)}
+                      loadRun={loadRun}
                     />
                   </div>
                 ))
@@ -640,6 +644,19 @@ const SessionNotebookDialog = ({
       })
   }, [dialogSession, historyPage, loadingEarlier, runs])
 
+  const loadRun = useCallback(
+    async (runId: string) => {
+      if (!dialogSession) return undefined
+      return window.api.notebook.runEvidence({
+        sessionId: dialogSession.id,
+        projectId: dialogSession.projectId,
+        workspaceCwd: dialogSession.cwd ?? '',
+        runId
+      })
+    },
+    [dialogSession]
+  )
+
   useEffect(() => {
     if (!sessionId) return
 
@@ -725,6 +742,7 @@ const SessionNotebookDialog = ({
               frameLabels={notebookFrameLabels(dialogSession, t, frameRuns, agents)}
               agentSummaries={agents}
               onLoadEarlier={loadEarlier}
+              loadRun={loadRun}
               status={status}
               error={error}
               onClose={onClose}

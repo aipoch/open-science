@@ -13,7 +13,7 @@ import {
   clickButton,
   fillRequiredProviderFields,
   findButton,
-  readyClaudeState,
+  readyBuiltInState,
   resetOnboardingStores,
   selectOption,
   stubWindowApi
@@ -48,7 +48,7 @@ const section = (label: string): Element | null =>
   container.querySelector(`section[aria-label="${label}"]`)
 
 const goToProvider = async (): Promise<void> => {
-  readyClaudeState()
+  readyBuiltInState()
   await renderWizard()
   await clickButton(/^continue$/i)
   await clickButton(/^continue$/i)
@@ -216,6 +216,8 @@ describe('Onboarding navigation regressions', () => {
     await clickButton(/test & continue/i)
     await clickButton(/^back$/i)
     await clickButton(/^continue$/i)
+    expect(findButton(/^skip$/i)?.disabled).toBe(true)
+    expect(findButton(/test & continue/i)?.disabled).toBe(true)
     await act(async () => {
       pending.resolve({ providerId: 'saved-1', validation: { ok: true, category: 'ok' } })
     })

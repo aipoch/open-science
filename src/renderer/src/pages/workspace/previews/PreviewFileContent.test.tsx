@@ -1419,7 +1419,9 @@ describe('PreviewFileContent', () => {
     )
 
     expect(container.textContent).not.toContain('This file is no longer available')
-    expect(container.textContent).toContain("File couldn't be read")
+    expect(container.textContent).toContain(
+      'The preview resource could not be loaded. Retry to request it again.'
+    )
     expect(container.querySelector('pre')).toBeNull()
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
       resourceId: 'resource-1'

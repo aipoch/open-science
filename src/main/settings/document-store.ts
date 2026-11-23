@@ -56,6 +56,10 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
+    return (await this.readExisting()) ?? createEmptySettings()
+  }
+
+  async readExisting(): Promise<StoredSettings | undefined> {
     assertCredentialAccessAllowed()
     try {
       const result = await readDurableJsonFile(
@@ -64,7 +68,7 @@ class SettingsDocumentStore {
         {},
         { maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes }
       )
-      return result.status === 'found' ? result.value : createEmptySettings()
+      return result.status === 'found' ? result.value : undefined
     } catch (cause) {
       throw settingsDocumentReadError(this.path, cause)
     }

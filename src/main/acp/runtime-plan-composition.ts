@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
 import type {
@@ -198,7 +199,9 @@ const composeAcpRuntimePlanWorkflow = (
       return {
         availability: 'available',
         reference: renderAppMcpToolReferences(
-          base.backendGeneration?.current.framework.id ?? options.framework?.id ?? 'claude-code',
+          base.backendGeneration?.current.framework.id ??
+            options.framework?.id ??
+            DEFAULT_AGENT_FRAMEWORK_ID,
           SESSION_PLAN_FILE_REFERENCE
         ),
         artifactVersionId: refreshed.artifactVersionId,

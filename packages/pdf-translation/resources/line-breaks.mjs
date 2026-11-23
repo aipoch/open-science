@@ -50,6 +50,7 @@ export function pdfTranslationLineEnds(text) {
         !/[+−\-±∓×÷/=<>≤≥≈≠]$/u.test(text.slice(0, end).trimEnd()) &&
         !/[（(［[｛{《「『【“‘]$/u.test(text.slice(0, end).trimEnd()) &&
         !(/[.,]$/u.test(text.slice(0, end)) && /^\d/u.test(text.slice(end))) &&
+        !(text[end] === '×' && /^\d$/u.test(text[end - 1] ?? '')) &&
         !/^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test(text.slice(end).trimStart()) &&
         !(
           /[\p{L}\p{N}）)]$/u.test(text.slice(0, end).trimEnd()) &&

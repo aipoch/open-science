@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
-import { ClaudeAcpAgent } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -387,26 +386,52 @@ const restoredContinuationFixture = async (): Promise<{
   return { permission, continuation, policy, providerRequest }
 }
 
-// Public SDK callback, with only the upstream in-memory Session fixture seeded. No model,
-// external process, tool execution, or production test seam is needed for these permission checks.
-const permissionAgent = (
-  requestPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
-): ReturnType<ClaudeAcpAgent['canUseTool']> => {
-  const agent = new ClaudeAcpAgent({
-    requestPermission,
-    sessionUpdate: vi.fn().mockResolvedValue(undefined)
-  } as unknown as ConstructorParameters<typeof ClaudeAcpAgent>[0])
-  agent.sessions['issue-3284'] = {
-    cwd: process.cwd(),
-    modes: {
-      currentModeId: 'default',
-      availableModes: [{ id: 'default' }, { id: 'plan' }]
-    },
-    emittedToolCalls: new Set<string>(),
-    liveBackgroundTasks: new Map()
-  } as unknown as ClaudeAcpAgent['sessions'][string]
-  return agent.canUseTool('issue-3284')
-}
+type CanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: { signal: AbortSignal; requestId: string; toolUseID: string }
+) => Promise<
+  | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+  | { behavior: 'deny'; message: string }
+>
+
+// This is the small public callback contract exercised by the broker. The Claude adapter's
+// process and SDK are tested by the dedicated ACP runtime suite instead of being loaded here.
+const permissionAgent =
+  (
+    requestPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
+  ): CanUseTool =>
+  async (toolName, input, options) => {
+    const response = await requestPermission({
+      ...createPermissionRequest('issue-3284'),
+      toolCall: {
+        toolCallId: options.toolUseID,
+        title: toolName,
+        status: 'pending'
+      },
+      options: [
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+    if (response.outcome.outcome === 'cancelled') throw new Error('Tool use aborted')
+    if (
+      response.outcome.outcome === 'selected' &&
+      /^(?:allow)(?:[-_]|$)/u.test(response.outcome.optionId ?? '')
+    )
+      return { behavior: 'allow', updatedInput: input }
+    const denial = response._meta?.['open-science/permission-denial']
+    const message =
+      typeof denial === 'object' &&
+      denial !== null &&
+      !Array.isArray(denial) &&
+      (denial as { version?: unknown }).version === 1 &&
+      typeof (denial as { reason?: unknown }).reason === 'string' &&
+      (denial as { reason: string }).reason.trim().length > 0
+        ? (denial as { reason: string }).reason.trim().slice(0, 2048)
+        : 'User refused permission to run tool'
+    return { behavior: 'deny', message }
+  }
 
 describe('issue #3284 permission rejection', () => {
   it.each(['Bash', 'ExitPlanMode'])(

@@ -107,6 +107,17 @@ for (const width of [320, 1000]) {
     await page.getByRole('button', { name: 'Environment and storage errors', exact: true }).click()
     const environment = page.getByTestId('env-status-banner')
     const storage = page.getByTestId('session-persistence-alert')
+    const stack = page.locator('[data-bottom-notice-stack]')
+    expect(await environment.getAttribute('class')).toContain('shadow-notice')
+    expect(await storage.locator('[data-notice-level]').getAttribute('class')).toContain(
+      'shadow-notice'
+    )
+    expect(
+      await stack.evaluate((el) => {
+        const style = getComputedStyle(el)
+        return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+      })
+    ).toEqual(['12px', '12px', '12px', '12px'])
     const envBounds = (await environment.boundingBox())!
     const storageBounds = (await storage.boundingBox())!
     expect(envBounds.x + envBounds.width).toBe(width - 12)
@@ -330,16 +341,15 @@ for (const width of [320, 375, 768, 1280]) {
       const layout = await error.evaluate((node) => {
         const notice = node.closest('section')!
         const column = notice.parentElement!
-        const label = column.parentElement!
+        const row = column.parentElement!
+        const rowStyle = getComputedStyle(row)
         const icon = notice.querySelector('svg')!.getBoundingClientRect()
         const text = node.getBoundingClientRect()
         const style = getComputedStyle(notice)
         return {
           columnWidth: column.clientWidth,
           availableWidth:
-            label.clientWidth -
-            label.firstElementChild!.getBoundingClientRect().width -
-            parseFloat(getComputedStyle(label).columnGap),
+            row.clientWidth - parseFloat(rowStyle.paddingLeft) - parseFloat(rowStyle.paddingRight),
           border: style.borderTopWidth,
           padding: style.padding,
           iconOffset: icon.y - text.y,

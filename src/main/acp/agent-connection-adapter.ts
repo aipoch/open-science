@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import { observeResourceProcess } from '../resource-diagnostics/recorder'
 import * as acp from '@agentclientprotocol/sdk'
@@ -61,6 +62,7 @@ type AcpAgentConnectionHooks = Readonly<{
   requestPermission: (
     request: RequestPermissionRequest
   ) => RequestPermissionResponse | Promise<RequestPermissionResponse>
+  captureUserStop?: (providerSessionId: string) => (() => boolean) | undefined
   observeSessionUpdate: (notification: SessionNotification) => void
   observeClaudeSdkMessage: (message: Record<string, unknown>) => void
   toolLess?: boolean
@@ -135,7 +137,7 @@ class AcpAgentConnectionAdapter {
     let openCodeStore: OpenCodeStoreLease | undefined
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let cleanupUnconfirmed = false
-    let framework: AgentFramework['id'] = 'claude-code'
+    let framework: AgentFramework['id'] = DEFAULT_AGENT_FRAMEWORK_ID
     let startupPhase = 'resolve-backend'
     let opening = true
     let storeWriters = 0
@@ -394,6 +396,7 @@ class AcpAgentConnectionAdapter {
     if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 1) {
       stream = createOpenCodeCompactionStream(stream, {
         api: backend.opencodeUsageApi,
+        captureUserStop: hooks.captureUserStop,
         resolveSessionCwd: hooks.filesystem.resolveSessionCwd,
         signal: abort.signal
       })

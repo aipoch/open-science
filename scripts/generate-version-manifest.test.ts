@@ -176,6 +176,36 @@ describe('buildManifest', () => {
   let dir: string | undefined
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }))
 
+  it('requires the exact advertised Windows patch before mirroring the feed', () => {
+    const exe = entry('win-x64')
+    dir = makeReleaseDir([exe])
+    const hash = (data: string): string => createHash('sha512').update(data).digest('base64')
+    const patch = join(dir, exe.name + '.from-0.1.1.wex')
+    const windowsDelta = {
+      format: 1,
+      from: '0.1.1',
+      size: 3,
+      sha512: hash('wex'),
+      sourceSha512: hash('old'),
+      oldViewSize: 10,
+      newViewSize: 10
+    }
+    writeFileSync(
+      join(dir, 'latest.yml'),
+      JSON.stringify({
+        version: VERSION,
+        files: [
+          { url: exe.name, size: exe.content.length, sha512: hash(exe.content), windowsDelta }
+        ]
+      })
+    )
+    const options = { dir, version: VERSION, cdnBase: CDN, prefix: PREFIX }
+    writeFileSync(patch, 'wex')
+    expect(buildManifest(options).downloads['win-x64']).toBeDefined()
+    writeFileSync(patch, 'bad')
+    expect(() => buildManifest(options)).toThrow(/Windows delta/)
+  })
+
   it.each(['x64', 'arm64'] as const)(
     'validates %s feed bytes and rejects a swapped architecture',
     (arch) => {

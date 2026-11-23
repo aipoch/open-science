@@ -1,5 +1,5 @@
 import { responsesToChatCompletionsRequest, type ResponsesRequestAdapterOptions } from './request'
-import { completionToResponse } from './response'
+import { completionToResponse, parseUpstreamJson } from './response'
 import { convertChatStream, type ReplayReply } from './stream'
 import { ReasoningReplay } from './replay'
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from '../transport/body'
@@ -102,15 +102,14 @@ export function createResponsesAdapter(options: ResponsesAdapterOptions = {}): R
           )
           if (!streaming) {
             try {
-              const completion = JSON.parse(
-                await readBoundedResponseText(
-                  upstream,
-                  maxBytes,
-                  'Chat Completions upstream response',
-                  undefined,
-                  controller.signal
-                )
-              ) as JsonObject
+              const text = await readBoundedResponseText(
+                upstream,
+                maxBytes,
+                'Chat Completions upstream response',
+                undefined,
+                controller.signal
+              )
+              const completion = parseUpstreamJson(text)
               const result = completionToResponse(completion, tools)
               const items: JsonObject[] = result.output ?? []
               const reasoning = completion.choices?.[0]?.message?.reasoning_content

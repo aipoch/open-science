@@ -140,6 +140,31 @@ async function executeGenomesCell(
   }
 }
 
+it('fails a host.mcp cell when the RPC response contains invalid JSON', async () => {
+  const { createServer } = await import('node:http')
+  const server = createServer((request, response) => {
+    request.resume()
+    response.writeHead(200, { 'content-type': 'application/json' }).end('invalid response body')
+  })
+  const connection = await listenForLocalRpc(server, { name: 'host-mcp-invalid-json' })
+  const exec = makeExecutor()
+  try {
+    const result = await exec.execute(
+      baseRequest({
+        code: "await host.mcp('fixture', 'lookup', {})",
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath
+      })
+    )
+    expect(result.status).toBe('failed')
+    expect(result.traceback).toContain('host.mcp received invalid JSON (HTTP 200)')
+    expect(result.traceback).not.toContain('invalid response body')
+  } finally {
+    await exec.shutdown()
+    server.close()
+  }
+})
+
 // This bounded regression always runs: only the external HTTP response is mocked, while the
 // shipped REPL, RPC, authorization, input validation and connector parser stay real.
 describe('clinical trial host.mcp regression', () => {
@@ -203,7 +228,7 @@ describe('clinical trial host.mcp regression', () => {
             const unrestricted = await host.mcp('clinical-trials', 'search_by_eligibility', {sex:'ALL'});
             let invalidSex;
             try { await host.mcp('clinical-trials', 'search_by_eligibility', {sex:'INVALID'}); }
-            catch (error) { invalidSex = String(error); }
+            catch (error) { invalidSex = { code: error.code, message: error.message }; }
             console.log(JSON.stringify({result, next, detail, unrestricted, invalidSex}));`,
           mcpRpcEndpoint: connection.endpoint,
           mcpRpcSocketPath: connection.socketPath,
@@ -233,7 +258,10 @@ describe('clinical trial host.mcp regression', () => {
         }
       })
       expect(output.unrestricted.items).toEqual(output.result.items)
-      expect(output.invalidSex).toContain('invalid_arguments')
+      expect(output.invalidSex).toEqual({
+        code: 'invalid_arguments',
+        message: expect.stringContaining('Invalid tool arguments')
+      })
       expect(requests).toHaveLength(4)
       const firstParams = requests[0].searchParams
       expect(firstParams.get('filter.advanced')).toContain('AREA[MaximumAge]RANGE[65 Years, MAX]')
@@ -1123,7 +1151,8 @@ gate('repl kernel host.mcp', () => {
     try {
       const result = await exec.execute(
         baseRequest({
-          code: "await host.mcp('oauth-server','lookup',{})",
+          code: `try { await host.mcp('oauth-server','lookup',{}) }
+            catch (error) { console.log(error.code); throw error }`,
           mcpRpcEndpoint: connection.endpoint,
           mcpRpcSocketPath: connection.socketPath,
           mcpRpcToken: connection.token,
@@ -1133,6 +1162,7 @@ gate('repl kernel host.mcp', () => {
       )
 
       expect(result.status).toBe('failed')
+      expect(result.stdout.trim()).toBe('connector_unauthenticated')
       expect(result.traceback).toContain('connector_unauthenticated')
       expect(result.traceback).toContain('Do not retry until the user signs in')
       expect(result.traceback).toContain('Settings > Connectors')

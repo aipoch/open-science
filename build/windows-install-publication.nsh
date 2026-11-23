@@ -140,6 +140,7 @@ FunctionEnd
     ${OrIf} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
       File /oname=$PLUGINSDIR\all-files.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-files.txt"
+      File /oname=$PLUGINSDIR\staged-sha256.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\staged-sha256.txt"
       File /oname=$PLUGINSDIR\all-directories.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-directories.txt"
       File /oname=$PLUGINSDIR\files-2-0.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-0.txt"
       File /oname=$PLUGINSDIR\files-2-1.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-1.txt"
@@ -171,6 +172,19 @@ FunctionEnd
   # not a work budget, so do not kill a valid large extraction merely because it is quiet.
   !ifdef APP_64
     ${If} ${IsNativeAMD64}
+      !ifdef isUpdated
+      ${If} ${isUpdated}
+      ${AndIf} $installMode == "CurrentUser"
+        ReadEnvStr $R0 OPEN_SCIENCE_PREPARED_ID
+        ${If} $R0 != ""
+          nsExec::ExecToStack '"$PLUGINSDIR\windows-install-helper.exe" copy-prepared --root "$EXEDIR\..\open-science-prepared" --target "$publicationDirectory" --lists "$PLUGINSDIR"'
+          Pop $publicationResult
+          Pop $publicationOutput
+          StrCmp $publicationResult "0" publication_payload_ready
+          DetailPrint "Using embedded archive after prepared payload check: $publicationOutput"
+        ${EndIf}
+      ${EndIf}
+      !endif
       StrCpy $publicationSource "powershell-extractor"
       # Parallel partitioned extraction. The helper owns the 7za processes and reports their
       # failures; only its exit 0 permits publication.
@@ -185,6 +199,7 @@ FunctionEnd
   Pop $publicationOutput
   StrCmp $publicationResult "0" 0 publication_failed
 
+  publication_payload_ready:
   SetDetailsPrint textonly
   DetailPrint "$(^CopyTo)$INSTDIR"
   SetDetailsPrint none

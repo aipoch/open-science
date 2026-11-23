@@ -8,3 +8,10 @@
 {"name": "figure-caption-label-remains-translatable", "source": "Figure 2", "sourceOnly": false}
 {"name": "single-han-label-remains-translatable", "source": "中", "sourceOnly": false}
 {"name":"standalone duration with measurement uncertainty needs no translation","source":"275±4.25s","sourceOnly":true}
+{"name": "numeric multiplication continuation retains its glyphs", "source": "· 1234 · 5678.", "sourceOnly": true}
+{"name": "middle-dot prose remains translatable", "source": "· 1234 observations", "sourceOnly": false}
+{"name": "standalone prime keeps its native glyph", "source": "′", "sourceOnly": true}
+{"name": "measurement prose with a prime remains translatable", "source": "Readings at 5′", "sourceOnly": false}
+{"name": "standalone opening ceiling stays native", "source": "⌈", "sourceOnly": true}
+{"name": "standalone closing ceiling stays native", "source": "⌉", "sourceOnly": true}
+{"name": "ceiling prose stays translatable", "source": "Ceiling value ⌈x⌉", "sourceOnly": false}

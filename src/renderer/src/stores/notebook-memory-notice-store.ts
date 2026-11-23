@@ -16,21 +16,30 @@ type CurrentNotebookTerminal = Readonly<{
 // This is a visible decision and the current mounted editor, never a saved execution or code.
 export const useNotebookMemoryNoticeStore = create<{
   rejection?: NotebookMemoryRejectedEvent
+  latestCheck?: NotebookMemoryRejectedEvent['memory']
   terminal?: CurrentNotebookTerminal
   rejectedTerminalId?: string
-  warning?: NotebookMemoryPolicyChangedEvent
   pressure?: NotebookMemoryPolicyChangedEvent
-  criticalScopes: string[]
+  dismissedPressureScopes: string[]
   dismissedRefusalIds: string[]
-}>(() => ({ criticalScopes: [], dismissedRefusalIds: [] }))
+}>(() => ({ dismissedPressureScopes: [], dismissedRefusalIds: [] }))
 
 export const presentNotebookMemoryRejection = (rejection: NotebookMemoryRejectedEvent): void => {
-  const { terminal, dismissedRefusalIds } = useNotebookMemoryNoticeStore.getState()
-  if (rejection.refusalId && dismissedRefusalIds.includes(rejection.refusalId)) return
+  const {
+    terminal,
+    dismissedRefusalIds,
+    rejection: current
+  } = useNotebookMemoryNoticeStore.getState()
+  if (
+    rejection.refusalId &&
+    (current?.refusalId === rejection.refusalId ||
+      dismissedRefusalIds.includes(rejection.refusalId))
+  )
+    return
   const terminalRejection = rejection.source === 'user' && rejection.inputKind === 'terminal'
   useNotebookMemoryNoticeStore.setState({
     rejection,
-    warning: undefined,
+    latestCheck: undefined,
     rejectedTerminalId:
       terminalRejection &&
       terminal?.projectId === rejection.projectId &&
@@ -54,44 +63,55 @@ export const dismissNotebookMemoryRejection = (): void => {
   const { rejection, dismissedRefusalIds } = useNotebookMemoryNoticeStore.getState()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
+    latestCheck: undefined,
     rejectedTerminalId: undefined,
-    warning: undefined,
     dismissedRefusalIds: rejection?.refusalId
       ? [...dismissedRefusalIds.slice(-63), rejection.refusalId]
       : dismissedRefusalIds
   })
 }
 
+export const dismissNotebookMemoryPressure = (): void => {
+  const { pressure, dismissedPressureScopes } = useNotebookMemoryNoticeStore.getState()
+  if (!pressure) return
+  const scope = pressure.memory.executionScope
+  useNotebookMemoryNoticeStore.setState({
+    pressure: undefined,
+    dismissedPressureScopes: dismissedPressureScopes.includes(scope)
+      ? dismissedPressureScopes
+      : [...dismissedPressureScopes.slice(-63), scope]
+  })
+}
+
+export const recordNotebookMemoryCheck = (
+  rejection: NotebookMemoryRejectedEvent,
+  memory: NotebookMemoryRejectedEvent['memory']
+): void => {
+  const state = useNotebookMemoryNoticeStore.getState()
+  if (
+    state.rejection === rejection &&
+    memory.executionScope === rejection.memory.executionScope &&
+    memory.checkedAt >= (state.latestCheck ?? rejection.memory).checkedAt
+  ) {
+    useNotebookMemoryNoticeStore.setState({ latestCheck: memory })
+  }
+}
+
 export const observeNotebookMemoryPolicy = (event: NotebookMemoryPolicyChangedEvent): void => {
   const state = useNotebookMemoryNoticeStore.getState()
   const scope = event.memory.executionScope
-  const criticalScopes =
+  const dismissedPressureScopes =
     event.memory.status === 'healthy'
-      ? state.criticalScopes.filter((entry) => entry !== scope)
-      : state.criticalScopes
-  const critical =
-    event.hasLiveResources &&
-    event.memory.status === 'pressured' &&
-    event.memory.executionScope === 'darwin:host' &&
-    event.memory.source === 'darwin-sysctl-dispatch' &&
-    event.memory.pressureLevel === 'critical'
-  const showWarning = critical && !criticalScopes.includes(scope)
+      ? state.dismissedPressureScopes.filter((entry) => entry !== scope)
+      : state.dismissedPressureScopes
+  if (state.rejection) recordNotebookMemoryCheck(state.rejection, event.memory)
   useNotebookMemoryNoticeStore.setState({
-    criticalScopes: showWarning ? [...criticalScopes, scope] : criticalScopes,
-    ...(state.rejection?.memory.executionScope === scope
-      ? { rejection: { ...state.rejection, memory: event.memory } }
-      : {}),
-    warning: state.rejection
-      ? undefined
-      : showWarning
-        ? event
-        : state.warning?.memory.executionScope === scope
-          ? event.hasLiveResources
-            ? event
-            : undefined
-          : state.warning,
+    dismissedPressureScopes,
     pressure:
-      event.hasLiveResources && event.memory.status === 'pressured'
+      event.hasLiveResources &&
+      event.memory.status === 'pressured' &&
+      event.memory.pressureLevel !== 'normal' &&
+      !dismissedPressureScopes.includes(scope)
         ? event
         : state.pressure?.memory.executionScope === scope
           ? undefined

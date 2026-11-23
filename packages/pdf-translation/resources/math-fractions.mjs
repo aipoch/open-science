@@ -137,6 +137,33 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
         items.some((part) => part.i > numerator.i && part.i < denominator[0].i && part.text.trim()))
     )
       continue
+    // A mathematical capital may own a lowered index and parenthesized raised order.
+    // Reader geometry ties both tiers to this base, rather than printing a fraction.
+    const [lower] = denominator
+    if (denominator.length === 1 && /^\d{1,3}$/u.test(lower.text.trim())) {
+      const base = items.find((part) => part.i === lower.i - 1)
+      const open = items.find((part) => part.i === numerator.i - 1)
+      const close = items.find((part) => part.i === numerator.i + 1)
+      if (
+        /^[\u{1D434}-\u{1D44D}]$/u.test(base?.text ?? '') &&
+        open?.text === '(' &&
+        close?.text === ')' &&
+        open.i > lower.i &&
+        !items.some((part) => part.i > lower.i && part.i < open.i && part.text.trim()) &&
+        Math.abs(base.baseline - bodyBaseline) < bodyFont * 0.05 &&
+        Math.abs(base.fontSize - bodyFont) < bodyFont * 0.05 &&
+        Math.abs(lower.bounds[0] - base.bounds[2]) < bodyFont * 0.1 &&
+        Math.abs(open.bounds[0] - lower.bounds[0]) < bodyFont * 0.25 &&
+        open.bounds[2] <= numerator.bounds[0] + bodyFont * 0.05 &&
+        close.bounds[0] >= numerator.bounds[2] - bodyFont * 0.05 &&
+        [open, close].every(
+          (part) =>
+            Math.abs(part.baseline - numerator.baseline) < bodyFont * 0.02 &&
+            Math.abs(part.fontSize - numerator.fontSize) < bodyFont * 0.02
+        )
+      )
+        continue
+    }
     if (members.some((item) => used.has(item.i))) continue
     for (const item of members) used.add(item.i)
     const denominatorText = denominator
@@ -159,6 +186,57 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
         Math.max(...members.map((item) => item.bounds[2])),
         Math.max(...members.map((item) => item.bounds[3]))
       ]
+    })
+  }
+  if (!items.some((item) => item.text.trim() === '⌈')) return result
+
+  // A scripted numerator can be proved without confusing its exponent
+  // with the denominator. Leave non-enclosed and ambiguous tiers untouched.
+  const native = items.filter((item) => item.text.trim()).sort((a, b) => a.i - b.i)
+  const relativeBaseline = (item) => item.baseline - bodyBaseline
+  const within = (value, low, high) => value > bodyFont * low && value < bodyFont * high
+  for (let index = 0; index + 4 < native.length; index++) {
+    const [open, base, power, bottom, close] = native.slice(index, index + 5)
+    if (
+      open.text.trim() !== '⌈' ||
+      close.text.trim() !== '⌉' ||
+      !/^[A-Za-z]$/u.test(base.text.trim().normalize('NFKC')) ||
+      !/^\d$/u.test(power.text.trim()) ||
+      !/^\d$/u.test(bottom.text.trim()) ||
+      [open, base, power, bottom, close].some((item) => used.has(item.i)) ||
+      [open, close].some(
+        (item) =>
+          Math.abs(relativeBaseline(item)) >= bodyFont * 0.04 ||
+          Math.abs(item.fontSize - bodyFont) >= bodyFont * 0.04
+      ) ||
+      !within(base.fontSize, 0.67, 0.79) ||
+      !within(power.fontSize, 0.49, 0.61) ||
+      Math.abs(bottom.fontSize - base.fontSize) >= bodyFont * 0.04 ||
+      !within(relativeBaseline(base), 0.3, 0.48) ||
+      !within(relativeBaseline(power) - relativeBaseline(base), 0.2, 0.32) ||
+      !within(-relativeBaseline(bottom), 0.27, 0.43) ||
+      !within(base.bounds[0] - open.bounds[2], -0.05, 0.23) ||
+      !within(power.bounds[0] - base.bounds[2], -0.05, 0.16) ||
+      !within(close.bounds[0] - power.bounds[2], -0.05, 0.24) ||
+      Math.abs((bottom.bounds[0] + bottom.bounds[2] - base.bounds[0] - power.bounds[2]) / 2) >=
+        bodyFont * 0.13
+    )
+      continue
+    const indices = [open.i, base.i, power.i, bottom.i, close.i]
+    for (const item of indices) used.add(item)
+    result.push({
+      indices,
+      label:
+        '⌈ ' +
+        base.text.trim() +
+        '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(power.text.trim())] +
+        '/' +
+        bottom.text.trim() +
+        ' ⌉',
+      numerator: base.i,
+      denominator: [bottom.i],
+      bounds: [base.bounds[0], bottom.bounds[1], power.bounds[2], power.bounds[3]],
+      enclosure: [open, close]
     })
   }
   return result
