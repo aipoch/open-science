@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { ProjectFolderValidationResult } from '../../../../shared/projects'
 import { ErrorNotice } from '@/components/error-notice'
 import { isDesktopRenderer } from '@/lib/interface-scale'
+import { projectFolderAccessAvailable } from '@/lib/project-folder'
 import { projectFolderFailure } from '@/lib/project-folder-error'
 import { useReviewStore } from '@/stores/review-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -29,6 +30,7 @@ export function ProjectFolderRecovery({
   rootPath?: string
 }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const available = projectFolderAccessAvailable()
   const identity = JSON.stringify([projectId, rootPath])
   const [state, setState] = useState<{ identity: string; problem?: Problem; busy: boolean }>({
     identity,
@@ -44,7 +46,7 @@ export function ProjectFolderRecovery({
     if (sessionId) useReviewStore.getState().retryReviewsAfterFolderRecovery(sessionId, projectId)
   }, [projectId, sessionId])
   const refresh = useCallback(async (): Promise<void> => {
-    if (!rootPath || busy.current) return
+    if (!available || !rootPath || busy.current) return
     const generation = ++sequence.current
     busy.current = true
     await window.api.projects
@@ -64,7 +66,7 @@ export function ProjectFolderRecovery({
       .finally(() => {
         if (generation === sequence.current) busy.current = false
       })
-  }, [identity, projectId, rootPath, retryRecoveredReviews])
+  }, [available, identity, projectId, rootPath, retryRecoveredReviews])
   useEffect(() => {
     busy.current = false
     void refresh()
@@ -110,7 +112,7 @@ export function ProjectFolderRecovery({
   }
 
   const problem = state.identity === identity ? state.problem : undefined
-  if (!rootPath || !problem) return null
+  if (!available || !rootPath || !problem) return null
   const missing = problem.kind === 'not-found'
   const recordsUnavailable = problem.kind === 'records-unavailable'
   const desktop = isDesktopRenderer()

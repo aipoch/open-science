@@ -29,6 +29,7 @@ import type { ProjectFilesFilterPreference } from '../../../../shared/settings'
 import { createPreviewFileItem } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
+import { projectFolderAccessAvailable } from '@/lib/project-folder'
 import { ProjectFolderBrowser } from './ProjectFolderBrowser'
 import { LocalFileBrowser } from './LocalFileBrowser'
 import {
@@ -475,9 +476,10 @@ const ProjectFilesViewContent = ({
   }
 
   const grantedRoots = useGrantedFoldersStore((state) => state.roots)
-  const projectRootPath = useProjectStore(
+  const boundRootPath = useProjectStore(
     (state) => state.projects.find((project) => project.id === activeProjectId)?.rootPath
   )
+  const projectRootPath = projectFolderAccessAvailable() ? boundRootPath : undefined
   const isFolderMode = sourceMode === 'project-folder' && Boolean(projectRootPath)
   const isLocalMode = sourceMode === 'local'
   // The granted folder the local browser is scoped to; a revoked root reads as the machine itself.

@@ -99,29 +99,53 @@ const registeredCommands = (): Array<{ name: string }> => {
   return commands
 }
 
-it('allows project-scoped folder reads from remote Web and rejects arbitrary host-root payloads', async () => {
+it('keeps bound folder reads and health checks on the desktop and local Web', async () => {
   const deps = createDependencies()
   const router = createApplicationCommandRouter()
   registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+  const commands = dataContentApplicationCommands
+  const listing = { projectId: 'project-1', relativePath: '', limit: 100 }
+  const file = { projectId: 'project-1', relativePath: 'raw.csv' }
+  const health = { projectId: 'project-1' }
+  const preview = { source: 'project-folder' as const, projectId: 'project-1', path: 'raw.csv' }
+  for (const caller of [remoteCaller, createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(commands.projectListFolder, invocation([listing], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.projectReadFolderPreview, invocation([file], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.projectCheckFolder, invocation([health], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.previewResourceAcquire, invocation([preview], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+  }
+  expect(deps.dependencies.withDataRootWrite).not.toHaveBeenCalled()
+  expect(deps.projects.listFolder).not.toHaveBeenCalled()
+  expect(deps.projects.readFolderPreview).not.toHaveBeenCalled()
+  expect(deps.projects.checkFolder).not.toHaveBeenCalled()
+  expect(deps.managedPreview.acquire).not.toHaveBeenCalled()
+
+  for (const caller of [electronCaller, callerContext]) {
+    await expect(
+      router.dispatcher.invoke(commands.projectListFolder, invocation([listing], caller))
+    ).resolves.toMatchObject({ entries: [] })
+    await expect(
+      router.dispatcher.invoke(commands.projectReadFolderPreview, invocation([file], caller))
+    ).resolves.toMatchObject({ content: 'data' })
+    await expect(
+      router.dispatcher.invoke(commands.projectCheckFolder, invocation([health], caller))
+    ).resolves.toBeNull()
+    await expect(
+      router.dispatcher.invoke(commands.previewResourceAcquire, invocation([preview], caller))
+    ).resolves.toMatchObject({ id: 'resource-1' })
+  }
   await expect(
     router.dispatcher.invoke(
-      dataContentApplicationCommands.projectListFolder,
-      invocation([{ projectId: 'project-1', relativePath: '', limit: 100 }], remoteCaller)
-    )
-  ).resolves.toMatchObject({ entries: [] })
-  await expect(
-    router.dispatcher.invoke(
-      dataContentApplicationCommands.projectReadFolderPreview,
-      invocation([{ projectId: 'project-1', relativePath: 'raw.csv' }], remoteCaller)
-    )
-  ).resolves.toMatchObject({ content: 'data' })
-  await expect(
-    router.dispatcher.invoke(
-      dataContentApplicationCommands.projectListFolder,
-      invocation(
-        [{ projectId: 'project-1', relativePath: '', rootPath: '/etc', limit: 100 }],
-        remoteCaller
-      )
+      commands.projectListFolder,
+      invocation([{ ...listing, rootPath: '/unrelated' }], electronCaller)
     )
   ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
 })
@@ -3154,10 +3178,4 @@ it('rejects forged browser and Task folder relocation while accepting desktop re
       invocation([request], electronCaller)
     )
   ).resolves.toMatchObject({ id: 'project-1' })
-  await expect(
-    router.dispatcher.invoke(
-      dataContentApplicationCommands.projectCheckFolder,
-      invocation([{ projectId: 'project-1' }], remoteCaller)
-    )
-  ).resolves.toBeNull()
 })

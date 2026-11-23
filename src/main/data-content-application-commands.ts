@@ -1187,10 +1187,14 @@ const registerDataContentApplicationCommands = (
     })
     scope.registerGroup(dataContentApplicationCommandGroups[3], {
       'preview-resources:acquire': (invocation) => {
-        if (invocation.args[0].source === 'local') {
+        const [request] = invocation.args
+        if (request.source === 'local') {
           assertLocalCaller(invocation, 'preview-resources:acquire')
         }
-        return dependencies.managedPreview.acquire(invocation.callerLease, invocation.args[0])
+        if (request.source === 'project-folder') {
+          assertElectronOrLocalWebCaller(invocation, 'preview-resources:acquire')
+        }
+        return dependencies.managedPreview.acquire(invocation.callerLease, request)
       },
       'preview-resources:export-research-video': (invocation) => {
         assertElectronCaller(invocation, 'preview-resources:export-research-video')
@@ -1276,12 +1280,24 @@ const registerDataContentApplicationCommands = (
         dependencies.projects.cancelPromptOptimization(args[0]),
       'projects:record-optimization-event': ({ args }) =>
         dependencies.projects.recordOptimizationEvent(args[0]),
-      'projects:list-folder': ({ args }) =>
-        dependencies.withDataRootWrite(() => dependencies.projects.listFolder(args[0])),
-      'projects:read-folder-preview': ({ args }) =>
-        dependencies.withDataRootWrite(() => dependencies.projects.readFolderPreview(args[0])),
-      'projects:check-folder': ({ args }) =>
-        dependencies.withDataRootWrite(() => dependencies.projects.checkFolder(args[0])),
+      'projects:list-folder': (invocation) => {
+        assertElectronOrLocalWebCaller(invocation, 'projects:list-folder')
+        return dependencies.withDataRootWrite(() =>
+          dependencies.projects.listFolder(invocation.args[0])
+        )
+      },
+      'projects:read-folder-preview': (invocation) => {
+        assertElectronOrLocalWebCaller(invocation, 'projects:read-folder-preview')
+        return dependencies.withDataRootWrite(() =>
+          dependencies.projects.readFolderPreview(invocation.args[0])
+        )
+      },
+      'projects:check-folder': (invocation) => {
+        assertElectronOrLocalWebCaller(invocation, 'projects:check-folder')
+        return dependencies.withDataRootWrite(() =>
+          dependencies.projects.checkFolder(invocation.args[0])
+        )
+      },
       'projects:locate-folder': (invocation) => {
         assertLocalFolderCaller(invocation)
         return dependencies.withDataRootWrite(async () => {

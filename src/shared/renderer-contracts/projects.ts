@@ -71,13 +71,13 @@ import {
 export const projectsCreateContracts = {
   'projects.listFolder': callable<
     (request: ListProjectFolderRequest) => Promise<ProjectFolderListing>
-  >()('projects', ['projects:list-folder', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('projects', ['projects:list-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'projects.readFolderPreview': callable<
     (request: ReadProjectFolderPreviewRequest) => Promise<ArtifactPreviewResult>
-  >()('projects', ['projects:read-folder-preview', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('projects', ['projects:read-folder-preview', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'projects.checkFolder': callable<
     (request: { projectId: string }) => Promise<ProjectFolderValidationResult | null>
-  >()('projects', ['projects:check-folder', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('projects', ['projects:check-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'projects.locateFolder': callable<(request: LocateProjectFolderRequest) => Promise<Project>>()(
     'projects',
     ['projects:locate-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]

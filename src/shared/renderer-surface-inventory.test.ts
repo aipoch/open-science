@@ -242,7 +242,13 @@ const WEB_UNAVAILABLE_CHANNELS = [
 ] as const
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
-  projects: ['locate-folder', 'validate-folder'],
+  projects: [
+    'check-folder',
+    'list-folder',
+    'locate-folder',
+    'read-folder-preview',
+    'validate-folder'
+  ],
   'pdf-structure': ['read-cached', 'parse', 'cancel', 'read-thumbnail', 'clear-cache'],
   'local-models': ['get-snapshot', 'install', 'cancel', 'remove', 'set-ocr-languages'],
   artifacts: ['open-file'],

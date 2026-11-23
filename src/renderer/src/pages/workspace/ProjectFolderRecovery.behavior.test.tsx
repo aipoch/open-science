@@ -1,3 +1,4 @@
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -47,6 +48,15 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   document.documentElement.removeAttribute('data-open-science-web-events')
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+})
+
+it('leaves the conversation available without checking the host folder from remote Web', () => {
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+  render(<ProjectFolderRecovery projectId="project-1" rootPath="/private/old" />)
+  window.dispatchEvent(new Event('focus'))
+  expect(checkFolder).not.toHaveBeenCalled()
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 it('shows missing-folder recovery in its region with collapsed diagnostics and updates the binding after locate', async () => {

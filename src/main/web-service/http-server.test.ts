@@ -3348,6 +3348,9 @@ describe('startWebHttpServer', () => {
       'local-fs:open-path',
       'local-fs:read-preview',
       'local-fs:reveal',
+      'projects:list-folder',
+      'projects:read-folder-preview',
+      'projects:check-folder',
       'uploads:stage-local-path'
     ]) {
       expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS, channel).toContain(channel)

@@ -1,3 +1,4 @@
+import { projectFolderAccessAvailable } from '@/lib/project-folder'
 import {
   getDesktopRuntimeEpoch,
   desktopRuntimeWritable,
@@ -98,9 +99,10 @@ export const ArtifactMentionPopup = ({
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const projectFolder = useProjectStore(
+  const boundRootPath = useProjectStore(
     (state) => state.projects.find((project) => project.id === activeProjectId)?.rootPath
   )
+  const projectFolder = projectFolderAccessAvailable() ? boundRootPath : undefined
   const [folder, setFolder] = useState<{
     projectId?: string
     root?: string

@@ -1,3 +1,4 @@
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import type { ProjectFolderProblem } from './project-folder-error'
 
 export type ProjectFolderWarning = 'cloud-synced' | 'removable' | 'network'
@@ -16,3 +17,6 @@ export type ProjectFolderForm = {
   onChoose: () => void
   onReveal: () => void
 }
+
+export const projectFolderAccessAvailable = (): boolean =>
+  document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) !== 'remote'
