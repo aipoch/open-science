@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   DesktopBackendStartupError,
   backendStartupStatusSchema,
@@ -23,6 +26,44 @@ beforeEach(() => {
   host.openPath.mockResolvedValue('')
 })
 describe('backend startup recovery', () => {
+  it('shows the configured path only for a confirmed missing data directory', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'startup-data-folder-'))
+    const dataRoot = join(config, '研究数据')
+    const status = {
+      protocolVersion: 1,
+      attemptId: '9706f945-efc7-4fe8-b52e-cd1978a126a7',
+      stage: 'storage',
+      kind: 'failed',
+      code: 'data-directory-unavailable'
+    } as const
+    try {
+      await writeFile(
+        join(config, 'settings.json'),
+        JSON.stringify({ version: 2, providers: [], dataRoot })
+      )
+      expect(backendStartupStatusSchema.safeParse({ ...status, stage: 'database' }).success).toBe(
+        false
+      )
+      host.dialog.mockResolvedValue({ response: 2 })
+      for (const code of ['data-directory-unavailable', 'startup-failed'] as const) {
+        await recoverDesktopBackendStartup(
+          new DesktopBackendStartupError('fixture', 'storage', true, join(config, 'logs'), {
+            ...status,
+            code
+          })
+        )
+      }
+      expect(host.dialog.mock.calls[0][0]).toMatchObject({
+        message: '无法访问已配置的数据目录。',
+        detail: expect.stringContaining(dataRoot + '\n\n'),
+        buttons: ['重试启动', '打开启动日志', '退出']
+      })
+      expect(host.dialog.mock.calls[0][0].detail).toContain('重试启动')
+      expect(host.dialog.mock.calls[1][0].detail).not.toContain(dataRoot)
+    } finally {
+      await rm(config, { recursive: true, force: true })
+    }
+  })
   it.each([
     {
       reason: 'native-secret-operation-failed',

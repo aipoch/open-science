@@ -49,6 +49,30 @@ export function readFilmStage(metadata: unknown, aspect: FilmAspect): FilmStage 
   return { W: width, H: height, duration: stage.duration }
 }
 
+export function readFilmObservations(
+  observations: unknown,
+  aspect: FilmAspect,
+  stage: FilmStage
+): ReturnType<typeof filmVisualCheckSchema.parse> {
+  const parsed = filmVisualCheckSchema.safeParse(observations)
+  if (!parsed.success)
+    throw new FilmDraftVisualError('The player did not produce a valid layout review.')
+  const { issues, frames } = parsed.data
+  const invalidFrame = frames.find(({ time }) => time > stage.duration)
+  if (invalidFrame)
+    throw new FilmDraftVisualError(
+      'Film review time lies outside the player duration.',
+      invalidFrame.scene
+    )
+  return {
+    issues: issues.map((issue) => ({
+      ...issue,
+      message: `${aspect}: ${issue.message}`.slice(0, 500)
+    })),
+    frames
+  }
+}
+
 export async function inspectFilmPlayer({
   aspect,
   stage,
@@ -60,27 +84,16 @@ export async function inspectFilmPlayer({
   stage: FilmStage
   includeFrames: boolean
   check(): Promise<unknown>
-  capture(time: number, scene: string): Promise<string>
+  capture(time: number): Promise<string>
 }): Promise<FilmVisualResult> {
-  const parsed = filmVisualCheckSchema.safeParse(await check())
-  if (!parsed.success)
-    throw new FilmDraftVisualError('The player did not produce a valid layout review.')
-  const result = parsed.data
+  const result = readFilmObservations(await check(), aspect, stage)
   const frames: FilmVisualResult['frames'] = []
   if (aspect === '16x9' && includeFrames && !result.issues.length) {
     for (const { scene, time } of result.frames) {
-      if (time > stage.duration)
-        throw new FilmDraftVisualError('Film review time lies outside the player duration.', scene)
-      const jpeg = await capture(time, scene)
+      const jpeg = await capture(time)
       if (!jpeg) throw new Error('The HTML review frame was empty.')
       frames.push({ scene, time, jpeg })
     }
   }
-  return {
-    issues: result.issues.map((issue) => ({
-      ...issue,
-      message: `${aspect}: ${issue.message}`.slice(0, 500)
-    })),
-    frames
-  }
+  return { issues: result.issues, frames }
 }

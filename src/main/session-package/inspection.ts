@@ -1,3 +1,4 @@
+import { SessionExportBlockedError, type SessionExportBlocker } from '../archive/availability-error'
 import { validateResearchFilms } from './research-films'
 import { validatePackageLiteratureSession } from './literature'
 import { join } from 'node:path'
@@ -8,29 +9,40 @@ import type {
   SessionPackageManifest,
   SessionPackagePreview
 } from '../../shared/session-package'
+import type { PackageWebOmission } from '../../shared/session-package-web'
 import { readPackageArchive, readPackageJson } from './archive'
 import { parseNativeRecords } from './native-snapshot'
 import { validatePackageRecords } from './validation'
 
-export const assertSettledHistory = (session: PersistedChatSession): void => {
+const unsettledHistory = (session: PersistedChatSession): SessionExportBlocker | undefined => {
   const context = session.runtimeContext
+  if (context?.permission?.state === 'pending' || session.status === 'waiting-permission')
+    return 'permission'
+  if (context?.plan?.approval === 'pending' || session.status === 'waiting-plan-approval')
+    return 'plan'
   if (
-    session.activeRun ||
-    session.status === 'running' ||
+    session.status === 'waiting-for-user' ||
+    context?.delegatedWork?.questionRequests?.some((question) => question.status === 'pending')
+  )
+    return 'question'
+  if (hasCurrentRunningDelegatedAttempt({ runtimeContext: context })) return 'delegated'
+  if (session.activeRun || session.status === 'running') return 'agent'
+  if (
     session.status.startsWith('waiting-') ||
-    // Package metadata is untrusted; claimed import identity cannot bypass source validation.
-    hasCurrentRunningDelegatedAttempt({ runtimeContext: context }) ||
-    context?.permission?.state === 'pending' ||
-    context?.plan?.approval === 'pending' ||
     context?.delegatedWork?.messageCommands?.some(
       (command) =>
         command.receipt.status === 'queued' ||
         (command.receipt.status === 'uncertain' && command.receipt.resolution === 'pending')
     ) ||
-    context?.delegatedWork?.questionRequests?.some((question) => question.status === 'pending') ||
     (context?.plan?.delivery && ['queued', 'delivering'].includes(context.plan.delivery.state))
   )
-    throw new Error('Wait for the Session to finish before exporting it.')
+    return 'pending'
+  return undefined
+}
+
+export const assertSettledHistory = (session: PersistedChatSession): void => {
+  const reason = unsettledHistory(session)
+  if (reason) throw new SessionExportBlockedError(reason)
 }
 
 export const readSession = async (directory: string): Promise<PersistedChatSession> => {
@@ -40,12 +52,14 @@ export const readSession = async (directory: string): Promise<PersistedChatSessi
   })
   if (decoded.status !== 'ok')
     throw new Error('Session package contains an invalid or unsupported Session.')
-  assertSettledHistory(decoded.session)
+  if (unsettledHistory(decoded.session))
+    throw new Error('Wait for the Session to finish before exporting it.')
   return decoded.session
 }
 export const preview = (
   manifest: SessionPackageManifest,
-  session: PersistedChatSession
+  session: PersistedChatSession,
+  webOmissions?: PackageWebOmission[]
 ): SessionPackagePreview => ({
   title: manifest.source.title,
   projectName: manifest.source.projectName,
@@ -55,6 +69,7 @@ export const preview = (
     (entry) => entry.kind === 'file' || entry.kind === 'notebook'
   ).length,
   totalBytes: manifest.inventory.reduce((total, entry) => total + entry.sizeBytes, 0),
+  ...(webOmissions?.length ? { webOmissions } : {}),
   omissions: [
     ...manifest.omissions,
     ...manifest.excludedFiles.map((file) => ({
@@ -89,5 +104,5 @@ export const inspectSessionPackage = async (
     onProgress
   )
   onProgress?.({ phase: 'validating', importStage: 'validate-preview', stageProgress: 1 })
-  return preview(manifest, session)
+  return preview(manifest, session, records.webEvidence?.omissions)
 }

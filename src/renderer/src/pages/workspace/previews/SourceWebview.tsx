@@ -85,7 +85,7 @@ export const SourceWebview = ({
         currentUrl: event.validatedURL || lastState.currentUrl,
         navigationId,
         phase: 'failed',
-        failure: [-20, -27, -30].includes(event.errorCode)
+        failure: [-20, -22, -27, -30, -32].includes(event.errorCode)
           ? 'blocked'
           : event.errorCode <= -200 && event.errorCode > -300
             ? 'certificate'
@@ -100,7 +100,7 @@ export const SourceWebview = ({
         currentUrl: lastState.currentUrl,
         navigationId,
         phase: 'failed',
-        failure: 'network'
+        failure: 'process-gone'
       })
     guest.addEventListener('did-start-navigation', start)
     guest.addEventListener('did-frame-navigate', navigate)
@@ -119,7 +119,7 @@ export const SourceWebview = ({
         currentUrl: request.url,
         navigationId,
         phase: 'failed',
-        failure: 'blocked'
+        failure: 'navigation-blocked'
       })
     })
     if (!guest.hasAttribute('src')) {

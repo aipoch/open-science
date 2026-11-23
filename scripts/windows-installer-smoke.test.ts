@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -43,6 +43,7 @@ import {
   terminateProcessTree,
   uninstallAndVerify,
   waitForShutdownExit,
+  watchRollbackLog,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 } from './windows-installer-smoke.mjs'
@@ -676,6 +677,39 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 
+  it('reads only a matching rollback record written after launch, including after log rotation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rollback-log-'))
+    const log = join(root, 'logs', 'main.log')
+    const record = {
+      scope: 'main',
+      msg: 'database startup blocked',
+      data: { appVersion: '1.2.2', code: 'database_newer_than_app' }
+    }
+    try {
+      await mkdir(join(root, 'logs'))
+      await writeFile(log, JSON.stringify(record) + '\n')
+      const readBlock = await watchRollbackLog(root, '1.2.2')
+      await appendFile(
+        log,
+        JSON.stringify({ ...record, data: { ...record.data, appVersion: '1.3.0' } }) + '\n'
+      )
+      expect(await readBlock()).toBeUndefined()
+      await rename(log, log + '.old')
+      await writeFile(
+        log,
+        JSON.stringify({
+          ...record,
+          data: { ...record.data, code: 'database_runtime_unavailable' }
+        }) + '\n'
+      )
+      expect(await readBlock()).toBeUndefined()
+      await appendFile(log, JSON.stringify(record) + '\n')
+      expect(await readBlock()).toEqual(record)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('accepts a blocked database downgrade regardless of process exit status', () => {
     expect(
       assertDatabaseDowngradeBlocked({
@@ -1159,7 +1193,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       return { code: 0, stdout: output, stderr: '' }
     })
 
-    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+    await cleanupOwnedSmokeRegistrations(root, ['0.25.1'], { run })
 
     expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
       [
@@ -1196,7 +1230,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       return { code: 0, stdout: output, stderr: '' }
     })
 
-    await expect(cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })).resolves.toBeUndefined()
+    await expect(cleanupOwnedSmokeRegistrations(root, ['0.25.1'], { run })).resolves.toBeUndefined()
   })
 
   it('still reports unexpected delete failures from registration cleanup', async () => {
@@ -1212,7 +1246,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       return { code: 0, stdout: output, stderr: '' }
     })
 
-    await expect(cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })).rejects.toThrow(
+    await expect(cleanupOwnedSmokeRegistrations(root, ['0.25.1'], { run })).rejects.toThrow(
       'reg.exe delete exited with 5'
     )
   })
@@ -1228,38 +1262,43 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       return { code: 0, stdout: output, stderr: '' }
     })
 
-    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+    await cleanupOwnedSmokeRegistrations(root, ['0.25.1'], { run })
 
     expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([])
   })
 
-  it('removes the observed owned uninstall registration with an empty install location', async () => {
-    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
-    const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
-    const run = vi.fn(async (_executable: string, args: string[]) => {
-      if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
-      if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
-      return {
-        code: 0,
-        stdout: `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`,
-        stderr: ''
-      }
-    })
+  it.each([
+    { versions: ['0.25.2', '0.25.1'], removed: true },
+    { versions: ['0.25.2'], removed: false }
+  ])(
+    'cleans up an owned registration only for a version in $versions',
+    async ({ versions, removed }) => {
+      const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+      const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
+      const run = vi.fn(async (_executable: string, args: string[]) => {
+        if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
+        if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
+        return {
+          code: 0,
+          stdout: `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`,
+          stderr: ''
+        }
+      })
 
-    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+      await cleanupOwnedSmokeRegistrations(root, versions, { run })
 
-    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
-      [
-        'reg.exe',
-        [
-          'delete',
-          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
-          '/f'
-        ],
-        { allowNonZero: true }
-      ]
-    ])
-  })
+      const deletedKeys = run.mock.calls
+        .filter(([, args]) => args[0] === 'delete')
+        .map(([, args]) => args[1])
+      expect(deletedKeys).toEqual(
+        removed
+          ? [
+              'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca'
+            ]
+          : []
+      )
+    }
+  )
 
   it('preserves an incomplete registration even when one path is under the smoke root', async () => {
     const root = 'C:\\Temp\\open-science-installer-smoke-owned'
@@ -1274,7 +1313,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       }
     })
 
-    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+    await cleanupOwnedSmokeRegistrations(root, ['0.25.1'], { run })
 
     expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([])
   })
@@ -1284,11 +1323,11 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     await expect(
-      cleanupSmokeRegistrations('safe-smoke-root', '0.25.1', new Error('startup failed'), cleanup)
+      cleanupSmokeRegistrations('safe-smoke-root', ['0.25.1'], new Error('startup failed'), cleanup)
     ).resolves.toBeUndefined()
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('registry unavailable'))
     await expect(
-      cleanupSmokeRegistrations('safe-smoke-root', '0.25.1', undefined, cleanup)
+      cleanupSmokeRegistrations('safe-smoke-root', ['0.25.1'], undefined, cleanup)
     ).rejects.toThrow('registry unavailable')
 
     warning.mockRestore()
@@ -1298,7 +1337,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     const run = vi.fn()
 
     await expect(
-      cleanupOwnedSmokeRegistrations('C:\\Temp\\unrelated', '0.25.1', { run })
+      cleanupOwnedSmokeRegistrations('C:\\Temp\\unrelated', ['0.25.1'], { run })
     ).rejects.toThrow('unexpected smoke root')
     expect(run).not.toHaveBeenCalled()
   })

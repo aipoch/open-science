@@ -452,8 +452,9 @@ after changing the variable.
 The browser runs headless with its Chromium sandbox enabled. Run the backend under an account that can
 use the browser sandbox. If the browser is missing or cannot start with its sandbox, film generation
 reports an error. The preview uses a temporary browser context, renders offline, and checks portrait
-and landscape layout. Operation replay uses its frozen evidence and does not require a browser on the
-generation host.
+and landscape drawing and text layout. After bounded visual repairs, the generator can publish its
+best playable candidate with remaining layout defects. Operation replay uses its frozen evidence and
+does not require a browser on the generation host.
 
 ## Historical compatibility requiring review
 

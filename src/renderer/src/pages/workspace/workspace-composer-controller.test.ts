@@ -1799,11 +1799,35 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers).toEqual([
       expect.objectContaining({
         status: 'error',
-        error: 'Could not attach the file. Check available storage and try again.'
+        error: 'Could not attach the file. Try again.'
       })
     ])
     expect(hook.result.current.view.errorDetail).toBe('claim failed')
     expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
+  })
+
+  it('keeps the draft removal when staged copy cleanup fails', async () => {
+    const file = {
+      id: 'notes',
+      name: 'notes.md',
+      originalName: 'notes.md',
+      path: '/staged/notes.md',
+      size: 5,
+      sessionId: '.pending'
+    }
+    const api = uploads(vi.fn().mockResolvedValue(file))
+    vi.mocked(api.deleteUpload).mockRejectedValue(new Error('cleanup unavailable'))
+    const hook = renderController(api)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.stageFiles([new File(['notes'], file.name)]))
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.removeAttachment(file))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.view.error).toBe(
+      'Attachment removed from the draft. Cleanup of the temporary copy could not be confirmed.'
+    )
+    expect(hook.result.current.view.errorDetail).toBe('cleanup unavailable')
   })
 
   it('captures the viewed single-page PDF before send-time candidate filtering', () => {
@@ -2880,7 +2904,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers[0]).toMatchObject({
       name: 'paper.pdf',
       status: 'error',
-      error: 'Could not attach the file. Check available storage and try again.'
+      error: 'Free up space on the device running Open Science, then try again.'
     })
 
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
@@ -2890,7 +2914,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers[0]).toMatchObject({
       name: 'paper.pdf',
       status: 'error',
-      error: 'Could not attach the file. Check available storage and try again.'
+      error: 'Free up space on the device running Open Science, then try again.'
     })
     expect(stageLocalFile).toHaveBeenCalledOnce()
   })
@@ -3323,7 +3347,10 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers).toEqual([])
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
     expect(hook.result.current.view.attachments).toEqual([])
-    expect(hook.result.current.view.error).not.toBe('disk full')
+    expect(hook.result.current.view.attachmentNotice?.description).toBe(
+      'Your pasted text is back in the draft. You can edit or send it.'
+    )
+    expect(hook.result.current.view.errorDetail).toBe('disk full')
     expect(hook.result.current.view.error).toMatch(/try again|storage|space/i)
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
     expect(hook.result.current.view.doc).toEqual(emptyDoc)
@@ -3406,7 +3433,7 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
 
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
-    expect(hook.result.current.view.error).toBe('You can attach up to 10 files')
+    expect(hook.result.current.view.error).toBe('You can attach up to 10 files.')
   })
 
   it('finishes a pasted-text upload in the draft that started it after a session switch', async () => {

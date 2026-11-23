@@ -530,7 +530,7 @@ const ProjectFilesFilterMenu = ({
   onShowAllSessionsChange: (showAll: boolean) => void
   sessionOptionCount: number
   canLoadMoreOptions: boolean
-  optionsLoadError?: string
+  optionsLoadError?: boolean
   onLoadMoreOptions: () => void
   onBrowseRemoteHost: (providerId: string) => void
   onBrowseLocal: () => void

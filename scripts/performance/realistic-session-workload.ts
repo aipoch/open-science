@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../src/shared/agent-framework-id'
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { toAcpRuntimeEvent } from '../../src/main/acp/runtime-events'
 import { AcpRuntimeSnapshotOwner } from '../../src/main/acp/runtime-snapshot-owner'
@@ -103,7 +104,7 @@ export const createRealisticSessionWorkload = (
   const graph = createLinearConversationGraph({
     sessionId,
     messages: [],
-    frameworkId: 'claude-code',
+    frameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
     createdAt: STARTED_AT,
     updatedAt: STARTED_AT
   })
@@ -112,7 +113,7 @@ export const createRealisticSessionWorkload = (
     projectId,
     title: 'Deterministic research conversation',
     cwd: '',
-    agentFrameworkId: 'claude-code',
+    agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
     status: 'idle',
     permissionProfile: 'ask',
     messages: [],

@@ -195,6 +195,9 @@ const resolveMessageArtifactReference = (
     (artifact) =>
       getArtifactName(artifact) === referenceName || getPathName(artifact.path) === referenceName
   )
+  // Replies cite saved Artifacts by filename, even when the Notebook kept a working copy.
+  const managedMatches = nameMatches.filter((file) => file.kind === 'managed-file')
+  if (managedMatches.length > 0) return managedMatches.length === 1 ? managedMatches[0] : undefined
   return uniqueFile(nameMatches)
 }
 

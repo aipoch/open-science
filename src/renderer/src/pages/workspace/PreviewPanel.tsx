@@ -739,6 +739,7 @@ const PreviewFilePanel = ({
           ref={previewSurfaceRef}
           item={item}
           contentKey={contentKey}
+          imageEditPresentation={isFullScreenOpen ? 'expanded-panel' : 'panel'}
           onPdfPageCountChange={reportPdfPageCount}
           // Floating controls inherit the expanded surface layer through portals.
           tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}

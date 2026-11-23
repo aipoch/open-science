@@ -1,3 +1,11 @@
+import type { WebMcpHandler } from '../web/mcp-server'
+import type { ReceiptQuery } from '../harness-acp/tool-receipts'
+import { SearchService } from '../web/search-service'
+import { WebService, type WebFetchContext } from '../web/service'
+import { WebSnapshotStore } from '../web/snapshot-store'
+import { WebInvocationOwner } from '../web/invocation-owner'
+import { WebInvocationStore } from '../web/invocation-store'
+import { parseWebResult, type FetchInput } from '../../shared/web-tools'
 import { rm, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +17,7 @@ import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { z } from 'zod'
 
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -26,6 +35,585 @@ describe('AgentMcpHttpHost', () => {
   let host: AgentMcpHttpHost | undefined
   let rpcServer: Server | undefined
   let root: string | undefined
+  const webClients: Client[] = []
+
+  async function connectWeb(
+    host: AgentMcpHttpHost,
+    options: { route?: string; fetchImpl?: typeof fetch } = {}
+  ): Promise<Client> {
+    const { route = 'route', fetchImpl } = options
+    const { token } = await host.ensureStarted()
+    const client = new Client({ name: 'test-web-mcp', version: '1' })
+    webClients.push(client)
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(host.urlFor('web', route)), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } },
+        ...(fetchImpl ? { fetch: fetchImpl } : {})
+      })
+    )
+    return client
+  }
+
+  function callWeb(
+    client: Client,
+    query: ReceiptQuery,
+    signal?: AbortSignal
+  ): ReturnType<Client['callTool']> {
+    return client.callTool(
+      {
+        name: query.name,
+        arguments: query.arguments,
+        _meta: { [HARNESS_INVOCATION]: query.invocationId }
+      },
+      undefined,
+      { signal }
+    )
+  }
+
+  function readWebReceipt(
+    client: Client,
+    query: ReceiptQuery
+  ): Promise<z.infer<typeof receiptResponseSchema>> {
+    return client.request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
+  }
+
+  it('rejects MCP receipt recovery when its route is revoked during ownership repair', async () => {
+    root = await mkdtemp(join(tmpdir(), 'web-local-recovery-revoke-'))
+    const directory = join(root, 'receipts')
+    const receipts = new HarnessToolReceipts(directory)
+    host = new AgentMcpHttpHost({ receiptDirectory: directory })
+    const query = {
+      invocationId: 'revoked-recovery',
+      name: 'web_fetch' as const,
+      arguments: { url: 'https://example.org/' }
+    }
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const receiptCommitted = vi.fn(() => gate)
+    const revoke = host.registerWeb('route', { fetchPage: vi.fn(), receiptCommitted })
+    host.registerReceiptScope('route', 'scope', 'web')
+    await receipts.begin('scope', query)
+    await receipts.complete('scope', query, { content: [] })
+    const client = await connectWeb(host)
+    const reading = readWebReceipt(client, query).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(receiptCommitted).toHaveBeenCalledOnce())
+    revoke()
+    release()
+    expect(await reading).toBeInstanceOf(Error)
+  })
+
+  it.each(['abort', 'unregister', 'revoke'] as const)(
+    'does not commit a late Web Tool result after %s',
+    async (operation) => {
+      root = await mkdtemp(join(tmpdir(), 'web-host-cancel-'))
+      host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let invocationSignal: AbortSignal | undefined
+      const fetchPage = vi.fn(async (_input: FetchInput, context: WebFetchContext) => {
+        invocationSignal = context.signal
+        await gate
+        return {
+          schema: 'open-science.web.v1' as const,
+          invocation_id: context.invocationId!,
+          operation: 'fetch' as const,
+          request: { url: 'https://example.org/' },
+          status: 'error' as const,
+          retrieved_at: '2026-11-16T00:00:00.000Z',
+          duration_ms: 0,
+          warnings: [],
+          sources: [],
+          error: { code: 'NETWORK_ERROR' as const, retryable: true }
+        }
+      })
+      const receiptCommitted = vi.fn(async () => undefined)
+      const revoke = host.registerWeb('route', { fetchPage, receiptCommitted })
+      host.registerReceiptScope('route', 'scope', 'web')
+      const abort = new AbortController()
+      const query = {
+        invocationId: 'cancelled',
+        name: 'web_fetch' as const,
+        arguments: { url: 'https://example.org/' }
+      }
+      const client = await connectWeb(host)
+      const outcome = callWeb(client, query, abort.signal).catch((error: unknown) => error)
+      await vi.waitFor(() => expect(fetchPage).toHaveBeenCalledOnce())
+      if (operation === 'abort') abort.abort()
+      else if (operation === 'unregister') host.unregister('route')
+      else revoke()
+      await vi.waitFor(() => expect(invocationSignal?.aborted).toBe(true))
+      release()
+      expect(await outcome).toBeInstanceOf(Error)
+      expect(receiptCommitted).not.toHaveBeenCalled()
+      expect(await new HarnessToolReceipts(join(root, 'receipts')).read('scope', query)).toEqual({
+        status: 'unknown'
+      })
+    }
+  )
+
+  it('reconciles a known local cancellation once without dispatching the tool again', async () => {
+    root = await mkdtemp(join(tmpdir(), 'web-cancel-reconcile-'))
+    const directory = join(root, 'receipts')
+    host = new AgentMcpHttpHost({ receiptDirectory: directory })
+    const query = {
+      invocationId: 'cancelled',
+      name: 'web_fetch',
+      arguments: { url: 'https://example.org/' }
+    }
+    const result = {
+      isError: true,
+      content: [{ type: 'text' as const, text: 'Known cancellation' }]
+    }
+    const fetchPage = vi.fn()
+    const reconcileResult = vi.fn(async () => result)
+    host.registerWeb('route', { fetchPage, reconcileResult })
+    host.registerReceiptScope('route', 'scope', 'web')
+    await new HarnessToolReceipts(directory).begin('scope', query)
+    const client = await connectWeb(host)
+    for (let index = 0; index < 2; index++) {
+      expect(await readWebReceipt(client, query)).toEqual({ status: 'completed', result })
+    }
+    expect(reconcileResult).toHaveBeenCalledExactlyOnceWith(query)
+    expect(fetchPage).not.toHaveBeenCalled()
+  })
+
+  it.each(['permission-revocation', 'session-authority', 'branch'] as const)(
+    'commits a known cancellation over MCP after %s changes without accepting a late result',
+    async (change) => {
+      root = await mkdtemp(join(tmpdir(), 'web-owner-cancel-'))
+      const directory = join(root, 'receipts')
+      host = new AgentMcpHttpHost({ receiptDirectory: directory })
+      const binding = { projectId: 'project', sessionId: 'session' }
+      const store = new WebInvocationStore(join(root, 'ledger'))
+      let release!: (result: ReturnType<typeof parseWebResult>) => void
+      const gate = new Promise<ReturnType<typeof parseWebResult>>((resolve) => {
+        release = resolve
+      })
+      const execute = vi.fn(async () => (await gate)!)
+      const owner = new WebInvocationOwner({
+        store,
+        scope: async () => ({
+          ...binding,
+          branchId: 'branch',
+          promptMessageId: 'prompt',
+          agentFrameId: 'frame',
+          runtimeSegmentId: 'segment'
+        }),
+        execute
+      })
+      host.registerWeb('route', {
+        fetchPage: (input, context) => owner.execute(binding, 'fetch', input, context),
+        receiptCommitted: (result) => owner.receiptCommitted(binding, result),
+        reconcileResult: (query) => owner.reconcileResult(binding, query)
+      })
+      host.registerReceiptScope('route', 'scope', 'web')
+      const query = {
+        invocationId: 'cancelled',
+        name: 'web_fetch' as const,
+        arguments: { url: 'https://example.org/' }
+      }
+      const running = callWeb(await connectWeb(host), query)
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce())
+      if (change === 'permission-revocation') owner.cancelSession(binding.sessionId)
+      else if (change === 'branch') owner.branchChanged(binding, 'other')
+      else owner.cancelSession(binding.sessionId)
+      const result = await running
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: 'CANCELLED', retryable: false } }
+      })
+      expect(await new HarnessToolReceipts(directory).read('scope', query)).toEqual({
+        status: 'completed',
+        result
+      })
+      expect(await store.read(binding, query.invocationId)).toMatchObject({ status: 'cancelled' })
+      release({
+        schema: 'open-science.web.v1',
+        invocation_id: query.invocationId,
+        operation: 'fetch',
+        status: 'error',
+        request: query.arguments,
+        retrieved_at: new Date().toISOString(),
+        duration_ms: 1,
+        sources: [],
+        error: { code: 'NETWORK_ERROR', retryable: true }
+      })
+      await Promise.resolve()
+      expect(await new HarnessToolReceipts(directory).read('scope', query)).toEqual({
+        status: 'completed',
+        result
+      })
+    }
+  )
+
+  it.each(['before', 'after'] as const)(
+    'delivers cancellation to the open caller and subsequent receipt recovery when revoked %s receipt publication',
+    async (timing) => {
+      root = await mkdtemp(join(tmpdir(), 'web-receipt-race-'))
+      const directory = join(root, 'receipts')
+      const ledger = join(root, 'ledger')
+      const receipts = new HarnessToolReceipts(directory)
+      const binding = { projectId: 'project', sessionId: 'session' }
+      const query = {
+        invocationId: 'receipt-race',
+        name: 'web_fetch' as const,
+        arguments: { url: 'https://example.org/' }
+      }
+      const snapshots = new WebSnapshotStore(join(root, 'snapshots'))
+      const transport = vi.fn(async () => ({
+        finalUrl: query.arguments.url,
+        contentType: 'text/plain',
+        body: Buffer.from('Independent source evidence.')
+      }))
+      const service = new WebService({ store: snapshots, transport })
+      const makeOwner = (): WebInvocationOwner =>
+        new WebInvocationOwner({
+          store: new WebInvocationStore(ledger),
+          scope: async () => ({
+            ...binding,
+            branchId: 'branch',
+            agentFrameId: 'frame',
+            promptMessageId: 'prompt',
+            runtimeSegmentId: 'segment'
+          }),
+          execute: (_scope, _op, input, context) => service.fetch('branch', input, context),
+          publishSnapshot: (scope, id, authorize) => snapshots.commit(scope.branchId, id, authorize)
+        })
+      const owner = makeOwner()
+      const handler = (authority: WebInvocationOwner): WebMcpHandler => ({
+        fetchPage: (input: FetchInput, context: WebFetchContext) =>
+          authority.execute(binding, 'fetch', input, context),
+        receiptSignal: (id: string) => authority.receiptSignal(binding, id),
+        receiptCommitted: (result: unknown) => authority.receiptCommitted(binding, result),
+        reconcileResult: (q) => authority.reconcileResult(binding, q)
+      })
+      host = new AgentMcpHttpHost({ receiptDirectory: directory })
+      host.registerWeb('route', handler(owner))
+      host.registerReceiptScope('route', 'scope', 'web')
+      const entering = Promise.withResolvers<void>(),
+        resume = Promise.withResolvers<void>()
+      const complete = HarnessToolReceipts.prototype.complete
+      const spy = vi
+        .spyOn(HarnessToolReceipts.prototype, 'complete')
+        .mockImplementationOnce(async function (this: HarnessToolReceipts, ...args) {
+          if (timing === 'after') await complete.apply(this, args)
+          entering.resolve()
+          await resume.promise
+          if (timing === 'before') await complete.apply(this, args)
+        })
+      const client = await connectWeb(host)
+      try {
+        const calling = callWeb(client, query)
+        await entering.promise
+        const original = await receipts.read('scope', query)
+        const prepared = await new WebInvocationStore(ledger).read(binding, query.invocationId)
+        expect(prepared.status).toBe('prepared')
+        owner.cancelSession(binding.sessionId)
+        resume.resolve()
+        const live = await calling
+        expect(live).toMatchObject({
+          isError: true,
+          structuredContent: { error: { code: 'CANCELLED' } }
+        })
+        const final = { status: 'completed', result: live }
+        expect(await receipts.read('scope', query)).toEqual(timing === 'after' ? original : final)
+        if (timing === 'after') expect(original.result?.structuredContent?.status).toBe('ok')
+        else expect(original.status).toBe('unknown')
+        // A fresh owner has only its durable journal and the immutable host receipt.
+        host.rebindWeb('route', handler(makeOwner()))
+        expect(await readWebReceipt(client, query)).toEqual(final)
+        expect(await receipts.read('scope', query)).toEqual(timing === 'after' ? original : final)
+        await expect(
+          snapshots.readCommitted('branch', prepared.result!.document!.snapshot_id)
+        ).rejects.toMatchObject({ code: 'INVALID_CURSOR' })
+        expect(transport).toHaveBeenCalledOnce()
+      } finally {
+        resume.resolve()
+        spy.mockRestore()
+      }
+    }
+  )
+
+  it.each(['MCP cancellation', 'route rebind', 'route revocation'] as const)(
+    'settles the receipt after %s while claiming the Web invocation',
+    async (change) => {
+      root = await mkdtemp(join(tmpdir(), 'web-cancel-before-dispatch-'))
+      const directory = join(root, 'receipts')
+      host = new AgentMcpHttpHost({ receiptDirectory: directory })
+      const binding = { projectId: 'project', sessionId: 'session' }
+      const store = new WebInvocationStore(join(root, 'ledger'))
+      const scope = vi.fn()
+      const execute = vi.fn()
+      const owner = new WebInvocationOwner({ store, scope, execute })
+      const fetchPage = vi.fn((input, context) => owner.execute(binding, 'fetch', input, context))
+      const cancelUndispatched = vi.fn((query) => owner.cancelUndispatched(binding, query))
+      const handler: WebMcpHandler = {
+        fetchPage,
+        cancelUndispatched,
+        reconcileResult: (query) => owner.reconcileResult(binding, query),
+        receiptCommitted: (result) => owner.receiptCommitted(binding, result)
+      }
+      const revoke = host.registerWeb('route', handler)
+      const replacement = { ...handler, cancelUndispatched: vi.fn(), fetchPage: vi.fn() }
+      host.registerReceiptScope('route', 'scope', 'web')
+      const started = Promise.withResolvers<void>()
+      const resume = Promise.withResolvers<void>()
+      const cancellation = Promise.withResolvers<void>()
+      const begin = HarnessToolReceipts.prototype.begin
+      const spy = vi
+        .spyOn(HarnessToolReceipts.prototype, 'begin')
+        .mockImplementationOnce(async function (this: HarnessToolReceipts, ...args) {
+          await begin.apply(this, args)
+          started.resolve()
+          await resume.promise
+        })
+      const client = await connectWeb(host, {
+        fetchImpl: async (input, init) => {
+          const response = await fetch(input, init)
+          if (
+            typeof init?.body === 'string' &&
+            JSON.parse(init.body).method === 'notifications/cancelled'
+          )
+            cancellation.resolve()
+          return response
+        }
+      })
+      const abort = new AbortController()
+      const query = {
+        invocationId: 'cancel-before-dispatch',
+        name: 'web_fetch',
+        arguments: { url: 'https://example.org/' }
+      }
+      const pending = callWeb(client, query, abort.signal).catch((error: unknown) => error)
+      try {
+        await started.promise
+        if (change === 'MCP cancellation') {
+          abort.abort()
+          await cancellation.promise
+        } else if (change === 'route rebind') {
+          host.rebindWeb('route', replacement)
+        } else {
+          revoke()
+          host.registerWeb('route', replacement)
+        }
+        resume.resolve()
+        expect(await pending).toBeInstanceOf(Error)
+        const recovery = await connectWeb(host)
+        await vi.waitFor(async () =>
+          expect(await readWebReceipt(recovery, query)).toMatchObject({
+            status: 'completed',
+            result: { isError: true, structuredContent: { error: { code: 'CANCELLED' } } }
+          })
+        )
+        expect(cancelUndispatched).toHaveBeenCalledExactlyOnceWith(query)
+        expect(replacement.cancelUndispatched).not.toHaveBeenCalled()
+        expect(replacement.fetchPage).not.toHaveBeenCalled()
+        expect(fetchPage).not.toHaveBeenCalled()
+        expect(scope).not.toHaveBeenCalled()
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        resume.resolve()
+        spy.mockRestore()
+      }
+    }
+  )
+
+  it.each(['policy', 'transport'] as const)(
+    'recovers cancellation before scope resolution over %s',
+    async (cancel) => {
+      root = await mkdtemp(join(tmpdir(), 'web-early-cancel-'))
+      const directory = join(root, 'receipts')
+      const store = new WebInvocationStore(join(root, 'ledger'))
+      const binding = { projectId: 'project', sessionId: 'session' }
+      const scope = vi.fn(() => new Promise<never>(() => undefined))
+      const execute = vi.fn()
+      const owner = new WebInvocationOwner({ store, scope, execute })
+      host = new AgentMcpHttpHost({ receiptDirectory: directory })
+      host.registerWeb('route', {
+        fetchPage: (input, context) => owner.execute(binding, 'fetch', input, context),
+        receiptCommitted: (result) => owner.receiptCommitted(binding, result),
+        reconcileResult: (query) => owner.reconcileResult(binding, query)
+      })
+      host.registerReceiptScope('route', 'scope', 'web')
+      const abort = new AbortController()
+      const query = {
+        invocationId: 'early-cancel',
+        name: 'web_fetch' as const,
+        arguments: { url: 'https://example.org/' }
+      }
+      const client = await connectWeb(host)
+      const calling = callWeb(client, query, abort.signal).catch((error: unknown) => error)
+      await vi.waitFor(() => expect(scope).toHaveBeenCalledOnce())
+      if (cancel === 'transport') abort.abort()
+      owner.cancelSession(binding.sessionId)
+      const outcome = await calling
+      if (cancel === 'transport') expect(outcome).toBeInstanceOf(Error)
+      else
+        expect(outcome).toMatchObject({
+          isError: true,
+          structuredContent: { error: { code: 'CANCELLED' } }
+        })
+      await vi.waitFor(async () =>
+        expect(await store.readUndispatchedCancellation(binding, query.invocationId)).toMatchObject(
+          { invocationId: query.invocationId }
+        )
+      )
+      expect(await readWebReceipt(client, query)).toMatchObject({
+        status: 'completed',
+        result: { isError: true, structuredContent: { error: { code: 'CANCELLED' } } }
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(owner.dispositionFor(binding, query.invocationId)).toBe('cancelled')
+    }
+  )
+
+  it('repairs snapshot ownership from a durable receipt without fetching again', async () => {
+    root = await mkdtemp(join(tmpdir(), 'web-receipt-repair-'))
+    host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+    const store = new WebSnapshotStore(join(root, 'evidence'))
+    const transport = vi.fn(async () => ({
+      body: Buffer.from('Durable evidence'),
+      contentType: 'text/plain',
+      finalUrl: 'https://example.org/'
+    }))
+    const service = new WebService({ store, transport })
+    let simulateCrashWindow = true
+    host.registerWeb('repair-route', {
+      fetchPage: (input, context) => service.fetch('session', input, context),
+      receiptCommitted: async (result) => {
+        // Simulate interruption after the receipt write but before its ownership index write.
+        if (simulateCrashWindow) return
+        const envelope = parseWebResult(
+          (result as { structuredContent?: unknown }).structuredContent
+        )!
+        await service.commitSnapshot('session', envelope.document!.snapshot_id)
+      }
+    })
+    host.registerReceiptScope('repair-route', 'scope', 'web')
+    const client = await connectWeb(host, { route: 'repair-route' })
+    const query = {
+      invocationId: 'repair-invocation',
+      name: 'web_fetch',
+      arguments: { url: 'https://example.org/' }
+    }
+    const result = await callWeb(client, query)
+    const snapshotId = parseWebResult(result.structuredContent)!.document!.snapshot_id
+    await expect(store.readCommitted('session', snapshotId)).rejects.toThrow()
+    simulateCrashWindow = false
+    expect(await readWebReceipt(client, query)).toEqual({ status: 'completed', result })
+    expect((await store.readCommitted('session', snapshotId)).text).toBe('Durable evidence')
+    expect(transport).toHaveBeenCalledOnce()
+  })
+
+  it('persists a single bounded search envelope and reads its receipt without another provider request', async () => {
+    root = await mkdtemp(join(tmpdir(), 'web-search-receipt-'))
+    host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+    const search = vi.fn(async () => ({
+      sources: [
+        {
+          source_id: 'source',
+          url: 'https://example.org/paper',
+          title: 'Scientific source',
+          snippet: 'Evidence excerpt',
+          evidence_kind: 'provider_excerpt' as const
+        }
+      ]
+    }))
+    const service = new SearchService({ provider: { search } })
+    host.registerWeb('search-route', {
+      fetchPage: vi.fn(),
+      search: (input, context) => service.search('session', input, context)
+    })
+    host.registerReceiptScope('search-route', 'search-session', 'web')
+    const client = await connectWeb(host, { route: 'search-route' })
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'web_fetch',
+      'web_search'
+    ])
+    const query = {
+      invocationId: 'search-invocation',
+      name: 'web_search',
+      arguments: { query: 'quantum materials' }
+    }
+    const result = await callWeb(client, query)
+    expect(result.content).toEqual([])
+    expect(result.structuredContent).toMatchObject({
+      operation: 'search',
+      status: 'ok',
+      returned_count: 1,
+      provider: { id: 'exa', auth_mode: 'anonymous' }
+    })
+    const recovered = await readWebReceipt(client, query)
+    expect(recovered).toEqual({ status: 'completed', result })
+    expect(search).toHaveBeenCalledOnce()
+  })
+
+  it('never lends a replacement Notebook environment to an old HTTP route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const environment = {
+      endpoint: 'http://127.0.0.1:1/notebook',
+      token: 'old-notebook-token',
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: '/workspace'
+    }
+    host.registerNotebook('session', environment)
+    const oldUrl = host.urlFor('notebook', 'session')
+    host.registerNotebook('session', { ...environment, token: 'new-notebook-token' })
+    const newUrl = host.urlFor('notebook', 'session')
+    const stale = await fetch(oldUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(stale.status).toBe(404)
+    const client = new Client({ name: 'fresh-notebook-intent', version: '1' })
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(newUrl), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      expect((await client.listTools()).tools.some(({ name }) => name === 'repl_execute')).toBe(
+        true
+      )
+    } finally {
+      await client.close()
+    }
+  })
+
+  it.each(['replacement', 'unregister', 'clear'] as const)(
+    'does not restore a Notebook route after %s supersedes its registration',
+    async (action) => {
+      host = new AgentMcpHttpHost()
+      await host.ensureStarted()
+      const environment = {
+        endpoint: 'http://127.0.0.1:1/notebook',
+        token: 'notebook-token',
+        projectId: 'project',
+        sessionId: 'session',
+        workspaceCwd: '/workspace'
+      }
+      host.registerNotebook('session', environment)
+      const rollback = host.registerNotebook('session', environment)
+      if (action === 'replacement') {
+        host.registerNotebook('session', { ...environment, token: 'successor' })
+        const successorUrl = host.urlFor('notebook', 'session')
+        rollback()
+        expect(host.urlFor('notebook', 'session')).toBe(successorUrl)
+      } else {
+        if (action === 'clear') host.clear()
+        else host.unregister('session')
+        rollback()
+        expect(() => host!.urlFor('notebook', 'session')).toThrow('No registered notebook')
+      }
+    }
+  )
 
   it('serves only the owned Skill allowlist and revokes each HTTP projection independently', async () => {
     root = await mkdtemp(join(tmpdir(), 'harness-skill-http-'))
@@ -88,6 +676,7 @@ describe('AgentMcpHttpHost', () => {
   })
 
   afterEach(async () => {
+    await Promise.all(webClients.splice(0).map((client) => client.close()))
     await host?.close()
     await saveFixture?.dispose()
     saveFixture = undefined
@@ -113,7 +702,8 @@ describe('AgentMcpHttpHost', () => {
     'skill-import',
     'host-message',
     'library',
-    'literature'
+    'literature',
+    'web'
   ] as const)(
     'persists %s receipts without exposing recovery as a model tool or replaying effects',
     async (kind) => {
@@ -205,6 +795,31 @@ describe('AgentMcpHttpHost', () => {
         })
         name = 'send_message'
         args = { target: 'main', text: 'Advisory fixture' }
+      } else if (kind === 'web') {
+        const store = new WebSnapshotStore(join(root, 'web-evidence'))
+        const service = new WebService({
+          store,
+          transport: async () => ({
+            body: Buffer.from('Offline fixture evidence'),
+            contentType: 'text/plain',
+            finalUrl: 'https://example.org/'
+          })
+        })
+        host.registerWeb(route, {
+          fetchPage: (input, context) => service.fetch('stable-session', input, context),
+          receiptCommitted: async (result) => {
+            const envelope = parseWebResult(
+              (result as { structuredContent?: unknown }).structuredContent
+            )!
+            expect(envelope.document).toBeDefined()
+            expect((await store.read('stable-session', envelope.document!.snapshot_id)).text).toBe(
+              'Offline fixture evidence'
+            )
+            await service.commitSnapshot('stable-session', envelope.document!.snapshot_id)
+          }
+        })
+        name = 'web_fetch'
+        args = { url: 'https://example.org/' }
       } else if (kind === 'library') {
         host.registerLiteratureLibrary(route, {
           searchLibrary: async () => ({ items: [], totalCount: 0, hasMore: false }),
@@ -292,10 +907,11 @@ describe('AgentMcpHttpHost', () => {
         release = resolve
       })
       const original = HarnessToolReceipts.prototype.read
+      let blockReceiptRead = false
       const spy = vi
         .spyOn(HarnessToolReceipts.prototype, 'read')
         .mockImplementation(async function (this: HarnessToolReceipts, scope, query) {
-          await gate
+          if (blockReceiptRead) await gate
           return original.call(this, scope, query)
         })
       try {
@@ -305,6 +921,8 @@ describe('AgentMcpHttpHost', () => {
           arguments: query.arguments,
           _meta: { [HARNESS_INVOCATION]: query.invocationId }
         })
+        spy.mockClear()
+        blockReceiptRead = true
         const reading = client
           .request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
           .catch((error) => error)

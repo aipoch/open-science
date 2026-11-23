@@ -1,20 +1,46 @@
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import type { McpServerStatus, Query } from '@anthropic-ai/claude-agent-sdk'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import {
-  ClaudeAcpAgent,
-  waitForMcpServers
-} from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
+import { externalAcpAvailable, externalAcpFile } from '../../../test/acp-agent-runtime'
 
-type McpStatusQuery = Pick<Query, 'mcpServerStatus' | 'close'>
+type McpServerStatus = { name: string; status: string; error?: string }
+type McpStatusQuery = {
+  mcpServerStatus: () => Promise<McpServerStatus[]>
+  close: () => void
+}
+type ClaudeAcpAgentInstance = {
+  newSession: (options: Record<string, unknown>) => Promise<{ sessionId?: string }>
+  dispose: () => Promise<void>
+  deleteSession: (input: { sessionId: string }) => Promise<unknown>
+}
+type ClaudeAcpAgentConstructor = new (...args: readonly unknown[]) => ClaudeAcpAgentInstance
+type WaitForMcpServers = (
+  query: McpStatusQuery,
+  names: string[],
+  timeout: number,
+  logger?: { error: (message: string) => void }
+) => Promise<void>
 
-it.runIf(process.platform === 'win32')(
+let ClaudeAcpAgent: ClaudeAcpAgentConstructor
+let waitForMcpServers: WaitForMcpServers
+
+beforeAll(async () => {
+  if (!externalAcpAvailable('claude')) return
+  const module = (await import(pathToFileURL(externalAcpFile('claude', 'acp-agent.js')).href)) as {
+    ClaudeAcpAgent: ClaudeAcpAgentConstructor
+    waitForMcpServers: WaitForMcpServers
+  }
+  ClaudeAcpAgent = module.ClaudeAcpAgent
+  waitForMcpServers = module.waitForMcpServers
+})
+
+it.runIf(process.platform === 'win32' && externalAcpAvailable('claude'))(
   'recovers launch files only after both owning processes exit',
   async () => {
     const root = mkdtempSync(join(tmpdir(), 'acp-launch-recovery-'))
@@ -24,7 +50,7 @@ it.runIf(process.platform === 'win32')(
       entry,
       `
 import { once } from 'node:events';
-import { spawnWithFileConfiguration } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/open-science-launch.js'))};
+      import { spawnWithFileConfiguration } from ${JSON.stringify(externalAcpFile('claude', 'open-science-launch.js'))};
 const child = spawnWithFileConfiguration({command:process.execPath,
   args:['-e',process.env.HOLD ? 'setInterval(()=>{},1000)' : '', '--', '--settings', JSON.stringify({env:{TOKEN:'synthetic'}})],
   env:process.env,cwd:process.env.CLAUDE_CONFIG_DIR});
@@ -78,7 +104,7 @@ await once(child, 'close');
   }
 )
 
-it.each(['mcp', 'settings'])(
+it.runIf(externalAcpAvailable('claude')).each(['mcp', 'settings'])(
   'creates a session with large %s configuration without exceeding the process launch limit',
   async (kind) => {
     const root = mkdtempSync(join(tmpdir(), 'acp-launch-'))
@@ -114,7 +140,7 @@ createInterface({input:process.stdin}).on('line', line => {
     writeFileSync(
       entry,
       `
-import { ClaudeAcpAgent } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'))};
+      import { ClaudeAcpAgent } from ${JSON.stringify(externalAcpFile('claude', 'acp-agent.js'))};
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -187,7 +213,7 @@ const status = (
   error?: string
 ): McpServerStatus => ({ name, status: state, ...(error ? { error } : {}) })
 
-describe('claude-agent-acp MCP readiness patch', () => {
+describe.runIf(externalAcpAvailable('claude'))('claude-agent-acp MCP readiness patch', () => {
   it('waits until every configured MCP server is connected', async () => {
     const mcpServerStatus = vi
       .fn<McpStatusQuery['mcpServerStatus']>()
@@ -260,7 +286,7 @@ describe('claude-agent-acp MCP readiness patch', () => {
   })
 })
 
-describe('claude-agent-acp Session deletion patch', () => {
+describe.runIf(externalAcpAvailable('claude'))('claude-agent-acp Session deletion patch', () => {
   it('treats a never-materialized Session as already deleted', async () => {
     const sessionId = '11111111-1111-4111-8111-111111111111'
     const configDir = mkdtempSync(join(tmpdir(), 'open-science-claude-session-delete-'))
@@ -277,36 +303,38 @@ describe('claude-agent-acp Session deletion patch', () => {
 })
 
 // Exercise the installed patch without exporting private upstream helpers as application API.
-it('counts Claude cache reads and writes once while excluding completion tokens', () => {
-  const source = readFileSync(
-    new URL(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')),
-    'utf8'
-  )
-  const helper = source.match(/function contextTokens\(usage\) \{[\s\S]*?^\}/m)?.[0]
-  expect(helper).toBeDefined()
-  const contextTokens = new Function(`${helper}; return contextTokens`)() as (
-    usage: Record<string, number>
-  ) => number
-  expect(
-    contextTokens({
-      input_tokens: 100,
-      cache_read_input_tokens: 40_000,
-      cache_creation_input_tokens: 150_000,
-      output_tokens: 5_000
-    })
-  ).toBe(190_100)
-})
+it.runIf(externalAcpAvailable('claude'))(
+  'counts Claude cache reads and writes once while excluding completion tokens',
+  () => {
+    const source = readFileSync(externalAcpFile('claude', 'acp-agent.js'), 'utf8')
+    const helper = source.match(/function contextTokens\(usage\) \{[\s\S]*?^\}/m)?.[0]
+    expect(helper).toBeDefined()
+    const contextTokens = new Function(`${helper}; return contextTokens`)() as (
+      usage: Record<string, number>
+    ) => number
+    expect(
+      contextTokens({
+        input_tokens: 100,
+        cache_read_input_tokens: 40_000,
+        cache_creation_input_tokens: 150_000,
+        output_tokens: 5_000
+      })
+    ).toBe(190_100)
+  }
+)
 
-it('keeps excluded settings out of initialization, file updates and cwd changes, then disposes watchers', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'open-science-settings-sources-'))
-  const entry = join(root, 'settings-probe.mjs')
-  writeFileSync(
-    entry,
-    `
+it.runIf(externalAcpAvailable('claude'))(
+  'keeps excluded settings out of initialization, file updates and cwd changes, then disposes watchers',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'open-science-settings-sources-'))
+    const entry = join(root, 'settings-probe.mjs')
+    writeFileSync(
+      entry,
+      `
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SettingsManager } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/settings.js'))};
+    import { SettingsManager } from ${JSON.stringify(externalAcpFile('claude', 'settings.js'))};
 const root = process.env.HOME;
 const profile = process.env.CLAUDE_CONFIG_DIR;
 const cwd = join(root, 'workspace');
@@ -346,33 +374,34 @@ try {
   excluded.dispose();
 }
 `
-  )
-  const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH,
-    SystemRoot: process.env.SystemRoot,
-    SYSTEMROOT: process.env.SYSTEMROOT,
-    TEMP: process.env.TEMP,
-    TMP: process.env.TMP,
-    TMPDIR: process.env.TMPDIR,
-    HOME: root,
-    USERPROFILE: root,
-    CLAUDE_CONFIG_DIR: join(root, '.claude')
+    )
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      SystemRoot: process.env.SystemRoot,
+      SYSTEMROOT: process.env.SYSTEMROOT,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+      TMPDIR: process.env.TMPDIR,
+      HOME: root,
+      USERPROFILE: root,
+      CLAUDE_CONFIG_DIR: join(root, '.claude')
+    }
+    try {
+      const { stdout } = await promisify(execFile)(process.execPath, [entry], {
+        env,
+        timeout: 10_000
+      })
+      expect(JSON.parse(stdout)).toEqual({
+        initial: null,
+        updated: null,
+        moved: null,
+        selectedInitial: 'auto',
+        selectedUpdated: 'acceptEdits',
+        excludedUpdates: 0,
+        updatesAfterDispose: 0
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }
-  try {
-    const { stdout } = await promisify(execFile)(process.execPath, [entry], {
-      env,
-      timeout: 10_000
-    })
-    expect(JSON.parse(stdout)).toEqual({
-      initial: null,
-      updated: null,
-      moved: null,
-      selectedInitial: 'auto',
-      selectedUpdated: 'acceptEdits',
-      excludedUpdates: 0,
-      updatesAfterDispose: 0
-    })
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
+)

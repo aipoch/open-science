@@ -1,5 +1,8 @@
+// A replacement draft was unavailable. An already checked playable draft can still be used.
+export class ResearchFilmDraftError extends Error {}
+
 /** A host-observed truncation; partial model output must never be accepted as a complete file. */
-export class ResearchFilmIncompleteError extends Error {}
+export class ResearchFilmIncompleteError extends ResearchFilmDraftError {}
 export class ResearchFilmOutputLimitError extends ResearchFilmIncompleteError {}
 
 export type FilmAuthoringCheckpoint = {
@@ -46,8 +49,15 @@ export async function writeWithResearchFilmCorrection<T>(
     } catch (error) {
       signal.throwIfAborted()
       const incomplete = error instanceof ResearchFilmIncompleteError
-      if (attempt > 0 && output !== undefined && !incomplete && review?.invalidOutput)
-        throw review.invalidOutput(error)
+      if (attempt > 0 && output !== undefined && !incomplete) {
+        const failure = review?.invalidOutput?.(error) ?? error
+        if (feedback)
+          throw new ResearchFilmDraftError(
+            failure instanceof Error ? failure.message : String(failure),
+            { cause: failure }
+          )
+        throw failure
+      }
       if (attempt > 0 || (output === undefined && !incomplete)) throw error
       correction = {
         draft: incomplete ? '' : output!,

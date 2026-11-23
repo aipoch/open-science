@@ -6,6 +6,7 @@ export type ProviderErrorCase = Readonly<{
   name: string
   status?: number
   code?: string
+  expectedExcerpt?: string
   message?: string
   requestId?: string
   wire?:
@@ -62,7 +63,8 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
     name: '401 authentication failed',
     status: 401,
     code: 'authentication_error',
-    message: 'Invalid API key',
+    message: 'Invalid API key for private account',
+    expectedExcerpt: 'Invalid API key',
     reason: 'configuration/auth-failed'
   },
   {
@@ -78,7 +80,8 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
     name: '429 rate limit exceeded',
     status: 429,
     code: 'rate_limit_exceeded',
-    message: 'Too many requests',
+    message: 'Too many requests for private account',
+    expectedExcerpt: 'Too many requests',
     reason: 'service/rate-limited'
   },
   {

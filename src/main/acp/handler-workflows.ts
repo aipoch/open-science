@@ -104,14 +104,10 @@ const safeRead = (value: object, key: string): unknown => {
 const saveAsSkillReplayTargetForBackend = (
   backend: AcpBackendGenerationView
 ): HistoryReplayTarget => {
-  if (backend.framework.id === 'opencode') return 'opencode'
-  if (backend.framework.id === 'codebuddy') return 'codebuddy'
-  if (backend.framework.id === 'open-science-agent') return 'open-science-agent'
-  if (backend.framework.id === 'pi') return 'pi'
   if (backend.framework.id === 'codex') {
     return backend.modelRoute === 'codex-bridge' ? 'codex-bridge' : 'codex-response'
   }
-  return 'claude-code'
+  return backend.framework.id
 }
 
 const prepareSaveAsSkillContinuation = (

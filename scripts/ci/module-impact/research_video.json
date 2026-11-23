@@ -5,11 +5,14 @@
     "src/main/research-video/export-control.ts",
     "src/main/research-video/export-electron.test.ts",
     "src/main/research-video/export-electron.ts",
+    "src/main/research-video/headless-review.test.ts",
+    "src/main/research-video/headless-review.ts",
     "src/main/research-video/input-context.test.ts",
     "src/main/research-video/input-context.ts",
     "src/main/research-video/lifecycle.test.ts",
     "src/main/research-video/lifecycle.ts",
     "src/main/research-video/mcp-contract.test.ts",
+    "src/main/research-video/player-review.ts",
     "src/main/research-video/presentation.test.ts",
     "src/main/research-video/presentation.ts",
     "src/main/research-video/replay-source.test.ts",
@@ -38,6 +41,7 @@
     "src/renderer/src/components/research-video-button.tsx",
     "src/main/research-video/export-control.ts",
     "src/main/research-video/export-electron.ts",
+    "src/main/research-video/headless-review.ts",
     "src/renderer/src/components/local-narration-control.tsx",
     "src/main/research-video/presentation.ts",
     "src/shared/research-video-presentation.ts",
@@ -57,6 +61,7 @@
     "owner": [
       "src/main/research-video/export-control.test.ts",
       "src/main/research-video/export-electron.test.ts",
+      "src/main/research-video/headless-review.test.ts",
       "src/main/research-video/input-context.test.ts",
       "src/main/research-video/lifecycle.test.ts",
       "src/main/research-video/presentation.test.ts",
@@ -72,7 +77,8 @@
     "contract": [
       "src/main/notebook/local-rpc-server.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/main/research-video/mcp-contract.test.ts"
+      "src/main/research-video/mcp-contract.test.ts",
+      "src/main/web-service/http-server.test.ts"
     ],
     "consumer": [
       "src/main/application-command-composition.test.ts",

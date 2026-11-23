@@ -246,7 +246,7 @@ const prepareRestrictedBackend = (
   profileRoot: string,
   profile: RestrictedRuntimeProfile
 ): Promise<ResolvedAgentBackend> => {
-  if (profile.taskOnly && backend.framework.id === 'open-science-agent') {
+  if (backend.framework.id === 'open-science-agent') {
     return Promise.resolve({
       ...backend,
       args: [HARNESS_ACP_ARG, join(profileRoot, 'sessions')],

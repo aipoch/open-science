@@ -125,6 +125,65 @@ const makeReadModel = (
   })
 
 describe('NotebookSessionReadModel', () => {
+  it('reads only the requested public evidence, including from a historical frame', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const readModel = makeReadModel(storageRoot, undefined, repository)
+    const lane = createFrameNotebookLane('project', 'session', 'child')
+    await repository.loadOrCreate({
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: storageRoot,
+      lane
+    })
+    const run = makeRun({
+      agentFrameId: 'child',
+      kernelEpochId: 'epoch',
+      submissionIdentity: 'internal'
+    })
+    await repository.appendRun({ projectId: 'project', sessionId: 'session', lane, run })
+    const window = vi.spyOn(repository, 'readSessionRunWindow')
+    const evidence = await readModel.runEvidence('project', 'session', run.runId)
+    expect(window).toHaveBeenCalledWith('project', 'session', 0, [run.runId])
+    expect(evidence).toEqual({ runId: run.runId, kernelEpochId: 'epoch' })
+    await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
+  })
+
+  it('projects only visible background task metadata within the same byte window', async () => {
+    root = await createRoot()
+    const repository = new NotebookRunRepository(root)
+    const readModel = makeReadModel(root, undefined, repository)
+    const background = makeRun({
+      runId: 'bg',
+      executionMode: 'background',
+      agentFrameId: 'worker',
+      script: '\r\n  ' + 'x'.repeat(100) + '\nprivate',
+      cancellationRequestedAt: 12
+    })
+    const foreground = makeRun({ runId: 'fg' })
+    const window = {
+      runs: [background, foreground],
+      total: 2,
+      agentSummaries: [],
+      latestRunEnvironments: {}
+    }
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue(window)
+    const result = await readModel.backgroundTasks('project', 'session')
+    expect(result.runs).toEqual([
+      {
+        runId: 'bg',
+        agentFrameId: 'worker',
+        title: 'x'.repeat(80),
+        status: 'completed',
+        kernelKind: 'python',
+        startedAt: 1,
+        cancellationRequestedAt: 12
+      }
+    ])
+    foreground.text.stdout = 'x'.repeat(32 * 1024 * 1024)
+    await expect(readModel.backgroundTasks('project', 'session')).resolves.toEqual({ runs: [] })
+  })
+
   it('returns only actionable live handoff data and never consults durable storage', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)
@@ -283,6 +342,16 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [
+        {
+          agentFrameId: 'frame-old',
+          isRoot: false,
+          runCount: 1,
+          views: [
+            { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+          ]
+        }
+      ],
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({
           runId: `run-${index + 25}`,
@@ -322,6 +391,25 @@ describe('NotebookSessionReadModel', () => {
       undefined,
       undefined
     )
+    const expectedAgents = [
+      {
+        agentFrameId: 'frame-old',
+        isRoot: false,
+        runCount: 1,
+        views: [
+          { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+        ]
+      }
+    ]
+    expect(state.agentSummaries).toEqual(expectedAgents)
+    const imported = await makeReadModel(storageRoot, undefined, repository).importedState(
+      { projectId: session.projectId, sessionId: session.sessionId, workspaceCwd: session.cwd },
+      [],
+      undefined,
+      undefined,
+      100
+    )
+    expect(imported.agentSummaries).toEqual(expectedAgents)
     expect(state.runCount).toBe(125)
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
@@ -359,6 +447,7 @@ describe('NotebookSessionReadModel', () => {
       latestDataKernel: 'r' as const
     }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [],
       runs: [],
       total: 125,
       latestRunEnvironments: {},
@@ -395,13 +484,21 @@ describe('NotebookSessionReadModel', () => {
       lane: session.lane,
       workspaceCwd: session.cwd
     })
+    const run = makeRun({
+      runId: 'run-old',
+      startedAt: 1,
+      environmentManifestChecksum: 'manifest-checksum',
+      environmentManifest: { packages: [] } as never
+    })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
+      agentSummaries: [],
+      runs: [run],
       total: 125,
       latestRunEnvironments: {}
     })
 
-    const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
+    const model = makeReadModel(storageRoot, session, repository)
+    const state = await model.state(session, ['run-old'])
 
     expect(readWindow).toHaveBeenCalledWith(
       session.projectId,
@@ -415,6 +512,10 @@ describe('NotebookSessionReadModel', () => {
     expect(state.recentRuns).toEqual([])
     expect(state.cells).toEqual([])
     expect(state.runCount).toBe(125)
+    expect(state.runs[0]).toHaveProperty('environmentManifest')
+
+    const normalState = await model.state(session)
+    expect(normalState.runs[0]).not.toHaveProperty('environmentManifest')
   })
 
   it('prefers a live reference and otherwise falls back to normalized durable roots', async () => {

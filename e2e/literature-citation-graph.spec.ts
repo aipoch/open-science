@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import {
@@ -8,7 +10,7 @@ import {
   type ElectronApplication,
   type TestInfo
 } from '@playwright/test'
-import { build, preview, type PreviewServer } from 'vite'
+import { preview, type PreviewServer } from 'vite'
 import {
   citationGraphPath,
   openCitationGraph,
@@ -70,14 +72,19 @@ const test = base.extend<{ graphApp: ElectronApplication }>({
 test.beforeAll(async () => {
   // Fixture bundling shares the browser suite's startup budget; interactions keep their own timeout.
   test.setTimeout(300_000)
-  await build({
+  await promisify(execFile)(process.execPath, [
+    '--max-old-space-size=4096',
+    resolve('node_modules/vite/bin/vite.js'),
+    'build',
+    '--config',
     configFile,
-    logLevel: 'warn',
-    build: {
-      outDir,
-      rollupOptions: { input: [resolve('e2e/browser/fixture/literature-recovery.html')] }
-    }
-  })
+    '--mode',
+    'citation-graph',
+    '--outDir',
+    outDir,
+    '--logLevel',
+    'warn'
+  ])
   server = await preview({
     configFile,
     build: { outDir },
@@ -95,6 +102,9 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   page,
   graphApp
 }, info) => {
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+  await expect.poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true)
   await openCitationGraph(page, url)
   const switcher = page.getByRole('group', { name: 'Citation discovery view' })
   const listView = switcher.getByRole('button', { name: 'List', exact: true })
@@ -257,19 +267,29 @@ test('Electron keeps a failed citation page readable and retries in place', asyn
 })
 
 test('Electron briefly hints only when a new page adds papers beyond the viewport', async ({
-  page
+  page,
+  graphApp
 }, info) => {
   await openCitationGraph(page, url)
   const frame = page.locator('[data-current-frame="true"]')
-  const hint = frame.getByText(
-    'New papers are outside the current view. Fit the graph to see all loaded papers.'
-  )
+  const hint = frame.locator('[data-citation-canvas] [role="status"]')
+  const toolbar = frame.locator('[data-citation-toolbar]')
   const zoomIn = frame.getByRole('button', { name: 'Zoom in', exact: true })
   await zoomIn.click()
   await zoomIn.click()
   await expect(hint).toHaveCount(0)
   await frame.getByRole('button', { name: 'Load more' }).click()
+  await expect(hint).toHaveText('New papers off-screen. Fit graph.')
   await expect(hint).toBeVisible()
+  await graphApp.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]!.setContentSize(375, 812)
+  })
+  await expect(hint).toBeVisible()
+  const hintBox = await hint.boundingBox()
+  const toolbarBox = await toolbar.boundingBox()
+  expect(hintBox).not.toBeNull()
+  expect(toolbarBox).not.toBeNull()
+  expect(hintBox!.y + hintBox!.height).toBeLessThan(toolbarBox!.y)
   await page.screenshot({ path: info.outputPath('citation-page-hint.png') })
   await expect(hint).toHaveCount(0, { timeout: 8000 })
   await zoomIn.click()

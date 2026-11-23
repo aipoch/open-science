@@ -43,7 +43,14 @@ const expectedChannels = [
   'settings:begin-xai-oauth-login',
   'settings:wait-xai-oauth-login',
   'settings:cancel-xai-oauth-login',
-  'settings:logout-xai-oauth'
+  'settings:logout-xai-oauth',
+  'settings:lab-set-server',
+  'settings:lab-check',
+  'settings:lab-begin-login',
+  'settings:lab-wait-login',
+  'settings:lab-cancel-login',
+  'settings:lab-refresh',
+  'settings:lab-logout'
 ] as const
 
 const callerLease = (): ApplicationCallerLease =>
@@ -69,6 +76,9 @@ const createDependencies = (): Readonly<{
   workflowMethod: (
     name: keyof RuntimeSettingsApplicationCommandDependencies['workflows']
   ) => ReturnType<typeof vi.fn>
+  labMethod: (
+    name: keyof RuntimeSettingsApplicationCommandDependencies['lab']
+  ) => ReturnType<typeof vi.fn>
 }> => {
   const methods = new Map<PropertyKey, ReturnType<typeof vi.fn>>()
   const workflows = new Proxy(
@@ -84,15 +94,30 @@ const createDependencies = (): Readonly<{
       }
     }
   ) as RuntimeSettingsApplicationCommandDependencies['workflows']
+  const labMethods = new Map<PropertyKey, ReturnType<typeof vi.fn>>()
+  const lab = new Proxy(
+    {},
+    {
+      get: (_target, property) => {
+        let method = labMethods.get(property)
+        if (!method) {
+          method = vi.fn()
+          labMethods.set(property, method)
+        }
+        return method
+      }
+    }
+  ) as RuntimeSettingsApplicationCommandDependencies['lab']
 
   return {
-    dependencies: { workflows, snapshotCommits: passThroughSnapshotCommits },
-    workflowMethod: (name) => workflows[name] as ReturnType<typeof vi.fn>
+    dependencies: { workflows, lab, snapshotCommits: passThroughSnapshotCommits },
+    workflowMethod: (name) => workflows[name] as ReturnType<typeof vi.fn>,
+    labMethod: (name) => lab[name] as ReturnType<typeof vi.fn>
   }
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 23-command inventory and keeps Task-only routing off renderer IPC', async () => {
+  it('installs the exact command inventory and keeps Task-only routing off renderer IPC', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)
@@ -188,8 +213,8 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('setReasoningEffort')).toHaveBeenCalledWith({ effort: 'high' })
   })
 
-  it('rejects all fifteen local-only commands before a runtime workflow can run', async () => {
-    const { dependencies, workflowMethod } = createDependencies()
+  it('rejects all twenty-two local-only commands before a runtime workflow can run', async () => {
+    const { dependencies, workflowMethod, labMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
 
@@ -208,7 +233,14 @@ describe('Settings runtime application commands', () => {
       [settingsRuntimeApplicationCommands.beginXaiOAuthLogin, []],
       [settingsRuntimeApplicationCommands.waitXaiOAuthLogin, []],
       [settingsRuntimeApplicationCommands.cancelXaiOAuthLogin, []],
-      [settingsRuntimeApplicationCommands.logoutXaiOAuth, []]
+      [settingsRuntimeApplicationCommands.logoutXaiOAuth, []],
+      [settingsRuntimeApplicationCommands.setLabServer, [{ serverUrl: 'https://lab.example' }]],
+      [settingsRuntimeApplicationCommands.checkLab, []],
+      [settingsRuntimeApplicationCommands.beginLabLogin, []],
+      [settingsRuntimeApplicationCommands.waitLabLogin, []],
+      [settingsRuntimeApplicationCommands.cancelLabLogin, []],
+      [settingsRuntimeApplicationCommands.refreshLab, []],
+      [settingsRuntimeApplicationCommands.logoutLab, []]
     ] as const
 
     for (const [command, args] of attempts) {
@@ -229,10 +261,17 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('waitXaiOAuthLogin')).not.toHaveBeenCalled()
     expect(workflowMethod('cancelXaiOAuthLogin')).not.toHaveBeenCalled()
     expect(workflowMethod('logoutXaiOAuth')).not.toHaveBeenCalled()
+    expect(labMethod('setLabServer')).not.toHaveBeenCalled()
+    expect(labMethod('checkLab')).not.toHaveBeenCalled()
+    expect(labMethod('beginLabLogin')).not.toHaveBeenCalled()
+    expect(labMethod('waitLabLogin')).not.toHaveBeenCalled()
+    expect(labMethod('cancelLabLogin')).not.toHaveBeenCalled()
+    expect(labMethod('refreshLab')).not.toHaveBeenCalled()
+    expect(labMethod('logoutLab')).not.toHaveBeenCalled()
   })
 
   it('delegates local runtime and authentication requests without taking effect ownership', async () => {
-    const { dependencies, workflowMethod } = createDependencies()
+    const { dependencies, workflowMethod, labMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
 
@@ -296,6 +335,34 @@ describe('Settings runtime application commands', () => {
       settingsRuntimeApplicationCommands.logoutXaiOAuth,
       invocation([] as const)
     )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.setLabServer,
+      invocation([{ serverUrl: 'https://lab.example' }] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.checkLab,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.beginLabLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.waitLabLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.cancelLabLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.refreshLab,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.logoutLab,
+      invocation([] as const)
+    )
 
     expect(workflowMethod('uninstallRuntime').mock.calls).toEqual([
       ['uninstallClaude', 'claude-code'],
@@ -314,6 +381,13 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('waitXaiOAuthLogin')).toHaveBeenCalledOnce()
     expect(workflowMethod('cancelXaiOAuthLogin')).toHaveBeenCalledOnce()
     expect(workflowMethod('logoutXaiOAuth')).toHaveBeenCalledOnce()
+    expect(labMethod('setLabServer')).toHaveBeenCalledWith({ serverUrl: 'https://lab.example' })
+    expect(labMethod('checkLab')).toHaveBeenCalledWith(undefined)
+    expect(labMethod('beginLabLogin')).toHaveBeenCalledOnce()
+    expect(labMethod('waitLabLogin')).toHaveBeenCalledOnce()
+    expect(labMethod('cancelLabLogin')).toHaveBeenCalledOnce()
+    expect(labMethod('refreshLab')).toHaveBeenCalledOnce()
+    expect(labMethod('logoutLab')).toHaveBeenCalledOnce()
   })
 
   it('preserves reasoning and isolated-token transport validation before workflow delegation', async () => {

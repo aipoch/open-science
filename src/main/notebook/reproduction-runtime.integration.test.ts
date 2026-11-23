@@ -22,6 +22,7 @@ import {
   createNotebookReproductionRuntime,
   type NotebookReproductionStep
 } from './reproduction-runtime'
+import { healthyNotebookExecutionAdmission } from './memory-policy.test-support'
 import { pythonBin, rScriptBin } from '@aipoch/environment'
 
 const execute = promisify(execFile)
@@ -90,6 +91,7 @@ for (const language of ['python', 'r'] as const) {
         await expect(
           createNotebookReproductionRuntime(
             {
+              createExecutionAdmission: healthyNotebookExecutionAdmission,
               requirements: [
                 {
                   requirementId: `environment-lock:${lockChecksum}`,
@@ -263,6 +265,7 @@ ggsave("plots.png", p, width=6, height=4, dpi=100, device="png", type="cairo")
           const attemptRoot = join(root, attempt)
           const runtime = await createNotebookReproductionRuntime(
             {
+              createExecutionAdmission: healthyNotebookExecutionAdmission,
               requirements: [
                 {
                   requirementId: `environment-lock:${lockChecksum}`,

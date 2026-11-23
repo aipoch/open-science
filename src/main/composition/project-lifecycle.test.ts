@@ -1,6 +1,11 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialRequestBroker } from '../connectors/credential-request-broker'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { SessionDeletionHandlers } from '../session-persistence/coordinator'
 
 const mocks = vi.hoisted(() => ({
@@ -57,7 +62,7 @@ vi.mock('../desktop-surface-declarations', () => ({}))
 
 import { composeProjectLifecycle } from './project-lifecycle'
 
-const fixture = (() => {
+const fixture = ((notebookRuntime?: NotebookRuntimeService) => {
   let handlers: SessionDeletionHandlers | undefined
   const runtime = {
     getSnapshot: vi.fn(() => ({ promptInFlightSessionIds: [] as string[] })),
@@ -71,6 +76,7 @@ const fixture = (() => {
     beginProjectDeletion: vi.fn(),
     deleteProjectFileEvidence: vi.fn(),
     deleteProjectInputs: vi.fn(),
+    forgetDeletedExecutionIntents: vi.fn(),
     releaseProjectDeletion: vi.fn()
   }
   const broker = new CredentialRequestBroker({
@@ -148,7 +154,7 @@ const fixture = (() => {
       }
     },
     clearSessionCredentials: (sessionId: string) => broker.clearSession(sessionId),
-    getNotebookService: () => notebook
+    getNotebookService: () => notebookRuntime ?? notebook
   }
   const result = composeProjectLifecycle(
     dependencies as unknown as Parameters<typeof composeProjectLifecycle>[0]
@@ -171,6 +177,52 @@ beforeEach(() => {
 })
 
 describe('Project lifecycle composition', () => {
+  it('forgets Notebook intents after permanent deletion and preserves surviving refusals', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-intent-deletion-'))
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-1',
+      memoryPolicy: healthyNotebookMemoryPolicy()
+    })
+    const session = { projectId: 'project-1', sessionId: 'session-1' }
+    const provisional = { projectId: 'project-1', sessionId: 'provisional-session' }
+    const survivor = { projectId: 'project-2', sessionId: 'session-2' }
+    try {
+      const { handlers } = fixture(notebook)
+      const hooks = mocks.deletion.mock.calls[0][5]
+      const [archivedIntent, provisionalIntent, survivingIntent] = [
+        session,
+        provisional,
+        survivor
+      ].map((scope) => {
+        const intent = notebook.createExecutionIntent(scope)
+        notebook.rememberExecutionIntent(scope, 'prompt', intent)
+        intent.block('manual-release')
+        return intent
+      })
+
+      await handlers.reconcile([session.sessionId, survivor.sessionId], [session.sessionId])
+      expect(notebook.currentExecutionIntent(session)).toBe(archivedIntent)
+      await hooks.abortProjectDeletion(session.projectId)
+      expect(notebook.currentExecutionIntent(provisional)).toBe(provisionalIntent)
+
+      await handlers.commit([session.sessionId])
+      expect(notebook.currentExecutionIntent(session)).toBeUndefined()
+      expect(notebook.resolveExecutionIntent(session, 'prompt')).toBeUndefined()
+      expect(notebook.currentExecutionIntent(provisional)).toBe(provisionalIntent)
+
+      hooks.completeProjectDeletion(session.projectId)
+      expect(notebook.currentExecutionIntent(provisional)).toBeUndefined()
+      expect(notebook.resolveExecutionIntent(provisional, 'prompt')).toBeUndefined()
+      expect(notebook.currentExecutionIntent(survivor)).toBe(survivingIntent)
+      expect(notebook.resolveExecutionIntent(survivor, 'prompt')).toBe(survivingIntent)
+    } finally {
+      await notebook.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('clears credential state on the shared durable commit even if another projection fails', async () => {
     const { dependencies, broker, handlers, result } = fixture()
     const info = {
@@ -256,7 +308,9 @@ describe('Project lifecycle composition', () => {
     const activity = mocks.archive.mock.calls[0][2]
     expect(result.detectSessionExportBlockingSessions()).toEqual([])
     await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
-    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(false)
+    await expect(
+      activity.getSessionExportBlocker('project-1', 'session-1')
+    ).resolves.toBeUndefined()
     await expect(activity.isProjectBusy('project-1')).resolves.toBe(true)
     d.getActiveSideChatSessions.mockReturnValue([])
     d.computeJobActivityRef.current.findNonTerminal.mockResolvedValue([{ project_id: 'project-1' }])
@@ -306,7 +360,9 @@ describe('Project lifecycle composition', () => {
     const activity = mocks.archive.mock.calls[0][2]
     expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
     await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
-    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(true)
+    await expect(activity.getSessionExportBlocker('project-1', 'session-1')).resolves.toBe(
+      'compute'
+    )
     // A database outage cannot turn local activity into a persistent execution fence.
     d.computeJobActivityRef.current.countNonTerminalBySession.mockRejectedValue(
       new Error('offline')
@@ -325,7 +381,7 @@ describe('Project lifecycle composition', () => {
     'side-chat-prompt',
     'delegated',
     'notebook'
-  ])('protects local %s activity and releases the protection when it settles', (kind) => {
+  ])('protects local %s activity and releases the protection when it settles', async (kind) => {
     const { dependencies: d, runtime } = fixture()
     d.getActiveSideChatSessions.mockReturnValue([])
     const active = [{ projectId: 'project-1', sessionId: 'session-1' }]
@@ -347,6 +403,17 @@ describe('Project lifecycle composition', () => {
         ]
       })
     expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(true)
+    if (kind === 'permission' || kind === 'elicitation')
+      runtime.getActivePromptSessions.mockReturnValue(active as never)
+    const expected = {
+      prompt: 'agent',
+      permission: 'permission',
+      elicitation: 'question',
+      delegated: 'delegated',
+      notebook: 'notebook'
+    }[kind]
+    await expect(activity.getSessionExportBlocker('project-1', 'session-1')).resolves.toBe(expected)
+    runtime.getActivePromptSessions.mockReturnValue([])
     if (source) source.mockReturnValue([])
     d.sideChatOwnerRef.current.hasForParent.mockReturnValue(false)
     runtime.getSnapshot.mockReturnValue({ promptInFlightSessionIds: [] })

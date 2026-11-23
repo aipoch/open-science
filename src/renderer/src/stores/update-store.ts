@@ -9,6 +9,7 @@ type UpdateStore = {
   isDialogOpen: boolean
   init: () => () => void
   check: () => Promise<void>
+  setAutomaticDownloads: (enabled: boolean) => Promise<void>
   openDialog: () => void
   closeDialog: () => void
   download: () => Promise<void>
@@ -156,7 +157,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   // may not have arrived yet, so a guarded call would miss it and leave the download running — the
   // exact race in issue #216. The main-process cancel() is a no-op when nothing is downloading.
   closeDialog: () => {
-    void get().cancel()
+    if (!get().status.backgroundDownload || get().status.recovery) void get().cancel()
     set({ isDialogOpen: false })
   },
 
@@ -165,6 +166,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     if (!api) return
     await acceptUpdateResponse(() => api.download())
   },
+
+  setAutomaticDownloads: (enabled) =>
+    acceptUpdateResponse(() => window.api.update.setAutomaticDownloads(enabled)),
 
   cancel: async () => {
     const cancel = window.api?.update?.cancel

@@ -14,7 +14,10 @@ import {
   isToolSearchActivity,
   getNotebookRunIdFromActivity
 } from './workspace-tool-activity-details'
-import { hasWebSearchContentEvidence } from './workspace-web-search-details'
+import {
+  hasWebSearchContentEvidence,
+  isBuiltinWebSearchActivity
+} from './workspace-web-search-details'
 import {
   getCorrelatedNotebookRun,
   getToolExecutionPhase,
@@ -117,6 +120,7 @@ const isToolSearchWrapperActivity = (activity: ToolActivity): boolean =>
 
 // Matches Claude's concrete WebSearch tool identity without conflating file-search kinds.
 const isProviderWebSearchActivity = (activity: ToolActivity): boolean =>
+  isBuiltinWebSearchActivity(activity) ||
   activity.providerToolName?.trim().toLowerCase() === WEB_SEARCH_PROVIDER_TOOL_NAME
 
 // Quoted titles are how the current ACP payload represents individual search queries.

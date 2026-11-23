@@ -67,16 +67,14 @@ describe('quoted punctuation in parser diagnostics', () => {
 
 describe('package text policy', () => {
   it.each([
-    'noCredentials',
-    'hasCredentials',
+    'credentials',
     'authentication',
     'authorization',
     'cookie',
     'apiKey',
-    'no-authorization',
-    'has-cookie',
-    'no-api-key'
-  ])('accepts boolean member types without allowlisting the %s key', (key) => {
+    'x-api-key',
+    'x-amz-security-token'
+  ])('accepts boolean members at the credential position %s', (key) => {
     for (const value of ['true', 'false']) {
       for (const text of [
         `{"${key}":${value}}`,
@@ -133,7 +131,7 @@ describe('package text policy', () => {
     expect(findSensitivePackageText(text)).toBeUndefined()
   })
   it.each(['true', 'false'])('defers incomplete boolean metadata %s', (value) => {
-    const text = `{"noCredentials":${value},"result":"ok"}`
+    const text = `{"credentials":${value},"result":"ok"}`
     for (let length = 1; length < text.length; length++)
       expect(
         findSensitivePackageText(text.slice(0, length), false),
@@ -142,12 +140,12 @@ describe('package text policy', () => {
     expect(findSensitivePackageText(text)).toBeUndefined()
   })
   it.each([
-    '{"noCredentials":"true"}',
-    '{"noCredentials":"false"}',
-    '{"noCredentials":"synthetic-private-value"}',
-    '{"noCredentials":123456}',
-    '{"noCredentials":true,"apiKey":"synthetic-private-value"}',
-    '{"noCredentials":true}\n{"apiKey":"synthetic-private-value"}\n'
+    '{"credentials":"true"}',
+    '{"credentials":"false"}',
+    '{"credentials":"synthetic-private-value"}',
+    '{"credentials":123456}',
+    '{"credentials":true,"apiKey":"synthetic-private-value"}',
+    '{"credentials":true}\n{"apiKey":"synthetic-private-value"}\n'
   ])('still blocks credentials alongside or in place of boolean metadata: %s', (text) => {
     expect(findSensitivePackageText(text)).toBeDefined()
   })
@@ -194,14 +192,13 @@ describe('package text policy', () => {
     '{"token":"word"}',
     '{"token":123456}',
     '{"apiKey":123456}',
-    '{"estimatedTokens":"synthetic-private-value"}',
+    '{"estimatedTokens":"ghp_syntheticprivatevalue"}',
     '{"tokens":"123456"}',
     '{"tokens":123456secret}',
     '{"tokens":-1}',
     '{"tokens":1.5}',
     '{"tokens":123',
     'tokens=123456',
-    'estimatedTokens=123456',
     '{"tokens":123,"password":"synthetic-private-value"}',
     '{"estimatedTokens":123,"tokens":"synthetic-private-value"}',
     '{"pass\\u0077ord":"synthetic-private-value"}',
@@ -220,31 +217,6 @@ describe('package text policy', () => {
     expect(findSensitivePackageText('Authorization: Bearer [redacted]', true)).toBeUndefined()
     expect(findSensitivePackageText('Authorization: Bearer actual-value\n', false)).toBeDefined()
   })
-  it.each(['cacheTokens', 'cachedReadTokens', 'cachedWriteTokens'])(
-    'limits the %s exception to exact JSON integer metrics',
-    (key) => {
-      for (const count of [0, 123456, Number.MAX_SAFE_INTEGER])
-        expect(findSensitivePackageText(`{"${key}" : ${count} }`)).toBeUndefined()
-      for (const value of [
-        '"123456"',
-        '"synthetic-private-value"',
-        '-1',
-        '1.5',
-        '9007199254740992',
-        '123456secret'
-      ])
-        expect(findSensitivePackageText(`{"${key}":${value}}`)).toBeDefined()
-      for (const text of [
-        `{"${key}":123`,
-        `${key}=123456`,
-        `--${key} 123456`,
-        `{"${key[0].toUpperCase() + key.slice(1)}":123456}`,
-        `{"${key}Secret":123456}`,
-        `{"${key}":123,"password":"synthetic-private-value"}`
-      ])
-        expect(findSensitivePackageText(text), text).toBeDefined()
-    }
-  )
   it('treats object-field values consistently', () => {
     expect(isPrivatePackageValue('')).toBe(false)
     expect(isPrivatePackageValue(' [redacted] ')).toBe(false)
@@ -254,28 +226,28 @@ describe('package text policy', () => {
 })
 
 it.each([
-  ['{"noCredentials":true}', false],
-  ['{"noCredentials":false}\n{"noCredentials":true}\n', false],
-  ['{\n "metadata": {"noCredentials":false}\n}', false],
+  ['{"credentials":true}', false],
+  ['{"credentials":false}\n{"credentials":true}\n', false],
+  ['{\n "metadata": {"credentials":false}\n}', false],
   ['{"authorization":true,"cookie":false,"api-key":true}', false],
-  ['{"noCredentials":"true"}', true],
-  ['{"noCredentials":123}', true],
-  ['{"noCredentials":true,"password":"synthetic-private-value"}', true],
+  ['{"credentials":"true"}', true],
+  ['{"credentials":123}', true],
+  ['{"credentials":true,"password":"synthetic-private-value"}', true],
   ['{"password":"synthetic-private-value","password":true}', true],
-  ['{"noCredentials":true,"note":"password=synthetic-private-value"}', true],
-  ['{"noCredentials":true,"note":"ghp_syntheticprivatevalue"}', true],
-  ['{"noCredentials":true,"note":"https://example.org/?token=true"}', true],
-  ['{"noCredentials":true}\npassword=synthetic-private-value', true],
-  ['{"noCredentials":true,}', true],
-  ['{"noCredentials":true', true],
-  ['{"noCredentials":tru}', true],
-  ['{"noCredentials":trueSuffix}', true],
-  ['{"noCredentials":TRUE}', true],
-  ["{'noCredentials':true}", true],
-  ['noCredentials=true', true],
-  ['{"noCredentials":true} garbage', true],
-  ['{"noCredentials":true}\n{"result":}', true],
-  ['{"noCredentials":true}\n{"password":os.environ["PASSWORD"]}', true]
+  ['{"credentials":true,"note":"password=synthetic-private-value"}', true],
+  ['{"credentials":true,"note":"ghp_syntheticprivatevalue"}', true],
+  ['{"credentials":true,"note":"https://example.org/?token=true"}', true],
+  ['{"credentials":true}\npassword=synthetic-private-value', true],
+  ['{"credentials":true,}', true],
+  ['{"credentials":true', true],
+  ['{"credentials":tru}', true],
+  ['{"credentials":trueSuffix}', true],
+  ['{"credentials":TRUE}', true],
+  ["{'credentials':true}", true],
+  ['credentials=true', true],
+  ['{"credentials":true} garbage', true],
+  ['{"credentials":true}\n{"result":}', true],
+  ['{"credentials":true}\n{"password":os.environ["PASSWORD"]}', true]
 ] as const)('preserves boolean policy across every stream split: %s', (text, blocked) => {
   expect(Boolean(findSensitivePackageText(text))).toBe(blocked)
   for (let split = 0; split <= text.length; split++) {
@@ -286,7 +258,7 @@ it.each([
   }
 })
 
-it.each(['noCredentials', 'authorization', 'no-authorization', 'has-cookie', 'no-api-key'])(
+it.each(['credentials', 'authorization', 'no-authorization', 'has-cookie', 'no-api-key'])(
   'keeps boolean %s metadata safe at every overlap alignment',
   (key) => {
     for (let shift = -key.length; shift <= 1; shift++) {
@@ -305,7 +277,7 @@ it.each(['true', 'false', '"true"', '"synthetic-private-value"', '123456'])(
   'preserves the value type after an overlap-truncated key: %s',
   (value) => {
     for (const shift of [-2, 0]) {
-      const prefix = ' '.repeat(65536 - 8192 - 2 + shift) + '{"noCredentials":'
+      const prefix = ' '.repeat(65536 - 8192 - 2 + shift) + '{"credentials":'
       const text = prefix + ' '.repeat(9000) + value + '}'
       const scanner = new PackageTextScanner()
       scanner.write(text.slice(0, 65536))
@@ -387,7 +359,8 @@ it('keeps matched values out of location errors', async () => {
 it.each([
   '{"estimatedTokens":71862,"difference":16335}',
   '{"tokens":88197,"estimated":true}',
-  '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0}',
+  '{"modelMaxAccessTokens":50,"quota_remaining_refresh_tokens":12}',
+  '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0,"contextUsedTokens":42}',
   'Authorization: Bearer [redacted]',
   '--authorization Bearer [redacted]',
   'password="\\u005bredacted]"',
@@ -395,6 +368,7 @@ it.each([
   'password=%5Bredacted%5D',
   'password="  [redacted]  "',
   'Authorization: Bearer   [redacted]  ',
+  String.raw`{"note":"\u0042earer [redacted]"}`,
   '{"password":"  [redacted]  "}'
 ])('does not reject any incomplete safe prefix: %s', (value) => {
   for (let length = 1; length < value.length; length++)
@@ -611,7 +585,7 @@ describe('noncredential syntax and metadata', () => {
     '{"tokens":null',
     '{"tokens":["actual-secret"]}',
     '{"tokens":{"password":"actual-secret"}}',
-    '{"token_type":"actual-secret"}',
+    '{"token_type":"ghp_syntheticprivatevalue"}',
     '{"secretName":"ghp_syntheticprivatevalue"}',
     'token: str',
     'def parse(token: str = "actual-secret"): pass',
@@ -630,6 +604,204 @@ describe('noncredential syntax and metadata', () => {
       expect(scanner.finish(), `split ${split}`).toBeDefined()
     }
   })
+})
+
+it('checks export metadata values independently of their field names', () => {
+  const cursor = 'opaque-cursor-7M2Q'
+  const secret = 'ghp_syntheticprivatevalue'
+  for (const key of [
+    'page_token',
+    'next_page_token',
+    'next_page_tokens',
+    'authMan',
+    'tokenizer_token_index',
+    'authPanelTitle',
+    'secretName',
+    'apiSecretName',
+    'API_SECRET_NAME',
+    'NEXT_PAGE_TOKEN',
+    'clientToken',
+    'jobContinuationToken',
+    'reportSessionToken',
+    'report.session.token',
+    'provider.has.api.key',
+    'reportSessionTokenValue',
+    'providerHasApiKeyValue',
+    'authorizationHeaderName',
+    'providerHasSecretToken',
+    'REPORT_SESSION_TOKEN',
+    'worker_session_token',
+    'database_secret',
+    'APP_SECRET_KEY_LABEL',
+    'credential_name',
+    'hasCredentials',
+    'no-api-key',
+    'hasDatabasePassword',
+    'providerHasApiKey',
+    'database_requires_password',
+    'modelMaxAccessTokens',
+    'quota_remaining_refresh_tokens',
+    'worker-supports-refresh-tokens',
+    'reportPageToken',
+    'pipelineSecretKeyLabel',
+    'compassWord',
+    'contextUsedTokens',
+    'notes'
+  ]) {
+    const formats = [
+      (value: string) => JSON.stringify({ [key]: value }),
+      (value: string) => JSON.stringify({ content: `${key}=${value}` }),
+      (value: string) => `https://example.org/results?${key}=${value}`,
+      (value: string) => `--${key} ${value}`
+    ]
+    for (const format of formats) {
+      if (key.includes(' ') && format === formats[3]) continue
+      expect(findSensitivePackageText(format(cursor))).toBeUndefined()
+      expect(findSensitivePackageText(format(secret))).toBeDefined()
+    }
+  }
+  const encoded = String.raw`{"notes":["\u0067hp_syntheticprivatevalue"]}`
+  const match = findSensitivePackageText(encoded)!
+  expect(match).toBeDefined()
+  expect(buildSensitiveContentEvidence(encoded, match, 'data.json').context).not.toContain(
+    'syntheticprivatevalue'
+  )
+  expect(
+    findSensitivePackageText('https://example.org/#next_page_token=Bearer%20opaque')
+  ).toBeDefined()
+  for (const key of [
+    'signature_value',
+    'sig-value',
+    'X-Amz-Credential',
+    'X-Goog-Credential',
+    'X-Signature'
+  ]) {
+    expect(findSensitivePackageText('https://example.org/?' + key + '=opaque')).toBeUndefined()
+    expect(findSensitivePackageText('https://example.org/?' + key + '=' + secret)).toBeDefined()
+  }
+  expect(findSensitivePackageText('authMan["password"]="private-value"')?.label).toBe('password')
+  expect(findSensitivePackageText(`page_token=${cursor}&password=private-value`)?.label).toBe(
+    'password'
+  )
+})
+
+it('keeps the complete metadata key when a file scan resumes inside its name', () => {
+  for (const [source, sensitive] of [
+    [JSON.stringify({ next_page_token: 'cursor' }), false],
+    [JSON.stringify({ content: 'search\npage_token=cursor' }), false],
+    ['https://example.org/?%70age_token=cursor', false],
+    ['access_token=private-value', true]
+  ] as const) {
+    const text = source + 'x'.repeat(9000)
+    for (let offset = 0; offset < source.length; offset++) {
+      const split = offset + 8192
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(Boolean(scanner.finish()), `${source} at ${offset}`).toBe(sensitive)
+    }
+  }
+})
+
+it('preserves the tokens value type when the scan window starts at the key', () => {
+  for (const tokens of [123, 'opaque']) {
+    const text = JSON.stringify({ tokens, notes: 'x'.repeat(9000) })
+    const split = text.indexOf('tokens') + 8192
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    const expected = typeof tokens === 'string'
+    expect(Boolean(findSensitivePackageText(text))).toBe(expected)
+    expect(Boolean(scanner.finish())).toBe(expected)
+  }
+})
+
+it('checks escapes in a long JSON string and reports the original source span', () => {
+  const chunk = 64 * 1024
+  const prefix = '{"notes":"'.padEnd(2 * chunk - 7, 'x') + '😀 '
+  const token = String.raw`\u0067hp_syntheticprivatevalue`
+  for (const escaped of [token, '\\' + token, String.raw`Bearer\u0020[redacted]`]) {
+    const text = prefix + escaped + ' ' + 'x'.repeat(chunk) + '"}'
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += chunk) scanner.write(text.slice(i, i + chunk))
+    const finding = scanner.finish()
+    expect(Boolean(finding)).toBe(escaped === token)
+    if (finding) {
+      const { match, offset } = finding
+      expect(offset + match.valueOffset!).toBe(prefix.length)
+      expect(match.valueLength).toBe(token.length)
+      expect(buildSensitiveContentEvidence(finding.text, match, 'data.json').context).not.toContain(
+        'syntheticprivatevalue'
+      )
+    }
+  }
+})
+
+it('keeps a decoded assignment through whitespace across reads in the same JSON string', () => {
+  const gap = ' '.repeat(140000)
+  const key = String.raw`\u0070assword`
+  const opaque = String.raw`priv\u0061te-value`
+  for (const [content, blocked] of [
+    [key + gap + '=' + gap + opaque, true],
+    [key + '=' + gap + '[redacted]', false],
+    [key + '=' + gap + 'process.env.PASSWORD', false],
+    [key + '=' + gap + '","' + opaque, false],
+    [String.raw`report.session.\u0074oken` + '=' + gap + opaque, false]
+  ] as const) {
+    const text = '["' + content + '"]'
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += 65536) scanner.write(text.slice(i, i + 65536))
+    const finding = scanner.finish()
+    expect(Boolean(finding)).toBe(blocked)
+    if (finding) {
+      const { match, offset } = finding
+      expect(offset + match.valueOffset!).toBe(text.indexOf(opaque))
+      expect(buildSensitiveContentEvidence(finding.text, match, 'data.json').valueHash).toBe(
+        createHash('sha256').update(opaque).digest('hex')
+      )
+    }
+  }
+})
+
+it('scans complete escaped JSON strings even without a raw candidate', () => {
+  const text = String.raw`{"notes":["\u0067hp_syntheticprivatevalue"]}`
+  expect(findSensitivePackageText(text)).toBeDefined()
+  const scanner = new PackageTextScanner()
+  scanner.write(text)
+  expect(scanner.finish()).toBeDefined()
+})
+
+it('recognizes the value type inside JSON quoted in a long string', () => {
+  const chunk = 64 * 1024
+  for (const tokens of [123, 'opaque']) {
+    const text = JSON.stringify({
+      notes: 'x'.repeat(125000) + ' ' + JSON.stringify({ tokens }) + ' ' + 'y'.repeat(chunk) + '\n'
+    })
+    const scanner = new PackageTextScanner()
+    for (let i = 0; i < text.length; i += chunk) scanner.write(text.slice(i, i + chunk))
+    expect(Boolean(scanner.finish())).toBe(typeof tokens === 'string')
+  }
+})
+
+it('distinguishes numeric search patterns from PAT assignments across export chunks', () => {
+  for (const [code, sensitive] of [
+    ['const pats = ["0.59", "−0.03", "278"];', false],
+    ['const pats=[redacted]"0.59","-0.03"];', false],
+    ['const pats=["0.59","ghp_syntheticprivatevalue"];', true],
+    ['const pats=[redacted]"0.59","ghp_syntheticprivatevalue"];', true],
+    ['const pats=["0.59","278"', false],
+    ['const pats=["0.59","278"] + privateValue;', false],
+    ['const pats=["0.59","278"]; password="private-value"', true]
+  ] as const) {
+    for (const text of [code, JSON.stringify({ code })]) {
+      for (let split = 0; split <= text.length; split++) {
+        const scanner = new PackageTextScanner()
+        scanner.write(text.slice(0, split))
+        scanner.write(text.slice(split))
+        expect(Boolean(scanner.finish()), `${code} at ${split}`).toBe(sensitive)
+      }
+    }
+  }
 })
 
 it.each([
@@ -670,29 +842,6 @@ it.each([
     }
   }
 })
-
-// A credential name is not a trusted schema: real secrets can have identifier shapes.
-it.each(['secretName', 'secret_name', 'credentialName', 'credential_name'])(
-  'retains identifier-shaped values under %s',
-  (key) => {
-    for (const value of ['API_KEY', 'ABCDEF1234567890']) {
-      expect(isPrivatePackageField(key, value)).toBe(true)
-      for (const text of [JSON.stringify({ [key]: value }), `${key} = "${value}"`]) {
-        expect(findSensitivePackageText(text)).toBeDefined()
-        for (let split = 0; split <= text.length; split++) {
-          const scanner = new PackageTextScanner()
-          scanner.write(text.slice(0, split))
-          scanner.write(text.slice(split))
-          expect(scanner.finish(), `split ${split}`).toBeDefined()
-        }
-      }
-    }
-    for (const value of ['', '[redacted]']) {
-      expect(isPrivatePackageField(key, value)).toBe(false)
-      expect(findSensitivePackageText(JSON.stringify({ [key]: value }))).toBeUndefined()
-    }
-  }
-)
 
 it.each([
   'password = process.env.PASSWORD',
@@ -738,5 +887,78 @@ it.each([
       scanner.write(text.slice(split))
       expect(scanner.finish(), `split ${split}`).toBeDefined()
     }
+  }
+})
+
+it('distinguishes authentication metadata from credential positions', () => {
+  expect(isPrivatePackageField('auth_mode', 'custom-mode')).toBe(false)
+  for (const key of ['api_key', 'clientSecret', 'OPENAI_API_KEY', 'accessToken', 'password'])
+    expect(isPrivatePackageField(key, 'opaque-value')).toBe(true)
+})
+
+it.each(['api key', 'access token', 'client secret'])(
+  'recognizes spaced credential key %s',
+  (key) => {
+    expect(isPrivatePackageField(key, 'opaque')).toBe(true)
+    for (const text of [
+      JSON.stringify({ [key]: 'opaque' }),
+      key + '=opaque',
+      'https://example.org/?' + encodeURIComponent(key) + '=opaque'
+    ]) {
+      expect(findSensitivePackageText(text)).toBeDefined()
+    }
+  }
+)
+
+it.each([
+  'apiSecret',
+  'api_secret',
+  'api-secret',
+  'API_SECRET',
+  'ACME_SECRET_KEY',
+  'sessionToken',
+  'AWS_SESSION_TOKEN',
+  'tenantOAuthSessionToken',
+  'oauth.token',
+  'my.oauth.token',
+  'cookieValue',
+  'db_password_value',
+  'oauth-token-value',
+  'authorizationHeader',
+  'proxy.authorization.header',
+  'req.headers.authorization',
+  'JWT_SECRET',
+  'tenantSigningSecret',
+  'oauth_signature',
+  'oidcSignature',
+  'authenticationToken',
+  'authorizationToken',
+  'openai_api_key',
+  'db_password',
+  'warehouseAPIKey',
+  'service-client-secret',
+  'archive_private_key',
+  'tenantRefreshToken',
+  'tenantRefreshTokens',
+  'secretToken',
+  'DEPLOY_SECRET_TOKEN',
+  'service-secret-tokens',
+  'accessTokens',
+  'githubToken',
+  'hf_token',
+  'backupPassphrase'
+])('recognizes %s as a credential position', (key) => {
+  expect(isPrivatePackageField(key, 'opaque')).toBe(true)
+  const scanner = new PackageTextScanner()
+  scanner.write(`{"${key}`)
+  scanner.write('":"opaque"}')
+  expect(scanner.finish()).toBeDefined()
+  for (const text of [
+    JSON.stringify({ [key]: 'opaque' }),
+    `${key}=opaque`,
+    `https://example.org/?${key}=opaque`,
+    `--${key} opaque`
+  ]) {
+    expect(findSensitivePackageText(text)).toBeDefined()
   }
 })

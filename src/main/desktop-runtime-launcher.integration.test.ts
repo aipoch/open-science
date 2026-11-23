@@ -12,6 +12,18 @@ import {
 } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { once } from 'node:events'
+import { inspectInstallationProcessesAsync } from './update/installation-occupancy'
+import { processBirthIdentity } from './process-birth-identity'
+import { prefetchSystemBootIdentity } from './system-boot-identity'
+import {
+  inspectInstallationAvailability,
+  captureInstallationHelperExit,
+  beginInstallationUpdateAsync,
+  advanceInstallationUpdate,
+  advanceInstallationUpdateAsync
+} from './update/installation-protection'
 import * as childProcess from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
@@ -31,7 +43,14 @@ vi.mock('node:child_process', async (original) => {
   }
 })
 const roots: string[] = []
+const replacements: { pid: number; birth: string }[] = []
 afterEach(async () => {
+  for (const { pid, birth } of replacements.splice(0)) {
+    if (processBirthIdentity(pid) === birth) {
+      process.kill(pid, 'SIGTERM')
+      await vi.waitFor(() => expect(processBirthIdentity(pid)).not.toBe(birth))
+    }
+  }
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
@@ -58,6 +77,261 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it.each(['desktop', 'cli'])(
+    'admits launch-log readers, rejects foreign occupants, and releases the installation on shutdown (%s)',
+    async (surface) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'update-launch-ownership-')))
+      roots.push(root)
+      const installationRoot = join(root, 'installed app')
+      const configRoot = join(root, 'config')
+      const stateRoot = join(root, 'state')
+      const entry = join(installationRoot, 'resources/backend/out/backend/index.cjs')
+      const command = join(installationRoot, 'node' + (process.platform === 'win32' ? '.exe' : ''))
+      const bootstrap = join(installationRoot, 'resources/backend/installation-startup.cjs')
+      await mkdir(dirname(entry), { recursive: true })
+      await mkdir(configRoot)
+      await copyFile(process.execPath, command)
+      await copyFile('packages/open-science/installation-startup.cjs', bootstrap)
+      const previousStateRoot = process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
+      process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = stateRoot
+      try {
+        await build({
+          stdin: {
+            contents: `import { registerInstallationRuntime } from './src/main/update/installation-protection';
+import * as log from './packages/open-science/launch-log.mjs';
+async function main() {
+${fixtureSource
+  .replace(
+    ' res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration',
+    ` if(req.url==='/restart') {
+      res.end('restarting');
+      setImmediate(()=>{
+        const child=log.restartWithLaunchLogReader(launchLogControl);
+        child.unref();process.exit(0);
+      });return;
+    }
+    if(req.url==='/stop') {
+      // The writer must outlive the backend on Windows to hold the reader's input open.
+      const writer=require('node:child_process').spawn(${JSON.stringify(process.execPath)}, ['-e',
+        "const fs=require('node:fs');const timer=setInterval(()=>{if(fs.existsSync(process.argv[1])||!fs.existsSync(require('node:path').dirname(process.argv[1])))clearInterval(timer)},20);setTimeout(()=>process.exit(0),120000).unref()",
+        ${JSON.stringify(join(root, 'release-reader'))}], {detached:true,windowsHide:true,stdio:['ignore','inherit','inherit']});
+      writer.once('spawn',()=>{ writer.unref();res.end('stopping');server.close(); });return;
+    }
+    res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration`
+  )
+  .replace(
+    'const server=http',
+    'setTimeout(()=>process.exit(2),300000).unref();\nconst server=http'
+  )
+  .replace(
+    "req.headers['x-open-science-runtime-generation']!==generation",
+    "(req.url!=='/api/bootstrap'&&req.headers['x-open-science-runtime-generation']!==generation)"
+  )
+  .replace(
+    'server.listen(',
+    `const installationLease=registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
+process.once('exit',()=>installationLease.release());
+const launchLogControl=await log.bindLaunchLogReader();
+server.listen(`
+  )}
+} main().catch(error => {console.error(error);process.exit(1)});`,
+            resolveDir: process.cwd()
+          },
+          outfile: entry,
+          bundle: true,
+          platform: 'node',
+          format: 'cjs',
+          packages: 'external',
+          banner: {
+            js: `require = require('node:module').createRequire(${JSON.stringify(join(process.cwd(), 'package.json'))});`
+          }
+        })
+        const options = {
+          configRoot,
+          profilePath: configRoot,
+          version: 'test',
+          command,
+          entry,
+          packaged: true,
+          timeoutMs: 10000
+        }
+        let backendProcess: ChildProcess | undefined
+        if (surface === 'desktop') {
+          backendProcess = (await startOrAttachDesktopBackend(options)).startedProcess
+        } else {
+          const { startCommand } = await import(
+            pathToFileURL(join(process.cwd(), 'packages/open-science/cli.mjs')).href
+          )
+          const result = await startCommand(
+            { configRoot, port: 0, timeoutMs: 10000 },
+            {
+              locateBackend: async () => ({ command, entry, development: false }),
+              findServiceState: async () => {
+                try {
+                  return {
+                    ...JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8')),
+                    configRoot
+                  }
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+                  throw error
+                }
+              },
+              readWebToken: async () => readFile(join(configRoot, 'web-token'), 'utf8'),
+              isAlive: (pid: number) => {
+                try {
+                  process.kill(pid, 0)
+                  return true
+                } catch {
+                  return false
+                }
+              },
+              fetch,
+              now: Date.now,
+              sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+              log: () => {},
+              warn: () => {}
+            }
+          )
+          expect(result.started).toBe(true)
+          backendProcess = children.find((child) => child.pid === result.state.pid)
+        }
+        expect(backendProcess).toBeDefined()
+        const owner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+        const location = { installationRoot, stateRoot }
+        const runtime = { pid: owner.pid, generation: owner.generation, configRoot }
+        const reader = children.find((child) => child.spawnargs.includes('--input-type=commonjs'))
+        expect(reader?.pid).toBeDefined()
+        const readerBirth = processBirthIdentity(reader!.pid!)
+        expect(readerBirth).toBeTruthy()
+        const expectAvailable = async (expectedRuntime: typeof runtime): Promise<void> => {
+          const runtimeBirth = processBirthIdentity(expectedRuntime.pid)
+          expect(runtimeBirth).toBeTruthy()
+          // Hosted Windows provisioning can briefly hold the executable after a launch.
+          // Keep both intended processes live while waiting for actual admission.
+          await vi.waitFor(
+            async () => {
+              await expect(
+                inspectInstallationAvailability({
+                  ...location,
+                  runtime: expectedRuntime
+                })
+              ).resolves.toBeUndefined()
+              expect(processBirthIdentity(expectedRuntime.pid)).toBe(runtimeBirth)
+              expect(processBirthIdentity(reader!.pid!)).toBe(readerBirth)
+            },
+            { timeout: 60000, interval: 250 }
+          )
+        }
+        await expectAvailable(runtime)
+        expect((await startOrAttachDesktopBackend(options)).startedProcess).toBeUndefined()
+        await expectAvailable(runtime)
+        const foreign = childProcess.spawn(
+          command,
+          ['-e', "process.stdout.write('ready');process.stdin.resume()"],
+          { stdio: ['pipe', 'pipe', 'ignore'] }
+        )
+        const foreignExit = once(foreign, 'exit')
+        await once(foreign.stdout!, 'data')
+        try {
+          await expect(
+            inspectInstallationAvailability({ ...location, runtime })
+          ).rejects.toMatchObject({
+            reason: 'installation-busy',
+            recovery: {
+              detail: 'foreign-process',
+              blockingProcesses: expect.arrayContaining([
+                expect.objectContaining({ pid: foreign.pid })
+              ])
+            }
+          })
+        } finally {
+          foreign.stdin!.end()
+          await foreignExit
+        }
+        await expectAvailable(runtime)
+        const restarted = once(backendProcess!, 'exit')
+        await fetch(`http://127.0.0.1:${owner.port}/restart`, {
+          headers: {
+            authorization: 'Bearer ' + 'x'.repeat(43),
+            'x-open-science-runtime-generation': owner.generation
+          }
+        })
+        await restarted
+        let replacement: typeof owner
+        await vi.waitFor(
+          async () => {
+            replacement = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+            expect(replacement.pid).not.toBe(owner.pid)
+          },
+          { timeout: 10000 }
+        )
+        const birth = processBirthIdentity(replacement.pid)
+        expect(birth).toBeTruthy()
+        replacements.push({ pid: replacement.pid, birth: birth! })
+        await expectAvailable({
+          pid: replacement.pid,
+          generation: replacement.generation,
+          configRoot
+        })
+        expect(await inspectInstallationProcessesAsync(installationRoot)).toEqual(
+          expect.arrayContaining([replacement.pid, reader!.pid])
+        )
+        await prefetchSystemBootIdentity()
+        const record = await beginInstallationUpdateAsync({
+          ...location,
+          runtime: { pid: replacement.pid, generation: replacement.generation, configRoot },
+          currentVersion: '1',
+          targetVersion: '2',
+          targetManifest: { version: '2', files: {} },
+          startupOptions: {
+            configRoot,
+            dataRoot: configRoot,
+            profilePath: configRoot,
+            port: 44100,
+            host: '127.0.0.1',
+            credentialStore: 'file'
+          }
+        })
+        const waitForHelpers = captureInstallationHelperExit(location, record.runtime)
+        advanceInstallationUpdate(location, record.operationId, 'stopping')
+        const stopped = await fetch(`http://127.0.0.1:${replacement.port}/stop`, {
+          headers: {
+            authorization: 'Bearer ' + 'x'.repeat(43),
+            'x-open-science-runtime-generation': replacement.generation
+          }
+        })
+        expect(stopped.status).toBe(200)
+        await vi.waitFor(() => expect(processBirthIdentity(replacement.pid)).toBeUndefined())
+        expect(processBirthIdentity(reader!.pid!)).toBe(readerBirth)
+        advanceInstallationUpdate(location, record.operationId, 'stopped', true, true)
+        try {
+          await expect(
+            advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
+          ).rejects.toMatchObject({
+            reason: 'installation-busy',
+            recovery: {
+              blockingProcesses: expect.arrayContaining([
+                expect.objectContaining({ pid: reader!.pid })
+              ])
+            }
+          })
+        } finally {
+          await writeFile(join(root, 'release-reader'), '')
+          await waitForHelpers()
+        }
+        expect(processBirthIdentity(reader!.pid!)).toBeUndefined()
+        await expect(
+          advanceInstallationUpdateAsync(location, record.operationId, 'handoff')
+        ).resolves.toMatchObject({ phase: 'handoff' })
+      } finally {
+        await writeFile(join(root, 'release-reader'), '')
+        if (previousStateRoot === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
+        else process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = previousStateRoot
+      }
+    },
+    240000
+  )
   it.each([true, false])(
     'resolves bundled npm in the actual Node backend (packaged: %s)',
     async (packaged) => {
@@ -401,7 +675,12 @@ ${fixtureSource}`
       }
     })
     expect(launched.startedProcess?.pid).toBeGreaterThan(0)
-    expect(children.filter((child) => child.spawnargs.includes(entry))).toHaveLength(2)
+    expect(
+      children.filter(
+        (child) =>
+          child.spawnargs.includes(entry) && !child.spawnargs.includes('--input-type=commonjs')
+      )
+    ).toHaveLength(2)
   })
   it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
@@ -432,7 +711,9 @@ ${fixtureSource}`
     const spy = vi
       .spyOn(childProcess, 'spawn')
       .mockImplementation((...args) =>
-        Array.isArray(args[1]) && args[1].includes(entry)
+        Array.isArray(args[1]) &&
+        args[1].includes(entry) &&
+        !args[1].includes('--input-type=commonjs')
           ? real.spawn(join(root, 'missing-executable'), [], { stdio: 'ignore' })
           : spawn(...args)
       )

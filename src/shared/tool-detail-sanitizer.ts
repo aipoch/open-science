@@ -1,4 +1,10 @@
 import { REDACTED_MARKER, isSensitiveDiagnosticKey, redactSensitiveText } from '@aipoch/diagnostics'
+import {
+  webResultSchema,
+  WEB_RESULT_MAX_BYTES,
+  WEB_RESULT_MAX_CODE_UNITS,
+  type WebResult
+} from './web-tools'
 
 const MAX_TOOL_DETAIL_TEXT_CHARS = 16_000
 const MAX_TOOL_DETAIL_CONTENT_CHARS = 32_000
@@ -42,8 +48,120 @@ const capToolDetailText = (text: string): string =>
     ? `${text.slice(0, MAX_TOOL_DETAIL_TEXT_CHARS)}\n…`
     : text
 
+// Keep known Web envelopes structurally complete after credential redaction expands text. This
+// is a display projection only; execution arguments, receipts and snapshot hashes are immutable.
+const sanitizeWebResultText = (text: string): string | undefined => {
+  if (text.length > WEB_RESULT_MAX_CODE_UNITS) return undefined
+  let value: unknown
+  try {
+    value = JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
+  const parsed = webResultSchema.safeParse(value)
+  if (!parsed.success) return undefined
+  const projected = sanitizeRawToolPayload(parsed.data, 256 * 1024) as WebResult | undefined
+  if (!projected) return undefined
+  // This closed enum is a category, not an authentication credential. The generic key policy
+  // deliberately redacts unknown auth_* fields, so restore only this validated metadata value.
+  if (projected.provider && parsed.data.provider)
+    projected.provider.auth_mode = parsed.data.provider.auth_mode
+  projected.attempts?.forEach((attempt, index) => {
+    const original = parsed.data.attempts?.[index]
+    if (original) {
+      attempt.provider.auth_mode = original.provider.auth_mode
+      // Restore only the closed numeric metering fields that the generic token-key policy
+      // can redact. Cost labels/version strings still pass through ordinary secret redaction.
+      if (original.usage && attempt.usage) {
+        for (const field of [
+          'input_tokens',
+          'output_tokens',
+          'total_tokens',
+          'search_requests',
+          'credits'
+        ] as const) {
+          const value = original.usage[field]
+          if (value !== undefined) attempt.usage[field] = value
+        }
+      }
+    }
+  })
+  if (projected.synthesis)
+    projected.synthesis.text = [...projected.synthesis.text].slice(0, 2000).join('')
+  const serialize = (): string => JSON.stringify(projected)
+  const fits = (serialized: string): boolean =>
+    serialized.length <= WEB_RESULT_MAX_CODE_UNITS &&
+    new TextEncoder().encode(serialized).length <= WEB_RESULT_MAX_BYTES &&
+    JSON.stringify({ type: 'content', content: { type: 'text', text: serialized } }).length <=
+      MAX_TOOL_DETAIL_CONTENT_CHARS
+  // Redaction can expand short secrets past per-field limits. Preserve a valid display schema.
+  const clip = (value: string, limit: number): string => {
+    let clipped = value.slice(0, limit)
+    if (/[\uD800-\uDBFF]$/u.test(clipped)) clipped = clipped.slice(0, -1)
+    return clipped
+  }
+  if ('query' in projected.request && projected.request.query !== undefined) {
+    projected.request.query = Array.from(projected.request.query.trim()).slice(0, 2000).join('')
+  }
+  for (const source of projected.sources) {
+    if (source.title) {
+      if (source.title.length > 512) projected.results_truncated = true
+      source.title = clip(source.title, 512)
+    }
+    if (source.snippet) {
+      if (source.snippet.length > 8000) projected.results_truncated = true
+      source.snippet = clip(source.snippet, 8000)
+    }
+  }
+  let serialized = serialize()
+  if (fits(serialized)) return webResultSchema.safeParse(projected).success ? serialized : undefined
+  if (projected.operation === 'search') {
+    projected.results_truncated = true
+    delete projected.synthesis
+    // Reduce excerpts first, retaining source identities and their ranking whenever possible.
+    const excerpts = projected.sources.map((source) => Array.from(source.snippet ?? ''))
+    let low = 0
+    let high = Math.max(0, ...excerpts.map((points) => points.length))
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2)
+      projected.sources.forEach((source, index) => {
+        if (source.snippet !== undefined) source.snippet = excerpts[index].slice(0, middle).join('')
+      })
+      if (fits(serialize())) low = middle
+      else high = middle - 1
+    }
+    projected.sources.forEach((source, index) => {
+      if (source.snippet !== undefined) source.snippet = excerpts[index].slice(0, low).join('')
+    })
+    while (!fits(serialize()) && projected.sources.length > 0) projected.sources.pop()
+    projected.returned_count = projected.sources.length
+    serialized = serialize()
+  }
+  if (projected.document) {
+    const document = projected.document
+    const points = Array.from(document.text)
+    document.truncated = true
+    delete document.next_cursor
+    let low = 0
+    let high = points.length
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2)
+      document.text = points.slice(0, middle).join('')
+      if (fits(serialize())) low = middle
+      else high = middle - 1
+    }
+    document.text = points.slice(0, low).join('')
+    document.end_line = document.text
+      ? document.start_line + document.text.split('\n').length - 1
+      : Math.max(0, document.start_line - 1)
+    serialized = serialize()
+  }
+  // Metadata alone can exhaust the budget. Fall back through the ordinary redacted text path.
+  return fits(serialized) && webResultSchema.safeParse(projected).success ? serialized : undefined
+}
+
 const sanitizeToolDetailText = (text: string): string =>
-  capToolDetailText(redactSensitiveText(capToolDetailText(text)))
+  sanitizeWebResultText(text) ?? capToolDetailText(redactSensitiveText(capToolDetailText(text)))
 
 const asSanitizedString = (value: unknown): string | undefined => {
   const text = asString(value)
@@ -153,32 +271,42 @@ const sanitizeNotebookCodeReviewPayload = (value: unknown): unknown | undefined 
       typeof review[key] === 'string' ? [[key, review[key].slice(0, 1024)]] : []
     )
   )
-  return sanitizeRawToolPayload(
-    {
-      code: value.code,
-      notebookCodeRisk: {
-        ...metadata,
-        language: review.language,
-        ...(review.language === 'bash' &&
-        isRecord(review.shellRuntime) &&
-        review.shellRuntime.kind === 'powershell'
-          ? { shellRuntime: { kind: 'powershell' } }
-          : {}),
-        riskCount: Math.max(
-          review.risks.length,
-          Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
-            ? (review.riskCount as number)
-            : 0
-        ),
-        risks: review.risks.slice(0, 128).map((risk) => ({
-          operation: risk.operation.slice(0, 512),
-          source: risk.source.slice(0, 1024),
-          line: risk.line
-        }))
-      }
-    },
-    8 * 1024 * 1024
-  )
+  const payload = {
+    code: value.code,
+    notebookCodeRisk: {
+      ...metadata,
+      language: review.language,
+      ...(review.language === 'bash' &&
+      isRecord(review.shellRuntime) &&
+      review.shellRuntime.kind === 'powershell'
+        ? { shellRuntime: { kind: 'powershell' } }
+        : {}),
+      riskCount: Math.max(
+        review.risks.length,
+        Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
+          ? (review.riskCount as number)
+          : 0
+      ),
+      risks: review.risks.slice(0, 128).map((risk) => ({
+        operation: risk.operation.slice(0, 512),
+        source: risk.source.slice(0, 1024),
+        line: risk.line
+      }))
+    }
+  }
+  const maxChars = 8 * 1024 * 1024
+  if (payload.code.length >= MAX_TOOL_DETAIL_TEXT_CHARS && !isSensitiveDiagnosticKey('code')) {
+    try {
+      const code = redactToolPayloadText(payload.code)
+      // Each source code unit adds at most six JSON characters to the empty string.
+      // Clone only the findings when even that upper bound fits the existing budget.
+      const projected = sanitizeRawToolPayload({ ...payload, code: '' }, maxChars - 6 * code.length)
+      if (isRecord(projected)) return { ...projected, code }
+    } catch {
+      return undefined
+    }
+  }
+  return sanitizeRawToolPayload(payload, maxChars)
 }
 
 // Rebuilds a bounded JSON-safe projection while replacing sensitive fields at every nesting level.
@@ -207,5 +335,6 @@ export {
   sanitizeRawToolPayload,
   sanitizeToolContent,
   sanitizeToolDetailText,
-  sanitizeNotebookCodeReviewPayload
+  sanitizeNotebookCodeReviewPayload,
+  sanitizeWebResultText
 }

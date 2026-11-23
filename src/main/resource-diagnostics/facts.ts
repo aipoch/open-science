@@ -6,7 +6,7 @@ const keys = new Set(
     'reconnect retirement activePrompts activeReviewers activityLeases operationLeases startups additionalActivity ' +
     'idleReleasePending retirementPending teardownPending providerPending skillsPending ' +
     'kernelEpochId receiptId lane attempt expected code signal reaped osReaped reason truncated total ' +
-    'supported complete startedAt endedAt system committedBytes commitLimitBytes availableBytes systemError ' +
+    'supported complete startedAt endedAt system committedBytes commitLimitBytes availableBytes totalPhysicalBytes systemError ' +
     'processes privateBytes workingSetBytes handleCount error sampleId elapsedMs dropped sealsSuppressed rotatedBytes ' +
     'pendingBytes failed missing snapshots processCoverage writeFailures processed processingMs nativeMs backoffMs ' +
     'activityProcessed activityTotal'

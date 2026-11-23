@@ -129,6 +129,7 @@ describe('NotificationLiveToast', () => {
     expect(toast).not.toBeNull()
     expect(toast?.textContent).toContain('Approval needed')
     expect(toast?.classList.contains('invisible')).toBe(false)
+    expect(toast?.classList.contains('shadow-notice')).toBe(true)
   })
 
   it('N04: removes the shown toast when its target is invalidated without a new sequence', async () => {

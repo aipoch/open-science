@@ -1,3 +1,4 @@
+import { basename } from 'node:path'
 import { app, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
@@ -22,6 +23,7 @@ import { fetchManifest } from './manifest'
 import {
   canStartUpdateDownload,
   toAvailableUpdateStatus,
+  type DownloadPreference,
   type InstallGate,
   type UpdateStrategy
 } from './strategy'
@@ -88,6 +90,7 @@ export type UpdateInstallationHooks = {
   recheckInstall?: () => Promise<Partial<UpdateStatus>>
 }
 export type ElectronUpdaterDeps = UpdateInstallationHooks & {
+  downloadPreference?: Promise<DownloadPreference | undefined>
   translate?: NativeTranslator
   prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
   installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
@@ -225,8 +228,8 @@ const extractArtifactSize = (
 
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
 // on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
-// stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
-// downloads/installs without a user action.
+// stamped applyKind:'restart'. The desktop policy schedules eligible background downloads.
+// Keep the SDK's automatic download and install-on-quit disabled so it cannot bypass that policy.
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
@@ -257,6 +260,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readyCheckError?: unknown
   private status: UpdateStatus
   private applying = false
+  private cancelledDownloadVersion?: string
   private installerStarted = false
   private pendingInstallRollback?: () => void
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
@@ -322,6 +326,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           }
         : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
+    void deps.downloadPreference?.then((preference) => {
+      if (preference) {
+        this.downloadPreference = preference
+        this.publishDownloadPreference()
+      }
+    })
 
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
@@ -329,6 +339,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private readonly installationHooks: UpdateInstallationHooks
+  private downloadPreference?: DownloadPreference
 
   private subscribe(): void {
     this.updater.on('checking-for-update', () => {
@@ -442,14 +453,23 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         downloaded?.files?.filter((file) =>
           file.url?.split('?')[0].toLowerCase().endsWith(`.${extension}`)
         ) ?? []
+      const selected =
+        candidates.length === 1
+          ? candidates[0]
+          : candidates.find(
+              (file) =>
+                file.url?.split('?')[0].split('/').pop() ===
+                basename(downloaded?.downloadedFile ?? '')
+            )
       const readyStatus: UpdateStatus = {
         ...this.status,
         state: 'ready',
         progress: 100,
-        artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
+        artifactSha512: selected?.sha512,
         localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
       }
       delete readyStatus.installerMissing
+      delete readyStatus.backgroundDownload
       this.installerInvalidated = false
       this.confirmedInstaller = confirmInstaller(
         readyStatus,
@@ -457,6 +477,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.inspectInstallerFile
       )
       this.setStatus(readyStatus)
+      if (this.downloadPreference?.enabled && this.confirmedInstaller)
+        void this.downloadPreference.stageForNextLaunch?.(readyStatus).catch((error: unknown) =>
+          this.log.warn('Could not prepare the desktop update for next launch', {
+            message: String(error)
+          })
+        )
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
@@ -523,6 +549,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.applying && partial.state !== 'applying') return
     this.status = {
       ...partial,
+      ...(this.downloadPreference ? { automaticDownloads: this.downloadPreference.enabled } : {}),
       state: partial.state ?? this.status.state,
       current: this.currentVersion,
       applyKind: 'restart'
@@ -665,7 +692,49 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
   }
 
-  async download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
+  private publishDownloadPreference(): void {
+    const checkingReadyArtifact = this.readyCheckStatus === this.status
+    this.setStatus(this.status)
+    if (checkingReadyArtifact) this.readyCheckStatus = this.status
+  }
+
+  async setAutomaticDownloads(enabled: boolean): Promise<UpdateStatus> {
+    const preference = this.downloadPreference
+    if (!preference || typeof enabled !== 'boolean')
+      throw new Error('Unsupported download preference')
+    preference.setEnabled(enabled)
+    if (!enabled && this.status.state === 'downloading' && this.status.backgroundDownload) {
+      return this.cancel()
+    }
+    this.publishDownloadPreference()
+    return this.status
+  }
+
+  getBackgroundDownloadOffer(): UpdateStatus | undefined {
+    if (
+      this.downloadPreference?.enabled &&
+      !this.checkLifecycle &&
+      !this.downloadLifecycle &&
+      this.status.state === 'available' &&
+      this.status.latest !== this.cancelledDownloadVersion
+    )
+      return this.status
+    return undefined
+  }
+
+  async downloadInBackground(version: string): Promise<UpdateStatus> {
+    if (this.getBackgroundDownloadOffer()?.latest !== version) return this.status
+    return this.startDownload({ nonInteractive: true }, true)
+  }
+
+  download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
+    return this.startDownload(options, false)
+  }
+
+  private async startDownload(
+    options: UpdateDownloadOptions,
+    background: boolean
+  ): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
@@ -706,6 +775,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.setStatus({
       ...this.status,
       state: 'downloading',
+      backgroundDownload: background || undefined,
       progress: 0,
       downloadedBytes: 0,
       downloadProgress: undefined,
@@ -807,6 +877,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.downloadToken?.cancel()
     this.downloadToken = undefined
     if (this.status.state === 'downloading') {
+      this.cancelledDownloadVersion = this.status.latest
       this.setStatus(toAvailableUpdateStatus(this.status))
     }
     this.downloadOperation?.cancel({ reason: 'user' })

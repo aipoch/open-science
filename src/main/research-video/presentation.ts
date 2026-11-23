@@ -22,10 +22,6 @@ import {
 import type { ResearchVideoStep } from '@aipoch/research-film/contracts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { LocalModelOwner, createLocalModelOwner } from '../local-models/owner'
-import {
-  RestrictedInferenceError,
-  UnconfirmedRestrictedInferenceCleanupError
-} from '../acp/restricted-inference-contract'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 import {
   generateResearchFilm,
@@ -103,11 +99,6 @@ const activeFilmBranch = (session: PersistedChatSession | undefined): string | u
   session?.conversationGraph?.frames.find(
     (frame) => frame.id === session.conversationGraph?.rootFrameId
   )?.activeBranchId
-
-const isFatalNarrationReviewError = (error: unknown): boolean =>
-  error instanceof UnconfirmedRestrictedInferenceCleanupError ||
-  (error instanceof RestrictedInferenceError &&
-    (error.code === 'tool-violation' || error.code === 'shutting-down'))
 
 const filmSourceFingerprint = (
   conversation: string,
@@ -194,7 +185,6 @@ export function createResearchVideoPresentationOwner(options: {
         alias: string
         branchId?: string
         revision?: ResearchFilmRevision
-        narrationReview?: ResearchFilmNarrationReview
         controller: AbortController
         prepared: Promise<void>
         blockedStatus?: ResearchVideoPresentationStatus
@@ -676,34 +666,20 @@ export function createResearchVideoPresentationOwner(options: {
       if (revision && failedReview?.attemptId !== revision.attemptId)
         throw new ResearchFilmRevisionError()
       if (headless && failedReview && !revision) return
-      if (resumable && !revision && requestedNarrationReview && !resumable.narrationReview)
-        throw new Error(
-          'Continue this Film with its original narration review policy, or start a new Film attempt.'
-        )
       narrationReview ??= resumable?.narrationReview
-      if (active?.key === key) active.narrationReview = narrationReview
       const pending =
         resumable?.built && (await diskStep(() => filmPathInfo(join(existingBase!, 'pending'))))
       const hasBuiltOutput =
         !revision &&
         resumable?.built &&
-        resumable.built.narrationReview === narrationReview &&
         (!headlessReview || resumable.built.sessionAppMode !== 'live') &&
         (request.mode === 'operation-replay' ||
           (!headlessReview && !reviewPlayer) ||
           resumable.visualChecked) &&
-        (!options.reviewScript ||
-          request.mode === 'operation-replay' ||
-          narrationReview === 'advisory' ||
-          resumable.built.scriptScore === 9) &&
         resumable.outputFingerprint &&
         resumable.outputFingerprint ===
           (await diskStep(() =>
-            filmOutputFingerprint(
-              join(existingBase!, pending ? 'pending' : resumable.id),
-              signal,
-              resumable.built
-            )
+            filmOutputFingerprint(join(existingBase!, pending ? 'pending' : resumable.id), signal)
           ))
       if (headlessReview && !hasBuiltOutput) {
         if (!reviewPlayer)
@@ -835,7 +811,7 @@ export function createResearchVideoPresentationOwner(options: {
           checkpointStarted = true
         })
         if (revision) prepared()
-        for (const file of ['files', 'anims', 'libs', 'video.json', 'output'])
+        for (const file of ['files', 'anims', 'libs', 'video.json', 'output', 'best-layout'])
           await diskStep(() => rm(join(job!, file), { recursive: true, force: true }))
         await diskStep(() => mkdir(join(job!, 'files')))
         const stagedChecksums: string[] = []
@@ -880,8 +856,6 @@ export function createResearchVideoPresentationOwner(options: {
             directory: job!,
             author: options,
             signal,
-            narrationReview,
-            isFatalNarrationReviewError,
             revisionGuidance: confirmedRevision && {
               feedback: confirmedRevision.feedback,
               findings: confirmedRevision.findings,
@@ -938,9 +912,7 @@ export function createResearchVideoPresentationOwner(options: {
           narrationReview,
           sessionAppMode
         }
-        saved.outputFingerprint = await diskStep(() =>
-          filmOutputFingerprint(job!, signal, saved?.built)
-        )
+        saved.outputFingerprint = await diskStep(() => filmOutputFingerprint(job!, signal))
         if (!saved.outputFingerprint)
           throw new Error('Missing or empty research presentation output.')
         if (reviewPlayer && request.mode !== 'operation-replay') saved.visualChecked = true
@@ -1180,8 +1152,6 @@ export function createResearchVideoPresentationOwner(options: {
         if (previousFailure?.progress?.phase === 'failed' && previousFailure.error)
           throw new Error(previousFailure.error)
         if (active.key === key) {
-          if (narrationReview && active.narrationReview !== narrationReview)
-            throw new Error(RESEARCH_FILM_BUSY_MESSAGE)
           if (
             revision &&
             (revision.attemptId !== active.revision?.attemptId ||
@@ -1257,7 +1227,6 @@ export function createResearchVideoPresentationOwner(options: {
         alias,
         branchId: request.branchId,
         revision,
-        narrationReview,
         controller,
         prepared
       }

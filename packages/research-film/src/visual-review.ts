@@ -7,6 +7,8 @@ export const filmVisualIssueSchema = z
     scene,
     line: z.number().int().nonnegative().max(2).optional(),
     app: z.literal(true).optional(),
+    textLayout: z.boolean().optional(),
+    renderFailure: z.literal(true).optional(),
     script: z
       .string()
       .regex(/^anims\/[\w-]+\.js$/)
@@ -25,7 +27,7 @@ export const filmVisualCheckSchema = z
   .strict()
 export const filmVisualResultSchema = z
   .object({
-    issues: filmVisualCheckSchema.shape.issues,
+    issues: z.array(filmVisualIssueSchema).max(128),
     frames: z
       .array(
         framePosition.extend({

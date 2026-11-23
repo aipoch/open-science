@@ -53,13 +53,21 @@ for (const width of [375, 1440]) {
     const view = (await page
       .getByRole('button', { name: 'Citation graph', exact: true })
       .boundingBox())!
-    expect(Math.abs(source.y + source.height / 2 - view.y - view.height / 2)).toBeLessThan(4)
-    expect(source.x - view.x - view.width).toBeLessThan(20)
+    if (width === 375) {
+      expect(source.y).toBeGreaterThanOrEqual(view.y + view.height)
+      expect(source.y + source.height).toBeLessThanOrEqual(plot.y)
+      expect(source.x).toBeGreaterThanOrEqual(0)
+      expect(source.x + source.width).toBeLessThanOrEqual(width)
+      await expect(frame.locator('[data-citation-plot]')).toBeInViewport()
+      await page.getByRole('combobox', { name: 'Citation source' }).click({ trial: true })
+    } else {
+      expect(Math.abs(source.y + source.height / 2 - view.y - view.height / 2)).toBeLessThan(4)
+      expect(source.x - view.x - view.width).toBeLessThan(20)
+    }
     await frame.locator('[data-paper-id="europe-pmc:MED:1100"] [data-node-mark]').click()
     await expect(frame.locator('[data-citation-inspector-title]')).toContainText('Graph paper 1100')
     await page.mouse.move(0, 0)
-    if (await frame.locator('[data-citation-hover-title]').count())
-      await page.keyboard.press('Escape')
+    await expect(frame.locator('[data-citation-hover-title]')).toHaveCount(0)
     await page.screenshot({ path: info.outputPath(`graph-${width}-dark-layout.png`) })
   })
 }
@@ -91,11 +99,10 @@ for (const width of [320, 375, 414, 768]) {
     await more.click()
     await expect(frame.locator('[data-paper-id="europe-pmc:MED:1139"]')).toHaveCount(1)
     await frame.locator('[data-paper-id="europe-pmc:MED:1100"] [data-node-mark]').click()
-    await expect(frame.getByRole('button', { name: 'Open Inbox', exact: true })).toBeVisible()
     await expect(frame.getByRole('button', { name: 'Add to Inbox', exact: true })).toBeVisible()
+    await expect(frame.getByRole('button', { name: 'Open Inbox', exact: true })).toHaveCount(0)
     await page.mouse.move(0, 0)
-    if (await frame.locator('[data-citation-hover-title]').count())
-      await page.keyboard.press('Escape')
+    await expect(frame.locator('[data-citation-hover-title]')).toHaveCount(0)
     await page.screenshot({ path: info.outputPath(`panel-${width}.png`) })
   })
 }
@@ -171,11 +178,8 @@ for (const width of [1440, 375]) {
       await expect(node).toHaveAttribute('aria-pressed', 'true')
       const title = `Graph paper ${id}: a study with a deliberately long descriptive title`
       await expect(frame.locator('[data-citation-inspector-title]')).toHaveText(title)
-      // The inspector resize can move another node under the pointer. Dismiss that
-      // inspection before focusing the selected paper, as a keyboard user can do.
       await page.mouse.move(0, 0)
-      await page.keyboard.press('Escape')
-      await frame.getByRole('button', { name: 'Zoom in', exact: true }).focus()
+      await frame.locator('[data-citation-inspector-toggle]').focus()
       await node.focus()
       const selectedEdge = frame.locator(
         `path[data-edge-emphasis="related"][${direction === 'references' ? 'data-target' : 'data-source'}="europe-pmc:MED:${id}"]`
@@ -206,11 +210,9 @@ for (const width of [1440, 375]) {
         await details.click()
         await expect(details).toHaveAttribute('aria-expanded', 'false')
         await expect(node).toHaveAttribute('aria-pressed', 'true')
-        if (await frame.locator('[data-citation-hover-title]').count()) {
-          await page.keyboard.press('Escape')
-          await expect(frame.locator('[data-citation-hover-title]')).toHaveCount(0)
-          await expect(page.getByRole('dialog')).toBeVisible()
-        }
+        await page.mouse.move(0, 0)
+        await expect(frame.locator('[data-citation-hover-title]')).toHaveCount(0)
+        await expect(page.getByRole('dialog')).toBeVisible()
         await expect
           .poll(async () => {
             const size = await node.locator('text').evaluate((element) => {
@@ -303,7 +305,7 @@ for (const height of [812, 667]) {
         path: info.outputPath(`graph-375x${height}-${direction}-expanded.png`)
       })
       const scroll = frame.locator('[data-citation-inspector]')
-      await scroll.locator('summary').click()
+      await scroll.getByRole('button', { name: 'Show more', exact: true }).click()
       await scroll.evaluate((element) => {
         element.scrollTop = element.scrollHeight
       })
@@ -320,7 +322,7 @@ for (const height of [812, 667]) {
       await scroll.evaluate((element) => {
         element.scrollTop = 0
       })
-      await scroll.locator('summary').click()
+      await scroll.getByRole('button', { name: 'Show less', exact: true }).click()
     }
   })
 }
@@ -343,11 +345,11 @@ for (const [height, language, landscape] of [
     const svg = frame.locator('svg[data-zoom]')
     const first = frame.locator('[data-paper-id="europe-pmc:MED:1100"]')
     await first.locator('[data-node-mark]').click()
-    async function finishSave(expected: string): Promise<void> {
+    async function finishSave(expected: string, buttonName = 'Add to Inbox'): Promise<void> {
       await page.evaluate(() => {
         delete (window as unknown as { finishCitationStage?: () => void }).finishCitationStage
       })
-      await actions.getByRole('button', { name: 'Add to Inbox', exact: true }).click()
+      await actions.getByRole('button', { name: buttonName, exact: true }).click()
       await expect
         .poll(() =>
           page.evaluate(
@@ -375,9 +377,11 @@ for (const [height, language, landscape] of [
     if (language !== 'en') {
       // Content pressure using real catalog strings; this is not an application language switch.
       await actions.evaluate((element, translations) => {
-        for (const text of element.querySelectorAll('button, [role="status"]')) {
-          const key = text.textContent!.trim()
-          if (translations[key]) text.textContent = translations[key]
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        while (walker.nextNode()) {
+          const text = walker.currentNode
+          const translated = translations[text.nodeValue!.trim()]
+          if (translated) text.nodeValue = translated
         }
       }, translations)
     }
@@ -433,7 +437,6 @@ for (const [height, language, landscape] of [
     await pane.evaluate((element) => {
       element.scrollTop = 0
     })
-    await body.locator('summary').click()
     await body.evaluate((element) => {
       element.scrollTop = element.scrollHeight
     })
@@ -441,12 +444,13 @@ for (const [height, language, landscape] of [
     await pane.evaluate((element) => {
       element.scrollTop = element.scrollHeight
     })
-    const openInbox = pane.getByRole('button', { name: 'Open Inbox', exact: true })
-    await openInbox.scrollIntoViewIfNeeded()
-    await expect(openInbox).toBeInViewport({ ratio: 1 })
-    await openInbox.click()
-    await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(page.locator('#inbox-state-pending')).toHaveAttribute('aria-selected', 'true')
+    const retrySave = actions.getByRole('button', {
+      name: translations['Add to Inbox'] ?? 'Add to Inbox',
+      exact: true
+    })
+    await retrySave.scrollIntoViewIfNeeded()
+    await expect(retrySave).toBeInViewport({ ratio: 1 })
+    await finishSave('In Inbox', translations['Add to Inbox'] ?? 'Add to Inbox')
   })
 }
 
@@ -528,10 +532,7 @@ for (const width of [1440, 375]) {
     await expect(reference).toHaveAttribute('aria-pressed', 'true')
     await page.mouse.move(0, 0)
     const title = frame.locator('[data-citation-hover-title]')
-    if (await title.count()) {
-      await page.keyboard.press('Escape')
-      await expect(title).toHaveCount(0)
-    }
+    await expect(title).toHaveCount(0)
     await expect
       .poll(async () =>
         reference.locator('text').evaluate((element) => {
@@ -597,10 +598,7 @@ for (const width of [1440, 375]) {
     await expect(
       frame.locator('path[data-source="europe-pmc:MED:1200"][data-target="europe-pmc:MED:1000"]')
     ).toHaveAttribute('data-edge-emphasis', 'related')
-    if (await title.count()) {
-      await page.keyboard.press('Escape')
-      await expect(title).toHaveCount(0)
-    }
+    await expect(title).toHaveCount(0)
     await page.screenshot({
       path: info.outputPath(`graph-all-${width}-selected-citation.png`),
       animations: 'disabled'

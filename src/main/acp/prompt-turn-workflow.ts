@@ -51,6 +51,7 @@ import type {
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
+import { markNotebookExecutionIntent, notebookExecutionIntent } from '../notebook/execution-intent'
 
 const log = createLogger('acp-prompt-turn-workflow')
 
@@ -145,7 +146,19 @@ type AcpPromptTurnEnvironment = Readonly<{
     providerSessionId: string
     cwd: string
     skillRuntimeAllowlist?: readonly string[]
+    request?: AcpPromptRequest
+    signal?: AbortSignal
+    assertCurrent?: () => void
   }) => Promise<void>
+  commitNotebookDispatch?: (appSessionId: string) => void
+  prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
+  observeNotebookExecutionLoop?: (input: {
+    appSessionId: string
+    providerSessionId: string
+    request: AcpPromptRequest
+    signal: AbortSignal
+    assertCurrent(): void
+  }) => () => void
 }>
 
 type AcpPromptTurnArtifacts = Readonly<{
@@ -215,6 +228,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     AcpSessionInteractionOwner,
     | 'activatePrompt'
     | 'cancellationCheckpoint'
+    | 'isCancellationAccepted'
     | 'captureTerminal'
     | 'current'
     | 'release'
@@ -472,6 +486,11 @@ class AcpPromptTurnWorkflow {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
+      this.options.environment.prepareNotebookIntent?.(admittedRequest, mode)
+      // The coordinator retains the original object for automatic Reviewer/settlement work.
+      // Copy only Main-owned symbols, never wire metadata, onto that retained request.
+      const intent = notebookExecutionIntent(admittedRequest)
+      if (intent) markNotebookExecutionIntent(request, intent)
       if (this.options.beginRuntimeSessionTurn) {
         try {
           await this.options.beginRuntimeSessionTurn(
@@ -511,6 +530,7 @@ class AcpPromptTurnWorkflow {
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
     } catch (error) {
+      notebookExecutionIntent(admittedRequest)?.abandonUserExecution()
       const scope = interaction ?? reservation
       const cancelled = mode.kind === 'app-continuation' && scope.signal.aborted
       skill.close(cancelled ? 'cancelled' : rejectedSkillOutcome)
@@ -576,6 +596,7 @@ class AcpPromptTurnWorkflow {
     let skillStarted = false
     let skillFinalized = false
     let userMessageEmitted = false
+    let notebookProviderDispatched = false
     let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
     let sideChatRelaySettled = false
     const notebookWorkingFiles = new NotebookWorkingFileObserver()
@@ -721,6 +742,7 @@ class AcpPromptTurnWorkflow {
       let deliveryClaimed = false
       let providerDispatched = false
       let accumulatedFacts: AcpProviderTurnResult | undefined
+      let releaseNotebookBranch: (() => void) | undefined
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
@@ -744,6 +766,7 @@ class AcpPromptTurnWorkflow {
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
+          isUserStopped: () => interactions.isCancellationAccepted(interaction, 'user'),
           beforeDispatch: async () => {
             if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (publicationPrompt && artifact) {
@@ -773,6 +796,13 @@ class AcpPromptTurnWorkflow {
               framework,
               providerSessionId: session.sessionId,
               cwd,
+              request,
+              signal: interaction.signal,
+              assertCurrent: () => {
+                interaction.signal.throwIfAborted()
+                if (!this.isCurrent(turn))
+                  throw new Error('ACP prompt interaction is no longer active')
+              },
               ...(readyPrepared.skillRuntimeAllowlist
                 ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
                 : {})
@@ -791,6 +821,18 @@ class AcpPromptTurnWorkflow {
               deliveryClaimed = true
             }
             const dispatch = await this.checkpoint(interaction)
+            if (dispatch !== 'cancelled') {
+              releaseNotebookBranch = env.observeNotebookExecutionLoop?.({
+                appSessionId: sessionId,
+                providerSessionId: session.sessionId,
+                request,
+                signal: interaction.signal,
+                assertCurrent: () => {
+                  interaction.signal.throwIfAborted()
+                  if (!this.isCurrent(turn)) throw new Error('Notebook Provider dispatch ended.')
+                }
+              })
+            }
             // Mark the boundary before calling the adapter: a synchronous throw from
             // session.prompt cannot prove that no request left the process.
             if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
@@ -800,6 +842,9 @@ class AcpPromptTurnWorkflow {
           },
           onDispatched: () => {
             providerDispatched = true
+            notebookProviderDispatched = true
+            env.commitNotebookDispatch?.(sessionId)
+            notebookExecutionIntent(request)?.commitUserExecution()
           },
           captureStop: (response) => {
             if (plan.isProviderPaused?.(interaction)) {
@@ -886,6 +931,8 @@ class AcpPromptTurnWorkflow {
         try {
           outcome = await this.options.serialization.run(framework, executeProviderTurn)
         } finally {
+          releaseNotebookBranch?.()
+          releaseNotebookBranch = undefined
           if (deliveryClaimed && !providerDispatched) await resumeNotDispatched?.()
         }
         if (outcome.kind !== 'stopped') {
@@ -950,6 +997,7 @@ class AcpPromptTurnWorkflow {
     } finally {
       scheduleTurn?.close()
     }
+    if (!notebookProviderDispatched) notebookExecutionIntent(request)?.abandonUserExecution()
     if (sideChatRelay && !sideChatRelaySettled) {
       sideChatRelaySettled = true
       sideChatRelay.restore()

@@ -7,7 +7,7 @@ name: Nightly
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '17 15 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '17 12 * * *' # UTC; 20:17 Asia/Singapore
   workflow_dispatch:
     inputs:
       dry_run:

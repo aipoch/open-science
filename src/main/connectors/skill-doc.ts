@@ -1,6 +1,6 @@
 import { renderSkillDoc as render } from './skill-document-renderer'
 import { CONNECTOR_CATALOG } from './catalog'
-import { getConnectorTools } from './registry'
+import { getConnectorSkillTools } from './registry'
 export { renderConnectorInstructions, renderCustomSkillDoc } from './skill-document-renderer'
 export type { CustomSkillDocServer, CustomSkillDocTool } from './skill-document-renderer'
 
@@ -38,5 +38,5 @@ export function renderSkillDoc(connectorId: string): string {
         ]
       : [])
   ].join(' ')
-  return render(meta, getConnectorTools(connectorId), guidance)
+  return render(meta, getConnectorSkillTools(connectorId), guidance)
 }

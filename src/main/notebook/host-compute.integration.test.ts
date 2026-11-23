@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { ComputeRemoteOperationOwner } from '../compute/compute-remote-operation-owner'
+import { createWindowsStandardProcessSandbox } from './fixtures/windows-standard-process-sandbox'
 
 // host.compute lives ONLY in the control-plane repl kernel (a Node process), reached via the same
 // loopback computeCall RPC as host.mcp. Node is always available under vitest, so the sole gate is
@@ -16,11 +18,30 @@ const gate = process.env.RUN_KERNEL ? describe : describe.skip
 // exactly as production does.
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
-const makeExecutor = (): NotebookKernelExecutor =>
-  new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
+const resetOwnership = configureTestRuntimeMetadata()
+let windowsSandbox: Awaited<ReturnType<typeof createWindowsStandardProcessSandbox>> | undefined
+const windowsExecutors: NotebookKernelExecutor[] = []
+const makeExecutor = (): NotebookKernelExecutor => {
+  const executor = new NotebookKernelExecutor({
+    replLoopPath: REPL_LOOP,
+    processSandbox: windowsSandbox?.port
+  })
+  if (process.platform === 'win32') windowsExecutors.push(executor)
+  return executor
+}
 
 const notebookRoots: string[] = []
-afterEach(() => {
+beforeEach(async () => {
+  if (process.platform !== 'win32') return
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', makeNotebookRoots().runtimeRoot)
+  windowsSandbox = await createWindowsStandardProcessSandbox()
+})
+afterEach(async () => {
+  for (const executor of windowsExecutors.splice(0)) await executor.shutdown()
+  await windowsSandbox?.dispose()
+  windowsSandbox = undefined
+  await resetOwnership()
+  vi.unstubAllEnvs()
   for (const root of notebookRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
   }
@@ -170,6 +191,9 @@ const baseRequest = (
   code: '',
   kind: 'repl',
   ...makeNotebookRoots(),
+  ...(process.platform === 'win32'
+    ? { sessionId: 'source-session', projectId: 'source-project' }
+    : {}),
   ...overrides
 })
 

@@ -36,16 +36,26 @@ describe('built-in Agent host boundary', () => {
     const spawnProcess = vi.fn(() => ({})) as unknown as NonNullable<
       AgentSpawnInput['spawnProcess']
     >
-    harnessFramework.spawn({
-      executablePath: resolve('out/backend/index.cjs'),
-      args: config.args!,
-      env: { API_KEY: 'do-not-inherit' },
-      spawnProcess
-    })
-    expect(JSON.stringify(vi.mocked(spawnProcess).mock.calls)).not.toMatch(
-      /do-not-inherit|upstream-secret|revocable-local-token/
-    )
-    expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
+    const previousOwner = process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+    process.env.OPEN_SCIENCE_INSTALLATION_OWNER = 'installation-owner'
+    try {
+      harnessFramework.spawn({
+        executablePath: resolve('out/backend/index.cjs'),
+        args: config.args!,
+        env: { API_KEY: 'do-not-inherit' },
+        spawnProcess
+      })
+      expect(JSON.stringify(vi.mocked(spawnProcess).mock.calls)).not.toMatch(
+        /do-not-inherit|upstream-secret|revocable-local-token/
+      )
+      expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
+      expect(vi.mocked(spawnProcess).mock.calls[0][2].env).toMatchObject({
+        OPEN_SCIENCE_INSTALLATION_OWNER: 'installation-owner'
+      })
+    } finally {
+      if (previousOwner === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+      else process.env.OPEN_SCIENCE_INSTALLATION_OWNER = previousOwner
+    }
   })
   it('rejects remote model credentials and unsupported subscription routes', () => {
     expect(

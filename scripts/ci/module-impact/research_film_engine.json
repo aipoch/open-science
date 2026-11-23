@@ -44,6 +44,7 @@
     "packages/research-film/src/authoring-correction.ts",
     "packages/research-film/src/authoring.test.ts",
     "packages/research-film/src/authoring.ts",
+    "packages/research-film/src/babel-commonjs.d.ts",
     "packages/research-film/src/build-player.test.ts",
     "packages/research-film/src/build-player.ts",
     "packages/research-film/src/contracts.ts",

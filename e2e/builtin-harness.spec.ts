@@ -5,14 +5,14 @@ import { dirname, join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { expect, type Locator } from '@playwright/test'
 import { test } from './fixtures/electron-app'
-import { createProject, openProjectSession } from './certification/helpers'
+import { createProject, openProjectSession, openRecentSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
 const initialPrompt =
   'Use the Notebook REPL tool repl_execute to execute exactly eval("console.log(\'HARNESS_TOOL_OK\')"). Do not use any other tool. After successful execution, reply exactly HARNESS_TURN_OK.'
 
-test('built-in harness executes approved host MCP and restores its session after restart', async ({
+test('built-in harness executes approved host MCP and restores its session after restart @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(240_000)
@@ -634,7 +634,7 @@ const isChildRequest = (body: HarnessRequest): boolean =>
       JSON.stringify(message.content).includes('You are a Subagent executing a delegated Attempt')
   )
 
-test('built-in harness asks the user and receives the selected answer', async ({
+test('built-in harness asks the user and receives the selected answer @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -668,12 +668,7 @@ test('built-in harness asks the user and receives the selected answer', async ({
       timeout: 30000
     })
     host.page = await app.restart()
-    await host.page
-      .getByRole('button', {
-        name: 'Open session Ask which dataset to use., waiting for your answer',
-        exact: true
-      })
-      .click()
+    await openRecentSession(host.page, 'Ask which dataset to use.')
     await expect(host.page.getByText('Dataset Alpha', { exact: true }).first()).toBeVisible()
     await host.page.getByText('Dataset Alpha', { exact: true }).first().click()
     await expect(host.page.getByText('HARNESS_ANSWER_RECEIVED', { exact: true })).toHaveCount(0)
@@ -688,7 +683,7 @@ test('built-in harness asks the user and receives the selected answer', async ({
   }
 })
 
-test('built-in harness creates a host plan and continues only after approval', async ({
+test('built-in harness creates a host plan and continues only after approval @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -762,7 +757,7 @@ test('built-in harness creates a host plan and continues only after approval', a
   }
 })
 
-test('built-in harness rejects denied execution and can cancel then continue', async ({
+test('built-in harness rejects denied execution and can cancel then continue @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -1212,6 +1207,10 @@ test('built-in harness reloads an edited Skill in the same conversation', async 
         body: 'SKILL_REVISION_TWO'
       })
     }, skill.id)
+    // The settings command returns before the previous Skill catalog's runtime retires.
+    await expect
+      .poll(() => host.page.evaluate(async () => (await window.api.acp.getState()).sessionIds))
+      .toEqual([])
     await submitPromptViaUi(host.page, 'Reload harness-reload after the edit.')
     await expect(host.page.getByText('HARNESS_SKILL_TWO', { exact: true })).toBeVisible({
       timeout: 30000
@@ -1683,7 +1682,7 @@ test('built-in harness stops a detached child and retains cancellation after res
   }
 })
 
-test('built-in harness recovers a crashed model turn without repeating its completed tool', async ({
+test('built-in harness recovers a crashed model turn without repeating its completed tool @default-agent-release', async ({
   app
 }) => {
   test.setTimeout(180000)
@@ -1880,7 +1879,13 @@ test('built-in harness reaps a crashed running child before explicit continuatio
     host.page = await app.restartAfterCrash({ force: true })
     recovering = true
     await openProjectSession(host.page, 'Harness running child crash', prompt)
-    await host.page.getByRole('button', { name: 'Resume session', exact: true }).click()
+    await expect(
+      host.page.getByRole('button', { name: 'Resume session', exact: true })
+    ).toBeVisible()
+    await submitPromptViaUi(
+      host.page,
+      'Use the Notebook to continue the cancelled Cold child and collect its result.'
+    )
     await expect(host.page.getByText('COLD_PARENT_COMPLETE', { exact: true })).toBeVisible({
       timeout: 90000
     })

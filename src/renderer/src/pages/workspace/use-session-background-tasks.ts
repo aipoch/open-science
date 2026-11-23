@@ -4,7 +4,7 @@ import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/comp
 import { sessionExportLocked, usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
 import type { JobSummary } from '../../../../shared/compute'
-import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import type { NotebookBackgroundTask, NotebookSessionReference } from '../../../../shared/notebook'
 
 // Shared data source for the composer-area background-task surfaces: the strip
 // summary chip and the expandable "Background tasks" ledger. Local background
@@ -13,7 +13,7 @@ import type { NotebookRunRecord, NotebookSessionReference } from '../../../../sh
 // Notebook reference exists.
 type SessionBackgroundTasks = {
   /** Background Runs, active first, with recently completed activity kept. */
-  runs: NotebookRunRecord[]
+  runs: NotebookBackgroundTask[]
   /** All Compute Jobs, active first. */
   jobs: JobSummary[]
   /** Ticks every second while anything is live; frozen otherwise. */
@@ -26,7 +26,7 @@ type SessionBackgroundTasks = {
   }
 }
 
-const isRunActive = (run: NotebookRunRecord): boolean =>
+const isRunActive = (run: NotebookBackgroundTask): boolean =>
   run.status === 'queued' || run.status === 'running'
 
 const isJobActive = (job: JobSummary): boolean =>
@@ -38,7 +38,7 @@ const jobStartedAt = (job: JobSummary): number => job.started_at ?? job.created_
 
 type TaskSnapshot = Readonly<{
   identityKey?: string
-  runs: NotebookRunRecord[]
+  runs: NotebookBackgroundTask[]
   deliveries: BackgroundResultActivityItem[]
   computeJobs: JobSummary[]
 }>
@@ -80,7 +80,7 @@ const useSessionBackgroundTasks = (
         const [state, activity, jobs] = await Promise.all([
           // Notebook state can initialize runtime resources, so respect the export admission lock.
           notebook && !exportLocked
-            ? window.api.notebook.state(notebook).catch(() => undefined)
+            ? window.api.notebook.backgroundTasks(notebook).catch(() => undefined)
             : Promise.resolve(undefined),
           window.api.backgroundResultDelivery?.getSessionActivity
             ? window.api.backgroundResultDelivery
@@ -94,9 +94,7 @@ const useSessionBackgroundTasks = (
           const previous = current.identityKey === identityKey ? current : EMPTY_TASK_SNAPSHOT
           return {
             identityKey,
-            runs: state
-              ? state.runs.filter((run) => run.executionMode === 'background')
-              : previous.runs,
+            runs: state?.runs ?? previous.runs,
             deliveries: activity ? [...activity.awaitingAgent] : previous.deliveries,
             computeJobs: jobs ?? previous.computeJobs
           }
@@ -115,7 +113,12 @@ const useSessionBackgroundTasks = (
       }) ?? (() => undefined)
     const stop =
       window.api.notebook?.onChanged((event) => {
-        if (event.sessionId === sessionId && event.projectId === projectId) {
+        if (
+          !event.codeAppendOnly &&
+          !event.codeWriteOnly &&
+          event.sessionId === sessionId &&
+          event.projectId === projectId
+        ) {
           void load()
         }
       }) ?? (() => undefined)

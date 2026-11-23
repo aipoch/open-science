@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
-import type { PdfLayoutTextItem } from '../../src/reader/layout.js'
+import { groupPdfTranslationPages, type PdfLayoutTextItem } from '../../src/reader/layout.js'
 import type { PdfTranslationUnit } from '../../src/reader/source.js'
 
 function fixture(kind = 'script', fault = ''): PDFDocumentProxy {
@@ -689,3 +689,275 @@ it.each([
   expect(ownerOf(denominator)?.sourceOnly).toBe(fault === 'proved' ? true : undefined)
   if (fault === 'proved') expect(ownerOf(differential)?.sourceOnly).toBe(true)
 })
+
+const braceItem = (
+  str: string,
+  x: number,
+  y: number,
+  width: number,
+  height = 10,
+  fontName = 'Body',
+  hasEOL = false
+): PdfLayoutTextItem => ({
+  str,
+  dir: 'ltr',
+  width,
+  height,
+  transform: [height, 0, 0, height, x, y],
+  fontName,
+  fontAscent: 0.73,
+  fontDescent: -0.24,
+  fontVertical: false,
+  hasEOL
+})
+
+it.each([false, true])(
+  'protects the paired summation under matching segmented braces (%s)',
+  (shifted) => {
+    const items = [
+      braceItem(
+        'The centered expression gives the combined estimate below.',
+        49,
+        552,
+        230,
+        10,
+        'Body',
+        true
+      ),
+      braceItem('0', 170, 500, 3, 6, 'Body', true),
+      braceItem('0', 107, 500, 3, 6, 'Body', true),
+      braceItem('r', 162, 500, 2.5, 6, 'Math', true),
+      braceItem('r', 99, 500, 2.5, 6, 'Math', true),
+      braceItem('p', 204, 510, 4.5, 10.5, 'Math'),
+      braceItem('p', 135, 510, 4.5, 10.5, 'Math'),
+      braceItem('W', 78, 510, 6.4, 10.5, 'Math'),
+      braceItem('Z', 51, 510, 6.4, 10.5, 'Math'),
+      braceItem('\uf8fe', 242, 500, 5.2, 10.5, 'Symbol', true),
+      braceItem('\uf8fd', 242, 508.1, 5.2, 10.5, 'Symbol', true),
+      braceItem('\uf8fc', 242 + (shifted ? 4 : 0), 516.4, 5.2, 10.5, 'Symbol', true),
+      braceItem('\uf8f3', 91, 500, 5.2, 10.5, 'Symbol', true),
+      braceItem('\uf8f2', 91, 508.1, 5.2, 10.5, 'Symbol', true),
+      braceItem('\uf8f1', 91, 516.4, 5.2, 10.5, 'Symbol'),
+      braceItem('+', 148, 510, 5.8, 10.5, 'Symbol', false),
+      braceItem('=', 69, 510, 5.8, 10.5, 'Symbol', false),
+      braceItem('∑', 160, 507.8, 11, 15.7, 'Symbol', false),
+      braceItem('∑', 96, 507.8, 11, 15.7, 'Symbol', false),
+      braceItem('>', 165.6, 500, 3.7, 6, 'Symbol', true),
+      braceItem('≥', 102, 500, 3.7, 6, 'Symbol', true),
+      braceItem('(1)', 267, 512, 12, 10, 'Body', true),
+      braceItem(
+        'Ordinary body text immediately follows the display.',
+        49,
+        481,
+        220,
+        10,
+        'Body',
+        true
+      )
+    ]
+
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 790, rotation: 0, items }]
+    })
+
+    const definition = units.find(({ items }) => items.includes('1:8'))
+    expect(definition?.preserve).toBe(shifted ? undefined : 'formula')
+    expect(units[0].sourceOnly).toBeUndefined()
+    expect(units.at(-1)?.sourceOnly).toBeUndefined()
+  }
+)
+
+it.each([false, true])(
+  'protects a complete equation enclosed by native tall braces (%s)',
+  (shifted) => {
+    const items = [
+      braceItem(
+        'The expression gives the combined estimate used below.',
+        310,
+        320,
+        232,
+        10,
+        'Body',
+        true
+      ),
+      braceItem('(', 381, 278.5, 4.6, 14.1, 'Symbol'),
+      braceItem(')', 419, 278.5, 4.6, 14.1, 'Symbol'),
+      braceItem('(', 454, 278.5, 4.6, 14.1, 'Symbol'),
+      braceItem(')', 500, 278.5, 4.6, 14.1, 'Symbol'),
+      braceItem('{', 346, 278.5, 6.6, 22.3, 'Symbol'),
+      braceItem('}', 509, 278.5 + (shifted ? 4 : 0), 6.6, 22.3, 'Symbol'),
+      braceItem('x', 504, 278.4, 3, 10.7, 'Math'),
+      braceItem('R', 406, 278.4, 6.5, 10.7, 'Math'),
+      braceItem('nR', 386, 278.4, 14.3, 10.7, 'Math'),
+      braceItem('R', 350, 278.4, 6.5, 10.7, 'Math'),
+      braceItem('R', 315, 278.4, 6.5, 10.7, 'Math'),
+      braceItem('j', 321, 275.8, 1.7, 6.2, 'Math'),
+      braceItem('3', 493, 275.8, 3.1, 6.2, 'Body'),
+      braceItem('2', 467, 275.8, 3.1, 6.2, 'Body', true),
+      braceItem('3', 428, 280.8, 3.1, 6.2, 'Body', true),
+      braceItem('1', 424, 285.6, 3.1, 6.2, 'Body', true),
+      braceItem('3', 413, 275.8, 3.1, 6.2, 'Body'),
+      braceItem('2', 401, 275.8, 3.1, 6.2, 'Body'),
+      braceItem('0', 357, 275.8, 3.1, 6.2, 'Body'),
+      braceItem('sin', 436, 278.4, 14.2, 10.7, 'Body'),
+      braceItem('3', 375, 278.4, 5.3, 10.7, 'Body'),
+      braceItem('θ', 483, 278.4, 7.3, 10.7, 'Greek'),
+      braceItem('θ', 457, 278.4, 7.3, 10.7, 'Greek'),
+      braceItem('β', 337, 278.4, 6.4, 10.7, 'Greek'),
+      braceItem('−', 474, 278.4, 5.9, 10.7, 'Symbol'),
+      braceItem('+', 365, 278.4, 5.9, 10.7, 'Symbol'),
+      braceItem('=', 328, 278.4, 5.9, 10.7, 'Symbol'),
+      braceItem(',', 514, 279.1, 2.5),
+      braceItem('(2)', 528, 279.1, 11.7, 10, 'Body', true),
+      braceItem(
+        'Ordinary body text immediately follows the display.',
+        310,
+        254,
+        220,
+        10,
+        'Body',
+        true
+      )
+    ]
+
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 790, rotation: 0, items }]
+    })
+
+    const equation = units.find(({ items }) => items.includes('1:29'))
+    expect(equation?.preserve).toBe(shifted ? undefined : 'formula')
+    expect(units[0].sourceOnly).toBeUndefined()
+    expect(units.at(-1)?.sourceOnly).toBeUndefined()
+  }
+)
+
+it.each(['closed display', 'ordinary metrics', 'detached closing fence'])(
+  'preserves encoded delimiters and their infimum only in a complete display (%s)',
+  (shape) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = false,
+      height = 10
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName,
+      fontAscent: fontName === 'Fence' && shape !== 'ordinary metrics' ? 0.04 : 0.7,
+      fontDescent: fontName === 'Fence' && shape !== 'ordinary metrics' ? -0.6 : -0.2,
+      fontVertical: false,
+      hasEOL,
+      transform: [height, 0, 0, height, x, y]
+    })
+    const items = [
+      row('We can express the measured bound as follows.', 90, 528, 240, 'Body', true),
+      row('∥', 193.3, 500, 5, 'Math'),
+      row('u', 198.3, 500, 4.9, 'Math'),
+      row('∥', 204.23, 500, 4.98, 'Math'),
+      row('ℓ', 209.21, 497.7, 3.33, 'Subscript', false, 7),
+      row('s', 212.54, 499.7, 3.28, 'Superscript', false, 5),
+      row('(', 216, 499.7, 2.7, 'Index', false, 5),
+      row('·', 218.7, 499.7, 2.28, 'Index', false, 5),
+      row(')', 220.98, 499.7, 2.7, 'Index', false, 5),
+      row('(', 224.18, 497.7, 3.11, 'Subscript', false, 7),
+      row('L', 227.29, 497.7, 5.46, 'Subscript', false, 7),
+      row('r', 232.75, 499.7, 3.69, 'Superscript', false, 5),
+      row('(', 236.44, 499.7, 2.7, 'Index', false, 5),
+      row('·', 239.14, 499.7, 2.28, 'Index', false, 5),
+      row(')', 241.42, 499.7, 2.7, 'Index', false, 5),
+      row(')', 244.62, 497.7, 3.11, 'Subscript', false, 7),
+      row('= inf', 251, 500, 21.87),
+      row('n', 275.3, 511, 6.67, 'Fence'),
+      row('α >', 281.97, 500, 16.52, 'Math'),
+      row('0', 301.23, 500, 5),
+      row('ϱ', 313, 500, 6, 'Math'),
+      row('(', 319, 500, 4),
+      row('β', 323, 500, 6, 'Math'),
+      row(')', 329, 500, 4),
+      row('≤', 336, 500, 7, 'Math'),
+      row('1', 346, 500, 5),
+      row('o', 351, shape === 'detached closing fence' ? 518 : 511, 6.67, 'Fence'),
+      row('(3.1)', 90, 500, 20, 'Body', true),
+      row('This gives the required estimate.', 90, 470, 190, 'Body', true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    for (const index of [16, 17, 26]) {
+      const owner = units.find((unit) => unit.items.includes(`1:${index}`))
+      expect(owner?.source).toBe(items[index].str)
+      expect(Boolean(owner?.sourceOnly && owner.preserve === 'formula')).toBe(
+        shape === 'closed display'
+      )
+    }
+    expect(units.find((unit) => unit.items.includes('1:28'))?.sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).toSorted()).toEqual(
+      items.map((_, index) => `1:${index}`).toSorted()
+    )
+  }
+)
+
+it.each(['paired aggregates', 'lowered limit', 'different operands'])(
+  'retains indexed repeated aggregate displays (%s)',
+  (shape) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 10
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName: height === 10 ? 'Body' : 'Index',
+      fontAscent: 0.75,
+      fontDescent: -0.25,
+      fontVertical: false,
+      hasEOL: str.endsWith('.'),
+      transform: [height, 0, 0, height, x, y]
+    })
+    const items = [
+      item('We evaluate the aggregate with the following expression.', 75, 522, 230),
+      item('Total', 172, 500, 20),
+      item('j', 192, 498.9, 3, 6.7),
+      item('=', 198, 500, 7),
+      item('Mean', 208, 500, 22),
+      item('( max', 230, 500, 24),
+      item('k', 233, shape === 'lowered limit' ? 491 : 493.8, 5, 6.7),
+      item('∈', 238, 493.8, 6, 6.7),
+      item('K', 244, 493.8, 7, 6.7),
+      item('Value', 256, 500, 22),
+      item('j,k', 278, 498.9, 11, 6.7),
+      item(') +', 289, 500, 13),
+      item('Mean', 306, 500, 22),
+      item('( max', 328, 500, 24),
+      item('k', 331, 493.8, 5, 6.7),
+      item('∈', 336, 493.8, 6, 6.7),
+      item('K', 342, 493.8, 7, 6.7),
+      item(shape === 'different operands' ? 'Count' : 'Value', 354, 500, 22),
+      item('j,blind,k', 376, 498.9, 24, 6.7),
+      item(')', 400, 500, 4),
+      item('.', 404, 500, 3),
+      item('The following sentence describes how we interpret the result.', 74, 478, 258)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    for (const index of [1, 6, 12, 14, 18]) {
+      const owner = units.find((unit) => unit.items.includes(`1:${index}`))
+      expect(owner).toBeDefined()
+      expect(Boolean(owner?.sourceOnly && owner.preserve === 'formula')).toBe(
+        shape === 'paired aggregates'
+      )
+    }
+    expect(units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
+    expect(units.find((unit) => unit.items.includes('1:21'))?.sourceOnly).toBeUndefined()
+  }
+)

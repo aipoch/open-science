@@ -3,13 +3,11 @@ import { constants } from 'node:fs'
 import { access, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Browser } from 'playwright-core'
-import sharp from 'sharp'
-import type { FilmVisualResult } from '@aipoch/research-film/contracts'
+import type { FilmVisualIssue } from '@aipoch/research-film/contracts'
 import {
   filmPlayerCsp,
-  FilmDraftVisualError,
   filmStageSize,
-  inspectFilmPlayer,
+  readFilmObservations,
   readFilmStage,
   verifyFilmPlayerHtml,
   type FilmAspect
@@ -109,9 +107,8 @@ async function checkFilmAspect(
   browser: Browser,
   html: string,
   aspect: FilmAspect,
-  includeFrames: boolean,
   parentSignal: AbortSignal
-): Promise<FilmVisualResult> {
+): Promise<FilmVisualIssue[]> {
   const setupSignal = AbortSignal.any([parentSignal, AbortSignal.timeout(30_000)])
   const setup = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(setupSignal, work)
   const viewport = filmStageSize(aspect)
@@ -164,45 +161,21 @@ async function checkFilmAspect(
       aspect
     )
     const reviewSignal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
-    return await inspectFilmPlayer({
-      aspect,
-      stage,
-      includeFrames,
-      check: () =>
-        waitForFilmStep(reviewSignal, () =>
-          page.evaluate('Promise.resolve().then(() => window.__checkFilm()).catch(() => null)')
-        ),
-      capture: async (time, scene) => {
-        const sought = await waitForFilmStep(reviewSignal, () =>
-          page.evaluate(
-            `Promise.resolve().then(() => {
-              window.__seek(${time});
-              return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))));
-            }).catch(() => false)`
-          )
-        )
-        if (sought !== true)
-          throw new FilmDraftVisualError('The player could not render the selected scene.', scene)
-        const image = await waitForFilmStep(reviewSignal, () =>
-          page.screenshot({ type: 'png', scale: 'css' })
-        )
-        const jpeg = await waitForFilmStep(reviewSignal, () =>
-          sharp(image).resize(960, 540).jpeg({ quality: 78 }).toBuffer()
-        )
-        return jpeg.toString('base64')
-      }
-    })
+    const observations = await waitForFilmStep(reviewSignal, () =>
+      page.evaluate('Promise.resolve().then(() => window.__checkFilm()).catch(() => null)')
+    )
+    return readFilmObservations(observations, aspect, stage).issues
   } finally {
     if (browser.isConnected()) await context.close()
   }
 }
 
 export async function checkHeadlessResearchFilmHtml(
-  request: { htmlPath: string; includeFrames: boolean },
+  htmlPath: string,
   signal: AbortSignal
-): Promise<FilmVisualResult> {
+): Promise<FilmVisualIssue[]> {
   signal.throwIfAborted()
-  const html = await readFile(request.htmlPath, { encoding: 'utf8', signal })
+  const html = await readFile(htmlPath, { encoding: 'utf8', signal })
   verifyFilmPlayerHtml(html)
   const browser = await openReviewBrowser()
   let closing: Promise<void> | undefined
@@ -213,10 +186,9 @@ export async function checkHeadlessResearchFilmHtml(
   signal.addEventListener('abort', onAbort, { once: true })
   try {
     signal.throwIfAborted()
-    const portrait = await checkFilmAspect(browser, html, '9x16', false, signal)
-    return portrait.issues.length
-      ? portrait
-      : await checkFilmAspect(browser, html, '16x9', request.includeFrames, signal)
+    const portrait = await checkFilmAspect(browser, html, '9x16', signal)
+    const landscape = await checkFilmAspect(browser, html, '16x9', signal)
+    return [...portrait, ...landscape]
   } finally {
     signal.removeEventListener('abort', onAbort)
     await close()

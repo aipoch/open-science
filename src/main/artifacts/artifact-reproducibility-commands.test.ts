@@ -4,9 +4,12 @@ import type {
   ArtifactReproducibilityCheckRequest,
   ArtifactReproducibilityCheckState
 } from '../../shared/artifact-reproducibility'
-import { createCallerContext } from '../caller-context'
+import { createCallerContext, type CallerContext } from '../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
-import { createApplicationCommandRouter } from '../application-command-router'
+import {
+  createApplicationCommandRouter,
+  type ApplicationInvocation
+} from '../application-command-router'
 import {
   dataContentApplicationCommands,
   registerDataContentApplicationCommands,
@@ -69,8 +72,15 @@ function setup(
     reproducibility: commands
   } as DataContentApplicationCommandDependencies)
   const leases = new ApplicationCallerLeaseRegistry()
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-  const caller = (surface: 'electron' | 'web' = 'electron') => {
+  const caller = (
+    surface: 'electron' | 'web' = 'electron',
+    authority: Partial<
+      Pick<CallerContext, 'principalKind' | 'actionOrigin' | 'isAuthorizationCurrent'>
+    > = {}
+  ): ReturnType<ApplicationCallerLeaseRegistry['acquire']> & {
+    clientId: string
+    invocation: ApplicationInvocation<readonly [ArtifactReproducibilityCheckRequest]>
+  } => {
     const clientId = randomUUID()
     const context = createCallerContext({
       clientId,
@@ -79,7 +89,8 @@ function setup(
       surface,
       location: 'local',
       principalKind: 'human',
-      actionOrigin: 'human'
+      actionOrigin: 'human',
+      ...authority
     })
     const lease = leases.acquire(context)
     return {
@@ -92,6 +103,58 @@ function setup(
 }
 
 describe('shared reproducibility command ownership', () => {
+  it.each(['automation', 'agent-session'] as const)(
+    'does not let a %s caller create new execution authority through either start command',
+    async (principalKind) => {
+      const value = setup()
+      const caller = value.caller('electron', { principalKind, actionOrigin: principalKind })
+      await expect(
+        value.router.dispatcher.invoke(
+          dataContentApplicationCommands.reproducibilityStart,
+          caller.invocation
+        )
+      ).rejects.toThrow('requires a current human caller')
+      await expect(
+        value.router.dispatcher.invoke(
+          dataContentApplicationCommands.reproducibilitySessionCommand,
+          {
+            ...caller.invocation,
+            args: [
+              {
+                projectId: request.projectId,
+                appSessionId: request.appSessionId,
+                action: 'start',
+                batchId: 'batch'
+              }
+            ]
+          }
+        )
+      ).rejects.toThrow('requires a current human caller')
+      expect(value.owner.start).not.toHaveBeenCalled()
+      expect(value.owner.sessionCommand).not.toHaveBeenCalled()
+      value.router.dispose()
+      value.leases.dispose()
+    }
+  )
+
+  it('rechecks human authorization after session admission before minting an execution intent', async () => {
+    let authorized = true
+    const value = setup((_request, work) => {
+      authorized = false
+      return work()
+    })
+    const caller = value.caller('electron', { isAuthorizationCurrent: () => authorized })
+    await expect(
+      value.router.dispatcher.invoke(
+        dataContentApplicationCommands.reproducibilityStart,
+        caller.invocation
+      )
+    ).rejects.toThrow('requires a current human caller')
+    expect(value.owner.start).not.toHaveBeenCalled()
+    value.router.dispose()
+    value.leases.dispose()
+  })
+
   it('gives each live Node document one distinct owner and cancels only its work on release', async () => {
     const value = setup()
     const first = value.caller(),

@@ -2018,6 +2018,125 @@ describe('cached PDF table source ownership', () => {
     expect(f.extraction.source.units[0].sourceOnly).toBeUndefined()
   })
 
+  it('preserves native plot marks while keeping identical text in ordinary fonts eligible', async () => {
+    const units = (
+      [
+        ['ll', 0.12],
+        ['ll', 0.2],
+        ['Samples', 0.3],
+        ['ll', 0.81]
+      ] as const
+    ).map(([source, x], index) => ({
+      id: `label-${index}`,
+      source,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x, y: 0.15, width: 0.06, height: 0.03 },
+          items: [{ index, text: source }]
+        }
+      ]
+    }))
+    const extraction = {
+      source: createPdfTranslationSource({
+        resourceRequestKey: 'plot',
+        fingerprint: 'plot',
+        pages: [{ width: 100, height: 100 }],
+        units
+      })
+    }
+    const page = {
+      commonObjs: {
+        has: (): boolean => true,
+        get: (name: string): { name: string; missingFile: boolean } =>
+          name === 'marker'
+            ? { name: 'ZapfDingbats', missingFile: true }
+            : { name: 'Helvetica', missingFile: false }
+      },
+      getTextContent: async () => ({
+        items: units.map((unit, index) => ({
+          str: unit.source,
+          fontName: index === 0 || index === 3 ? 'marker' : 'body'
+        })),
+        styles: { marker: {}, body: {} }
+      }),
+      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, 1, 0, 0] }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.transform, OPS.paintImageXObject],
+        argsArray: [[45, 0, 0, 32, 10, 10], ['image']]
+      }),
+      cleanup: () => {}
+    }
+    const prepared = await preservePdfFigureSources({
+      extraction,
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(prepared.source.units).toEqual([
+      { ...units[0], figure: true, sourceOnly: true, preserve: 'literal' },
+      { ...units[1], figure: true },
+      { ...units[2], figure: true },
+      units[3]
+    ])
+  })
+
+  it('keeps figure feature keys while retaining the ordinary labels for translation', async () => {
+    const labels = [
+      ['BandVariance', 0.16, 0.13, 0.16],
+      ['PeakSlope', 0.17, 0.18, 0.15],
+      ['SignalSpread', 0.18, 0.23, 0.14],
+      ['Sample count', 0.19, 0.28, 0.13],
+      ['ExternalMetricName', 0.7, 0.33, 0.12],
+      ['FrontBound', 0.38, 0.14, 0.1],
+      ['SharedOrigin', 0.38, 0.19, 0.12],
+      ['BackBound', 0.41, 0.24, 0.09]
+    ] as const
+    const units = labels.map(([source, x, y, width], index) => ({
+      id: `label-${index}`,
+      source,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x, y, width, height: 0.03 },
+          items: [{ index, text: source }]
+        }
+      ]
+    }))
+    const extraction = {
+      source: createPdfTranslationSource({
+        resourceRequestKey: 'figure',
+        fingerprint: 'figure',
+        pages: [{ width: 100, height: 100 }],
+        units
+      })
+    }
+    const page = {
+      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, 1, 0, 0] }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.transform, OPS.paintImageXObject],
+        argsArray: [[45, 0, 0, 32, 10, 10], ['image']]
+      }),
+      cleanup: () => {}
+    }
+    const prepared = await preservePdfFigureSources({
+      extraction,
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(prepared.source.units).toEqual([
+      ...units
+        .slice(0, 3)
+        .map((unit) => ({ ...unit, figure: true, sourceOnly: true, preserve: 'literal' })),
+      { ...units[3], figure: true },
+      units[4],
+      ...units.slice(5).map((unit) => ({ ...unit, figure: true }))
+    ])
+  })
+
   const measuredSegmentsSetup = () => {
     const f = setup()
     f.items[1].str = '10 10'
@@ -4651,5 +4770,284 @@ it.each(['complete', 'changed-literal', 'broken-region'])(
     ])
     expect(out.retainedSourcePageNumbers ?? []).toEqual([])
     expect(out.extraction.source.originalRegions).toEqual(source.originalRegions)
+  }
+)
+
+it.each([false, true])(
+  'restores a terminal caption only under its aligned raster (shifted=%s)',
+  async (shifted) => {
+    const references = [
+      'REFERENCES',
+      'Smith, A. and Lane, C., 2020, Phys. Rev., 22, 363',
+      'Lee, A. and Bell, C., 2021, ApJ, 46, 127',
+      'Jones, B. and Fox, E., 2022, A&A, 105, L16'
+    ]
+    const labels = [
+      'Figure 4.',
+      'The measured response is compared with a fixed reference pattern',
+      'over the stated observation interval. Filled markers indicate readings',
+      'recorded after the instrument reached its stable operating conditions.'
+    ]
+    const units = [
+      ...references.map((source, index) => ({
+        id: 'reference-' + index,
+        source,
+        sourceOnly: true as const,
+        preserve: 'reference' as const,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.49, y: 0.2 + index * 0.035, width: 0.35, height: 0.02 },
+            items: [{ index, text: source }]
+          }
+        ]
+      })),
+      {
+        id: 'caption',
+        source: labels.join(' '),
+        sourceOnly: true as const,
+        preserve: 'reference' as const,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.06, y: 0.786, width: 0.8, height: 0.045 },
+            items: labels.map((text, index) => ({ index: references.length + index, text }))
+          }
+        ]
+      }
+    ]
+    const page = {
+      rotate: 0,
+      getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+        argsArray: [[], [480, 0, 0, 240, shifted ? 58 : 36, 184], ['image', 100, 50], []]
+      }),
+      getTextContent: async () => ({
+        items: [...references, ...labels].map((str, index) => ({
+          str,
+          height: 10,
+          transform: [10, 0, 0, 10, 36, [640, 612, 584, 556, 164, 164, 152, 140][index]]
+        }))
+      }),
+      cleanup: () => true
+    } as unknown as Awaited<ReturnType<PDFDocumentProxy['getPage']>>
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'native-caption',
+      fingerprint: 'native-caption',
+      pages: [{ width: 600, height: 800 }],
+      units
+    })
+    const result = await preservePdfFigureSources({
+      document: { getPage: async () => page },
+      extraction: { source },
+      operators: OPS,
+      signal: new AbortController().signal
+    })
+    expect(result.source.units.slice(0, 4)).toEqual(source.units.slice(0, 4))
+    const caption = result.source.units.at(-1)!
+    expect(caption.fragments).toEqual(source.units.at(-1)?.fragments)
+    expect(caption.sourceOnly).toBe(shifted ? true : undefined)
+    expect(caption.preserve).toBe(shifted ? 'reference' : undefined)
+  }
+)
+
+it.each([false, true])(
+  'restores a centered caption on a separate raster page after references (shifted=%s)',
+  async (shifted) => {
+    const labels = ['Figure 2: The shaded region shows the low', '-noise sensor.']
+    const caption = {
+      id: 'caption',
+      source: labels.join(''),
+      sourceOnly: true as const,
+      preserve: 'reference' as const,
+      fragments: [
+        {
+          pageNumber: 2,
+          rect: { x: 119 / 600, y: 0.585, width: 362 / 600, height: 0.015 },
+          items: labels.map((text, index) => ({ index, text }))
+        }
+      ]
+    }
+    const reference = {
+      id: 'reference',
+      source: '1. C. Example, Field Methods (2023).',
+      sourceOnly: true as const,
+      preserve: 'reference' as const,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.1, y: 0.2, width: 0.5, height: 0.02 },
+          items: [{ index: 0, text: '1. C. Example, Field Methods (2023).' }]
+        }
+      ]
+    }
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'separate-raster-caption',
+      fingerprint: 'separate-raster-caption',
+      pages: Array.from({ length: 2 }, () => ({ width: 600, height: 800 })),
+      units: [reference, caption]
+    })
+    const page = (number: number) =>
+      ({
+        rotate: 0,
+        getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }),
+        getOperatorList: async () =>
+          number === 2
+            ? {
+                fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+                argsArray: [[], [284, 0, 0, 370, shifted ? 170 : 158, 340], ['image'], []]
+              }
+            : { fnArray: [], argsArray: [] },
+        getTextContent: async () => ({
+          items: labels.map((str, i) => ({
+            str,
+            dir: 'ltr',
+            width: i === 0 ? 280 : 82,
+            height: 10,
+            transform: [10, 0, 0, 10, i === 0 ? 119 : 399, 320]
+          }))
+        }),
+        cleanup: () => true
+      }) as unknown as Awaited<ReturnType<PDFDocumentProxy['getPage']>>
+    const result = await preservePdfFigureSources({
+      document: { getPage: async (number) => page(number) },
+      extraction: { source },
+      operators: OPS,
+      signal: new AbortController().signal
+    })
+    expect(result.source.units[0]).toEqual(source.units[0])
+    expect(result.source.units[1].fragments).toEqual(source.units[1].fragments)
+    expect(result.source.units[1].sourceOnly).toBe(shifted ? true : undefined)
+    expect(result.source.units[1].preserve).toBe(shifted ? 'reference' : undefined)
+  }
+)
+
+const legendScenarios = [
+  'complete',
+  'missing swatch',
+  'triangle frame',
+  'paired series',
+  'different series',
+  'paired points',
+  'shifted point',
+  'split line',
+  'split line missing swatch'
+] as const
+it.each(legendScenarios)(
+  'keeps mixed legend text with its complete native swatch column (%s)',
+  async (variant) => {
+    const points = variant === 'paired points' || variant === 'shifted point'
+    const paired = points || variant === 'paired series' || variant === 'different series'
+    const labels = points
+      ? ['Coarse reading', 'Daily mean']
+      : paired
+        ? [
+            'Sample profile (north + center)',
+            variant === 'paired series' ? 'Sample profile (south)' : 'Sample reading (south)'
+          ]
+        : ['North Profile', 'Central Profile', 'South Profile']
+    const split = variant.startsWith('split line')
+    const baseline = (index: number): number => 700 - index * 8 + (split && index === 2 ? 0.45 : 0)
+    const items = labels.flatMap((str, index) => {
+      const row = {
+        str,
+        dir: 'ltr',
+        width: 75,
+        height: 5.6,
+        fontName: 'plot',
+        transform: [5.6, 0, 0, 5.6, 283, baseline(index)]
+      }
+      if (!split || index !== 0) return [row]
+      return [
+        { ...row, str: 'North', width: 27, fontName: 'plot-italic' },
+        { ...row, str: 'Profile', width: 46, transform: [5.6, 0, 0, 5.6, 312, baseline(index)] }
+      ]
+    })
+    const unit = {
+      id: 'legend',
+      source: labels.join(' '),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 283 / 612, y: 87 / 792, width: 75 / 612, height: (paired ? 15 : 23) / 792 },
+          items: items.map(({ str: text }, index) => ({ index, text }))
+        }
+      ]
+    }
+    const caption = {
+      id: 'caption',
+      source: 'Figure 1. Three sampling profiles across the same measurement interval.',
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.22, y: 0.25, width: 0.6, height: 0.02 },
+          items: [
+            {
+              index: items.length,
+              text: 'Figure 1. Three sampling profiles across the same measurement interval.'
+            }
+          ]
+        }
+      ]
+    }
+    const frame = new Float32Array(
+      variant === 'triangle frame'
+        ? [0, 264, 679, 1, 360, 679, 1, 264, 706, 4]
+        : points
+          ? [
+              0, 266, 679, 1, 358, 679, 2, 359, 679, 360, 680, 360, 681, 1, 360, 704, 2, 360, 705,
+              359, 706, 358, 706, 1, 266, 706, 2, 265, 706, 264, 705, 264, 704, 1, 264, 681, 2, 264,
+              680, 265, 679, 266, 679, 4
+            ]
+          : [0, 264, 679, 1, 360, 679, 1, 360, 706, 1, 264, 706, 4]
+    )
+    const paths = [
+      [OPS.stroke, [], [180, 600, 450, 746]],
+      [OPS.fillStroke, [frame], [264, 679, 360, 706]],
+      ...labels.slice(0, variant.endsWith('missing swatch') ? 2 : 3).map((_, index) => {
+        const y = baseline(index) + 2
+        const x = index === 1 && variant === 'shifted point' ? 275 : 271
+        return [OPS.stroke, [], points ? [x, y - 2, x + 4, y + 2] : [267, y, 278, y]]
+      })
+    ]
+    const page = {
+      rotate: 0,
+      getTextContent: async () => ({ items, styles: {} }),
+      getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
+      getOperatorList: async () => ({
+        fnArray: paths.map(() => OPS.constructPath),
+        argsArray: paths
+      }),
+      cleanup: () => {}
+    }
+    const extraction = {
+      source: createPdfTranslationSource({
+        resourceRequestKey: 'profiles',
+        fingerprint: 'profiles',
+        pages: [{ width: 612, height: 792 }],
+        units: [unit, caption]
+      })
+    }
+    const result = await preservePdfFigureSources({
+      extraction,
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(result.source.units).toEqual([
+      {
+        ...unit,
+        figure: true,
+        ...(variant === 'complete' ||
+        variant === 'paired series' ||
+        variant === 'split line' ||
+        variant === 'paired points'
+          ? { sourceOnly: true, preserve: 'literal' }
+          : {})
+      },
+      caption
+    ])
   }
 )

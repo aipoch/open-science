@@ -6,8 +6,8 @@ import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 export const RESEARCH_VIDEO_STATUS_TIMEOUT_MS = 30_000
 export const RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE = 'Research film status timed out. Try again.'
 export const RESEARCH_FILM_BUSY_MESSAGE = 'Another film is being generated. Wait for it to finish.'
-export const RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE =
-  'Research film model request timed out after 5 minutes. Try again.'
+export const RESEARCH_FILM_MODEL_TIMEOUT_MINUTES = 10
+export const RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE = `Research film model request timed out after ${RESEARCH_FILM_MODEL_TIMEOUT_MINUTES} minutes. Try again.`
 
 export const researchFilmModeSchema = z.enum(['research-explanation', 'operation-replay'])
 export type ResearchFilmMode = z.infer<typeof researchFilmModeSchema>
@@ -46,6 +46,7 @@ export type ResearchVideoStartRequest = z.infer<typeof researchVideoStartRequest
 export const researchVideoOwnerStartRequestSchema = researchVideoStartRequestSchema.extend({
   revision: researchFilmRevisionSchema.optional(),
   headless: z.boolean().optional(),
+  // Accepted for clients of the earlier opt-in policy. Narration scoring is always advisory.
   narrationReview: researchFilmNarrationReviewSchema.optional()
 })
 export type ResearchVideoOwnerStartRequest = z.infer<typeof researchVideoOwnerStartRequestSchema>

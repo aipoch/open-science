@@ -208,7 +208,7 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
         reaped &&= outcome.value.reaped
       }
 
-      if (outcome.status === 'fulfilled' || terminal) {
+      if ((outcome.status === 'fulfilled' && outcome.value.reaped) || terminal) {
         let released = false
         try {
           session.releaseMcpRpcConnection()
@@ -249,6 +249,7 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
         operation.failureStage = 0
         throw error
       }
+      if (!result.reaped) return result
       operation.releaseAttempted = true
       try {
         session.releaseMcpRpcConnection()

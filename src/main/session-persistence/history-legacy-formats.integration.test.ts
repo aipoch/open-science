@@ -162,6 +162,9 @@ it('refuses to overwrite an unsupported future envelope through the compatibilit
   const raw = JSON.stringify({ version: SESSION_FILE_VERSION + 1, session: fixture() }, null, 2)
   await writeFile(logicalPath(), raw)
   expect(await repository.loadSessionHistoryPage(request)).toBeUndefined()
+  await expect(repository.loadSessionHistoryPage(request, true)).rejects.toMatchObject({
+    code: 'session-file-unsupported-version'
+  })
   expect(
     await repository.loadSessionWithDiagnostics(request.projectId, request.sessionId, {
       mode: 'read-only'
@@ -172,4 +175,18 @@ it('refuses to overwrite an unsupported future envelope through the compatibilit
   expect(await readdir(join(root, 'sessions', 'project'))).toEqual(['session.json'])
   expect(await client.sessionHistoryIndex.count()).toBe(0)
   expect(await client.sessionHistoryItem.count()).toBe(0)
+})
+
+it('distinguishes a missing file from a quarantined conversation on reopen', async () => {
+  const repository = await setup()
+  await expect(repository.loadSessionHistoryPage(request, true)).rejects.toMatchObject({
+    code: 'session-file-missing'
+  })
+  await writeFile(logicalPath(), '{')
+  await expect(repository.loadSessionHistoryPage(request, true)).rejects.toMatchObject({
+    code: 'session-file-corrupt'
+  })
+  await expect(reopen().loadSessionHistoryPage(request, true)).rejects.toMatchObject({
+    code: 'session-file-corrupt'
+  })
 })

@@ -2,6 +2,7 @@ import { streamChatToResponses } from '../../test/stream-harness'
 import { describe, expect, it, vi } from 'vitest'
 
 import { completionToResponse, upstreamErrorMessage } from './response'
+import { createResponseStreamState } from './stream-state'
 
 describe('Responses result protocol adapter', () => {
   it('maps Chat Completions output text and tool calls to a Responses response', () => {
@@ -106,6 +107,16 @@ describe('Responses result protocol adapter', () => {
     })
   })
 
+  it.each(['content_filter', 'length'])(
+    'keeps a %s choice incomplete when it has no message',
+    (finish_reason) => {
+      expect(completionToResponse({ choices: [{ finish_reason }] })).toMatchObject({
+        status: 'incomplete',
+        output: []
+      })
+    }
+  )
+
   it('surfaces a refusal as the visible answer', () => {
     expect(
       completionToResponse({
@@ -165,11 +176,42 @@ describe('Responses result protocol adapter', () => {
     ).toThrow(/Upstream image output is not supported/)
   })
 
+  it.each(['<html>PRIVATE_PAGE</html>', '{"prompt":"PRIVATE_PROMPT"}'])(
+    'keeps a nested gateway document out of an upstream error summary',
+    (message) => {
+      const body = JSON.stringify({ error: { message } })
+      expect(upstreamErrorMessage(body, 403)).toBe('Chat Completions upstream returned 403')
+      expect(() => completionToResponse(JSON.parse(body))).toThrow(
+        'The model service reported an error.'
+      )
+    }
+  )
+
   it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
     expect(
       upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
     ).toBe('Model deepseek-v4-flash does not exist')
     expect(upstreamErrorMessage('plain upstream failure', 400)).toBe('plain upstream failure')
+  })
+
+  it.each([
+    ['stop', 'completed'],
+    ['length', 'incomplete'],
+    [undefined, 'failed']
+  ] as const)('keeps the creation time through a %s finish reason', (finishReason, status) => {
+    using clock = vi.spyOn(Date, 'now').mockReturnValue(10_000)
+    const stream = createResponseStreamState('model-a', [])
+    expect(stream.drain()).toMatchObject([
+      { type: 'response.created', response: { status: 'in_progress', created_at: 10 } },
+      { type: 'response.in_progress', response: { status: 'in_progress', created_at: 10 } }
+    ])
+
+    clock.mockReturnValue(12_000)
+    if (finishReason) stream.consume({ choices: [{ finish_reason: finishReason }] })
+    stream.finish(undefined, false)
+    expect(stream.drain()).toMatchObject([
+      { type: `response.${status}`, response: { status, created_at: 10 } }
+    ])
   })
 
   it('assembles fragmented tool calls and emits ordered terminal SSE events', async () => {

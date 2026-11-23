@@ -590,7 +590,7 @@ export type ResearchFilmStatus = {
   canResume?: boolean
   filmStep?: number
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
-  /** The applied policy for the current attempt when advisory review was requested. */
+  /** Present when this attempt explicitly selected the advisory scoring compatibility option. */
   narrationReview?: 'advisory'
   narrationDownload?: {
     availability: 'notInstalled' | 'installing' | 'ready' | 'error'
@@ -610,6 +610,7 @@ export type ResearchFilmStatus = {
     id: string
     title: string
     duration: number
+    /** Advisory narration score from 0 to 9, if the assessment returned a valid result. */
     scriptScore?: number
     narrationReview?: 'advisory'
     sessionAppMode?: 'live' | 'drawn'
@@ -810,7 +811,7 @@ export class OpenScienceClient {
     request: ResearchFilmScope & {
       installNarration?: boolean
       resume?: boolean
-      /** For research explanation only. Run one narration review without a minimum score for publication. */
+      /** Compatibility option for research explanation. Narration scoring is advisory by default. */
       narrationReview?: 'advisory'
     },
     options?: RequestOptions
@@ -824,7 +825,7 @@ export class OpenScienceClient {
     request: ResearchFilmScope & {
       attemptId: string
       feedback: string
-      /** For research explanation only. Omit to inherit the failed attempt's narration review policy. */
+      /** Compatibility option for research explanation. Narration scoring is advisory by default. */
       narrationReview?: 'advisory'
     },
     options?: RequestOptions
@@ -833,7 +834,7 @@ export class OpenScienceClient {
     scope: ResearchFilmScope,
     options?: RequestOptions
   ): Promise<ResearchFilmStatus>
-  /** Downloads the exact checked HTML player identified by the published result. */
+  /** Downloads the exact HTML player identified by the published result. */
   downloadResearchFilm(
     request: ResearchFilmScope & { filmId: string },
     options?: RequestOptions

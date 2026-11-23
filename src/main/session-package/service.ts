@@ -1,7 +1,6 @@
 import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
 import { readResearchFilmCard } from '../research-video/stored-presentation'
-import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import { ReviewRepository } from '../reviewer/repository'
 import { ComputeJobRepository } from '../compute/job-repository'
 import type { ReplayRecords } from '@aipoch/research-film'
@@ -49,7 +48,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -98,6 +97,10 @@ import {
 } from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
 import { encodeRunDocumentDataPaths } from '../notebook/run-document-data-path-codec'
+import {
+  environmentManifestChecksumForRun,
+  environmentManifestStorageKey
+} from '../notebook/repository'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
@@ -125,6 +128,7 @@ import {
   inheritedComputeChecksums
 } from './execution-evidence'
 import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
+import { preserveLocalForkWebEvidence } from '../web/fork-evidence'
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
 import {
@@ -181,8 +185,21 @@ import {
 } from './sensitive-content'
 import { withPackageTransfer } from './transfer'
 import { assertPortablePackageStorageKey, validatePackageRecords } from './validation'
+import {
+  assertWebDerivedTextSafe,
+  containsShortWebContent,
+  prepareWebEvidence,
+  projectWebDerivedValue,
+  remapWebEvidence,
+  type PrepareWebEvidenceOptions,
+  type WebEvidenceProjection,
+  type WebPackageActivity,
+  type WebSnapshotInput
+} from './web-evidence'
 
 const activeLogImports = new Set<string>()
+const ENVIRONMENT_MANIFEST_STORAGE_KEY =
+  /^runtime\/provenance\/environment-manifests\/[a-f0-9]{64}\.json$/u
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
@@ -228,12 +245,20 @@ const PACKAGE_README =
   '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
 
 type PackageOptions = {
+  webEvidence?: Pick<PrepareWebEvidenceOptions, 'resolvePolicy'> & {
+    loadSnapshot?: (
+      session: PersistedChatSession,
+      snapshotId: string,
+      activity: WebPackageActivity
+    ) => Promise<WebSnapshotInput | undefined>
+  }
   literatureSource?: PackageLiteratureSource
   storageRoot: string
   configRoot?: string
   getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
+  reserveExport?: (request: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
   readImageTasks?: (scope: ImageTaskScope) => Promise<ImageTask[]>
   inspectPackage?: typeof inspectSessionPackage
   runSessionPublication?: (
@@ -242,6 +267,8 @@ type PackageOptions = {
     work: () => Promise<PersistedChatSession>
   ) => Promise<PersistedChatSession>
   onSessionPublished?: (publication: PublishedSessionHandoff) => Promise<void>
+  onForkPrepared?: (source: PersistedChatSession, child: PersistedChatSession) => Promise<void>
+  onForkAborted?: (child: PersistedChatSession) => Promise<void>
 }
 
 type PackageExportOptions = {
@@ -260,6 +287,198 @@ type PackageExportOptions = {
 type PackageSnapshotOptions = PackageExportOptions & {
   // Local-copy consumer: no archive, picker, or sharing-policy boundary.
   consumeSnapshot?: (directory: string) => Promise<void>
+}
+
+class WebPackagePolicyError extends Error {
+  readonly code = 'WEB_PACKAGE_POLICY_RESTRICTED'
+  constructor(
+    cause?: unknown,
+    readonly invocationIds: readonly string[] = []
+  ) {
+    super('Required Web execution evidence cannot be shared under the current data policy.', {
+      cause
+    })
+  }
+}
+
+// Execution IDs identify copies of short queries. A long exact restricted body/excerpt also
+// identifies an untagged echo; ordinary short prose cannot restrict an unrelated Artifact.
+const assertWebShareableFile = async (
+  path: string,
+  projection: WebEvidenceProjection | undefined,
+  signal: AbortSignal
+): Promise<void> => {
+  if (!projection) return
+  let tail = ''
+  let decoder: TextDecoder | undefined
+  let seenEnvelope = false
+  let seenHostFlag = false
+  let seenHostWebIdentity = false
+  let seenRawExecutionField = false
+  const seenInvocations = new Set<string>()
+  const seenRestricted = new Set<string>()
+  const seenAttributableRestricted = new Set<string>()
+  for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024, signal })) {
+    await paceFileIo(chunk.length, signal)
+    signal.throwIfAborted()
+    decoder ??= new TextDecoder(
+      chunk[0] === 0xff && chunk[1] === 0xfe
+        ? 'utf-16le'
+        : chunk[0] === 0xfe && chunk[1] === 0xff
+          ? 'utf-16be'
+          : 'utf-8'
+    )
+    const text = tail + decoder.decode(chunk, { stream: true })
+    seenEnvelope ||= /open-science\.web\.v[123]\b/.test(text)
+    seenHostFlag ||= /"appOwned"\s*:\s*true\b/.test(text)
+    seenRawExecutionField ||=
+      /"(?:rawInput|rawOutput|toolContent|terminalOutput|toolLocations)"\s*:/.test(text)
+    seenHostWebIdentity ||=
+      /"providerToolName"\s*:\s*"(?:mcp__open_science_web__web_(?:fetch|search)|mcp__open-science-web__web_(?:fetch|search)|open-science-web\/web_(?:fetch|search))"/.test(
+        text
+      )
+    if (seenHostFlag && seenHostWebIdentity && seenRawExecutionField)
+      throw new WebPackagePolicyError()
+    for (const id of new Set([
+      ...projection.plan.packets.keys(),
+      ...projection.plan.restrictedText.keys()
+    ]))
+      if (text.includes(id)) seenInvocations.add(id)
+    for (const [id, restricted] of projection.plan.restrictedText) {
+      const matched = restricted.filter((value) => {
+        let prefix = value.slice(0, 16 * 1024)
+        const nextUnit = value.charCodeAt(prefix.length)
+        if (/[\uD800-\uDBFF]$/.test(prefix) && nextUnit >= 0xdc00 && nextUnit <= 0xdfff)
+          prefix = prefix.slice(0, -1)
+        return (
+          prefix.length > 0 &&
+          (text.includes(prefix) || text.includes(JSON.stringify(prefix).slice(1, -1)))
+        )
+      })
+      if (matched.length) seenRestricted.add(id)
+      if (
+        containsShortWebContent(text, projection.plan, id) ||
+        matched.some((value) => value.length >= 32 || text.trim() === value.trim())
+      )
+        seenAttributableRestricted.add(id)
+    }
+    if (seenEnvelope && seenInvocations.size)
+      throw new WebPackagePolicyError(undefined, [...seenInvocations])
+    const paired = [...seenRestricted].filter(
+      (id) => seenInvocations.has(id) || seenAttributableRestricted.has(id)
+    )
+    if (paired.length) throw new WebPackagePolicyError(undefined, paired)
+    try {
+      assertWebDerivedTextSafe(text, projection.plan)
+    } catch (error) {
+      throw new WebPackagePolicyError(error, [...seenInvocations])
+    }
+    tail = text.slice(-128 * 1024)
+  }
+}
+
+const noteWebPolicyOmission = (
+  projection: WebEvidenceProjection,
+  invocationIds: readonly string[]
+): void => {
+  const packets = invocationIds.length
+    ? invocationIds.flatMap((id) => projection.plan.packets.get(id) ?? [])
+    : [...projection.plan.packets.values()]
+  for (const component of new Set(
+    packets.map((packet) =>
+      packet.operation === 'fetch' ? ('fetch_body' as const) : ('provider_excerpt' as const)
+    )
+  )) {
+    const existing = projection.omissions.find(
+      (item) => item.component === component && item.reason === 'redacted'
+    )
+    if (existing) existing.count = Math.min(100000, existing.count + 1)
+    else projection.omissions.push({ component, reason: 'redacted', count: 1 })
+  }
+}
+
+const webPolicyExcludedFiles = async (
+  files: readonly PackageSelectableFile[],
+  sourcePath: (file: PackageSelectableFile) => Promise<string>,
+  projection: WebEvidenceProjection | undefined,
+  signal: AbortSignal
+): Promise<Set<string>> => {
+  const excluded = new Set<string>()
+  if (!projection) return excluded
+  for (const file of files) {
+    const path = await sourcePath(file)
+    try {
+      await assertWebShareableFile(path, projection, signal)
+    } catch (error) {
+      if (!(error instanceof WebPackagePolicyError) || file.requiredForEvidence) throw error
+      excluded.add(file.storageKey)
+      noteWebPolicyOmission(projection, error.invocationIds)
+    }
+  }
+  return excluded
+}
+
+const projectWebSessionCopies = (projection: WebEvidenceProjection): PersistedChatSession => {
+  const { activities, conversationGraph, ...rest } = projection.session
+  const projected = projectWebDerivedValue(rest, projection.plan)
+  if (!conversationGraph) return { ...projected, activities }
+  const { activities: graphActivities, ...graph } = conversationGraph
+  return {
+    ...projected,
+    activities,
+    conversationGraph: {
+      ...projectWebDerivedValue(graph, projection.plan),
+      activities: graphActivities
+    }
+  }
+}
+
+const omittedWebLogLanes = new WeakMap<WebEvidenceProjection, Set<string>>()
+const projectWebRecords = (
+  records: PackageRecords,
+  projection: WebEvidenceProjection | undefined
+): PackageRecords => {
+  if (!projection) return records
+  // These records seal scientific evidence. Never change their bytes while retaining a hash.
+  for (const value of [
+    records.tables,
+    records.reproducibility,
+    records.pdfNotes,
+    records.literature,
+    records.researchFilms,
+    records.operationReplayFilms,
+    records.imageTasks
+  ]) {
+    if (!value) continue
+    try {
+      assertWebDerivedTextSafe(JSON.stringify(value), projection.plan)
+    } catch (error) {
+      throw new WebPackagePolicyError(error)
+    }
+  }
+  const logEvidence = records.logEvidence?.filter((lane) => {
+    try {
+      assertWebDerivedTextSafe(JSON.stringify(lane), projection.plan)
+      return true
+    } catch {
+      const omitted = omittedWebLogLanes.get(projection) ?? new Set<string>()
+      if (!omitted.has(lane.key)) {
+        noteWebPolicyOmission(
+          projection,
+          [...projection.plan.packets.keys()].filter((id) => JSON.stringify(lane).includes(id))
+        )
+        omitted.add(lane.key)
+        omittedWebLogLanes.set(projection, omitted)
+      }
+      return false
+    }
+  })
+  return {
+    ...records,
+    history: projectWebDerivedValue(records.history, projection.plan),
+    logEvidence: logEvidence?.length ? logEvidence : undefined,
+    webEvidence: projection.webEvidence
+  }
 }
 
 // Session links refer to local snapshots, so portable history retains their readable labels only.
@@ -647,7 +866,26 @@ export class SessionPackageService {
     path: string,
     options: PackageExportOptions = {}
   ): Promise<SessionPackagePreview> {
-    return this.serialize(() => this.exportNow(rawRequest, path, options), options.signal)
+    return this.serialize(
+      () =>
+        this.withExportReservation(rawRequest, (request) => this.exportNow(request, path, options)),
+      options.signal
+    )
+  }
+
+  private async withExportReservation<Result>(
+    rawRequest: SessionPackageRequest,
+    work: (request: SessionPackageRequest) => Promise<Result>
+  ): Promise<Result> {
+    const request = sessionPackageRequestSchema.parse(rawRequest)
+    const release = await this.options.reserveExport?.(request, this.signal)
+    try {
+      this.signal.throwIfAborted()
+      await this.assertExportIdle(request)
+      return await work(request)
+    } finally {
+      release?.()
+    }
   }
 
   private async exportNow(
@@ -720,7 +958,8 @@ export class SessionPackageService {
       directory: string,
       records: PackageRecords,
       manifest: SessionPackageManifest,
-      captured = capturedFilms
+      captured = capturedFilms,
+      webProjection?: WebEvidenceProjection
     ): Promise<void> => {
       await appendResearchFilms({
         root: this.options.storageRoot,
@@ -731,6 +970,7 @@ export class SessionPackageService {
         signal: this.signal,
         onProgress: options.onProgress,
         checkFile: async (path, storageKey, checksum) => {
+          await assertWebShareableFile(path, webProjection, this.signal)
           if (!options.consumeSnapshot && !options.allowSensitiveContent)
             await assertShareableFile(path, this.signal, storageKey, storageKey, {
               storageKey,
@@ -770,7 +1010,7 @@ export class SessionPackageService {
         await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
-      const forwardedSession = withoutPrivateAuthority(
+      let forwardedSession = withoutPrivateAuthority(
         options.consumeSnapshot
           ? (mapPackageReferences(
               encodeSessionDataPaths(session, this.options.storageRoot),
@@ -780,15 +1020,24 @@ export class SessionPackageService {
             ) as PersistedChatSession)
           : sourceSession
       )
+      const sourceRecords = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
+      const forwardedWeb = await this.prepareWebProjection(
+        forwardedSession,
+        options,
+        sourceRecords.webEvidence
+      )
+      if (forwardedWeb) forwardedSession = projectWebSessionCopies(forwardedWeb)
+      const records = projectWebRecords(sourceRecords, forwardedWeb)
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
         await assertShareable(forwardedSession, this.signal, 'session.json')
       // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
       // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
       const forwardedSessionJson =
-        options.consumeSnapshot || requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
+        options.consumeSnapshot ||
+        forwardedWeb ||
+        requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
           ? JSON.stringify({ version: 2, session: forwardedSession })
           : undefined
-      const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
       const previousFilmKeys = new Set(researchFilmStorageKeys(packageFilms(records)))
       delete records.researchFilms
       delete records.operationReplayFilms
@@ -820,19 +1069,31 @@ export class SessionPackageService {
       const optionalKeys = new Set(
         [...selectable, ...inheritedExclusions].map((file) => file.storageKey)
       )
+      const plannedFiles = markRequiredPackageFiles(
+        records,
+        selectable,
+        manifest.inventory.filter(
+          (entry) =>
+            (!entry.storageKey || !optionalKeys.has(entry.storageKey)) &&
+            !previousFilmKeys.has(entry.storageKey ?? '')
+        )
+      )
+      const policyExcluded = await webPolicyExcludedFiles(
+        plannedFiles,
+        async (file) => {
+          const entry = manifest.inventory.find((item) => item.storageKey === file.storageKey)
+          if (!entry) throw new Error('Session package omits required content.')
+          return join(source, entry.path)
+        },
+        forwardedWeb,
+        this.signal
+      )
       const selection = await this.chooseFiles(
         options,
-        markRequiredPackageFiles(
-          records,
-          selectable,
-          manifest.inventory.filter(
-            (entry) =>
-              (!entry.storageKey || !optionalKeys.has(entry.storageKey)) &&
-              !previousFilmKeys.has(entry.storageKey ?? '')
-          )
-        ),
+        plannedFiles.filter((file) => !policyExcluded.has(file.storageKey)),
         {
           researchFilms: filmSummary,
+          webOmissions: forwardedWeb?.omissions,
           pdfNotesAvailable: !!records.pdfNotes?.length,
           metadataBytes: manifest.inventory
             .filter((entry) => !entry.storageKey)
@@ -853,7 +1114,7 @@ export class SessionPackageService {
         },
         session.title
       )
-      const excluded = new Set(selection.excludedStorageKeys)
+      const excluded = new Set([...selection.excludedStorageKeys, ...policyExcluded])
       diagnostic.phase('forward-content')
       if (!selection.includePdfNotes && !options.consumeSnapshot) delete records.pdfNotes
       filterPackagePdfNotes(records, new Set([...excluded, ...alreadyExcluded]))
@@ -872,7 +1133,16 @@ export class SessionPackageService {
       const forwarded: SessionPackageManifest = {
         ...manifest,
         requiredFeatures: manifest.requiredFeatures?.filter(
-          (feature) => feature !== 'research-film'
+          (feature) =>
+            feature !== 'research-film' &&
+            (feature !== 'web-search-operations-v1' ||
+              !!records.webEvidence?.requiredCapabilities?.includes('web-search-operations-v1')) &&
+            (feature !== 'web-restricted-result-v1' ||
+              !!records.webEvidence?.requiredCapabilities?.includes('web-restricted-result-v1')) &&
+            (feature !== 'web-evidence-v2' ||
+              !!records.webEvidence?.requiredCapabilities?.includes('web-result-v2')) &&
+            (feature !== 'log-evidence' || !!records.logEvidence) &&
+            (feature !== 'compute-log-evidence' || hasComputeLogEvidence(records.logEvidence))
         ),
         inventory: manifest.inventory
           .filter(
@@ -927,6 +1197,8 @@ export class SessionPackageService {
               await writeFile(join(staging, entry.path), forwardedSessionJson)
               continue
             }
+            if (!options.consumeSnapshot)
+              await assertWebShareableFile(join(source, entry.path), forwardedWeb, this.signal)
             if (!options.consumeSnapshot && !options.allowSensitiveContent)
               await assertShareableFile(
                 join(source, entry.path),
@@ -957,7 +1229,7 @@ export class SessionPackageService {
             )
           }
           if (selection.includeResearchFilms || options.consumeSnapshot)
-            await appendFilms(staging, records, forwarded, forwardedFilms)
+            await appendFilms(staging, records, forwarded, forwardedFilms, forwardedWeb)
           await writePackageRoCrateMetadata(staging, forwarded, records, this.signal)
           await writeFile(join(staging, 'manifest.json'), JSON.stringify(forwarded))
           options.onProgress?.({ phase: 'validating' })
@@ -972,11 +1244,21 @@ export class SessionPackageService {
               writePackageArchive(staging, temporary, this.signal)
             )
           }
-          return preview(forwarded, forwardedSession)
+          return preview(forwarded, forwardedSession, records.webEvidence?.omissions)
         },
         () => rm(staging, { recursive: true, force: true })
       )
     }
+    const webProjection = await this.prepareWebProjection(
+      session,
+      options,
+      filmOrigin?.webEvidence
+        ? (mapPackageReferences(
+            filmOrigin.webEvidence,
+            filmOrigin.identities
+          ) as PackageRecords['webEvidence'])
+        : undefined
+    )
     diagnostic.phase('read-notebooks')
     const assertSettled = (): void => {
       assertSettledHistory(session)
@@ -997,6 +1279,19 @@ export class SessionPackageService {
     }
     const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const environmentManifestKeys = [
+      ...new Set(
+        notebooks.flatMap((document) =>
+          document.runs.flatMap((run) => {
+            if (run.environmentManifest) return []
+            const checksum = environmentManifestChecksumForRun(run)
+            return checksum && /^[a-f0-9]{64}$/u.test(checksum)
+              ? [environmentManifestStorageKey(checksum)]
+              : []
+          })
+        )
+      )
+    ]
     const portableNotebooks = new Map<string, NotebookRunDocument>()
     let notebookIndex = 0
     for (const key of notebookKeys) {
@@ -1089,10 +1384,6 @@ export class SessionPackageService {
     )
     if (logEvidence) {
       records.logEvidence = logEvidence
-      if (!options.consumeSnapshot && !options.allowSensitiveContent) {
-        for (const [key, record] of indexPortableEvidence(logEvidence))
-          await assertShareable(JSON.parse(record.bytes.toString()), this.signal, key)
-      }
     }
     const executionKeys = await executionEvidenceKeys(
       this.options.storageRoot,
@@ -1101,7 +1392,7 @@ export class SessionPackageService {
       this.signal
     )
     const sharedSession = encodeSessionDataPaths(
-      withoutPrivateAuthority(session),
+      withoutPrivateAuthority(webProjection ? projectWebSessionCopies(webProjection) : session),
       this.options.storageRoot
     )
     const optionalKeys = new Set(
@@ -1121,10 +1412,12 @@ export class SessionPackageService {
       string,
       { observation: FileObservation; integrity: { checksum: string; sizeBytes: number } }
     >()
+    const measuredSources = new Map<string, { checksum: string; sizeBytes: number }>()
     diagnostic.phase('measure-content')
     for (const key of new Set([
       ...nativeStorageKeys(records),
       ...notebookKeys,
+      ...environmentManifestKeys,
       ...executionKeys,
       ...packageReproducibilityKeys(records)
     ])) {
@@ -1154,29 +1447,44 @@ export class SessionPackageService {
       if (!sameFileObservation(observation, observeFile(await lstat(original, { bigint: true }))))
         throw new Error('The Session changed during export. Try again.')
       measuredContent.set(identity, integrity)
+      measuredSources.set(key, integrity)
       if (immutableVersions.has(key) && observation.inode !== '0')
         sourceObservations.set(key, { observation, integrity })
       retainedFiles.push({ storageKey: key, filename: key, ...integrity })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
-    let recordsJson = JSON.stringify(records)
-    let metadataBytes =
-      Buffer.byteLength(sessionJson) +
-      Buffer.byteLength(recordsJson) +
-      Buffer.byteLength(PACKAGE_README)
-    diagnostic.phase('select-files')
+    let publicRecords = projectWebRecords(records, webProjection)
+    let recordsJson = JSON.stringify(publicRecords)
+    const fixedMetadataBytes = Buffer.byteLength(sessionJson) + Buffer.byteLength(PACKAGE_README)
+    diagnostic.phase('select-files', {
+      selectableFiles: selectable.length,
+      retainedFiles: retainedFiles.length
+    })
+    const plannedFiles = markRequiredPackageFiles(records, selectable, [
+      ...retainedFiles,
+      ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({
+        sizeBytes: Buffer.byteLength(content),
+        checksum: sha256(content)
+      }))
+    ])
+    const policyExcluded = await webPolicyExcludedFiles(
+      plannedFiles,
+      async (file) => {
+        await assertPackageSourcePath(this.options.storageRoot, sourceKey(file.storageKey))
+        return resolveStorageKey(this.options.storageRoot, sourceKey(file.storageKey))
+      },
+      webProjection,
+      this.signal
+    )
+    recordsJson = JSON.stringify(publicRecords)
+    let metadataBytes = fixedMetadataBytes + Buffer.byteLength(recordsJson)
     const selection = await this.chooseFiles(
       options,
-      markRequiredPackageFiles(records, selectable, [
-        ...retainedFiles,
-        ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({
-          sizeBytes: Buffer.byteLength(content),
-          checksum: sha256(content)
-        }))
-      ]),
+      plannedFiles.filter((file) => !policyExcluded.has(file.storageKey)),
       {
         retainedFiles,
         metadataBytes,
+        webOmissions: webProjection?.omissions,
         researchFilms: filmSummary,
         pdfNotesAvailable: selectable.some((file) => /\.pdf$/i.test(file.filename))
       },
@@ -1184,17 +1492,16 @@ export class SessionPackageService {
     )
     const excludedKeys = new Set([
       ...selection.excludedStorageKeys,
+      ...policyExcluded,
       ...inheritedExclusions.map((file) => file.storageKey)
     ])
     diagnostic.phase('prepare-content')
     if (selection.includePdfNotes) {
       records.pdfNotes = await capturePackagePdfNotes(client, records, excludedKeys)
       retainInheritedPdfNotes(records, inheritedPdfNotes, excludedKeys)
-      recordsJson = JSON.stringify(records)
-      metadataBytes =
-        Buffer.byteLength(sessionJson) +
-        Buffer.byteLength(recordsJson) +
-        Buffer.byteLength(PACKAGE_README)
+      publicRecords = projectWebRecords(records, webProjection)
+      recordsJson = JSON.stringify(publicRecords)
+      metadataBytes = fixedMetadataBytes + Buffer.byteLength(recordsJson)
     }
     const excludedFiles = [
       ...new Map(
@@ -1236,12 +1543,13 @@ export class SessionPackageService {
           notebookSources.get(key) ?? resolveStorageKey(this.options.storageRoot, sourceKey(key))
         diagnostic.phase('copy-content')
         if (!options.consumeSnapshot && !options.allowSensitiveContent)
-          await assertShareable(records, this.signal, 'records.json')
+          await assertShareable(publicRecords, this.signal, 'records.json')
         const totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
             ...nativeStorageKeys(records),
             ...notebookKeys,
+            ...environmentManifestKeys,
             ...executionKeys,
             ...packageReproducibilityKeys(records)
           ])
@@ -1271,8 +1579,12 @@ export class SessionPackageService {
             }
           }
           sizes.set(key, size)
+          const measured = measuredSources.get(key)
           const integrity =
-            observed?.integrity ?? (await digestFileWithinBudget(original, size, this.signal))
+            observed?.integrity ??
+            (measured?.sizeBytes === size
+              ? measured
+              : await digestFileWithinBudget(original, size, this.signal))
           if (
             integrity.sizeBytes !== size ||
             (!observed &&
@@ -1375,19 +1687,26 @@ export class SessionPackageService {
           }
           completedFiles += 1
           assertNoExcludedContentCopies(records, excludedFiles, [copied])
-          if (!existing && !options.consumeSnapshot && !options.allowSensitiveContent)
-            await assertShareableFile(
+          if (!existing && !options.consumeSnapshot) {
+            await assertWebShareableFile(
               join(directory, objectPathForEntry),
-              this.signal,
-              storageKey,
-              sourceKey(storageKey),
-              {
-                storageKey: sourceKey(storageKey),
-                root: this.options.storageRoot,
-                relativePath: sourceKey(storageKey),
-                checksum: copied.checksum
-              }
+              webProjection,
+              this.signal
             )
+            if (!options.allowSensitiveContent)
+              await assertShareableFile(
+                join(directory, objectPathForEntry),
+                this.signal,
+                storageKey,
+                sourceKey(storageKey),
+                {
+                  storageKey: sourceKey(storageKey),
+                  root: this.options.storageRoot,
+                  relativePath: sourceKey(storageKey),
+                  checksum: copied.checksum
+                }
+              )
+          }
           inventory.push({
             path: objectPathForEntry,
             kind: notebookKeys.includes(storageKey) ? 'notebook' : 'file',
@@ -1396,11 +1715,20 @@ export class SessionPackageService {
           })
         }
         const requiredFeatures = [
-          ...(records.logEvidence ? (['log-evidence'] as const) : []),
-          ...(hasComputeLogEvidence(records.logEvidence)
+          ...(publicRecords.logEvidence ? (['log-evidence'] as const) : []),
+          ...(hasComputeLogEvidence(publicRecords.logEvidence)
             ? (['compute-log-evidence'] as const)
             : []),
-          ...(records.literature ? (['literature'] as const) : []),
+          ...(publicRecords.literature ? (['literature'] as const) : []),
+          ...(publicRecords.webEvidence?.requiredCapabilities?.includes('web-result-v2')
+            ? (['web-evidence-v2'] as const)
+            : []),
+          ...(publicRecords.webEvidence?.requiredCapabilities?.includes('web-restricted-result-v1')
+            ? (['web-restricted-result-v1'] as const)
+            : []),
+          ...(publicRecords.webEvidence?.requiredCapabilities?.includes('web-search-operations-v1')
+            ? (['web-search-operations-v1'] as const)
+            : []),
           ...(deduplicated ? (['content-dedupe'] as const) : [])
         ]
         const manifest: SessionPackageManifest = {
@@ -1449,12 +1777,15 @@ export class SessionPackageService {
           ]
         }
         if (selection.includeResearchFilms || options.consumeSnapshot)
-          await appendFilms(directory, records, manifest)
-        await writePackageRoCrateMetadata(directory, manifest, records, this.signal)
+          await appendFilms(directory, publicRecords, manifest, capturedFilms, webProjection)
+        if (publicRecords.researchFilms) records.researchFilms = publicRecords.researchFilms
+        if (publicRecords.operationReplayFilms)
+          records.operationReplayFilms = publicRecords.operationReplayFilms
+        await writePackageRoCrateMetadata(directory, manifest, publicRecords, this.signal)
         await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
         options.onProgress?.({ phase: 'validating' })
         diagnostic.phase('validate-package')
-        await validatePackageRecords(directory, manifest, records, this.signal)
+        await validatePackageRecords(directory, manifest, publicRecords, this.signal)
         assertSettled()
         if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
           throw new Error('The Session changed during export. Try again.')
@@ -1547,13 +1878,31 @@ export class SessionPackageService {
             writePackageArchive(directory, temporaryPath, this.signal)
           )
         }
-        return preview(manifest, session)
+        return preview(manifest, sharedSession, publicRecords.webEvidence?.omissions)
       },
       async () => {
         await rm(directory, { recursive: true, force: true })
         if (notebookStaging) await rm(notebookStaging, { recursive: true, force: true })
       }
     )
+  }
+
+  private async prepareWebProjection(
+    session: PersistedChatSession,
+    options: PackageSnapshotOptions,
+    existingEvidence?: PackageRecords['webEvidence']
+  ): Promise<WebEvidenceProjection | undefined> {
+    if (options.consumeSnapshot) return undefined
+    const projection = await prepareWebEvidence(session, {
+      resolvePolicy: this.options.webEvidence?.resolvePolicy,
+      existingEvidence,
+      loadSnapshot: this.options.webEvidence?.loadSnapshot
+        ? (id, activity) => this.options.webEvidence!.loadSnapshot!(session, id, activity)
+        : undefined
+    })
+    return projection.plan.packets.size || projection.omissions.length || existingEvidence
+      ? projection
+      : undefined
   }
 
   private async captureHistory(session: PersistedChatSession): Promise<PackageHistory> {
@@ -1593,33 +1942,34 @@ export class SessionPackageService {
     const safe = sessionPackageRequestSchema.parse(request)
     return this.serialize(async () => {
       await this.assertImportProject(safe.projectId)
-      await this.assertExportIdle(safe)
-      const source = await new SessionRepository(this.configRoot).loadSession(
-        safe.projectId,
-        safe.sessionId
-      )
-      if (!source) throw new Error('Session not found or unreadable.')
-      if (
-        source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
-        source.runtimeContext?.permission?.state === 'pending' ||
-        source.runtimeContext?.plan?.approval === 'pending'
-      )
-        throw new Error('Wait for pending approvals before forking this Session.')
-      let result: SessionPackageRequest | undefined
-      await this.exportNow(safe, '', {
-        onProgress,
-        consumeSnapshot: async (directory) => {
-          result = await this.importNow(
-            directory,
-            onProgress,
-            undefined,
-            { projectId: safe.projectId },
-            source
-          )
-        }
+      return this.withExportReservation(safe, async () => {
+        const source = await new SessionRepository(this.configRoot).loadSession(
+          safe.projectId,
+          safe.sessionId
+        )
+        if (!source) throw new Error('Session not found or unreadable.')
+        if (
+          source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
+          source.runtimeContext?.permission?.state === 'pending' ||
+          source.runtimeContext?.plan?.approval === 'pending'
+        )
+          throw new Error('Wait for pending approvals before forking this Session.')
+        let result: SessionPackageRequest | undefined
+        await this.exportNow(safe, '', {
+          onProgress,
+          consumeSnapshot: async (directory) => {
+            result = await this.importNow(
+              directory,
+              onProgress,
+              undefined,
+              { projectId: safe.projectId },
+              source
+            )
+          }
+        })
+        if (!result) throw new Error('Fork did not publish a Session.')
+        return result
       })
-      if (!result) throw new Error('Fork did not publish a Session.')
-      return result
     }, signal)
   }
 
@@ -1816,6 +2166,7 @@ export class SessionPackageService {
       await defaultFileDurability.syncDirectory(join(this.configRoot, 'session-package-imports'))
     }
     let published: boolean | undefined = false
+    let preparedWebFork: PersistedChatSession | undefined
     let journal: ImportJournal | undefined
     let retryPlan: Awaited<ReturnType<typeof allocate>> | undefined
     const recoveryError = (cause: unknown): PackageImportRecoveryRequiredError =>
@@ -1892,6 +2243,43 @@ export class SessionPackageService {
         onProgress,
         retryPlan
       )
+      for (const entry of manifest.inventory) {
+        if (!entry.storageKey || !ENVIRONMENT_MANIFEST_STORAGE_KEY.test(entry.storageKey)) continue
+        const source = resolveStorageKey(
+          destinationRoot,
+          remapStorageKey(entry.storageKey, native.identities)
+        )
+        const contents = await readFile(source)
+        if (sha256(contents) !== entry.checksum)
+          throw new Error('Session package environment manifest checksum mismatch.')
+        const targetPath = resolveStorageKey(this.options.storageRoot, entry.storageKey)
+        await mkdir(dirname(targetPath), { recursive: true })
+        const existing = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined
+          throw error
+        })
+        if (existing && !existing.equals(contents))
+          throw new Error('Session package environment manifest conflict.')
+        if (!existing) await writeFile(targetPath, contents, { flag: 'wx' })
+      }
+      const bookmarkIdentities = { ...native.identities }
+      let forkWebEvidence: PackageRecords['webEvidence']
+      if (forkSource?.packageOrigin) {
+        const origin = await this.readOrigin({
+          projectId: forkSource.projectId,
+          sessionId: forkSource.id
+        })
+        for (const [originalId, localId] of Object.entries(origin.identities)) {
+          if (native.identities[originalId])
+            bookmarkIdentities[localId] = native.identities[originalId]
+        }
+        forkWebEvidence = origin.webEvidence
+          ? (mapPackageReferences(
+              origin.webEvidence,
+              origin.identities
+            ) as PackageRecords['webEvidence'])
+          : undefined
+      }
       await installPackageReproducibility(
         destinationRoot,
         native.records,
@@ -1913,7 +2301,7 @@ export class SessionPackageService {
           { recursive: true }
         )
       }
-      const mappedSession = withoutPrivateAuthority(
+      let mappedSession = withoutPrivateAuthority(
         mapPackageReferences(
           sourceSession,
           native.identities,
@@ -1921,6 +2309,16 @@ export class SessionPackageService {
           native.checksums
         ) as PersistedChatSession
       )
+      if (!forkSource) {
+        const importedWeb = remapWebEvidence(
+          sourceSession,
+          mappedSession,
+          records.webEvidence,
+          native.identities
+        )
+        mappedSession = importedWeb.session
+        native.records.webEvidence = importedWeb.webEvidence
+      }
       let session: PersistedChatSession = {
         ...mappedSession,
         parentSessionId: undefined,
@@ -1981,6 +2379,19 @@ export class SessionPackageService {
             siblings.map((sibling) => sibling.title)
           )
         )
+        session = preserveLocalForkWebEvidence(forkSource, session, bookmarkIdentities)
+        if (forkWebEvidence) {
+          const inheritedWeb = remapWebEvidence(
+            forkSource,
+            session,
+            forkWebEvidence,
+            bookmarkIdentities
+          )
+          session = inheritedWeb.session
+          native.records.webEvidence = inheritedWeb.webEvidence
+        }
+        await this.options.onForkPrepared?.(forkSource, session)
+        preparedWebFork = session
       }
       validatePackageLiteratureSession(native.records, session)
       const sessionStage = join(configOperationRoot, 'session-stage')
@@ -2167,17 +2578,6 @@ export class SessionPackageService {
           this.signal
         )
       }
-      const bookmarkIdentities = { ...native.identities }
-      if (forkSource?.packageOrigin) {
-        const origin = await this.readOrigin({
-          projectId: forkSource.projectId,
-          sessionId: forkSource.id
-        })
-        for (const [originalId, localId] of Object.entries(origin.identities)) {
-          if (native.identities[originalId])
-            bookmarkIdentities[localId] = native.identities[originalId]
-        }
-      }
       const client = await this.options.getClient()
       const publishRecords = prepareNativePublication(native.records)
       this.signal.throwIfAborted()
@@ -2258,6 +2658,7 @@ export class SessionPackageService {
           },
           async () => {
             if (journal) await this.removeUnpublished(journal, operationId)
+            if (preparedWebFork) await this.options.onForkAborted?.(preparedWebFork)
             await cleanupStaging()
           }
         )
@@ -2552,6 +2953,7 @@ export class SessionPackageService {
     literature?: import('./literature').PackageLiterature
     pdfNotes?: PackagePdfNotes
     researchFilms?: PackageResearchFilms
+    webEvidence?: PackageRecords['webEvidence']
     originSessionIds: string[]
     logSessionIds: string[]
   }> {
@@ -2601,6 +3003,7 @@ export class SessionPackageService {
       literature: records.literature,
       pdfNotes: records.pdfNotes,
       researchFilms: packageFilms(records),
+      webEvidence: records.webEvidence,
       logSessionIds: [
         ...new Set(
           (records.logEvidence ?? []).map((lane) => receipt.identities[lane.key.split('/')[2]])

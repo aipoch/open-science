@@ -30,7 +30,7 @@ const threeFrameworks = [
 ]
 
 beforeEach(() => {
-  resetOnboardingStores()
+  resetOnboardingStores('claude-code')
   stubWindowApi()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -431,7 +431,7 @@ describe('AgentStep', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('prefers OpenCode when Claude is missing and OpenCode is installed', async () => {
+  it('keeps an explicit Claude selection even when OpenCode is already installed', async () => {
     const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
@@ -454,11 +454,11 @@ describe('AgentStep', () => {
 
     await renderStep()
 
-    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
-    expect(checkEnvironment).toHaveBeenCalledOnce()
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    expect(checkEnvironment).not.toHaveBeenCalled()
   })
 
-  it('prefers Codex when it is the only installed runtime', async () => {
+  it('keeps an explicit Claude selection even when Codex is already installed', async () => {
     const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
@@ -479,7 +479,7 @@ describe('AgentStep', () => {
 
     await renderStep()
 
-    expect(setAgentFramework).toHaveBeenCalledWith('codex')
+    expect(setAgentFramework).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -515,12 +515,12 @@ describe('AgentStep', () => {
     }
   )
 
-  it('queues the user choice behind the initial installed-agent preference', async () => {
-    let releaseAutoSelect: (() => void) | undefined
+  it('queues a second explicit choice while the first is being saved', async () => {
+    let releaseSelection: (() => void) | undefined
     const setAgentFramework = vi.fn().mockImplementation(
       () =>
         new Promise<void>((resolve) => {
-          releaseAutoSelect = resolve
+          releaseSelection = resolve
         })
     )
     useSettingsStore.setState({
@@ -542,6 +542,11 @@ describe('AgentStep', () => {
     })
 
     await renderStep()
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Use OpenCode"]')?.click()
+      await Promise.resolve()
+    })
     expect(setAgentFramework).toHaveBeenCalledWith('opencode')
 
     await act(async () => {
@@ -551,7 +556,7 @@ describe('AgentStep', () => {
     expect(setAgentFramework).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      releaseAutoSelect?.()
+      releaseSelection?.()
       await Promise.resolve()
       await Promise.resolve()
     })

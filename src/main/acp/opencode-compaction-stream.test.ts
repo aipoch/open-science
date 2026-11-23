@@ -30,7 +30,8 @@ const fixture = (
   messages: AnyMessage[],
   fetchImpl: typeof fetch,
   resolveSessionCwd = (): string => '/workspace',
-  keepOpen = false
+  keepOpen = false,
+  captureUserStop?: (sessionId: string) => (() => boolean) | undefined
 ): {
   stream: Stream
   abort: AbortController
@@ -61,7 +62,8 @@ const fixture = (
       api: { baseUrl: 'http://localhost:1234', authorization: 'Basic test' },
       resolveSessionCwd,
       signal: abort.signal,
-      fetchImpl
+      fetchImpl,
+      captureUserStop
     }
   )
   const read = async (): Promise<AnyMessage[]> => {
@@ -133,6 +135,27 @@ describe('OpenCode 1.x compaction stream', () => {
     test.end()
     expect(await test.read()).toMatchObject([{ id: 1, error: { code: -32603 } }])
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('retains a classification failure observed before user Stop', async () => {
+    const test = fixture([], vi.fn(), undefined, true, () => () => true)
+    const writer = test.stream.writable.getWriter()
+    await writer.write({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/prompt',
+      params: { sessionId: 's', prompt: [] }
+    })
+    const reader = test.stream.readable.getReader()
+    test.send(chunk('s'))
+    // A control message is a barrier for the prior malformed chunk on the inbound stream.
+    const control = { jsonrpc: '2.0', method: '$/notice', params: {} } as const
+    test.send(control)
+    expect((await reader.read()).value).toEqual(control)
+    await writer.write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } })
+    test.send(response)
+    test.end()
+    expect((await reader.read()).value).toMatchObject({ id: 1, error: { code: -32603 } })
   })
 
   it('does not cancel another session lookup when Stop targets a different session', async () => {

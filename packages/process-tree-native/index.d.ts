@@ -51,7 +51,12 @@ export type WindowsResourceSample = {
   complete: boolean
   startedAt: number
   endedAt: number
-  system?: { committedBytes: number; commitLimitBytes: number; availableBytes: number }
+  system?: {
+    committedBytes: number
+    commitLimitBytes: number
+    availableBytes: number
+    totalPhysicalBytes?: number
+  }
   systemError?: number
   processes: ResourceProcessSample[]
 }
@@ -62,6 +67,35 @@ export function sampleWindowsResources(
 ): Promise<WindowsResourceSample>
 /** Single process identity read; no process enumeration. Null means unavailable. */
 export function readWindowsResourceBirth(pid: number): string | null
+
+export type DarwinMemoryPressureSample = {
+  supported: boolean
+  complete: boolean
+  pressureLevel?: number
+  eventSequence: number
+  pressureEventSequence: number
+  error?: number
+}
+/** Current read-only sysctl snapshot. Missing/unknown levels are never healthy evidence. */
+export function sampleDarwinMemoryPressure(): Promise<DarwinMemoryPressureSample>
+export type DarwinMemoryUsageSample = {
+  supported: boolean
+  complete: boolean
+  totalBytes?: number
+  usedBytes?: number
+  freeBytes?: number
+  cachedBytes?: number
+  error?: number
+}
+/** Current Activity Monitor-style memory counters from macOS VM statistics. */
+export function sampleDarwinMemoryUsage(): DarwinMemoryUsageSample
+/** Native Dispatch notification; a subscription alone does not establish the current level. */
+export function subscribeDarwinMemoryPressure(
+  listener: (event: { pressureLevel: number; eventSequence: number }) => void
+): object | null
+export function stopDarwinMemoryPressureSubscription(subscription: object): void
+/** Read the sequence synchronously so queued JS events cannot leave an old snapshot valid. */
+export function darwinMemoryPressureEventSequence(): number
 
 // Windows only. Terminates the process only when its creation FILETIME matches birth, using one
 // handle for the check and the kill so a reused PID is never signaled. Returns false when the

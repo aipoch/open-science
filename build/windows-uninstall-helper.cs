@@ -32,6 +32,12 @@ public static class UninstallHelper {
         case "update-handoff": UpdateHandoff(Required(options, "install-path")); break;
         case "notebook-sandbox": NotebookSandbox(Required(options, "sandbox-root")); break;
         case "runtime-cache": RuntimeCache(); break;
+        case "prepared-updates":
+          // Published payloads can contain node_modules paths beyond the Framework legacy limit.
+          AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
+          AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
+          RemovePreparedUpdates(Required(options, "cache"), Required(options, "executable"));
+          break;
         case "program-data-paths":
           ProgramDataPaths(
             Required(options, "install-path"),
@@ -194,8 +200,22 @@ public static class UninstallHelper {
   // The scripts parsed JSON with ConvertFrom-Json (JavaScriptSerializer underneath) and compared
   // with PowerShell's loose operators. These keep the same verdicts for the values they accept.
 
-  static Dictionary<string, object> ReadJsonObject(string path) {
-    var value = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(path));
+  // Match SETTINGS_RESOURCE_LIMITS.documentBytes in the application settings store.
+  const int SettingsDocumentBytes = 128 * 1024 * 1024;
+
+  static Dictionary<string, object> ReadJsonObject(string path, int? maxBytes = null) {
+    var serializer = new JavaScriptSerializer();
+    string contents;
+    using (var stream = File.OpenRead(path)) {
+      if (maxBytes.HasValue) {
+        if (stream.Length > maxBytes.Value)
+          throw new InvalidDataException("Settings document exceeds the " + maxBytes.Value + " byte limit.");
+        // A UTF-8 document has at most one UTF-16 code unit per byte.
+        serializer.MaxJsonLength = maxBytes.Value;
+      }
+      using (var reader = new StreamReader(stream)) contents = reader.ReadToEnd();
+    }
+    var value = serializer.DeserializeObject(contents);
     var result = value as Dictionary<string, object>;
     if (result == null) throw new InvalidDataException("Expected a JSON object: " + path);
     return result;
@@ -360,10 +380,16 @@ public static class UninstallHelper {
   // Remove-Item -Recurse -Force without ever following a link: a reparse point is removed itself.
   static void RemoveTree(string path) {
     var attributes = File.GetAttributes(path);
+    if ((attributes & FileAttributes.ReparsePoint) != 0) {
+      if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(path, false);
+      else File.Delete(path);
+      return;
+    }
     if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
     if ((attributes & FileAttributes.Directory) == 0) { File.Delete(path); return; }
-    if ((attributes & FileAttributes.ReparsePoint) == 0)
+    using (InstallDirectory.HoldForProgramCleanup(path)) {
       foreach (var child in Directory.GetFileSystemEntries(path)) RemoveTree(child);
+    }
     Directory.Delete(path, false);
   }
 
@@ -387,6 +413,49 @@ public static class UninstallHelper {
       .Where(part => !string.IsNullOrWhiteSpace(part)));
   }
 
+  // A true uninstall can precede the first launch of the successor. The updater cache is
+  // per user and may also contain packages for another installation of the same product.
+  static void RemovePreparedUpdates(string cache, string executable) {
+    var root = Path.Combine(cache, "open-science-prepared");
+    if (!Directory.Exists(root) || !NoReparsePointInPath(root) || !TrustedAcl(root)) return;
+    var installed = InstallDirectory.CanonicalPath(executable);
+    root = root.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + root.Substring(2) : @"\\?\" + root;
+    bool failed = false;
+    using (InstallDirectory.HoldForProgramCleanup(cache))
+    using (InstallDirectory.HoldForProgramCleanup(root)) {
+      foreach (var stage in Directory.GetDirectories(root)) {
+        if (!Regex.IsMatch(Path.GetFileName(stage), @"\A[a-f0-9]{32}\z") || IsReparsePoint(stage)) continue;
+        try {
+          using (InstallDirectory.HoldForProgramCleanup(stage)) {
+            if (!TrustedAcl(stage)) continue;
+            var marker = new[] { "ready.json", "installing.json", "scan-timed-out.json" }
+              .Select(name => Path.Combine(stage, name)).FirstOrDefault(File.Exists);
+            if (marker == null || IsReparsePoint(marker) || !TrustedAcl(marker)) continue;
+            var receipt = ReadJsonObject(marker, 64 * 1024);
+            if (!TextEquals(Field(receipt, "executable"), installed)) continue;
+            var sha512 = Field(receipt, "sha512") as string;
+            if (sha512 == null || !Regex.IsMatch(sha512, @"\A[A-Za-z0-9+/]{86}==\z")) continue;
+            // The canonical executable in the receipt identifies the installation; the digest
+            // identifies the installer. Never consume or delete the SDK's own pending files.
+            var payload = Path.Combine(stage, "payload");
+            if (Directory.Exists(payload)) RemoveTree(payload);
+            foreach (var file in Directory.GetFiles(stage)) {
+              if (Regex.IsMatch(Path.GetFileName(file), @"\A(?:occupant-\d+-\d+|accepted-[a-f0-9-]{36})\z"))
+                File.Delete(file);
+            }
+            File.Delete(marker);
+          }
+          if (!Directory.EnumerateFileSystemEntries(stage).Any()) Directory.Delete(stage);
+        } catch (Exception error) {
+          Console.Error.WriteLine("Retained prepared update at " + stage + ": " + error.Message);
+          failed = true;
+        }
+      }
+    }
+    if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+    if (failed) Exit(1);
+  }
+
   // ---- runtime-cache: owned micromamba caches --------------------------------------------
 
   static void RuntimeCache() {
@@ -401,7 +470,7 @@ public static class UninstallHelper {
     var settingsPath = Path.Combine(profile, @".open-science\settings.json");
     if (File.Exists(settingsPath)) {
       try {
-        var dataRoot = AsString(Field(ReadJsonObject(settingsPath), "dataRoot"));
+        var dataRoot = AsString(Field(ReadJsonObject(settingsPath, SettingsDocumentBytes), "dataRoot"));
         if (dataRoot.Length > 0 && Path.IsPathRooted(dataRoot)) addRoot(Path.Combine(dataRoot, "runtime"));
       } catch { }
     }
@@ -780,7 +849,7 @@ public static class UninstallHelper {
       var dataRoot = "";
       var settingsPath = Path.Combine(configRoot, "settings.json");
       if (File.Exists(settingsPath)) {
-        var saved = Field(ReadJsonObject(settingsPath), "dataRoot");
+        var saved = Field(ReadJsonObject(settingsPath, SettingsDocumentBytes), "dataRoot");
         if (saved != null) {
           if (!(saved is string)) throw new InvalidDataException("The saved data location is not a path.");
           if (((string)saved).Trim().Length > 0) dataRoot = AbsolutePath((string)saved);

@@ -3,7 +3,11 @@ import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { runtimeModuleSpecifiers } from '../../../../../test/module-boundary-assertions'
-import type { FailureCategory, FailureReason } from '../../../../shared/failure/contract'
+import type {
+  ClassifiedFailure,
+  FailureCategory,
+  FailureReason
+} from '../../../../shared/failure/contract'
 import {
   formatNoticeDiagnostics,
   noticeCatalog,
@@ -59,7 +63,102 @@ it('does not repeat the displayed description when an operation uses it as its r
       'Optimize question',
       description
     )
-  ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
+  ).toEqual({
+    details: `Optimize question\n${description}\nrequestId: request-id`,
+    fullText: `Optimize question\n${description}\nrequestId: request-id`
+  })
+})
+
+it('shows only the recorded code when the request has no diagnostic body', () => {
+  const failure: ClassifiedFailure = { category: 'internal', diagnostics: { code: '-32603' } }
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Request failed',
+      ''
+    ).details
+  ).toBe('code: -32603')
+})
+
+it('keeps protocol metadata when the turn error is used as fallback detail', () => {
+  const failure: ClassifiedFailure = {
+    category: 'configuration',
+    reason: 'configuration/model-unavailable',
+    diagnostics: {
+      status: 400,
+      protocol: 'chat-completions',
+      requestId: 'request-id',
+      providerExcerpt: 'Provider rejected the request',
+      raw: 'Provider HTTP 400'
+    }
+  }
+  const details = formatNoticeDiagnostics(
+    { id: 'failure', source: 'turn', occurredAt: 0, failure },
+    'Model configuration needs attention',
+    'The selected model is unavailable. Select another model in Settings.'
+  ).details
+  expect(details).toContain('status: 400\n')
+  expect(details).toContain('protocol: chat-completions\n')
+  expect(details).toContain('requestId: request-id')
+})
+
+it('keeps an actionable title and body for an explicit provider status', () => {
+  const body = JSON.stringify({
+    error: {
+      type: 'upstream_error',
+      message: 'Insufficient Balance (request_id: request-402)',
+      status: 402
+    }
+  })
+  const failure: ClassifiedFailure = {
+    category: 'configuration',
+    reason: 'configuration/billing',
+    responseMessage: 'Insufficient Balance (request_id: request-402)',
+    diagnostics: { status: 402, raw: body }
+  }
+  expect(noticePresentation(failure).titleKey).toBe('Model provider quota needs attention')
+  expect(
+    formatNoticeDiagnostics(
+      { id: 'failure', source: 'turn', occurredAt: 0, failure },
+      'Model provider quota needs attention',
+      'Check the model provider plan, quota or account balance, then retry.'
+    ).details
+  ).toContain(body)
+})
+
+it.each<[ClassifiedFailure, string]>([
+  [
+    {
+      category: 'internal',
+      reason: 'internal/reconfigure',
+      diagnostics: { raw: 'Internal error: adapter reconfiguration failed' }
+    },
+    'Internal error: adapter reconfiguration failed'
+  ],
+  [
+    {
+      category: 'service',
+      reason: 'service/connection-failed',
+      diagnostics: { raw: 'Internal error: API Error: Unable to connect to API (ECONNREFUSED)' }
+    },
+    'Info: API Error: Unable to connect to API (ECONNREFUSED)'
+  ],
+  [
+    {
+      category: 'service',
+      diagnostics: {
+        status: 400,
+        protocol: 'responses',
+        providerExcerpt: 'Maximum call stack size exceeded'
+      }
+    },
+    'status: 400\nprotocol: responses\nInfo: Maximum call stack size exceeded'
+  ]
+])('shows the recorded diagnostic for %j', (failure, expected) => {
+  expect(
+    formatNoticeDiagnostics({ id: 'failure', source: 'turn', occurredAt: 0, failure }, 'Title', '')
+      .fullText
+  ).toBe('Title\n' + expected)
 })
 
 describe('composer notice boundaries', () => {
@@ -166,6 +265,16 @@ describe('composer notice boundaries', () => {
       noticePresentation({ category: 'service', reason: 'service/future-reason', diagnostics: {} })
     ).toBe(noticeCatalog.service)
   })
+})
+
+it('explains a reported stack overflow and offers a diagnostic export', () => {
+  const presentation = noticePresentation({
+    category: 'internal',
+    reason: 'internal/model-request-stack-overflow',
+    diagnostics: {}
+  })
+  expect(presentation.titleKey).toBe('Call stack limit reached during a model request')
+  expect(presentation.secondaryActions).toContain('export-diagnostics')
 })
 
 it('offers diagnostics and a fresh conversation for unknown effects, never a blind retry', () => {

@@ -11,6 +11,7 @@ describe('OS package file handoff', () => {
     relay.receive('/research.science')
     relay.receive('/unrelated.txt')
     expect(open).not.toHaveBeenCalled()
+    expect(relay.pendingPaths).toEqual(['/research.science'])
     relay.bind(open)
     relay.receive('/next.science')
     expect(open.mock.calls).toEqual([['/research.science'], ['/next.science']])

@@ -1,6 +1,6 @@
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
-import type { ConnectorsView } from '@/lib/settings-navigation'
+import type { ConnectorsView, SettingsRoute } from '@/lib/settings-navigation'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import type { CustomizeGoal } from '@/lib/customize-chat'
@@ -28,11 +28,14 @@ import {
 export type NavigationView = 'home' | 'library' | 'marketplace' | 'workspace'
 export type NavigationOrigin = 'user' | 'notification' | 'automatic'
 export type ResourceCenterResource = 'marketplace' | 'skills' | 'specialists' | 'connectors'
-export type ResourceCenterIntent =
+export type ResourceCenterIntent = {
+  settingsOrigin?: { view: NavigationView; route: SettingsRoute }
+} & (
   | { resource: 'marketplace' }
   | { resource: 'connectors'; view?: ConnectorsView }
   | { resource: 'skills'; skillId?: string }
   | { resource: 'specialists'; specialistId?: string; specialistKind?: 'builtin' | 'edit' }
+)
 
 // A compact list expands around its visible case, even when the grid changes column count.
 export type MarketplaceListSnapshot = {

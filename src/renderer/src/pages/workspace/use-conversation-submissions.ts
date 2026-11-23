@@ -1,14 +1,21 @@
 import { useCallback, useRef, useState } from 'react'
 
-type StopSubmissionState = Readonly<{
-  pending: boolean
-  error?: string
+type StopScope = Readonly<{
+  branchId?: string
+  subagentsOnly?: boolean
+  targets: readonly string[]
 }>
+
+type StopSubmissionState = Readonly<{ pending: boolean; scope?: StopScope; error?: string }>
 
 export type ConversationSubmissions = Readonly<{
   stopBySessionId: ReadonlyMap<string, StopSubmissionState>
   resumePendingSessionIds: ReadonlySet<string>
-  submitStop: (sessionId: string | undefined, action: () => void | Promise<void>) => void
+  submitStop: (
+    sessionId: string | undefined,
+    action: () => void | Promise<void>,
+    scope?: StopScope
+  ) => void
   submitResume: (sessionId: string | undefined, action: () => Promise<void>) => Promise<void>
 }>
 
@@ -21,18 +28,22 @@ export const useConversationSubmissions = (): ConversationSubmissions => {
   )
   const [resumePendingSessionIds, setResumePendingSessionIds] = useState(() => new Set<string>())
 
-  const settleStop = useCallback((sessionId: string, error?: string): void => {
+  const settleStop = useCallback((sessionId: string, error?: string, scope?: StopScope): void => {
     stopPendingIds.current.delete(sessionId)
     setStopBySessionId((current) => {
       const next = new Map(current)
-      if (error !== undefined) next.set(sessionId, { pending: false, error })
+      if (error !== undefined) next.set(sessionId, { pending: false, error, scope })
       else next.delete(sessionId)
       return next
     })
   }, [])
 
   const submitStop = useCallback(
-    (sessionId: string | undefined, action: () => void | Promise<void>): void => {
+    (
+      sessionId: string | undefined,
+      action: () => void | Promise<void>,
+      scope?: StopScope
+    ): void => {
       if (!sessionId || stopPendingIds.current.has(sessionId)) return
       stopPendingIds.current.add(sessionId)
       setStopBySessionId((current) => new Map(current).set(sessionId, { pending: true }))
@@ -40,7 +51,7 @@ export const useConversationSubmissions = (): ConversationSubmissions => {
       try {
         outcome = action()
       } catch (error) {
-        settleStop(sessionId, error instanceof Error ? error.message : String(error))
+        settleStop(sessionId, error instanceof Error ? error.message : String(error), scope)
         return
       }
       if (!outcome || typeof (outcome as Promise<void>).then !== 'function') {
@@ -50,7 +61,7 @@ export const useConversationSubmissions = (): ConversationSubmissions => {
       void outcome.then(
         () => settleStop(sessionId),
         (error: unknown) =>
-          settleStop(sessionId, error instanceof Error ? error.message : String(error))
+          settleStop(sessionId, error instanceof Error ? error.message : String(error), scope)
       )
     },
     [settleStop]

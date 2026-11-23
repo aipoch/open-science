@@ -101,7 +101,7 @@ describe('OpenScienceClient', () => {
     ])
   })
 
-  it('forwards explicit advisory review on explanation generation and revision', async () => {
+  it('forwards the advisory review compatibility option on explanation generation and revision', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => response(200, { data: {} }))
     const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'token', fetch })
     const scope = {

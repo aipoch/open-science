@@ -56,7 +56,7 @@ describe('Research Film CLI', () => {
     expect(() => parseCliArgs(['film', ...argv])).toThrow(CliUsageError)
   })
 
-  it('opts into advisory narration review only for explanation generation and revision', async () => {
+  it('accepts the advisory narration compatibility flag for explanation generation and revision', async () => {
     const client = {
       listProjects,
       startResearchFilm: vi.fn().mockResolvedValue({}),

@@ -8,6 +8,7 @@ import { preferredEndpoint } from '../../shared/settings-runtime'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import {
   createSkillRuntimeAcpServerConfig,
@@ -36,6 +37,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
     env: {}
   }),
   acceptsStdioMcp: false,
+  acceptsReviewerMcpSocket: true,
   supportsLiveEffortChange: false,
   supportedApiTypes: ['responses', 'messages', 'chat-completions'],
   spawn(input) {
@@ -55,6 +57,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         SystemRoot: process.env.SystemRoot,
         TEMP: process.env.TEMP,
         TMP: process.env.TMP,
+        ...nodeRuntimeEnvironment(),
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
       }
     })

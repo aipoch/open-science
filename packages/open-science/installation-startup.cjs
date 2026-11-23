@@ -44,6 +44,16 @@ function installationRootForEntry(entryPath) {
 }
 const REGISTRATION_NAME = /^([\da-f-]{36})\.(json|sqlite)$/
 const MAX_REAPED_PER_PASS = 200
+const installationHelperFlags = Object.freeze([
+  '--internal-agent-acp',
+  '--open-science-artifact-mcp',
+  '--open-science-image-mcp',
+  '--open-science-notebook-mcp',
+  '--open-science-reviewer-mcp-proxy',
+  '--open-science-skill-import-mcp',
+  '--open-science-skill-runtime-mcp',
+  '--open-science-plan-mcp'
+])
 // Caller MUST hold the coordinator lock: registrations are only created, probed and reclaimed under
 // it, so a free kernel lock here means the owner is gone and nobody can re-open the file meanwhile.
 // The pair is removed json first, so a reader never sees a registration without its lifetime lock.
@@ -82,7 +92,7 @@ function reapStaleRegistrations(directory, DatabaseSync = require('node:sqlite')
   }
   return reaped
 }
-function protectInstallationStartup(entryPath, configRoot, stateRoot) {
+function protectInstallationStartup(entryPath, configRoot, stateRoot, helperOwner) {
   // Loading node:sqlite emits an experimental warning on Node 22; ordinary CLI commands
   // must not load it and contaminate their machine-readable output.
   let DatabaseSync
@@ -116,19 +126,12 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot) {
       throw new Error('Installation update requires recovery before starting Open-Science.')
     reapStaleRegistrations(directory, DatabaseSync)
     let owner
-    const helperFlags = [
-      '--open-science-artifact-mcp',
-      '--open-science-notebook-mcp',
-      '--open-science-reviewer-mcp-proxy',
-      '--open-science-skill-import-mcp',
-      '--open-science-skill-runtime-mcp',
-      '--open-science-plan-mcp'
-    ]
     if (
-      helperFlags.some((flag) => process.argv.includes(flag)) &&
-      process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+      helperOwner ||
+      (installationHelperFlags.some((flag) => process.argv.includes(flag)) &&
+        process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
     ) {
-      const candidate = JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
+      const candidate = helperOwner ?? JSON.parse(process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
       const tokenHash = createHash('sha256').update(String(candidate.token)).digest('hex')
       for (const name of readdirSync(directory).filter((name) =>
         /^[\da-f-]{36}\.json$/.test(name)
@@ -202,4 +205,9 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot) {
   }
 }
 
-module.exports = { installationRootForEntry, protectInstallationStartup, reapStaleRegistrations }
+module.exports = {
+  installationHelperFlags,
+  installationRootForEntry,
+  protectInstallationStartup,
+  reapStaleRegistrations
+}

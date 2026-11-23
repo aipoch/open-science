@@ -5,13 +5,12 @@ import { expect, it, vi } from 'vitest'
 import {
   authorResearchFilmSource,
   createResearchFilmAuthor,
-  generateResearchFilm,
-  type ResearchFilmAuthor
+  generateResearchFilm
 } from './authoring.js'
-import { buildVideoTimeline, type VideoPanel, type VideoSpec } from './timeline.js'
+import { buildVideoTimeline, type VideoPanel } from './timeline.js'
 import { parseResearchVideoScreenplay } from './screenplay.js'
-import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 import { FILM_CLOSING_LINE } from './script-review.js'
+import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 
 const source = {
   sessionTitle: 'Evidence',
@@ -76,7 +75,12 @@ it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML b
       preparationMs: 2
     }))
     const issue = { scene: 'result', script: 'anims/result.js', message: 'Two labels overlap' }
-    const reviewPlayer = vi.fn().mockResolvedValueOnce([issue]).mockResolvedValueOnce([])
+    const reviewPlayer = vi
+      .fn()
+      .mockResolvedValueOnce([issue])
+      .mockResolvedValueOnce([
+        { scene: 'result', textLayout: false, message: 'Panel extends outside the safe area.' }
+      ])
     await generateResearchFilm({
       source,
       directory,
@@ -101,6 +105,67 @@ it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML b
     await rm(directory, { recursive: true, force: true })
   }
 })
+it.each([
+  { text: [5, 2, 2, 4], failures: [0, 0, 0, 0], invalidRevision: false },
+  { text: [0, 3, 3, 0], failures: [1, 0, 0, 1], invalidRevision: false },
+  { text: [0, 2, 0, 0], failures: [1, 0, 1, 0], invalidRevision: true }
+])(
+  'publishes the earliest best playable draft for %j',
+  async ({ text, failures, invalidRevision }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'film-best-layout-'))
+    let pass = 0
+    try {
+      const result = await generateResearchFilm({
+        source,
+        directory,
+        author: {
+          writeScreenplay: async () => JSON.stringify(spec),
+          writeAnimation: async () =>
+            invalidRevision && pass === 3 ? 'function (' : '// draft ' + (pass + 1)
+        },
+        generate: async ({ outputDirectory }) => {
+          ++pass
+          await mkdir(outputDirectory)
+          const playerPath = join(outputDirectory, 'player.html'),
+            sourcePath = join(outputDirectory, 'sources.zip')
+          await writeFile(playerPath, 'player ' + pass)
+          await writeFile(sourcePath, 'sources ' + pass)
+          return { playerPath, sourcePath, duration: pass, preparationMs: 1 }
+        },
+        reviewPlayer: async () => [
+          ...Array.from({ length: failures[pass - 1] }, () => ({
+            scene: 'hook',
+            script: 'anims/hook.js',
+            textLayout: false,
+            renderFailure: true as const,
+            message: 'Animation is blank.'
+          })),
+          ...Array.from({ length: text[pass - 1] }, (_, i) => ({
+            scene: 'hook',
+            script: 'anims/hook.js',
+            textLayout: true,
+            message: 'Overlapping label ' + i
+          }))
+        ],
+        signal: new AbortController().signal,
+        modelDirectory: 'model',
+        modelRevision: 'v',
+        engineDirectory: 'engine'
+      })
+      expect(pass).toBe(invalidRevision ? 3 : 4)
+      expect(result.duration).toBe(2)
+      expect(await readFile(result.playerPath, 'utf8')).toBe('player 2')
+      expect(await readFile(result.sourcePath, 'utf8')).toBe('sources 2')
+      expect(await readFile(join(directory, 'anims/hook.js'), 'utf8')).toBe('// draft 2')
+      await expect(readFile(join(directory, 'best-layout/video.json'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 it('replaces a failed session app with a drawing and rechecks later repairs', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'film-app-fallback-'))
   try {
@@ -193,127 +258,45 @@ it('repairs only the reported layout and preserves the narration and existing dr
   }
 })
 
-it('preserves repaired visuals while applying later narration and cue corrections', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'film-layout-narration-'))
+it.each([0, undefined])('finishes a valid screenplay with advisory score %s', async (score) => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-advisory-score-'))
   try {
-    const original: VideoSpec = {
+    const screenplay = {
       ...spec,
       scenes: [
         spec.scenes[0],
         {
-          id: 'result',
-          role: 'result',
-          msg: 0,
-          lines: [{ caption: 'The evidence remains uncertain.' }],
-          panels: [
-            {
-              type: 'stats',
-              total: 'Total',
-              total_at: '0:uncertain',
-              items: [{ value: '?', label: 'Evidence', at: '0:uncertain' }]
-            },
-            {
-              type: 'compare',
-              left: { title: 'Claim' },
-              right: { title: 'Evidence', at: '0:uncertain' }
-            }
-          ]
-        },
-        {
           ...spec.scenes[1],
-          lines: [{ caption: 'The evidence is uncertain.' }, { ...FILM_CLOSING_LINE }],
-          panels: [
-            { type: 'title', text: 'Keep the qualification', until: '1' },
-            { type: 'end_card', at: '1' }
-          ]
+          lines: [{ caption: 'The evidence remains uncertain.' }, FILM_CLOSING_LINE],
+          panels: [{ type: 'end_card', at: '1' }]
         }
       ]
     }
-    const repaired = structuredClone(original)
-    repaired.scenes[0].panels[0].text = 'Readable title'
-    repaired.scenes[0].lines[0].caption = 'Evidence?'
-    const rewritten = structuredClone(original)
-    rewritten.scenes[0].lines = [{ caption: 'What does the evidence establish?' }]
-    rewritten.scenes[1].lines = [{ caption: 'The evidence is inconclusive.' }]
-    rewritten.scenes[1].panels[0].total_at = '0:inconclusive'
-    rewritten.scenes[1].panels[0].items![0].at = '0:inconclusive'
-    rewritten.scenes[1].panels[0].items![0].value = 'Unrequested new value'
-    rewritten.scenes[1].panels[1].right!.at = '0:inconclusive'
-    rewritten.scenes[1].panels[1].right!.title = 'Unrequested new label'
-    rewritten.scenes[2].lines.unshift({ caption: 'The result needs another check.' })
-    rewritten.scenes[2].panels[0].until = '2'
-    rewritten.scenes[2].panels[1].at = '2'
-    const memory = new Map([['screenplay', JSON.stringify(original)]])
-    const checkpoint = {
-      read: async (key: string) => memory.get(key),
-      save: async (key: string, value: string) => {
-        memory.set(key, value)
-      }
-    }
-    const writeScreenplay = vi
-      .fn()
-      .mockResolvedValueOnce(JSON.stringify(repaired))
-      .mockResolvedValue(JSON.stringify(rewritten))
-    const reviewScript = vi.fn<NonNullable<ResearchFilmAuthor['reviewScript']>>(
-      async (_source, narration) =>
-        JSON.stringify({
-          spine:
-            narration[0].lines[0].caption === repaired.scenes[0].lines[0].caption
-              ? 'Ask a clear opening question.'
-              : null,
-          catch: null,
-          thread: null,
-          audioOnly: null,
-          numbers: null,
-          plainWords: null,
-          lineCraft: null,
-          clean: null,
-          true: null
-        })
+    const writeScreenplay = vi.fn().mockResolvedValue(JSON.stringify(screenplay))
+    const reviewScript = vi.fn().mockResolvedValue(
+      score === undefined
+        ? 'unscorable'
+        : JSON.stringify({
+            spine: 'Missing question.',
+            catch: 'No twist.',
+            thread: 'Unclear transition.',
+            audioOnly: 'Name the scores.',
+            numbers: 'Explain the units.',
+            plainWords: 'Explain the term.',
+            lineCraft: 'Shorten the line.',
+            clean: 'Remove filler.',
+            true: 'Check the claim.'
+          })
     )
-    const generate = vi.fn(async () => ({
-      playerPath: 'player.html',
-      sourcePath: 'sources.zip',
-      duration: 4,
-      preparationMs: 1
-    }))
-    const reviewPlayer = vi
-      .fn()
-      .mockResolvedValueOnce([
-        { scene: 'hook', line: 0, message: 'Make the title and opening caption fit.' }
-      ])
-      .mockResolvedValueOnce([])
-    const result = await generateResearchFilm({
+    const result = await authorResearchFilmSource({
       source,
       directory,
       author: { writeScreenplay, reviewScript, writeAnimation: async () => '// drawing' },
-      checkpoint,
-      generate,
-      reviewPlayer,
-      signal: new AbortController().signal,
-      modelDirectory: 'model',
-      engineDirectory: 'engine',
-      modelRevision: 'v'
+      signal: new AbortController().signal
     })
-    const saved = JSON.parse(await readFile(join(directory, 'video.json'), 'utf8')) as VideoSpec
-    expect(saved.scenes[0].panels).toEqual(repaired.scenes[0].panels)
-    expect(saved.scenes.map((scene) => scene.lines)).toEqual(
-      rewritten.scenes.map((scene) => scene.lines)
-    )
-    expect(saved.scenes[1].panels[0].items).toEqual([
-      { value: '?', label: 'Evidence', at: '0:inconclusive' }
-    ])
-    expect(saved.scenes[1].panels[1].right).toEqual({ title: 'Evidence', at: '0:inconclusive' })
-    expect(saved.scenes[2].panels).toEqual(rewritten.scenes[2].panels)
-    expect(JSON.parse(memory.get('screenplay')!)).toMatchObject({ scenes: saved.scenes })
-    expect(JSON.parse(writeScreenplay.mock.calls[1][2].draft).scenes[0].panels).toEqual(
-      repaired.scenes[0].panels
-    )
-    expect(writeScreenplay).toHaveBeenCalledTimes(2)
-    expect(reviewScript).toHaveBeenCalledTimes(3)
-    expect(generate).toHaveBeenCalledTimes(2)
-    expect(reviewPlayer).toHaveBeenCalledTimes(2)
-    expect(result.scriptScore).toBe(9)
+    expect(result.scriptScore).toBe(score)
+    expect(writeScreenplay).toHaveBeenCalledOnce()
+    expect(reviewScript).toHaveBeenCalledOnce()
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -347,8 +330,8 @@ it('uses the default comparison reveal for malformed timing while preserving con
   expect(() => parse({ at: 'after the first line' })).toThrow()
 })
 
-it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'visual failure'])(
-  'keeps only the narration score advisory (%s)',
+it.each(['provider error', 'unsafe cleanup', 'visual failure'])(
+  'propagates failures outside advisory scoring quality (%s)',
   async (outcome) => {
     const directory = await mkdtemp(join(tmpdir(), 'film-advisory-review-'))
     try {
@@ -357,6 +340,7 @@ it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'vi
       Object.assign(story.scenes[1].panels[0], { at: '1' })
       const unsafe = new Error('Model worker cleanup is unconfirmed.')
       const visual = new Error('The browser checker is unavailable.')
+      const provider = new Error('Scoring provider unavailable.')
       const report = JSON.stringify({
         spine: 'Strengthen the opening question.',
         catch: null,
@@ -372,8 +356,7 @@ it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'vi
       const reviewScript = vi.fn(async () => {
         sequence.push('score')
         if (outcome === 'unsafe cleanup') throw unsafe
-        if (outcome === 'provider error') throw new Error('Scoring provider unavailable.')
-        if (outcome === 'malformed score') return 'Malformed scorer response'
+        if (outcome === 'provider error') throw provider
         return report
       })
       const reviewPlayer = vi.fn(async () => {
@@ -387,8 +370,6 @@ it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'vi
         directory,
         signal: new AbortController().signal,
         author: { writeScreenplay, reviewScript, writeAnimation: async () => '// drawing' },
-        narrationReview: 'advisory',
-        isFatalNarrationReviewError: (error) => error === unsafe,
         generate: async () => ({
           playerPath: 'player.html',
           sourcePath: 'sources.zip',
@@ -400,16 +381,88 @@ it.each(['low score', 'provider error', 'malformed score', 'unsafe cleanup', 'vi
         engineDirectory: 'engine',
         modelRevision: 'v'
       })
-      if (outcome === 'visual failure') await expect(run).rejects.toBe(visual)
-      else if (outcome === 'unsafe cleanup') await expect(run).rejects.toBe(unsafe)
-      else expect((await run).scriptScore).toBe(outcome === 'low score' ? 8 : undefined)
+      await expect(run).rejects.toBe(
+        outcome === 'visual failure' ? visual : outcome === 'unsafe cleanup' ? unsafe : provider
+      )
       expect(writeScreenplay).toHaveBeenCalledOnce()
-      expect(sequence).toEqual(outcome === 'visual failure' ? ['visual'] : ['visual', 'score'])
+      expect(sequence).toEqual(outcome === 'visual failure' ? ['score', 'visual'] : ['score'])
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
   }
 )
+
+it('retains the confirmed feedback and previous draft when reauthoring a failed film', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-feedback-'))
+  try {
+    const previousDraft = JSON.stringify(spec)
+    const writeScreenplay = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ ...spec, title: 'Qualified evidence' }))
+    const readPreviousDraft = vi.fn().mockResolvedValue(previousDraft)
+    await expect(
+      authorResearchFilmSource({
+        source,
+        directory,
+        author: { writeScreenplay, writeAnimation: async () => '// drawing' },
+        signal: new AbortController().signal,
+        revisionGuidance: {
+          feedback: 'Keep the uncertainty in the title.',
+          findings: ['The original title was too strong.'],
+          readPreviousDraft
+        }
+      })
+    ).resolves.toMatchObject({ title: 'Qualified evidence' })
+    expect(writeScreenplay.mock.calls[0][2]).toEqual({
+      draft: previousDraft,
+      error: expect.stringContaining('Keep the uncertainty in the title.')
+    })
+    expect(writeScreenplay.mock.calls[0][2].error).toContain('The original title was too strong.')
+    expect(readPreviousDraft).toHaveBeenCalledExactlyOnceWith('screenplay')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('reports exhausted unranked visual checks even after keeping an earlier ranked draft', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-unranked-review-'))
+  try {
+    const reviewPlayer = vi
+      .fn()
+      .mockResolvedValueOnce([{ scene: 'hook', textLayout: true, message: 'Overlapping label.' }])
+      .mockResolvedValue([
+        { scene: 'hook', message: 'The player did not expose its required stage.' }
+      ])
+    const run = generateResearchFilm({
+      source,
+      directory,
+      author: {
+        writeScreenplay: async () => JSON.stringify(spec),
+        writeAnimation: async () => '// drawing'
+      },
+      generate: async ({ outputDirectory }) => {
+        await mkdir(outputDirectory)
+        const playerPath = join(outputDirectory, 'player.html')
+        const sourcePath = join(outputDirectory, 'sources.zip')
+        await writeFile(playerPath, 'player')
+        await writeFile(sourcePath, 'sources')
+        return { playerPath, sourcePath, duration: 4, preparationMs: 1 }
+      },
+      reviewPlayer,
+      signal: new AbortController().signal,
+      modelDirectory: 'model',
+      modelRevision: 'v',
+      engineDirectory: 'engine'
+    })
+    await expect(run).rejects.toMatchObject({
+      stage: 'visual',
+      findings: ['hook: The player did not expose its required stage.']
+    })
+    expect(reviewPlayer).toHaveBeenCalledTimes(4)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 it('preserves a long verdict and gives its remaining pages time before the next narration', () => {
   const text = 'The measured difference remains uncertain. '.repeat(8) + '不能据此得出因果结论。'

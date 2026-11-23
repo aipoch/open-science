@@ -16,6 +16,7 @@ import {
   createVideoExportTools,
   researchFilmResources,
   ResearchFilmOutputLimitError,
+  ResearchFilmDraftError,
   ResearchFilmIncompleteError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
@@ -47,15 +48,16 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
-import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
+import {
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
+} from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
 import {
   assertHeadlessResearchFilmReady,
   checkHeadlessResearchFilmHtml
 } from '../research-video/headless-review'
 import { FilmDraftVisualError } from '../research-video/player-review'
-import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
-import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
@@ -146,6 +148,7 @@ export async function composeResearchFilm({
     profileNamespace: 'research-video',
     requireConfirmedCleanup: true,
     allowNativeCodexSubscription: true,
+    allowCodeBuddySubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
@@ -154,7 +157,6 @@ export async function composeResearchFilm({
   ): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
-    supportsImages: boolean
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
@@ -166,7 +168,6 @@ export async function composeResearchFilm({
     const model = target.model.kind === 'required' ? target.model.id : provider.model
     return {
       target,
-      supportsImages: provider.supportsImageInput,
       budget: researchFilmInputBudget(provider, model),
       count: researchFilmTokenCounter({
         ...target,
@@ -213,8 +214,7 @@ export async function composeResearchFilm({
     source: ResearchVideoSessionSource,
     systemPrompt: string,
     payload: unknown,
-    signal: AbortSignal,
-    images?: AcpMessageImage[]
+    signal: AbortSignal
   ): Promise<string> => {
     signal.throwIfAborted()
     const targetDeadline = AbortSignal.timeout(30_000)
@@ -257,16 +257,14 @@ export async function composeResearchFilm({
               ? 'screenplay'
               : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
                 ? 'script-review'
-                : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
-                  ? 'visual-review'
-                  : 'animation',
+                : 'animation',
         purpose: correction ? 'correction' : undefined,
         frameworkId: target.frameworkId,
         providerId: target.providerId
       }
       try {
         filmLog.info('film model request', fields)
-        const modelDeadline = AbortSignal.timeout(300_000)
+        const modelDeadline = AbortSignal.timeout(RESEARCH_FILM_MODEL_TIMEOUT_MINUTES * 60_000)
         const inferenceSignal = AbortSignal.any([signal, modelDeadline])
         const response = await Promise.resolve()
           .then(() =>
@@ -274,7 +272,6 @@ export async function composeResearchFilm({
               target,
               prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
               systemPrompt,
-              images,
               agentName:
                 source.provenance.mode === 'operation-replay'
                   ? 'Operation replay'
@@ -322,7 +319,10 @@ export async function composeResearchFilm({
                 signal
               )
             signal.throwIfAborted()
-            if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
+            if (timedOut)
+              throw new ResearchFilmDraftError(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, {
+                cause: error
+              })
             throw error
           })
         filmLog.info('film model response', {
@@ -350,6 +350,7 @@ export async function composeResearchFilm({
             signal
           )
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && response.stopReason === 'refusal') return ''
         if (response.stopReason === 'max_tokens')
           throw new ResearchFilmOutputLimitError(
             'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
@@ -370,6 +371,7 @@ export async function composeResearchFilm({
         return response.text
       } catch (error) {
         signal.throwIfAborted()
+        if (fields.phase === 'script-review' && error instanceof ResearchFilmDraftError) return ''
         const used = automaticRetries.get(source) ?? 0
         if (!retryable || attempt >= 1 || used >= 2) throw error
         // Reserve synchronously: parallel animation lanes share one allowance.
@@ -387,45 +389,6 @@ export async function composeResearchFilm({
   }
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
-  const reviewPlayer =
-    (
-      check: NonNullable<ReturnType<typeof desktopFileInteraction>['checkResearchVideoHtml']>,
-      headless = false
-    ): NonNullable<Parameters<typeof createResearchVideoPresentationOwner>[0]['reviewPlayer']> =>
-    async (source, htmlPath, spec, signal) => {
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
-      let review: Awaited<ReturnType<typeof check>>
-      try {
-        review = await check({ htmlPath, includeFrames: supportsImages }, signal)
-      } catch (error) {
-        signal.throwIfAborted()
-        if (!headless || !(error instanceof FilmDraftVisualError)) throw error
-        return [{ scene: error.scene ?? spec.scenes[0]?.id ?? 'scene-1', message: error.message }]
-      }
-      signal.throwIfAborted()
-      const { issues, frames } = review
-      filmLog.info('film HTML checked', {
-        ...currentFilmAttempt(),
-        issues: issues.length,
-        frames: frames.length
-      })
-      if (issues.length || !supportsImages) return issues
-      if (
-        frames.length !== spec.scenes.length ||
-        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
-      )
-        throw new Error('The Film browser returned incomplete review frames.')
-      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
-        inferResearchVideo(
-          source,
-          FILM_VISUAL_REVIEW_PROMPT,
-          { frames: positions, correction },
-          signal,
-          images
-        )
-      )
-    }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
@@ -538,12 +501,27 @@ export async function composeResearchFilm({
       )
       return result.response === 1
     },
-    reviewPlayer: reviewPlayer((request, signal) => {
+    reviewPlayer: async (_source, htmlPath, _spec, signal) => {
       const check = desktopFileInteraction().checkResearchVideoHtml
       if (!check) throw new Error('The desktop HTML film checker is unavailable.')
-      return check(request, signal)
-    }),
-    reviewPlayerHeadless: reviewPlayer(checkHeadlessResearchFilmHtml, true),
+      const { issues } = await check({ htmlPath, includeFrames: false }, signal)
+      signal.throwIfAborted()
+      filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+      return issues
+    },
+    reviewPlayerHeadless: async (_source, htmlPath, spec, signal) => {
+      try {
+        const issues = await checkHeadlessResearchFilmHtml(htmlPath, signal)
+        signal.throwIfAborted()
+        filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+        return issues
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!(error instanceof FilmDraftVisualError)) throw error
+        // An invalid player contract is a review failure, never a ranked layout candidate.
+        return [{ scene: error.scene ?? spec.scenes[0]?.id ?? 'scene-1', message: error.message }]
+      }
+    },
     checkHeadlessReadiness: assertHeadlessResearchFilmReady,
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,

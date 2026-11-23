@@ -9,6 +9,7 @@ import { stripVTControlCharacters } from 'node:util'
 
 import type {
   ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityFailedStep,
   ArtifactReproducibilityReceiptComparison
 } from './evidence'
 import type {
@@ -29,7 +30,12 @@ import type {
   NotebookReproductionStep
 } from './ports'
 import { limitUtf8 } from './text'
-import { CHILD_UNCONFIRMED, isChildUnconfirmedError } from '@aipoch/environment'
+import {
+  CHILD_UNCONFIRMED,
+  environmentChildCleanup,
+  isChildUnconfirmedError,
+  type EnvironmentChildCleanup
+} from '@aipoch/environment'
 import { redactRuntimeDiagnosticText } from '@aipoch/diagnostics/node'
 import { notebookHelperEvidenceKey } from './helper-identity'
 import { createReproductionRecipes } from './recipe'
@@ -74,7 +80,11 @@ type ArtifactReproducibilityExecutionEvent =
   | { type: 'environment-output'; entry: ArtifactReproducibilityCheckLog }
   | { type: 'environments-restored'; count: number }
   | { type: 'step-started'; stepId: string; index: number; total: number }
-  | { type: 'step-output'; entries: ArtifactReproducibilityCheckLog[] }
+  | {
+      type: 'step-output'
+      entries: ArtifactReproducibilityCheckLog[]
+      failedStep?: ArtifactReproducibilityFailedStep
+    }
   | { type: 'step-completed'; stepId: string; index: number; total: number }
   | { type: 'output-compared'; comparison: ArtifactReproducibilityOutputComparison }
   | { type: 'attempt-completed'; matched: boolean }
@@ -91,6 +101,11 @@ type ExecuteArtifactReproducibilityInput = {
   evidence: ReproductionEvidence
   signal?: AbortSignal
   onEvent?: (event: ArtifactReproducibilityExecutionEvent) => void
+  // Transient ownership handoff; never serialized into a recipe, receipt or attempt marker.
+  onCleanupRetained?: (
+    cleanup: () => Promise<{ reaped: boolean }>,
+    child?: EnvironmentChildCleanup
+  ) => void
   retainOutput?: (bytes: Buffer) => Promise<boolean>
   comparisonPolicy?: OutputComparisonPolicy
 }
@@ -116,7 +131,8 @@ export const createReproductionExecutor = (options: {
 
   const reproductionLogs = (
     step: NotebookReproductionStep,
-    result: Awaited<ReturnType<NotebookReproductionRuntime['execute']>>
+    result: Awaited<ReturnType<NotebookReproductionRuntime['execute']>>,
+    failedStep?: ArtifactReproducibilityFailedStep
   ): ArtifactReproducibilityCheckLog[] => {
     const stderr =
       result.traceback && !result.stderr.includes(result.traceback)
@@ -125,7 +141,7 @@ export const createReproductionExecutor = (options: {
     return (
       [
         ['stdout', result.stdout],
-        ['stderr', stderr]
+        ['stderr', failedStep ? [failedStep.execution, stderr].filter(Boolean).join(': ') : stderr]
       ] as const
     ).flatMap(([stream, text]) => {
       if (!text) return []
@@ -464,8 +480,17 @@ export const createReproductionExecutor = (options: {
           helperModules: helpersForRun(run, input.execution.helperModules),
           signal: input.signal
         })
-        const logEntries = reproductionLogs(step, result)
-        if (logEntries.length > 0) input.onEvent?.({ type: 'step-output', entries: logEntries })
+        const failedStep =
+          result.status !== 'completed' && result.recovery
+            ? { stepId: step.stepId, runIndex: step.runIndex, execution: result.recovery.execution }
+            : undefined
+        const logEntries = reproductionLogs(step, result, failedStep)
+        if (logEntries.length > 0)
+          input.onEvent?.({
+            type: 'step-output',
+            entries: logEntries,
+            ...(failedStep ? { failedStep } : {})
+          })
         if (result.status !== 'completed') {
           const diagnostic = result.stderr || result.traceback
           throw new Error(
@@ -573,8 +598,45 @@ export const createReproductionExecutor = (options: {
       : { reaped: true }
     const retainedMarker = await readFile(markerPath, 'utf8').catch(() => undefined)
     if (!shutdown.reaped || retainedMarker !== marker || isChildUnconfirmedError(executionError)) {
+      const childCleanup = environmentChildCleanup(executionError)
+      let retrying: Promise<{ reaped: boolean }> | undefined
+      input.onCleanupRetained?.(() => {
+        if (retrying) return retrying
+        const retry = (async (): Promise<{ reaped: boolean }> => {
+          // A kernel cannot establish a failed installer's tree identity or exit. Retry both original
+          // owners, and retain the attempt when the old error has no genuine installer capability.
+          const stopped = await Promise.allSettled([
+            Promise.resolve().then(() => (runtime ? runtime.shutdown() : { reaped: true })),
+            Promise.resolve().then(() =>
+              childCleanup
+                ? childCleanup.release()
+                : {
+                    reaped: !isChildUnconfirmedError(executionError)
+                  }
+            )
+          ])
+          if (
+            stopped.some((result) => result.status === 'rejected' || !result.value.reaped) ||
+            (await readFile(markerPath, 'utf8').catch(() => undefined)) !== marker
+          )
+            return { reaped: false }
+          await rm(attemptRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+          return { reaped: true }
+        })()
+        retrying = retry
+        void retry.then(
+          (result) => {
+            if (!result.reaped && retrying === retry) retrying = undefined
+          },
+          () => {
+            if (retrying === retry) retrying = undefined
+          }
+        )
+        return retry
+      }, childCleanup)
       throw new Error(
-        `${CHILD_UNCONFIRMED}: Reproducibility kernel teardown could not be confirmed; attempt retained.`
+        `${CHILD_UNCONFIRMED}: Reproducibility kernel teardown could not be confirmed; attempt retained.`,
+        executionError === undefined ? undefined : { cause: executionError }
       )
     }
     try {

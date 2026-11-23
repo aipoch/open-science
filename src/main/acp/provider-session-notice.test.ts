@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 
 import type { SessionNotification } from '@agentclientprotocol/sdk'
@@ -9,6 +8,7 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { normalizeProviderSessionNotice } from './provider-session-notice'
 import { toAcpRuntimeEvent } from './runtime-events'
+import { externalAcpAvailable, externalAcpFile } from '../../../test/acp-agent-runtime'
 
 const legacyWarning =
   'Warning: Falling back from WebSockets to HTTPS transport. request timed out\n\n'
@@ -192,7 +192,7 @@ describe('provider session notice provenance', () => {
     }
   })
 
-  it.each(
+  it.runIf(externalAcpAvailable('claude')).each(
     (
       [
         ['info', 'SDK informational detail', 'info', false],
@@ -218,11 +218,7 @@ describe('provider session notice provenance', () => {
     async ({ level, expectedText, expectedLevel, preventsContinuation, negotiated }) => {
       // Execute the installed adapter's real branch with only its two local inputs. This neither
       // imports the SDK nor creates a session; source-shape changes must trigger test review.
-      const require = createRequire(import.meta.url)
-      const source = readFileSync(
-        require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'),
-        'utf8'
-      )
+      const source = readFileSync(externalAcpFile('claude', 'acp-agent.js'), 'utf8')
       const start = source.indexOf('case "informational": {')
       const end = source.indexOf('case "hook_started":', start)
       expect(start).toBeGreaterThan(-1)
@@ -289,7 +285,7 @@ describe('provider session notice provenance', () => {
     }
   )
 
-  it.each([
+  it.runIf(externalAcpAvailable('claude')).each([
     { typed: false, negotiated: false },
     { typed: false, negotiated: true },
     { typed: true, negotiated: false },
@@ -297,11 +293,7 @@ describe('provider session notice provenance', () => {
   ])(
     'preserves Claude model fallback routing (typed=$typed, negotiated=$negotiated)',
     async ({ typed, negotiated }) => {
-      const require = createRequire(import.meta.url)
-      const source = readFileSync(
-        require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'),
-        'utf8'
-      )
+      const source = readFileSync(externalAcpFile('claude', 'acp-agent.js'), 'utf8')
       const start = source.indexOf('case "model_refusal_fallback": {')
       const end = source.indexOf('case "model_refusal_no_fallback":', start)
       expect(start).toBeGreaterThan(-1)
@@ -369,14 +361,10 @@ describe('provider session notice provenance', () => {
     }
   )
 
-  it.each([false, true])(
+  it.runIf(externalAcpAvailable('claude')).each([false, true])(
     'scopes Claude fast-mode markers to negotiated callers: %s',
     async (negotiated) => {
-      const require = createRequire(import.meta.url)
-      const source = readFileSync(
-        require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'),
-        'utf8'
-      )
+      const source = readFileSync(externalAcpFile('claude', 'acp-agent.js'), 'utf8')
       const start = source.indexOf('    async syncFastModeState(')
       const end = source.indexOf('    async getOrCreateSession(', start)
       expect(start).toBeGreaterThan(-1)

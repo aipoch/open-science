@@ -298,13 +298,12 @@ current failure. A revision goes through review again. `cancelResearchFilm(branc
 cancellation explicitly. A request timeout ends the client request, so read status before repeating
 a start, revision, or cancellation whose outcome is uncertain.
 
-For Research explanation, pass `narrationReview: 'advisory'` on a fresh `startResearchFilm` or
-on `reviseResearchFilm` to make the narration score advisory. Chromium checks, screenshot review
-when supported, and player integrity checks still apply. The service assesses the final narration
-once after visual review and includes `result.scriptScore` when it obtains a valid score. A fresh
-generation defaults to requiring 9/9 narration review. A revision or explicit resume inherits
-the pending attempt's policy when the option is omitted. Operation replay uses its own recorded-evidence
-checks.
+Research explanation uses advisory narration scoring. `result.scriptScore` can be a number from
+0 to 9 and may be absent if the scoring model does not provide a valid result. Chromium checks the
+player in portrait and landscape. After bounded repairs, a completed attempt can publish its best
+playable candidate with remaining layout defects. Screenplay structure and player integrity checks
+remain required. `narrationReview: 'advisory'` is accepted on explanation start and revision requests
+for compatibility. Operation replay uses its own recorded-evidence checks.
 
 Once the current attempt has published a player, use
 `downloadResearchFilm({ ...branch, filmId: status.result.id })` to receive the HTML `Response`.

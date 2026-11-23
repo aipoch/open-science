@@ -15,7 +15,7 @@ The intended workflow starts with a research Run, uses its Session to identify a
 
 ## Baseline
 
-Open Science 1.3.0 at official commit `69df576af5b2bd1d25bbea2b5d78f99615011e82`. Development branch `codex/research-film-sdk-cli`.
+Initial baseline was Open Science 1.3.0 at official commit `69df576af5b2bd1d25bbea2b5d78f99615011e82`. Development branch `feat/research-film-sdk-cli` incorporates the upstream change to advisory narration scoring and best playable candidate selection. [Upstream quality review change](https://github.com/aipoch/open-science/pull/4468)
 
 At the baseline commit, Research Film generation and MP4 export were desktop operations. The explanation flow used the desktop HTML renderer for visual checks. Both modes used the desktop frame-capture pipeline for MP4 export. [Generation composition](https://github.com/aipoch/open-science/blob/69df576af5b2bd1d25bbea2b5d78f99615011e82/src/main/composition/research-film.ts#L479-L523) · [MP4 export implementation](https://github.com/aipoch/open-science/blob/69df576af5b2bd1d25bbea2b5d78f99615011e82/src/main/research-video/export-electron.ts#L148-L218)
 
@@ -25,17 +25,17 @@ The baseline pipeline supported bounded automatic repairs and desktop checkpoint
 
 ### Feedback flow
 
-1. After automatic repairs are exhausted, preserve a structured diagnostic with the failed review stage, actionable findings and a reference to the failed attempt. The CLI and SDK can read it after reconnecting. Distinguish a failed review from setup, transport and cancellation outcomes.
+1. When validation blocks publication after automatic repairs, preserve a structured diagnostic with the failed review stage, actionable findings and a reference to the failed attempt. The CLI and SDK can read it after reconnecting. Distinguish a failed review from setup, transport and cancellation outcomes.
 2. The user discusses the diagnostic with the calling agent. The agent submits revision instructions through the CLI or SDK against the specific failed attempt. The film author receives those instructions and the relevant review findings for the same branch, mode and frozen source. Reject stale or mismatched attempts.
-3. Run the applicable film checks again after revision. Publish the HTML only when they pass. If review fails again, expose the updated findings for another feedback round. Keep any previously published film available until a revision passes.
+3. Run the applicable film checks again after revision. Publish an eligible player under the same review rules. If validation still blocks publication, expose the updated findings for another feedback round. Keep any previously published film available until a replacement is published.
 
 The calling agent owns the user conversation and relays the diagnostic and revision instructions through the selected interface. The initial release accepts feedback for failed reviews. Requests to revise an already published player are outside this release.
 
-Callers can opt into advisory narration scoring when starting a headless Research explanation or revising a failed review. Browser layout checks, applicable model screenshot review and integrity checks still gate publication. After they pass, one advisory assessment reports a score when available. A revision or resume inherits the pending attempt's policy when the caller omits the option. A fresh generation defaults to requiring 9/9 narration review.
+Research explanation reports an advisory narration score from 0 to 9 when available. The public SDK option and CLI flag for advisory scoring remain accepted for compatibility. Headless Chromium checks portrait and landscape without a separate model screenshot review. After bounded repairs the service may publish its best playable candidate with remaining layout defects. Required screenplay and player integrity checks still apply. Saved failures from the earlier narration review policy remain eligible for revision.
 
 ## Acceptance
 
 - With the desktop application closed, start each film mode for a scoped conversation branch, check progress and download the self-contained HTML player using the SDK or CLI. The explanation flow uses a sandboxed local Chromium browser for portrait and landscape checks. Replay keeps the existing evidence-order validation.
-- Inject an exhausted review failure and recover its stage, attempt ID and findings after reconnecting. Submit feedback for that exact attempt, confirm the author receives it and verify the revised player passes the mode's review before publication. A stale attempt returns `film_review_conflict`. A second failure provides a new attempt ID and findings.
+- Inject a blocking validation failure and recover its stage, attempt ID and findings after reconnecting. Submit feedback for that exact attempt, confirm the author receives it and verify the new player is eligible under the mode's review rules before publication. A stale attempt returns `film_review_conflict`. A second failure provides a new attempt ID and findings.
 - A failed revision leaves an earlier published player available. Downloads require the published film ID and return the HTML as an attachment. The service keeps its native paths and the pending draft private.
 - Use the matching local service profile with bearer authentication. An explanation requires a sandbox-capable Chrome, Chromium or Microsoft Edge installation. Both modes require the existing narration model and an eligible source branch.

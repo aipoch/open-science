@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
-  writeWithResearchFilmCorrection,
-  type FilmAuthoringCheckpoint,
-  type ResearchFilmCorrection
+  ResearchFilmIncompleteError,
+  type FilmAuthoringCheckpoint
 } from './authoring-correction.js'
 import type { VideoScene, VideoSpec } from './timeline.js'
 
@@ -120,31 +119,39 @@ function scriptWarnings(narration: FilmNarration): string[] {
 
 export async function scoreFilmScript(
   spec: VideoSpec,
-  write: (
-    narration: FilmNarration,
-    warnings: string[],
-    correction?: ResearchFilmCorrection
-  ) => Promise<string>,
+  write: (narration: FilmNarration, warnings: string[]) => Promise<string>,
   signal: AbortSignal,
-  checkpoint?: FilmAuthoringCheckpoint,
-  { allowCorrection = true } = {}
-): Promise<{ score: number; findings: string[] }> {
+  checkpoint?: FilmAuthoringCheckpoint
+): Promise<{ score: number; findings: string[] } | undefined> {
   const narration = filmNarration(spec)
   const key =
     'script-rubric-v1:' + createHash('sha256').update(JSON.stringify(narration)).digest('hex')
-  const warnings = scriptWarnings(narration)
-  const parse = (raw: string): z.infer<typeof reviewSchema> =>
-    reviewSchema.parse(JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1')))
-  const report = allowCorrection
-    ? await writeWithResearchFilmCorrection(
-        (correction) => write(narration, warnings, correction),
-        parse,
-        signal,
-        checkpoint,
-        key
-      )
-    : parse(await write(narration, warnings))
+  const parse = (raw: string): z.infer<typeof reviewSchema> | undefined => {
+    try {
+      return reviewSchema.safeParse(
+        JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1'))
+      ).data
+    } catch {
+      return undefined
+    }
+  }
+  const saved = await checkpoint?.read(key)
   signal.throwIfAborted()
+  let report = saved === undefined ? undefined : parse(saved)
+  if (!report) {
+    let raw: string
+    try {
+      raw = await write(narration, scriptWarnings(narration))
+    } catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof ResearchFilmIncompleteError) return undefined
+      throw error
+    }
+    signal.throwIfAborted()
+    report = parse(raw)
+    if (!report) return undefined
+    await checkpoint?.save(key, raw)
+  }
   const introduction = agentIntroductionIssue(narration)
   if (introduction) report.clean = [introduction, report.clean].filter(Boolean).join(' ')
   const findings = criteria.filter((k) => report[k] !== null).map((k) => k + ': ' + report[k])

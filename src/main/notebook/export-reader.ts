@@ -3,7 +3,7 @@ import type {
   ExportNotebookKernelRequest,
   NotebookRunDocument
 } from '../../shared/notebook'
-import { resolveDataKernelForTab } from '../../shared/notebook'
+import { createNotebookFrameRunFilter, resolveDataKernelForTab } from '../../shared/notebook'
 import { resolveProjectId } from '../../shared/project-scope'
 import { runDocumentToIpynbByKernel, runDocumentToIpynbForKernel } from './ipynb-export'
 import type { NotebookRunRepository } from './repository'
@@ -84,7 +84,9 @@ class NotebookExportReader {
         ? sessionRuns
         : request.agentFrameFilter === null
           ? sessionRuns.filter((run) => !run.agentFrameId)
-          : sessionRuns.filter((run) => run.agentFrameId === request.agentFrameFilter)
+          : sessionRuns.filter(
+              createNotebookFrameRunFilter(request.sessionId, request.agentFrameFilter, sessionRuns)
+            )
     return { ...document, runs }
   }
 }

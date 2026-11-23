@@ -10,8 +10,7 @@ import {
   researchFilmReviewFailureSchema,
   researchFilmRevisionSchema,
   type ResearchFilmMode,
-  type ResearchFilmNarrationReview,
-  type ResearchVideoPresentation
+  type ResearchFilmNarrationReview
 } from '../../shared/research-video-presentation'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { hasResearchFilmOutputs, researchFilmReceiptSchema } from './stored-presentation'
@@ -90,8 +89,7 @@ export const digestFilmInput = (value: string): string =>
 /** Changing the review rules invalidates unpublished builds without changing published receipts. */
 export async function filmOutputFingerprint(
   directory: string,
-  signal: AbortSignal,
-  quality?: Pick<ResearchVideoPresentation, 'narrationReview' | 'scriptScore'>
+  signal: AbortSignal
 ): Promise<string | undefined> {
   if (!(await hasResearchFilmOutputs(directory))) return undefined
   const files = []
@@ -100,10 +98,7 @@ export async function filmOutputFingerprint(
     const stat = await lstat(path)
     files.push(await digestFileWithinBudget(path, stat.size, signal))
   }
-  const review = quality?.narrationReview
-    ? ['film-output-review-v1', quality.narrationReview, quality.scriptScore ?? null]
-    : ['film-output-review-v1']
-  return digestFilmInput(JSON.stringify([...review, ...files]))
+  return digestFilmInput(JSON.stringify(['film-output-review-v3', ...files]))
 }
 
 export const filmConversationDigest = (source: ResearchVideoSessionSource): string =>

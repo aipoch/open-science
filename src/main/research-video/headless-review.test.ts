@@ -1,9 +1,8 @@
-import type { FilmVisualResult } from '@aipoch/research-film/contracts'
+import type { FilmVisualIssue } from '@aipoch/research-film/contracts'
 import { buildResearchVideoPlayer, researchFilmResources } from '@aipoch/research-film'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import sharp from 'sharp'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   assertHeadlessResearchFilmReady,
@@ -28,7 +27,7 @@ it('preserves an explicit browser choice and rejects a relative or missing execu
   await expect(locateResearchFilmBrowser()).rejects.toThrow(browserVariable)
 })
 
-async function checkPlayer(script: string, issueIn?: '9x16' | '16x9'): Promise<FilmVisualResult> {
+async function checkPlayer(script: string): Promise<FilmVisualIssue[]> {
   vi.stubEnv(browserVariable, browser)
   const directory = await mkdtemp(join(tmpdir(), 'open-science-film-review-'))
   const htmlPath = join(directory, 'player.html')
@@ -40,58 +39,47 @@ async function checkPlayer(script: string, issueIn?: '9x16' | '16x9'): Promise<F
       const aspect = new URL(location.href).searchParams.get('ar');
       const portrait = aspect === '9x16';
       window.__ready = { W: portrait ? 1080 : 1920, H: portrait ? 1920 : 1080, duration: 2 };
-      window.__seek = (time) => { document.body.style.backgroundColor = time > 0 ? 'green' : 'blue'; };
       window.__checkFilm = async function () {
+        const issues = [];
+        const frames = [{ scene: 'slide', time: 0.5 }];
         ${script}
-        return {
-          issues: aspect === ${JSON.stringify(issueIn ?? '')} ? [{ scene: 'slide', message: 'Layout overflow' }] : [],
-          frames: [{ scene: 'slide', time: 0.5 }]
-        };
+        return { issues, frames };
       };
       </script></body>`
     )
-    return await checkHeadlessResearchFilmHtml(
-      { htmlPath, includeFrames: true },
-      new AbortController().signal
-    )
+    return await checkHeadlessResearchFilmHtml(htmlPath, new AbortController().signal)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
 }
 
 browserTest(
-  'renders the two orientations offline and captures landscape model-review frames',
+  'renders both orientations offline and retains ranked findings from each',
   async () => {
     const result = await checkPlayer(`
     if (window.RTCPeerConnection) throw new Error('Unexpected WebRTC access');
     if (navigator.onLine) throw new Error('Unexpected network access');
     if (innerWidth !== window.__ready.W || innerHeight !== window.__ready.H)
       throw new Error('Unexpected viewport');
+    issues.push(portrait
+      ? { scene: 'slide', message: 'Layout overflow', textLayout: true }
+      : { scene: 'slide', message: 'Blank animation', renderFailure: true });
   `)
-    expect(result.issues).toEqual([])
-    expect(result.frames).toHaveLength(1)
-    const [frame] = result.frames
-    expect(frame).toMatchObject({ scene: 'slide', time: 0.5 })
-    const image = sharp(Buffer.from(frame!.jpeg, 'base64'))
-    await expect(image.metadata()).resolves.toMatchObject({
-      format: 'jpeg',
-      width: 960,
-      height: 540
-    })
-    const pixel = await image.extract({ left: 480, top: 270, width: 1, height: 1 }).raw().toBuffer()
-    expect(pixel[1]).toBeGreaterThan(105)
-    expect(pixel[2]).toBeLessThan(15)
+    expect(result).toEqual([
+      { scene: 'slide', message: '9x16: Layout overflow', textLayout: true },
+      { scene: 'slide', message: '16x9: Blank animation', renderFailure: true }
+    ])
   },
   25_000
 )
 
-browserTest.each(['9x16', '16x9'] as const)(
-  'reports a %s-specific issue without a frame',
-  async (aspect) => {
-    await expect(checkPlayer('', aspect)).resolves.toEqual({
-      issues: [{ scene: 'slide', message: `${aspect}: Layout overflow` }],
-      frames: []
-    })
+browserTest(
+  'rejects observations with a sample time outside the player duration',
+  async () => {
+    await expect(checkPlayer('frames[0].time = 5')).rejects.toMatchObject({
+      scene: 'slide',
+      message: 'Film review time lies outside the player duration.'
+    } satisfies Partial<FilmDraftVisualError>)
   },
   25_000
 )
@@ -165,12 +153,10 @@ browserTest(
         outputDirectory: join(directory, 'output')
       })
       const reviewed = await checkHeadlessResearchFilmHtml(
-        { htmlPath: generated.playerPath, includeFrames: true },
+        generated.playerPath,
         new AbortController().signal
       )
-      expect(reviewed.issues).toEqual([])
-      expect(reviewed.frames).toHaveLength(1)
-      expect(reviewed.frames[0]?.scene).toBe('outro')
+      expect(reviewed).toEqual([])
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

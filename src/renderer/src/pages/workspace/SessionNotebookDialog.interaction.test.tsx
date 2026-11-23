@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import { summarizeNotebookHistory, type NotebookRunRecord } from '../../../../shared/notebook'
+import { SessionNotebookContent, SessionNotebookDialog } from './SessionNotebookDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 if (!Element.prototype.scrollIntoView) {
@@ -49,6 +49,102 @@ afterEach(() => {
   container.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+it.each([false, true])('opens mixed-root history with a canonical graph: %s', async (withGraph) => {
+  const sessionId = `paged-dialog-session-${withGraph}`
+  const runs = [
+    {
+      ...run,
+      runId: 'manual',
+      agentFrameId: `root-frame-${sessionId}`,
+      rootFrameId: `root-frame-${sessionId}`,
+      script: 'print("manual-history")'
+    },
+    {
+      ...run,
+      runId: 'agent',
+      agentFrameId: 'root-frame-pending-dialog',
+      rootFrameId: 'root-frame-pending-dialog',
+      script: 'print("agent-history")'
+    },
+    {
+      ...run,
+      runId: 'child',
+      agentFrameId: 'child-frame',
+      rootFrameId: 'root-frame-pending-dialog',
+      script: 'print("child-history")'
+    }
+  ]
+  vi.stubGlobal('api', {
+    notebook: {
+      getReference: vi.fn().mockResolvedValue({ sessionId }),
+      state: vi.fn().mockResolvedValue({
+        runs,
+        runCount: runs.length,
+        agentSummaries: summarizeNotebookHistory(sessionId, runs)
+      }),
+      exportIpynb: vi.fn()
+    }
+  })
+  await act(async () => {
+    root.render(
+      <SessionNotebookDialog
+        session={
+          {
+            id: sessionId,
+            projectId: 'project-1',
+            contentLoaded: withGraph,
+            ...(withGraph
+              ? {
+                  conversationGraph: {
+                    rootFrameId: `root-frame-${sessionId}`,
+                    frames: [
+                      { id: `root-frame-${sessionId}`, kind: 'root' },
+                      { id: 'child-frame', kind: 'delegate', delegateName: 'Child' }
+                    ]
+                  }
+                }
+              : {})
+          } as never
+        }
+        onClose={vi.fn()}
+      />
+    )
+  })
+  await waitFor(() => {
+    expect(document.body.textContent).toContain('manual-history')
+    expect(document.body.textContent).toContain('agent-history')
+    expect(document.body.textContent).not.toContain('child-history')
+  })
+})
+
+it('uses complete Agent summaries without a second summary request', async () => {
+  const sessionId = 'session-summary'
+  const frameId = `root-frame-${sessionId}`
+  const recent = { ...run, agentFrameId: frameId, rootFrameId: frameId }
+  const earlier = { ...recent, runId: 'earlier-r', kernelKind: 'r' as const, startedAt: 0 }
+  const state = vi.fn().mockResolvedValue({
+    runs: [recent],
+    runCount: 2,
+    agentSummaries: summarizeNotebookHistory(sessionId, [earlier, recent])
+  })
+  vi.stubGlobal('api', {
+    notebook: { getReference: vi.fn().mockResolvedValue({ sessionId }), state }
+  })
+  await act(async () =>
+    root.render(<SessionNotebookDialog session={{ id: sessionId } as never} onClose={vi.fn()} />)
+  )
+  await waitFor(() => {
+    expect(
+      document.body.querySelector('button[aria-label="Download separate notebooks by kernel (2)"]')
+    ).not.toBeNull()
+  })
+  expect(state).toHaveBeenCalledExactlyOnceWith({
+    sessionId,
+    projectId: undefined,
+    workspaceCwd: ''
+  })
 })
 
 describe('SessionNotebookContent export', () => {
@@ -134,21 +230,16 @@ describe('SessionNotebookContent export', () => {
 
   it('discovers and exports a kernel that exists only outside the recent window', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
-    const onLoadHistorySummary = vi.fn(async (agentFrameId: string) =>
-      agentFrameId === 'frame-child'
-        ? {
-            agentFrameId,
-            runCount: 12,
-            kernelCounts: { python: 0, r: 12, repl: 0, bash: 0 },
-            latestDataKernel: 'r' as const
-          }
-        : {
-            agentFrameId,
-            runCount: 1,
-            kernelCounts: { python: 1, r: 0, repl: 0, bash: 0 },
-            latestDataKernel: 'python' as const
-          }
-    )
+    const agentSummaries = summarizeNotebookHistory('session-1', [
+      run,
+      {
+        ...run,
+        runId: 'earlier-child-r',
+        agentFrameId: 'frame-child',
+        kernelKind: 'r',
+        startedAt: 0
+      }
+    ])
     await act(async () => {
       root.render(
         <SessionNotebookContent
@@ -156,7 +247,7 @@ describe('SessionNotebookContent export', () => {
           frameLabels={frameLabels}
           runs={[run]}
           status="ready"
-          onLoadHistorySummary={onLoadHistorySummary}
+          agentSummaries={agentSummaries}
           onClose={vi.fn()}
           onExport={onExport}
           onExportAll={vi.fn()}
@@ -180,7 +271,6 @@ describe('SessionNotebookContent export', () => {
       await Promise.resolve()
     })
 
-    expect(onLoadHistorySummary).toHaveBeenCalledWith('frame-child')
     expect(container.querySelector('[data-testid="session-notebook-tab-r"]')).not.toBeNull()
     expect(container.textContent).toContain(
       'No runs from this kernel are in the recent window. Downloads include the complete history.'

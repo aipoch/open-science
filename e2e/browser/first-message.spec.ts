@@ -26,13 +26,10 @@ for (const { count, expandHistory, notices } of [
       // A real wheel expands 80 mounted rows to 160. Returning to the first window then
       // halves the content height, which used to interrupt the button's smooth scroll.
       await expect(rows).toHaveCount(160)
-      if (notices) {
-        // The persistent notices can anchor expansion at the physical top. Move into
-        // history and scroll upward again so the shortcut becomes eligible.
-        await page.mouse.wheel(0, 1200)
-        await expect.poll(() => viewport.evaluate((node) => node.scrollTop)).toBeGreaterThan(1000)
-        await page.mouse.wheel(0, -150)
-      }
+      // Expansion can anchor at the top. Reveal the shortcut with a fresh upward scroll.
+      await page.mouse.wheel(0, 1200)
+      await expect.poll(() => viewport.evaluate((node) => node.scrollTop)).toBeGreaterThan(1000)
+      await page.mouse.wheel(0, -150)
     }
     const firstMessage = page.getByRole('button', { name: 'Scroll to first message' })
     await expect(firstMessage).toBeVisible()

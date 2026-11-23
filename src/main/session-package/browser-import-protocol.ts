@@ -94,6 +94,12 @@ export class BrowserImportLaunchRelay {
   private pendingOpen = false
   private openHandler?: () => void
 
+  get pendingUrls(): readonly string[] {
+    const urls = Array.from(this.pending.values(), (entry) => entry.url)
+    if (this.pendingOpen) urls.push('open-science://open')
+    return urls
+  }
+
   get snapshot(): PackageOperationSnapshot | null {
     const preparing = [...this.pending.values()].map((entry) => entry.transfer)
     if (!preparing.length) return this.current

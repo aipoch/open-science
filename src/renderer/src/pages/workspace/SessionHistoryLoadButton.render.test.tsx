@@ -33,14 +33,17 @@ it('loads earlier records on click and preserves a full-load entry after the las
       }
     ]
   })
-  const loadHistoryPage = vi.fn().mockResolvedValue({
-    projectId: 'project',
-    sessionId: 'session',
-    revision: 1,
-    session,
-    totalItems: 160,
-    hasMore: false
-  })
+  const loadHistoryPage = vi
+    .fn()
+    .mockRejectedValueOnce({ code: 'response-too-large' })
+    .mockResolvedValue({
+      projectId: 'project',
+      sessionId: 'session',
+      revision: 1,
+      session,
+      totalItems: 160,
+      hasMore: false
+    })
   const loadOne = vi.fn().mockResolvedValue(session)
   window.api = { sessions: { loadHistoryPage, loadOne } } as unknown as Window['api']
   const container = document.createElement('div')
@@ -52,6 +55,11 @@ it('loads earlier records on click and preserves a full-load entry after the las
   try {
     await act(async () => root.render(<Harness />))
     await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The requested conversation history exceeds the transfer limit.'
+    )
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(loadHistoryPage).toHaveBeenCalledWith({
       projectId: 'project',
       sessionId: 'session',
@@ -62,7 +70,11 @@ it('loads earlier records on click and preserves a full-load entry after the las
     expect(container.textContent).toContain('Load full conversation')
     expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(false)
     await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
-    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project', sessionId: 'session' })
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: 'project',
+      sessionId: 'session',
+      reportReadFailure: true
+    })
     expect(container.textContent).toBe('')
     expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
   } finally {

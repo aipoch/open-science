@@ -448,6 +448,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('form')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not confirm that your response was submitted.'
+    )
+    expect(container.querySelector('details')?.textContent).toContain(
       'Invalid structured input response'
     )
     await act(async () =>
@@ -491,6 +494,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
     expect(container.querySelector('form')).not.toBeNull()
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not confirm that your response was submitted.'
+    )
+    expect(container.querySelector('details')?.textContent).toContain(
       'The bound specialist is unavailable.'
     )
     expect(container.textContent).not.toContain('Retry continuation')
@@ -1839,10 +1845,17 @@ describe('WorkspaceElicitationCard choice question', () => {
     const finish = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Finish'
     )
-    await act(async () => finish?.click())
+    await act(async () => {
+      finish?.click()
+      finish?.click()
+    })
+    expect(onRespond).toHaveBeenCalledTimes(1)
 
     expect(container.querySelector('[data-testid="elicitation-choice-mode"]')).not.toBeNull()
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Bridge unavailable')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not confirm that your response was submitted.'
+    )
+    expect(container.querySelector('details')?.textContent).toContain('Bridge unavailable')
   })
 
   it('opens an answered choice as a read-only review', async () => {
@@ -2294,7 +2307,10 @@ describe('elicitation reported input regressions', () => {
       })
     )
     await act(async () => button('Finish').click())
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Try again')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not confirm that your response was submitted.'
+    )
+    expect(container.querySelector('details')?.textContent).toContain('Try again')
     expect(onEditDraftChange).not.toHaveBeenCalledWith(undefined)
     await act(async () => button('Finish').click())
     expect(onEditDraftChange).toHaveBeenLastCalledWith(undefined)
