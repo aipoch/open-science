@@ -9,7 +9,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Value } from 'platejs'
+import type { TElement, Value } from 'platejs'
 import {
   Plate,
   PlateContent,
@@ -99,7 +99,6 @@ const MarkdownEditorCanvas = memo(
               onKeyDownCapture={(event) => {
                 if (
                   disabled ||
-                  event.key !== 'Tab' ||
                   event.altKey ||
                   event.ctrlKey ||
                   event.metaKey ||
@@ -108,6 +107,25 @@ const MarkdownEditorCanvas = memo(
                   event.target.closest('[contenteditable="false"]')
                 )
                   return
+                if (event.key === 'Enter') {
+                  const quote = editor.api.above<TElement>({
+                    match: (node) => node.type === 'blockquote'
+                  })
+                  if (quote) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (event.shiftKey) {
+                      editor.tf.insertSoftBreak()
+                      return
+                    }
+                    if (!editor.api.block<TElement>()) return
+                    editor.tf.insertBreak()
+                    const nextBlock = editor.api.block<TElement>()
+                    if (nextBlock) editor.tf.liftNodes({ at: nextBlock[1] })
+                    return
+                  }
+                }
+                if (event.key !== 'Tab') return
                 const path = getMarkdownListItemAtCaret(editor)
                 if (!path) return
                 // Own list indentation before Plate's default Tab navigation moves the caret.

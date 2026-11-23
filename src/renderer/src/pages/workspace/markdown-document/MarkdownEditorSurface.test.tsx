@@ -110,6 +110,42 @@ describe('MarkdownEditorSurface', () => {
     expect(codeBlock?.className).not.toContain('before:content-[attr(data-markdown-placeholder)]')
   })
 
+  it('renders an inserted block quote placeholder only in its inner paragraph', async () => {
+    render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    const surface = screen.getByTestId('markdown-plate-editor')
+
+    await act(async () => insertMarkdownBlock(editor, [0], 'quote'))
+
+    const quote = surface.querySelector('blockquote')
+    const paragraph = quote?.querySelector('p')
+    expect(quote?.getAttribute('data-markdown-placeholder')).toBeNull()
+    expect(surface.querySelectorAll('[data-markdown-placeholder]')).toHaveLength(1)
+    expect(paragraph?.getAttribute('data-markdown-placeholder')).toBe(
+      'Type / for blocks, @ to mention'
+    )
+  })
+
+  it('uses Shift+Enter for a soft line break and Enter for a new quote paragraph', async () => {
+    render(<MarkdownEditorSurface source={'> First'} onChange={vi.fn()} />)
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+    const surface = screen.getByTestId('markdown-plate-editor')
+
+    await act(async () => {
+      editor.tf.select({ path: [0, 0, 0], offset: 5 })
+      fireEvent.keyDown(surface, { key: 'Enter', shiftKey: true })
+    })
+
+    expect(editor.children[0].children[0].children[0]).toMatchObject({ text: 'First\n' })
+
+    await act(async () => fireEvent.keyDown(surface, { key: 'Enter' }))
+
+    expect(editor.children).toMatchObject([
+      { type: 'blockquote', children: [{ type: 'p', children: [{ text: 'First\n' }] }] },
+      { type: 'p', children: [{ text: '' }] }
+    ])
+  })
+
   it.each([
     ['bullet', 'Bulleted list'],
     ['numbered', 'Numbered list'],

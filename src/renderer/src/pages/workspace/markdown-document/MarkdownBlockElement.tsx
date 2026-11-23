@@ -675,7 +675,9 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     dropdown: t('Dropdown')
   }
   const placeholderText =
-    caretInElement && !['ul', 'ol', 'li', 'img', 'code_block'].includes(type) && !NodeApi.string(element)
+    caretInElement &&
+    !['ul', 'ol', 'li', 'blockquote', 'img', 'code_block'].includes(type) &&
+    !NodeApi.string(element)
       ? placeholderKind
         ? placeholderLabels[placeholderKind]
         : type === 'p'
