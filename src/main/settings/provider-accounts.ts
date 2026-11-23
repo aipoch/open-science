@@ -1333,27 +1333,6 @@ class ProviderAccountsModule {
       .join(' or ')}. Change the API format or switch the agent framework.`
   }
 
-  private resolveValidationTarget(
-    request: ValidateProviderRequest,
-    settings: StoredSettings
-  ): { provider: ResolvedProvider; storedId?: string } | undefined {
-    if (request.providerId) {
-      const stored = settings.providers.find((provider) => provider.id === request.providerId)
-      const model =
-        request.model ??
-        (settings.activeProviderId === stored?.id ? settings.activeModel : undefined)
-      return stored
-        ? {
-            provider: this.resolveProvider(stored, model, request.allowInsecureHttp === true),
-            storedId: stored.id
-          }
-        : undefined
-    }
-    if (request.draft)
-      return { provider: this.resolveDraft(request.draft, request.allowInsecureHttp === true) }
-    return undefined
-  }
-
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&

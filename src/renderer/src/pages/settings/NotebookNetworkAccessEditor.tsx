@@ -30,6 +30,11 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
+import {
+  removeNotebookNetworkRule,
+  sharedRuleForId,
+  updateNotebookNetworkRule
+} from './notebook-network-rule-operations'
 
 export type NetworkEditorLeaveState = Readonly<{
   dirty: boolean
@@ -128,7 +133,6 @@ export function NotebookNetworkAccessEditor({
   const strict = currentMode === 'strict'
   const editingExisting = Boolean(editor?.id || editor?.original)
   const editorOpen = Boolean(editor)
-  const strictRules = settings.strictWhitelist ?? []
   const manual = (settings.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
   const rules = effectiveNotebookStrictWhitelist(settings)
   const groups = settings.strictWhitelistGroups ?? []
@@ -254,25 +258,7 @@ export function NotebookNetworkAccessEditor({
     void commit({ ...base, mode: pendingMode }, base, undefined, true)
   }
   const removeStrictRule = (ruleId: string): void => {
-    const shared = manual.find(
-      (rule) => rule.sharedWithAgent && trustedDestinationId(rule) === ruleId
-    )
-    if (shared) {
-      void commit(
-        {
-          ...settings,
-          trustedPrivateDestinations: (settings.trustedPrivateDestinations ?? []).filter(
-            (item) => item !== shared
-          )
-        },
-        settings
-      )
-      return
-    }
-    void commit(
-      { ...settings, strictWhitelist: strictRules.filter((item) => item.id !== ruleId) },
-      settings
-    )
+    void commit(removeNotebookNetworkRule(settings, ruleId), settings)
   }
   const open = (
     rule?: NotebookStrictWhitelistEntry,
@@ -302,6 +288,7 @@ export function NotebookNetworkAccessEditor({
       return
     }
     const base = editor.base
+    const sharedOriginal = editor.id ? sharedRuleForId(base, editor.id) : undefined
     const persist = (next: NotebookNetworkSettings): void => {
       if (JSON.stringify(next) === JSON.stringify(base)) {
         setError('')
@@ -310,7 +297,7 @@ export function NotebookNetworkAccessEditor({
       }
       void commit(next, base)
     }
-    if (strict && !editor.original) {
+    if (strict && !editor.original && !sharedOriginal) {
       let groupId = group
       let groups = [...(base.strictWhitelistGroups ?? [])]
       if (group === '__new__') {
@@ -348,6 +335,8 @@ export function NotebookNetworkAccessEditor({
           : [...remaining, rule],
         strictWhitelistGroups: groups
       })
+    } else if (sharedOriginal && editor.id) {
+      persist(updateNotebookNetworkRule(base, editor.id, target))
     } else {
       const remaining = (base.trustedPrivateDestinations ?? []).filter(
         (rule) => rule !== editor.original

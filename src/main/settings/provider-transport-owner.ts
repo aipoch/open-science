@@ -577,6 +577,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: planned.id,
+                        ...this.providerHttpAccess(candidate.provider),
                         baseUrl: planned.endpoint!,
                         ...key,
                         model,
@@ -594,6 +595,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: planned.id,
+                        ...this.providerHttpAccess(candidate.provider),
                         wire: planned.wire,
                         endpoint: planned.endpoint!,
                         ...key,

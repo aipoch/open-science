@@ -929,6 +929,11 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))
   }
 
+  // Restores a complete snapshot for a failed cross-owner settings transaction.
+  async restoreSettings(snapshot: StoredSettings): Promise<StoredSettings> {
+    return this.mutate(() => snapshot)
+  }
+
   async setWslSelection(selection: WslSelection): Promise<StoredSettings> {
     const distro = selection.distro.trim()
     const user = selection.user.trim()

@@ -306,26 +306,36 @@ const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): Notebo
 export const effectiveNotebookStrictWhitelist = (
   settings: NotebookNetworkSettings
 ): NotebookStrictWhitelistEntry[] => {
+  const strictRules = settings.strictWhitelist ?? []
   const sharedRules = (settings.trustedPrivateDestinations ?? [])
     .filter((entry) => entry.sharedWithAgent && !entry.managedGrantId && entry.protocol === 'http')
-    .map((entry) => ({
-      hostnamePattern: entry.hostname,
-      port: entry.port,
-      protocol: entry.protocol ?? ('https' as const),
-      id: trustedDestinationId(entry),
-      origin: 'manual' as const
-    }))
+    .map((entry) => {
+      const duplicate = strictRules.find(
+        (rule) =>
+          rule.protocol === entry.protocol &&
+          rule.port === entry.port &&
+          rule.hostnamePattern === entry.hostname
+      )
+      return {
+        hostnamePattern: entry.hostname,
+        port: entry.port,
+        protocol: entry.protocol ?? ('https' as const),
+        id: trustedDestinationId(entry),
+        origin: 'manual' as const,
+        ...(duplicate?.groupId ? { groupId: duplicate.groupId } : {})
+      }
+    })
   return [
-    ...(settings.strictWhitelist ?? []),
-    ...sharedRules.filter(
-      (entry) =>
-        !settings.strictWhitelist?.some(
-          (rule) =>
+    ...strictRules.filter(
+      (rule) =>
+        !sharedRules.some(
+          (entry) =>
             rule.protocol === entry.protocol &&
             rule.port === entry.port &&
             rule.hostnamePattern === entry.hostnamePattern
         )
-    )
+    ),
+    ...sharedRules
   ]
 }
 

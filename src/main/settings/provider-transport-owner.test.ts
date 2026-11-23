@@ -1317,6 +1317,68 @@ describe('ProviderTransportOwner generations', () => {
     expect(proxy.close).toHaveBeenCalledTimes(1)
   })
 
+  it('passes live HTTP authorization to Pi messages and protocol bridges', async () => {
+    const allow = vi.fn(async () => false)
+    let messageTargets: readonly MessagesBridgeTarget[] = []
+    let protocolTargets: readonly ProtocolForwardingBridgeTarget[] = []
+    const owner = new ProviderTransportOwner({
+      isProviderHttpAllowed: allow,
+      createMessagesBridge: (targets) => {
+        messageTargets = targets
+        return makeMessagesBridge()
+      },
+      createProtocolForwardingBridge: (targets) => {
+        protocolTargets = targets
+        return makeOpenAiBridge(9)
+      }
+    })
+    const makeHttpTarget = (providerId: string): ProviderRuntimeTarget => ({
+      ...makeTarget(),
+      providerId,
+      provider: {
+        ...makeTarget().provider,
+        type: 'custom',
+        baseUrl: 'http://gateway.example/v1',
+        apiEndpoints: ['messages', 'chat-completions']
+      },
+      apiEndpoints: ['messages', 'chat-completions']
+    })
+    const messageTarget = makeHttpTarget('message-provider')
+    const protocolTarget = makeHttpTarget('protocol-provider')
+
+    const generation = await owner.acquire({
+      activeTarget: messageTarget,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        transport: {
+          kind: 'pi',
+          initialTargetId: 'message',
+          targets: [
+            {
+              id: 'message',
+              target: messageTarget,
+              wire: 'messages',
+              endpoint: 'http://gateway.example/v1/messages'
+            },
+            {
+              id: 'protocol',
+              target: protocolTarget,
+              wire: 'chat-completions',
+              endpoint: 'http://gateway.example/v1/chat/completions'
+            }
+          ]
+        }
+      }
+    })
+
+    expect(messageTargets[0]).toEqual(expect.objectContaining({ isInsecureHttpAllowed: allow }))
+    expect(protocolTargets[0]).toEqual(expect.objectContaining({ isInsecureHttpAllowed: allow }))
+    expect(await messageTargets[0]?.isInsecureHttpAllowed?.('http://gateway.example/v1')).toBe(
+      false
+    )
+    await generation.release()
+  })
+
   it('owns Claude bridge credentials, retargeting, bypass aliases, and idempotent release', async () => {
     const bridge = makeMessagesBridge()
     const owner = new ProviderTransportOwner({

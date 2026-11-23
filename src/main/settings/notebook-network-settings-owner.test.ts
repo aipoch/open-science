@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS as LEGACY_DEFAULTS,
+  normalizeNotebookNetworkSettings,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
@@ -115,6 +116,61 @@ describe('NotebookNetworkSettingsOwner', () => {
       2,
       expect.objectContaining(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
     )
+  })
+
+  it('rolls back provider and shared rule persistence when applying the shared destination fails', async () => {
+    const previous: NotebookNetworkSettings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS }
+    let stored: StoredSettings = {
+      version: SETTINGS_FILE_VERSION,
+      providers: [],
+      notebookNetwork: previous
+    }
+    const repository = {
+      getSettings: vi.fn(async () => structuredClone(stored)),
+      setNotebookNetwork: vi.fn(async (next: NotebookNetworkSettings) => {
+        stored = { ...stored, notebookNetwork: next }
+        return structuredClone(stored)
+      }),
+      restoreSettings: vi.fn(async (snapshot: StoredSettings) => {
+        stored = structuredClone(snapshot)
+        return structuredClone(stored)
+      })
+    }
+    const apply = vi.fn().mockRejectedValueOnce(new Error('gateway update failed'))
+    const owner = new NotebookNetworkSettingsOwner({ repository, apply })
+    const rule = {
+      sharedWithAgent: true as const,
+      hostname: 'gateway.example',
+      port: 8080,
+      protocol: 'http' as const,
+      approvedAddresses: []
+    }
+    const provider = { id: 'provider', type: 'custom' as const, name: 'Gateway' }
+
+    await expect(
+      owner.commitSharedDestination(async () => {
+        stored = {
+          ...stored,
+          providers: [provider],
+          notebookNetwork: normalizeNotebookNetworkSettings({
+            ...stored.notebookNetwork,
+            trustedPrivateDestinations: [rule]
+          })
+        }
+      })
+    ).rejects.toThrow('gateway update failed')
+
+    expect(repository.restoreSettings).toHaveBeenCalledWith({
+      version: SETTINGS_FILE_VERSION,
+      providers: [],
+      notebookNetwork: previous
+    })
+    expect(stored).toEqual({
+      version: SETTINGS_FILE_VERSION,
+      providers: [],
+      notebookNetwork: previous
+    })
+    expect(apply).toHaveBeenLastCalledWith(previous)
   })
 
   it.each(['persist', 'apply'])('rolls back a cancelled approval during %s', async (phase) => {
