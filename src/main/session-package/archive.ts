@@ -6,10 +6,8 @@ import { finished, pipeline } from 'node:stream/promises'
 import { createGzip } from 'node:zlib'
 import { Header, Pax, Parser } from 'tar'
 import {
-  PACKAGE_INSTRUCTION_PATH,
   PACKAGE_MAX_BYTES,
   PACKAGE_MAX_FILE_BYTES,
-  PACKAGE_MAX_INSTRUCTION_BYTES,
   PACKAGE_RO_CRATE_METADATA,
   sessionPackageManifestSchema,
   type SessionPackageManifest,
@@ -21,7 +19,6 @@ import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
 import { assertPackageCapacity, packageCapacityChecker } from './capacity'
 import { createPackageContentVerifier } from './materialize'
-import { PACKAGE_GZIP_COMMENT } from './opening-guide'
 
 // Keep this diagnostic stable across the inspection worker's error-message boundary.
 export const PACKAGE_REQUIRES_UPDATE = 'Session package requires a newer version of Open Science.'
@@ -47,12 +44,13 @@ export const PACKAGE_MAX_JSON_BYTES = 256 * 1024 ** 2
 const MAX_MANIFEST_BYTES = 8 * 1024 ** 2
 const MAX_ENTRIES = 10004
 const ENTRY_PATH =
-  /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|instruction-for-agent\.md|objects\/[a-f0-9]{64})$/
+  /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
 const GZIP_COMMENT_FLAG = 0x10
 const GZIP_HEADER_BYTES = 10
-const gzipComment = Buffer.from(PACKAGE_GZIP_COMMENT + '\0', 'ascii')
-const openingEntryRank = (path: string): number =>
-  path === 'manifest.json' ? 0 : path === PACKAGE_INSTRUCTION_PATH ? 1 : 2
+const gzipComment = Buffer.from(
+  'AIPOCH Open-Science session package (gzip-compress tar archive).\0',
+  'ascii'
+)
 
 async function* addGzipComment(source: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
   const header = Buffer.alloc(GZIP_HEADER_BYTES)
@@ -123,11 +121,8 @@ export const writePackageArchive = async (
     checksum: await fileChecksum(join(directory, 'manifest.json'), signal)
   })
   for (const entry of manifest.inventory) addEntry(entry)
-  const hasOpeningGuide = entriesByPath.has(PACKAGE_INSTRUCTION_PATH)
   const entries = [...entriesByPath.values()]
-    .sort(
-      (a, b) => openingEntryRank(a.path) - openingEntryRank(b.path) || (a.path < b.path ? -1 : 1)
-    )
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((entry) => {
       const header = new Header({
         path: entry.path,
@@ -154,7 +149,7 @@ export const writePackageArchive = async (
     Math.floor(tarBytes / 16384) +
     Math.floor(tarBytes / 33554432) +
     25 +
-    (hasOpeningGuide ? gzipComment.length : 0)
+    gzipComment.length
   await assertPackageCapacity(dirname(path), archiveBound)
   let source: ReadStream | undefined
   try {
@@ -188,9 +183,7 @@ export const writePackageArchive = async (
       pacedFileTransform(signal),
       // Asynchronous zlib work keeps compression off the main event loop.
       createGzip({ level: 1, windowBits: 15, memLevel: 8 }),
-      async function* (source: AsyncIterable<Buffer>) {
-        yield* hasOpeningGuide ? addGzipComment(source) : source
-      },
+      addGzipComment,
       pacedFileTransform(signal),
       createWriteStream(path, { flags: 'wx' }),
       { signal }
@@ -239,13 +232,11 @@ export const readPackageArchive = async (
         const type = 'type' in entry ? entry.type : undefined
         const isDirectory = type === 'Directory'
         const limit =
-          name === PACKAGE_INSTRUCTION_PATH
-            ? PACKAGE_MAX_INSTRUCTION_BYTES
-            : name === 'manifest.json'
-              ? MAX_MANIFEST_BYTES
-              : name.endsWith('.json')
-                ? PACKAGE_MAX_JSON_BYTES
-                : PACKAGE_MAX_FILE_BYTES
+          name === 'manifest.json'
+            ? MAX_MANIFEST_BYTES
+            : name.endsWith('.json')
+              ? PACKAGE_MAX_JSON_BYTES
+              : PACKAGE_MAX_FILE_BYTES
         total += entry.size
         if (
           entries.has(name) ||

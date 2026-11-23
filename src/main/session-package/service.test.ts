@@ -13,9 +13,7 @@ import { dirname } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
-import { fileChecksum, packageEntry, readPackageArchive, writePackageArchive } from './archive'
-import { PACKAGE_INSTRUCTION } from './opening-guide'
-import { PACKAGE_INSTRUCTION_PATH } from '../../shared/session-package'
+import { fileChecksum, packageEntry, readPackageArchive } from './archive'
 import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
 import { readLoggedEvidence, readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { parseNativeRecords, remapStorageKey } from './native-snapshot'
@@ -143,33 +141,8 @@ it('round-trips a compaction activity and its conversation through a science pac
   try {
     const archive = join(source.storageRoot, 'compacted.science')
     await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
-    const expanded = join(source.storageRoot, 'expanded')
-    const manifest = await readPackageArchive(archive, expanded)
-    await expect(readFile(join(expanded, PACKAGE_INSTRUCTION_PATH), 'utf8')).resolves.toBe(
-      PACKAGE_INSTRUCTION
-    )
-    await writeFile(join(expanded, PACKAGE_INSTRUCTION_PATH), 'Untrusted sender instructions')
-    manifest.inventory = await Promise.all(
-      manifest.inventory.map((entry) =>
-        entry.path === PACKAGE_INSTRUCTION_PATH
-          ? packageEntry(expanded, entry.path, 'readme')
-          : entry
-      )
-    )
-    const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
-    await writePackageRoCrateMetadata(expanded, manifest, records)
-    await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
-    const thirdPartyArchive = join(source.storageRoot, 'third-party.science')
-    await writePackageArchive(expanded, thirdPartyArchive)
     initDataRoot(target.storageRoot)
-    const imported = await importer.importFrom(thirdPartyArchive)
-    const forwarded = join(target.storageRoot, 'forwarded.science')
-    await importer.exportTo(imported, forwarded)
-    const forwardedRoot = join(target.storageRoot, 'forwarded')
-    await readPackageArchive(forwarded, forwardedRoot)
-    await expect(readFile(join(forwardedRoot, PACKAGE_INSTRUCTION_PATH), 'utf8')).resolves.toBe(
-      PACKAGE_INSTRUCTION
-    )
+    const imported = await importer.importFrom(archive)
     const session = await new SessionRepository(target.storageRoot).loadSession(
       imported.projectId,
       imported.sessionId
@@ -1356,6 +1329,23 @@ it('forwards imported historical Plan state while retaining runtime admission an
   const unpacked = join(target.storageRoot, 'forwarded-unpacked')
   await readPackageArchive(forwarded, unpacked, new AbortController().signal)
   expect(await readFile(join(unpacked, 'session.json'), 'utf8')).not.toContain('historical-plan')
+  const readme = await readFile(join(unpacked, 'README.md'), 'utf8')
+  expect(readme.match(/^## .+$/gm)).toEqual([
+    '## Opening this file',
+    '## 1. Install AIPOCH Open-Science',
+    '## 2. Import and open the session'
+  ])
+  expect(readme).toContain(
+    'If the app is already installed, import the original `.science` file and open the imported session.'
+  )
+  expect(readme).toContain('If the app is missing, install it from the official download page')
+  expect(readme).toContain(
+    'If an assistant is handling the installation, it should confirm with the user before proceeding.'
+  )
+  expect(readme).toContain('https://aipoch.com/open-science/download')
+  expect(readme).toContain('npm install --global @aipoch/open-science')
+  expect(readme).toContain('**Import Session package**')
+  expect(readme).toContain('open-science session import')
   await expect(importer.inspect(forwarded)).resolves.toMatchObject({ title: 'History' })
   await exporter.close()
   await importer.close()
@@ -2870,7 +2860,6 @@ it('rejects self-consistent archive hashes when the embedded evidence contradict
     'session.json',
     'records.json',
     'README.md',
-    PACKAGE_INSTRUCTION_PATH,
     'ro-crate-metadata.json',
     'objects'
   ])
