@@ -10,6 +10,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
+  RESEARCH_FILM_BUSY_MESSAGE,
+  type ResearchVideoActiveSession
+} from '../../shared/research-video-presentation'
+import {
   filmAuthoringCheckpoint,
   PENDING_FILM_OWNER,
   pendingFilmSchema,
@@ -224,23 +228,145 @@ it('generates a persistent presentation directly from read-only history without 
   expect((await reopened.status(request)).result?.playerPath).toContain(moved)
   await reopened.close()
 })
+
+it('projects admitted Film work for both modes and clears it on completion or cancellation', async () => {
+  const f = await fixture()
+  const writeReplay = vi.fn(async () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Rainfall replay',
+      scenes: [
+        {
+          id: 's1',
+          evidenceIds: ['message:result'],
+          narration: 'The recorded answer reports an uncertain trend.'
+        }
+      ]
+    })
+  )
+  const changes: Array<readonly ResearchVideoActiveSession[]> = []
+  const onOutcome = vi.fn()
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    writeReplay,
+    onOutcome,
+    onActivityChanged: (sessions) => changes.push(sessions)
+  })
+  const generate = f.options.generate.getMockImplementation()!
+  const explanationGate = Promise.withResolvers<void>()
+  f.options.generate.mockImplementation(async (input, signal) => {
+    await explanationGate.promise
+    return generate(input, signal)
+  })
+  const replay = { ...request, mode: 'operation-replay' as const }
+  const replayGate = Promise.withResolvers<void>()
+
+  try {
+    expect(owner.activeSessions()).toEqual([])
+    await owner.start(request)
+    expect(owner.activeSessions()).toEqual([request])
+    expect(changes.at(-1)).toEqual([request])
+    expect(await owner.status(replay)).toMatchObject({
+      preflightError: RESEARCH_FILM_BUSY_MESSAGE,
+      blockingSession: request
+    })
+
+    explanationGate.resolve()
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    await vi.waitFor(() => expect(owner.activeSessions()).toEqual([]))
+    expect(changes.at(-1)).toEqual([])
+    expect((await owner.status(replay)).blockingSession).toBeUndefined()
+    expect(onOutcome).toHaveBeenCalledExactlyOnceWith({
+      ...request,
+      invocationId: expect.any(String),
+      outcome: 'completed'
+    })
+
+    f.options.generate.mockImplementation(async (input, signal) => {
+      await Promise.race([
+        replayGate.promise,
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      ])
+      return generate(input, signal)
+    })
+    await owner.start(replay)
+    expect(owner.activeSessions()).toEqual([request])
+    expect((await owner.status(request)).blockingSession).toEqual(replay)
+    owner.cancel(replay)
+    expect(owner.activeSessions()).toEqual([])
+    expect(changes.at(-1)).toEqual([])
+    await vi.waitFor(async () =>
+      expect((await owner.status(replay)).progress?.phase).toBe('cancelled')
+    )
+    expect(onOutcome).toHaveBeenCalledOnce()
+  } finally {
+    explanationGate.resolve()
+    replayGate.resolve()
+    await owner.close()
+  }
+})
+
+it('clears the Film activity projection when authoring fails', async () => {
+  const f = await fixture()
+  const changes: Array<readonly ResearchVideoActiveSession[]> = []
+  const onOutcome = vi.fn()
+  const authoring = Promise.withResolvers<void>()
+  f.options.writeScreenplay.mockImplementation(async () => {
+    await authoring.promise
+    throw new Error('authoring stopped')
+  })
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    onOutcome,
+    onActivityChanged: (sessions) => changes.push(sessions)
+  })
+
+  try {
+    await owner.start(request)
+    expect(owner.activeSessions()).toEqual([request])
+    authoring.resolve()
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).error).toContain('authoring stopped')
+    )
+    await vi.waitFor(() => expect(owner.activeSessions()).toEqual([]))
+    expect(changes.at(-1)).toEqual([])
+    expect(onOutcome).toHaveBeenCalledExactlyOnceWith({
+      ...request,
+      invocationId: expect.any(String),
+      outcome: 'failed'
+    })
+  } finally {
+    authoring.resolve()
+    await owner.close()
+  }
+})
+
 it('continues exactly once for the requesting session when narration finishes in the background', async () => {
   const f = await fixture()
   const download = Promise.withResolvers<Awaited<ReturnType<Options['models']['installForUse']>>>()
   f.options.models.installForUse = vi.fn(() => download.promise)
-  const owner = createResearchVideoPresentationOwner(f.options)
+  const onActivityChanged = vi.fn()
+  const owner = createResearchVideoPresentationOwner({ ...f.options, onActivityChanged })
   const start = { ...request, installNarration: true }
-  expect((await owner.start(start)).narrationDownload).toBeDefined()
-  expect((await owner.start(start)).narrationDownload).toBeDefined()
-  const other = { ...request, sessionId: 'other' }
-  expect((await owner.status(other)).narrationDownload).toBeUndefined()
-  owner.cancel(other)
-  expect(f.options.writeScreenplay).not.toHaveBeenCalled()
-  download.resolve({ ...(await f.options.models.getSnapshot()), availability: 'ready' })
-  await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
-  expect(f.options.models.installForUse).toHaveBeenCalledOnce()
-  expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
-  await owner.close()
+  try {
+    expect((await owner.start(start)).narrationDownload).toBeDefined()
+    expect((await owner.start(start)).narrationDownload).toBeDefined()
+    expect(owner.activeSessions()).toEqual([request])
+    const other = { ...request, sessionId: 'other' }
+    expect((await owner.status(other)).narrationDownload).toBeUndefined()
+    owner.cancel(other)
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    download.resolve({ ...(await f.options.models.getSnapshot()), availability: 'ready' })
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    await vi.waitFor(() => expect(owner.activeSessions()).toEqual([]))
+    expect(f.options.models.installForUse).toHaveBeenCalledOnce()
+    expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
+    expect(onActivityChanged.mock.calls).toEqual([[[request]], [[]]])
+  } finally {
+    await owner.close()
+  }
 })
 it('cancels the background authoring operation and releases the model lease', async () => {
   const f = await fixture()

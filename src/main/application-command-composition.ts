@@ -177,6 +177,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'resource-recording:get-state',
   'resource-recording:start',
   'resource-recording:stop',
+  'research-video:active-sessions',
   'research-video:start',
   'research-video:status',
   'research-video:remove',
