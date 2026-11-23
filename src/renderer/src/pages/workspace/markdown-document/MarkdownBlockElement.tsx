@@ -211,7 +211,11 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                     }
                   }}
                   onClick={(event) => {
-                    if (!dragged.current || event.detail === 0) setActionsOpen(true)
+                    if (dragged.current && event.detail > 0) {
+                      dragged.current = false
+                      return
+                    }
+                    setActionsOpen(true)
                   }}
                   onDragStart={(event) => {
                     // This is a whole-block move, not Slate's selected-text drag operation.
@@ -359,12 +363,16 @@ const ImageEditor = ({
     : ''
   const fileInput = useRef<HTMLInputElement>(null)
   const [draftUrl, setDraftUrl] = useState('')
+  const [urlDraft, setUrlDraft] = useState(url)
   const [error, setError] = useState('')
   const embedded = /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(url)
   if (!url)
     return (
       <div
         contentEditable={false}
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
         className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -400,7 +408,7 @@ const ImageEditor = ({
               reader.onload = () => {
                 const at = editor.api.findPath(element)
                 if (at && typeof reader.result === 'string')
-                  editor.tf.setNodes({ url: reader.result, caption: [{ text: file.name }] }, { at })
+                  editor.tf.setNodes({ url: reader.result, caption: [{ text: '' }] }, { at })
               }
               reader.onerror = () => setError(invalid)
               reader.readAsDataURL(file)
@@ -417,6 +425,24 @@ const ImageEditor = ({
               setDraftUrl(event.target.value)
               setError('')
             }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onPaste={(event) => {
+              event.stopPropagation()
+              const pasted = event.clipboardData.getData('text/plain').trim()
+              if (!pasted) return
+              event.preventDefault()
+              if (!isSafeRemoteImageUrl(pasted)) {
+                setError(t('Enter a safe http(s) URL'))
+                return
+              }
+              setDraftUrl(pasted)
+              setLoadedUrl(pasted)
+              const at = editor.api.findPath(element)
+              if (at) editor.tf.setNodes({ url: pasted }, { at })
+              setError('')
+            }}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
               event.preventDefault()
@@ -426,6 +452,7 @@ const ImageEditor = ({
                 setError(t('Enter a safe http(s) URL'))
                 return
               }
+              setUrlDraft(next)
               setLoadedUrl(next)
               editor.tf.setNodes({ url: next }, { at: path })
             }}
@@ -435,6 +462,17 @@ const ImageEditor = ({
       </div>
     )
   const safe = isSafeRemoteImageUrl(url)
+  if (embedded || safe)
+    return (
+      <div contentEditable={false} className="pointer-events-none">
+        <img
+          src={url}
+          alt={alt}
+          referrerPolicy="no-referrer"
+          className="max-h-64 max-w-full rounded object-contain"
+        />
+      </div>
+    )
   return (
     <div
       contentEditable={false}
@@ -443,11 +481,35 @@ const ImageEditor = ({
       {!embedded && (
         <Input
           aria-label={t('Image URL')}
-          value={url}
+          value={urlDraft}
           disabled={readOnly}
           onChange={(event) => {
             setLoadedUrl(undefined)
-            editor.tf.setNodes({ url: event.target.value }, { at: path })
+            setUrlDraft(event.target.value)
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onPaste={(event) => {
+            event.stopPropagation()
+            const pasted = event.clipboardData.getData('text/plain').trim()
+            if (!pasted) return
+            event.preventDefault()
+            setLoadedUrl(undefined)
+            setUrlDraft(pasted)
+            if (isSafeRemoteImageUrl(pasted)) {
+              setLoadedUrl(pasted)
+              editor.tf.setNodes({ url: pasted }, { at: path })
+            }
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation()
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            const next = urlDraft.trim()
+            if (!isSafeRemoteImageUrl(next)) return
+            setLoadedUrl(next)
+            editor.tf.setNodes({ url: next }, { at: path })
           }}
         />
       )}
@@ -613,7 +675,7 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     dropdown: t('Dropdown')
   }
   const placeholderText =
-    caretInElement && !['ul', 'ol', 'li', 'img'].includes(type) && !NodeApi.string(element)
+    caretInElement && !['ul', 'ol', 'li', 'img', 'code_block'].includes(type) && !NodeApi.string(element)
       ? placeholderKind
         ? placeholderLabels[placeholderKind]
         : type === 'p'
@@ -664,8 +726,13 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       </>
     )
   }
+  const previousBlock =
+    path.length > 0 && (path.at(-1) ?? 0) > 0
+      ? editor.api.node<TElement>([...path.slice(0, -1), (path.at(-1) ?? 0) - 1])?.[0]
+      : undefined
   const blockClassName = cn(
     'relative min-h-7 [&:hover:not(:has([data-markdown-block]:hover))>.markdown-block-controls]:opacity-100 [&:focus-within:not(:has([data-markdown-block]:focus-within))>.markdown-block-controls]:opacity-100',
+    type === 'img' && previousBlock?.type === 'img' && 'pt-4',
     dropPosition &&
       'after:pointer-events-none after:absolute after:inset-x-0 after:z-20 after:h-0.5 after:rounded-full after:bg-primary',
     dropPosition === 'before' && 'after:top-0',

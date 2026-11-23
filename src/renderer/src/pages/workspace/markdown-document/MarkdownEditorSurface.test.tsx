@@ -98,6 +98,18 @@ describe('MarkdownEditorSurface', () => {
     await waitFor(() => expect(heading.getAttribute('data-markdown-placeholder')).toBeNull())
   })
 
+  it('does not render a placeholder for an inserted code block', async () => {
+    render(<MarkdownEditorSurface source={'Before\n'} onChange={vi.fn()} />)
+    const editor = vi.mocked(createMarkdownEditor).mock.results.at(-1)!.value
+
+    await act(async () => insertMarkdownBlock(editor, [0], 'code'))
+
+    const codeBlock = screen.getByTestId('markdown-plate-editor').querySelector('pre')
+    expect(codeBlock).not.toBeNull()
+    expect(codeBlock?.getAttribute('data-markdown-placeholder')).toBeNull()
+    expect(codeBlock?.className).not.toContain('before:content-[attr(data-markdown-placeholder)]')
+  })
+
   it.each([
     ['bullet', 'Bulleted list'],
     ['numbered', 'Numbered list'],
