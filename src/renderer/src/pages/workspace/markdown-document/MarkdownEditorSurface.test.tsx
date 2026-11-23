@@ -369,7 +369,7 @@ describe('MarkdownEditorSurface', () => {
     })
   })
 
-  it('opens the date picker from the final insert group before inserting a date', async () => {
+  it('opens the date picker with today selected before inserting a date', async () => {
     const onChange = vi.fn()
     render(<MarkdownEditorSurface source={'Before\n'} onChange={onChange} />)
 
@@ -381,12 +381,13 @@ describe('MarkdownEditorSurface', () => {
 
     const dateInput = await screen.findByLabelText('Date')
     expect(screen.queryByRole('menu')).toBeNull()
+    expect((dateInput as HTMLInputElement).value).toBe(new Date().toISOString().slice(0, 10))
     expect(onChange).not.toHaveBeenCalled()
     fireEvent.change(dateInput, { target: { value: '2026-11-19' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('Before\n\n2026-11-19\n'))
-    expect(screen.queryByLabelText('Date')).toBeNull()
+    expect((screen.getByLabelText('Date') as HTMLInputElement).value).toBe('2026-11-19')
   })
 
   it('renders actual per-key editor transformations and reports their Markdown', async () => {

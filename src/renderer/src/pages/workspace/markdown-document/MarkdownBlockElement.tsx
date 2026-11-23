@@ -21,7 +21,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { ErrorNotice } from '@/components/error-notice'
-import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NodeApi, RangeApi, type TElement } from 'platejs'
 import {
   PlateElement,
@@ -54,7 +54,9 @@ import {
   deleteMarkdownBlock,
   duplicateMarkdownBlock,
   insertMarkdownBlock,
+  isMarkdownDate,
   isSafeRemoteImageUrl,
+  todayMarkdownDate,
   markdownBlockSiblingCount,
   moveMarkdownBlockTo,
   moveMarkdownBlockRelative,
@@ -66,6 +68,60 @@ import {
 const drags = new WeakMap<object, { element: TElement; clearDropTarget?: () => void }>()
 const DRAG_TYPE = 'application/x-openscience-markdown-block'
 
+const MarkdownDateElement = ({
+  element,
+  path,
+  children
+}: {
+  element: TElement
+  path: number[]
+  children: React.ReactNode
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const editor = useEditorRef()
+  const readOnly = useReadOnly()
+  const value = NodeApi.string(element)
+
+  return (
+    <span
+      contentEditable={false}
+      className="my-2 inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 p-1 shadow-sm"
+      data-markdown-date
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="sr-only">{children}</span>
+      <Input
+        type="date"
+        aria-label={t('Date')}
+        value={isMarkdownDate(value) ? value : todayMarkdownDate()}
+        disabled={readOnly}
+        className="h-8 w-auto min-w-[9.5rem] border-0 bg-transparent px-2 font-medium shadow-none focus-visible:ring-0"
+        onChange={(event) => {
+          const next = event.target.value
+          if (!isMarkdownDate(next)) return
+          editor.tf.withoutNormalizing(() => {
+            editor.tf.setNodes({ dateBlock: true }, { at: path })
+            editor.tf.delete({ at: [...path, 0] })
+            editor.tf.insertText(next, { at: [...path, 0, 0] })
+          })
+        }}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t('Delete')}
+        disabled={readOnly}
+        onClick={() => deleteMarkdownBlock(editor, path)}
+      >
+        <Trash2 aria-hidden="true" />
+      </Button>
+    </span>
+  )
+}
+
 const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Element => {
   const { t } = useTranslation()
   const editor = useEditorRef()
@@ -76,8 +132,19 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
   const [menuOpen, setMenuOpen] = useState(false)
   const [actionsOpen, setActionsOpen] = useState(false)
   const [dateOpen, setDateOpen] = useState(false)
-  const [date, setDate] = useState('')
+  const [date, setDate] = useState(todayMarkdownDate)
+  const dateInputRef = useRef<HTMLInputElement>(null)
   const path = editor.api.findPath(element) ?? []
+
+  useEffect(() => {
+    if (!dateOpen) return
+    dateInputRef.current?.focus()
+    try {
+      dateInputRef.current?.showPicker?.()
+    } catch {
+      // showPicker is unavailable in some browsers and in the test environment.
+    }
+  }, [dateOpen])
   const siblingIndex = path.at(-1) ?? -1
   const siblingCount = markdownBlockSiblingCount(editor, path)
   const choiceGroups = useMemo(
@@ -168,7 +235,7 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
                       className="min-h-9 gap-3 px-2.5"
                       onSelect={() => {
                         if (kind === 'date') {
-                          setDate('')
+                          setDate(todayMarkdownDate())
                           setDateOpen(true)
                           return
                         }
@@ -310,28 +377,47 @@ const BlockControls = memo(({ element }: { element: TElement }): React.JSX.Eleme
       </div>
       <Popover open={dateOpen} onOpenChange={setDateOpen}>
         <PopoverTrigger asChild>
-          <span />
+          <span aria-hidden="true" />
         </PopoverTrigger>
-        <PopoverContent>
+        <PopoverContent
+          align="start"
+          className="w-[18rem] p-3"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
           <form
-            className="space-y-2"
+            className="space-y-3"
             onSubmit={(event) => {
               event.preventDefault()
-              if (!date) return
-              insertMarkdownBlock(editor, editor.api.findPath(element), 'date', { date })
+              if (!isMarkdownDate(date)) return
+              const currentPath = editor.api.findPath(element)
+              if (!currentPath) return
+              insertMarkdownBlock(editor, currentPath, 'date', { date })
               setDateOpen(false)
-              editor.tf.focus()
             }}
           >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">{t('Insert date')}</p>
+                <p className="text-xs text-muted-foreground">{t('Choose a date to add')}</p>
+              </div>
+              <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
+            </div>
             <Input
+              ref={dateInputRef}
               type="date"
               aria-label={t('Date')}
               value={date}
               onChange={(event) => setDate(event.target.value)}
+              className="h-10 text-base"
             />
-            <Button type="submit" disabled={!date}>
-              {t('Add')}
-            </Button>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setDateOpen(false)}>
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" disabled={!isMarkdownDate(date)}>
+                {t('Add')}
+              </Button>
+            </div>
           </form>
         </PopoverContent>
       </Popover>
@@ -688,7 +774,12 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     type === 'code_block' && element.lang === DROPDOWN_LANGUAGE
       ? decodeDropdownDefinition(NodeApi.string(element))
       : undefined
-  let content: React.ReactNode = children
+  const dateBlock = type === 'p' && (element.dateBlock === true || isMarkdownDate(NodeApi.string(element)))
+  let content: React.ReactNode = dateBlock ? (
+    <MarkdownDateElement element={element} path={path}>
+      {children}
+    </MarkdownDateElement>
+  ) : children
   let tag: keyof HTMLElementTagNameMap = 'p'
   if (/^h[1-6]$/u.test(type)) tag = type as keyof HTMLElementTagNameMap
   else if (['blockquote', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th'].includes(type))
@@ -804,6 +895,7 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       }}
       className={cn(
         type === 'li' && blockClassName,
+        dateBlock && 'my-2 min-h-0',
         type === 'li' && typeof element.checked === 'boolean' && 'list-none',
         placeholderText &&
           'relative before:absolute before:left-0 before:top-0 before:pointer-events-none before:whitespace-nowrap before:text-muted-foreground before:content-[attr(data-markdown-placeholder)]',
@@ -817,14 +909,14 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
       )}
     >
       {content}
-      {type === 'li' && !readOnly ? <BlockControls element={element} /> : null}
+      {type === 'li' && !readOnly && !dateBlock ? <BlockControls element={element} /> : null}
     </PlateElement>
   )
   if (!block || type === 'li') return rendered
   return (
     <div className={blockClassName} {...blockAttributes}>
       {rendered}
-      {!readOnly ? <BlockControls element={element} /> : null}
+      {!readOnly && !dateBlock ? <BlockControls element={element} /> : null}
     </div>
   )
 }

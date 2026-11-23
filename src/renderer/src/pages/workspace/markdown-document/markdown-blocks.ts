@@ -44,6 +44,27 @@ export type DropdownDefinition = Readonly<{
 const text = (value = ''): Descendant => ({ text: value })
 const paragraph = (value = ''): TElement => ({ type: 'p', children: [text(value)] })
 
+/** Return a local-calendar date in the format used by Markdown date blocks. */
+export const todayMarkdownDate = (): string => {
+  const today = new Date()
+  const year = today.getFullYear().toString().padStart(4, '0')
+  const month = (today.getMonth() + 1).toString().padStart(2, '0')
+  const day = today.getDate().toString().padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/** Keep ordinary paragraphs distinct from the date blocks rendered by the editor. */
+export const isMarkdownDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value)
+  if (!match) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return (
+    date.getUTCFullYear() === Number(match[1]) &&
+    date.getUTCMonth() + 1 === Number(match[2]) &&
+    date.getUTCDate() === Number(match[3])
+  )
+}
+
 const listItem = (value: string, checked?: boolean): TElement => ({
   type: 'li',
   ...(checked === undefined ? {} : { checked }),
@@ -170,7 +191,10 @@ export const createMarkdownBlock = (
     case 'divider':
       return { type: 'hr', children: [text('')] }
     case 'date':
-      return paragraph(options.date ?? new Date().toISOString().slice(0, 10))
+      return {
+        ...paragraph(options.date ?? todayMarkdownDate()),
+        dateBlock: true
+      }
     case 'dropdown': {
       const definition = encodeDropdownDefinition({
         options: ['1', '2'],
