@@ -67,13 +67,16 @@ vi.mock('node:child_process', async (original) => {
                   configOptions: [
                     { id: 'model', type: 'select', currentValue: 'model', options: [
                       { value: 'model', name: 'Model', _meta: { effortOptions: ['low', 'high'] } },
-                      { value: 'other', name: 'Other', _meta: { effortOptions: ['medium', 'max'] } }
+                      { value: 'other', name: 'Other' }
                     ] },
                     { id: 'effort', category: 'thought_level', type: 'select', options: [
                       { value: 'low', name: 'Low' }, { value: 'high', name: 'High' }
                     ] }
                   ],
-                  models: { currentModelId: 'model', availableModels: [{ modelId: 'model' }, { modelId: 'other' }] }
+                  models: { currentModelId: 'model', availableModels: [
+                    { modelId: 'model' },
+                    { modelId: 'other', _meta: { effortOptions: ['medium', 'max'] } }
+                  ] }
                 }
                 break
               default:

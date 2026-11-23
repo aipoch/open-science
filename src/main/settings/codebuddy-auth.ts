@@ -207,7 +207,10 @@ export async function runCodeBuddyAuth(
       const session = await Promise.race([
         connection.agent.request<
           acp.NewSessionResponse & {
-            models?: { currentModelId?: string; availableModels?: { modelId: string }[] }
+            models?: {
+              currentModelId?: string
+              availableModels?: Array<{ modelId?: unknown; _meta?: unknown }>
+            }
           }
         >('session/new', { cwd, mcpServers: [] }),
         new Promise<never>((_, reject) => {
@@ -246,6 +249,16 @@ export async function runCodeBuddyAuth(
         const modelId = entry.value
         const efforts = readModelReasoningEfforts(entry)
         if (typeof modelId === 'string' && efforts.length) modelReasoningEfforts[modelId] = efforts
+      }
+      for (const entry of session.models?.availableModels ?? []) {
+        const modelId = entry.modelId
+        const efforts = readModelReasoningEfforts(entry)
+        if (
+          typeof modelId === 'string' &&
+          efforts.length &&
+          modelReasoningEfforts[modelId] === undefined
+        )
+          modelReasoningEfforts[modelId] = efforts
       }
       if (model && effortValues.length && !modelReasoningEfforts[model]) {
         modelReasoningEfforts[model] = [...new Set(effortValues)]
