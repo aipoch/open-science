@@ -1553,6 +1553,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     }
 
     const selectProvenanceVersion = (nextItem: PreviewFileItem): boolean => {
+      if (imageEditorItem) return true
       return applyVersionItem(nextItem, false, () => finishVersionSelection(false))
     }
 
@@ -2194,8 +2195,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             ? (provenanceTab) => updateFileView({ provenanceTab })
                             : undefined
                         }
-                        lockVersion={Boolean(imageEditorItem)}
                         onVersionChange={selectProvenanceVersion}
+                        preserveVersionSelection={Boolean(imageEditorItem)}
                         tooltipClassName={tooltipClassName}
                         initialTab={
                           provenanceTarget?.surfaceKey === surfaceKey

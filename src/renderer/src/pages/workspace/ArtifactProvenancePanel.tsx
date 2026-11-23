@@ -32,7 +32,7 @@ import {
   X
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -127,6 +127,7 @@ type ArtifactProvenancePanelProps = {
   onClose: () => void
   lockVersion?: boolean
   onVersionChange?: (item: PreviewFileItem) => boolean
+  preserveVersionSelection?: boolean
   initialTab?: ProvenanceTab
   selectedTab?: ProvenanceTab
   onTabChange?: (tab: ProvenanceTab) => void
@@ -805,6 +806,7 @@ const ArtifactProvenancePanel = ({
   onClose,
   lockVersion,
   onVersionChange,
+  preserveVersionSelection = false,
   initialTab,
   selectedTab,
   onTabChange,
@@ -818,8 +820,15 @@ const ArtifactProvenancePanel = ({
     artifactId: string
     versionId: string
   }>()
+  const lastItemVersionId = useRef(item.selectedVersionId)
+  useEffect(() => {
+    if (lastItemVersionId.current === item.selectedVersionId) return
+    lastItemVersionId.current = item.selectedVersionId
+    setSelectedVersion(undefined)
+  }, [item.selectedVersionId])
+  const canUseLocalVersionSelection = !onVersionChange || preserveVersionSelection
   const requestedVersionId =
-    !onVersionChange && selectedVersion && selectedVersion.artifactId === item.artifactId
+    canUseLocalVersionSelection && selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
       : item.selectedVersionId
   const lineageRequestKey = `${lineageKey}:${requestedVersionId ?? ''}`
@@ -1527,9 +1536,11 @@ const ArtifactProvenancePanel = ({
     const nextItem = createPreviewFileItemForArtifactVersion({ item, version, projectId })
     const committed = onVersionChange
       ? onVersionChange(nextItem)
-      : usePreviewWorkbenchStore.getState().upsertItem(nextItem)
+      : preserveVersionSelection
+        ? true
+        : usePreviewWorkbenchStore.getState().upsertItem(nextItem)
     if (!committed) return
-    if (!onVersionChange) setSelectedVersion({ artifactId: item.artifactId, versionId })
+    if (canUseLocalVersionSelection) setSelectedVersion({ artifactId: item.artifactId, versionId })
   }
 
   const downloadExecutionNotebook = async (): Promise<void> => {
