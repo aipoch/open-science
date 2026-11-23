@@ -8892,6 +8892,21 @@
     "This file contains encrypted content.": "此檔案包含加密內容。",
     "This file uses external content that the preview cannot load.": "此檔案引用了預覽無法載入的外部內容。",
     "This Office format cannot be previewed.": "預覽不支援此 Office 格式。",
-    "The secure Office preview could not start.": "無法啟動安全的 Office 預覽。"
+    "The secure Office preview could not start.": "無法啟動安全的 Office 預覽。",
+    "Change": "更換",
+    "Change provider": "更換服務商",
+    "Search providers": "搜尋服務商",
+    "Search by name or website, e.g. kimi, openrouter": "搜尋名稱或網址，例如 kimi、openrouter",
+    "Provider category": "服務商分類",
+    "Account sign-in": "帳號登入",
+    "Model vendors": "模型廠商",
+    "Coding plans": "程式設計方案",
+    "Cloud platforms": "雲端平台",
+    "Gateways": "閘道",
+    "Recommended": "推薦",
+    "No providers match your search.": "沒有符合的服務商。",
+    "{{count}} regions_other": "{{count}} 個區域",
+    "Sign in with your CodeBuddy account": "使用 CodeBuddy 帳號登入",
+    "Already added": "已新增"
   }
 }

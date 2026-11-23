@@ -8892,6 +8892,21 @@
     "This file contains encrypted content.": "このファイルには暗号化された内容が含まれています。",
     "This file uses external content that the preview cannot load.": "このファイルはプレビューで読み込めない外部コンテンツを使用しています。",
     "This Office format cannot be previewed.": "この Office 形式はプレビューできません。",
-    "The secure Office preview could not start.": "安全な Office プレビューを起動できませんでした。"
+    "The secure Office preview could not start.": "安全な Office プレビューを起動できませんでした。",
+    "Change": "変更",
+    "Change provider": "プロバイダーを変更",
+    "Search providers": "プロバイダーを検索",
+    "Search by name or website, e.g. kimi, openrouter": "名前または URL で検索（例: kimi、openrouter）",
+    "Provider category": "プロバイダーのカテゴリ",
+    "Account sign-in": "アカウントでサインイン",
+    "Model vendors": "モデルベンダー",
+    "Coding plans": "コーディングプラン",
+    "Cloud platforms": "クラウドプラットフォーム",
+    "Gateways": "ゲートウェイ",
+    "Recommended": "おすすめ",
+    "No providers match your search.": "一致するプロバイダーはありません。",
+    "{{count}} regions_other": "{{count}} リージョン",
+    "Sign in with your CodeBuddy account": "CodeBuddy アカウントでサインイン",
+    "Already added": "追加済み"
   }
 }

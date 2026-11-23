@@ -9067,6 +9067,22 @@
     "This file contains encrypted content.": "Diese Datei enthält verschlüsselte Inhalte.",
     "This file uses external content that the preview cannot load.": "Diese Datei verwendet externe Inhalte, die die Vorschau nicht laden kann.",
     "This Office format cannot be previewed.": "Dieses Office-Format lässt sich nicht in der Vorschau anzeigen.",
-    "The secure Office preview could not start.": "Die sichere Office-Vorschau konnte nicht starten."
+    "The secure Office preview could not start.": "Die sichere Office-Vorschau konnte nicht starten.",
+    "Change": "Ändern",
+    "Change provider": "Anbieter ändern",
+    "Search providers": "Anbieter suchen",
+    "Search by name or website, e.g. kimi, openrouter": "Nach Name oder Website suchen, z. B. kimi, openrouter",
+    "Provider category": "Anbieterkategorie",
+    "Account sign-in": "Kontoanmeldung",
+    "Model vendors": "Modellanbieter",
+    "Coding plans": "Coding-Tarife",
+    "Cloud platforms": "Cloud-Plattformen",
+    "Gateways": "Gateways",
+    "Recommended": "Empfohlen",
+    "No providers match your search.": "Keine Anbieter entsprechen Ihrer Suche.",
+    "{{count}} regions_one": "{{count}} Region",
+    "{{count}} regions_other": "{{count}} Regionen",
+    "Sign in with your CodeBuddy account": "Mit Ihrem CodeBuddy-Konto anmelden",
+    "Already added": "Bereits hinzugefügt"
   }
 }
