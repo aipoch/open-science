@@ -215,6 +215,7 @@ import {
   deliversNotebookResultToAgent
 } from '../background-result-delivery/notebook-adapter'
 import {
+  NOTEBOOK_PREVIEW_HISTORY_BYTES,
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
 } from './content-limits'
@@ -544,6 +545,13 @@ class NotebookRuntimeService {
 
   adoptExecutionIntentScope(scope: NotebookExecutionIntentScope, sessionId: string): void {
     this.executionIntents.adopt(scope, sessionId)
+  }
+
+  finishPendingRunDeletion(scope: {
+    projectId?: string
+    sessionIds?: readonly string[]
+  }): Promise<void> {
+    return this.repository.finishPendingRunDeletion(scope)
   }
 
   forgetDeletedExecutionIntents(deletion: NotebookExecutionIntentDeletion): void {
@@ -1027,10 +1035,14 @@ class NotebookRuntimeService {
   ): Promise<void> {
     if (!this.executionApproval || (run.source === 'user' && !run.promptMessageId)) return
     signal?.throwIfAborted()
-    const document = run.kernelEpochId
-      ? await this.repository.findExisting(session.projectId, session.sessionId, session.lane)
-      : undefined
-    const previousSources = (document?.runs ?? [])
+    const history = run.kernelEpochId
+      ? await this.repository.readLaneAnalysisRuns(
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+      : []
+    const previousSources = history
       .filter(
         (previous) =>
           previous.runId !== run.runId &&
@@ -2839,90 +2851,93 @@ class NotebookRuntimeService {
     return session
   }
 
-  async runEvidence(
-    request: NotebookRunEvidenceRequest
-  ): Promise<NotebookRunEvidenceSnapshot | null> {
+  private readHistory<T>(
+    request: NotebookSessionRequest,
+    read: (projectId: string) => Promise<T>
+  ): Promise<T> {
+    const projectId = resolveProjectId(request, resolveProjectId(this.options))
     return this.sessionLifecycle.runProjectOperation(
       request,
-      async () => {
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        return this.sessionReadModel.runEvidence(
-          session?.projectId ?? projectId,
-          session?.sessionId ?? request.sessionId,
-          request.runId,
-          session
-        )
-      },
+      () => this.repository.withinHistoryRead(projectId, request.sessionId, () => read(projectId)),
       false
     )
   }
 
+  async runEvidence(
+    request: NotebookRunEvidenceRequest
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.runEvidence(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        request.runId,
+        session
+      )
+    })
+  }
+
   async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
-    return this.sessionLifecycle.runProjectOperation(
-      request,
-      async () => {
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        return this.sessionReadModel.backgroundTasks(
-          session?.projectId ?? projectId,
-          session?.sessionId ?? request.sessionId,
-          session
-        )
-      },
-      false
-    )
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.backgroundTasks(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        session
+      )
+    })
   }
 
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    return this.sessionLifecycle.runProjectOperation(
-      request,
-      async () => {
-        const requestedRunIds = request.runIds ?? []
-        if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-          throw new Error(
-            `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
-          )
-        }
-        if (
-          request.historySummaryFrameId !== undefined &&
-          Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
-            NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
-        ) {
-          throw new Error(
-            `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
-          )
-        }
-        const runIds = [...new Set(requestedRunIds)]
-        const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
-        if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
-          throw new Error('Notebook history limit must be 1-100.')
-        if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
-          throw new Error('Notebook state history cursor is invalid.')
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        const session = await this.sessionForHistoryRead(request, projectId)
-        if (!session) {
-          return this.sessionReadModel.importedState(
-            request,
-            runIds,
-            request.historySummaryFrameId,
-            request.historyBefore,
-            historyLimit
-          )
-        }
-        return this.sessionReadModel.state(
-          session,
+    return this.readHistory(request, async (projectId) => {
+      const requestedRunIds = request.runIds ?? []
+      if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+        throw new Error(
+          `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+        )
+      }
+      if (
+        request.historySummaryFrameId !== undefined &&
+        Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+          NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+      ) {
+        throw new Error(
+          `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+        )
+      }
+      const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
+      const historyByteLimit =
+        request.previewHistory === true && request.historyBefore === undefined
+          ? NOTEBOOK_PREVIEW_HISTORY_BYTES
+          : undefined
+      const session = await this.sessionForHistoryRead(request, projectId)
+      if (!session) {
+        return this.sessionReadModel.importedState(
+          request,
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
-          historyLimit
+          historyLimit,
+          historyByteLimit
         )
-      },
-      false
-    )
+      }
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit,
+        historyByteLimit
+      )
+    })
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
@@ -3495,10 +3510,13 @@ class NotebookRuntimeService {
                 )
               if (this.shellProcessOwnership.hasReceipts())
                 await this.shellProcessOwnership.recover()
+              await this.repository.checkpointPendingRuns()
               await options.afterShutdown!()
             }
           : undefined
       )
+      if (!options?.afterShutdown && shell.reaped && sessions.reaped)
+        await this.repository.checkpointPendingRuns()
       if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
         try {
           this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
@@ -3579,7 +3597,7 @@ class NotebookRuntimeService {
         }
       )
     const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal])
-      .then(([shutdownResult, recoveryResult, idleResult]) => {
+      .then(async ([shutdownResult, recoveryResult, idleResult]) => {
         const failures = [shutdownResult, recoveryResult, idleResult]
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason)
@@ -3590,7 +3608,9 @@ class NotebookRuntimeService {
             'Multiple notebook runtime resources failed to dispose.'
           )
         }
-        return (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        const result = (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        if (result.reaped) await this.repository.checkpointPendingRuns()
+        return result
       })
       .finally(async () => {
         const policy = await this.memoryPolicyPromise?.catch(() => undefined)

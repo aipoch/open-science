@@ -510,6 +510,7 @@ const callNotebookRpc = async (
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
           projectId,
+          ...(method === 'state' ? { historyLimit: MAX_STATE_RUNS } : {}),
           ...(method === 'executeShell' && environment.shellRuntime
             ? { shellRuntime: environment.shellRuntime }
             : {})

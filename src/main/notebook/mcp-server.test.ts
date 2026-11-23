@@ -3693,10 +3693,25 @@ describe('compactNotebookStateResult', () => {
     expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
   })
 
-  it('applies the state projection and smaller global budget to notebook_state', () => {
+  it('requests only the recent runs used by the notebook_state projection', async () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)
     expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'session',
+        workspaceCwd: '/work',
+        projectId: 'project'
+      },
+      tool!.method,
+      {},
+      async (_endpoint, init) => {
+        expect(JSON.parse(String(init.body)).params.historyLimit).toBe(10)
+        return Response.json({ result: {} })
+      }
+    )
   })
 
   it('returns bounded recent metadata without duplicating the complete run history', () => {

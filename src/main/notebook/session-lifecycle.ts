@@ -365,7 +365,7 @@ class NotebookSessionLifecycleOwner {
       await this.options.ensureProcessRecovery(notebookLaneKey(lane))
       assertCreationAvailable()
       await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
-      let document = await this.options.repository.loadOrCreate({
+      let document = await this.options.repository.loadSessionInitialization({
         projectId: projectId,
         sessionId: request.sessionId,
         workspaceCwd: request.workspaceCwd,

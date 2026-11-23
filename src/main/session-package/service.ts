@@ -1,3 +1,4 @@
+import { pendingDirectoryIdentity } from '../notebook/pending-run-files'
 import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
 import { readResearchFilmCard } from '../research-video/stored-presentation'
@@ -1298,7 +1299,11 @@ export class SessionPackageService {
       if (!notebookDocumentIdentity(key)) continue
       const document = notebooks[notebookIndex++]
       const stored = await readPackageJson(resolveStorageKey(this.options.storageRoot, key))
-      if ((stored as { version?: number }).version === 2) portableNotebooks.set(key, document)
+      if (
+        (stored as { version?: number }).version === 2 ||
+        (await pendingDirectoryIdentity(resolveStorageKey(this.options.storageRoot, key)))
+      )
+        portableNotebooks.set(key, document)
     }
     diagnostic.phase('collect-records')
     const bookmarkTargets = options.consumeSnapshot

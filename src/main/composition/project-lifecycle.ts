@@ -227,6 +227,7 @@ export function composeProjectLifecycle({
         await owner.completeProjectDeletion(projectId)
         await getNotebookService().deleteProjectFileEvidence(projectId)
         await getNotebookService().deleteProjectInputs(projectId)
+        await getNotebookService().finishPendingRunDeletion({ projectId })
         await backgroundResultDelivery.commitProjectDeletion(projectId)
         await scheduleRepository?.deleteTarget(projectId)
         schedulesChanged(projectId, null)
@@ -364,6 +365,7 @@ export function composeProjectLifecycle({
       imageTasks?.cancelSessions(sessionIds)
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       const results = await Promise.allSettled([
+        getNotebookService().finishPendingRunDeletion({ sessionIds }),
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),

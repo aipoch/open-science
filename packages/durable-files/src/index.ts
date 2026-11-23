@@ -5,6 +5,7 @@ export {
   readDurableJsonFile,
   readFileWithinLimit,
   recoverDurableJsonDirectory,
+  isDurableJsonTemporaryFileName,
   isRecoverableDurableJsonTemporaryFile,
   type DurableJsonFileDependencies
 } from './durable-json-file'
