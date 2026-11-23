@@ -19,9 +19,13 @@ type UpdateCommandOwner = Readonly<{
   download: (options?: UpdateDownloadOptions) => Promise<UpdateStatus>
   cancel: () => Promise<UpdateStatus>
   apply: (options?: UpdateApplyOptions) => Promise<UpdateStatus>
+  openProcessManager?: () => Promise<boolean>
 }>
 
-const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner => ({
+const createUpdateCommandOwner = (
+  strategy: UpdateStrategy,
+  openProcessManager?: () => Promise<boolean>
+): UpdateCommandOwner => ({
   getAppInfo: (): AppInfo => ({
     name: APP.name,
     version: strategy.getStatus().current,
@@ -35,7 +39,8 @@ const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner 
   check: () => strategy.check(),
   download: (options) => strategy.download(options),
   cancel: () => strategy.cancel(),
-  apply: (options) => strategy.apply(options)
+  apply: (options) => strategy.apply(options),
+  ...(openProcessManager ? { openProcessManager } : {})
 })
 
 export { createUpdateCommandOwner }
