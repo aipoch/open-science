@@ -13,6 +13,7 @@
 
 - Los proyectos ganan un interruptor de rastreo del Agent de activación voluntaria: cuando está habilitado y hay un receptor configurado, el Agent integrado exporta trazas JSON OTLP/HTTP correlacionadas de turnos, solicitudes de modelo y ejecuciones de herramientas MCP a recolectores genéricos o a Langfuse. Cuatro interruptores de detalle ajustan lo que se captura, y un interruptor local de estado de subida informa de la salud de la entrega. (#4514)
 - Las conexiones de CodeBuddy descubren los esfuerzos de razonamiento admitidos por cada modelo durante el inicio de sesión y la actualización del catálogo; el selector de esfuerzo luego solo ofrece los niveles que el modelo seleccionado realmente admite. (#4619)
+- El catálogo de modelos de Zhipu ahora incluye GLM-5.4, disponible directamente en las conexiones de Zhipu. (#4637)
 
 ## 🔧 Improvements
 
@@ -27,6 +28,10 @@
 - Las versiones generadas de edición de imágenes se abren de forma fiable en la vista previa de imagen completa mientras su versión aún se está publicando. (#4603)
 - Los estados HTTP ascendentes explícitos se presentan como hechos del proveedor: un 402 como «Insufficient Balance» ahora muestra una explicación de facturación accionable, conservando el estado y los detalles seguros del proveedor. (#4601)
 - En Windows, el primer flujo de trazado de Python ya no se detiene por una barrera de recuperación de kernel residual de un carril no relacionado. (#4620)
+- Cuando se deniega una acción de herramienta, el turno ahora termina con una explicación duradera en lugar de quedarse en silencio, y los recuentos de denegación se mantienen distintos del trabajo completado. (#4517)
+- Las conexiones de CodeBuddy restauran el modelo seleccionado al reanudar una sesión con historial, de modo que las actualizaciones de uso de tokens siguen llegando. (#4631)
+- Las generaciones de películas de investigación permanecen visibles: la conversación se mantiene en Activo con su estado de película mostrado, y un diálogo de película bloqueada puede abrir la conversación que posee la generación. (#4633)
+- El Agent integrado acepta continuaciones de herramientas que llevan campos de identidad nulos en lugar de fallar el turno. (#4638)
 
 ## 🙏 Agradecimientos
 

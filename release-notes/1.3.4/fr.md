@@ -13,6 +13,7 @@
 
 - Les projets gagnent un commutateur de **traçage de l'Agent** en opt-in : lorsqu'il est activé et qu'un récepteur est configuré, l'Agent intégré exporte des spans JSON OTLP/HTTP corrélées pour les tours, les requêtes de modèle et les exécutions d'outils MCP vers des collecteurs génériques ou Langfuse. Quatre commutateurs de détail règlent ce qui est capturé, et un commutateur local d'état d'envoi rapporte la bonne santé de la livraison. (#4514)
 - Les connexions CodeBuddy découvrent les efforts de raisonnement pris en charge par chaque modèle lors de la connexion et du rafraîchissement du catalogue ; le sélecteur d'effort ne propose alors que les niveaux que le modèle sélectionné prend réellement en charge. (#4619)
+- Le catalogue de modèles Zhipu liste désormais GLM-5.4, disponible directement sur les connexions Zhipu. (#4637)
 
 ## 🔧 Improvements
 
@@ -27,6 +28,10 @@
 - Les versions d'édition d'image générées s'ouvrent de façon fiable dans l'aperçu d'image complet pendant que leur version est encore en cours de publication. (#4603)
 - Les codes d'état HTTP en amont explicites sont présentés comme des faits fournisseur : un 402 tel que « Solde insuffisant » affiche désormais une explication de facturation exploitable, avec le code d'état et les détails sûrs du fournisseur préservés. (#4601)
 - Sous Windows, le premier flux de tracé Python ne reste plus bloqué sur une barrière de récupération de noyau résiduelle provenant d'une voie sans rapport. (#4620)
+- Lorsqu'une action d'outil est refusée, le tour se termine désormais par une explication durable au lieu de se taire, et les compteurs de refus restent distincts du travail achevé. (#4517)
+- Les connexions CodeBuddy restaurent le modèle sélectionné lors de la reprise d'une session portant un historique, de sorte que les mises à jour d'utilisation de jetons continuent de circuler. (#4631)
+- Les générations de film de recherche restent visibles : la conversation demeure dans l'onglet Active avec son état de film affiché, et un dialogue de film bloqué peut ouvrir la conversation qui détient la génération. (#4633)
+- L'Agent intégré accepte les continuations d'outils comportant des champs d'identité nuls au lieu de faire échouer le tour. (#4638)
 
 ## 🙏 Remerciements
 

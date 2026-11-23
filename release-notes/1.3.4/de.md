@@ -13,6 +13,7 @@
 
 - Projekte erhalten einen optionalen Schalter für die **Agenten-Ablaufverfolgung**: Ist er aktiviert und ein Empfänger konfiguriert, exportiert der integrierte Agent korrelierte OTLP/HTTP-JSON-Bereiche für Turns, Modellanfragen und MCP-Werkzeugausführungen an generische Sammler oder Langfuse. Vier Detailschalter steuern, was erfasst wird, und ein lokaler Schalter für den Übertragungsstatus meldet die Zustellgesundheit. (#4514)
 - CodeBuddy-Verbindungen ermitteln die von jedem Modell unterstützten Reasoning-Aufwände während der Anmeldung und bei der Katalogaktualisierung; die Auswahl bietet dann nur noch die Stufen an, die das gewählte Modell tatsächlich unterstützt. (#4619)
+- Der Modellkatalog von Zhipu führt nun GLM-5.4, das direkt auf Zhipu-Verbindungen verfügbar ist. (#4637)
 
 ## 🔧 Improvements
 
@@ -27,6 +28,10 @@
 - Erzeugte Bearbeitungsversionen von Bildern öffnen zuverlässig in der vollständigen Bildvorschau, während ihre Version noch veröffentlicht wird. (#4603)
 - Explizite HTTP-Statuscodes der Anbieterseite werden als Anbieterfakten angezeigt: Ein 402 wie „Insufficient Balance" zeigt nun eine handlungsfähige Abrechnungserklärung, wobei der Status und sichere Anbieterdetails erhalten bleiben. (#4601)
 - Unter Windows bleibt der erste Python-Plotting-Ablauf nicht mehr an einer übriggebliebenen Kernel-Wiederherstellungssperre aus einem unzusammenhängenden Ausführungsweg stehen. (#4620)
+- Wenn eine Werkzeugaktion verweigert wird, endet der Turn nun mit einer dauerhaften Erklärung, statt zu verstummen, und Verweigerungszählungen bleiben von abgeschlossener Arbeit getrennt. (#4517)
+- CodeBuddy-Verbindungen stellen das ausgewählte Modell beim Wiederaufnehmen einer verlauftragenden Sitzung wieder her, sodass Token-Nutzungsaktualisierungen weiterlaufen. (#4631)
+- Erzeugungen von Forschungsfilmen bleiben sichtbar: Das Gespräch verbleibt mit angezeigtem Filmstatus unter Aktiv, und ein blockierter Filmdialog kann das Gespräch öffnen, das der Erzeugung gehört. (#4633)
+- Der integrierte Agent akzeptiert Werkzeugfortsetzungen mit Null-Identitätsfeldern, statt den Turn fehlschlagen zu lassen. (#4638)
 
 ## 🙏 Danksagungen
 

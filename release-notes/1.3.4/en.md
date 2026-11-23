@@ -13,6 +13,7 @@
 
 - Projects gain an opt-in **Agent tracing** switch: when enabled and a receiver is configured, the built-in Agent exports correlated OTLP/HTTP JSON spans for turns, model requests, and MCP tool executions to generic collectors or Langfuse. Four detail switches tune what is captured, and a local upload-status switch reports delivery health. (#4514)
 - CodeBuddy connections discover each model's supported reasoning efforts during sign-in and catalog refresh; the effort picker then offers only the levels the selected model actually supports. (#4619)
+- The Zhipu model catalog now lists GLM-5.4, available directly on Zhipu connections. (#4637)
 
 ## 🔧 Improvements
 
@@ -27,6 +28,10 @@
 - Generated edit-image versions open reliably in the full image preview while their version is still being published. (#4603)
 - Explicit upstream HTTP statuses are surfaced as provider facts: a 402 such as "Insufficient Balance" now shows an actionable billing explanation with the status and safe provider details preserved. (#4601)
 - On Windows, the first Python plotting flow no longer stalls on a leftover kernel-recovery fence from an unrelated lane. (#4620)
+- When a tool action is denied, the turn now ends with a durable explanation instead of going silent, and denial counts stay distinct from completed work. (#4517)
+- CodeBuddy connections restore the selected model when resuming a history-bearing session, so token-usage updates keep flowing. (#4631)
+- Research-film generations stay visible: the conversation remains in Active with its film status shown, and a blocked film dialog can open the conversation that owns the generation. (#4633)
+- The built-in Agent accepts tool continuations that carry null identity fields instead of failing the turn. (#4638)
 
 ## 🙏 Acknowledgements
 
