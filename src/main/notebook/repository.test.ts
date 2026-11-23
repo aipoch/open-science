@@ -2995,76 +2995,102 @@ describe('large immutable Notebook records', () => {
     }
   )
 
-  it.each([2, 6])('batches large history with %i inline rows', async (inlineCount) => {
-    const root = await createStorageRoot()
-    const repo = new NotebookRunRepository(root)
-    const request = {
-      projectId: 'p',
-      sessionId: 's',
-      lane: createFrameNotebookLane('p', 's', 'f')
-    }
-    const doc = await repo.loadOrCreate({ ...request, workspaceCwd: root })
-    await repo.appendRun({
-      ...request,
-      run: admittedRun({
-        status: 'completed',
-        script: inlineCount === 2 ? 's'.repeat(300000) : 'print(1)',
-        text: { ...admittedRun().text, stdout: 'x'.repeat(33 * 1024 * 1024) }
-      })
-    })
-    const manifest = join(doc.notebookSessionRoot, 'run.json')
-    // Two inline rows fit the lifecycle view; six exceed its budget.
-    const seed = JSON.parse(await readFile(manifest, 'utf8'))
-    for (let i = 0; i < inlineCount; i++) {
-      seed.runs.push(
-        admittedRun({
-          runId: 'inline-' + i,
-          submissionIdentity: 'inline-' + i,
-          startedAt: i + 2,
+  it.each([
+    { inlineCount: 2, custom: false },
+    { inlineCount: 6, custom: false },
+    { inlineCount: 6, custom: true }
+  ])(
+    'batches large history with $inlineCount inline rows (custom project: $custom)',
+    async ({ inlineCount, custom }) => {
+      const root = await createStorageRoot()
+      const project = join(root, 'selected-project')
+      const recordStorage = custom
+        ? { getProjectRecordRoot: () => join(project, '.open-science') }
+        : {}
+      const repo = new NotebookRunRepository(root, recordStorage)
+      const request = {
+        projectId: 'p',
+        sessionId: 's',
+        lane: createFrameNotebookLane('p', 's', 'f')
+      }
+      await repo.loadOrCreate({ ...request, workspaceCwd: custom ? project : root })
+      await repo.appendRun({
+        ...request,
+        run: admittedRun({
           status: 'completed',
-          text: { ...admittedRun().text, stdout: 'y'.repeat(60000) }
+          script: inlineCount === 2 ? 's'.repeat(300000) : 'print(1)',
+          text: { ...admittedRun().text, stdout: 'x'.repeat(33 * 1024 * 1024) }
         })
-      )
-    }
-    await writeFile(manifest, JSON.stringify(seed))
-    const reader = new NotebookRunRepository(root)
-    await reader.findExisting('p', 's', request.lane)
-    if (inlineCount === 2) await reader.setRuntimeBindings('p', 's', {}, request.lane)
-    const before = await readFile(manifest, 'utf8')
-    const beforeIndex = await reader.readSessionRunIndex('p', 's')
-    const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
-    try {
-      const page = await reader.readCachedHistoryWindow('p', 's', {
-        limit: 2,
-        runIds: [],
-        lane: request.lane
       })
-      expect(page?.window.runs.map((r) => [r.runId, r.text.stdout])).toEqual(
-        seed.runs.slice(-2).map((r: NotebookRunRecord) => [r.runId, r.text.stdout])
-      )
-      const run = admittedRun({ runId: 'new', submissionIdentity: 'new' })
-      expect((await reader.appendOrGetRun({ ...request, run })).admitted).toBe(true)
-      expect(await readFile(manifest, 'utf8')).toBe(before)
-      await reader.checkpointPendingRuns()
-      expect(
-        (await reader.readSessionRunIndex('p', 's')).filter((row) => row.runId !== run.runId)
-      ).toEqual(beforeIndex)
-      expect(
-        reads.mock.calls.some(
-          ([path]) => dirname(path) === join(doc.notebookSessionRoot, '.run-records')
+      const manifest = repo.runJsonPath('p', 's', request.lane)
+      // Two inline rows fit the lifecycle view; six exceed its budget.
+      const seed = JSON.parse(await readFile(manifest, 'utf8'))
+      for (let i = 0; i < inlineCount; i++) {
+        seed.runs.push(
+          admittedRun({
+            runId: 'inline-' + i,
+            submissionIdentity: 'inline-' + i,
+            startedAt: i + 2,
+            status: 'completed',
+            text: { ...admittedRun().text, stdout: 'y'.repeat(60000) }
+          })
         )
-      ).toBe(false)
-    } finally {
-      reads.mockRestore()
+      }
+      await writeFile(manifest, JSON.stringify(seed))
+      const reader = new NotebookRunRepository(root, recordStorage)
+      await reader.findExisting('p', 's', request.lane)
+      if (inlineCount === 2) await reader.setRuntimeBindings('p', 's', {}, request.lane)
+      const before = await readFile(manifest, 'utf8')
+      const beforeIndex = await reader.readSessionRunIndex('p', 's')
+      const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+      try {
+        const page = await reader.readCachedHistoryWindow('p', 's', {
+          limit: 2,
+          runIds: [],
+          lane: request.lane
+        })
+        expect(page?.window.runs.map((r) => [r.runId, r.text.stdout])).toEqual(
+          seed.runs.slice(-2).map((r: NotebookRunRecord) => [r.runId, r.text.stdout])
+        )
+        const run = admittedRun({
+          runId: 'new',
+          submissionIdentity: 'new',
+          cwdAfter: custom ? project : root
+        })
+        expect((await reader.appendOrGetRun({ ...request, run })).admitted).toBe(true)
+        expect(await readFile(manifest, 'utf8')).toBe(before)
+        await reader.checkpointPendingRuns()
+        expect(
+          (await reader.readSessionRunIndex('p', 's')).filter((row) => row.runId !== run.runId)
+        ).toEqual(beforeIndex)
+        expect(
+          reads.mock.calls.some(
+            ([path]) => dirname(path) === join(dirname(manifest), '.run-records')
+          )
+        ).toBe(false)
+      } finally {
+        reads.mockRestore()
+      }
+      const saved = JSON.parse(await readFile(manifest, 'utf8'))
+      expect(saved.runs[0]).toEqual(seed.runs[0])
+      expect(saved.runs.slice(1, -1).map((r: NotebookRunRecord) => r.text)).toEqual(
+        seed.runs.slice(1).map((r: NotebookRunRecord) => r.text)
+      )
+      const ids = saved.runs.map((row: NotebookRunRecord) => row.runId)
+      expect(ids).toEqual([...seed.runs.map((row: NotebookRunRecord) => row.runId), 'new'])
+      if (custom) {
+        expect(saved.runs.at(-1)?.cwdAfter).toBe('$PROJECT/')
+        const movedProject = join(root, 'moved-project')
+        await rename(project, movedProject)
+        const reopened = new NotebookRunRepository(join(root, 'new-data'), {
+          getProjectRecordRoot: () => join(movedProject, '.open-science')
+        })
+        expect((await reopened.findExisting('p', 's', request.lane))?.runs.at(-1)?.cwdAfter).toBe(
+          movedProject
+        )
+      }
     }
-    const saved = JSON.parse(await readFile(manifest, 'utf8'))
-    expect(saved.runs[0]).toEqual(seed.runs[0])
-    expect(saved.runs.slice(1, -1).map((r: NotebookRunRecord) => r.text)).toEqual(
-      seed.runs.slice(1).map((r: NotebookRunRecord) => r.text)
-    )
-    const ids = saved.runs.map((row: NotebookRunRecord) => row.runId)
-    expect(ids).toEqual([...seed.runs.map((row: NotebookRunRecord) => row.runId), 'new'])
-  })
+  )
 
   it.each(['missing', 'corrupt', 'path'] as const)(
     'rejects a %s record without recreating the document',

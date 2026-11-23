@@ -45,7 +45,19 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0-test' },
   BrowserWindow: { getAllWindows: () => [] }
 }))
-vi.mock('node:fs/promises', () => ({ lstat, mkdir, rm }))
+vi.mock('node:fs/promises', () => ({
+  lstat,
+  mkdir,
+  realpath: async (path: string) => path,
+  rm
+}))
+vi.mock('../storage/root-binding', () => ({
+  bindStorageRoot: (path: string) => ({
+    path,
+    prepare: vi.fn().mockResolvedValue(undefined),
+    verify: vi.fn().mockResolvedValue(undefined)
+  })
+}))
 vi.mock('../storage/managed-workspace-ownership', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../storage/managed-workspace-ownership')>()),
   initializeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined),
@@ -1004,6 +1016,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     await expect(
       handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(error)
+    await waitForDataRootWriters()
 
     const request = createSession.mock.calls[0][0]
     expect(mkdir).toHaveBeenCalledWith(join('/tmp/data', 'workspaces'), { recursive: true })
@@ -1019,6 +1032,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     await expect(
       handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(superseded)
+    await waitForDataRootWriters()
 
     const request = createSession.mock.calls[0][0]
     expect(rm).toHaveBeenCalledWith(request.cwd, { recursive: true, force: true })
@@ -1068,6 +1082,11 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     await expect(
       handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(failure)
+    await waitForDataRootWriters()
+    expect(rm).toHaveBeenCalledWith(createSession.mock.calls[0][0].cwd, {
+      recursive: true,
+      force: true
+    })
   })
 })
 

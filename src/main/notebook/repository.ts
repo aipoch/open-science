@@ -435,7 +435,10 @@ type NotebookRunMutationResult = {
   run: NotebookRunRecord
 }
 type NotebookRunLookupResult = Readonly<{
-  document: Pick<NotebookRunDocument, 'notebookSessionRoot' | 'dataRoot' | 'kernel'>
+  document: Pick<
+    NotebookRunDocument,
+    'projectId' | 'sessionId' | 'notebookSessionRoot' | 'dataRoot' | 'kernel'
+  >
   run: NotebookRunRecord
 }>
 

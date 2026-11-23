@@ -521,7 +521,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   toRunSummaryFromDocument(
-    document: Pick<NotebookRunDocument, 'notebookSessionRoot' | 'dataRoot' | 'kernel'>,
+    document: Pick<
+      NotebookRunDocument,
+      'projectId' | 'sessionId' | 'notebookSessionRoot' | 'dataRoot' | 'kernel'
+    >,
     run: NotebookRunRecord
   ): NotebookRunSummary {
     const inputFiles = (run.inputFiles ?? []).map((input) => {

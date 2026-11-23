@@ -787,6 +787,7 @@ async function startDesktopTestRuntime(
     pptxDrafts: { subscribe: vi.fn() },
     settingsService: {},
     settingsRepository: { getSettings: async () => ({}) },
+    managedFileVersionService: { setForkContentExclusionCheck: vi.fn() },
     sessionPackageDesktop: {},
     computeIpcModule: { handlers: {} },
     createDeferredRecovery: () => ({}),

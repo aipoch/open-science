@@ -297,11 +297,12 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'
     )
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Use saved path and runId')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('`producerRunId`')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the exact saved path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Call `notebook_state` before generating files')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Keep cwd unchanged')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
-      '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "<exact saved path>" }, "producerRunId": "<runId>" })`'
+      'For `source`, use `"kind": "localPath"` with the exact saved path'
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')

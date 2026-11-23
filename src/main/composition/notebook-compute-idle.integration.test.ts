@@ -25,6 +25,7 @@ import { configureSecureStorageCipher } from '../secure-storage'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookIdleReclamation, NOTEBOOK_SESSION_IDLE_MS } from '../notebook/idle-reclamation'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import * as windowsNotebookRuntime from '../notebook/windows-notebook-runtime'
 import { composeApplicationRuntime } from '../application-runtime'
@@ -42,6 +43,18 @@ vi.mock('../managed-file-versions/ipc', () => ({
   createManagedFileVersionCommandOwner: (handlers: unknown) => handlers
 }))
 vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers: () => undefined }))
+vi.mock('../notebook/application', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../notebook/application')>()
+  return {
+    ...actual,
+    createNotebookApplicationModule: (
+      options: Parameters<typeof actual.createNotebookApplicationModule>[0]
+    ) => {
+      const fixtureOptions = { ...options, memoryPolicy: healthyNotebookMemoryPolicy() }
+      return actual.createNotebookApplicationModule(fixtureOptions)
+    }
+  }
+})
 
 import { composeProjectLifecycle } from './project-lifecycle'
 import { composeNotebookRuntime } from './notebook-runtime'
@@ -186,6 +199,7 @@ async function notebookComposition(
         }
       },
       projectRepository: { get: async () => project },
+      managedFileVersionService: { setWriteAdmission: vi.fn() },
       runtimeRef: {},
       sideChatOwnerRef: {},
       notebookActivityRef,
@@ -204,6 +218,7 @@ async function notebookComposition(
       artifactReproducibilityAttemptOwnerRef: {},
       applicationEvents: { publish: () => undefined },
       notebookRepository: new NotebookRunRepository(root),
+      projectRepository: { assertProjectFolderHealthy: async () => undefined },
       settingsService: { registeredHelperCatalog: () => undefined },
       grantedRootsRepository: { list: async () => [] },
       backgroundResultDelivery: {

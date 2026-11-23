@@ -4635,6 +4635,7 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         assertProjectFolderHealthy: async () => folder,
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         platform: 'linux'
       })
       liveShellServices.push(service)
@@ -4678,6 +4679,7 @@ describe('notebook runtime service', () => {
       dataRoot: root,
       projectId: 'default-project',
       assertProjectFolderHealthy: async () => folder,
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       executorFactory: () => ({
         execute: async (request) => {
           executionRequests.push(request)

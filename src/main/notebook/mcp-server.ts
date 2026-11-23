@@ -69,7 +69,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "<exact saved path>" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Use saved path and runId; inline small text.',
+  'Publish with `open-science-artifacts` `write_artifact_file`: pass `filename` and `producerRunId`. For `source`, use `"kind": "localPath"` with the exact saved path or inline small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
