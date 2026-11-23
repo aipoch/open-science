@@ -56,7 +56,7 @@ describe('loadNotebookMemoryPolicyConfig', () => {
   })
 
   it.each([
-    [{ linuxEnterRatio: 0.08 }, true],
+    [{ linuxEnterRatio: 0.04 }, true],
     [{ windowsEnterRatio: 0.04 }, false],
     [{ windowsExitRatio: 0.2 }, false]
   ] as const)(

@@ -127,7 +127,7 @@ describe('WSL original-owner memory policy', () => {
     [
       'guest available memory',
       '/proc/meminfo',
-      'MemTotal: 1000 kB\nMemAvailable: 50 kB\nCommitLimit: 900 kB\nCommitted_AS: 100 kB\n',
+      'MemTotal: 1000 kB\nMemAvailable: 25 kB\nCommitLimit: 900 kB\nCommitted_AS: 100 kB\n',
       'linux-memory-low'
     ],
     [
@@ -139,7 +139,7 @@ describe('WSL original-owner memory policy', () => {
     [
       'limiting ancestor',
       '/proc/42/root/run/cgroup/tenant/memory.max',
-      '850\n',
+      '820\n',
       'linux-cgroup-low'
     ],
     [
