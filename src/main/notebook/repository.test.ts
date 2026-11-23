@@ -287,6 +287,17 @@ describe('notebook run repository', () => {
       })
     )
     await writeFile(manifest, JSON.stringify(base))
+    // Pure inline version 1 manifests also serve old results without a conversion.
+    const legacy = new NotebookRunRepository(root)
+    const legacyIdentity = await stat(manifest, { bigint: true })
+    await legacy.findExisting('p', 's', lane)
+    const legacyResult = await legacy.readCachedHistoryWindow('p', 's', {
+      limit: 0,
+      runIds: ['old-1'],
+      lane
+    })
+    expect(legacyResult?.window.runs[0]?.text.stdout).toBe(stdout)
+    expect((await stat(manifest, { bigint: true })).mtimeNs).toBe(legacyIdentity.mtimeNs)
     const external = { ...base.runs[0], script: 'x'.repeat(180_000) }
     await repo.updateRun({ ...request, run: external })
     const before = await stat(manifest, { bigint: true })
@@ -318,13 +329,15 @@ describe('notebook run repository', () => {
           [run.runId, '']
         ])
       )
-      expect(
-        await repo.readCachedHistoryWindow('p', 's', {
-          limit: 0,
-          runIds: ['old-1'],
-          lane
-        })
-      ).toBeUndefined()
+      const older = await repo.readCachedHistoryWindow('p', 's', {
+        limit: 0,
+        runIds: ['old-1', 'old-2'],
+        lane
+      })
+      expect(older?.window.runs.map((row) => [row.runId, row.text.stdout])).toEqual([
+        ['old-1', stdout],
+        ['old-2', stdout]
+      ])
 
       const index = await repo.readSessionRunIndex('p', 's')
       expect(index.find((row) => row.runId === 'old-0')).toMatchObject({

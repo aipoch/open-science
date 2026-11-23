@@ -18,6 +18,7 @@ import {
   PENDING_RUN_BYTES
 } from './pending-run-files'
 import { estimateReplayBytes, indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
+import { indexInlineRuns, readInlineRunBatch, type InlineRunSlot } from './inline-run-window'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
@@ -1205,6 +1206,7 @@ class NotebookRunRepository {
   >()
 
   private readonly historyBodies = new WeakMap<NotebookRunRecord, HistoryBody>()
+  private readonly inlineSlots = new WeakMap<NotebookRunRecord, InlineRunSlot>()
   private readonly inlineOutputs = new WeakMap<
     NotebookRunRecord,
     Pick<NotebookRunRecord, 'text' | 'outputs'>
@@ -1277,7 +1279,7 @@ class NotebookRunRepository {
     detachedBodies?: Map<NotebookRunRecord, HistoryBody>,
     backgroundTaskMetadata = false,
     evidenceOnly = false,
-    missingOutput?: Set<NotebookRunRecord>
+    missingOutput?: Map<NotebookRunRecord, InlineRunSlot | undefined>
   ): Promise<{ summaries: LaneSummary[]; documents: LaneHistory[] } | undefined> {
     const root = getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
     const framesRoot = join(root, 'frames')
@@ -1325,7 +1327,7 @@ class NotebookRunRepository {
               const external = this.historyBodies.get(row)
               if (inline) runs[i] = { ...runs[i], ...inline }
               else if (external && detachedBodies) detachedBodies.set(runs[i], external)
-              else missingOutput.add(runs[i])
+              else missingOutput.set(runs[i], this.inlineSlots.get(row))
             })
           }
           documents.push({ ...compact, runs })
@@ -1384,7 +1386,9 @@ class NotebookRunRepository {
   ): Promise<NotebookHistorySnapshot | undefined> {
     const { limit, runIds, frameId, before, lane, retain } = query
     const detachedBodies = new Map<NotebookRunRecord, HistoryBody>()
-    const missingOutput = query.evidenceOnly ? undefined : new Set<NotebookRunRecord>()
+    const missingOutput = query.evidenceOnly
+      ? undefined
+      : new Map<NotebookRunRecord, InlineRunSlot | undefined>()
     const cached = await this.cachedHistory(
       projectId,
       sessionId,
@@ -1410,11 +1414,24 @@ class NotebookRunRepository {
     const first = query.backgroundTaskMetadata
       ? window.runs.findIndex((run) => run.executionMode === 'background')
       : 0
+    let inlineBatch: Map<NotebookRunRecord, NotebookRunRecord> | undefined
     for (let index = window.runs.length - 1; first >= 0 && index >= first; index--) {
       const row = window.runs[index]
-      if (missingOutput?.has(row)) return undefined
+      let inline: NotebookRunRecord | undefined
+      if (missingOutput?.has(row)) {
+        try {
+          if (!inlineBatch?.has(row))
+            inlineBatch = await readInlineRunBatch(window.runs, index, missingOutput)
+          inline = inlineBatch?.get(row)
+          if (!inline) return undefined
+        } catch {
+          return undefined
+        }
+      }
       const body = this.historyBodies.get(row) ?? detachedBodies.get(row)
-      let run = row
+      let run = inline
+        ? { ...row, text: inline.text ?? emptyText(), outputs: inline.outputs ?? [] }
+        : row
       let omittedBytes =
         body && query.backgroundTaskMetadata ? this.backgroundOutputBytes.get(body.ref) : undefined
       if (
@@ -2677,7 +2694,9 @@ class NotebookRunRepository {
         return { document, stable: true }
       }
     }
+    let manifestJson: string | undefined
     const read = await readDurableJsonFile(filePath, (contents) => {
+      if (fileInfo.size > MAX_ANALYSIS_METADATA_BYTES) manifestJson = contents
       const document = decodeNotebookDocument(contents)
       assertNotebookDocumentOwnership(document, projectId, sessionId)
       assertStoredNotebookDocumentShape(document)
@@ -2725,7 +2744,14 @@ class NotebookRunRepository {
       weight > MAX_DOCUMENT_CACHE_BYTES ? read.value.runs : undefined
     )
     if (!pending.checkpointed && weight > MAX_DOCUMENT_CACHE_BYTES)
-      this.rememberPendingView(filePath, currentInfo, normalized, coldCount, read.value.runs)
+      this.rememberPendingView(
+        filePath,
+        currentInfo,
+        normalized,
+        coldCount,
+        read.value.runs,
+        manifestJson
+      )
     else this.pendingViews.delete(filePath)
     this.rememberDocument(filePath, {
       pending: currentInfo.pending,
@@ -2944,7 +2970,8 @@ class NotebookRunRepository {
     identity: DocumentFileIdentity,
     document: NotebookRunDocument,
     coldCount: number,
-    stored: StoredNotebookRun[]
+    stored: StoredNotebookRun[],
+    manifestJson?: string
   ): void {
     this.pendingViews.delete(path)
     // A manifest smaller than a hot slot can keep using the bounded lifecycle writer.
@@ -2980,6 +3007,8 @@ class NotebookRunRepository {
     if (analysis) {
       // Keep recent inline output only within the remaining metadata budget. External
       // output already has a verified address and never needs to occupy that space.
+      let inlineFile: InlineRunSlot['file'] | undefined
+      let indexed = false
       for (let i = analysis.length - 1; i >= 0; i--) {
         const ref = stored[i]
         if (isNotebookRunReference(ref)) {
@@ -2990,6 +3019,13 @@ class NotebookRunRepository {
           analysisBytes += estimateReplayBytes(output) + 64
           if (analysisBytes <= MAX_ANALYSIS_METADATA_BYTES)
             this.inlineOutputs.set(analysis[i], output)
+        }
+        if (!isNotebookRunReference(ref) && !this.inlineOutputs.has(analysis[i]) && manifestJson) {
+          if (!indexed) {
+            inlineFile = indexInlineRuns(path, identity, manifestJson, coldCount)
+            indexed = true
+          }
+          if (inlineFile) this.inlineSlots.set(analysis[i], { file: inlineFile, index: i })
         }
       }
     }
@@ -3526,7 +3562,8 @@ class NotebookRunRepository {
       version: runs.some(isNotebookRunReference) ? 2 : 1,
       runs
     }
-    await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
+    const manifestJson = `${JSON.stringify(encoded, null, 2)}\n`
+    await writeDurableJsonFile(filePath, manifestJson)
     await clearPendingRuns(filePath)
     if (!pendingLanes.get(filePath)?.recoveryError) pendingLanes.delete(filePath)
     const fileInfo = await manifestIdentity(filePath)
@@ -3578,7 +3615,8 @@ class NotebookRunRepository {
           fileInfo,
           { ...cachedDocument, runs: metadata },
           runs.length,
-          runs
+          runs,
+          manifestJson
         )
       }
       return
@@ -3590,7 +3628,8 @@ class NotebookRunRepository {
       oversized,
       oversized ? runs : undefined
     )
-    if (oversized) this.rememberPendingView(filePath, fileInfo, cachedDocument, runs.length, runs)
+    if (oversized)
+      this.rememberPendingView(filePath, fileInfo, cachedDocument, runs.length, runs, manifestJson)
     else this.pendingViews.delete(filePath)
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
