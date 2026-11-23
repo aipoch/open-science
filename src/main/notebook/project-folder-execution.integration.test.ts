@@ -147,6 +147,40 @@ it('uses fresh per-run copies across approved and rejected edits and preserves c
   expect(h.approve).not.toHaveBeenCalled()
 })
 
+it('preserves completed Notebook results when a reviewed file changes before publication', async () => {
+  const h = await fixture()
+  const original = join(h.folder, 'raw.csv')
+  h.approve.mockImplementationOnce(async () => {
+    await writeFile(original, 'saved user edit')
+    return true
+  })
+  const completed = await h.execute.execute(
+    { ...h.request, code: 'open("raw.csv", "w").write("candidate")' },
+    async (prepared) => {
+      await writeFile(join(prepared.cwd, 'raw.csv'), 'candidate')
+      return {
+        ...result(prepared.cwd),
+        stdout: 'completed scientific analysis',
+        stderr: 'kernel warning',
+        outputs: [{ type: 'stream', name: 'stdout', text: 'completed scientific analysis' }]
+      }
+    }
+  )
+  expect(completed).toMatchObject({
+    status: 'completed',
+    stdout: 'completed scientific analysis',
+    stderr:
+      'kernel warning\nCould not change raw.csv because the file changed on disk. Review the latest file or try a different name.',
+    projectFolderChanges: [],
+    outputs: [
+      { type: 'stream', name: 'stdout', text: 'completed scientific analysis' },
+      { type: 'stream', name: 'stderr', text: expect.stringContaining('Could not change raw.csv') }
+    ]
+  })
+  await expect(readFile(original, 'utf8')).resolves.toBe('saved user edit')
+  await expect(readdir(join(h.dataRoot, '.project-preparations'))).resolves.toEqual([])
+})
+
 it('prepares only existing source parents and releases successful, rejected and failed run copies', async () => {
   const h = await fixture()
   await mkdir(join(h.folder, 'results'))

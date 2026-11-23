@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,12 @@ import type { PrismaClient } from '@prisma/client'
 import type { NewCheck, ReviewCheck, TurnScope } from '../../shared/reviewer'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from './repository'
+import {
+  ProjectArtifactIndexUnavailableError,
+  readCommittedReviewProjection,
+  withProjectRecordIndexes
+} from '../projects/record-indexes'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
 
 // Integration test against a real (temp) SQLite database, mirroring projects/prisma-client.test.ts:
 // proves the runtime DDL is byte-compatible with the generated client and that round-trip + cascade
@@ -85,6 +91,73 @@ const checks = (): NewCheck[] => [
 const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
 
 describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEOUT_MS }, () => {
+  it('only reads the requested committed Review history while its checkpoint is corrupt', async () => {
+    await createRepository()
+    const root = storageRoot!
+    const wrapped = withProjectRecordIndexes(client!, root)
+    const repository = new ReviewRepository(async () => wrapped)
+    const folder = join(root, 'portable')
+    await mkdir(folder)
+    await initializeProjectRecordStorage(root, folder, {
+      format: 'open-science-project',
+      version: 2,
+      outputLayout: 'session-v1',
+      projectId: 'portable',
+      name: 'Portable',
+      createdAt: 1
+    })
+    const running = await repository.createReview({
+      projectId: 'portable',
+      sessionId: 'requested-session',
+      turnMessageId: 'running-turn',
+      scope: scope('running-turn')
+    })
+    const completed = await repository.createReview({
+      projectId: 'portable',
+      sessionId: 'requested-session',
+      turnMessageId: 'completed-turn',
+      scope: scope('completed-turn'),
+      lifecycle: 'complete',
+      outcome: 'flagged'
+    })
+    await repository.addChecks(completed.id, [checks()[1]])
+    for (const [projectId, sessionId] of [
+      ['portable', 'other-session'],
+      ['unrelated', 'requested-session']
+    ]) {
+      await repository.createReview({
+        projectId,
+        sessionId,
+        turnMessageId: 'elsewhere',
+        scope: scope('elsewhere')
+      })
+    }
+    const checkpoint = join(folder, '.open-science', 'artifact-index.json')
+    await writeFile(checkpoint, '{invalid JSON')
+    await expect(
+      repository.getReviewSummariesForProjectSession('portable', 'requested-session')
+    ).rejects.toBeInstanceOf(ProjectArtifactIndexUnavailableError)
+    const summaries = await repository.getCommittedReviewSummariesForProjectSession(
+      'portable',
+      'requested-session',
+      readCommittedReviewProjection
+    )
+    expect(summaries).toHaveLength(2)
+    expect(summaries).toContainEqual(
+      expect.objectContaining({ id: running.id, lifecycle: 'running' })
+    )
+    expect(summaries).toContainEqual(
+      expect.objectContaining({
+        id: completed.id,
+        lifecycle: 'complete',
+        checks: [expect.objectContaining({ claim: checks()[1].claim })],
+        reviewerLog: []
+      })
+    )
+    expect(await repository.recoverInterruptedReviews('unrelated')).toBe(1)
+    expect(await readFile(checkpoint, 'utf8')).toBe('{invalid JSON')
+  })
+
   it('advances every Review projection write at a fixed clock and after clock rollback', async () => {
     const repository = await createRepository()
     const review = await repository.createReview({

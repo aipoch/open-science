@@ -10,6 +10,7 @@ import type {
 } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ProjectFilesClient } from './mutation-projection'
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import {
   SEARCH_FILE_EXTENSIONS,
   type SearchFileFormat,
@@ -412,6 +413,14 @@ const queryAuthoritativeFiles = async (
   query: AuthoritativeCatalogQuery
 ): Promise<ManagedFile[]> => {
   if (query.projectIds.length === 0) return []
+  await reconcileProjectRecordIndexes(client, query.projectIds)
+  return readAuthoritativeFiles(client, query)
+}
+
+const readAuthoritativeFiles = async (
+  client: ProjectFilesClient,
+  query: AuthoritativeCatalogQuery
+): Promise<ManagedFile[]> => {
   const predicates = authoritativeCatalogPredicates(query)
   const limit = query.limit === undefined ? Prisma.empty : Prisma.sql`LIMIT ${query.limit}`
   const rows = await client.$queryRaw<Array<ManagedFile & { seq: number | bigint }>>(Prisma.sql`
@@ -447,6 +456,7 @@ const getAuthoritativeOverviewCounts = async (
   projectId: string,
   search: NormalizedSearch | undefined
 ): Promise<[number, number, number, number]> => {
+  await reconcileProjectRecordIndexes(client, [projectId])
   const predicates = authoritativeCatalogPredicates({ search })
   const rows = await client.$queryRaw<AuthoritativeOverviewCounts[]>(Prisma.sql`
     ${authoritativeCatalogCte([projectId])}
@@ -472,9 +482,11 @@ const getAuthoritativeOverviewCounts = async (
 const listAuthoritativeFiles = async (
   client: ProjectFilesClient,
   query: AuthoritativeCatalogQuery & { limit: number }
-): Promise<[ManagedFile[], number]> =>
-  Promise.all([
-    queryAuthoritativeFiles(client, query),
+): Promise<[ManagedFile[], number]> => {
+  if (query.projectIds.length === 0) return [[], 0]
+  await reconcileProjectRecordIndexes(client, query.projectIds)
+  return Promise.all([
+    readAuthoritativeFiles(client, query),
     countAuthoritativeFiles(client, {
       projectIds: query.projectIds,
       source: query.source,
@@ -482,6 +494,7 @@ const listAuthoritativeFiles = async (
       search: query.search
     })
   ])
+}
 
 const listAuthoritativeArtifactGroups = async (
   client: ProjectFilesClient,
@@ -492,6 +505,7 @@ const listAuthoritativeArtifactGroups = async (
     limit: number
   }
 ): Promise<[AuthoritativeArtifactGroupRow[], number]> => {
+  await reconcileProjectRecordIndexes(client, [input.projectId])
   const predicates = authoritativeCatalogPredicates({ source: 'artifact', search: input.search })
   const cursorPredicate = input.cursor
     ? Prisma.sql`WHERE (

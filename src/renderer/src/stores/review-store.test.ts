@@ -80,10 +80,12 @@ describe('review store', () => {
       useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
         .verificationUnavailable
     ).toBe(true)
-    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
-    expect(
-      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
-    ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
+    useReviewStore.getState().retryReviewsAfterFolderRecovery('session-1', 'project-1')
+    await vi.waitFor(() => {
+      expect(
+        useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
+      ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
+    })
   })
 
   it('keeps a pushed reviewer log when a newer list summary omits it', async () => {

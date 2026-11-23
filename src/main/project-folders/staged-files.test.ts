@@ -63,6 +63,15 @@ afterEach(async () => {
 })
 const stage = (): ReturnType<ProjectFolderStagedFiles['stage']> =>
   service.stage({ ...scope, runId: 'run-1', folder, directory, paths: ['raw.csv'] })
+const prepareOutput = (content?: string): ReturnType<ProjectFolderStagedFiles['prepareMutation']> =>
+  service.prepareMutation({
+    ...scope,
+    runId: 'run-1',
+    folder,
+    relativePath: 'output.txt',
+    operation: content === undefined ? 'delete' : 'write',
+    content: content === undefined ? undefined : Buffer.from(content)
+  })
 
 describe('Project folder staged files', () => {
   it('uses independent input bytes and leaves hardlink aliases unchanged during staging and publication', async () => {
@@ -185,6 +194,142 @@ describe('Project folder staged files', () => {
     await expect(readFile(join(folder, 'results', 'output.csv'), 'utf8')).resolves.toBe(
       'revised output'
     )
+  })
+
+  it.each(['replace', 'delete'])(
+    'reviews a %s of app-created content edited externally in place',
+    async (operation) => {
+      const created = await prepareOutput('app output')
+      await service.apply(scope, created!.id)
+      const target = join(folder, 'output.txt')
+      const before = await stat(target)
+      await writeFile(target, 'my version')
+      const edited = await stat(target)
+      expect([edited.ino, edited.dev, edited.size]).toEqual([before.ino, before.dev, before.size])
+
+      service = new ProjectFolderStagedFiles({
+        storageRoot: storage,
+        approve,
+        authorizeCreatedFile
+      })
+      approve.mockResolvedValueOnce(false)
+      const proposed = await prepareOutput(operation === 'replace' ? 'next output' : undefined)
+      expect(proposed).toMatchObject({ operation, requiresConfirmation: true })
+      expect((await service.apply(scope, proposed!.id)).state).toBe('rejected')
+      expect(approve).toHaveBeenCalledOnce()
+      expect(authorizeCreatedFile).toHaveBeenCalledOnce()
+      await expect(readFile(target, 'utf8')).resolves.toBe('my version')
+    }
+  )
+
+  it.each(['replace', 'delete'])(
+    'restores verified application content and its ownership on Undo of a %s',
+    async (operation) => {
+      const created = await prepareOutput('app output')
+      await service.apply(scope, created!.id)
+      const proposed = await prepareOutput(operation === 'replace' ? 'next output' : undefined)
+      expect(proposed).toMatchObject({ operation, requiresConfirmation: false })
+      await service.apply(scope, proposed!.id)
+      await service.revert(scope, proposed!.id)
+
+      await expect(readFile(join(folder, 'output.txt'), 'utf8')).resolves.toBe('app output')
+      expect(await prepareOutput('later output')).toMatchObject({ requiresConfirmation: false })
+      expect(approve).not.toHaveBeenCalled()
+    }
+  )
+
+  it('reviews externally edited content restored by Undo of an approved replacement', async () => {
+    const created = await prepareOutput('app output')
+    await service.apply(scope, created!.id)
+    await writeFile(join(folder, 'output.txt'), 'external edit')
+    const proposed = await prepareOutput('next output')
+    expect(proposed).toMatchObject({ requiresConfirmation: true })
+    await service.apply(scope, proposed!.id)
+    expect(await prepareOutput('other proposal')).toMatchObject({ requiresConfirmation: false })
+    await service.revert(scope, proposed!.id)
+    await expect(readFile(join(folder, 'output.txt'), 'utf8')).resolves.toBe('external edit')
+    expect(await prepareOutput('later output')).toMatchObject({ requiresConfirmation: true })
+  })
+
+  it('requires review for legacy identity-only ownership and legacy prepared replacements', async () => {
+    const created = await prepareOutput('app output')
+    await service.apply(scope, created!.id)
+    const staged = await prepareOutput('next output')
+    expect(staged).toMatchObject({ requiresConfirmation: false })
+
+    const createdFolder = join(storage, 'project-folder-history', 'created', scope.projectId)
+    const [record] = await readdir(createdFolder)
+    const recordPath = join(createdFolder, record)
+    const proof = JSON.parse(await readFile(recordPath, 'utf8'))
+    delete proof.checksum
+    await writeFile(recordPath, JSON.stringify(proof))
+
+    const receiptPath = join(
+      storage,
+      'project-folder-history',
+      'changes',
+      scope.projectId,
+      scope.sessionId,
+      staged!.id,
+      'receipt.json'
+    )
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+    delete receipt.originalCreatedFile
+    await writeFile(receiptPath, JSON.stringify(receipt))
+    service = new ProjectFolderStagedFiles({ storageRoot: storage, approve, authorizeCreatedFile })
+
+    expect(await prepareOutput('candidate')).toMatchObject({ requiresConfirmation: true })
+    approve.mockResolvedValueOnce(false)
+    expect(await service.apply(scope, staged!.id)).toMatchObject({
+      requiresConfirmation: true,
+      state: 'rejected'
+    })
+    expect(approve).toHaveBeenCalledOnce()
+    await expect(readFile(join(folder, 'output.txt'), 'utf8')).resolves.toBe('app output')
+  })
+
+  it('only recognizes application content inside the same physical Project folder', async () => {
+    const created = await prepareOutput('app output')
+    await service.apply(scope, created!.id)
+    const oldFolder = folder
+    folder = join(root, 'relocated-research')
+    await rename(oldFolder, folder)
+    expect(await prepareOutput('another output')).toMatchObject({ requiresConfirmation: false })
+
+    await mkdir(oldFolder)
+    await rename(join(folder, 'output.txt'), join(oldFolder, 'output.txt'))
+    folder = oldFolder
+    expect(await prepareOutput('another output')).toMatchObject({ requiresConfirmation: true })
+  })
+
+  it('keeps Artifact replacement authority independent of ordinary ownership proof', async () => {
+    const deliver = (
+      replacementBaseline: Awaited<
+        ReturnType<ProjectFolderStagedFiles['inspectDeliveryTarget']>
+      > | null
+    ): ReturnType<ProjectFolderStagedFiles['prepareMutation']> =>
+      service.prepareMutation({
+        ...scope,
+        runId: 'artifact-version',
+        folder,
+        relativePath: 'output.txt',
+        operation: 'write',
+        content: Buffer.from('new Artifact output'),
+        replacementBaseline
+      })
+    const created = await prepareOutput('app output')
+    await service.apply(scope, created!.id)
+    const initial = await service.inspectDeliveryTarget(folder, 'output.txt')
+    expect(await deliver(null)).toMatchObject({ requiresConfirmation: true })
+    const replacement = await deliver(initial)
+    expect(await service.apply(scope, replacement!.id)).toMatchObject({
+      requiresConfirmation: false,
+      state: 'applied'
+    })
+
+    const delivered = await service.inspectDeliveryTarget(folder, 'output.txt')
+    await writeFile(join(folder, 'output.txt'), 'external edit')
+    expect(await deliver(delivered)).toMatchObject({ requiresConfirmation: true })
   })
 
   it('backs up deleted original bytes and restores them on undo', async () => {

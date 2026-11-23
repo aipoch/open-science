@@ -119,6 +119,9 @@ export const createInitialReviewState = (): ReviewStoreData => ({
 // outside the store (transient control state, not rendered) and cleared in loadReviewsForSession.
 const loadsInFlight = new Set<string>()
 const folderRecoveryRetries = new Set<string>()
+const needsFolderRecoveryRetry = (state: ReviewStoreData, key: string): boolean =>
+  state.loadErrorsBySession[key] !== undefined ||
+  state.reviewsBySession[key]?.some((review) => review.verificationUnavailable === true) === true
 const reviewSessionKey = (projectId: string, sessionId: string): string =>
   `${projectId}\0${sessionId}`
 const EMPTY_REVIEWS: ReviewWithChecks[] = []
@@ -233,7 +236,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       }))
     } finally {
       loadsInFlight.delete(key)
-      if (folderRecoveryRetries.delete(key) && get().loadErrorsBySession[key] !== undefined)
+      if (folderRecoveryRetries.delete(key) && needsFolderRecoveryRetry(get(), key))
         void get().loadReviewsForSession(sessionId, projectId)
     }
   },
@@ -243,7 +246,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
     // A pre-relocation request can fail after the folder has recovered. Queue one retry after
     // that request settles instead of letting the ordinary focus-load dedup swallow recovery.
     if (loadsInFlight.has(key)) folderRecoveryRetries.add(key)
-    else if (get().loadErrorsBySession[key] !== undefined)
+    else if (needsFolderRecoveryRetry(get(), key))
       void get().loadReviewsForSession(sessionId, projectId)
   },
 

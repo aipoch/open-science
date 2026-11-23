@@ -1367,7 +1367,8 @@ class NotebookRuntimeService {
       files: this.projectFolderFiles,
       getFolder: (projectId) =>
         options.assertProjectFolderHealthy?.(projectId) ?? Promise.resolve(undefined),
-      analyze: analyzeNotebookSourceFileAccessOffMainThread
+      analyze: analyzeNotebookSourceFileAccessOffMainThread,
+      translate: options.translate
     })
     this.exportReader = new NotebookExportReader({
       repository: this.repository,

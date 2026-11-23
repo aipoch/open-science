@@ -2,7 +2,11 @@ import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { isAbsolute, sep } from 'node:path'
-import type { ProjectFolderStagedFiles } from '../project-folders/staged-files'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import {
+  ProjectFolderConflictError,
+  type ProjectFolderStagedFiles
+} from '../project-folders/staged-files'
 import type {
   NotebookSessionExecutionRequest,
   NotebookSessionExecutionResult
@@ -19,6 +23,7 @@ type Options = {
   files: ProjectFolderStagedFiles
   getFolder: (projectId: string) => Promise<string | undefined>
   analyze: typeof analyzeNotebookSourceFileAccess
+  translate?: NativeTranslator
 }
 
 // Direct Notebook execution follows the existing permission and platform-protection settings.
@@ -116,25 +121,49 @@ export class ProjectFolderNotebookExecution {
               })
               released ||= result.projectFolderStageReleased === true
               const changes = []
+              let publicationWarning: string | undefined
               if (result.status === 'completed') {
-                const present = (await inspect(join(stage.directory, target))) !== undefined
-                const change = await this.options.files.prepare(
-                  stage,
-                  target,
-                  present ? 'write' : 'delete'
-                )
-                if (change)
-                  changes.push(
-                    await this.options.files.apply(
-                      stage,
-                      change.id,
-                      request.signal,
-                      request.projectFolderPermissionPrompts
-                    )
+                try {
+                  const present = (await inspect(join(stage.directory, target))) !== undefined
+                  const change = await this.options.files.prepare(
+                    stage,
+                    target,
+                    present ? 'write' : 'delete'
                   )
+                  if (change)
+                    changes.push(
+                      await this.options.files.apply(
+                        stage,
+                        change.id,
+                        request.signal,
+                        request.projectFolderPermissionPrompts
+                      )
+                    )
+                } catch (error) {
+                  if (!(error instanceof ProjectFolderConflictError)) throw error
+                  publicationWarning = (this.options.translate ?? englishNativeTranslator)(
+                    'Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.',
+                    { path: target }
+                  )
+                }
               }
               return {
                 ...result,
+                ...(publicationWarning
+                  ? {
+                      stderr: [result.stderr, publicationWarning].filter(Boolean).join('\n'),
+                      outputs: result.outputs.length
+                        ? [
+                            ...result.outputs,
+                            {
+                              type: 'stream' as const,
+                              name: 'stderr' as const,
+                              text: publicationWarning
+                            }
+                          ]
+                        : result.outputs
+                    }
+                  : {}),
                 projectFolderChanges: changes,
                 projectFolderInputs: stage.inputs.map((input) => ({
                   relativePath: input.path.split(sep).join('/'),

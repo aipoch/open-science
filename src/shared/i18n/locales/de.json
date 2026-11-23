@@ -251,6 +251,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "Nicht genügend Speicherplatz zum Herunterladen dieses Beispiels. Geben Sie Speicherplatz frei und versuchen Sie es erneut.",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "Das heruntergeladene Beispiel konnte nicht im temporären Speicher gesichert werden. Prüfen Sie die Ordnerberechtigungen und versuchen Sie es erneut.",
     "Wait for the application handoff to finish before transferring research.": "Warten Sie, bis die Anwendungsübergabe abgeschlossen ist, bevor Sie Forschungsdaten übertragen.",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "{{path}} konnte nicht geändert werden, weil die Datei auf dem Datenträger geändert wurde. Prüfen Sie die aktuelle Datei oder versuchen Sie es mit einem anderen Namen.",
     "Review project folder changes": "Änderungen am Projektordner prüfen"
   },
   "renderer": {
@@ -9081,6 +9082,8 @@
     "Keep this location connected while working.": "Halten Sie während der Arbeit die Verbindung zu diesem Speicherort aufrecht.",
     "Project folder is already in use": "Projektordner wird bereits verwendet",
     "Project folder not found": "Projektordner nicht gefunden",
+    "Some research records could not be restored": "Einige Forschungsaufzeichnungen konnten nicht wiederhergestellt werden",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "Sie können Projektdateien und Konversationen weiterhin verwenden. Stellen Sie eine gültige Kopie der Forschungsaufzeichnungen wieder her und versuchen Sie es erneut.",
     "Unable to access project folder": "Zugriff auf den Projektordner nicht möglich",
     "Your project folder and its files will not be deleted.": "Ihr Projektordner und die darin enthaltenen Dateien werden nicht gelöscht.",
     "Drop a folder to create a project, or a .science file to import": "Einen Ordner ablegen, um ein Projekt zu erstellen, oder eine .science-Datei importieren",

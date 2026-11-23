@@ -250,6 +250,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "この事例をダウンロードするためのディスク容量が不足しています。空き容量を確保してからもう一度お試しください。",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "ダウンロードした事例を一時ストレージに保存できませんでした。フォルダーの権限を確認してもう一度お試しください。",
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "ディスク上のファイルが変更されたため、{{path}} を変更できませんでした。最新のファイルを確認するか、別の名前をお試しください。",
     "Review project folder changes": "プロジェクトフォルダーの変更を確認"
   },
   "renderer": {
@@ -8908,6 +8909,8 @@
     "Keep this location connected while working.": "作業中はこの場所への接続を維持してください。",
     "Project folder is already in use": "プロジェクトフォルダーはすでに使用されています",
     "Project folder not found": "プロジェクトフォルダーが見つかりません",
+    "Some research records could not be restored": "一部の研究記録を復元できませんでした",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "プロジェクトのファイルと会話は引き続き使えます。有効な研究記録のコピーを復元してから、再試行してください。",
     "Unable to access project folder": "プロジェクトフォルダーにアクセスできません",
     "Your project folder and its files will not be deleted.": "プロジェクトフォルダーとその中のファイルは削除されません。",
     "Drop a folder to create a project, or a .science file to import": "フォルダーをドロップしてプロジェクトを作成、または .science ファイルをインポート",

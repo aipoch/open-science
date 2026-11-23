@@ -11,6 +11,7 @@ import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpRuntime } from '../acp/runtime'
 import { ReviewerProjectRuntimeOwner } from './project-runtime-owner'
+import { ProjectArtifactIndexUnavailableError } from '../projects/record-indexes'
 
 // Distinct roots so a config-vs-data mix-up is unambiguous: artifacts must read from the data root.
 const CONFIG_ROOT = join(tmpdir(), 'open-science-config-root')
@@ -47,6 +48,12 @@ vi.mock('./orchestrator', () => ({
 const reviewRepositoryThunks: Array<() => unknown> = []
 const getReviewsForSession = vi.fn().mockResolvedValue([])
 const getReviewSummariesForProjectSession = vi.fn()
+const getCommittedReviewSummariesForProjectSession = vi.fn()
+const reconcileProjectRecordIndexes = vi.fn()
+vi.mock('../projects/record-indexes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../projects/record-indexes')>()),
+  reconcileProjectRecordIndexes: (...args: unknown[]) => reconcileProjectRecordIndexes(...args)
+}))
 const getReviewLog = vi.fn()
 const recoverInterruptedReviews = vi.fn().mockResolvedValue(0)
 vi.mock('./repository', () => ({
@@ -56,6 +63,7 @@ vi.mock('./repository', () => ({
     }
     getReviewsForSession = getReviewsForSession
     getReviewSummariesForProjectSession = getReviewSummariesForProjectSession
+    getCommittedReviewSummariesForProjectSession = getCommittedReviewSummariesForProjectSession
     getReviewLog = getReviewLog
     recoverInterruptedReviews = recoverInterruptedReviews
     getReviewsForProjectSession = getReviewsForSession
@@ -159,6 +167,8 @@ beforeEach(() => {
   sessionLoadOne.mockResolvedValue({ id: 'session-1' })
   getReviewsForSession.mockReset()
   getReviewSummariesForProjectSession.mockReset()
+  getCommittedReviewSummariesForProjectSession.mockReset()
+  reconcileProjectRecordIndexes.mockReset()
   getReviewLog.mockReset()
   getReviewSummariesForProjectSession.mockImplementation((...args: unknown[]) =>
     getReviewsForSession(...args)
@@ -249,6 +259,48 @@ describe('reviewer IPC handlers', () => {
     ).resolves.toEqual([])
 
     expect(recoverInterruptedReviews).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    new ProjectArtifactIndexUnavailableError('broken', new Error('invalid checkpoint')),
+    new ApplicationCommandError('project-folder-not-found', 'folder moved')
+  ])(
+    'recovers healthy Review history after another Project blocks startup recovery',
+    async (failure) => {
+      recoverInterruptedReviews.mockImplementation(async (projectId?: string) => {
+        if (projectId !== 'healthy') throw failure
+        return 0
+      })
+      const owner = createReviewerCommandOwner({ acpRuntime })
+      await expect(
+        owner.getForSession({ projectId: 'healthy', appSessionId: 'session-1' })
+      ).resolves.toEqual([])
+      await expect(
+        owner.getForSession({ projectId: 'healthy', appSessionId: 'session-2' })
+      ).resolves.toEqual([])
+      expect(recoverInterruptedReviews.mock.calls).toEqual([[], ['healthy']])
+      expect(getCommittedReviewSummariesForProjectSession).not.toHaveBeenCalled()
+    }
+  )
+
+  it('blocks manual and automatic Review writes when the owning checkpoint is unavailable', async () => {
+    const failure = new ProjectArtifactIndexUnavailableError(
+      'project-1',
+      new Error('invalid checkpoint')
+    )
+    const client = {}
+    getProjectDbClient.mockResolvedValueOnce(client)
+    reconcileProjectRecordIndexes.mockRejectedValue(failure)
+    getReviewsForSession.mockRejectedValue(failure)
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    await expect(owner.run({ ...createRequest(), origin: 'manual' })).rejects.toBe(failure)
+    await expect(owner.run({ ...createRequest(), origin: 'auto' })).resolves.toEqual({
+      started: false,
+      reason: 'idempotency-check-failed'
+    })
+    expect(reconcileProjectRecordIndexes).toHaveBeenCalledWith(client, ['project-1'])
+    expect(runReview).not.toHaveBeenCalled()
+    expect(getCommittedReviewSummariesForProjectSession).not.toHaveBeenCalled()
   })
 
   it('shares the in-flight start outcome between direct and IPC commands', async () => {
@@ -773,6 +825,41 @@ describe('reviewer IPC handlers', () => {
         expect.any(Function)
       )
       expect(result).toEqual({ ok: true, result: flagged })
+    })
+
+    it('keeps committed running Reviews and marks completed ones when verification fails', async () => {
+      const failure = new ProjectArtifactIndexUnavailableError(
+        'project-1',
+        new Error('invalid checkpoint')
+      )
+      recoverInterruptedReviews
+        .mockRejectedValueOnce(failure)
+        .mockRejectedValueOnce(failure)
+        .mockResolvedValue(0)
+      const reviews = [
+        { id: 'complete', lifecycle: 'complete', outcome: 'pass' },
+        { id: 'running', lifecycle: 'running' }
+      ]
+      getCommittedReviewSummariesForProjectSession.mockResolvedValue(reviews)
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      await expect(
+        owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+      ).resolves.toEqual([{ ...reviews[0], verificationUnavailable: true }, reviews[1]])
+      expect(getCommittedReviewSummariesForProjectSession).toHaveBeenCalledWith(
+        'project-1',
+        'session-1',
+        expect.any(Function)
+      )
+      expect(sessionLoadOne).not.toHaveBeenCalled()
+      expect(flagStaleReviews).not.toHaveBeenCalled()
+      const current = { ...reviews[0], verificationUnavailable: false, stale: false }
+      getReviewSummariesForProjectSession.mockResolvedValue(reviews)
+      flagStaleReviews.mockResolvedValue([current, reviews[1]])
+      await expect(
+        owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+      ).resolves.toEqual([current, reviews[1]])
+      expect(recoverInterruptedReviews.mock.calls).toEqual([[], ['project-1'], ['project-1']])
     })
 
     it('loads the renderer list through the log-free summary projection', async () => {

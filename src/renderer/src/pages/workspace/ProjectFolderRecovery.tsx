@@ -112,6 +112,7 @@ export function ProjectFolderRecovery({
   const problem = state.identity === identity ? state.problem : undefined
   if (!rootPath || !problem) return null
   const missing = problem.kind === 'not-found'
+  const recordsUnavailable = problem.kind === 'records-unavailable'
   const desktop = isDesktopRenderer()
   const canLocate = missing && desktop
   const diagnostics =
@@ -129,9 +130,18 @@ export function ProjectFolderRecovery({
       title={
         problem.kind === 'not-found'
           ? t('Project folder not found')
-          : problem.kind === 'conflict'
-            ? t('Project folder is already in use')
-            : t('Unable to access project folder')
+          : recordsUnavailable
+            ? t('Some research records could not be restored')
+            : problem.kind === 'conflict'
+              ? t('Project folder is already in use')
+              : t('Unable to access project folder')
+      }
+      description={
+        recordsUnavailable
+          ? t(
+              'You can keep using project files and conversations. Restore a valid copy of the research records, then retry.'
+            )
+          : undefined
       }
       errorCode={diagnostics}
       diagnosticsLabel={t('Details')}

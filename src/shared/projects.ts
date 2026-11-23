@@ -65,7 +65,7 @@ export const projectFolderValidationResultSchema = z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(false),
-      kind: z.enum(['not-found', 'unavailable', 'conflict']),
+      kind: z.enum(['not-found', 'unavailable', 'conflict', 'records-unavailable']),
       path: z.string().optional(),
       diagnostics: z.string()
     })

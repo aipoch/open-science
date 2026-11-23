@@ -44,3 +44,9 @@ export const isManagedFilePublicationPendingError = (error: unknown): boolean =>
 // missing (deleted/moved) or outside it. Used to badge tiles and to quiet expected read failures.
 export const isUnavailableFileError = (error: unknown): boolean =>
   isMissingFileError(error) || isOutsideStorageError(error)
+
+// Artifact thumbnails can outlive the availability of their project's research records.
+export const isProjectArtifactIndexUnavailableError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Project Artifact records are unavailable: [a-zA-Z0-9_-]+/.test(message)
+}

@@ -252,6 +252,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "No hay suficiente espacio en disco para descargar este ejemplo. Libere espacio e inténtelo de nuevo.",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "No se pudo guardar el ejemplo descargado en el almacenamiento temporal. Compruebe los permisos de la carpeta e inténtelo de nuevo.",
     "Wait for the application handoff to finish before transferring research.": "Espere a que finalice la transferencia de la aplicación antes de transferir datos de investigación.",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "No se pudo modificar {{path}} porque el archivo cambió en el disco. Revise el archivo actualizado o pruebe con otro nombre.",
     "Review project folder changes": "Revisar los cambios de la carpeta del proyecto"
   },
   "renderer": {
@@ -9262,6 +9263,8 @@
     "Keep this location connected while working.": "Mantenga esta ubicación conectada mientras trabaja.",
     "Project folder is already in use": "La carpeta del proyecto ya está en uso",
     "Project folder not found": "No se encontró la carpeta del proyecto",
+    "Some research records could not be restored": "No se pudieron restaurar algunos registros de investigación",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "Puede seguir usando los archivos y las conversaciones del proyecto. Restaure una copia válida de los registros de investigación y vuelva a intentarlo.",
     "Unable to access project folder": "No se puede acceder a la carpeta del proyecto",
     "Your project folder and its files will not be deleted.": "La carpeta del proyecto y sus archivos no se eliminarán.",
     "Drop a folder to create a project, or a .science file to import": "Soltar una carpeta para crear un proyecto o un archivo .science para importar",

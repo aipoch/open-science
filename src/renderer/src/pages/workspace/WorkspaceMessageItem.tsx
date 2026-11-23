@@ -98,6 +98,7 @@ import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import {
   FILE_MISSING_TAG_KEY,
   isManagedFilePublicationPendingError,
+  isProjectArtifactIndexUnavailableError,
   isUnavailableFileError
 } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
@@ -877,7 +878,11 @@ const VisibleArtifactPreview = ({
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )
           return
-        if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
+        if (
+          !isUnavailableFileError(error) &&
+          !isManagedFilePublicationPendingError(error) &&
+          !isProjectArtifactIndexUnavailableError(error)
+        ) {
           console.error('Failed to read artifact preview', error)
         }
         setPreviewState({ requestKey, preview: undefined })

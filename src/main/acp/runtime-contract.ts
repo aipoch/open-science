@@ -382,6 +382,7 @@ export type AcpRuntimeArtifactOptions = {
         | 'recordLiteratureAbstractRead'
         | 'recordLiteratureSearch'
         | 'withSessionMutation'
+        | 'recoverLiveRunPublication'
       >
     >
   managedFileVersions?: Pick<

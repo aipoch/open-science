@@ -14,6 +14,10 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { ArtifactVersion, PrismaClient } from '@prisma/client'
+import {
+  readCommittedArtifactRunVersions,
+  reconcileProjectRecordIndexes
+} from '../projects/record-indexes'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
@@ -35,6 +39,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
+  type ArtifactFile,
   type ArtifactWriteEncoding,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
@@ -637,7 +642,11 @@ class ArtifactProvenanceRepository {
     const rows = await (
       await this.options.getClient()
     ).artifactVersion.findMany({
-      where: { id: { in: completed.map((task) => task.result!.versionId) }, state: 'finalized' },
+      where: {
+        id: { in: completed.map((task) => task.result!.versionId) },
+        state: 'finalized',
+        artifact: { projectId: { in: [...new Set(completed.map((task) => task.projectId))] } }
+      },
       select: {
         id: true,
         artifactId: true,
@@ -921,7 +930,10 @@ class ArtifactProvenanceRepository {
           (await (
             await this.options.getClient()
           ).artifactVersion.findUnique({
-            where: { writeOperationId: request.writeOperationId },
+            where: {
+              writeOperationId: request.writeOperationId,
+              artifact: { projectId: request.projectId }
+            },
             select: { id: true }
           }))
         ) {
@@ -1017,7 +1029,10 @@ class ArtifactProvenanceRepository {
             preserveRecoveryState: async () => {
               const client = await this.options.getClient()
               const version = await client.artifactVersion.findUnique({
-                where: { writeOperationId: request.writeOperationId },
+                where: {
+                  writeOperationId: request.writeOperationId,
+                  artifact: { projectId: request.projectId }
+                },
                 select: { checksum: true }
               })
               return version !== null && version.checksum === replacementChecksum
@@ -1195,6 +1210,7 @@ class ArtifactProvenanceRepository {
     const writeOperationId = assertSafeSegment(request.writeOperationId, 'write operation id')
     const normalizedFilename = normalizeFilename(request.filename)
     const client = await this.options.getClient()
+    await reconcileProjectRecordIndexes(client, [projectId])
     const existing = await client.artifactVersion.findUnique({
       where: { writeOperationId },
       include: { artifact: true }
@@ -1277,6 +1293,88 @@ class ArtifactProvenanceRepository {
     return Promise.all(
       versions.map((version) =>
         this.toArtifactVersionFile(requireAgentArtifactVersion(version), projectId, appSessionId)
+      )
+    )
+  }
+
+  async recoverLiveRunPublication(
+    scope: Omit<FinalizeArtifactVersionsRequest, 'artifactVersionIds' | 'messageId'> & {
+      artifactStorageSessionId: string
+    },
+    pendingFiles: readonly ArtifactFile[]
+  ): Promise<ArtifactVersionFile[] | undefined> {
+    const client = await this.options.getClient()
+    const versions = await readCommittedArtifactRunVersions(client, scope)
+    if (!versions) return undefined
+    if (!versions.length) return pendingFiles.length ? undefined : []
+    if (
+      versions.some(
+        (version) =>
+          version.state !== 'pending' ||
+          version.messageId !== null ||
+          version.managedVisibleAt !== null ||
+          version.rootFrameId !== scope.rootFrameId ||
+          version.agentFrameId !== scope.agentFrameId ||
+          version.messageBranchId !== scope.messageBranchId ||
+          version.runtimeSegmentId !== scope.runtimeSegmentId ||
+          version.promptMessageId !== scope.promptMessageId
+      )
+    )
+      return undefined
+
+    const byId = new Map(versions.map((version) => [version.id, version]))
+    const latestByArtifact = new Map<string, ArtifactVersion>()
+    for (const version of versions) {
+      const previous = latestByArtifact.get(version.artifactId)
+      if (!previous || previous.versionNumber < version.versionNumber)
+        latestByArtifact.set(version.artifactId, version)
+    }
+
+    const routed = new Set<string>()
+    for (const file of pendingFiles) {
+      const version = file.versionId && byId.get(file.versionId)
+      if (
+        !version ||
+        routed.has(version.id) ||
+        file.projectId !== scope.projectId ||
+        file.sessionId !== scope.artifactStorageSessionId ||
+        file.runId !== scope.artifactRunId ||
+        file.artifactId !== version.artifactId ||
+        file.versionNumber !== version.versionNumber ||
+        file.checksum !== version.checksum ||
+        file.size !== Number(version.sizeBytes) ||
+        normalizeFilename(file.name) !== normalizeFilename(version.filename)
+      )
+        return undefined
+
+      const key = storageKey(
+        'artifacts',
+        scope.projectId,
+        scope.artifactStorageSessionId,
+        PENDING_DIR,
+        scope.artifactRunId,
+        file.name
+      )
+      await assertRegularStoragePath(this.options.storageRoot, key)
+      const digest = await digestFileWithinBudget(
+        resolveStorageKey(this.options.storageRoot, key),
+        LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+      )
+      if (digest.checksum !== version.checksum || digest.sizeBytes !== Number(version.sizeBytes))
+        return undefined
+      routed.add(version.id)
+    }
+
+    // A filename can represent multiple Versions in this run. The last one owns the current
+    // pending route, and the exact set in the marker comes from SQLite rather than that route.
+    if ([...latestByArtifact.values()].some((version) => !routed.has(version.id))) return undefined
+    return Promise.all(
+      versions.map((version) =>
+        this.toArtifactVersionFile(
+          requireAgentArtifactVersion(version),
+          scope.projectId,
+          scope.appSessionId
+        )
       )
     )
   }

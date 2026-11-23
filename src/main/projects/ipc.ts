@@ -68,9 +68,22 @@ const createDefaultProjectRepository = (
     folderOptions,
     {
       storageRoot: resolveDataRoot,
-      restoreIndexes: async (client, projectId) => {
-        const { restoreProjectRecordIndexesWithinTransaction } = await import('./record-indexes')
-        await restoreProjectRecordIndexesWithinTransaction(client, resolveDataRoot(), projectId)
+      restoreIndexes: async (client, projectId, locatedFolder) => {
+        const { restoreLocatedProjectRecordIndexes, restoreProjectRecordIndexesWithinTransaction } =
+          await import('./record-indexes')
+        if (locatedFolder)
+          await restoreLocatedProjectRecordIndexes(
+            client,
+            resolveDataRoot(),
+            projectId,
+            locatedFolder
+          )
+        else
+          await restoreProjectRecordIndexesWithinTransaction(client, resolveDataRoot(), projectId)
+      },
+      reconcileIndexes: async (client, projectId) => {
+        const { reconcileProjectRecordIndexes } = await import('./record-indexes')
+        await reconcileProjectRecordIndexes(client, [projectId])
       }
     }
   )

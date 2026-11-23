@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -341,6 +342,7 @@ class ArtifactProvenanceVersionWriter {
     )
     const normalizedFilename = normalizeArtifactFilename(request.filename)
     const client = await this.options.getClient()
+    await reconcileProjectRecordIndexes(client, [projectId])
     const existing = await client.artifactVersion.findUnique({
       where: { writeOperationId },
       include: {
@@ -412,6 +414,7 @@ class ArtifactProvenanceVersionWriter {
     const stagingDirectory = this.options.resolveVersionPath(stagingStorageKey)
     const stagingContentPath = join(stagingDirectory, 'content')
 
+    let stagingTransactionStarted = false
     let stagingRowPersisted = false
     let versionCommitted = false
     try {
@@ -446,6 +449,7 @@ class ArtifactProvenanceVersionWriter {
         appSessionId,
         promptMessageId: request.promptMessageId
       })
+      stagingTransactionStarted = true
       const persisted = await withVersionAllocationRetry(() =>
         client.$transaction(async (transaction) => {
           const origin = await transaction.fileOriginSession.upsert({
@@ -714,7 +718,20 @@ class ArtifactProvenanceVersionWriter {
       versionCommitted = true
       return await this.options.projectVersionFile(finalized, projectId, appSessionId)
     } catch (error) {
-      // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
+      if (stagingTransactionStarted && !stagingRowPersisted) {
+        // A portable checkpoint may have published before SQLite failed to acknowledge the write.
+        // Preserve the staging copy if the row replays or its ownership cannot be checked.
+        const recovered = await client.artifactVersion
+          .findUnique({
+            where: { id: versionId, artifact: { projectId } },
+            select: { id: true }
+          })
+          .then((row) => row !== null)
+          .catch(() => undefined)
+        if (recovered === undefined) throw error
+        stagingRowPersisted = recovered
+      }
+      // Once the staging row is durable, its copied bytes are recovery state for an idempotent
       // transport retry. Removing them here would force a retry to reread a mutable pending source.
       if (!stagingRowPersisted) {
         await rm(stagingDirectory, { recursive: true, force: true })

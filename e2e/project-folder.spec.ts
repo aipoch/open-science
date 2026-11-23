@@ -1,12 +1,12 @@
-import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { basename, join, relative, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { test } from './fixtures/electron-app'
-import { homeNewProjectButton } from './fixtures/project'
-import { submitPromptViaUi } from './fixtures/conversation'
+import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
+import { expectCompletedAssistant, submitPromptViaUi } from './fixtures/conversation'
 
 async function sessionFor(page: Page, projectId: string): Promise<PersistedChatSession> {
   return page.evaluate(async (id) => {
@@ -212,6 +212,53 @@ test('uses a project folder, reviews changes, then locates and resumes the same 
   await expect.poll(() => readFile(join(moved, 'raw.csv'), 'utf8')).toBe(relocatedInput)
   await page.screenshot({ path: info.outputPath('folder-restored.png') })
 
+  const resultPath = join(moved, 'result.txt')
+  const generated = await stat(resultPath)
+  await writeFile(resultPath, 'sample,double\nA,56\n')
+  const edited = await stat(resultPath)
+  expect([edited.dev, edited.ino, edited.size]).toEqual([
+    generated.dev,
+    generated.ino,
+    generated.size
+  ])
+  const permissionCard = page.getByTestId('permission-card')
+  const outputReview = permissionCard.getByTestId('project-folder-change-review')
+  const editPrompt = 'Revise the app-created project folder result.'
+  const skipped = page.getByText('Project folder edit was skipped.', { exact: true })
+
+  await submitPromptViaUi(page, editPrompt)
+  await expect(outputReview.getByText('result.txt', { exact: true })).toBeVisible()
+  await outputReview.getByRole('button', { name: 'View changes', exact: true }).click()
+  await expect(outputReview.getByText('A,56', { exact: false })).toBeVisible()
+  await permissionCard.getByRole('button', { name: 'Reject', exact: true }).click()
+  await expect(skipped).toHaveCount(1)
+  await expect.poll(async () => (await sessionFor(page, project.id)).status).toBe('idle')
+  expect(await readFile(resultPath, 'utf8')).toBe('sample,double\nA,56\n')
+
+  await submitPromptViaUi(page, editPrompt + ' Keep the earlier analysis.')
+  await expect(outputReview.getByText('result.txt', { exact: true })).toBeVisible()
+  await writeFile(resultPath, 'sample,double\nA,78\n')
+  await permissionCard.getByRole('button', { name: 'Back up and replace', exact: true }).click()
+  await expect(skipped).toHaveCount(2)
+  await expect.poll(async () => (await sessionFor(page, project.id)).status).toBe('idle')
+  expect(await readFile(resultPath, 'utf8')).toBe('sample,double\nA,78\n')
+
+  await submitPromptViaUi(page, 'Save the project folder result under another name.')
+  await finishFolderStepWithStandardPermissions(page, 'Project folder output saved.')
+  await expect.poll(async () => (await sessionFor(page, project.id)).status).toBe('idle')
+  expect(await readFile(join(moved, 'alternate-result.txt'), 'utf8')).toBe('revised analysis\n')
+  expect(await readFile(resultPath, 'utf8')).toBe('sample,double\nA,78\n')
+  expect(await sessionFor(page, project.id)).toMatchObject({
+    id: after.id,
+    providerSessionId: after.providerSessionId,
+    messages: expect.arrayContaining([
+      expect.objectContaining({
+        role: 'agent',
+        content: expect.stringContaining('Project folder Resume completed.')
+      })
+    ])
+  })
+
   // Existing disk files remain live project references: no upload or immutable Version is needed.
   // Search after Locate also proves the picker and provider resolve the current folder binding.
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
@@ -367,6 +414,64 @@ test('retains Notebook and Artifact records when a project is removed and select
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name, exact: true })
     .click()
+  const indexPath = join(records, 'artifact-index.json')
+  const lineageRequest = {
+    projectId: project.id,
+    appSessionId: session.id,
+    artifactId: version.artifactId as string
+  }
+  const readLineage = (): ReturnType<Window['api']['artifacts']['getLineage']> =>
+    page.evaluate((request) => window.api.artifacts.getLineage(request), lineageRequest)
+  await page.locator(`[data-session-id="${session.id}"] [data-slot="session-open-button"]`).click()
+  await expect(page.getByText('Portable project research saved.', { exact: false })).toBeVisible()
+
+  const damagedIndex = '{incomplete checkpoint'
+  const plainPrompt = 'Summarize the deterministic fixture.'
+  const plainReply = `Deterministic reply: ${plainPrompt}`
+  await writeFile(indexPath, damagedIndex)
+  try {
+    expect(await readLineage()).toMatchObject({ failure: { kind: 'load-failed' } })
+    await expect(async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(
+        page.getByRole('heading', {
+          name: 'Some research records could not be restored',
+          exact: true
+        })
+      ).toBeVisible({ timeout: 500 })
+    }).toPass({ timeout: 20_000 })
+    expect(
+      await page.evaluate((request) => window.api.projects.readFolderPreview(request), {
+        projectId: project.id,
+        relativePath: deliveredRelative,
+        encoding: 'utf8' as const
+      })
+    ).toMatchObject({ content: 'portable research result' })
+    await submitPromptViaUi(page, plainPrompt)
+    await expectCompletedAssistant(page, plainReply, { projectId: project.id })
+    expect((await sessionFor(page, project.id)).id).toBe(session.id)
+
+    await page.getByRole('button', { name: 'All projects', exact: true }).click()
+    const managed = 'Independent managed project'
+    await createProjectViaUi(page, managed)
+    const managedId = await page.evaluate(async (name) => {
+      const project = (await window.api.projects.list()).find((entry) => entry.name === name)
+      if (!project) throw new Error('Managed project was not persisted.')
+      return project.id
+    }, managed)
+    await submitPromptViaUi(page, plainPrompt)
+    await expectCompletedAssistant(page, plainReply, { projectId: managedId })
+    expect(await readFile(indexPath, 'utf8')).toBe(damagedIndex)
+  } finally {
+    await writeFile(indexPath, indexBefore)
+  }
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
+  await page
+    .getByRole('region', { name: 'Projects', exact: true })
+    .getByRole('button', { name, exact: true })
+    .click()
+  expect(await readLineage()).toMatchObject({ artifactId: lineageRequest.artifactId })
+
   const runs = await page.evaluate((request) => window.api.notebook.runIndex(request), {
     projectId: project.id,
     sessionId: session.id,
@@ -375,8 +480,12 @@ test('retains Notebook and Artifact records when a project is removed and select
   expect(runs.length).toBeGreaterThan(0)
   const moved = folder + '-moved'
   await rename(folder, moved)
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(page.getByText('Project folder not found', { exact: true }).first()).toBeVisible()
+  await expect(async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(
+      page.getByRole('heading', { name: 'Project folder not found', exact: true }).first()
+    ).toBeVisible({ timeout: 500 })
+  }).toPass({ timeout: 20_000 })
   await app.selectDirectoryInNextDialog(moved)
   await page.getByRole('button', { name: 'Locate folder…', exact: true }).click()
   await expect

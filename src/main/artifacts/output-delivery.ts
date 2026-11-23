@@ -96,7 +96,9 @@ export class ArtifactOutputDelivery {
   async deliverActivated(versions: ArtifactVersionFile[]): Promise<void> {
     const client = await this.options.getClient()
     for (const version of versions) {
-      const lineage = await client.artifactLineage.findUnique({ where: { id: version.artifactId } })
+      const lineage = await client.artifactLineage.findUnique({
+        where: { id: version.artifactId, projectId: version.projectId }
+      })
       if (lineage?.currentVersionId === version.versionId) {
         // Activation is already committed. The separate status is inspected/retried by the caller;
         // never reinterpret an external-file problem as a failed immutable publication.
@@ -132,12 +134,10 @@ export class ArtifactOutputDelivery {
   }
   private async assertCurrent(request: ManagedFileRetryOutputDeliveryRequest): Promise<void> {
     const client = await this.options.getClient()
-    const lineage = await client.artifactLineage.findUnique({ where: { id: request.fileId } })
-    if (
-      !lineage ||
-      lineage.projectId !== request.projectId ||
-      lineage.currentVersionId !== request.versionId
-    )
+    const lineage = await client.artifactLineage.findUnique({
+      where: { id: request.fileId, projectId: request.projectId }
+    })
+    if (!lineage || lineage.currentVersionId !== request.versionId)
       throw new ManagedFileVersionError(
         'VERSION_CONFLICT',
         'Artifact output no longer names the current head.'
@@ -164,7 +164,13 @@ export class ArtifactOutputDelivery {
           }
         }
       }),
-      client.artifactVersion.findUnique({ where: { id: request.versionId } })
+      client.artifactVersion.findUnique({
+        where: {
+          id: request.versionId,
+          artifactId: lineage.id,
+          artifact: { projectId: request.projectId }
+        }
+      })
     ])
     if (
       !project ||
@@ -196,7 +202,6 @@ export class ArtifactOutputDelivery {
       )
     if (
       !version ||
-      version.artifactId !== lineage.id ||
       version.state !== 'finalized' ||
       (version.originKind === 'agent_generated' && !version.managedVisibleAt)
     )
@@ -205,19 +210,20 @@ export class ArtifactOutputDelivery {
         'Artifact output version is not published.'
       )
   }
-  private async store(fileId: string, record: DeliveryRecord): Promise<void> {
+  private async store(request: ManagedFileIdentity, record: DeliveryRecord): Promise<void> {
     const client = await this.options.getClient()
     await client.artifactLineage.update({
-      where: { id: fileId },
+      where: { id: request.fileId, projectId: request.projectId },
       data: { outputDeliveryJson: JSON.stringify(record) }
     })
   }
   async inspect(request: ManagedFileIdentity): Promise<ArtifactOutputDeliveryStatus | undefined> {
     if (request.source !== 'artifact') return undefined
     const client = await this.options.getClient()
-    const lineage = await client.artifactLineage.findUnique({ where: { id: request.fileId } })
-    if (!lineage || lineage.projectId !== request.projectId || !lineage.currentVersionId)
-      return undefined
+    const lineage = await client.artifactLineage.findUnique({
+      where: { id: request.fileId, projectId: request.projectId }
+    })
+    if (!lineage?.currentVersionId) return undefined
     const layout = await this.options.getLayout(request.projectId, lineage.sessionId)
     if (!layout) return undefined
     const record = this.parse(lineage.outputDeliveryJson) ?? {
@@ -286,7 +292,7 @@ export class ArtifactOutputDelivery {
     await this.assertCurrent(request)
     const client = await this.options.getClient()
     const lineage = await client.artifactLineage.findUniqueOrThrow({
-      where: { id: request.fileId }
+      where: { id: request.fileId, projectId: request.projectId }
     })
     const layout = await this.options.getLayout(request.projectId, lineage.sessionId)
     if (!layout) return undefined
@@ -319,7 +325,7 @@ export class ArtifactOutputDelivery {
       canRetry: true,
       ...(old?.lastDelivered ? { lastDelivered: old.lastDelivered } : {})
     }
-    await this.store(request.fileId, record)
+    await this.store(request, record)
     let lease: ManagedFileReadLease | undefined
     try {
       lease = await this.options.openVersion(request, request.versionId)
@@ -379,8 +385,10 @@ export class ArtifactOutputDelivery {
       await lease?.close()
     }
     // A superseding head may have its own intent. Never replace it with the result of old I/O.
-    const current = await client.artifactLineage.findUnique({ where: { id: request.fileId } })
-    if (current?.currentVersionId === request.versionId) await this.store(request.fileId, record)
+    const current = await client.artifactLineage.findUnique({
+      where: { id: request.fileId, projectId: request.projectId }
+    })
+    if (current?.currentVersionId === request.versionId) await this.store(request, record)
     return this.publicStatus(record)
   }
 }

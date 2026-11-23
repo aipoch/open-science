@@ -155,7 +155,8 @@ type AcpRuntimeArtifacts = {
   provenanceRepository?: Pick<
     ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  >
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'recoverLiveRunPublication' | 'withSessionMutation'>>
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {

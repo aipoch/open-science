@@ -26,6 +26,7 @@ import {
 import type { ProjectFolderPath } from '../storage/workspace-location'
 import { detectProjectFolderWarnings } from './project-folder-location'
 import { assertProjectRecordLocation } from './project-record-location'
+import { ProjectArtifactIndexUnavailableError } from './record-indexes'
 import { revalidateProjectNotebookOutputDirectories } from './session-output-layout'
 import {
   completeProjectRecordReopen,
@@ -125,7 +126,12 @@ type ProjectClientProvider = () => Promise<ProjectClient>
 export type ProjectRecordOptions = {
   storageRoot: () => string
   assertLocation?: (path: string) => Promise<void>
-  restoreIndexes?: (client: Prisma.TransactionClient, projectId: string) => Promise<void>
+  restoreIndexes?: (
+    client: Prisma.TransactionClient,
+    projectId: string,
+    locatedFolder?: string
+  ) => Promise<void>
+  reconcileIndexes?: (client: ProjectClient, projectId: string) => Promise<void>
 }
 
 class ProjectRepository {
@@ -264,9 +270,21 @@ class ProjectRepository {
     if (!project?.rootPath) return null
     try {
       const path = await this.assertProjectFolderHealthy(request.projectId)
+      if (path)
+        await this.recordOptions?.reconcileIndexes?.(await this.getClient(), request.projectId)
       return path ? { ok: true, path, warnings: projectFolderWarnings(path) } : null
     } catch (error) {
-      return { ...projectFolderFailure(error), path: project.rootPath }
+      const failure = projectFolderFailure(error)
+      if (failure.kind === 'unavailable') {
+        const missing = await lstat(project.rootPath).then(
+          () => false,
+          (cause: NodeJS.ErrnoException) => cause.code === 'ENOENT'
+        )
+        if (missing) return { ...failure, kind: 'not-found', path: project.rootPath }
+        if (error instanceof ProjectArtifactIndexUnavailableError)
+          return { ...failure, kind: 'records-unavailable', path: project.rootPath }
+      }
+      return { ...failure, path: project.rootPath }
     }
   }
 
@@ -343,6 +361,11 @@ class ProjectRepository {
         if (recordRoute) {
           await revalidateProjectNotebookOutputDirectories(
             this.recordOptions!.storageRoot(),
+            request.projectId,
+            path
+          )
+          await this.recordOptions!.restoreIndexes?.(
+            client as unknown as Prisma.TransactionClient,
             request.projectId,
             path
           )

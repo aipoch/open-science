@@ -1,7 +1,9 @@
-export type ProjectFolderProblem = {
-  kind: 'not-found' | 'unavailable' | 'conflict'
-  diagnostics: string
-}
+import type { ProjectFolderValidationResult } from '../../../shared/projects'
+
+export type ProjectFolderProblem = Pick<
+  Extract<ProjectFolderValidationResult, { ok: false }>,
+  'kind' | 'diagnostics'
+>
 
 export const projectFolderFailure = (error: unknown): ProjectFolderProblem | undefined => {
   if (!error || typeof error !== 'object' || !('code' in error)) return undefined

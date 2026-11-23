@@ -9,6 +9,7 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
+import { ProjectArtifactIndexUnavailableError } from '../projects/record-indexes'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 
 const roots: string[] = []
@@ -653,6 +654,46 @@ describe('ArtifactTurnOwner', () => {
       terminalResult: { kind: 'empty' }
     })
   })
+
+  it.each([false, true])(
+    'keeps unavailable checkpoint errors scoped to Artifact publication (pending=%s)',
+    async (hasPendingFile) => {
+      const dataRoot = await createRoot()
+      const repository = new ArtifactRepository(dataRoot)
+      const failure = new ProjectArtifactIndexUnavailableError('project-1', new Error('checkpoint'))
+      const owner = new ArtifactTurnOwner({
+        dataRoot,
+        repository,
+        runRegistry: new ArtifactRunRegistry(),
+        provenance: {
+          listRunVersions: async () => {
+            throw failure
+          },
+          writeAppGeneratedVersion: async () => artifactVersion()
+        }
+      })
+      const turn = await openRootExecution(owner, {
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        projectId: 'project-1',
+        agentName: 'Codex'
+      })
+      if (hasPendingFile) {
+        await repository.writePendingFile({
+          projectId: 'project-1',
+          sessionId: 'artifact-session-1',
+          runId: owner.snapshot(turn).runId,
+          filename: 'pending.txt',
+          source: { kind: 'inline', content: 'pending', encoding: 'utf8' }
+        })
+        await expect(owner.finalize(turn)).rejects.toBe(failure)
+      } else {
+        await expect(owner.finalize(turn)).resolves.toBeUndefined()
+        expect(owner.snapshot(turn).terminalResult).toEqual({ kind: 'empty' })
+      }
+      await owner.dispose(turn)
+    }
+  )
 
   it('does not let stale cleanup erase a replacement turn owned by the same Session', async () => {
     const dataRoot = await createRoot()

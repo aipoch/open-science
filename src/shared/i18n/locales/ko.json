@@ -250,6 +250,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "이 사례를 다운로드할 디스크 공간이 부족합니다. 공간을 확보한 후 다시 시도해 주세요.",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "다운로드한 사례를 임시 저장소에 저장하지 못했습니다. 폴더 권한을 확인한 후 다시 시도해 주세요.",
     "Wait for the application handoff to finish before transferring research.": "연구 데이터를 전송하기 전에 애플리케이션 인계가 완료될 때까지 기다려 주세요.",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "디스크에서 파일이 변경되어 {{path}}을(를) 수정할 수 없습니다. 최신 파일을 확인하거나 다른 이름으로 시도하세요.",
     "Review project folder changes": "프로젝트 폴더 변경 사항 검토"
   },
   "renderer": {
@@ -8906,6 +8907,8 @@
     "Keep this location connected while working.": "작업하는 동안 이 위치의 연결을 유지하세요.",
     "Project folder is already in use": "프로젝트 폴더가 이미 사용 중입니다",
     "Project folder not found": "프로젝트 폴더를 찾을 수 없습니다",
+    "Some research records could not be restored": "일부 연구 기록을 복원할 수 없습니다",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "프로젝트 파일과 대화를 계속 이용할 수 있습니다. 유효한 연구 기록 사본을 복원한 다음 다시 시도하세요.",
     "Unable to access project folder": "프로젝트 폴더에 액세스할 수 없습니다",
     "Your project folder and its files will not be deleted.": "프로젝트 폴더와 그 안의 파일은 삭제되지 않습니다.",
     "Drop a folder to create a project, or a .science file to import": "폴더를 놓아 프로젝트를 만들거나 .science 파일을 놓아 가져오기",

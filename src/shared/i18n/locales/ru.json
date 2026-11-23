@@ -253,6 +253,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "Недостаточно места на диске для загрузки этого примера. Освободите место и повторите попытку.",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "Не удалось сохранить загруженный пример во временное хранилище. Проверьте права доступа к папке и повторите попытку.",
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования.",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "Не удалось изменить {{path}}, потому что файл на диске был изменён. Проверьте текущую версию файла или попробуйте другое имя.",
     "Review project folder changes": "Проверить изменения в папке проекта"
   },
   "renderer": {
@@ -9416,6 +9417,8 @@
     "Keep this location connected while working.": "Поддерживайте подключение к этому расположению во время работы.",
     "Project folder is already in use": "Папка проекта уже используется",
     "Project folder not found": "Папка проекта не найдена",
+    "Some research records could not be restored": "Не удалось восстановить часть исследовательских записей",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "Вы можете продолжать работать с файлами и диалогами проекта. Восстановите корректную копию исследовательских записей и повторите попытку.",
     "Unable to access project folder": "Нет доступа к папке проекта",
     "Your project folder and its files will not be deleted.": "Папка проекта и находящиеся в ней файлы не будут удалены.",
     "Drop a folder to create a project, or a .science file to import": "Перетащите папку для создания проекта или файл .science для импорта",

@@ -34,6 +34,11 @@ import type { ReviewerAcpRuntime } from './acp-runtime'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
+import {
+  ProjectArtifactIndexUnavailableError,
+  readCommittedReviewProjection,
+  reconcileProjectRecordIndexes
+} from '../projects/record-indexes'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
@@ -50,6 +55,10 @@ import type { ArtifactVersionContentResolver } from './host-sdk'
 import { toErrorMessage } from '../error-message'
 import type { ReviewerPagedContentResolver } from './host-sdk'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+
+const isProjectRecordsUnavailable = (error: unknown): boolean =>
+  error instanceof ApplicationCommandError &&
+  (error.code === 'project-folder-not-found' || error.code === 'project-folder-unavailable')
 
 const log = createLogger('reviewer:ipc')
 // Share first-use module loading across concurrent review commands; allow retry on load failure.
@@ -233,7 +242,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const artifactProvenanceRepository = options.artifactProvenanceRepository
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
   let recoveryGate: Promise<void> | undefined
-  const ensureRecovery = (): Promise<void> => {
+  const ensureGlobalRecovery = (): Promise<void> => {
     if (recoveryGate) return recoveryGate
     const attempt = reviewRepository.recoverInterruptedReviews().then((count) => {
       if (count > 0) {
@@ -245,13 +254,30 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.error('review recovery failed', {
         error: toErrorMessage(error)
       })
-      if (recoveryGate === attempt) {
-        recoveryGate = undefined
-      }
+      if (recoveryGate === attempt && !isProjectRecordsUnavailable(error)) recoveryGate = undefined
     })
     return attempt
   }
-  void ensureRecovery()
+  void ensureGlobalRecovery()
+  const projectRecoveryGates = new Map<string, Promise<void>>()
+  const ensureRecovery = async (projectId: string): Promise<void> => {
+    try {
+      await ensureGlobalRecovery()
+    } catch (error) {
+      if (!projectId || !isProjectRecordsUnavailable(error)) throw error
+      // The initial pass can fail on one Project. Once requests can begin, recover only their
+      // owning Project and cache successful admission so an active Review is never interrupted.
+      let attempt = projectRecoveryGates.get(projectId)
+      if (!attempt) {
+        attempt = reviewRepository.recoverInterruptedReviews(projectId).then((count) => {
+          if (count > 0) log.warn('recovered interrupted reviews', { projectId, count })
+        })
+        projectRecoveryGates.set(projectId, attempt)
+        void attempt.catch(() => projectRecoveryGates.delete(projectId))
+      }
+      await attempt
+    }
+  }
   // Prefer the injected reader (production wires the composed session-persistence owner). The
   // fallback keeps standalone/test construction working, and pins `mode: 'read-only'` so even that
   // path cannot quarantine — reviewer is never the owner that repairs a corrupt session file.
@@ -367,34 +393,49 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // before the owning run either broadcasts `running` or reports a pre-start failure.
   const inFlightReviewStarts = new Map<string, InFlightReviewStart>()
 
-  // Loads persisted reviews for a session at startup, flagging any whose
-  // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
-  // does not present a stale verdict as current.
+  const withoutVerification = (reviews: ReviewWithChecks[]): ReviewWithChecks[] =>
+    reviews.map((review) =>
+      review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+    )
+
+  const loadReviewHistory = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
+    await ensureRecovery(request.projectId)
+    const reviews = await reviewRepository.getReviewSummariesForProjectSession(
+      request.projectId,
+      request.appSessionId
+    )
+    if (reviews.length === 0) return reviews
+    let session: PersistedChatSession | undefined
+    try {
+      session = await sessionReader.loadSession(request.projectId, request.appSessionId)
+    } catch {
+      return withoutVerification(reviews)
+    }
+    return flagStaleReviews(reviews, session, dataRoot, createLoadArtifactVersionResolver(reviews))
+  }
+
   const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
     try {
-      await ensureRecovery()
-      const reviews = await reviewRepository.getReviewSummariesForProjectSession(
-        request.projectId,
-        request.appSessionId
-      )
-      if (reviews.length === 0) return reviews
-      let session: PersistedChatSession | undefined
       try {
-        session = await sessionReader.loadSession(request.projectId, request.appSessionId)
-      } catch {
-        return reviews.map((review) =>
-          review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+        return await loadReviewHistory(request)
+      } catch (error) {
+        if (
+          !(error instanceof ProjectArtifactIndexUnavailableError) ||
+          error.projectId !== request.projectId
+        )
+          throw error
+        // Retain persisted running Reviews as admission evidence, including active Fix Loops.
+        // Completed Reviews can be shown, but the portable evidence cannot be verified.
+        return withoutVerification(
+          await reviewRepository.getCommittedReviewSummariesForProjectSession(
+            request.projectId,
+            request.appSessionId,
+            readCommittedReviewProjection
+          )
         )
       }
-      return flagStaleReviews(
-        reviews,
-        session,
-        dataRoot,
-        createLoadArtifactVersionResolver(reviews)
-      )
     } catch (error) {
-      // Preserve the rejection for the caller, but keep the cause diagnosable. The transport's
-      // response-byte budget failure happens after this handler resolves and is logged separately.
+      // The transport's response-byte budget is applied after this handler resolves.
       log.error('review history load failed', {
         projectId: request.projectId,
         sessionId: request.appSessionId,
@@ -467,7 +508,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     }
 
     try {
-      await ensureRecovery()
+      await ensureRecovery(projectId)
+      if (projectId && (request.origin !== 'auto' || correctionResume))
+        await reconcileProjectRecordIndexes(await getProjectDbClient(storageRoot), [projectId])
     } catch (error) {
       inFlightReviewStarts.delete(inFlightKey)
       inFlightStart.reject(error)

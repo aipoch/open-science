@@ -1854,6 +1854,35 @@ if (process.argv.includes('--version')) {
           await waitForSessionCancellation(context.params.sessionId)
         return { stopReason: folderReplacement || resumed ? 'end_turn' : 'cancelled' }
       }
+      const reviseFolderOutput = prompt.includes('Revise the app-created project folder result.')
+      const alternateFolderOutput = prompt.includes(
+        'Save the project folder result under another name.'
+      )
+      if (
+        (reviseFolderOutput || alternateFolderOutput) &&
+        !prompt.includes('Generate Session metadata only from the following JSON data:')
+      ) {
+        let text = 'Project folder output saved.'
+        try {
+          await context.client.request(acp.methods.client.fs.writeTextFile, {
+            sessionId: context.params.sessionId,
+            path: alternateFolderOutput ? 'alternate-result.txt' : 'result.txt',
+            content: 'revised analysis\n'
+          })
+        } catch (error) {
+          if (alternateFolderOutput) throw error
+          text = 'Project folder edit was skipped.'
+        }
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text }
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         await context.client.notify(acp.methods.client.session.update, {

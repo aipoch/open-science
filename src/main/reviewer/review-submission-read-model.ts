@@ -10,7 +10,9 @@ import type {
   SubmittedReviewCheck
 } from '../../shared/reviewer'
 
-type ReviewSubmissionReadClient = Pick<PrismaClient, 'finding' | 'reviewFindingDisposition'>
+type ReviewSubmissionReadClient = {
+  [Model in 'finding' | 'reviewFindingDisposition']: Pick<PrismaClient[Model], 'findMany'>
+}
 type PersistedReviewCheckAssessment = ReviewCheckAssessment & { schemaVersion: 1 }
 type ReviewSubmissionProjection = {
   checks: ReviewCheck[]
@@ -97,7 +99,8 @@ const compareSubmittedChecks = (
 // provenance from drifting into subtly different Review projections.
 const loadReviewSubmissionProjections = async (
   client: ReviewSubmissionReadClient,
-  reviewIds: readonly string[]
+  reviewIds: readonly string[],
+  scope?: { projectId: string; sessionId: string }
 ): Promise<Map<string, ReviewSubmissionProjection>> => {
   if (reviewIds.length === 0) return new Map()
   const findingRows = await client.finding.findMany({
@@ -106,7 +109,11 @@ const loadReviewSubmissionProjections = async (
   })
   const [dispositionRows, terminalDispositionRows] = await Promise.all([
     client.reviewFindingDisposition.findMany({
-      where: { causeReviewId: { in: [...reviewIds] }, trigger: 'review_submission' },
+      where: {
+        causeReviewId: { in: [...reviewIds] },
+        trigger: 'review_submission',
+        ...(scope ? { sourceFinding: { review: scope } } : {})
+      },
       orderBy: [{ createdAt: 'asc' }, { sequence: 'asc' }, { id: 'asc' }],
       include: { sourceFinding: true }
     }),

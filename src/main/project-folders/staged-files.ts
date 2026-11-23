@@ -53,6 +53,11 @@ export type ProjectFolderDeliveryBaseline = {
   identity: string
   rootIdentity: string
 }
+type CreatedFileRecord = Pick<
+  ProjectFolderDeliveryBaseline,
+  'rootIdentity' | 'identity' | 'checksum'
+>
+
 type Receipt = {
   version: 1
   createdAt?: number
@@ -63,6 +68,8 @@ type Receipt = {
   originalIdentity?: string
   originalMode?: number
   originalCtimeMs?: number
+  originalCreatedFile?: 'verified' | 'unverified'
+  artifactDelivery?: true
   appliedIdentity?: string
   appliedCtimeMs?: number
   commitState?: 'applying' | 'reverting'
@@ -338,6 +345,67 @@ export class ProjectFolderStagedFiles {
     return receipt
   }
 
+  private createdFileRecordPath(scope: ProjectFolderChangeScope, relativePath: string): string {
+    return join(
+      'created',
+      safeId(scope.projectId),
+      createHash('sha256').update(relativePath).digest('hex') + '.json'
+    )
+  }
+
+  private async readCreatedFile(
+    scope: ProjectFolderChangeScope,
+    relativePath: string
+  ): Promise<Partial<CreatedFileRecord> | undefined> {
+    try {
+      const path = await safePath(
+        this.history.path,
+        this.createdFileRecordPath(scope, relativePath),
+        false,
+        true
+      )
+      const metadata = await lstat(path)
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1024 * 1024)
+        return undefined
+      return JSON.parse(await readFile(path, 'utf8'))
+    } catch (error) {
+      // Missing or unreadable proof requires review for ordinary writes and deletes.
+      if (!hasCode(error, 'ENOENT'))
+        createLogger('project-folders').warn(
+          'Project folder created file proof could not be read',
+          diagnosticErrorFields(error)
+        )
+      return undefined
+    }
+  }
+
+  private async rememberCreatedFile(
+    scope: ProjectFolderChangeScope,
+    receipt: Receipt,
+    fileIdentity: string,
+    checksum: string
+  ): Promise<void> {
+    try {
+      const path = await safePath(
+        this.history.path,
+        this.createdFileRecordPath(scope, receipt.change.relativePath),
+        true
+      )
+      const record: CreatedFileRecord = {
+        rootIdentity: receipt.rootIdentity,
+        identity: fileIdentity,
+        checksum
+      }
+      await writeDurableJsonFile(path, JSON.stringify(record))
+    } catch (error) {
+      // The mutation and its receipt are already durable. Missing proof requires review next time.
+      createLogger('project-folders').warn(
+        'Project folder created file proof could not be saved',
+        diagnosticErrorFields(error)
+      )
+    }
+  }
+
   async describeInputs(
     folder: string,
     cwd: string,
@@ -590,13 +658,14 @@ export class ProjectFolderStagedFiles {
           : undefined
       if (operation === 'write' && !candidate) return undefined
       if (!original && operation === 'delete') return undefined
+      const rootIdentity = identity(await stat(stage.folder))
       const baselineMatches = Boolean(
         original &&
         replacementBaseline &&
         original.checksum === replacementBaseline.checksum &&
         original.size === replacementBaseline.size &&
         original.identity === replacementBaseline.identity &&
-        identity(await stat(stage.folder)) === replacementBaseline.rootIdentity
+        rootIdentity === replacementBaseline.rootIdentity
       )
       if (
         original?.checksum === candidate?.checksum &&
@@ -613,30 +682,15 @@ export class ProjectFolderStagedFiles {
           join(root, 'candidate'),
           candidate.checksum
         )
-      const createdRecord = join(
-        this.storage.path,
-        'project-folder-history',
-        'created',
-        safeId(stage.projectId),
-        createHash('sha256').update(relativePath).digest('hex') + '.json'
-      )
-      await safePath(
-        this.history.path,
-        join(
-          'created',
-          safeId(stage.projectId),
-          createHash('sha256').update(relativePath).digest('hex') + '.json'
-        ),
-        false,
-        true
-      )
-      const created = await readFile(createdRecord, 'utf8').then(
-        (text) => JSON.parse(text) as { root: string; rootIdentity?: string; identity: string },
-        (error: unknown) => {
-          if (hasCode(error, 'ENOENT')) return undefined
-          throw error
-        }
-      )
+      const created = original ? await this.readCreatedFile(stage, relativePath) : undefined
+      const originalCreatedFile =
+        original &&
+        created?.rootIdentity === rootIdentity &&
+        created?.identity === original.identity
+          ? created.checksum === original.checksum
+            ? 'verified'
+            : 'unverified'
+          : undefined
       const change: ProjectFolderChange = {
         id,
         projectId: stage.projectId,
@@ -651,9 +705,7 @@ export class ProjectFolderStagedFiles {
         requiresConfirmation: Boolean(
           original &&
           !(replacementBaseline === undefined
-            ? (created?.root === stage.folder ||
-                created?.rootIdentity === identity(await stat(stage.folder))) &&
-              created?.identity === original.identity
+            ? originalCreatedFile === 'verified'
             : baselineMatches)
         ),
         state: 'prepared'
@@ -662,10 +714,12 @@ export class ProjectFolderStagedFiles {
         version: 1,
         change,
         root: stage.folder,
-        rootIdentity: identity(await stat(stage.folder)),
+        rootIdentity,
         originalIdentity: original?.identity,
         originalMode: original?.mode,
-        originalCtimeMs: original?.ctimeMs
+        originalCtimeMs: original?.ctimeMs,
+        originalCreatedFile,
+        artifactDelivery: replacementBaseline !== undefined ? true : undefined
       })
       return change
     })
@@ -704,6 +758,16 @@ export class ProjectFolderStagedFiles {
       }
       await assertOriginal()
       signal?.throwIfAborted()
+      // Older prepared receipts authorized existing files using identity alone.
+      if (
+        receipt.change.originalChecksum &&
+        !receipt.change.requiresConfirmation &&
+        !receipt.artifactDelivery &&
+        receipt.originalCreatedFile !== 'verified'
+      ) {
+        receipt.change = { ...receipt.change, requiresConfirmation: true }
+        await this.writeReceipt(scope, receipt)
+      }
       const approve = receipt.change.requiresConfirmation
         ? this.options.approve
         : this.options.authorizeCreatedFile
@@ -726,36 +790,28 @@ export class ProjectFolderStagedFiles {
       await assertOriginal()
       receipt.commitState = 'applying'
       await this.writeReceipt(scope, receipt)
-      await this.replaceTarget(receipt, transactionRoot, target, 'candidate', assertOriginal)
-      const applied = await fileVersion(target)
+      const applied = await this.replaceTarget(
+        receipt,
+        transactionRoot,
+        target,
+        'candidate',
+        assertOriginal
+      )
       receipt.appliedIdentity = applied?.identity
       receipt.appliedCtimeMs = applied?.ctimeMs
       receipt.change = { ...receipt.change, state: 'applied' }
       receipt.commitState = undefined
       await this.writeReceipt(scope, receipt)
-      if (receipt.change.operation !== 'delete' && !receipt.change.requiresConfirmation) {
-        const createdRoot = join(
-          this.storage.path,
-          'project-folder-history',
-          'created',
-          safeId(scope.projectId)
-        )
-        await safePath(
-          this.history.path,
-          join('created', safeId(scope.projectId), 'placeholder'),
-          true
-        )
-        const createdRecord = join(
-          createdRoot,
-          createHash('sha256').update(receipt.change.relativePath).digest('hex') + '.json'
-        )
-        await writeDurableJsonFile(
-          createdRecord,
-          JSON.stringify({
-            root: receipt.root,
-            rootIdentity: receipt.rootIdentity,
-            identity: (await fileVersion(target))?.identity
-          })
+      if (
+        applied &&
+        receipt.change.candidateChecksum &&
+        (!receipt.change.requiresConfirmation || receipt.originalCreatedFile)
+      ) {
+        await this.rememberCreatedFile(
+          scope,
+          receipt,
+          applied.identity,
+          receipt.change.candidateChecksum
         )
       }
       return receipt.change
@@ -768,7 +824,7 @@ export class ProjectFolderStagedFiles {
     target: string,
     source: 'candidate' | 'backup',
     verify?: () => Promise<void>
-  ): Promise<void> {
+  ): Promise<Pick<FileVersion, 'identity' | 'ctimeMs'> | undefined> {
     const expected =
       source === 'candidate' ? receipt.change.candidateChecksum : receipt.change.originalChecksum
     if (!expected) {
@@ -776,7 +832,7 @@ export class ProjectFolderStagedFiles {
       await verify?.()
       await rm(target, { force: true })
       await defaultFileDurability.syncDirectory(dirname(target))
-      return
+      return undefined
     }
     const temporary = join(dirname(target), `.open-science-${randomUUID()}.tmp`)
     try {
@@ -802,10 +858,21 @@ export class ProjectFolderStagedFiles {
         await chmod(temporary, receipt.originalMode)
         await defaultFileDurability.syncFile(temporary)
       } else await durableCopy(join(transactionRoot, source), temporary, expected)
-      await safePath(receipt.root, receipt.change.relativePath, false, true)
-      await verify?.()
-      await rename(temporary, target)
-      await defaultFileDurability.syncDirectory(dirname(target))
+      // The destination name can be changed externally after rename, and on Windows the
+      // creation time can change during rename. Observe the installed file by its open handle.
+      const installed = await open(temporary, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      try {
+        if (!(await installed.stat()).isFile())
+          throw new ProjectFolderConflictError(receipt.change.relativePath)
+        await safePath(receipt.root, receipt.change.relativePath, false, true)
+        await verify?.()
+        await rename(temporary, target)
+        const metadata = await installed.stat()
+        await defaultFileDurability.syncDirectory(dirname(target))
+        return { identity: identity(metadata), ctimeMs: metadata.ctimeMs }
+      } finally {
+        await installed.close()
+      }
     } finally {
       await rm(temporary, { force: true })
     }
@@ -837,14 +904,27 @@ export class ProjectFolderStagedFiles {
       await assertApplied()
       receipt.commitState = 'reverting'
       await this.writeReceipt(scope, receipt)
-      await this.replaceTarget(receipt, this.receiptRoot(scope, id), target, 'backup', async () => {
-        if (identity(await stat(receipt.root)) !== receipt.rootIdentity)
-          throw new ProjectFolderConflictError(receipt.change.relativePath)
-        await assertApplied()
-      })
+      const restored = await this.replaceTarget(
+        receipt,
+        this.receiptRoot(scope, id),
+        target,
+        'backup',
+        async () => {
+          if (identity(await stat(receipt.root)) !== receipt.rootIdentity)
+            throw new ProjectFolderConflictError(receipt.change.relativePath)
+          await assertApplied()
+        }
+      )
       receipt.change = { ...receipt.change, state: 'reverted' }
       receipt.commitState = undefined
       await this.writeReceipt(scope, receipt)
+      if (restored && receipt.change.originalChecksum && receipt.originalCreatedFile === 'verified')
+        await this.rememberCreatedFile(
+          scope,
+          receipt,
+          restored.identity,
+          receipt.change.originalChecksum
+        )
       return receipt.change
     })
   }

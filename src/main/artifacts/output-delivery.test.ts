@@ -13,7 +13,7 @@ import {
   initializeProjectRecordStorage,
   registerProjectRecordStorage
 } from '../projects/record-storage'
-import { restoreProjectRecordIndexes, withProjectRecordIndexes } from '../projects/record-indexes'
+import { withProjectRecordIndexes } from '../projects/record-indexes'
 import { ArtifactProvenanceRepository } from './provenance-repository'
 import { createProvenanceTestFixture } from './provenance-test-fixtures'
 import { ArtifactOutputDelivery } from './output-delivery'
@@ -439,18 +439,14 @@ it('retains the portable association and baseline through index loss and a folde
   await cp(folder, copied, { recursive: true })
   folder = copied
   await registerProjectRecordStorage(fixture.storageRoot, folder, 'project-1')
-  await fixture.client.artifactLineage.update({
-    where: { id: first.version.artifactId },
-    data: { outputDeliveryJson: null }
+  await fixture.client.$transaction(async (tx) => {
+    await tx.artifactLineage.update({
+      where: { id: first.version.artifactId },
+      data: { currentVersionId: null }
+    })
+    await tx.artifactVersion.delete({ where: { id: first.version.versionId } })
+    await tx.artifactLineage.delete({ where: { id: first.version.artifactId } })
   })
-  await restoreProjectRecordIndexes(wrapped, fixture.storageRoot, 'project-1')
-  expect(
-    (
-      await fixture.client.artifactLineage.findUniqueOrThrow({
-        where: { id: first.version.artifactId }
-      })
-    ).outputDeliveryJson
-  ).toBe(before)
   await rm(join(fixture.storageRoot, 'project-folder-history'), { recursive: true, force: true })
   portable = new ArtifactOutputDelivery({
     storageRoot: fixture.storageRoot,
@@ -467,6 +463,13 @@ it('retains the portable association and baseline through index loss and a folde
     })
   })
   expect((await portable.inspect(identity(first)))?.state).toBe('conflict')
+  expect(
+    (
+      await fixture.client.artifactLineage.findUniqueOrThrow({
+        where: { id: first.version.artifactId }
+      })
+    ).outputDeliveryJson
+  ).toBe(before)
   approve.mockResolvedValue(false)
   expect(
     await portable.deliver({ ...identity(first), versionId: first.version.versionId })

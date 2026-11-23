@@ -250,6 +250,7 @@
     "Not enough disk space to download this example. Free up space and try again.": "磁盘空间不足，无法下载此案例。请清理空间后重试。",
     "Could not save the downloaded example to temporary storage. Check folder permissions and try again.": "无法将下载的案例保存到临时目录，请检查文件夹权限后重试。",
     "Wait for the application handoff to finish before transferring research.": "请等待应用交接完成后再传输研究内容。",
+    "Could not change {{path}} because the file changed on disk. Review the latest file or try a different name.": "磁盘上的文件已更改，因此无法修改 {{path}}。请检查最新文件，或尝试使用其他名称。",
     "Review project folder changes": "审核项目文件夹更改"
   },
   "renderer": {
@@ -8908,6 +8909,8 @@
     "Keep this location connected while working.": "工作时请保持此位置连接。",
     "Project folder is already in use": "项目文件夹已被占用",
     "Project folder not found": "找不到项目文件夹",
+    "Some research records could not be restored": "部分研究记录无法恢复",
+    "You can keep using project files and conversations. Restore a valid copy of the research records, then retry.": "你可以继续使用项目文件和对话。恢复有效的研究记录副本后重试。",
     "Unable to access project folder": "无法访问项目文件夹",
     "Your project folder and its files will not be deleted.": "不会删除您的项目文件夹及其中的文件。",
     "Drop a folder to create a project, or a .science file to import": "拖放文件夹以创建项目，或拖放 .science 文件以导入",

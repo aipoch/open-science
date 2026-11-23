@@ -79,6 +79,7 @@ const PUBLIC_METHODS = [
   'finalizeRun',
   'activateFinalizedRun',
   'listRunVersions',
+  'recoverLiveRunPublication',
   'recordLiteratureSearch',
   'recordLiteratureAbstractRead',
   'recordLiteraturePdfRead',

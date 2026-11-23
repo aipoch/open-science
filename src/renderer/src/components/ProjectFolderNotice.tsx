@@ -19,7 +19,9 @@ export const ProjectFolderNotice = ({
           ? t('Project folder is already in use')
           : problem.kind === 'not-found'
             ? t('Project folder not found')
-            : t('Unable to access project folder')
+            : problem.kind === 'records-unavailable'
+              ? t('Some research records could not be restored')
+              : t('Unable to access project folder')
       }
       errorCode={problem.diagnostics || undefined}
       diagnosticsLabel={t('Details')}

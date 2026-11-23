@@ -14,13 +14,20 @@ import {
   registerProjectRecordStorage,
   markProjectRecordDetached
 } from './record-storage'
-import { restoreProjectRecordIndexes, withProjectRecordIndexes } from './record-indexes'
+import {
+  reconcileProjectRecordIndexes,
+  restoreLocatedProjectRecordIndexes,
+  restoreProjectRecordIndexes,
+  withProjectRecordIndexes
+} from './record-indexes'
+import { ProjectRepository } from './repository'
+import { getAuthoritativeOverviewCounts } from '../project-files/query-support'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, rename: vi.fn(actual.rename) }
+  return { ...actual, readFile: vi.fn(actual.readFile), rename: vi.fn(actual.rename) }
 })
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
@@ -98,6 +105,297 @@ it('restores immutable versions and generation facts after losing the index and 
       { forceVerify: true }
     )
   ).rejects.toThrow()
+})
+
+it('rolls back the whole checkpoint restore when a Review identity belongs to another Project', async () => {
+  const f = await setup()
+  const origin = { projectId: 'project-1', sessionId: 'session-1' }
+  const originWhere = { projectId_sessionId: origin }
+  await f.wrapped.fileOriginSession.create({ data: { ...origin, titleSnapshot: 'checkpoint' } })
+  await f.wrapped.review.create({
+    data: {
+      ...origin,
+      id: 'review-1',
+      turnMessageId: 'turn-1',
+      lifecycle: 'complete',
+      outcome: 'pass'
+    }
+  })
+
+  await f.client.fileOriginSession.update({
+    where: originWhere,
+    data: { titleSnapshot: 'local title' }
+  })
+  const localReview = await f.client.review.update({
+    where: { id: 'review-1' },
+    data: { projectId: 'project-2', model: 'local model' }
+  })
+
+  await expect(restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')).rejects.toThrow(
+    'Conflicting project Artifact index identity: Review.projectId'
+  )
+  expect(await f.client.review.findUnique({ where: { id: localReview.id } })).toEqual(localReview)
+  expect(
+    (await f.client.fileOriginSession.findUniqueOrThrow({ where: originWhere })).titleSnapshot
+  ).toBe('local title')
+})
+
+it('preserves an existing Artifact Version when its checkpoint and local lineage identities differ', async () => {
+  const f = await setup()
+  await f.stagePng('first')
+  const created = await f.repository.createVersion(createArtifactVersionRequest())
+  const localLineage = await f.client.artifactLineage.create({
+    data: {
+      id: 'local-lineage',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      filename: 'local.png',
+      normalizedFilename: 'local.png'
+    }
+  })
+  await f.client.artifactLineage.update({
+    where: { id: created.artifactId },
+    data: { currentVersionId: null }
+  })
+  const localVersion = await f.client.artifactVersion.update({
+    where: { id: created.versionId },
+    data: { artifactId: localLineage.id }
+  })
+
+  await expect(restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')).rejects.toThrow(
+    'Conflicting project Artifact index identity: ArtifactVersion.artifactId'
+  )
+  expect(await f.client.artifactVersion.findUnique({ where: { id: localVersion.id } })).toEqual(
+    localVersion
+  )
+  expect(
+    (await f.client.artifactLineage.findUniqueOrThrow({ where: { id: created.artifactId } }))
+      .currentVersionId
+  ).toBeNull()
+})
+
+it.each(['pending', 'staging'] as const)(
+  'checks immutable Artifact bytes when the local Version state is %s',
+  async (state) => {
+    const f = await setup()
+    await f.stagePng('first')
+    const created = await f.repository.createVersion(createArtifactVersionRequest())
+    const where = { id: created.versionId }
+    const checkpointVersion = await f.client.artifactVersion.findUniqueOrThrow({ where })
+    const localVersion = await f.client.artifactVersion.update({
+      where,
+      data: {
+        state,
+        contentStorageKey: 'artifacts/project-1/session-1/local-version.png'
+      }
+    })
+
+    const restore = restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')
+    if (state === 'pending') {
+      await expect(restore).rejects.toThrow(
+        'Conflicting project Artifact index identity: ArtifactVersion.contentStorageKey'
+      )
+      expect(await f.client.artifactVersion.findUnique({ where })).toEqual(localVersion)
+    } else {
+      await restore
+      expect(await f.client.artifactVersion.findUnique({ where })).toEqual(checkpointVersion)
+    }
+  }
+)
+
+it.each(['ready', 'staging'] as const)(
+  'checks the linked ContentBlob when the restored Upload Version state is %s',
+  async (state) => {
+    const f = await setup()
+    const scope = { projectId: 'project-1', sessionId: 'session-1' }
+    await f.client.fileOriginSession.create({ data: scope })
+    const upload = await f.client.uploadFile.create({
+      data: { ...scope, id: 'upload-1', filename: 'sample.txt', originalFilename: 'sample.txt' }
+    })
+    const content = await f.client.contentBlob.create({
+      data: {
+        id: 'blob-1',
+        checksum: 'a'.repeat(64),
+        storageKey: 'uploads/project-1/session-1/sample.txt',
+        sizeBytes: 10n
+      }
+    })
+    const version = await f.client.uploadVersion.create({
+      data: {
+        id: 'upload-version-1',
+        uploadFileId: upload.id,
+        versionNumber: 1,
+        filename: upload.filename,
+        originalFilename: upload.originalFilename,
+        state,
+        checksum: content.checksum,
+        contentStorageKey: content.storageKey,
+        contentBlobId: content.id,
+        sizeBytes: 9n
+      }
+    })
+    await f.wrapped.fileOriginSession.update({
+      where: { projectId_sessionId: scope },
+      data: { titleSnapshot: 'checkpoint' }
+    })
+    await f.client.uploadVersion.delete({ where: { id: version.id } })
+
+    const restore = restoreProjectRecordIndexes(f.wrapped, f.storageRoot, scope.projectId)
+    if (state === 'ready') {
+      await expect(restore).rejects.toThrow(
+        'Conflicting project Artifact index content binding: UploadVersion.contentBlobId'
+      )
+      expect(await f.client.uploadVersion.count()).toBe(0)
+      expect(await f.client.contentBlob.findUnique({ where: { id: content.id } })).toEqual(content)
+    } else {
+      await restore
+      expect(await f.client.uploadVersion.findUnique({ where: { id: version.id } })).toEqual(
+        version
+      )
+    }
+  }
+)
+
+it.each(['missing', 'unlinked'] as const)(
+  'restores a published Artifact Version with %s ContentBlob metadata',
+  async (binding) => {
+    const f = await setup()
+    await f.stagePng('first')
+    const created = await f.repository.createVersion(createArtifactVersionRequest())
+    const where = { id: created.versionId }
+    const version = await f.client.artifactVersion.findUniqueOrThrow({ where })
+    const contentBlobId = version.contentBlobId
+    if (!contentBlobId) throw new Error('Expected a ContentBlob from Artifact publication')
+    await f.client.contentBlob.delete({ where: { id: contentBlobId } })
+    if (binding === 'unlinked')
+      await f.client.artifactVersion.update({ where, data: { contentBlobId: null } })
+    await f.wrapped.fileOriginSession.update({
+      where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
+      data: { titleSnapshot: 'checkpoint' }
+    })
+
+    await restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')
+    expect(await f.client.artifactVersion.findUnique({ where })).toMatchObject({
+      contentBlobId: binding === 'unlinked' ? null : contentBlobId,
+      checksum: version.checksum,
+      sizeBytes: version.sizeBytes
+    })
+  }
+)
+
+it('preserves a local Review scope snapshot if pruning its Review would cross Project scope', async () => {
+  const f = await setup()
+  await f.wrapped.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'session-1' }
+  })
+  const review = await f.client.review.create({
+    data: {
+      id: 'review-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'turn-1'
+    }
+  })
+  const snapshot = await f.client.reviewScopeSnapshot.create({
+    data: {
+      id: 'snapshot-1',
+      projectId: 'project-2',
+      sessionId: 'session-1',
+      reviewId: review.id,
+      scopeTurnMessageId: 'turn-1',
+      storageKey: 'snapshot.json',
+      snapshotJson: '{}',
+      checksum: 'checksum',
+      blockCount: 0
+    }
+  })
+
+  await expect(restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')).rejects.toThrow(
+    'Conflicting project Artifact index prune scope: Review'
+  )
+  expect(await f.client.review.findUnique({ where: { id: review.id } })).toEqual(review)
+  expect(await f.client.reviewScopeSnapshot.findUnique({ where: { id: snapshot.id } })).toEqual(
+    snapshot
+  )
+})
+
+it.each([
+  { label: 'a matching scope', projectId: 'project-1', sessionId: 'session-1', valid: true },
+  { label: 'a different Session', projectId: 'project-1', sessionId: 'session-2', valid: false },
+  { label: 'a different Project', projectId: 'project-2', sessionId: 'session-1', valid: false }
+])(
+  'validates a Finding disposition whose cause Review is in $label',
+  async ({ projectId, sessionId, valid }) => {
+    const f = await setup()
+    const scope = { projectId: 'project-1', sessionId: 'session-1' }
+    const source = await f.client.review.create({
+      data: { ...scope, id: 'source-review', turnMessageId: 'turn-1' }
+    })
+    const cause = await f.client.review.create({
+      data: { id: 'cause-review', projectId, sessionId, turnMessageId: 'turn-1' }
+    })
+    const finding = await f.client.finding.create({
+      data: { id: 'finding-1', reviewId: source.id, status: 'warn' }
+    })
+    await f.client.reviewFindingDisposition.createMany({
+      data: [
+        {
+          id: 'assessment',
+          sourceFindingId: finding.id,
+          causeReviewId: cause.id,
+          sequence: 1,
+          trigger: 'review_submission',
+          outcome: 'still_open'
+        },
+        {
+          id: 'aborted',
+          sourceFindingId: finding.id,
+          sequence: 2,
+          trigger: 'aborted',
+          outcome: 'unaddressed'
+        }
+      ]
+    })
+    await f.wrapped.fileOriginSession.create({ data: scope })
+    await f.client.reviewFindingDisposition.deleteMany({ where: { sourceFindingId: finding.id } })
+
+    const restore = restoreProjectRecordIndexes(f.wrapped, f.storageRoot, scope.projectId)
+    if (valid) {
+      await restore
+      expect(
+        await f.client.reviewFindingDisposition.findMany({ orderBy: { sequence: 'asc' } })
+      ).toMatchObject([
+        { id: 'assessment', causeReviewId: cause.id },
+        { id: 'aborted', causeReviewId: null }
+      ])
+    } else {
+      await expect(restore).rejects.toThrow(
+        'Conflicting project Artifact index parent: ReviewFindingDisposition.causeReviewId'
+      )
+      expect(await f.client.reviewFindingDisposition.count()).toBe(0)
+      expect(await f.client.review.findUnique({ where: { id: cause.id } })).toEqual(cause)
+    }
+  }
+)
+
+it('rejects a checkpoint containing Review metadata from another Project', async () => {
+  const f = await setup()
+  await f.wrapped.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'session-1' }
+  })
+  const path = join(f.folder, '.open-science', 'artifact-index.json')
+  const checkpoint = JSON.parse(await readFile(path, 'utf8'))
+  checkpoint.tables.Review.push({
+    id: 'out-of-scope-review',
+    projectId: 'project-2',
+    sessionId: 'session-1'
+  })
+  await writeFile(path, JSON.stringify(checkpoint))
+
+  await expect(restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')).rejects.toThrow(
+    'Conflicting project Artifact index scope: Review'
+  )
+  expect(await f.client.review.count()).toBe(0)
 })
 
 it('retains the durable checkpoint through detached project index deletion', async () => {
@@ -226,9 +524,94 @@ it('reconciles the published checkpoint after a database commit fails', async ()
     })
   ).rejects.toThrow('simulated commit failure')
   expect((await f.client.fileOriginSession.findFirstOrThrow()).titleSnapshot).toBeNull()
-  expect((await live.fileOriginSession.findFirstOrThrow()).titleSnapshot).toBe(
-    'durable before failed commit'
+  expect(
+    (
+      await live.fileOriginSession.findUniqueOrThrow({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } }
+      })
+    ).titleSnapshot
+  ).toBe('durable before failed commit')
+})
+
+it('recovers staged bytes when the Artifact checkpoint publishes before SQLite aborts', async () => {
+  const f = await setup()
+  await f.stagePng('recoverable bytes')
+  const request = createArtifactVersionRequest()
+  let interrupt = true
+  const failing = new Proxy(f.client, {
+    get(target, key) {
+      if (key === '$transaction')
+        return (body: (tx: typeof f.client) => Promise<unknown>) =>
+          target.$transaction(async (tx) => {
+            const result = await body(tx as typeof f.client)
+            if (
+              interrupt &&
+              (await tx.artifactVersion.findUnique({
+                where: { writeOperationId: request.writeOperationId }
+              }))
+            ) {
+              interrupt = false
+              throw new Error('simulated Artifact staging commit failure')
+            }
+            return result
+          })
+      const value = Reflect.get(target, key)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+  const live = withProjectRecordIndexes(failing, f.storageRoot)
+  const repository = new ArtifactProvenanceRepository({
+    ...f.repositoryOptions,
+    getClient: async () => live
+  })
+  await expect(repository.createVersion(request)).rejects.toThrow(
+    'simulated Artifact staging commit failure'
   )
+  const recovered = await f.client.artifactVersion.findUniqueOrThrow({
+    where: { writeOperationId: request.writeOperationId }
+  })
+  expect(recovered.state).toBe('staging')
+  const version = await repository.createVersion(request)
+  expect(version.versionId).toBe(recovered.id)
+  expect(await readFile(resolveStorageKey(f.storageRoot, recovered.contentStorageKey))).toEqual(
+    await readFile(version.path)
+  )
+})
+
+it('keeps foreign key enforcement active for writes after a cold replay', async () => {
+  const f = await setup()
+  await f.wrapped.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'saved' }
+  })
+  const path = join(f.folder, '.open-science', 'artifact-index.json')
+  const before = await readFile(path, 'utf8')
+  const startup = withProjectRecordIndexes(f.client, f.storageRoot)
+  await expect(
+    startup.artifactLineage.create({
+      data: {
+        id: 'invalid-artifact',
+        projectId: 'project-1',
+        sessionId: 'missing-origin',
+        filename: 'x.txt',
+        normalizedFilename: 'x.txt'
+      }
+    })
+  ).rejects.toThrow()
+  expect(await readFile(path, 'utf8')).toBe(before)
+  expect(await startup.fileOriginSession.count({ where: { projectId: 'project-1' } })).toBe(1)
+})
+
+it('reconciles Project Files raw reads using their explicit catalog scope', async () => {
+  const f = await setup()
+  await f.wrapped.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'saved' }
+  })
+  await f.client.fileOriginSession.deleteMany()
+  const startup = withProjectRecordIndexes(f.client, f.storageRoot)
+  await getAuthoritativeOverviewCounts(startup, 'managed', undefined)
+  expect(await f.client.fileOriginSession.count()).toBe(0)
+  await getAuthoritativeOverviewCounts(startup, 'project-1', undefined)
+  expect(await f.client.fileOriginSession.count()).toBe(1)
 })
 
 it('keeps live foreign lineage heads and source edges when restoring or detaching referenced projects', async () => {
@@ -372,20 +755,58 @@ it('isolates corrupt or disconnected checkpoints from unrelated projects and hom
     name: 'Broken',
     createdAt: 1
   })
-  await fs.writeFile(join(folder, '.open-science', 'artifact-index.json'), '{invalid JSON')
+  const brokenIndex = join(await fs.realpath(folder), '.open-science', 'artifact-index.json')
+  const healthyIndex = join(await fs.realpath(f.folder), '.open-science', 'artifact-index.json')
+  await fs.writeFile(brokenIndex, '{invalid JSON')
   const live = withProjectRecordIndexes(f.client, f.storageRoot)
+  const checkpointReads = (): string[] =>
+    vi
+      .mocked(readFile)
+      .mock.calls.map(([path]) => String(path))
+      .filter((path) => fsPath.basename(path) === 'artifact-index.json')
+  vi.mocked(readFile).mockClear()
   expect(await live.project.findMany()).toEqual([])
   expect(await live.$queryRawUnsafe('SELECT 1 AS settings')).toHaveLength(1)
+  await live.$transaction(async (tx) => {
+    await tx.sessionHistoryIndex.create({
+      data: {
+        projectId: 'legacy-other',
+        sessionId: 'ordinary-conversation',
+        revision: 1n,
+        sourceFingerprint: 'source',
+        scopeKey: 'scope',
+        headerJson: '{}',
+        totalItems: 0
+      }
+    })
+    expect(await tx.$queryRaw`SELECT 1`).toHaveLength(1)
+  })
   expect(
-    await live.artifactVersion.count({ where: { artifact: { projectId: 'project-1' } } })
-  ).toBe(1)
+    await live.sessionHistoryIndex.findUnique({ where: { sessionId: 'ordinary-conversation' } })
+  ).toMatchObject({ projectId: 'legacy-other' })
+  expect(await live.artifactLineage.findUnique({ where: { id: 'missing-legacy-file' } })).toBeNull()
+  expect(
+    await live.artifactVersion.count({ where: { artifact: { projectId: 'legacy-other' } } })
+  ).toBe(0)
   await live.fileOriginSession.create({ data: { projectId: 'legacy-other', sessionId: 's' } })
+  expect(checkpointReads()).toEqual([])
+
+  await live.$transaction([
+    live.artifactVersion.count({ where: { artifact: { projectId: 'project-1' } } }),
+    live.fileOriginSession.count({ where: { projectId: 'project-1' } })
+  ])
+  expect(checkpointReads()).toEqual([healthyIndex])
+  vi.mocked(readFile).mockClear()
   await expect(live.artifactLineage.findMany({ where: { projectId: 'broken' } })).rejects.toThrow(
     'Project Artifact records are unavailable'
   )
-  expect(await readFile(join(folder, '.open-science', 'artifact-index.json'), 'utf8')).toBe(
-    '{invalid JSON'
-  )
+  await expect(
+    live.fileOriginSession.create({
+      data: { projectId: 'broken', sessionId: 'should-not-publish' }
+    })
+  ).rejects.toThrow('Project Artifact records are unavailable')
+  expect(checkpointReads()).toEqual([brokenIndex, brokenIndex])
+  expect(await readFile(brokenIndex, 'utf8')).toBe('{invalid JSON')
   await fs.rm(folder, { recursive: true })
   expect(await live.project.findMany()).toEqual([])
   await expect(live.artifactLineage.findMany({ where: { projectId: 'broken' } })).rejects.toThrow(
@@ -543,6 +964,56 @@ it('retries the same scoped reviewer read after a missing project folder is loca
   expect((await query())[0].model).toBe('after-locate')
 })
 
+it('validates the checkpoint in a located folder before changing its binding', async () => {
+  const f = await setup()
+  const originalFolder = await fs.realpath(f.folder)
+  await f.client.project.create({
+    data: { id: 'project-1', name: 'Research', rootPath: originalFolder }
+  })
+  await f.wrapped.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'saved', titleSnapshot: 'durable title' }
+  })
+  const moved = join(await fs.realpath(f.storageRoot), 'new-project-folder')
+  await rename(f.folder, moved)
+  const checkpoint = join(moved, '.open-science', 'artifact-index.json')
+  const original = await readFile(checkpoint, 'utf8')
+  const projects = new ProjectRepository(
+    async () => f.wrapped,
+    undefined,
+    {
+      dataRoot: join(f.storageRoot, 'managed-data'),
+      configRoot: join(f.storageRoot, 'config'),
+      homePath: join(f.storageRoot, 'home'),
+      preflight: async () => undefined
+    },
+    {
+      storageRoot: () => f.storageRoot,
+      assertLocation: async () => undefined,
+      reconcileIndexes: (client, id) => reconcileProjectRecordIndexes(client, [id]),
+      restoreIndexes: (tx, id, folder) =>
+        restoreLocatedProjectRecordIndexes(tx, f.storageRoot, id, folder!)
+    }
+  )
+  const locate = (): ReturnType<ProjectRepository['locateFolder']> =>
+    projects.locateFolder(
+      { projectId: 'project-1', expectedRootPath: originalFolder, path: moved },
+      (commit) => commit()
+    )
+  await writeFile(checkpoint, '{invalid JSON')
+  await expect(locate()).rejects.toMatchObject({ code: 'project-folder-unavailable' })
+  expect(await projects.get('project-1')).toMatchObject({ rootPath: originalFolder })
+
+  await writeFile(checkpoint, original)
+  await f.client.fileOriginSession.deleteMany({ where: { projectId: 'project-1' } })
+  expect(await locate()).toMatchObject({ rootPath: moved })
+  expect(await projects.checkFolder({ projectId: 'project-1' })).toMatchObject({ ok: true })
+  expect(
+    await f.wrapped.fileOriginSession.findUnique({
+      where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'saved' } }
+    })
+  ).toMatchObject({ titleSnapshot: 'durable title' })
+})
+
 it.each([1, 2] as const)(
   'keeps delivery state out of v1 checkpoints until explicit layout enablement (v%s)',
   async (version) => {
@@ -562,9 +1033,13 @@ it.each([1, 2] as const)(
     )
     if (version === 1) expect(row).not.toHaveProperty('outputDeliveryJson')
     else expect(row.outputDeliveryJson).toBe(delivery)
+    await f.client.artifactLineage.update({
+      where: { id: created.artifactId },
+      data: { filename: 'PLOT.png', outputDeliveryJson: null }
+    })
+    await restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')
     expect(
-      (await f.client.artifactLineage.findUniqueOrThrow({ where: { id: created.artifactId } }))
-        .outputDeliveryJson
-    ).toBe(delivery)
+      await f.client.artifactLineage.findUniqueOrThrow({ where: { id: created.artifactId } })
+    ).toMatchObject({ filename: 'plot.png', outputDeliveryJson: version === 1 ? null : delivery })
   }
 )
