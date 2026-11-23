@@ -24,7 +24,10 @@ test('offers Windows Task Manager for known installation blockers', async ({ pag
     })
   })
   const dialog = page.getByRole('dialog')
-  const processManager = dialog.getByRole('button', { name: 'Open Task Manager', exact: true })
+  const processManager = dialog
+    .getByRole('button', { name: /Open Task Manager to find PID/ })
+    .first()
+  await expect(dialog.getByRole('button', { name: /Open Task Manager to find PID/ })).toHaveCount(2)
   await expect(processManager).toBeVisible()
   await expect(dialog).toContainText('node.exe')
   await expect(dialog).toContainText('PID 33996')

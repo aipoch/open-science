@@ -8224,7 +8224,7 @@
     "Processes using Open-Science files": "Processus utilisant les fichiers Open-Science",
     "{{name}} (PID {{pid}})": "{{name}} (PID {{pid}})",
     "PID {{pid}}": "PID {{pid}}",
-    "Open Task Manager": "Ouvrir le Gestionnaire des tâches",
+    "Open Task Manager to find PID {{pid}}": "Ouvrir le Gestionnaire des tâches pour rechercher le PID {{pid}}",
     "Close the process listed below, then check again.": "Fermez le processus indiqué ci-dessous, puis vérifiez à nouveau.",
     "Unknown process": "Processus inconnu",
     "Loading earlier messages…": "Chargement des messages précédents…",

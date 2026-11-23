@@ -8368,7 +8368,7 @@
     "Processes using Open-Science files": "Процессы, использующие файлы Open-Science",
     "{{name}} (PID {{pid}})": "{{name}} (PID {{pid}})",
     "PID {{pid}}": "PID {{pid}}",
-    "Open Task Manager": "Открыть диспетчер задач",
+    "Open Task Manager to find PID {{pid}}": "Открыть диспетчер задач и найти PID {{pid}}",
     "Close the process listed below, then check again.": "Закройте указанный ниже процесс и повторите проверку.",
     "Unknown process": "Неизвестный процесс",
     "Loading earlier messages…": "Загрузка предыдущих сообщений…",

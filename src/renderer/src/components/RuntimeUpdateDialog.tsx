@@ -4,7 +4,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Check, Download, LoaderCircle } from 'lucide-react'
+import { AlertTriangle, Check, Download, ExternalLink, LoaderCircle } from 'lucide-react'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
@@ -411,8 +411,39 @@ export const RuntimeUpdateDialog = ({
                               <span className="min-w-0 break-all font-mono text-foreground">
                                 {process.name ?? t('Unknown process')}
                               </span>
-                              <span className="shrink-0 tabular-nums text-muted-foreground">
-                                {t('PID {{pid}}', { pid: process.pid })}
+                              <span className="inline-flex shrink-0 items-center gap-2">
+                                <span className="tabular-nums text-muted-foreground">
+                                  {t('PID {{pid}}', { pid: process.pid })}
+                                </span>
+                                {canOpenProcessManager ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    data-testid="open-process-manager"
+                                    aria-label={t('Open Task Manager to find PID {{pid}}', {
+                                      pid: process.pid
+                                    })}
+                                    title={t('Open Task Manager to find PID {{pid}}', {
+                                      pid: process.pid
+                                    })}
+                                    onClick={() =>
+                                      void request(async () => {
+                                        await openProcessManager()
+                                      })
+                                    }
+                                    disabled={busy}
+                                  >
+                                    {requestPending ? (
+                                      <LoaderCircle
+                                        className="size-4 animate-spin motion-reduce:animate-none"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <ExternalLink className="size-4" aria-hidden="true" />
+                                    )}
+                                  </Button>
+                                ) : null}
                               </span>
                             </li>
                           ))}
@@ -420,25 +451,6 @@ export const RuntimeUpdateDialog = ({
                       ) : null}
                       {!status.error && !knownInstallationBlocker ? (
                         <ManualUpdateFailure manual={manual} status={status} />
-                      ) : null}
-                      {canOpenProcessManager ? (
-                        <div className="mt-3 flex justify-end border-t border-border pt-3">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            data-testid="open-process-manager"
-                            className="min-h-9"
-                            onClick={() =>
-                              void request(async () => {
-                                await openProcessManager()
-                              })
-                            }
-                            disabled={busy}
-                          >
-                            {t('Open Task Manager')}
-                          </Button>
-                        </div>
                       ) : null}
                     </ErrorNotice>
                   ) : null}
