@@ -1445,8 +1445,8 @@ describe('ProviderStep', () => {
     )
 
     expect(actionRule).toContain('backdrop-filter: blur(18px) saturate(1.12);')
-    expect(actionRule).toContain('border-top: 1px solid')
-    expect(actionRule).toContain('background: linear-gradient(transparent')
+    expect(actionRule).toContain('border-top: 0;')
+    expect(actionRule).toContain('color-mix(in oklab, var(--bg-10) 46%, transparent)')
   })
 
   it('uses one provider card treatment across color schemes', () => {

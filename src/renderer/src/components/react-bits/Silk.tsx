@@ -108,7 +108,7 @@ export default function Silk({
     let frame = 0
     let previous = 0
     const tick = (now: number): void => {
-      phase.current += previous ? Math.min(now - previous, 50) * 0.00075 : 0
+      phase.current += previous ? Math.min(now - previous, 50) * 0.001 : 0
       previous = now
       draw()
       frame = requestAnimationFrame(tick)

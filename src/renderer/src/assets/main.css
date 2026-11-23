@@ -696,8 +696,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-card-actions {
   min-height: 8.35rem;
   padding: 2rem 1.35rem 1.25rem;
-  border-top: 1px solid color-mix(in oklab, var(--text-200) 12%, transparent);
-  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 52%, transparent));
+  border-top: 0;
+  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 46%, transparent));
   backdrop-filter: blur(18px) saturate(1.12);
   -webkit-backdrop-filter: blur(18px) saturate(1.12);
   opacity: 0;
