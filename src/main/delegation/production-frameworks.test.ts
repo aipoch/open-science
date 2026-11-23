@@ -9,6 +9,7 @@ import { DelegateMessagePreAcceptanceError, type DelegateExecutionInput } from '
 import { createProductionDelegatedFrameworks } from './production-frameworks'
 import { productionDelegatedWorkFrameworks } from './production-readiness'
 import { CODEX_DELEGATION_AUDITED_RUNTIME } from './codex-execution'
+import { nativeDelegationAuditFailureMessage } from './certification'
 
 const session = (frameworkId: AgentFrameworkId): PersistedChatSession => ({
   id: `session-${frameworkId}`,
@@ -274,5 +275,26 @@ describe('production delegated framework factory composition', () => {
     )
     expect(prepare).not.toHaveBeenCalled()
     expect(createRuntime).not.toHaveBeenCalled()
+  })
+
+  it('explicitly gates Codex delegation when no audited runtime identity is supplied', async () => {
+    const frameworks = createProductionDelegatedFrameworks({
+      capacity: 1,
+      certify: async () => ({
+        frameworkId: 'codex',
+        assertProviderAvailable: async () => undefined,
+        prepare: async () => {
+          throw new Error('must not prepare an unaudited Codex runtime')
+        },
+        createRuntime: () => {
+          throw new Error('must not create an unaudited Codex runtime')
+        }
+      })
+    })
+
+    const selected = await frameworks.forSession(session('codex'))
+    await expect(selected.assertAvailable()).rejects.toThrow(
+      nativeDelegationAuditFailureMessage('codex')
+    )
   })
 })

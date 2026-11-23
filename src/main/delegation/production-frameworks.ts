@@ -10,7 +10,6 @@ import {
   type AgentSpawnInput,
   type SessionSetup
 } from '../agent-framework'
-import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type {
   AcpDelegateExecutionCallbacks,
   AcpDelegateRuntime,
@@ -33,6 +32,7 @@ import {
   createOpenCodeDelegateExecution,
   type PreparedOpenCodeDelegateExecution
 } from './opencode-execution'
+import { nativeDelegationAuditFailureMessage } from './certification'
 
 type PreparedClaudeCodeDelegateExecution = PreparedDelegateExecution &
   Readonly<{ sessionSetup: SessionSetup }>
@@ -86,8 +86,8 @@ const requireCodexRuntime = (
   certification: ProductionFrameworkCertification
 ): CodexRuntimeIdentity =>
   certification.codexRuntime ?? {
-    nativeVersion: CODEX_VERSION,
-    adapterVersion: CODEX_ACP_VERSION
+    nativeVersion: 'unreviewed',
+    adapterVersion: 'unreviewed'
   }
 
 const createProductionDelegatedFrameworks = (
@@ -152,7 +152,12 @@ const createProductionDelegatedFrameworks = (
       return Object.freeze({
         frameworkId,
         execution: codex.execution,
-        assertAvailable: codex.assertAvailable
+        async assertAvailable() {
+          if (!certification.codexRuntime) {
+            throw new Error(nativeDelegationAuditFailureMessage('codex'))
+          }
+          await codex.assertAvailable()
+        }
       })
     }
 
