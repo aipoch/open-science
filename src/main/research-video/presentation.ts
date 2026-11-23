@@ -10,6 +10,7 @@ import {
   researchVideoPresentationRequestSchema,
   researchVideoStatusRequestSchema,
   researchVideoOwnerStartRequestSchema,
+  type ResearchVideoActiveSession,
   type ResearchFilmNarrationReview,
   type ResearchFilmRevision,
   type ResearchFilmReviewFailure as ReviewFailure,
@@ -128,6 +129,7 @@ async function checkFilmReadiness<T>(
 }
 
 export type ResearchVideoPresentationOwner = {
+  activeSessions(): readonly ResearchVideoActiveSession[]
   status(request: ResearchVideoStatusRequest): Promise<ResearchVideoPresentationStatus>
   start(request: ResearchVideoOwnerStartRequest): Promise<ResearchVideoPresentationStatus>
   remove(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
@@ -141,6 +143,13 @@ export function createResearchVideoPresentationOwner(options: {
   withUnusedFilmFiles?: (paths: string[], remove: () => Promise<void>) => Promise<boolean>
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   checkReadiness?: (signal?: AbortSignal) => Promise<void>
+  onActivityChanged?: (sessions: readonly ResearchVideoActiveSession[]) => void
+  onOutcome?: (outcome: {
+    invocationId: string
+    projectId: string
+    sessionId: string
+    outcome: 'completed' | 'failed'
+  }) => void
   models: Pick<
     ReturnType<typeof createLocalModelOwner>,
     'acquireUse' | 'getSnapshot' | 'installForUse'
@@ -183,13 +192,28 @@ export function createResearchVideoPresentationOwner(options: {
     | {
         key: string
         alias: string
-        branchId?: string
         revision?: ResearchFilmRevision
+        request: ResearchVideoPresentationRequest
         controller: AbortController
         prepared: Promise<void>
+        activity?: ResearchVideoActiveSession
         blockedStatus?: ResearchVideoPresentationStatus
       }
     | undefined
+  const activeSessions = (): readonly ResearchVideoActiveSession[] =>
+    active?.activity ? [{ ...active.activity }] : []
+  const setActivity = (
+    controller: AbortController,
+    activity?: ResearchVideoActiveSession
+  ): void => {
+    if (active?.controller !== controller || active.activity === activity) return
+    active.activity = activity
+    try {
+      options.onActivityChanged?.(activeSessions())
+    } catch {
+      // Sidebar projection updates cannot affect Film admission or persistence.
+    }
+  }
   const states = new Map<string, ResearchVideoPresentationStatus>()
   const readinessReads = new Map<string, Promise<ResearchVideoPresentationStatus>>()
   const statusReads = new Map<string, Promise<ResearchVideoPresentationStatus>>()
@@ -235,7 +259,7 @@ export function createResearchVideoPresentationOwner(options: {
     const requestedKey = scopeKey(request)
     const current =
       active?.alias === requestedKey || active?.key === requestedKey ? active : undefined
-    if (current?.branchId) request = { ...request, branchId: current.branchId }
+    if (current?.request.branchId) request = { ...request, branchId: current.request.branchId }
     const revision = operationRevision
     const session = await options.loadSession(request.projectId, request.sessionId)
     signal.throwIfAborted()
@@ -247,7 +271,10 @@ export function createResearchVideoPresentationOwner(options: {
     const key = current?.key ?? (states.has(requestedKey) ? requestedKey : resolvedKey)
     const state = structuredClone(states.get(key) ?? {})
     if (branchId) state.branchId = branchId
-    if (active && active.key !== key) state.preflightError = RESEARCH_FILM_BUSY_MESSAGE
+    if (active && active.key !== key) {
+      state.preflightError = RESEARCH_FILM_BUSY_MESSAGE
+      if (!active.blockedStatus) state.blockingSession = { ...active.request }
+    }
     if (installingKey === key) state.narrationDownload = await options.models.getSnapshot()
     signal.throwIfAborted()
     if (block) state.generationBlock = block
@@ -371,7 +398,7 @@ export function createResearchVideoPresentationOwner(options: {
     if (current?.blockedStatus)
       return {
         ...current.blockedStatus,
-        ...(current.branchId ? { branchId: current.branchId } : {})
+        ...(current.request.branchId ? { branchId: current.request.branchId } : {})
       }
     const held = draining.get(sessionKey(request))
     if (held && held.status === states.get(key))
@@ -430,11 +457,20 @@ export function createResearchVideoPresentationOwner(options: {
       narrationReview?: ResearchFilmNarrationReview
     },
     prepared: (error?: ResearchFilmRevisionError) => void,
+    reportActivity: (working: boolean) => void,
     park: (error: Error, status: ResearchVideoPresentationStatus, kind: 'disk' | 'build') => void
   ): Promise<void> => {
     const diskController = new AbortController()
     const signal = AbortSignal.any([callerSignal, diskController.signal])
     const invocationId = randomUUID()
+    const reportOutcome = (outcome: 'completed' | 'failed'): void => {
+      options.onOutcome?.({
+        invocationId,
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        outcome
+      })
+    }
     const startedAt = Date.now()
     const started = performance.now()
     const stageMs: Record<string, number> = {}
@@ -605,6 +641,7 @@ export function createResearchVideoPresentationOwner(options: {
       if (installNarration) {
         installingKey = key
         states.delete(key)
+        reportActivity(true)
         prepared()
         measure('narration-install')
         // The model owner retains its writer while an aborted download drains. Film owns no
@@ -625,6 +662,7 @@ export function createResearchVideoPresentationOwner(options: {
             errorCategory: 'installation-incomplete'
           })
           states.set(key, { error: 'Narration installation did not finish. Retry to continue.' })
+          reportOutcome('failed')
           return
         }
         const scope = { ...request, branchId: source.provenance.branchId }
@@ -716,6 +754,7 @@ export function createResearchVideoPresentationOwner(options: {
       installingKey = undefined
       admitted = true
       report({ phase: 'preparing' })
+      reportActivity(true)
       if (!revision) prepared()
       base = existingBase ?? (await diskStep(() => directory(scopeKey(scope), true)))!
       const publishBase = base
@@ -942,6 +981,7 @@ export function createResearchVideoPresentationOwner(options: {
         playerPath: join(outputJob, 'output', 'player.html'),
         sourcePath: join(outputJob, 'output', 'sources.zip')
       }
+      reportOutcome('completed')
       // Publication already committed. Do not start more I/O after a timeout.
       if (diskFailure) {
         states.delete(key)
@@ -1028,6 +1068,9 @@ export function createResearchVideoPresentationOwner(options: {
                 : {})
             }
       if (!diskFailure && !reviewFailure) states.set(key, failureStatus)
+      reportActivity(false)
+      if (!reviewFailure && (admitted || installingKey === key) && !cancelled && !completedResult)
+        reportOutcome('failed')
       if (buildUnconfirmed) {
         park(error, failureStatus, 'build')
         // The thread can still touch the pending job. Keep the lifecycle reservation alive so
@@ -1041,7 +1084,10 @@ export function createResearchVideoPresentationOwner(options: {
           log.info('film checkpoint write failed', { ...context(), phase: stage })
         )
       }
-      if (!diskFailure && reviewFailure) states.set(key, failureStatus)
+      if (!diskFailure && reviewFailure) {
+        states.set(key, failureStatus)
+        reportOutcome('failed')
+      }
       const failure = reported instanceof ResearchVideoWorkerError ? reported.cause : reported
       let code: string | undefined
       try {
@@ -1116,6 +1162,7 @@ export function createResearchVideoPresentationOwner(options: {
     }
   }
   return {
+    activeSessions,
     status,
     async start(
       rawRequest: ResearchVideoOwnerStartRequest
@@ -1180,6 +1227,9 @@ export function createResearchVideoPresentationOwner(options: {
       const prepared = new Promise<void>((resolve, reject) => {
         finishPreparation = (error) => (error ? reject(error) : resolve())
       })
+      const activity = { projectId: request.projectId, sessionId: request.sessionId }
+      const reportActivity = (working: boolean): void =>
+        setActivity(controller, working ? activity : undefined)
       const park = (
         error: Error,
         status: ResearchVideoPresentationStatus,
@@ -1188,6 +1238,8 @@ export function createResearchVideoPresentationOwner(options: {
         if (active?.controller !== controller) return
         active.blockedStatus = status
         states.set(key, status)
+        // A parked attempt is no longer generating, even when it retains the admission slot.
+        reportActivity(false)
         // At most one stalled disk attempt can release its slot. Further stalls still throttle
         // admission, so repeated retries cannot build up hung I/O and model leases indefinitely.
         if ([...draining.values()].some((attempt) => attempt.kind === kind)) return
@@ -1203,10 +1255,11 @@ export function createResearchVideoPresentationOwner(options: {
               AbortSignal.any([signal, controller.signal]),
               runOptions,
               finishPreparation,
+              reportActivity,
               park
             )
           )
-        : run(request, key, controller.signal, runOptions, finishPreparation, park)
+        : run(request, key, controller.signal, runOptions, finishPreparation, reportActivity, park)
       const done = operation
         .catch((error) => {
           log.info('film lifecycle failed', {
@@ -1218,6 +1271,7 @@ export function createResearchVideoPresentationOwner(options: {
         .finally(() => {
           finishPreparation()
           draining.delete(session)
+          reportActivity(false)
           if (active?.controller === controller) active = undefined
           attempts.delete(done)
         })
@@ -1225,8 +1279,8 @@ export function createResearchVideoPresentationOwner(options: {
       active = {
         key,
         alias,
-        branchId: request.branchId,
         revision,
+        request,
         controller,
         prepared
       }
@@ -1271,13 +1325,20 @@ export function createResearchVideoPresentationOwner(options: {
     },
     cancel(rawRequest: ResearchVideoPresentationRequest): void {
       const key = scopeKey(researchVideoPresentationRequestSchema.parse(rawRequest))
-      if (active?.key === key || active?.alias === key)
-        active.controller.abort(new Error('Research explanation cancelled.'))
+      if (active?.key === key || active?.alias === key) {
+        const { controller } = active
+        controller.abort(new Error('Research explanation cancelled.'))
+        setActivity(controller)
+      }
     },
     async close(): Promise<void> {
       operationRevision++
       closed = true
-      active?.controller.abort(new Error('Application is closing.'))
+      if (active) {
+        const { controller } = active
+        controller.abort(new Error('Application is closing.'))
+        setActivity(controller)
+      }
       await Promise.all(attempts)
     }
   }

@@ -33,7 +33,10 @@ export type TaskResearchFilmPort = Pick<
   'start' | 'status' | 'cancel'
 >
 
-type PublicResearchFilmStatus = Omit<ResearchVideoPresentationStatus, 'result'> & {
+type PublicResearchFilmStatus = Omit<
+  ResearchVideoPresentationStatus,
+  'result' | 'blockingSession'
+> & {
   result?: Omit<ResearchVideoPresentation, 'playerPath' | 'sourcePath'>
 }
 
@@ -80,7 +83,14 @@ function publicStatus(status: ResearchVideoPresentationStatus): PublicResearchFi
       'The Research Film Session or branch is unavailable.'
     )
   }
-  const { result, error, preflightError, reviewFailure, ...rest } = status
+  const {
+    result,
+    error,
+    preflightError,
+    reviewFailure,
+    blockingSession: _blockingSession,
+    ...rest
+  } = status
   const state = {
     ...rest,
     ...(error === undefined ? {} : { error: publicFilmDiagnostic(error) }),

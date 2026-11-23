@@ -174,7 +174,11 @@ it('runs automatic compaction and an authorized tool round-trip through native H
             choices: [
               {
                 index: 0,
-                delta: { tool_calls: [{ index: 0, function: { arguments: '3,5,8]}' } }] },
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: null, function: { name: null, arguments: '3,5,8]}' } }
+                  ]
+                },
                 finish_reason: 'tool_calls'
               }
             ]

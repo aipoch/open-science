@@ -385,6 +385,16 @@ describe('independent Chat Completions wire adapter', () => {
       ]),
       'tool-arguments'
     ],
+    [
+      'null initial tool id',
+      encode([chunk({ tool_calls: [{ index: 0, id: null, function: { name: 'sum' } }] })]),
+      'tool-delta'
+    ],
+    [
+      'null initial tool name',
+      encode([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: null } }] })]),
+      'tool-delta'
+    ],
     ['upstream error', encode([{ error: { message: 'secret-upstream' } }]), 'provider'],
     [
       'provider status error',

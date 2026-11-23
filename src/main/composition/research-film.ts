@@ -32,6 +32,7 @@ import {
   extractRestrictedInferenceUsage
 } from '../acp/restricted-inference-runner'
 import type { ApplicationModuleBuilder } from '../application-runtime'
+import type { ApplicationEvents } from '../application-events'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import {
@@ -48,6 +49,10 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
+import {
+  runTaskNotificationInBackground,
+  type TaskNotificationService
+} from '../notifications/task-notifications'
 import {
   RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
   RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
@@ -93,6 +98,8 @@ export async function composeResearchFilm({
   previewResources,
   recordAuxiliaryUsage,
   translate = englishNativeTranslator,
+  applicationEvents,
+  taskNotifications,
   modules
 }: {
   configRoot: string
@@ -107,6 +114,8 @@ export async function composeResearchFilm({
   researchFilmLifecycle: ResearchFilmLifecycle
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
+  applicationEvents: Pick<ApplicationEvents, 'publish'>
+  taskNotifications: Pick<TaskNotificationService, 'handleResearchFilmOutcome'>
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -390,6 +399,13 @@ export async function composeResearchFilm({
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    onActivityChanged: (sessions) =>
+      applicationEvents.publish('research-video:activity-changed', sessions),
+    onOutcome: (outcome) =>
+      runTaskNotificationInBackground(
+        () => taskNotifications.handleResearchFilmOutcome(outcome),
+        (error) => filmLog.warn('film notification failed', diagnosticErrorFields(error))
+      ),
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,

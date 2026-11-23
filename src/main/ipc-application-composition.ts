@@ -394,8 +394,19 @@ export const createApplicationModules = async (
     sessionRepository: sessionFoundation.sessionRepository,
     modules
   })
+  const notifications = composeNotifications({
+    surfaceAdapters,
+    settingsBootstrap,
+    storageStartup,
+    sessionAuthority,
+    notificationDelivery,
+    headless,
+    translate
+  })
   const researchFilm = await composeResearchFilm({
     translate,
+    applicationEvents,
+    taskNotifications: notifications.taskNotifications,
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
@@ -479,15 +490,6 @@ export const createApplicationModules = async (
     ...notebookRuntime,
     ...specialistCatalog,
     modules
-  })
-  const notifications = composeNotifications({
-    surfaceAdapters,
-    settingsBootstrap,
-    storageStartup,
-    sessionAuthority,
-    notificationDelivery,
-    headless,
-    translate
   })
   const connectors = await composeConnectors({
     canRequestDesktopCredential,

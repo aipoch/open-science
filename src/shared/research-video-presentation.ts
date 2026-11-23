@@ -72,10 +72,17 @@ export type ResearchVideoPresentationStatus = {
   filmStep?: number
   narrationDownload?: LocalModelSnapshot
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
+  blockingSession?: ResearchVideoPresentationRequest
   progress?: ResearchVideoProgress
   result?: ResearchVideoPresentation
   error?: string
   preflightError?: string
+}
+
+/** Read-only projection of admitted Film work for sidebar activity, independent of Session status. */
+export type ResearchVideoActiveSession = {
+  projectId: string
+  sessionId: string
 }
 
 /** One portable display/export name for both formats; internal job paths remain stable. */

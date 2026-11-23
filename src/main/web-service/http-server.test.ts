@@ -223,6 +223,13 @@ it('exposes a local Film review and player workflow without exposing host paths'
       result: { id: filmId, title: 'Film title', duration: 10 }
     }
   })
+  status.mockResolvedValueOnce({
+    preflightError: 'A research film is already generating.',
+    blockingSession: { projectId: 'project-2', sessionId: 'session-2' }
+  })
+  expect(await (await post('status', scope)).json()).toEqual({
+    data: { preflightError: 'A research film is already generating.' }
+  })
   for (const path of [
     "/srv/Open Science/Pat's research/missing figure.png",
     String.raw`C:\Users\O'Connor\Open Science\missing figure.png`
