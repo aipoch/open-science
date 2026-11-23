@@ -307,7 +307,12 @@ const createWorkspaceConversationTimeline = (
       message.turnOutcome ?? (message.id === latestPrompt?.id ? legacyOutcome : undefined)
     const itemIndex = lastItemIndexByPromptId.get(message.id)
     if (!outcome || itemIndex === undefined) continue
-    if (message.id !== activePromptMessageId && unansweredDeclines.has(message.id)) {
+    if (
+      !session.packageOrigin &&
+      message.id !== activePromptMessageId &&
+      unansweredDeclines.has(message.id) &&
+      !isInheritedForkTurn(session, message.id)
+    ) {
       denialsByItemIndex.set(itemIndex, {
         id: `permission-denial-${message.id}`,
         type: 'permission-denial',

@@ -1044,6 +1044,16 @@ describe('imported turn outcomes', () => {
     manifestChecksum: 'a'.repeat(64)
   }
 
+  it('keeps declined tool activity without a denial notice in imported history', () => {
+    const input = session({
+      packageOrigin,
+      messages: [message({ turnOutcome: { kind: 'completed', settledAt: 500 } })],
+      activities: [activity({ toolDisposition: 'declined' })]
+    })
+
+    expect(timelineIds(input)).toEqual(['prompt-1', 'activity-group-tool-1'])
+  })
+
   it.each(['legacy', 'turn'] as const)(
     'keeps an imported %s failure as history without changing its data',
     (surface) => {
@@ -1121,6 +1131,33 @@ describe('fork inherited turn outcomes', () => {
       ],
       forkHeadMessageId: 'inherited-answer'
     })
+
+  it('shows a denial notice only for the turn run in the fork', () => {
+    const input = forkOf(interrupted, [
+      message({
+        id: 'new-prompt',
+        sortIndex: 4,
+        createdAt: 400,
+        turnOutcome: { kind: 'completed', settledAt: 600 }
+      })
+    ])
+    input.activities = [
+      activity({ promptMessageId: 'inherited-prompt', toolDisposition: 'declined' }),
+      activity({
+        id: 'new-tool',
+        promptMessageId: 'new-prompt',
+        toolDisposition: 'declined',
+        sortIndex: 5,
+        createdAt: 500
+      })
+    ]
+
+    const ids = timelineIds(input)
+    expect(ids).toContain('activity-group-tool-1')
+    expect(ids.filter((id) => id.startsWith('permission-denial-'))).toEqual([
+      'permission-denial-new-prompt'
+    ])
+  })
 
   it('presents an inherited failed latest turn only as a historical marker', () => {
     const input = forkOf(failed)
