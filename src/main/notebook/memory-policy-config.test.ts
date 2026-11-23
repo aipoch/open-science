@@ -57,7 +57,7 @@ describe('loadNotebookMemoryPolicyConfig', () => {
 
   it.each([
     [{ linuxEnterRatio: 0.08 }, true],
-    [{ windowsEnterRatio: 0.08 }, false],
+    [{ windowsEnterRatio: 0.04 }, false],
     [{ windowsExitRatio: 0.2 }, false]
   ] as const)(
     'selects default physical caps for a partial override %j',
