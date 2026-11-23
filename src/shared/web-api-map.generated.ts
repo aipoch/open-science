@@ -516,7 +516,6 @@ export const WEB_INVOKE_CHANNELS = {
   'update.getAppInfo': 'update:get-app-info',
   'update.getInstaller': 'update:get-installer',
   'update.getStatus': 'update:get-status',
-  'update.openProcessManager': 'update:open-process-manager',
   'update.recheck': 'update:recheck',
   'update.recover': 'update:recover',
   'update.revealInstaller': 'update:reveal-installer',

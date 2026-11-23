@@ -388,7 +388,15 @@ test('switches instructions in the same dialog and returns focus with the latest
         (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
           .actions
     )
-  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+  ).toEqual({
+    download: 0,
+    apply: 0,
+    cancel: 0,
+    recover: 0,
+    check: 0,
+    reveal: 0,
+    openProcessManager: 0
+  })
 })
 
 test('keeps manual instructions and package reveal available during restricted installation recovery', async ({
@@ -414,7 +422,15 @@ test('keeps manual instructions and package reveal available during restricted i
         (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
           .actions
     )
-  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 1 })
+  ).toEqual({
+    download: 0,
+    apply: 0,
+    cancel: 0,
+    recover: 0,
+    check: 0,
+    reveal: 1,
+    openProcessManager: 0
+  })
 })
 
 test('offers external manual installation guidance in About', async ({ page }) => {
@@ -535,7 +551,15 @@ for (const query of ['continuous&stage=downloading', 'short']) {
           (window as unknown as { updateFixture: { actions: Record<string, number> } })
             .updateFixture.actions
       )
-    ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+    ).toEqual({
+      download: 0,
+      apply: 0,
+      cancel: 0,
+      recover: 0,
+      check: 0,
+      reveal: 0,
+      openProcessManager: 0
+    })
   })
 }
 

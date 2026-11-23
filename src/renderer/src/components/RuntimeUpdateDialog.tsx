@@ -105,7 +105,10 @@ export const RuntimeUpdateDialog = ({
   const blockingProcesses = status.recovery?.blockingProcesses ?? []
   const knownInstallationBlocker =
     status.reason === 'installation-busy' && blockingProcesses.length > 0
-  const canOpenProcessManager = window.api?.platform === 'win32' && knownInstallationBlocker
+  const canOpenProcessManager =
+    window.api?.platform === 'win32' &&
+    typeof window.api?.update?.openProcessManager === 'function' &&
+    knownInstallationBlocker
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
