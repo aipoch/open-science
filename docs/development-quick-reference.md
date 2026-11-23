@@ -185,6 +185,9 @@ Read the existing owner document before changing one of these areas, then run it
 | Settings | [Settings design](design.md#settings)                                              | `npm run typecheck`; targeted tests under `src/main/settings/` and `src/renderer/src/pages/settings/` |
 | ACP      | [Current architecture](PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/acp/`                                        |
 
+Notebook memory thresholds and the optional local policy file are documented in
+[Notebook memory policy](notebook-memory-policy.md).
+
 ## Project Structure
 
 The desktop uses Electron, electron-vite, React and TypeScript; business owners run in ordinary Node.

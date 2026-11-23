@@ -432,7 +432,11 @@ export class MemoryPolicyService {
         'Physical memory counters are incomplete or invalid.'
       )
     }
-    const caps = windows ? this.policy.windowsPhysicalCaps : undefined
+    const caps = windows
+      ? this.policy.windowsPhysicalCaps
+      : sample.platform === 'linux'
+        ? this.policy.linuxPhysicalCaps
+        : undefined
     signals.push({
       ratio: facts.availableBytes / facts.totalBytes,
       enter: caps ? Math.min(enter, caps.enterBytes / facts.totalBytes) : enter,

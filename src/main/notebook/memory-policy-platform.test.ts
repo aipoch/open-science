@@ -16,7 +16,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
   it('uses the same native physical and commit snapshot, including boundary hysteresis', async () => {
     let current = windowsSample({
       totalPhysicalBytes: 1000,
-      availableBytes: 50,
+      availableBytes: 25,
       commitLimitBytes: 1000,
       committedBytes: 300
     })
@@ -27,24 +27,34 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
     await expect(service.getState()).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-physical-low', remainingThresholdRatio: 0.05 }
+      reason: { code: 'windows-physical-low', remainingThresholdRatio: 0.025 }
     })
     expect(sampleWindowsResources).toHaveBeenCalledWith(false, [])
     current = windowsSample({
       totalPhysicalBytes: 1000,
       availableBytes: 201,
       commitLimitBytes: 1000,
-      committedBytes: 900
+      committedBytes: 975
     })
     await expect(service.getState({ force: true })).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.1 }
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.025 }
     })
     current = windowsSample({
       totalPhysicalBytes: 1000,
       availableBytes: 201,
       commitLimitBytes: 1000,
-      committedBytes: 899
+      committedBytes: 950
+    })
+    await expect(service.getState({ force: true })).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.05 }
+    })
+    current = windowsSample({
+      totalPhysicalBytes: 1000,
+      availableBytes: 201,
+      commitLimitBytes: 1000,
+      committedBytes: 949
     })
     await expect(service.getState({ force: true })).resolves.toMatchObject({ status: 'healthy' })
   })
@@ -77,15 +87,15 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
     system.availableBytes += 1
     await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
+    system.committedBytes = 62_400 * MiB
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.025 }
+    })
     system.committedBytes = 60_800 * MiB
     await expect(service.getState(fresh)).resolves.toMatchObject({
       status: 'pressured',
       reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.05 }
-    })
-    system.committedBytes = 57_600 * MiB
-    await expect(service.getState(fresh)).resolves.toMatchObject({
-      status: 'pressured',
-      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.1 }
     })
     system.committedBytes -= 1
     await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
