@@ -104,6 +104,9 @@ export type StartTaskRunRequest = {
   enabledComputeHostIds?: string[]
 }
 
+/** Only authenticated local durable submissions may opt in to tracing for one Run. */
+export type SubmitTaskRunRequest = StartTaskRunRequest & { otelTraces?: true }
+
 export type TaskRunAttention = { kind: 'plan-approval'; plan: ActivePlanProjection }
 
 export type TaskRunReview = {

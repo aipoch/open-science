@@ -510,6 +510,7 @@ const callNotebookRpc = async (
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
           projectId,
+          ...(method === 'state' ? { historyLimit: MAX_STATE_RUNS } : {}),
           ...(method === 'executeShell' && environment.shellRuntime
             ? { shellRuntime: environment.shellRuntime }
             : {})
@@ -1792,17 +1793,20 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: AUTHORIZED_DIRECTORIES_DESCRIPTION,
     method: 'listAuthorizedDirectories',
     inputSchema: {},
-    outputSchema: z.object({
-      revision: z.string(),
-      directories: z.array(
-        z.object({
-          path: z.string(),
-          name: z.string(),
-          access: z.enum(['ro', 'rw']),
-          grantedAt: z.string().datetime()
-        })
-      )
-    }),
+    // These keywords also support MCP's default JSON Schema 2020-12 dialect.
+    outputSchema: z
+      .object({
+        revision: z.string(),
+        directories: z.array(
+          z.object({
+            path: z.string(),
+            name: z.string(),
+            access: z.enum(['ro', 'rw']),
+            grantedAt: z.string().datetime()
+          })
+        )
+      })
+      .meta({ $schema: undefined }),
     mapResult: (raw) => raw
   },
   {

@@ -222,6 +222,69 @@ it('recovers failed headless review after restart and requires feedback for the 
   }
 })
 
+it('reports an exhausted animation correction and applies feedback to the next draft', async () => {
+  const f = await fixture()
+  f.options.writeScreenplay.mockResolvedValue(
+    JSON.stringify({
+      version: 1,
+      case: 'rainfall',
+      title: 'Rainfall uncertainty',
+      session: 'session.json',
+      scenes: [
+        {
+          id: 'hook',
+          role: 'hook',
+          msg: 1,
+          lines: [{ caption: 'How certain is the trend?' }],
+          panels: [
+            { type: 'title', text: 'Rainfall uncertainty' },
+            { type: 'animation', script: 'anims/trend.js', size: 'band', box: 'plain' }
+          ]
+        },
+        {
+          id: 'outro',
+          role: 'outro',
+          msg: 1,
+          lines: [{ caption: 'The observed trend was uncertain.' }],
+          panels: [{ type: 'end_card' }]
+        }
+      ]
+    })
+  )
+  const writeAnimation = vi
+    .fn<NonNullable<Options['writeAnimation']>>()
+    .mockResolvedValueOnce('function (')
+    .mockResolvedValueOnce('function (')
+    .mockResolvedValue('k.ctx.fillRect(0, 0, 20, 20);')
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    writeAnimation,
+    reviewPlayerHeadless: vi.fn().mockResolvedValue([])
+  })
+  const headless = { ...request, headless: true }
+  try {
+    await owner.start(headless)
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).reviewFailure).toMatchObject({
+        stage: 'visual',
+        findings: [expect.stringContaining('anims/trend.js has invalid JavaScript syntax')]
+      })
+    )
+    expect(writeAnimation).toHaveBeenCalledTimes(2)
+    expect(f.options.generate).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const { reviewFailure } = await owner.status(request)
+    const feedback = 'Draw the trend as a plain line and simplify its animation.'
+    await owner.start({ ...headless, revision: { attemptId: reviewFailure!.attemptId, feedback } })
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    expect(writeAnimation).toHaveBeenCalledTimes(3)
+    expect(writeAnimation.mock.lastCall?.[3]?.error).toContain(feedback)
+    expect(writeAnimation.mock.lastCall?.[3]?.error).toContain(reviewFailure!.findings[0])
+  } finally {
+    await owner.close()
+  }
+})
+
 it('rejects feedback after the failed review source changes', async () => {
   const f = await fixture()
   let source = session

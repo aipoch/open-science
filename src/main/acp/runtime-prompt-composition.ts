@@ -399,6 +399,7 @@ const composeAcpRuntimePromptOwners = (
     permission: session.permissionContext,
     environment: {
       authorizedDirectories: options.authorizedDirectories,
+      connection: () => base.connectionResources.connection,
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
@@ -631,6 +632,7 @@ const composeAcpRuntimePromptOwners = (
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,
+    resolveProjectTracing: options.resolveProjectTracing,
     prepareContinuationReplay: host.reload.prepareContinuationReplay,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,

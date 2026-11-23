@@ -873,6 +873,8 @@ export type NotebookSessionStateRequest = NotebookSessionRequest & {
   historySummaryFrameId?: string
   historyBefore?: NotebookRunCursor
   historyLimit?: number
+  /** Prefer a smaller initial Run window when opening the Notebook preview. */
+  previewHistory?: true
 }
 
 // Read-only, process-local view of the selected live data-kernel namespace. These values are never

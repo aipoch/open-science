@@ -1,3 +1,7 @@
+import {
+  redactAbsoluteDiagnosticPaths,
+  redactRuntimeDiagnosticText
+} from '@aipoch/diagnostics/node'
 import { constants } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { z } from 'zod'
@@ -65,6 +69,10 @@ function assertNarrationReviewMode(request: z.infer<typeof generationScopeSchema
   }
 }
 
+function publicFilmDiagnostic(message: string): string {
+  return redactAbsoluteDiagnosticPaths(redactRuntimeDiagnosticText(message))
+}
+
 function publicStatus(status: ResearchVideoPresentationStatus): PublicResearchFilmStatus {
   if (status.generationBlock === 'unavailable') {
     throw new TaskApiError(
@@ -72,21 +80,37 @@ function publicStatus(status: ResearchVideoPresentationStatus): PublicResearchFi
       'The Research Film Session or branch is unavailable.'
     )
   }
-  const { result, ...rest } = status
-  const state = status.reviewFailure ? { ...rest, canResume: false } : rest
+  const { result, error, preflightError, reviewFailure, ...rest } = status
+  const state = {
+    ...rest,
+    ...(error === undefined ? {} : { error: publicFilmDiagnostic(error) }),
+    ...(preflightError === undefined
+      ? {}
+      : { preflightError: publicFilmDiagnostic(preflightError) }),
+    ...(reviewFailure && {
+      canResume: false,
+      reviewFailure: {
+        ...reviewFailure,
+        findings: reviewFailure.findings.map(publicFilmDiagnostic)
+      }
+    })
+  }
   if (!result) return state
   const { id, title, duration, scriptScore, sessionAppMode, narrationReview } = result
   return { ...state, result: { id, title, duration, scriptScore, sessionAppMode, narrationReview } }
 }
 
-async function runFilmOperation(
-  operation: () => Promise<ResearchVideoPresentationStatus>
-): Promise<PublicResearchFilmStatus> {
+async function runFilmOperation<T>(operation: () => Promise<T>): Promise<T> {
   try {
-    return publicStatus(await operation())
+    return await operation()
   } catch (error) {
+    if (error instanceof TaskApiError) {
+      const message = publicFilmDiagnostic(error.message)
+      if (message !== error.message) throw new TaskApiError(error.code, message)
+      throw error
+    }
     if (error instanceof Error && 'code' in error && error.code === 'film_review_conflict') {
-      throw new TaskApiError('film_review_conflict', error.message)
+      throw new TaskApiError('film_review_conflict', publicFilmDiagnostic(error.message))
     }
     if (error instanceof Error && error.message === RESEARCH_FILM_BUSY_MESSAGE) {
       throw new TaskApiError('film_busy', error.message)
@@ -100,31 +124,37 @@ export function createTaskResearchFilmApi(owner: TaskResearchFilmPort): TaskRese
     start(raw: unknown) {
       const request = parseRequest(startSchema, raw)
       assertNarrationReviewMode(request)
-      return runFilmOperation(() => owner.start({ ...request, headless: true }))
+      return runFilmOperation(async () =>
+        publicStatus(await owner.start({ ...request, headless: true }))
+      )
     },
     status(raw: unknown) {
       const request = parseRequest(scopeSchema, raw)
-      return runFilmOperation(() => owner.status(request))
+      return runFilmOperation(async () => publicStatus(await owner.status(request)))
     },
     revise(raw: unknown) {
       const { attemptId, feedback, ...request } = parseRequest(revisionSchema, raw)
       assertNarrationReviewMode(request)
-      return runFilmOperation(() =>
-        owner.start({ ...request, headless: true, revision: { attemptId, feedback } })
+      return runFilmOperation(async () =>
+        publicStatus(
+          await owner.start({ ...request, headless: true, revision: { attemptId, feedback } })
+        )
       )
     },
     async cancel(raw: unknown) {
       let request = parseRequest(scopeSchema, raw)
-      if (!request.branchId) {
-        const current = publicStatus(await owner.status(request))
-        request = { ...request, branchId: current.branchId }
-      }
-      owner.cancel(request)
-      return runFilmOperation(() => owner.status(request))
+      return runFilmOperation(async () => {
+        if (!request.branchId) {
+          const current = publicStatus(await owner.status(request))
+          request = { ...request, branchId: current.branchId }
+        }
+        owner.cancel(request)
+        return publicStatus(await owner.status(request))
+      })
     },
     async openPlayer(raw: unknown) {
       const { filmId, ...request } = parseRequest(playerSchema, raw)
-      const status = await owner.status(request)
+      const status = await runFilmOperation(() => owner.status(request))
       if (status.generationBlock === 'unavailable' || status.result?.id !== filmId) {
         throw new TaskApiError(
           'film_not_found',

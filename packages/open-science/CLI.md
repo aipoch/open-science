@@ -604,6 +604,27 @@ silently running a task that might wait for a person. Omitting the option retain
 including Desktop/Web approval for unresolved ordinary permissions. There are no ordinary
 `permission list/show/approve` CLI commands. `--return-on-attention` only covers Plan approval.
 
+### OpenTelemetry traces for one Run
+
+```bash
+open-science run --project <project-id> --prompt-file ./task.md --otel-traces --wait
+```
+
+Add `--otel-traces` to trace the built-in Open-Science Agent's turn, including when resuming with
+`--session <id>`. The flag authorizes just this Run, even when Project tracing is off. Omit it to
+use the Project's current setting at dispatch. Project and Session settings are preserved.
+
+Configure the full OTLP/HTTP JSON traces endpoint, authentication and capture switches on the
+backend, then restart it. The Run uses the same destination and capture settings as Agent tracing
+in the app. Depending on those switches, traces can include prompts, model requests and tool
+arguments or results. See [Open-Science Agent traces](https://github.com/aipoch/open-science/blob/main/docs/development-quick-reference.md#open-science-agent-traces).
+
+The CLI requires a local backend with the `run-otel-traces` capability. Selecting a third-party
+Agent or supplying missing or invalid local exporter configuration fails Run preparation.
+After dispatch, delivery failures follow the exporter's usual asynchronous diagnostics and the Run
+continues. With the SDK, pass `otelTraces: true` to `submitRun(requestId, request)` or
+`startRun(request, { requestId })`.
+
 ### Execution controls
 
 The run command exposes five provider-neutral controls:

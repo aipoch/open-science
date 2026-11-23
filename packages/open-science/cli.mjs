@@ -127,6 +127,7 @@ Options:
   --compute-host <provider-id>  Select a Compute Host execution target (repeatable)
   --enable-compute-host <provider-id>  Enable a Compute Host without selecting it (repeatable)
   --clear-compute-hosts    Clear enabled and selected Compute Hosts
+  --otel-traces          Export Open-Science Agent traces for this Run
   --plan-first           Require an approved Plan before execution
   --auto-review          Enable automatic review for this Session
   --no-auto-review       Disable automatic review for this Session
@@ -432,6 +433,7 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
     else if (arg === '--return-on-attention') options.returnOnAttention = true
+    else if (arg === '--otel-traces') options.otelTraces = true
     else if (arg === '--plan-first') options.planFirst = true
     else if (arg === '--non-interactive') options.nonInteractive = true
     else if (arg === '--commit') options.commit = true
@@ -595,6 +597,8 @@ export const parseCliArgs = (argv) => {
       'Use only one of Compute Host selection options or --clear-compute-hosts.'
     )
   }
+  if (options.otelTraces && (command !== 'run' || subcommand))
+    throw new CliUsageError('--otel-traces requires starting a run.')
   if (options.requestId !== undefined) {
     if (command !== 'run' || (subcommand && !['status', 'wait'].includes(subcommand)))
       throw new CliUsageError('--request-id requires run, run status, or run wait.')
@@ -1657,7 +1661,10 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   const { command, subcommand, positionals = [], options } = parsed
   let client
   try {
-    client = await deps.connect({ configRoot: options.configRoot })
+    client = await deps.connect({
+      configRoot: options.configRoot,
+      ...(options.otelTraces ? { requireRunTracing: true } : {})
+    })
   } catch (error) {
     if (command !== 'doctor' || error?.code !== 'daemon_unavailable' || error?.status !== undefined)
       throw error
@@ -2396,6 +2403,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
               ...(options.permissionPrompts
                 ? { permissionPrompts: options.permissionPrompts }
                 : {}),
+              ...(options.otelTraces ? { otelTraces: true } : {}),
               ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
               ...(options.autoReviewEnabled !== undefined
                 ? { autoReviewEnabled: options.autoReviewEnabled }
@@ -2454,7 +2462,12 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         throw error
       }
     } catch (error) {
-      if (error && typeof error === 'object' && requestId) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        requestId &&
+        error.code !== 'unsupported_capability'
+      ) {
         error.requestId = requestId
         error.message += ` Request: ${requestId}. Query: open-science run status --request-id ${requestId}.`
       }

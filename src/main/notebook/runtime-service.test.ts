@@ -364,12 +364,22 @@ describe('notebook runtime service', () => {
 
   it('holds session creation behind a folder policy commit and releases admission after failure', async () => {
     const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
     const service = new NotebookRuntimeService({
+      repository,
       memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project'
     })
+    const commit = vi.fn(async () => {})
+    vi.spyOn(repository, 'checkpointPendingRuns').mockRejectedValueOnce(
+      new Error('checkpoint failed')
+    )
+    await expect(service.shutdownAll({ afterShutdown: commit })).rejects.toThrow(
+      'checkpoint failed'
+    )
+    expect(commit).not.toHaveBeenCalled()
     const started = createDeferred<void>()
     const release = createDeferred<void>()
     const change = service.shutdownAll({
@@ -14755,12 +14765,16 @@ describe('v4 runtime bindings & agent tools', () => {
     })
     service.setDefaultEnvProvisioner({ provisionPython, provisionR: async () => undefined })
 
-    const bound = await service.bindRuntime({
+    const write = vi.spyOn(repository, 'setRuntimeBindings')
+    const request = {
       sessionId: 's',
       workspaceCwd: root,
-      language: 'python',
+      language: 'python' as const,
       runtimeId: userPyA.envId
-    })
+    }
+    const bound = await service.bindRuntime(request)
+    expect(await service.bindRuntime(request)).toEqual(bound)
+    expect(write).toHaveBeenCalledTimes(1)
     expect(bound.bindings.python?.runtimeId).toBe(userPyA.envId)
     expect(bound.bindings.python?.source).toBe('external')
 

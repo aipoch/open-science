@@ -11,6 +11,8 @@ it.each([
   'complete',
   'legacy-slot',
   'latin-modern',
+  'latin-modern-number',
+  'changed-number',
   'mixed-fonts',
   'detached',
   'different-size',
@@ -26,6 +28,8 @@ it.each([
       equal = await pdf.embedFont(StandardFonts.Helvetica),
       page = pdf.addPage([320, 200]),
       x = 120,
+      fusedNumber = kind === 'latin-modern-number' || kind === 'changed-number',
+      equality = fusedNumber ? '= 27' : '=',
       shift = (equal.widthOfTextAtSize('=', 10) - slash.widthOfTextAtSize('/', 10)) / 2
     page.drawText('The values u ', { font: prose, x: 40, y: 150, size: 10 })
     page.drawText('/', {
@@ -34,14 +38,20 @@ it.each([
       y: 150,
       size: kind === 'different-size' ? 8 : 10
     })
-    page.drawText('=', { font: equal, x, y: 150, size: 10 })
-    page.drawText(' v differ.', { font: prose, x: 140, y: 150, size: 10 })
+    page.drawText(equality, { font: equal, x, y: 150, size: 10 })
+    page.drawText(fusedNumber ? ' differs.' : ' v differ.', {
+      font: prose,
+      x: fusedNumber ? 145 : 140,
+      y: 150,
+      size: 10
+    })
     if (kind === 'foreign-ink') page.drawText('q', { font: prose, x, y: 150, size: 10 })
     page.drawText('Independent neighbor.', { font: prose, x: 40, y: 100, size: 10 })
     await pdf.flush()
-    const latinModern = kind === 'latin-modern' || kind === 'mixed-fonts',
+    const latinModern = kind === 'latin-modern' || kind === 'mixed-fonts' || fusedNumber,
       legacy = kind === 'legacy-slot',
-      complete = kind === 'complete' || kind === 'latin-modern' || legacy,
+      complete =
+        kind === 'complete' || kind === 'latin-modern' || kind === 'latin-modern-number' || legacy,
       slashFont = pdf.context.lookup(slash.ref, PDFDict)
     slashFont.set(
       PDFName.of('BaseFont'),
@@ -64,14 +74,15 @@ it.each([
       .lookup(equal.ref, PDFDict)
       .set(
         PDFName.of('BaseFont'),
-        PDFName.of(kind === 'latin-modern' ? 'LMRoman10-Regular' : 'CMR10')
+        PDFName.of(kind === 'latin-modern' || fusedNumber ? 'LMRoman10-Regular' : 'CMR10')
       )
     const data = await pdf.save(),
       registry = new TestCallerRegistry(),
       caller = registry.acquire({ leaseId: 'native-negation' }),
       relation = kind === 'missing-mark' ? '=' : kind === 'reordered' ? '=\u0338' : '\u0338=',
-      source = `The values u \u0338= v differ.${kind === 'foreign-ink' ? ' q' : ''}`,
-      translation = `数值 u ${relation} v 不同。${kind === 'foreign-ink' ? ' q' : ''}`
+      source = `The values u \u0338${equality}${fusedNumber ? ' differs.' : ' v differ.'}${kind === 'foreign-ink' ? ' q' : ''}`,
+      value = fusedNumber ? (kind === 'changed-number' ? ' 270' : ' 27') : ' v',
+      translation = `数值 u ${relation}${value} 不同。${kind === 'foreign-ink' ? ' q' : ''}`
     const mark = legacy ? '6' : '\u0338'
     const original = getDocument({ data: data.slice(), useSystemFonts: true })
     let target: ReturnType<typeof getDocument> | undefined
@@ -129,8 +140,8 @@ it.each([
             newObjects: Native[] = native.objects(newPage),
             oldMark = oldObjects.find((o) => o.text?.trim() === mark)!,
             newMark = newObjects.find((o) => o.text?.trim() === mark)!,
-            oldEqual = oldObjects.find((o) => o.text?.trim() === '=')!,
-            newEqual = newObjects.find((o) => o.text?.trim() === '=')!
+            oldEqual = oldObjects.find((o) => o.text?.trim() === equality)!,
+            newEqual = newObjects.find((o) => o.text?.trim() === equality)!
           for (const [oldGlyph, newGlyph] of [
             [oldMark, newMark],
             [oldEqual, newEqual]

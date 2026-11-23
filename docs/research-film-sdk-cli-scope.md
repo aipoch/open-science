@@ -25,7 +25,7 @@ The baseline pipeline supported bounded automatic repairs and desktop checkpoint
 
 ### Feedback flow
 
-1. When validation blocks publication after automatic repairs, preserve a structured diagnostic with the failed review stage, actionable findings and a reference to the failed attempt. The CLI and SDK can read it after reconnecting. Distinguish a failed review from setup, transport and cancellation outcomes.
+1. When validation blocks publication after automatic repairs, preserve a structured diagnostic with the failed review stage, actionable findings and a reference to the failed attempt. This includes exhausted validation of a generated scene animation or shared helper. The CLI and SDK can read the diagnostic after reconnecting. Distinguish a failed review from setup, transport and cancellation outcomes.
 2. The user discusses the diagnostic with the calling agent. The agent submits revision instructions through the CLI or SDK against the specific failed attempt. The film author receives those instructions and the relevant review findings for the same branch, mode and frozen source. Reject stale or mismatched attempts.
 3. Run the applicable film checks again after revision. Publish an eligible player under the same review rules. If validation still blocks publication, expose the updated findings for another feedback round. Keep any previously published film available until a replacement is published.
 
@@ -37,5 +37,5 @@ Research explanation reports an advisory narration score from 0 to 9 when availa
 
 - With the desktop application closed, start each film mode for a scoped conversation branch, check progress and download the self-contained HTML player using the SDK or CLI. The explanation flow uses a sandboxed local Chromium browser for portrait and landscape checks. Replay keeps the existing evidence-order validation.
 - Inject a blocking validation failure and recover its stage, attempt ID and findings after reconnecting. Submit feedback for that exact attempt, confirm the author receives it and verify the new player is eligible under the mode's review rules before publication. A stale attempt returns `film_review_conflict`. A second failure provides a new attempt ID and findings.
-- A failed revision leaves an earlier published player available. Downloads require the published film ID and return the HTML as an attachment. The service keeps its native paths and the pending draft private.
+- A failed revision leaves an earlier published player available. Downloads require the published film ID and return the HTML as an attachment. Public status and error diagnostics hide native filesystem paths, and the pending draft remains private.
 - Use the matching local service profile with bearer authentication. An explanation requires a sandbox-capable Chrome, Chromium or Microsoft Edge installation. Both modes require the existing narration model and an eligible source branch.

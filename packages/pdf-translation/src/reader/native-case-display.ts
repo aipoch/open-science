@@ -351,6 +351,369 @@ function annotatedModularItems(items: Part[]): ReadonlySet<number> {
   return result
 }
 
+// Full-size TeX braces can enclose two numbered cases on two nearby baselines.
+// Keep the condition attached to its value, even when “if” looks like prose.
+function factorialConditionalItems(items: Part[]): ReadonlySet<number> {
+  const selected = new Set<number>()
+  for (let at = 1; at + 7 < items.length; at++) {
+    const brace = items[at],
+      equal = items[at - 1]
+    if (
+      brace.str !== '{' ||
+      equal.str !== '=' ||
+      ![brace, equal].every(valid) ||
+      brace.fontAscent! < 0 ||
+      brace.fontAscent! > 0.1 ||
+      brace.fontDescent! >= -2
+    )
+      continue
+    const labelAt = items
+      .slice(at + 1, at + 24)
+      .findIndex((item) => /^\([1-9]\d?\)$/u.test(item.str))
+    if (labelAt < 0) continue
+    const label = items[at + 1 + labelAt],
+      packet = items.slice(at + 1, at + 1 + labelAt)
+    const [first, last, extra] = packet.filter((item) => item.str === 'if')
+    if (!first || !last || extra || ![label, ...packet].every(valid)) continue
+    const h = brace.height,
+      x = (item: Part): number => item.transform[4],
+      y = (item: Part): number => item.transform[5],
+      right = (item: Part): number => x(item) + item.width,
+      near = (a: number, b: number): boolean => Math.abs(a - b) < h * 0.06,
+      rows = [
+        packet.filter((item) => y(item) > y(equal)),
+        packet.filter((item) => y(item) <= y(equal))
+      ]
+    if (rows.some((row) => row.length < 3)) continue
+    const splits = rows.map((row, n) => row.indexOf(n === 0 ? first : last))
+    const compact = (row: Part[]): string =>
+      row.map((item) => item.str.replace(/\s/gu, '')).join('')
+    const [upper, lower] = rows.map((row, n) => compact(row.slice(0, splits[n])))
+    const match = /^([a-z])=([a-z]),$/u.exec(compact(rows[0].slice(splits[0] + 1)))
+    if (
+      splits.some((split) => split < 1) ||
+      !match ||
+      match[1] === match[2] ||
+      !new RegExp(
+        '^(?:\\(−1\\)' + match[2] + '·[a-z]' + match[2] + '·)?' + match[2] + '!$',
+        'u'
+      ).test(upper) ||
+      lower !== '0' ||
+      compact(rows[1].slice(splits[1] + 1)) !== match[1] + '<' + match[2] + '.' ||
+      !near(y(equal), y(label)) ||
+      !near(equal.height, h) ||
+      !near(label.height, h) ||
+      !near(y(brace) - y(equal), h * 1.72) ||
+      !near(y(first) - y(last), h * 1.5) ||
+      !near(y(first) - y(equal), h * 0.7) ||
+      !near(x(brace) - right(equal), h * 0.28) ||
+      !near(x(first), x(last)) ||
+      first.fontName !== last.fontName ||
+      first.fontName === brace.fontName ||
+      ![rows[0][0], rows[1][0]].every((item) => near(x(item), right(brace))) ||
+      rows.some((row, n) =>
+        row.some((item, i) => {
+          const connector = n ? last : first
+          const script =
+            n === 0 &&
+            item.height > h * 0.7 &&
+            item.height < h * 0.8 &&
+            /^[a-z]$/u.test(item.str) &&
+            i < splits[0] &&
+            y(item) - y(first) > h * 0.3 &&
+            y(item) - y(first) < h * 0.45 &&
+            i > 0 &&
+            near(x(item), right(row[i - 1]))
+          return (
+            x(item) < right(brace) - h * 0.06 ||
+            right(item) >= x(label) - h ||
+            (!script && (!near(y(item), y(connector)) || !near(item.height, h))) ||
+            (i > 0 && x(item) < right(row[i - 1]) - h * 0.06)
+          )
+        })
+      )
+    )
+      continue
+    for (const item of [equal, brace, ...packet, label]) selected.add(item.index)
+  }
+  return selected
+}
+
+// A single TeX brace can span a native three-row numeric set-membership display.
+function numericSetCaseItems(items: Part[]): ReadonlySet<number> {
+  const result = new Set<number>()
+  for (let at = 3; at + 9 < items.length; at++) {
+    const [base, subscript, equal, brace] = items.slice(at - 3, at + 1)
+    if (
+      brace.str !== '{' ||
+      equal.str !== '=' ||
+      ![base, subscript, equal, brace].every(valid) ||
+      !/^[A-Za-z\p{Script=Greek}]$/u.test(base.str) ||
+      !/^[A-Za-z\p{Script=Greek}]$/u.test(subscript.str) ||
+      brace.fontAscent! < 0 ||
+      brace.fontAscent! > 0.1 ||
+      brace.fontDescent! >= -0.3 ||
+      brace.fontName === equal.fontName
+    )
+      continue
+    const size = equal.height,
+      x = (i: Part): number => i.transform[4],
+      y = (i: Part): number => i.transform[5],
+      right = (i: Part): number => x(i) + i.width,
+      near = (a: number, b: number): boolean => Math.abs(a - b) < size * 0.06,
+      lhs = [base, subscript, equal]
+    if (
+      !near(brace.height, size) ||
+      y(brace) - y(equal) < size * 1.5 ||
+      y(brace) - y(equal) > size * 2 ||
+      x(equal) < right(subscript) ||
+      x(equal) - right(subscript) > size * 0.8 ||
+      x(brace) - right(equal) < 0 ||
+      x(brace) - right(equal) > size * 0.6 ||
+      !conditionalMathParts(lhs, size, y(equal)) ||
+      y(subscript) >= y(base)
+    )
+      continue
+
+    const rows = [1.2, 0, -1.2].map((offset) =>
+      items.filter(
+        (item) =>
+          item.index > brace.index &&
+          x(item) >= right(brace) &&
+          near(y(item), y(equal) + size * offset)
+      )
+    )
+    const columns = rows.map((row) => {
+      const split = row.findIndex((item) => item.str === 'if')
+      return { value: row.slice(0, split), connector: row[split], condition: row.slice(split + 1) }
+    })
+    const compact = (row: Part[]): string => row.map((item) => item.str.trim()).join('')
+    const values = columns.map(({ value }) => compact(value))
+    if (
+      new Set(values).size !== 3 ||
+      columns.some(
+        ({ value, connector, condition }, row) =>
+          !connector ||
+          !/^[+−-]?\d{1,3},$/u.test(values[row]) ||
+          !new RegExp('^' + subscript.str + '∈[A-Za-z]∩[A-Za-z][;.]$', 'u').test(
+            compact(condition)
+          ) ||
+          x(value[0]) - right(brace) > size * 0.5 ||
+          connector.fontName !== equal.fontName ||
+          !near(x(value[0]), x(columns[0].value[0])) ||
+          !near(x(connector), x(columns[0].connector)) ||
+          !near(x(condition[0]), x(columns[0].condition[0])) ||
+          !near(right(condition.at(-1)!), right(columns[0].condition.at(-1)!)) ||
+          rows[row].some(
+            (item, n, entries) =>
+              !valid(item) ||
+              !near(item.height, size) ||
+              (n > 0 &&
+                (item.index <= entries[n - 1].index ||
+                  x(item) < right(entries[n - 1]) - size * 0.06 ||
+                  x(item) - right(entries[n - 1]) > size * 3))
+          )
+      )
+    )
+      continue
+
+    const packet = [...lhs, brace, ...rows.flat()],
+      selected = new Set(packet.map((item) => item.index)),
+      end = Math.max(...selected),
+      high = y(brace) + size * 0.5,
+      low = y(rows[2][0]) - size * 0.6,
+      far = right(rows[0].at(-1)!)
+    if (
+      packet.length !== selected.size ||
+      packet.some((item, n) => n > 0 && item.index <= packet[n - 1].index) ||
+      items.some(
+        (item) =>
+          !selected.has(item.index) &&
+          ((item.index >= base.index && item.index <= end) ||
+            (x(item) < far && right(item) > x(base) && y(item) < high && y(item) > low))
+      )
+    )
+      continue
+    for (const index of selected) result.add(index)
+  }
+  return result
+}
+
+// An assignment and two aligned comparison rows certify a complete Unicode
+// cases brace. Its interior can contain a function and stacked fractions.
+function extensibleCaseItems(items: Part[]): ReadonlySet<number> {
+  const result = new Set<number>()
+  for (const [at, top] of items.entries()) {
+    if (top.str !== '⎧' || !valid(top)) continue
+    let end = at + 1
+    while (end < at + 12 && /^[⎪⎨]$/u.test(items[end]?.str ?? '')) end++
+    const rail = items.slice(at, end + 1),
+      bottom = items[end],
+      lead = items[at - 1],
+      size = top.height,
+      x = (item: Part): number => item.transform[4],
+      y = (item: Part): number => item.transform[5],
+      right = (item: Part): number => x(item) + item.width,
+      near = (a: number, b: number): boolean => Math.abs(a - b) < size * 0.05
+    if (
+      !bottom ||
+      !lead ||
+      !valid(lead) ||
+      !/=\s*$/u.test(lead.str) ||
+      Math.abs(y(lead) - (y(top) + y(bottom)) / 2) > size * 0.85 ||
+      Math.abs(x(top) - right(lead)) > size * 0.7 ||
+      !/^⎧⎪+⎨⎪+⎩$/u.test(rail.map(({ str }) => str).join('')) ||
+      !rail.every(
+        (item, index) =>
+          valid(item) &&
+          item.fontName === top.fontName &&
+          near(item.height, size) &&
+          near(item.width, top.width) &&
+          near(x(item), x(top)) &&
+          (!index || (y(rail[index - 1]) > y(item) && y(rail[index - 1]) - y(item) < size * 2))
+      )
+    )
+      continue
+    const body = items
+        .slice(end + 1, end + 49)
+        .filter(
+          (item) =>
+            valid(item) &&
+            x(item) >= right(top) - size * 0.05 &&
+            y(item) < y(top) &&
+            y(item) > y(bottom) - size
+        ),
+      comparisons = body.filter((item, index) => {
+        const value = body[index + 1]
+        return (
+          /[<>≤≥]$/u.test(item.str) &&
+          x(item) - x(top) > size * 6 &&
+          !!value &&
+          /^\d+[.,]?$/u.test(value.str) &&
+          near(y(item), y(value)) &&
+          x(value) > x(item) &&
+          x(value) - right(item) < size
+        )
+      }),
+      upper = comparisons.find((item) => y(item) > y(bottom) + size),
+      lower = comparisons.find((item) => Math.abs(y(item) - y(bottom)) < size * 0.6)
+    if (!upper || !lower || Math.abs(x(upper) - x(lower)) > size * 1.5) continue
+
+    for (const item of rail) result.add(item.index)
+    const fn = items[end + 1]
+    if (
+      fn &&
+      valid(fn) &&
+      /^(?:max|min)$/u.test(fn.str) &&
+      near(y(fn), y(upper)) &&
+      near(x(fn), right(top))
+    )
+      result.add(fn.index)
+    for (const [index, item] of body.entries()) {
+      const numerator = body[index - 1],
+        minus = body[index - 2],
+        one = body[index - 3]
+      if (
+        numerator &&
+        minus &&
+        one &&
+        /^\p{Ll}$/u.test(item.str) &&
+        /^\p{Ll}$/u.test(numerator.str) &&
+        item.fontName === numerator.fontName &&
+        y(item) < y(upper) &&
+        y(item) > y(lower) &&
+        x(item) > x(one) &&
+        right(item) < right(numerator) &&
+        y(numerator) - y(item) > size &&
+        y(numerator) - y(item) < size * 2 &&
+        minus.str === '−' &&
+        one.str === '1' &&
+        near(y(one), y(numerator)) &&
+        near(y(minus), y(numerator))
+      )
+        result.add(item.index)
+      if (x(item) < x(top) + size * 2 && near(y(item), y(lower)) && /^[\d,.]+$/u.test(item.str))
+        result.add(item.index)
+    }
+  }
+  return result
+}
+
+// A closed four-row brace can keep split relation clauses in their original type.
+function alignedCaseConditionItems(items: Part[]): number[] {
+  for (const [at, top] of items.entries()) {
+    if (top.str !== '\uF8F1' || !valid(top)) continue
+    let end = at + 1
+    while (end - at < 15 && /^[\uF8F2\uF8F4]$/u.test(items[end]?.str ?? '')) end++
+    const rail = items.slice(at, end + 1),
+      bottom = rail.at(-1)!,
+      em = top.height
+    const x = (i: Part): number => i.transform[4],
+      y = (i: Part): number => i.transform[5]
+    if (
+      !/^\uF8F1\uF8F4{3,6}\uF8F2\uF8F4{3,6}\uF8F3$/u.test(rail.map((i) => i.str).join('')) ||
+      rail.some(
+        (i, n) =>
+          !valid(i) ||
+          i.fontName !== top.fontName ||
+          Math.abs(x(i) - x(top)) > em * 0.01 ||
+          Math.abs(i.height - em) > em * 0.01 ||
+          Math.abs(i.width - top.width) > em * 0.01 ||
+          (n > 0 && (y(rail[n - 1]) - y(i) <= 0 || y(rail[n - 1]) - y(i) > em * 2))
+      )
+    )
+      continue
+    const next = items.slice(end + 1, end + 101)
+    const tag = next.find(
+      (i) =>
+        /^\([1-9]\d{0,2}\)$/u.test(i.str) &&
+        valid(i) &&
+        x(i) - x(top) > em * 18 &&
+        x(i) - x(top) < em * 24 &&
+        Math.abs(y(i) - (y(top) + y(bottom)) / 2) < em * 0.2
+    )
+    if (!tag) continue
+    const packet = next.slice(0, next.indexOf(tag))
+    if (
+      !packet.length ||
+      packet.some(
+        (i) =>
+          !valid(i) ||
+          x(i) < x(top) + top.width - em * 0.02 ||
+          x(i) + i.width >= x(tag) ||
+          y(i) > y(top) ||
+          y(i) < y(bottom) - em * 0.7 ||
+          !/^[\p{Script=Latin}\p{Script=Greek}ℓ\d\s(),.+−<>≤≥]+$/u.test(i.str) ||
+          /[A-Za-z]{4,}/u.test(i.str)
+      )
+    )
+      continue
+    const comparisons = packet.filter((i) => /[<>≤≥]/u.test(i.str))
+    const levels = [...new Set(comparisons.map(y))]
+    if (
+      levels.length !== 4 ||
+      levels.some(
+        (b, n) => n > 0 && (levels[n - 1] - b < em * 1.25 || levels[n - 1] - b > em * 2.05)
+      )
+    )
+      continue
+    const firstX = (baseline: number): number =>
+      Math.min(
+        ...packet
+          .filter((i) => Math.abs(y(i) - baseline) < em * 0.03 && x(i) - x(top) > em * 10)
+          .map(x)
+      )
+    const column = firstX(levels[0])
+    if (
+      !(column - x(top) > em * 10 && column - x(top) < em * 12) ||
+      levels.some((b) => Math.abs(firstX(b) - column) > em * 0.04)
+    )
+      continue
+    return packet.map((i) => i.index)
+  }
+  return []
+}
+
 /** Only closed native case rows or a complete conditional display lose eligibility. */
 export function nativeCaseDisplayItems(page: PdfLayoutPage): ReadonlySet<number> {
   const result = new Set<number>()
@@ -490,7 +853,11 @@ export function nativeCaseDisplayItems(page: PdfLayoutPage): ReadonlySet<number>
       continue
     for (const index of keys) result.add(index)
   }
+  for (const index of extensibleCaseItems(items)) result.add(index)
   for (const index of opaqueConditionalItems(items, page.width)) result.add(index)
   for (const index of annotatedModularItems(items)) result.add(index)
+  for (const index of factorialConditionalItems(items)) result.add(index)
+  for (const index of numericSetCaseItems(items)) result.add(index)
+  for (const index of alignedCaseConditionItems(items)) result.add(index)
   return result
 }

@@ -303,7 +303,7 @@ describe('reader-owned PDF preparation', () => {
       expect(current.state.extraction.source).toBe(fresh.source)
       expect(current.state.extraction.source.units[0].id).toBe('fresh-unit')
       expect(getPdfTranslationLayoutSnapshot(fresh.source)?.parserVersion).toBe(
-        'pdfjs-paragraph-layout-193'
+        'pdfjs-paragraph-layout-271'
       )
       expect(historical.parserVersion).toBe(parserVersion)
       expect(historical.units[0].id).toBe('saved-unit')

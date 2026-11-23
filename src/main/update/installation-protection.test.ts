@@ -325,7 +325,19 @@ describe('installation protection', () => {
       configRoot: 'other',
       generation: 'other'
     })
-    expect(() => beginInstallationUpdate(f.options)).toThrow('Another service')
+    let error: unknown
+    try {
+      beginInstallationUpdate(f.options)
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toMatchObject({
+      reason: 'installation-busy',
+      recovery: {
+        detail: 'other-runtime',
+        blockingProcesses: [expect.objectContaining({ pid: process.pid })]
+      }
+    })
     other.release()
     const record = beginInstallationUpdate(f.options)
     expect(() => registerInstallationRuntime({ ...f.location, ...f.runtime })).toThrow(

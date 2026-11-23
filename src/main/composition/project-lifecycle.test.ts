@@ -77,6 +77,7 @@ const fixture = ((notebookRuntime?: NotebookRuntimeService) => {
     deleteProjectFileEvidence: vi.fn(),
     deleteProjectInputs: vi.fn(),
     forgetDeletedExecutionIntents: vi.fn(),
+    finishPendingRunDeletion: vi.fn(),
     releaseProjectDeletion: vi.fn()
   }
   const broker = new CredentialRequestBroker({

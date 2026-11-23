@@ -24,20 +24,13 @@ import {
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
   ResearchFilmDraftError,
+  ResearchFilmReviewFailure,
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint,
   type ResearchFilmCorrection as Correction
 } from './authoring-correction.js'
 
-export class ResearchFilmReviewFailure extends Error {
-  constructor(
-    readonly stage: 'script' | 'visual' | 'replay',
-    readonly findings: string[],
-    message: string
-  ) {
-    super(message)
-  }
-}
+export { ResearchFilmReviewFailure } from './authoring-correction.js'
 
 function invalidFilmDocument(
   stage: 'script' | 'replay',
@@ -386,7 +379,10 @@ export async function authorResearchFilmSource(options: {
     options.checkpoint,
     options.onAnimations,
     options.visualIssues,
-    options.reviewedScripts
+    options.reviewedScripts,
+    revision && guidance !== undefined
+      ? { guidance, readPreviousDraft: (key) => revision.readPreviousDraft(key) }
+      : undefined
   )
   signal.throwIfAborted()
   const specPath = join(directory, 'video.json')

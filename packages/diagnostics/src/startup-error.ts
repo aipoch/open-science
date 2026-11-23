@@ -79,6 +79,20 @@ const redactRemainingAbsolutePaths = (text: string): string =>
     // stops at an earlier replacement. One marker communicates the same redaction more clearly.
     .replace(/(?:<absolute-path>){2,}/g, '<absolute-path>')
 
+// Native filenames can contain spaces, quotes and parentheses. Public errors keep the prefix
+// before the first native path without guessing where that path ends. Skip ordinary web URLs.
+const redactAbsoluteDiagnosticPaths = (text: string): string => {
+  const tokens =
+    /\bhttps?:\/\/[^\s"'`<>]+|(^|[\s"'`=(,[{:;])(?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/(?!\/))|(^|[\s"'`=(,[{;])\/\/(?!\/)/gi
+  for (const match of text.matchAll(tokens)) {
+    const boundary = match[1] ?? match[2]
+    if (boundary === undefined) continue
+    const prefixLength = /["'`([{]/.test(boundary) ? 0 : boundary.length
+    return `${text.slice(0, match.index + prefixLength)}<absolute-path>`
+  }
+  return text
+}
+
 const redactPublicDiagnostics = (text: string, options: StartupDiagnosticsOptions): string => {
   const roots = [
     [options.configRoot, '<config-root>'],
@@ -143,5 +157,5 @@ const buildStartupDiagnostics = (
   return `${[...body].slice(0, budget).join('')}${TRUNCATION_MARKER}`
 }
 
-export { buildStartupDiagnostics }
+export { buildStartupDiagnostics, redactAbsoluteDiagnosticPaths }
 export type { StartupDiagnosticsOptions }

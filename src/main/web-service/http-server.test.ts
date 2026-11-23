@@ -153,6 +153,7 @@ it('exposes a local Film review and player workflow without exposing host paths'
     rpc: { channels: () => [], invoke: vi.fn() },
     tasks: {
       runWithCallerContext,
+      supportsSubmissions: () => true,
       subscribeProgress: vi.fn(() => vi.fn()),
       researchFilms: createTaskResearchFilmApi({ start, status, cancel })
     } as never,
@@ -177,6 +178,16 @@ it('exposes a local Film review and player workflow without exposing host paths'
       headers: local ? headers : { 'content-type': 'application/json' },
       body: JSON.stringify(body)
     })
+
+  const bootstrap = new URL('/api/bootstrap', base)
+  const local = await (await fetch(bootstrap, { headers })).json()
+  expect(local.taskCapabilities).toEqual(
+    expect.arrayContaining(['durable-submissions', 'run-otel-traces', 'research-film-html'])
+  )
+  const remote = await (await fetch(bootstrap)).json()
+  expect(remote.webCallerLocation).toBe('remote')
+  expect(remote.taskCapabilities).not.toContain('run-otel-traces')
+  expect(remote.taskCapabilities).not.toContain('research-film-html')
 
   expect((await post('start', scope, false)).status).toBe(403)
   expect((await post('start', { ...scope, headless: false })).status).toBe(400)
@@ -212,6 +223,39 @@ it('exposes a local Film review and player workflow without exposing host paths'
       result: { id: filmId, title: 'Film title', duration: 10 }
     }
   })
+  for (const path of [
+    "/srv/Open Science/Pat's research/missing figure.png",
+    String.raw`C:\Users\O'Connor\Open Science\missing figure.png`
+  ]) {
+    const privateStatus = {
+      error: `ENOENT: no such file or directory, realpath '${path}'`,
+      preflightError: `Could not read '${path}'. Check the source branch.`,
+      reviewFailure: {
+        ...reviewFailure,
+        findings: [
+          `Scene 1: layout clips the caption for '${path}'. Move it below the plot.`,
+          'Scene 2: use the title from images/results.png.'
+        ]
+      }
+    }
+    status.mockResolvedValueOnce(privateStatus)
+    expect(await (await post('status', scope)).json()).toEqual({
+      data: {
+        canResume: false,
+        error: 'ENOENT: no such file or directory, realpath <absolute-path>',
+        preflightError: 'Could not read <absolute-path>',
+        reviewFailure: {
+          ...reviewFailure,
+          findings: [
+            'Scene 1: layout clips the caption for <absolute-path>',
+            'Scene 2: use the title from images/results.png.'
+          ]
+        }
+      }
+    })
+    expect(privateStatus.error).toContain(path)
+    expect(privateStatus.reviewFailure.findings[0]).toContain(path)
+  }
   status.mockResolvedValueOnce({
     branchId: scope.branchId,
     narrationReview: 'advisory',
@@ -241,12 +285,30 @@ it('exposes a local Film review and player workflow without exposing host paths'
     narrationReview: 'advisory',
     revision: { attemptId, feedback }
   })
+  const reviewPath = String.raw`\\service-host\private share\review.json`
+  const privateError = `A newer attempt exists at '${reviewPath}'. Read current status.`
+  const safeError = 'A newer attempt exists at <absolute-path>'
   start.mockRejectedValueOnce(
-    Object.assign(new Error('A newer attempt exists.'), { code: 'film_review_conflict' })
+    Object.assign(new Error(privateError), { code: 'film_review_conflict' })
   )
   const stale = await post('revise', { ...scope, attemptId, feedback })
   expect(stale.status).toBe(409)
-  expect(await stale.json()).toMatchObject({ error: { code: 'film_review_conflict' } })
+  expect(await stale.json()).toEqual({
+    error: { code: 'film_review_conflict', message: safeError }
+  })
+  status.mockRejectedValueOnce(new TaskApiError('invalid_configuration', privateError))
+  const invalid = await post('cancel', { ...scope, branchId: undefined })
+  expect(invalid.status).toBe(400)
+  expect(await invalid.json()).toEqual({
+    error: { code: 'invalid_configuration', message: safeError }
+  })
+  start.mockRejectedValueOnce(new Error(privateError))
+  const unexpected = await post('start', scope)
+  expect(unexpected.status).toBe(500)
+  const unexpectedError = await unexpected.json()
+  expect(unexpectedError).toMatchObject({ error: { code: 'internal_error' } })
+  expect(unexpectedError.error.message).not.toContain(reviewPath)
+  expect(cancel).not.toHaveBeenCalled()
   expect((await post('cancel', { ...scope, branchId: undefined })).status).toBe(200)
   expect(cancel).toHaveBeenCalledWith(scope)
 
@@ -5782,14 +5844,35 @@ it('recovers a lost submission response through the real SDK and CLI without sta
   try {
     await expect(
       lostResponse.startRun(
-        { project: 'project', prompt: 'Research' },
+        { project: 'project', prompt: 'Research', otelTraces: true },
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
     expect(
-      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+      await client.submitRun('request-receipt', {
+        project: 'project',
+        prompt: 'Research',
+        otelTraces: true
+      })
     ).toMatchObject({ status: 'pending' })
+    await expect(
+      client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+    ).rejects.toMatchObject({ code: 'submission_conflict' })
     expect(startRun).toHaveBeenCalledOnce()
+    expect(startRun).toHaveBeenCalledWith(
+      { project: 'project', prompt: 'Research', otelTraces: true },
+      'request-receipt'
+    )
+    const remote = await (await fetch(`${baseUrl}/api/bootstrap`)).json()
+    expect(remote.taskCapabilities).not.toContain('run-otel-traces')
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v1/run-submissions/remote`, {
+          method: 'PUT',
+          body: JSON.stringify({ project: 'project', prompt: 'Trace', otelTraces: true })
+        })
+      ).status
+    ).toBe(403)
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()
     const log = vi.fn()

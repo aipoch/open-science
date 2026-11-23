@@ -2,7 +2,24 @@ import { homedir } from 'node:os'
 
 import { describe, expect, it } from 'vitest'
 
-import { buildStartupDiagnostics } from './startup-error'
+import { buildStartupDiagnostics, redactAbsoluteDiagnosticPaths } from './startup-error'
+
+it.each([
+  "ENOENT: realpath '/srv/Pat's research/private.csv'",
+  String.raw`ENOENT: realpath 'C:\Users\O'Connor\private.csv'`,
+  'ENOENT: realpath /mnt/lab (private)/cohort.csv\nAdditional private evidence',
+  'ENOENT: realpath (file:///srv/local/index.html). Use images/results.png.'
+])('removes the entire native-path suffix from a public diagnostic', (diagnostic) => {
+  expect(redactAbsoluteDiagnosticPaths(diagnostic)).toBe('ENOENT: realpath <absolute-path>')
+})
+
+it('retains normal HTTPS links and relative artifact labels before a native path', () => {
+  const guidance = 'Check https://example.test/guide?ref=/layout and anims/intro.js.'
+  expect(redactAbsoluteDiagnosticPaths(guidance)).toBe(guidance)
+  expect(redactAbsoluteDiagnosticPaths(`${guidance} Missing /srv/private/local.json`)).toBe(
+    `${guidance} Missing <absolute-path>`
+  )
+})
 
 describe('buildStartupDiagnostics', () => {
   it('redacts roots with long internal separator runs and mixed trailing separators', () => {

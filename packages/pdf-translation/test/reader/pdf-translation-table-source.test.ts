@@ -2082,6 +2082,125 @@ describe('cached PDF table source ownership', () => {
     ])
   })
 
+  it.each([false, true])(
+    'keeps independent acronym legend rows with their unique swatches (%s)',
+    async (shifted) => {
+      const labels = [
+        ['STs', 'legend-top', { x: 0.4, y: 0.41, width: 0.09, height: 0.05 }],
+        ['VCs', 'legend-bottom', { x: 0.4, y: 0.48, width: 0.1, height: 0.05 }],
+        ['Number of samples', 'axis', { x: 0.55, y: 0.57, width: 0.17, height: 0.03 }],
+        [
+          'Figure 1. Measurements by group.',
+          'caption',
+          { x: 0.2, y: 0.65, width: 0.55, height: 0.03 }
+        ]
+      ] as const
+      const units = labels.map(([source, id, rect], index) => ({
+        id,
+        source,
+        fragments: [{ pageNumber: 1, rect, items: [{ index, text: source }] }]
+      }))
+      const corner = (
+        x: number,
+        y: number,
+        fromX: number,
+        fromY: number,
+        toX: number,
+        toY: number
+      ) => [
+        1,
+        x + fromX,
+        y + fromY,
+        2,
+        x + fromX / 3,
+        y + fromY / 3,
+        x + toX / 3,
+        y + toY / 3,
+        x + toX,
+        y + toY
+      ]
+      const frame = Float32Array.from([
+        0,
+        50,
+        90,
+        ...corner(106, 90, -2, 0, 0, 2),
+        ...corner(106, 121, 0, -2, -2, 0),
+        ...corner(48, 121, 2, 0, 0, -2),
+        ...corner(48, 90, 0, 2, 2, 0),
+        4
+      ])
+      const circle = Float32Array.from([
+        0,
+        60,
+        110.5,
+        ...Array.from({ length: 8 }, (_, i) => {
+          const a = ((i - 2) * Math.PI) / 4,
+            b = a + Math.PI / 4,
+            k = 4 * Math.tan(Math.PI / 16)
+          return [
+            2,
+            60 + 3 * Math.cos(a) - k * Math.sin(a),
+            113.5 + 3 * Math.sin(a) + k * Math.cos(a),
+            60 + 3 * Math.cos(b) + k * Math.sin(b),
+            113.5 + 3 * Math.sin(b) - k * Math.cos(b),
+            60 + 3 * Math.cos(b),
+            113.5 + 3 * Math.sin(b)
+          ]
+        }).flat(),
+        4
+      ])
+      const cx = shifted ? 62 : 60
+      const cross = Float32Array.of(0, cx - 5, 99.5, 1, cx + 5, 99.5, 0, cx, 94.5, 1, cx, 104.5)
+      const page = {
+        rotate: 0,
+        getViewport: () => ({ width: 200, height: 200, transform: [1, 0, 0, -1, 0, 200] }),
+        getTextContent: async () => ({
+          items: units.slice(0, 2).map(({ source }, index) => ({
+            str: source,
+            dir: 'ltr',
+            fontName: 'f',
+            width: index ? 20 : 18,
+            height: 10,
+            transform: [10, 0, 0, 10, 80, 110 - index * 14]
+          }))
+        }),
+        getOperatorList: async () => ({
+          fnArray: Array(4).fill(OPS.constructPath),
+          argsArray: [
+            [OPS.stroke, [], [40, 80, 160, 160]],
+            [OPS.fillStroke, [frame], [48, 90, 106, 121]],
+            [OPS.fillStroke, [circle], [57, 110.5, 63, 116.5]],
+            [OPS.fillStroke, [cross], [cx - 5, 94.5, cx + 5, 104.5]]
+          ]
+        }),
+        cleanup: () => {}
+      }
+      const prepared = await preservePdfFigureSources({
+        extraction: {
+          source: createPdfTranslationSource({
+            resourceRequestKey: 'legend',
+            fingerprint: 'legend',
+            pages: [{ width: 200, height: 200 }],
+            units
+          })
+        },
+        document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+        operators: OPS,
+        signal: new AbortController().signal,
+        skipTranslation: false
+      })
+      expect(prepared.source.units).toEqual([
+        ...units.slice(0, 2).map((unit) => ({
+          ...unit,
+          figure: true,
+          ...(!shifted ? { sourceOnly: true, preserve: 'literal' } : {})
+        })),
+        { ...units[2], figure: true },
+        units[3]
+      ])
+    }
+  )
+
   it('keeps figure feature keys while retaining the ordinary labels for translation', async () => {
     const labels = [
       ['BandVariance', 0.16, 0.13, 0.16],
@@ -5049,5 +5168,778 @@ it.each(legendScenarios)(
       },
       caption
     ])
+  }
+)
+
+it.each([false, true])(
+  'separates a connector label from both lines of a closed node when the stroke joins them (%s)',
+  async (connected) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      fontName: string
+    ) => ({
+      str,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      width,
+      height,
+      fontName,
+      hasEOL: true
+    })
+    const items = [
+      row('feeds', 103, 292.8, 19, 5, 'Arrow'),
+      row('Sampling station', 133, 292, 54, 6.5, 'Node'),
+      row('status dashboard', 133, 284, 56, 6.5, 'Node'),
+      row('Figure 1. Monitoring instruments and their relationships.', 23, 245, 216, 9, 'Body')
+    ]
+    const unit = (id: string, indices: number[], x: number, y: number, width: number) => ({
+      id,
+      source: indices.map((index) => items[index].str).join(' '),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: x / 400, y: y / 500, width: width / 400, height: 8 / 500 },
+          items: indices.map((index) => ({ index, text: items[index].str }))
+        }
+      ]
+    })
+    const box = (left: number, right: number) => [
+      OPS.stroke,
+      [new Float32Array([0, left, 270, 1, right, 270, 1, right, 312, 1, left, 312, 4])],
+      [left, 270, right, 312]
+    ]
+    const end = connected ? 128 : 127
+    const paths = [
+      box(20, 100),
+      [OPS.stroke, [new Float32Array([0, 101, 291, 1, end, 291])], [101, 291, end, 291]],
+      box(128, 215)
+    ]
+    const page = {
+      rotate: 0,
+      getViewport: () => ({
+        width: 400,
+        height: 500,
+        transform: [1, 0, 0, -1, 0, 500],
+        convertToViewportPoint: (x: number, y: number) => [x, 500 - y]
+      }),
+      getOperatorList: async () => ({
+        fnArray: paths.map(() => OPS.constructPath),
+        argsArray: paths
+      }),
+      getTextContent: async () => ({ items, styles: {} }),
+      cleanup: () => {}
+    } as unknown as Awaited<ReturnType<PDFDocumentProxy['getPage']>>
+    const caption = unit('caption', [3], 23, 250, 216)
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'node-label',
+      fingerprint: 'node-label',
+      pages: [{ width: 400, height: 500 }],
+      units: [unit('adjacent', [0, 1], 103, 202, 84), unit('node', [2], 133, 210.8, 56), caption]
+    })
+    const result = await preservePdfFigureSources({
+      document: { getPage: async () => page },
+      extraction: { source },
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(result.source.units.map(({ source }) => source)).toEqual(
+      connected
+        ? ['feeds', 'Sampling station status dashboard', caption.source]
+        : ['feeds Sampling station', 'status dashboard', caption.source]
+    )
+    expect(
+      result.source.units.map(({ fragments }) =>
+        fragments.map(({ items }) => items.map(({ index }) => index))
+      )
+    ).toEqual(connected ? [[[0]], [[1], [2]], [[3]]] : [[[0, 1]], [[2]], [[3]]])
+    expect(
+      result.source.units.slice(0, 2).every(({ figure, sourceOnly }) => figure && !sourceOnly)
+    ).toBe(true)
+  }
+)
+
+describe('ruled table header layout', () => {
+  it.each([
+    ['ordinary', false],
+    ['ordinary', true],
+    ['appendix', false],
+    ['appendix', true]
+  ] as const)(
+    'uses ruled table geometry for %s header labels (separated=%s)',
+    async (kind, separated) => {
+      const labels =
+        kind === 'appendix' ? ['Parameter', 'Units', 'Prior'] : ['Rate', 'Count', 'Score']
+      const item = (str: string, x: number, y: number, width: number, height: number) => ({
+        str,
+        dir: 'ltr',
+        fontName: 'f',
+        transform: [4, 0, 0, 4, x, y],
+        width,
+        height,
+        hasEOL: false
+      })
+      const row = (y: number, step: number) =>
+        labels.flatMap((label, index) => [
+          ...(index ? [item(' ', 20 + (index - 1) * step + 8, y, step - 8, 0)] : []),
+          item(label, 20 + index * step, y, 8, 4)
+        ])
+      const headerStep = separated ? 23 : 10
+      const caption = `Table ${kind === 'appendix' ? 'A.1' : '1'}. Settings for three trials.`
+      const items = [
+        ...row(86, headerStep),
+        ...row(75, 23),
+        item('Details', 20, 72, 14, 4),
+        item(caption, 20, 64, 58, 4)
+      ]
+      const unit = (id: string, indices: number[], y: number, width: number) => ({
+        id,
+        source: indices.map((index) => items[index].str).join(' '),
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.2, y, width, height: 0.04 },
+            items: indices.map((index) => ({ index, text: items[index].str }))
+          }
+        ]
+      })
+      const units = [
+        unit('header', [0, 2, 4], 0.108, (2 * headerStep + 8) / 100),
+        unit('body', [5, 7, 9], 0.218, 0.54),
+        unit('details', [10], 0.248, 0.14),
+        unit('caption', [11], 0.328, 0.58)
+      ]
+      const extraction = {
+        source: createPdfTranslationSource({
+          resourceRequestKey: 'table',
+          fingerprint: 'table',
+          pages: [{ width: 100, height: 100 }],
+          units
+        })
+      }
+      const page = {
+        rotate: 0,
+        getTextContent: async () => ({ items, styles: { f: { ascent: 0.8 } } }),
+        getViewport: () => ({
+          width: 100,
+          height: 100,
+          transform: [1, 0, 0, -1, 0, 100],
+          convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+        }),
+        getOperatorList: async () => ({
+          fnArray: [OPS.constructPath, OPS.constructPath, OPS.constructPath],
+          argsArray: [90, 84.5, 69].map((y) => [OPS.stroke, [], [10, y, 90, y]])
+        }),
+        cleanup: () => {}
+      }
+      const result = await preservePdfFigureSources({
+        extraction,
+        document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+        operators: OPS,
+        signal: new AbortController().signal,
+        skipTranslation: false
+      })
+      if (kind === 'appendix') {
+        if (!separated) {
+          expect(result.source.units).toEqual(units)
+          return
+        }
+        const cells = result.source.units.slice(0, labels.length)
+        expect(cells.map(({ source, figure, sourceOnly }) => [source, figure, sourceOnly])).toEqual(
+          labels.map((label) => [label, true, undefined])
+        )
+        expect(cells.flatMap(({ fragments }) => fragments[0].items)).toEqual(
+          units[0].fragments[0].items
+        )
+        expect(result.source.units.slice(labels.length)).toEqual(units.slice(1))
+        return
+      }
+      expect(result.source.units).toEqual([
+        { ...units[0], figure: true, ...(separated ? { sourceOnly: true } : {}) },
+        { ...units[1], figure: true },
+        { ...units[2], figure: true },
+        units[3]
+      ])
+    }
+  )
+})
+
+// Native runs share a baseline, but each cell is separated from the next by a painted rule.
+describe('native dividers in a captioned table header', () => {
+  it.each([
+    'complete',
+    'no body divider',
+    'crossed divider',
+    'shared run',
+    'dashed divider',
+    'clipped divider'
+  ])('requires complete independent owners for the header cells (%s)', async (mode) => {
+    const item = (str: string, x: number, width: number, baseline = 92.7, fontName = 'f') => ({
+      dir: 'ltr',
+      str,
+      transform: [1, 0, 0, 1, x, baseline],
+      width,
+      height: str === ' ' ? 0 : 1,
+      fontName,
+      hasEOL: false
+    })
+    const caption = 'Table 1. Comparison across four columns.'
+    const items = [
+      item('Mode', 15.5, mode === 'crossed divider' ? 12 : 10),
+      item(' ', 25.5, 2.5),
+      item('Level (', 28, 5),
+      item('λ', 33, 1, 92.7, 'm'),
+      item(')', 34, 1),
+      item(' ', 35, 4),
+      item('Type (', 39, 3),
+      item('μ', 42, 1, 92.7, 'm'),
+      item(')', 43, 1),
+      item(' ', 44, 2),
+      item('Minimum total', 46, 20),
+      item('100', 20, 2, 90.7),
+      item('200', 20, 2, 89.5),
+      item(caption, 15, 50, 73)
+    ]
+    const headerItems = [0, 2, 3, 4, 6, 7, 8, 10]
+    const unit = (
+      id: string,
+      source: string,
+      owners: number[],
+      rect: { x: number; y: number; width: number; height: number }
+    ) => ({
+      id,
+      source,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect,
+          items: owners.map((index) => ({ index, text: items[index].str }))
+        }
+      ]
+    })
+    const headerRect = { x: 0.155, y: 0.064, width: 0.505, height: 0.012 }
+    const header = unit('header', 'Mode Level (λ) Type (μ) Minimum total', headerItems, headerRect)
+    const rows = [
+      unit('body', '100', [11], { x: 0.2, y: 0.085, width: 0.02, height: 0.01 }),
+      unit('next', '200', [12], { x: 0.2, y: 0.098, width: 0.02, height: 0.01 })
+    ]
+    const captionUnit = unit('caption', caption, [13], {
+      x: 0.15,
+      y: 0.26,
+      width: 0.5,
+      height: 0.01
+    })
+    const shared = mode === 'shared run' ? [unit('shared', 'Mode', [0], headerRect)] : []
+    const extraction = {
+      source: createPdfTranslationSource({
+        resourceRequestKey: 'table',
+        fingerprint: 'table',
+        pages: [{ width: 100, height: 100 }],
+        units: [header, ...rows, ...shared, captionUnit]
+      })
+    }
+    const lines = [
+      ...[94, 92, 75].map((y) => [15, y, 67, y]),
+      ...[15, 27, 38, 45, 67].map((x) => [x, 92.4, x, 93.6]),
+      ...[15, 27, 38, 45, 67]
+        .filter((x) => mode !== 'no body divider' || x !== 38)
+        .map((x) => [x, 90.4, x, 91.6])
+    ]
+    const fnArray: number[] = [],
+      argsArray: unknown[][] = []
+    for (const [i, [x0, y0, x1, y1]] of lines.entries()) {
+      fnArray.push(OPS.save, OPS.transform)
+      argsArray.push([], [1, 0, 0, 1, x0, y0])
+      if (mode === 'dashed divider' && i === 5) {
+        fnArray.push(OPS.setDash)
+        argsArray.push([[1], 0])
+      }
+      if (mode === 'clipped divider' && i === 5) {
+        fnArray.push(OPS.clip)
+        argsArray.push([])
+      }
+      fnArray.push(OPS.constructPath, OPS.restore)
+      const path = Float32Array.of(0, 0, 0, 1, x1 - x0, y1 - y0)
+      argsArray.push([OPS.stroke, [path], [0, 0, path[4], path[5]]], [])
+    }
+    const page = {
+      rotate: 0,
+      getTextContent: async () => ({ items, styles: { f: { ascent: 0.75 }, m: { ascent: 0.75 } } }),
+      getViewport: () => ({
+        width: 100,
+        height: 100,
+        transform: [1, 0, 0, -1, 0, 100],
+        convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+      }),
+      getOperatorList: async () => ({ fnArray, argsArray }),
+      cleanup: () => {}
+    }
+    const result = await preservePdfFigureSources({
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      extraction,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    const expectedHeader = [[0], [2, 3, 4], [6, 7, 8], [10]]
+    const split = mode === 'complete'
+    expect(result.source.units.map((unit) => unit.id)).toEqual([
+      ...(split
+        ? ['header-cell-1', 'header-cell-2', 'header-cell-3', 'header-cell-4']
+        : ['header']),
+      'body',
+      'next',
+      ...shared.map(({ id }) => id),
+      'caption'
+    ])
+    expect(result.source.units.slice(split ? 4 : 1)).toEqual([
+      ...[...rows, ...shared].map((row) => ({ ...row, figure: true })),
+      captionUnit
+    ])
+    const headerUnits = result.source.units.slice(0, split ? 4 : 1)
+    expect(headerUnits.map((unit) => unit.source)).toEqual(
+      split ? ['Mode', 'Level (λ)', 'Type (μ)', 'Minimum total'] : [header.source]
+    )
+    expect(headerUnits.map((unit) => unit.fragments[0].items.map((owner) => owner.index))).toEqual(
+      split ? expectedHeader : [headerItems]
+    )
+    for (const [i, unit] of headerUnits.entries()) {
+      expect(unit.figure).toBe(true)
+      expect(unit.sourceOnly).toBeUndefined()
+      if (split) {
+        const rect = unit.fragments[0].rect
+        expect(rect.x).toBeCloseTo([0.155, 0.28, 0.39, 0.46][i])
+        expect(rect.width).toBeCloseTo([0.1, 0.07, 0.05, 0.2][i])
+      }
+    }
+  })
+})
+
+it.each([0, 1])(
+  'retains coalesced body labels along proven ruled table rows (%s)',
+  async (shift) => {
+    const item = (str: string, x: number, y: number, width: number, height = 4) => ({
+      str,
+      dir: 'ltr',
+      fontName: 'f',
+      transform: [4, 0, 0, 4, x, y],
+      width,
+      height,
+      hasEOL: false
+    })
+    const caption = 'Table 1. Readings grouped by operation and control.'
+    const items = [
+      item(caption, 20, 90, 58),
+      ...['Mode', 'Reading', 'Status', 'Control'].flatMap((label, i) => [
+        ...(i ? [item(' ', i * 21 - 3, 84, 13, 0)] : []),
+        item(label, 10 + 21 * i, 84, 8)
+      ]),
+      ...[77, 72.25, 67.5].flatMap((y, i) => [
+        item(['Stable', 'Slowed', 'Reset'][i], 10, y, 10),
+        item(String(i + 3), 31, y + (i === 1 ? shift : 0), 3),
+        item(['Passed', 'Delayed', 'Restarted'][i], 52, y, 10),
+        item('Measured', 73, y, 10)
+      ])
+    ]
+    const unit = (id: string, indices: number[], rect: [number, number, number, number]) => ({
+      id,
+      source: indices.map((index) => items[index].str).join(' '),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: rect[0], y: rect[1], width: rect[2], height: rect[3] },
+          items: indices.map((index) => ({ index, text: items[index].str }))
+        }
+      ]
+    })
+    const units = [
+      unit('caption', [0], [0.2, shift ? 0.083 : 0.089, 0.58, 0.04]),
+      unit('header', [1, 3, 5, 7], [0.1, 0.13, 0.71, 0.04]),
+      unit('labels', [8, 12, 16], [0.1, 0.198, 0.1, 0.135]),
+      { ...unit('numbers', [9, 13, 17], [0.31, 0.198, 0.03, 0.135]), sourceOnly: true as const },
+      unit('status', [10, 14, 18], [0.52, 0.198, 0.1, 0.135]),
+      unit('single', [11], [0.73, 0.198, 0.1, 0.04]),
+      unit('controls', [15, 19], [0.73, 0.2455, 0.1, 0.0875])
+    ]
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'ruled-rows',
+      fingerprint: 'ruled-rows',
+      pages: [{ width: 100, height: 100 }],
+      units
+    })
+    const page = {
+      rotate: 0,
+      getTextContent: async () => ({ items, styles: { f: { ascent: 0.8 } } }),
+      getViewport: () => ({
+        width: 100,
+        height: 100,
+        transform: [1, 0, 0, -1, 0, 100],
+        convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+      }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath, OPS.constructPath, OPS.constructPath],
+        argsArray: [87, 81.5, 64].map((y) => [OPS.stroke, [], [10, y, 90, y]])
+      }),
+      cleanup: () => {}
+    }
+    const result = await preservePdfFigureSources({
+      extraction: { source },
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(result.source.units.map(({ fragments }) => fragments)).toEqual(
+      units.map(({ fragments }) => fragments)
+    )
+    expect(result.source.units.filter(({ sourceOnly }) => sourceOnly).map(({ id }) => id)).toEqual(
+      shift ? ['header', 'numbers'] : ['header', 'labels', 'numbers', 'status', 'controls']
+    )
+  }
+)
+
+it.each([false, true])(
+  'keeps cited frequency legend rows native and translates the first note only (%s)',
+  async (foreignText) => {
+    const labels = [
+      'AA 80 MHz (this work)',
+      ...Array.from({ length: 5 }, (_, i) => `BB ${i + 2} GHz (Reader et al., 2021)`)
+    ]
+    const legend = {
+      id: 'legend',
+      source: labels.join(' '),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.29, y: 0.2, width: 0.54, height: 0.24 },
+          items: labels.map((text, index) => ({ index, text }))
+        }
+      ]
+    }
+    const caption = {
+      id: 'caption',
+      source: 'Figure 1. Results from independent observations.',
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.15, y: 0.57, width: 0.65, height: 0.04 },
+          items: [{ index: 6, text: 'Figure 1. Results from independent observations.' }]
+        }
+      ]
+    }
+    const corner = (
+      x: number,
+      y: number,
+      fromX: number,
+      fromY: number,
+      toX: number,
+      toY: number
+    ) => [
+      1,
+      x + fromX,
+      y + fromY,
+      2,
+      x + fromX / 3,
+      y + fromY / 3,
+      x + toX / 3,
+      y + toY / 3,
+      x + toX,
+      y + toY
+    ]
+    const frame = Float32Array.from([
+      0,
+      42,
+      117,
+      ...corner(170, 117, -2, 0, 0, 2),
+      ...corner(170, 183, 0, -2, -2, 0),
+      ...corner(40, 183, 2, 0, 0, -2),
+      ...corner(40, 117, 0, 2, 2, 0),
+      4
+    ])
+    const item = (str: string, x: number, y: number, width: number) => ({
+      str,
+      dir: 'ltr',
+      fontName: 'axis',
+      width,
+      height: 6,
+      transform: [6, 0, 0, 6, x, y]
+    })
+    const page = {
+      rotate: 0,
+      getViewport: () => ({
+        width: 200,
+        height: 220,
+        transform: [1, 0, 0, -1, 0, 220],
+        convertToViewportPoint: (x: number, y: number) => [x, 220 - y]
+      }),
+      getTextContent: async () => ({
+        items: [
+          ...labels.map((label, index) => item(label, 58, 171 - index * 9, index ? 108 : 73)),
+          item(caption.source, 30, 92, 130),
+          ...(foreignText ? [item('another label', 81, 170, 31)] : [])
+        ],
+        styles: { axis: { ascent: 0.8, descent: -0.2, vertical: false } }
+      }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath, OPS.constructPath],
+        argsArray: [
+          [OPS.stroke, [], [20, 100, 188, 200]],
+          [OPS.fillStroke, [frame], [40, 117, 170, 183]]
+        ]
+      }),
+      cleanup: () => {}
+    }
+    const { source } = await preservePdfFigureSources({
+      extraction: {
+        source: createPdfTranslationSource({
+          resourceRequestKey: 'frequency-legend',
+          fingerprint: 'frequency-legend',
+          pages: [{ width: 200, height: 220 }],
+          units: [legend, caption]
+        })
+      },
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    if (foreignText) {
+      expect(source.units.map(({ id }) => id)).toEqual(['legend', 'caption'])
+      return
+    }
+    expect(source.units.map(({ source }) => source)).toEqual([...labels, caption.source])
+    expect(source.units.filter((unit) => !unit.sourceOnly).map(({ source }) => source)).toEqual([
+      labels[0],
+      caption.source
+    ])
+    expect(
+      source.units
+        .slice(0, labels.length)
+        .flatMap((unit) => unit.fragments.flatMap((fragment) => fragment.items))
+    ).toEqual(legend.fragments[0].items)
+  }
+)
+
+it.each(['complete', 'no axis', 'irregular spacing'])(
+  'separates a plot title from its ordinal tick only with the complete native axis (%s)',
+  async (shape) => {
+    const title = 'Batch Index'
+    const caption = 'Figure 1. Measurements across successive trials.'
+    const width = 200
+    const height = 220
+    const numbers = ['12', '14', '16', '18', '20']
+    const text = (str: string, x: number, y: number, font: number, width: number) => ({
+      str,
+      dir: 'ltr',
+      fontName: 'axis',
+      width,
+      height: font,
+      transform: [font, 0, 0, font, x, y]
+    })
+    const items = [
+      ...numbers.map((value, index) =>
+        text(
+          value,
+          36 + index * 30 + (shape === 'irregular spacing' && index === 1 ? 5 : 0),
+          179,
+          5,
+          8
+        )
+      ),
+      text(title, 79, 184, 6, 42),
+      text(caption, 18, 95, 8, 158)
+    ]
+    const fragment = (indices: number[], x: number, y: number, w: number, h: number) => ({
+      pageNumber: 1,
+      rect: { x: x / width, y: y / height, width: w / width, height: h / height },
+      items: indices.map((index) => ({ index, text: items[index].str }))
+    })
+    const mixed = {
+      id: 'merged',
+      source: title + numbers[2],
+      fragments: [fragment([2, 5], 79, 31, 42, 12)]
+    }
+    const units = [
+      ...numbers.flatMap((source, index) =>
+        index === 2
+          ? [mixed]
+          : [
+              {
+                id: 'tick-' + index,
+                source,
+                sourceOnly: true as const,
+                preserve: 'literal' as const,
+                fragments: [fragment([index], items[index].transform[4], 37, 8, 5)]
+              }
+            ]
+      ),
+      { id: 'caption', source: caption, fragments: [fragment([6], 18, 118, 158, 8)] }
+    ]
+    const page = {
+      rotate: 0,
+      getViewport: () => ({
+        width,
+        height,
+        transform: [1, 0, 0, -1, 0, height],
+        convertToViewportPoint: (x: number, y: number) => [x, height - y]
+      }),
+      getTextContent: async () => ({
+        items,
+        styles: { axis: { ascent: 0.8, descent: -0.2, vertical: false } }
+      }),
+      getOperatorList: async () => ({
+        fnArray: shape === 'no axis' ? [OPS.constructPath] : [OPS.constructPath, OPS.constructPath],
+        argsArray: [
+          [OPS.stroke, [], [15, 112, 185, 190]],
+          ...(shape === 'no axis'
+            ? []
+            : [[OPS.stroke, [Float32Array.from([0, 20, 176, 1, 180, 176])], [20, 176, 180, 176]]])
+        ]
+      }),
+      cleanup: () => {}
+    }
+    const { source } = await preservePdfFigureSources({
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      extraction: {
+        source: createPdfTranslationSource({
+          resourceRequestKey: 'ordinal-axis',
+          fingerprint: 'ordinal-axis',
+          pages: [{ width, height }],
+          units
+        })
+      },
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(source.units.filter((unit) => !unit.sourceOnly).map((unit) => unit.source)).toEqual([
+      shape === 'complete' ? title : mixed.source,
+      caption
+    ])
+    expect(source.units.flatMap((u) => u.fragments.flatMap((f) => f.items))).toEqual(
+      units.flatMap((u) => u.fragments.flatMap((f) => f.items))
+    )
+    if (shape === 'complete') {
+      expect(source.units.find((unit) => unit.source === numbers[2])).toMatchObject({
+        sourceOnly: true,
+        preserve: 'literal',
+        figure: true
+      })
+    }
+  }
+)
+
+it.each([0, 1])(
+  'splits adjacent parameter table labels only across verified native rows (%s)',
+  async (shift) => {
+    const item = (str: string, x: number, y: number, width: number, fontName = 'f') => ({
+      str,
+      dir: 'ltr',
+      fontName,
+      transform: [3, 0, 0, 3, x, y],
+      width,
+      height: 3,
+      hasEOL: false
+    })
+    const caption = 'Table 1. Calibration settings for the experiment.'
+    const labels = ['Source gain', 'Remaining phase', 'Delay offset', 'Stable duration']
+    const items = [
+      item(caption, 10, 94, 60),
+      item('Symbol', 10, 87.8, 12),
+      item('Setting name', 30, 87.8, 17),
+      item('Recorded value', 61, 87.8, 13),
+      item('Units', 82, 87.8, 6),
+      ...[80.8, 76.5, 72.2 - shift, 67.9].flatMap((y, n) => [
+        item(['da', 'α', 'β', 'γ'][n], 15, y, 2, 'm'),
+        item(labels[n], 30, y, 18),
+        item(String(n + 2), 66, y, 2),
+        item('ms', 84, y, 2)
+      ])
+    ]
+    const fragment = (indices: number[]) => {
+      const members = indices.map((i) => items[i])
+      const minX = Math.min(...members.map((i) => i.transform[4]))
+      const maxX = Math.max(...members.map((i) => i.transform[4] + i.width))
+      const baseline = members[0].transform[5]
+      return {
+        pageNumber: 1,
+        rect: {
+          x: minX / 100,
+          y: (100 - baseline - 2.4) / 100,
+          width: (maxX - minX) / 100,
+          height: 0.03
+        },
+        items: indices.map((index) => ({ index, text: items[index].str }))
+      }
+    }
+    const unit = (rows: number[][], keep = false) => ({
+      id: 'owner-' + rows[0][0],
+      source: rows
+        .flat()
+        .map((i) => items[i].str)
+        .join(' '),
+      fragments: rows.map(fragment),
+      ...(keep ? { sourceOnly: true as const } : {})
+    })
+    const units = [
+      unit([[0]]),
+      unit([[1, 2]]),
+      unit([[3, 4]]),
+      unit([[5, 6]]),
+      unit([[10], [14, 15], [18]]),
+      ...[[7, 8], [9], [11, 12], [13], [16], [17], [19, 20]].map((row) => unit([row], true))
+    ]
+    const extraction = {
+      source: createPdfTranslationSource({
+        resourceRequestKey: 'settings-table',
+        fingerprint: 'settings-table',
+        pages: [{ width: 100, height: 100 }],
+        units
+      })
+    }
+    const page = {
+      rotate: 0,
+      getTextContent: async () => ({ items, styles: { f: { ascent: 0.8 }, m: { ascent: 0.8 } } }),
+      getViewport: () => ({
+        width: 100,
+        height: 100,
+        transform: [1, 0, 0, -1, 0, 100],
+        convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+      }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath, OPS.constructPath, OPS.constructPath],
+        argsArray: [90.2, 84.5, 65.5].map((y) => [OPS.stroke, [], [10, y, 90, y]])
+      }),
+      cleanup: () => {}
+    }
+    const result = await preservePdfFigureSources({
+      extraction,
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    const eligible = result.source.units.filter((u) => !u.sourceOnly).map((u) => u.source)
+    expect(eligible).toEqual(
+      shift
+        ? units.filter((u) => !u.sourceOnly).map((u) => u.source)
+        : [caption, 'Symbol', 'Setting name', 'Recorded value', 'Units', ...labels]
+    )
+    const claims = result.source.units.flatMap((u) =>
+      u.fragments.flatMap((f) => f.items.map((i) => i.index))
+    )
+    expect(claims.sort((a, b) => a - b)).toEqual(items.map((_, i) => i))
+    if (!shift) {
+      const body = result.source.units.filter(({ source }) => labels.includes(source))
+      expect(body.map(({ fragments }) => fragments[0].rect.x)).toEqual([0.3, 0.3, 0.3, 0.3])
+      expect(body.every((u) => u.figure && u.fragments[0].items.length === 1)).toBe(true)
+      expect(
+        result.source.units.filter((u) => u.preserve === 'literal').map((u) => u.source)
+      ).toEqual(['da', '4'])
+    }
   }
 )

@@ -81,6 +81,7 @@ it('exposes only supported consumer operations, not private collectors or format
       'flushDiagnosticsWithTimeout',
       'timedStartupStorageProbe',
       'boundedRuntimeDiagnostic',
+      'redactAbsoluteDiagnosticPaths',
       'redactRuntimeDiagnosticText',
       'redactRuntimeDiagnosticValue',
       'runtimeChildProcessErrorFields',

@@ -399,7 +399,9 @@ it('retains the confirmed feedback and previous draft when reauthoring a failed 
     const writeScreenplay = vi
       .fn()
       .mockResolvedValue(JSON.stringify({ ...spec, title: 'Qualified evidence' }))
-    const readPreviousDraft = vi.fn().mockResolvedValue(previousDraft)
+    const readPreviousDraft = vi.fn(async (key: string) =>
+      key === 'screenplay' ? previousDraft : undefined
+    )
     await expect(
       authorResearchFilmSource({
         source,
@@ -418,7 +420,69 @@ it('retains the confirmed feedback and previous draft when reauthoring a failed 
       error: expect.stringContaining('Keep the uncertainty in the title.')
     })
     expect(writeScreenplay.mock.calls[0][2].error).toContain('The original title was too strong.')
-    expect(readPreviousDraft).toHaveBeenCalledExactlyOnceWith('screenplay')
+    expect(readPreviousDraft).toHaveBeenCalledWith('screenplay')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  {
+    kind: 'invalid shared helper',
+    path: 'anims/shared.js',
+    output: "const value = 'unfinished",
+    finding: 'Shared animation helper anims/shared.js has invalid JavaScript syntax.'
+  },
+  {
+    kind: 'fenced whitespace',
+    path: 'anims/hook.js',
+    output: '```js\n \t\n```',
+    finding: 'Animation anims/hook.js must contain non-empty JavaScript source.'
+  },
+  {
+    kind: 'empty fence',
+    path: 'anims/hook.js',
+    output: '```js\n```',
+    finding: 'Animation anims/hook.js must contain non-empty JavaScript source.'
+  }
+])('reports and guides correction of $kind', async ({ path, output, finding }) => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-animation-review-'))
+  try {
+    const story = structuredClone(spec)
+    Object.assign(story.scenes[0].panels[1], { use: ['anims/shared.js'] })
+    const writeAnimation = vi.fn<
+      NonNullable<Parameters<typeof authorResearchFilmSource>[0]['author']['writeAnimation']>
+    >(async (_, input) => (input.path === path ? output : '// Valid JavaScript.'))
+    const options = {
+      source,
+      directory,
+      author: { writeScreenplay: async () => JSON.stringify(story), writeAnimation },
+      signal: new AbortController().signal
+    }
+    const message = `${finding} Return a complete JavaScript replacement.`
+    await expect(authorResearchFilmSource(options)).rejects.toMatchObject({
+      stage: 'visual',
+      findings: [message]
+    })
+    expect(writeAnimation.mock.calls.filter(([, input]) => input.path === path)).toHaveLength(2)
+
+    const revisionDirectory = join(directory, 'revision')
+    await mkdir(revisionDirectory)
+    writeAnimation.mockClear().mockResolvedValue('// Corrected JavaScript.')
+    const feedback = 'Keep the drawing simple and label the estimate.'
+    await authorResearchFilmSource({
+      ...options,
+      directory: revisionDirectory,
+      revisionGuidance: {
+        feedback,
+        findings: [message],
+        readPreviousDraft: async () => undefined
+      }
+    })
+    const correction = writeAnimation.mock.calls.find(([, input]) => input.path === path)?.[3]
+    expect(correction?.error).toContain(feedback)
+    expect(correction?.error).toContain(message)
+    expect(await readFile(join(revisionDirectory, path), 'utf8')).toBe('// Corrected JavaScript.')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

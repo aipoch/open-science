@@ -5,6 +5,16 @@ export class ResearchFilmDraftError extends Error {}
 export class ResearchFilmIncompleteError extends ResearchFilmDraftError {}
 export class ResearchFilmOutputLimitError extends ResearchFilmIncompleteError {}
 
+export class ResearchFilmReviewFailure extends Error {
+  constructor(
+    readonly stage: 'script' | 'visual' | 'replay',
+    readonly findings: string[],
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 export type FilmAuthoringCheckpoint = {
   read(key: string): Promise<string | undefined>
   save(key: string, value: string): Promise<void>

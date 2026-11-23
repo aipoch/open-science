@@ -1,3 +1,4 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { recordMainAgentContext } from './main-agent-process-ownership'
 import { HARNESS_EPHEMERAL_SESSION, HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
@@ -81,6 +82,10 @@ export class AcpProviderSessionCreator {
       const connection = await this.deps.ensureConnected(cwd)
       this.deps.assertCurrentConnection(connection)
       const startupBackend = this.deps.currentBackend()
+      if (requiresTaskRunTracing(request)) {
+        await assertTaskRunTracingReady(startupBackend.framework.id, connection)
+        this.deps.assertCurrentConnection(connection)
+      }
       const startupGeneration = this.deps.registry.startupGeneration
       const specialist = await this.resolveSpecialist(request.specialistId, startupBackend)
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)

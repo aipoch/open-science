@@ -2417,6 +2417,65 @@ describe('task CLI', () => {
     })
   })
 
+  it.each([[], ['--session', 'session-1']])(
+    'submits --otel-traces for one Run %j',
+    async (...sessionArgs) => {
+      const startRun = vi.fn().mockResolvedValue({ id: 'run-1', status: 'running' })
+      await runTaskCommand(
+        parseCliArgs([
+          'run',
+          '--project',
+          'project-1',
+          '--prompt',
+          'Trace',
+          '--otel-traces',
+          '--json',
+          ...sessionArgs
+        ]),
+        {
+          connect: async () => ({ listProjects, startRun }),
+          log: vi.fn(),
+          stdinIsTTY: true
+        }
+      )
+      expect(startRun).toHaveBeenCalledWith(
+        {
+          project: 'project-1',
+          prompt: 'Trace',
+          otelTraces: true,
+          ...(sessionArgs.length ? { sessionId: 'session-1' } : {})
+        },
+        { requestId: expect.any(String) }
+      )
+    }
+  )
+
+  it('limits --otel-traces to Run creation and avoids receipt lookup for unsupported hosts', async () => {
+    for (const args of [
+      ['run', 'status', 'r'],
+      ['run', 'wait', 'r'],
+      ['run', 'cancel', 'r'],
+      ['settings', 'agent-routing']
+    ]) {
+      expect(() => parseCliArgs([...args, '--otel-traces'])).toThrow(
+        '--otel-traces requires starting a run'
+      )
+    }
+    const message = 'Update the server before submitting.'
+    const startRun = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error(message), { code: 'unsupported_capability' }))
+    await expect(
+      runTaskCommand(
+        parseCliArgs(['run', '--project', 'project-1', '--prompt', 'Trace', '--otel-traces']),
+        {
+          connect: async () => ({ listProjects, startRun }),
+          stdinIsTTY: true
+        }
+      )
+    ).rejects.toMatchObject({ message })
+  })
+
   it('accepts unattended runs and rejects incompatible prompt controls', () => {
     expect(parseCliArgs(['run', '--permission-prompts', 'none']).options.permissionPrompts).toBe(
       'none'

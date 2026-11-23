@@ -64,6 +64,8 @@ const getValidationDatabaseSeed = (): Promise<string> => {
 }
 
 export const assertPortablePackageStorageKey = (key: string): void => {
+  if (/^notebooks\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?\.pending-runs(?:\/|$)/iu.test(key))
+    throw new Error('Reserved Notebook pending Run path.')
   const segments = key.split('/')
   const isEnvironmentManifest =
     /^runtime\/provenance\/environment-manifests\/[a-f0-9]{64}\.json$/u.test(key)

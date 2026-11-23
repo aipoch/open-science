@@ -120,6 +120,7 @@ type AnimatedResizablePanelOptions = {
 }
 
 type AnimatedResizablePanel = {
+  animationTarget: number | null
   panelRef: React.RefObject<PanelImperativeHandle | null>
   separatorRef: React.RefObject<HTMLDivElement | null>
   minSize: string
@@ -145,7 +146,7 @@ const useAnimatedResizablePanel = ({
   const animationRevisionRef = useRef(0)
   const lastOpenSizeRef = useRef(defaultOpenSize)
   const hasSyncedInitialSizeRef = useRef(false)
-  const [isMinSizeRelaxed, setIsMinSizeRelaxed] = useState(false)
+  const [animationTarget, setAnimationTarget] = useState<number | null>(null)
 
   const animatePanelSize = useCallback(
     (
@@ -184,12 +185,12 @@ const useAnimatedResizablePanel = ({
           if (direction === 'opening') lastOpenSizeRef.current = targetSize
           animationDirectionRef.current = null
           animationRef.current = null
-          setIsMinSizeRelaxed(false)
+          setAnimationTarget(null)
           return
         }
 
         animationDirectionRef.current = direction
-        setIsMinSizeRelaxed(true)
+        setAnimationTarget(targetSize)
         animationFrameRef.current = window.requestAnimationFrame(() => {
           if (animationRevisionRef.current !== revision) return
           animationFrameRef.current = null
@@ -206,7 +207,7 @@ const useAnimatedResizablePanel = ({
               if (didResize && direction === 'opening') lastOpenSizeRef.current = targetSize
               animationDirectionRef.current = null
               animationRef.current = null
-              setIsMinSizeRelaxed(false)
+              setAnimationTarget(null)
             }
           })
         })
@@ -303,7 +304,8 @@ const useAnimatedResizablePanel = ({
   return {
     panelRef,
     separatorRef,
-    minSize: isMinSizeRelaxed ? PANEL_COLLAPSED_SIZE_CSS : `${minOpenSize}%`,
+    animationTarget,
+    minSize: animationTarget !== null ? PANEL_COLLAPSED_SIZE_CSS : `${minOpenSize}%`,
     onResize
   }
 }
@@ -423,6 +425,24 @@ const useWorkspacePanelLayout = (
     onPanelStateChange: previewPort.syncState,
     collapseFocusTargetRef: previewToggleRef
   })
+
+  useLayoutEffect(() => {
+    if (isMobile || !preview.animationTarget) return
+    const group = preview.separatorRef.current?.parentElement
+    const panel = group?.querySelector<HTMLElement>(':scope > #right-panel-resizable')
+    if (!group || !panel) return
+    // Separators take space outside the percentage-based panel allocation.
+    const available = Array.from(group.querySelectorAll(':scope > [data-panel]')).reduce(
+      (sum, child) => sum + child.getBoundingClientRect().width,
+      0
+    )
+    const width = (available * preview.animationTarget) / 100
+    if (!width) return
+    panel.style.setProperty('--notebook-opening-extra-width', `calc(${width}px - 100cqw)`)
+    return () => {
+      panel.style.removeProperty('--notebook-opening-extra-width')
+    }
+  }, [isMobile, preview.animationTarget, preview.separatorRef])
 
   useEffect(() => {
     sidebarStateRef.current = sidebarState
