@@ -3,6 +3,7 @@
   "alwaysLanes": ["policy"],
   "laneOrder": [
     "policy",
+    "update_occupancy",
     "docs",
     "format",
     "lint",
@@ -39,6 +40,7 @@
   ],
   "laneBundles": {
     "policy": "policy",
+    "update_occupancy": "policy",
     "docs": "static",
     "format": "static",
     "lint": "static",
@@ -148,6 +150,16 @@
         "CODEOWNERS"
       ],
       "capabilities": ["ci_integrity_surface"]
+    },
+    {
+      "id": "update_occupancy_surface",
+      "role": "overlay",
+      "paths": [
+        "src/main/update/**",
+        "packages/open-science/installation-startup.cjs",
+        ".github/workflows/update-occupancy.yml"
+      ],
+      "capabilities": ["update_occupancy"]
     },
     {
       "id": "documentation",
@@ -931,6 +943,10 @@
     "ci_integrity_surface": {
       "consumers": [],
       "lanes": []
+    },
+    "update_occupancy": {
+      "consumers": [],
+      "lanes": ["update_occupancy"]
     },
     "documentation": {
       "consumers": [],

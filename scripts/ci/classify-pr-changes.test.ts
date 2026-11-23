@@ -39,6 +39,14 @@ const listSourceFiles = (directory: string): string[] =>
 const windowsRuntimeSignal =
   /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
+it.each([
+  'src/main/update/new-installation-helper.ts',
+  'packages/open-science/installation-startup.cjs',
+  '.github/workflows/update-occupancy.yml'
+])('selects the update occupancy gate for %s', (path) => {
+  expect(classifyChanges([{ path, status: 'modified' }]).lanes).toContain('update_occupancy')
+})
+
 describe('declared test evidence without source ownership', () => {
   const path = 'scripts/unowned-consumer.test.ts'
   const moduleManifest = {

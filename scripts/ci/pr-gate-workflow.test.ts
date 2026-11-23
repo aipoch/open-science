@@ -2736,6 +2736,9 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
       })
     ).toBe(0)
     expect(workflow.jobs.gate.needs).toContain('update_occupancy')
+    expect(workflow.jobs.update_occupancy.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy')"
+    )
     expect(step.env?.UPDATE_OCCUPANCY_REQUIRED).toBe(
       workflow.jobs.update_occupancy.if?.replace("needs.preflight.result == 'success' && ", '')
     )
