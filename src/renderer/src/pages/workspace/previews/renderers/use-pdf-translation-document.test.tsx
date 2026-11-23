@@ -1082,11 +1082,11 @@ describe('translated PDF ownership', () => {
     }
   )
 
-  it.each(
-    readPdfTranslationCases<{ name: string; shift: number; duplicate?: boolean; expected: string }>(
-      'shared-fragment-native-run-verification.jsonl'
-    )
-  )(
+  it.each([
+    { name: 'serialization-rounding', shift: 0.006, duplicate: false, expected: 'ready' },
+    { name: 'moved-run', shift: 0.02, duplicate: false, expected: 'error' },
+    { name: 'extra-copy', shift: 0.006, duplicate: true, expected: 'error' }
+  ])(
     'verifies a retained run shared by two lines: $name',
     async ({ shift, duplicate, expected }) => {
       const f = fixture()
