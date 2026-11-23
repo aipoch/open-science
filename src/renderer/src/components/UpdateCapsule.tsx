@@ -118,7 +118,6 @@ const UpdateCapsule = ({
     (status.state === 'error' && Boolean(status.latest))
   if (
     !isVisible ||
-    (status.automaticDownloads && status.state === 'available') ||
     (status.backgroundDownload && (status.state === 'downloading' || status.state === 'error'))
   )
     return null

@@ -31,11 +31,11 @@ afterEach(() => {
 })
 
 describe('UpdateCapsule', () => {
-  it('keeps automatic preparation quiet and exposes a static restart action once ready', () => {
+  it('keeps automatic preparation visible and exposes a static restart action once ready', () => {
     const status = { current: '1', latest: '2', automaticDownloads: true }
     useUpdateStore.setState({ status: { ...status, state: 'available' } })
     act(() => root.render(<UpdateCapsule />))
-    expect(container.children).toHaveLength(0)
+    expect(container.querySelector('button')?.textContent).toContain('Update')
     act(() =>
       useUpdateStore.setState({
         status: { ...status, state: 'downloading', backgroundDownload: true }
@@ -44,6 +44,17 @@ describe('UpdateCapsule', () => {
     expect(container.children).toHaveLength(0)
     act(() => useUpdateStore.setState({ status: { ...status, state: 'ready' } }))
     expect(container.querySelector('button')?.textContent).toContain('Restart')
+    expect(container.querySelector('.update-reminder-attention')).toBeNull()
+  })
+
+  it('keeps the workspace action visible while an automatic download is available', () => {
+    useUpdateStore.setState({
+      status: { state: 'available', current: '1', latest: '2', automaticDownloads: true }
+    })
+
+    act(() => root.render(<UpdateCapsule variant="session" />))
+
+    expect(container.querySelector('button[data-variant="session"]')?.textContent).toBe('Update')
     expect(container.querySelector('.update-reminder-attention')).toBeNull()
   })
 
