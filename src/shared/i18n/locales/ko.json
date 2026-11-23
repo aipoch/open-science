@@ -8945,14 +8945,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "프로젝트 파일을 업데이트하지 못했습니다. 저장된 버전은 계속 사용할 수 있습니다. 폴더에 접근할 수 있을 때 다시 시도하세요.",
     "The project file has changed outside the app. Review the replacement before updating it.": "프로젝트 파일이 앱 외부에서 변경되었습니다. 업데이트하기 전에 교체 내용을 검토하세요.",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "저장된 버전은 사용할 수 있지만 현재 사본은 아직 프로젝트 폴더에 저장되지 않았습니다.",
-    "Update project file": "프로젝트 파일 업데이트",
-    "Session outputs": "세션 출력",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "앞으로 게시하는 파일과 생성된 Notebook 출력은 세션별 폴더에 저장됩니다. 기존 파일은 원래 위치에 유지됩니다.",
-    "Session outputs enabled": "세션 출력이 활성화됨",
-    "Enable session outputs when saving": "저장 시 세션 출력 활성화",
-    "Enable session outputs?": "세션 출력을 활성화하시겠습니까?",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "프로젝트 기록을 업그레이드합니다. 버전 1만 지원하는 이전 클라이언트에서는 이 프로젝트를 열 수 없습니다. 저장하기 전에 실행 중인 작업을 완료하거나 중지하세요. 기존 파일과 저장된 버전은 그대로 유지되며 모든 세션의 향후 출력은 세션 폴더를 사용합니다. 관리되는 실행 취소 백업은 이 컴퓨터에 남습니다. 단순 상대 출력 경로를 사용하는 네이티브 코드는 계속 작업 디렉터리를 기준으로 합니다.",
-    "Enable session outputs": "세션 출력 활성화",
-    "Finish or stop running work before enabling session outputs.": "세션 출력을 활성화하기 전에 실행 중인 작업을 완료하거나 중지하세요."
+    "Update project file": "프로젝트 파일 업데이트"
   }
 }

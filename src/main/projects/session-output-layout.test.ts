@@ -23,7 +23,6 @@ vi.mock('@aipoch/durable-files', async (importOriginal) => {
   return { ...actual, writeDurableJsonFile: vi.fn(actual.writeDurableJsonFile) }
 })
 import {
-  enableProjectSessionOutputs,
   initializeProjectRecordStorage,
   readProjectRecordManifest,
   registerProjectRecordStorage
@@ -57,17 +56,11 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-it('enables v1 only on request without moving or exporting old files and preserves stable relative IDs', async () => {
+it('routes only bound project outputs by stable project and session IDs', async () => {
   await writeFile(join(projectRoot, 'old-result.csv'), 'original')
-  expect(getProjectSessionOutputLayout(storageRoot, 'project-id', 'app-session')).toBeUndefined()
   expect(
     getProjectSessionOutputLayout(storageRoot, 'managed-project', 'app-session')
   ).toBeUndefined()
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
-  expect(readProjectRecordManifest(projectRoot)).toMatchObject({
-    version: 2,
-    outputLayout: 'session-v1'
-  })
   expect(await readFile(join(projectRoot, 'old-result.csv'), 'utf8')).toBe('original')
   const layout = getProjectSessionOutputLayout(storageRoot, 'project-id', 'app-session')!
   expect(layout).toEqual({
@@ -76,7 +69,6 @@ it('enables v1 only on request without moving or exporting old files and preserv
     artifactDirectoryRelativePath: 'artifacts/project-id/app-session'
   })
   await expect(readFile(join(projectRoot, 'artifacts'))).rejects.toMatchObject({ code: 'ENOENT' })
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const moved = projectRoot + '-moved'
   await rename(projectRoot, moved)
   await registerProjectRecordStorage(storageRoot, moved, 'project-id')
@@ -90,7 +82,7 @@ it('enables v1 only on request without moving or exporting old files and preserv
   expect(() => getNotebookSessionOutputRelativePath('project-id', '../provider')).toThrow()
 })
 
-it.each([{ version: 2, outputLayout: 'future-layout' }, { version: 3 }, { version: 2 }])(
+it.each([{ version: 2 }, { format: 'other-project' }, { layout: 'future-layout' }])(
   'rejects unsupported manifests without a managed fallback: %j',
   async (layout) => {
     const manifest = readProjectRecordManifest(projectRoot)!
@@ -106,7 +98,6 @@ it.each([{ version: 2, outputLayout: 'future-layout' }, { version: 3 }, { versio
 )
 
 it('provisions only owned session leaves, keeps ownership portable and refuses links and unowned leaves', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const relative = 'notebooks/project-id/app-session/data'
   const [first, second] = await Promise.all([
     ensureProjectNotebookOutputDirectory(storageRoot, 'project-id', 'app-session'),
@@ -141,7 +132,6 @@ it('provisions only owned session leaves, keeps ownership portable and refuses l
 it.each(['before rename', 'after rename'] as const)(
   'recovers a prepared directory after failure %s without adopting unrelated files',
   async (boundary) => {
-    await enableProjectSessionOutputs(storageRoot, 'project-id')
     const target = join(projectRoot, 'notebooks/project-id/app-session/data')
     const actualRename =
       await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -171,7 +161,6 @@ it.each(['before rename', 'after rename'] as const)(
 )
 
 it('never exposes an unrecorded public leaf when the prepared journal write fails', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   vi.mocked(writeDurableJsonFile).mockRejectedValueOnce(new Error('journal unavailable'))
   await expect(
     ensureProjectNotebookOutputDirectory(storageRoot, 'project-id', 'app-session')
@@ -185,7 +174,6 @@ it('never exposes an unrecorded public leaf when the prepared journal write fail
 })
 
 it('retries the committed journal write against the same exposed directory identity', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const actual =
     await vi.importActual<typeof import('@aipoch/durable-files')>('@aipoch/durable-files')
   vi.mocked(writeDurableJsonFile)
@@ -208,7 +196,6 @@ it('retries the committed journal write against the same exposed directory ident
 })
 
 it('refuses a replaced committed directory or a copied project without silently adopting new identities', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const target = (await ensureProjectNotebookOutputDirectory(
     storageRoot,
     'project-id',
@@ -254,7 +241,6 @@ it('refuses a replaced committed directory or a copied project without silently 
 })
 
 it('does not overwrite an unrelated leaf that appears while a prepared directory awaits retry', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   vi.mocked(rename).mockRejectedValueOnce(new Error('simulated crash'))
   await expect(
     ensureProjectNotebookOutputDirectory(storageRoot, 'project-id', 'app-session')
@@ -269,7 +255,6 @@ it('does not overwrite an unrelated leaf that appears while a prepared directory
 })
 
 it('recreates only an empty missing leaf on explicit Notebook use, without restoring deleted output files', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const target = (await ensureProjectNotebookOutputDirectory(
     storageRoot,
     'project-id',
@@ -294,7 +279,6 @@ it('recreates only an empty missing leaf on explicit Notebook use, without resto
 })
 
 it('explicit revalidation preserves only recorded paths and rejects links or another project subtree', async () => {
-  await enableProjectSessionOutputs(storageRoot, 'project-id')
   const target = (await ensureProjectNotebookOutputDirectory(
     storageRoot,
     'project-id',

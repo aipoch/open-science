@@ -192,8 +192,7 @@ describe('Project folder file authority', () => {
     const storageRoot = join(root, 'data')
     await initializeProjectRecordStorage(storageRoot, folder, {
       format: 'open-science-project',
-      version: 2,
-      outputLayout: 'session-v1',
+      version: 1,
       projectId,
       name: 'Research',
       createdAt: 1
@@ -225,8 +224,7 @@ describe('Project folder file authority', () => {
     const storageRoot = join(root, 'data')
     await initializeProjectRecordStorage(storageRoot, folder, {
       format: 'open-science-project',
-      version: 2,
-      outputLayout: 'session-v1',
+      version: 1,
       projectId,
       name: 'Research',
       createdAt: 1

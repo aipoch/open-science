@@ -8947,14 +8947,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "无法更新项目文件。已保存的版本仍然可用。请在文件夹可访问后重试。",
     "The project file has changed outside the app. Review the replacement before updating it.": "项目文件已在应用外更改。更新前请审核替换内容。",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "已保存的版本可用，但其当前副本尚未写入项目文件夹。",
-    "Update project file": "更新项目文件",
-    "Session outputs": "会话输出",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "今后发布的文件和生成的 Notebook 输出会分别保存在各会话的文件夹中。现有文件保留原位。",
-    "Session outputs enabled": "已启用会话输出",
-    "Enable session outputs when saving": "保存时启用会话输出",
-    "Enable session outputs?": "启用会话输出？",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "此操作会升级项目记录。仅支持版本 1 的旧客户端将无法打开此项目。保存前请完成或停止正在运行的工作。现有文件和已保存版本保留原位；所有会话的后续输出都使用会话文件夹。托管的撤销备份保留在本机。使用裸相对输出路径的原生代码仍以其工作目录为基准。",
-    "Enable session outputs": "启用会话输出",
-    "Finish or stop running work before enabling session outputs.": "启用会话输出前，请完成或停止正在运行的工作。"
+    "Update project file": "更新项目文件"
   }
 }

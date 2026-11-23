@@ -9455,14 +9455,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "Не удалось обновить файл проекта. Сохранённая версия по-прежнему доступна. Повторите попытку, когда папка станет доступна.",
     "The project file has changed outside the app. Review the replacement before updating it.": "Файл проекта был изменён вне приложения. Проверьте замену перед обновлением.",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "Сохранённая версия доступна, но её текущая копия ещё не сохранена в папке проекта.",
-    "Update project file": "Обновить файл проекта",
-    "Session outputs": "Результаты сеанса",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "Новые опубликованные файлы и результаты сгенерированного кода Notebook будут сохраняться в отдельных папках для каждого сеанса. Существующие файлы останутся на месте.",
-    "Session outputs enabled": "Результаты сеанса включены",
-    "Enable session outputs when saving": "Включить результаты сеанса при сохранении",
-    "Enable session outputs?": "Включить результаты сеанса?",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "Записи проекта будут обновлены. Старые клиенты, поддерживающие только версию 1, не смогут открыть этот проект. Перед сохранением завершите или остановите выполняемые задачи. Существующие файлы и сохранённые версии останутся на месте; будущие результаты всех сеансов будут использовать папки сеансов. Управляемые резервные копии для отмены останутся на этом компьютере. Нативный код с обычным относительным путём вывода по-прежнему использует рабочий каталог.",
-    "Enable session outputs": "Включить результаты сеанса",
-    "Finish or stop running work before enabling session outputs.": "Перед включением результатов сеанса завершите или остановите выполняемые задачи."
+    "Update project file": "Обновить файл проекта"
   }
 }

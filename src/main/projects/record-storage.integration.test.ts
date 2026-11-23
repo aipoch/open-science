@@ -6,6 +6,7 @@ import { registerDatabaseFixture } from '../database/migrated-database.test-supp
 import { ProjectRepository } from './repository'
 import { ensureProjectNotebookOutputDirectory } from './session-output-layout'
 import type { createProjectDbClient } from './prisma-client'
+import { projectRecordRoutePath } from '../storage/data-location-identity'
 import {
   getProjectRecordRoot,
   getProjectRecordRoute,
@@ -45,30 +46,31 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true })
 })
 
-it('enables durable records for new bindings, leaving legacy and managed projects unchanged', async () => {
+it('binds existing input bytes with one project manifest and keeps managed projects unbound', async () => {
+  const raw = Buffer.from('sample,value\r\nA,12\r\n')
+  await writeFile(join(folder, 'raw.csv'), raw)
   const project = await repository.create({ name: 'Research', rootPath: folder })
   expect(getProjectRecordRoot(dataRoot, project.id)).toBe(join(folder, '.open-science'))
-  expect(readProjectRecordManifest(folder)).toMatchObject({
+  expect(readProjectRecordManifest(folder)).toEqual({
+    format: 'open-science-project',
+    version: 1,
     projectId: project.id,
-    version: 2,
-    outputLayout: 'session-v1'
+    name: 'Research',
+    createdAt: expect.any(Number)
   })
+  expect(await readFile(join(folder, 'raw.csv'))).toEqual(raw)
   expect(assertLocation).toHaveBeenCalledWith(folder)
-  const oldFolder = join(root, 'legacy')
-  await mkdir(oldFolder)
-  const legacy = await client.project.create({ data: { name: 'Legacy', rootPath: oldFolder } })
-  await repository.assertProjectFolderHealthy(legacy.id)
-  expect(getProjectRecordRoot(dataRoot, legacy.id)).toBeUndefined()
-  expect(readProjectRecordManifest(oldFolder)).toBeUndefined()
   const managed = await repository.create({ name: 'Managed' })
+  expect(managed.rootPath).toBeUndefined()
   expect(getProjectRecordRoot(dataRoot, managed.id)).toBeUndefined()
 })
 
-it('locates the same durable identity and rejects empty replacement folders', async () => {
+it('locates the same durable identity and rejects empty replacement folders even without a route', async () => {
   const project = await repository.create({ name: 'Research', rootPath: folder })
   const moved = folder + '-moved'
   await rename(folder, moved)
   expect(() => getProjectRecordRoot(dataRoot, project.id)).toThrow()
+  await rm(projectRecordRoutePath(dataRoot, project.id))
   const empty = join(root, 'empty')
   await mkdir(empty)
   await expect(
@@ -103,7 +105,7 @@ it('retains records on removal and reopens the same identity with index restorat
   expect(await readFile(evidence, 'utf8')).toBe('research evidence')
 })
 
-it('never treats missing or damaged registered records as a new empty managed project', async () => {
+it('never treats missing or damaged bound records as a new empty managed project', async () => {
   const project = await repository.create({ name: 'Research', rootPath: folder })
   await writeFile(join(folder, '.open-science', 'project.json'), '{broken')
   expect(() => getProjectRecordRoot(dataRoot, project.id)).toThrow()
@@ -124,40 +126,6 @@ it('does not detach active records when the durable deletion intent cannot be sa
   await repository.assertProjectFolderHealthy(project.id)
   await repository.createDeletionIntent(project.id)
   expect(getProjectRecordRoute(dataRoot, project.id)?.detached).toBe(true)
-})
-
-it('requires explicit enable for reopened v1 records and never upgrades a stale edit', async () => {
-  const project = await repository.create({ name: 'Research', rootPath: folder })
-  const manifest = readProjectRecordManifest(folder)!
-  const legacy = {
-    format: manifest.format,
-    projectId: manifest.projectId,
-    name: manifest.name,
-    createdAt: manifest.createdAt
-  }
-  await writeFile(
-    join(folder, '.open-science', 'project.json'),
-    JSON.stringify({ ...legacy, version: 1 })
-  )
-  expect((await repository.get(project.id))?.outputLayout).toBe('legacy')
-  await repository.update({ id: project.id, expectedUpdatedAt: project.updatedAt, name: 'Renamed' })
-  expect(readProjectRecordManifest(folder)?.version).toBe(1)
-  await expect(
-    repository.update({
-      id: project.id,
-      expectedUpdatedAt: project.updatedAt,
-      enableSessionOutputs: true
-    })
-  ).rejects.toThrow('changed elsewhere')
-  expect(readProjectRecordManifest(folder)?.version).toBe(1)
-  const latest = (await repository.get(project.id))!
-  const enabled = await repository.update({
-    id: project.id,
-    expectedUpdatedAt: latest.updatedAt,
-    enableSessionOutputs: true
-  })
-  expect(enabled.outputLayout).toBe('session-v1')
-  expect(readProjectRecordManifest(folder)?.version).toBe(2)
 })
 
 it('revalidates known output directories only on explicit copied-folder locate and reopen', async () => {

@@ -309,8 +309,7 @@ it('opens an included Literature PDF after importing into a custom folder and fo
   await target.client.project.create({ data: { id: projectId, name, rootPath: folder } })
   await initializeProjectRecordStorage(target.storageRoot, folder, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId,
     name,
     createdAt: 1

@@ -557,8 +557,7 @@ it('stores and lists image tasks in the bound project record tree', async () => 
   const task = { ...request(), state: 'queued' as const, createdAt: 1, updatedAt: 1 }
   await initializeProjectRecordStorage(root, folder, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId: task.projectId,
     name: 'Images',
     createdAt: 1

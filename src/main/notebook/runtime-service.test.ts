@@ -4622,8 +4622,7 @@ describe('notebook runtime service', () => {
       )
       await initializeProjectRecordStorage(root, folder, {
         format: 'open-science-project',
-        version: 2,
-        outputLayout: 'session-v1',
+        version: 1,
         projectId: 'default-project',
         name: 'Research',
         createdAt: 1
@@ -4662,8 +4661,7 @@ describe('notebook runtime service', () => {
     )
     await initializeProjectRecordStorage(root, folder, {
       format: 'open-science-project',
-      version: 2,
-      outputLayout: 'session-v1',
+      version: 1,
       projectId: 'default-project',
       name: 'Research',
       createdAt: 1

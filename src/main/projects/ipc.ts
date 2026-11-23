@@ -114,10 +114,6 @@ type ProjectHandlerEffects = Pick<ProjectHandlers, 'updateArchive'> & {
     projectId: string,
     operation: () => Promise<Result>
   ) => Promise<Result>
-  withOutputLayoutUpgrade?: <Result>(
-    projectId: string,
-    operation: () => Promise<Result>
-  ) => Promise<Result>
   beforeFolderRelocation?: (projectId: string) => Promise<void>
   recoverFolderRuntime?: (projectId: string) => Promise<void>
   promptOptimization?: PromptOptimizationService
@@ -231,12 +227,7 @@ const createProjectHandlers = (
         request.agentContext === undefined
           ? undefined
           : (await repository.get(request.id))?.agentContext
-      const save = (): Promise<Project> => repository.update(request)
-      if (request.enableSessionOutputs && !effects.withOutputLayoutUpgrade)
-        throw new Error('Session output layout upgrades are unavailable.')
-      const project = request.enableSessionOutputs
-        ? await effects.withOutputLayoutUpgrade!(request.id, save)
-        : await save()
+      const project = await repository.update(request)
       if (request.agentContext !== undefined && previousAgentContext !== project.agentContext) {
         effects.onAgentContextChanged?.(request.id)
       }

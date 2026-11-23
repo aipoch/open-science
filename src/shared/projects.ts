@@ -28,7 +28,6 @@ export const projectSchema = z
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
     rootPath: z.string().nullable().optional(),
-    outputLayout: z.enum(['legacy', 'session-v1']).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
@@ -87,7 +86,6 @@ export const updateProjectRequestSchema = z
     name: z.string().max(PROJECT_NAME_MAX_LENGTH).optional(),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     expectedUpdatedAt: z.number().int().positive(),
-    enableSessionOutputs: z.literal(true).optional(),
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),

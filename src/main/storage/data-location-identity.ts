@@ -52,14 +52,13 @@ export const safeProjectRecordId = (id: string): string => {
     throw new Error('Invalid Project record identity.')
   return id
 }
-type ProjectRecordManifestIdentity = Readonly<{
+export type ProjectRecordManifest = Readonly<{
+  version: 1
   format: 'open-science-project'
   projectId: string
   name: string
   createdAt: number
 }>
-export type ProjectRecordManifest = ProjectRecordManifestIdentity &
-  ({ version: 1 } | { version: 2; outputLayout: 'session-v1' })
 type RecordRoute = {
   version: 1
   projectId: string
@@ -113,9 +112,11 @@ export function readProjectRecordManifest(folder: string): ProjectRecordManifest
     throw new Error('Invalid Project record manifest.')
   const value = JSON.parse(readFileSync(path, 'utf8')) as ProjectRecordManifest
   if (
+    !value ||
+    typeof value !== 'object' ||
+    Object.keys(value).length !== 5 ||
     value.format !== 'open-science-project' ||
-    (value.version !== 1 && !(value.version === 2 && value.outputLayout === 'session-v1')) ||
-    (value.version === 1 && 'outputLayout' in value) ||
+    value.version !== 1 ||
     typeof value.projectId !== 'string' ||
     typeof value.name !== 'string' ||
     value.name.length > 200 ||

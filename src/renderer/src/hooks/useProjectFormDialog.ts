@@ -71,8 +71,6 @@ const useProjectFormDialog = (
     },
     []
   )
-  const [outputLayout, setOutputLayout] = useState<Project['outputLayout']>()
-  const [enableSessionOutputs, setEnableSessionOutputs] = useState(false)
   const [folderStorage, setFolderStorage] = useState<'managed' | 'folder'>('managed')
   const [rootPathDraft, setRootPathDraft] = useState<string>()
   const [folderValidation, setFolderValidation] = useState<ProjectFolderValidation>()
@@ -102,8 +100,6 @@ const useProjectFormDialog = (
     if (isSubmitting) return
 
     folderGeneration.current += 1
-    setOutputLayout(undefined)
-    setEnableSessionOutputs(false)
     setFolderStorage('managed')
     setRootPathDraft(undefined)
     setFolderValidation(undefined)
@@ -133,8 +129,6 @@ const useProjectFormDialog = (
       if (isSubmitting) return
 
       folderGeneration.current += 1
-      setOutputLayout(project.outputLayout)
-      setEnableSessionOutputs(false)
       setFolderStorage(project.rootPath ? 'folder' : 'managed')
       setRootPathDraft(project.rootPath ?? undefined)
       setFolderValidation(undefined)
@@ -253,7 +247,6 @@ const useProjectFormDialog = (
       agentContextDraft !== initialDraft.current.agentContext ||
       optimizationPromptDraft !== initialDraft.current.optimizationPrompt ||
       agentTracingDraft !== initialDraft.current.agentTracing ||
-      enableSessionOutputs ||
       (formState.mode === 'create' && folderStorage === 'folder')
     ) {
       setDiscardConfirmationOpen(true)
@@ -301,7 +294,6 @@ const useProjectFormDialog = (
           description,
           agentContext,
           optimizationPrompt,
-          ...(enableSessionOutputs ? { enableSessionOutputs: true } : {}),
           expectedUpdatedAt: formState.expectedUpdatedAt,
           ...(agentTracingDraft !== initialDraft.current.agentTracing
             ? { agentTracingEnabled: agentTracingDraft }
@@ -349,10 +341,7 @@ const useProjectFormDialog = (
             ? t(
                 'Project changed elsewhere. Your draft is kept. Compare the latest values before saving again.'
               )
-            : error instanceof Error &&
-                error.message === 'Finish or stop running work before enabling session outputs.'
-              ? t('Finish or stop running work before enabling session outputs.')
-              : t('Could not save project. Please try again.')
+            : t('Could not save project. Please try again.')
         )
       })
       .finally(() => {
@@ -372,9 +361,6 @@ const useProjectFormDialog = (
         mode: isEdit ? 'edit' : 'create',
         storage: folderStorage,
         path: rootPathDraft,
-        outputLayout,
-        enableSessionOutputs,
-        onEnableSessionOutputsChange: setEnableSessionOutputs,
         validation: folderValidation,
         isBusy: folderBusy,
         canSelect: isDesktopRenderer(),

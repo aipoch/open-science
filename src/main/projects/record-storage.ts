@@ -100,22 +100,3 @@ export async function markProjectRecordDetached(
     JSON.stringify({ ...route, detached: true }) + '\n'
   )
 }
-
-// A single durable manifest replacement is the enable commit. No files or internal storage keys
-// move, and an interrupted replacement leaves either the supported v1 or the complete v2 manifest.
-// The caller must hold the Project's idle-work admission fence.
-export async function enableProjectSessionOutputs(
-  storageRoot: string,
-  projectId: string
-): Promise<void> {
-  const root = getProjectRecordRoot(storageRoot, projectId)
-  const route = getProjectRecordRoute(storageRoot, projectId)
-  if (!root || !route || route.detached || route.reopening)
-    throw new Error('Project research records are not ready for session outputs.')
-  const manifest = readProjectRecordManifest(route.folder)!
-  if (manifest.version === 2) return
-  await writeDurableJsonFile(
-    join(root, 'project.json'),
-    JSON.stringify({ ...manifest, version: 2, outputLayout: 'session-v1' }, null, 2) + '\n'
-  )
-}

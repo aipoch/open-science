@@ -1357,8 +1357,7 @@ it('preserves read-only ownership for a referenced Session imported into Project
   })
   await initializeProjectRecordStorage(target.storageRoot, destination, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId,
     name: 'Receiving research',
     createdAt: 1

@@ -9301,14 +9301,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "No se pudo actualizar el archivo del proyecto. La versión guardada sigue disponible. Vuelva a intentarlo cuando se pueda acceder a la carpeta.",
     "The project file has changed outside the app. Review the replacement before updating it.": "El archivo del proyecto se ha modificado fuera de la aplicación. Revise el reemplazo antes de actualizarlo.",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "La versión guardada está disponible, pero su copia actual aún no se ha guardado en la carpeta del proyecto.",
-    "Update project file": "Actualizar archivo del proyecto",
-    "Session outputs": "Salidas de sesión",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "Los archivos que se publiquen y las salidas de Notebook generadas usarán carpetas separadas para cada sesión. Los archivos existentes permanecerán en su ubicación.",
-    "Session outputs enabled": "Salidas de sesión activadas",
-    "Enable session outputs when saving": "Activar salidas de sesión al guardar",
-    "Enable session outputs?": "¿Activar las salidas de sesión?",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "Se actualizarán los registros del proyecto. Los clientes antiguos que solo admiten la versión 1 no podrán abrir este proyecto. Finalice o detenga el trabajo en ejecución antes de guardar. Los archivos existentes y las versiones guardadas permanecerán en su ubicación; las salidas futuras de todas las sesiones usarán carpetas de sesión. Las copias de seguridad administradas para deshacer permanecerán en este equipo. El código nativo que use una ruta de salida relativa simple seguirá usando su directorio de trabajo.",
-    "Enable session outputs": "Activar salidas de sesión",
-    "Finish or stop running work before enabling session outputs.": "Finalice o detenga el trabajo en ejecución antes de activar las salidas de sesión."
+    "Update project file": "Actualizar archivo del proyecto"
   }
 }

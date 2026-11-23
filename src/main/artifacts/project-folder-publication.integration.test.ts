@@ -396,8 +396,7 @@ it('retains execution evidence when publishing from the Project Notebook output 
   await Promise.all([mkdir(folder), mkdir(workspace)])
   await initializeProjectRecordStorage(f.storageRoot, folder, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId,
     name: 'Research',
     createdAt: 1

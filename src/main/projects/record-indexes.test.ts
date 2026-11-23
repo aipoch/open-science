@@ -35,16 +35,14 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((f) => f.dispose()))
 })
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const setup = async (version: 1 | 2 = 1) => {
+const setup = async () => {
   const f = await createProvenanceTestFixture()
   fixtures.push(f)
   const folder = join(f.storageRoot, 'chosen-project')
   await mkdir(folder)
   await initializeProjectRecordStorage(f.storageRoot, folder, {
     format: 'open-science-project',
-    ...(version === 1
-      ? { version: 1 as const }
-      : { version: 2 as const, outputLayout: 'session-v1' as const }),
+    version: 1,
     projectId: 'project-1',
     name: 'Research',
     createdAt: 1
@@ -1014,32 +1012,28 @@ it('validates the checkpoint in a located folder before changing its binding', a
   ).toMatchObject({ titleSnapshot: 'durable title' })
 })
 
-it.each([1, 2] as const)(
-  'keeps delivery state out of v1 checkpoints until explicit layout enablement (v%s)',
-  async (version) => {
-    const f = await setup(version)
-    await f.stagePng('version')
-    const created = await f.repository.createVersion(createArtifactVersionRequest())
-    const delivery = JSON.stringify({ format: 1, state: 'pending', versionId: created.versionId })
-    await f.wrapped.artifactLineage.update({
-      where: { id: created.artifactId },
-      data: { outputDeliveryJson: delivery }
-    })
-    const index = JSON.parse(
-      await readFile(join(f.folder, '.open-science', 'artifact-index.json'), 'utf8')
-    )
-    const row = index.tables.ArtifactLineage.find(
-      (row: { id: string }) => row.id === created.artifactId
-    )
-    if (version === 1) expect(row).not.toHaveProperty('outputDeliveryJson')
-    else expect(row.outputDeliveryJson).toBe(delivery)
-    await f.client.artifactLineage.update({
-      where: { id: created.artifactId },
-      data: { filename: 'PLOT.png', outputDeliveryJson: null }
-    })
-    await restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')
-    expect(
-      await f.client.artifactLineage.findUniqueOrThrow({ where: { id: created.artifactId } })
-    ).toMatchObject({ filename: 'plot.png', outputDeliveryJson: version === 1 ? null : delivery })
-  }
-)
+it('restores ordinary-file delivery state from the Project checkpoint', async () => {
+  const f = await setup()
+  await f.stagePng('version')
+  const created = await f.repository.createVersion(createArtifactVersionRequest())
+  const delivery = JSON.stringify({ format: 1, state: 'pending', versionId: created.versionId })
+  await f.wrapped.artifactLineage.update({
+    where: { id: created.artifactId },
+    data: { outputDeliveryJson: delivery }
+  })
+  const index = JSON.parse(
+    await readFile(join(f.folder, '.open-science', 'artifact-index.json'), 'utf8')
+  )
+  const row = index.tables.ArtifactLineage.find(
+    (row: { id: string }) => row.id === created.artifactId
+  )
+  expect(row.outputDeliveryJson).toBe(delivery)
+  await f.client.artifactLineage.update({
+    where: { id: created.artifactId },
+    data: { filename: 'PLOT.png', outputDeliveryJson: null }
+  })
+  await restoreProjectRecordIndexes(f.wrapped, f.storageRoot, 'project-1')
+  expect(
+    await f.client.artifactLineage.findUniqueOrThrow({ where: { id: created.artifactId } })
+  ).toMatchObject({ filename: 'plot.png', outputDeliveryJson: delivery })
+})

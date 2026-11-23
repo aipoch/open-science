@@ -9301,14 +9301,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "Le fichier du projet n’a pas pu être mis à jour. La version enregistrée reste disponible. Réessayez lorsque le dossier sera accessible.",
     "The project file has changed outside the app. Review the replacement before updating it.": "Le fichier du projet a été modifié en dehors de l’application. Vérifiez le remplacement avant de le mettre à jour.",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "La version enregistrée est disponible, mais sa copie actuelle n’a pas encore été enregistrée dans le dossier du projet.",
-    "Update project file": "Mettre à jour le fichier du projet",
-    "Session outputs": "Sorties de session",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "Les prochains fichiers publiés et les sorties Notebook générées utiliseront des dossiers distincts pour chaque session. Les fichiers existants restent en place.",
-    "Session outputs enabled": "Sorties de session activées",
-    "Enable session outputs when saving": "Activer les sorties de session à l’enregistrement",
-    "Enable session outputs?": "Activer les sorties de session?",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "Les données du projet seront mises à niveau. Les anciens clients qui ne prennent en charge que la version 1 ne pourront pas ouvrir ce projet. Terminez ou arrêtez les travaux en cours avant d’enregistrer. Les fichiers existants et les versions enregistrées restent en place; les prochaines sorties de toutes les sessions utiliseront des dossiers de session. Les sauvegardes gérées pour l’annulation restent sur cet ordinateur. Le code natif utilisant un simple chemin de sortie relatif reste basé sur son répertoire de travail.",
-    "Enable session outputs": "Activer les sorties de session",
-    "Finish or stop running work before enabling session outputs.": "Terminez ou arrêtez les travaux en cours avant d’activer les sorties de session."
+    "Update project file": "Mettre à jour le fichier du projet"
   }
 }

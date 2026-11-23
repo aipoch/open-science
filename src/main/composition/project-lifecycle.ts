@@ -432,13 +432,6 @@ export function composeProjectLifecycle({
       archiveCoordinator.withProjectAvailable(projectId, () =>
         getNotebookService().withProjectFolderRelocation(projectId, operation)
       ),
-    withOutputLayoutUpgrade: (projectId, operation) =>
-      archiveCoordinator.withIdleProjectMutation(projectId, () =>
-        getNotebookService().withProjectFolderRelocation(projectId, async () => {
-          await runtimeRef.current?.requestProjectAgentContextReload(projectId)
-          return operation()
-        })
-      ),
     beforeFolderRelocation: async (projectId) => {
       await runtimeRef.current?.requestProjectAgentContextReload(projectId)
     },

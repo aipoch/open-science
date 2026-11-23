@@ -405,8 +405,7 @@ it('recovers an unjournaled activated head as a read-only pending status after a
 it('retains the portable association and baseline through index loss and a folder copy without managed receipts', async () => {
   await initializeProjectRecordStorage(fixture.storageRoot, folder, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId: 'project-1',
     name: 'Outputs',
     createdAt: 1

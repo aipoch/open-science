@@ -23,8 +23,7 @@ async function fixture(customFolder = false): Promise<{
     await mkdir(folder)
     await initializeProjectRecordStorage(root, folder, {
       format: 'open-science-project',
-      version: 2,
-      outputLayout: 'session-v1',
+      version: 1,
       projectId: 'p',
       name: 'Study',
       createdAt: 1

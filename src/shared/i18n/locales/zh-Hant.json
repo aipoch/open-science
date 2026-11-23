@@ -8947,14 +8947,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "無法更新專案檔案。已儲存的版本仍然可用。請在資料夾可存取後重試。",
     "The project file has changed outside the app. Review the replacement before updating it.": "專案檔案已在應用程式外變更。更新前請審核取代內容。",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "已儲存的版本可用，但其目前副本尚未寫入專案資料夾。",
-    "Update project file": "更新專案檔案",
-    "Session outputs": "工作階段輸出",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "之後發佈的檔案與產生的 Notebook 輸出會分別儲存在各工作階段的資料夾中。現有檔案保留原位。",
-    "Session outputs enabled": "已啟用工作階段輸出",
-    "Enable session outputs when saving": "儲存時啟用工作階段輸出",
-    "Enable session outputs?": "啟用工作階段輸出？",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "此操作會升級專案記錄。僅支援版本 1 的舊用戶端將無法開啟此專案。儲存前請完成或停止執行中的工作。現有檔案與已儲存版本保留原位；所有工作階段的後續輸出都使用工作階段資料夾。託管的復原備份保留在本機。使用單純相對輸出路徑的原生程式碼仍以其工作目錄為基準。",
-    "Enable session outputs": "啟用工作階段輸出",
-    "Finish or stop running work before enabling session outputs.": "啟用工作階段輸出前，請完成或停止執行中的工作。"
+    "Update project file": "更新專案檔案"
   }
 }

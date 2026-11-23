@@ -8947,14 +8947,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "プロジェクトファイルを更新できませんでした。保存済みのバージョンは引き続き利用できます。フォルダーにアクセスできる状態で再試行してください。",
     "The project file has changed outside the app. Review the replacement before updating it.": "プロジェクトファイルがアプリ外で変更されています。更新する前に置換内容を確認してください。",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "保存済みのバージョンは利用できますが、現在のコピーはまだプロジェクトフォルダーに保存されていません。",
-    "Update project file": "プロジェクトファイルを更新",
-    "Session outputs": "セッションの出力",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "今後公開するファイルと生成した Notebook の出力は、セッションごとのフォルダーに保存されます。既存のファイルは移動しません。",
-    "Session outputs enabled": "セッションの出力は有効です",
-    "Enable session outputs when saving": "保存時にセッションの出力を有効にする",
-    "Enable session outputs?": "セッションの出力を有効にしますか？",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "プロジェクトの記録をアップグレードします。バージョン 1 のみに対応する古いクライアントでは、このプロジェクトを開けなくなります。保存前に実行中の作業を完了または停止してください。既存のファイルと保存済みバージョンはそのまま残り、すべてのセッションの今後の出力はセッションフォルダーを使用します。管理された取り消し用バックアップはこのコンピューターに残ります。単純な相対出力パスを使うネイティブコードは、引き続き作業ディレクトリを基準にします。",
-    "Enable session outputs": "セッションの出力を有効にする",
-    "Finish or stop running work before enabling session outputs.": "セッションの出力を有効にする前に、実行中の作業を完了または停止してください。"
+    "Update project file": "プロジェクトファイルを更新"
   }
 }

@@ -42,11 +42,9 @@ export function getProjectSessionOutputLayout(
   | undefined {
   const route = getProjectRecordRoute(storageRoot, projectId)
   if (!route || route.detached || route.reopening) return undefined
-  getProjectRecordRoot(storageRoot, projectId)
-  const manifest = readProjectRecordManifest(route.folder)!
-  if (manifest.version === 1) return undefined
+  const recordRoot = getProjectRecordRoot(storageRoot, projectId)!
   return {
-    projectRoot: route.folder,
+    projectRoot: dirname(recordRoot),
     notebookDataRelativePath: getNotebookSessionOutputRelativePath(projectId, appSessionId),
     artifactDirectoryRelativePath: getArtifactSessionOutputRelativePath(projectId, appSessionId)
   }
@@ -195,7 +193,6 @@ export function revalidateProjectNotebookOutputDirectories(
     const manifest = readProjectRecordManifest(folder)
     if (!manifest || manifest.projectId !== projectId)
       throw new Error('Project record identity does not match the selected folder.')
-    if (manifest.version !== 2) return
     const recordRoot = join(folder, '.open-science')
     const directories = outputDirectories(recordRoot, true)
     if (directories.length === 0) return

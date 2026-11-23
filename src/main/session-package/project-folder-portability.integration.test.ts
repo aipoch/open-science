@@ -120,7 +120,7 @@ async function publishSourceArtifact(
   await repository.activateFinalizedRun(proof)
 }
 
-async function sourceArchive(recordVersion?: 1 | 2): Promise<{
+async function sourceArchive(hasRecords = false): Promise<{
   source: Fixture
   service: SessionPackageService
   archive: string
@@ -136,10 +136,10 @@ async function sourceArchive(recordVersion?: 1 | 2): Promise<{
   await source.client.project.create({
     data: { id: 'source', name: 'Folder research', rootPath: folder }
   })
-  if (recordVersion)
+  if (hasRecords)
     await initializeProjectRecordStorage(source.storageRoot, folder, {
       format: 'open-science-project',
-      ...(recordVersion === 2 ? { version: 2, outputLayout: 'session-v1' } : { version: 1 }),
+      version: 1,
       projectId: 'source',
       name: 'Folder research',
       createdAt: 1
@@ -163,7 +163,7 @@ async function sourceArchive(recordVersion?: 1 | 2): Promise<{
         createdAt: 1,
         updatedAt: 2
       },
-      ...(recordVersion === 2
+      ...(hasRecords
         ? [
             {
               id: 'reply',
@@ -219,7 +219,7 @@ async function sourceArchive(recordVersion?: 1 | 2): Promise<{
       }
     ]
   } as NotebookRunRecord
-  if (recordVersion) {
+  if (hasRecords) {
     const location = source.notebookRepository.fileEvidenceLocation('source', 'session', scope.lane)
     const observation = await startWorkingFileObservation({
       dataRoot: document.dataRoot,
@@ -250,13 +250,13 @@ async function sourceArchive(recordVersion?: 1 | 2): Promise<{
     join(source.storageRoot, 'project-folder-history', 'changes', 'backup.txt'),
     'PRIVATE D3 BACKUP'
   )
-  if (recordVersion === 2) {
+  if (hasRecords) {
     const outputRoot = await ensureProjectNotebookOutputDirectory(
       source.storageRoot,
       'source',
       'session'
     )
-    if (!outputRoot) throw new Error('The source Project must have a v2 Notebook output directory.')
+    if (!outputRoot) throw new Error('The source Project must have a Notebook output directory.')
     await writeFile(join(outputRoot, notebookOutput.filename), notebookOutput.text)
     await publishSourceArtifact(source, sessions, folder)
   }
@@ -410,7 +410,7 @@ it('requires live target folder protection checks and fails closed without the h
     ).rejects.toMatchObject({ code: 'project-folder-unavailable' })
 })
 
-async function expectV2SessionRecords(
+async function expectPortableSessionRecords(
   fixture: Fixture,
   folder: string,
   { projectId, sessionId }: SessionPackageRequest
@@ -451,8 +451,8 @@ async function expectV2SessionRecords(
   }
 }
 
-async function verifyProjectRecordsRoundTrip(recordVersion: 1 | 2): Promise<void> {
-  const { source, service: exporter, archive, folder } = await sourceArchive(recordVersion)
+it('exports external Notebook records and evidence, then imports and forks into another bound project', async () => {
+  const { source, service: exporter, archive, folder } = await sourceArchive(true)
   const expanded = join(source.storageRoot, 'expanded-records')
   const manifest = await readPackageArchive(archive, expanded)
   const notebookEntry = manifest.inventory.find(
@@ -466,40 +466,38 @@ async function verifyProjectRecordsRoundTrip(recordVersion: 1 | 2): Promise<void
   expect(
     manifest.inventory.some((entry) => entry.storageKey?.startsWith('execution-file-evidence/'))
   ).toBe(true)
-  if (recordVersion === 2) {
-    const publicNotebook = join(
-      folder,
-      'notebooks',
-      'source',
-      'session',
-      'data',
-      notebookOutput.filename
-    )
-    const publicArtifact = join(folder, 'artifacts', 'source', 'session', artifactOutput.filename)
-    const sourceLineage = await source.client.artifactLineage.findFirstOrThrow({
-      where: { projectId: 'source', sessionId: 'session' }
-    })
-    expect(JSON.parse(sourceLineage.outputDeliveryJson!)).toMatchObject({
-      state: 'delivered',
-      relativePath: `artifacts/source/session/${artifactOutput.filename}`
-    })
-    const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
-    expect(records.tables.ArtifactLineage).toHaveLength(1)
-    expect(records.tables.ArtifactLineage[0]).not.toHaveProperty('outputDeliveryJson')
-    const packagedKeys = manifest.inventory.map((entry) => entry.storageKey)
-    expect(packagedKeys).not.toContain(`notebooks/source/session/data/${notebookOutput.filename}`)
-    expect(packagedKeys).not.toContain(`artifacts/source/session/${artifactOutput.filename}`)
-    const nativeFork = await exporter.fork({ projectId: 'source', sessionId: 'session' })
-    expect(nativeFork.projectId).toBe('source')
-    expect(nativeFork.sessionId).not.toBe('session')
-    await expect(
-      assertResearchSessionWritable(source.storageRoot, nativeFork.projectId, nativeFork.sessionId)
-    ).resolves.toBeUndefined()
-    await expectV2SessionRecords(source, folder, nativeFork)
-    await expect(readFile(publicNotebook, 'utf8')).resolves.toBe(notebookOutput.text)
-    await expect(readFile(publicArtifact, 'utf8')).resolves.toBe(artifactOutput.text)
-    await expect(readFile(join(folder, 'raw.csv'), 'utf8')).resolves.toBe('value\n7\n')
-  }
+  const publicNotebook = join(
+    folder,
+    'notebooks',
+    'source',
+    'session',
+    'data',
+    notebookOutput.filename
+  )
+  const publicArtifact = join(folder, 'artifacts', 'source', 'session', artifactOutput.filename)
+  const sourceLineage = await source.client.artifactLineage.findFirstOrThrow({
+    where: { projectId: 'source', sessionId: 'session' }
+  })
+  expect(JSON.parse(sourceLineage.outputDeliveryJson!)).toMatchObject({
+    state: 'delivered',
+    relativePath: `artifacts/source/session/${artifactOutput.filename}`
+  })
+  const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+  expect(records.tables.ArtifactLineage).toHaveLength(1)
+  expect(records.tables.ArtifactLineage[0]).not.toHaveProperty('outputDeliveryJson')
+  const packagedKeys = manifest.inventory.map((entry) => entry.storageKey)
+  expect(packagedKeys).not.toContain(`notebooks/source/session/data/${notebookOutput.filename}`)
+  expect(packagedKeys).not.toContain(`artifacts/source/session/${artifactOutput.filename}`)
+  const nativeFork = await exporter.fork({ projectId: 'source', sessionId: 'session' })
+  expect(nativeFork.projectId).toBe('source')
+  expect(nativeFork.sessionId).not.toBe('session')
+  await expect(
+    assertResearchSessionWritable(source.storageRoot, nativeFork.projectId, nativeFork.sessionId)
+  ).resolves.toBeUndefined()
+  await expectPortableSessionRecords(source, folder, nativeFork)
+  await expect(readFile(publicNotebook, 'utf8')).resolves.toBe(notebookOutput.text)
+  await expect(readFile(publicArtifact, 'utf8')).resolves.toBe(artifactOutput.text)
+  await expect(readFile(join(folder, 'raw.csv'), 'utf8')).resolves.toBe('value\n7\n')
   const target = await createProvenanceTestFixture()
   fixtures.push(target)
   const destination = await externalFolder()
@@ -508,7 +506,7 @@ async function verifyProjectRecordsRoundTrip(recordVersion: 1 | 2): Promise<void
   })
   await initializeProjectRecordStorage(target.storageRoot, destination, {
     format: 'open-science-project',
-    ...(recordVersion === 2 ? { version: 2, outputLayout: 'session-v1' } : { version: 1 }),
+    version: 1,
     projectId: 'target-records',
     name: 'Records target',
     createdAt: 1
@@ -552,25 +550,17 @@ async function verifyProjectRecordsRoundTrip(recordVersion: 1 | 2): Promise<void
   const forked = await target.notebookRepository.findExisting(fork.projectId, fork.sessionId)
   expect(forked?.runs[0].script).toBe(notebook.runs[0].script)
   expect(forked?.runs[0].cwdBefore).toBe('')
-  if (recordVersion === 2) {
-    const sessions = new SessionRepository(target.storageRoot)
-    const importedSession = await sessions.loadSession(imported.projectId, imported.sessionId)
-    expect(importedSession?.packageOrigin).toMatchObject({
-      sourceProjectId: 'source',
-      sourceSessionId: 'session'
-    })
-    const forkedSession = await sessions.loadSession(fork.projectId, fork.sessionId)
-    expect(forkedSession?.forkOrigin?.sourceSessionId).toBe(imported.sessionId)
-    expect(forkedSession?.packageOrigin).toBeUndefined()
-    await expectV2SessionRecords(target, destination, imported)
-    await expectV2SessionRecords(target, destination, fork)
-    expect((await readdir(destination)).sort()).toEqual(['.open-science', 'raw.csv'])
-  }
+  const sessions = new SessionRepository(target.storageRoot)
+  const importedSession = await sessions.loadSession(imported.projectId, imported.sessionId)
+  expect(importedSession?.packageOrigin).toMatchObject({
+    sourceProjectId: 'source',
+    sourceSessionId: 'session'
+  })
+  const forkedSession = await sessions.loadSession(fork.projectId, fork.sessionId)
+  expect(forkedSession?.forkOrigin?.sourceSessionId).toBe(imported.sessionId)
+  expect(forkedSession?.packageOrigin).toBeUndefined()
+  await expectPortableSessionRecords(target, destination, imported)
+  await expectPortableSessionRecords(target, destination, fork)
+  expect((await readdir(destination)).sort()).toEqual(['.open-science', 'raw.csv'])
   await expect(readFile(join(destination, 'raw.csv'), 'utf8')).resolves.toBe('value\n42\n')
-}
-
-it.each([1, 2] as const)(
-  'exports external Notebook records and evidence, then imports and forks into another v%s record project',
-  verifyProjectRecordsRoundTrip,
-  60_000
-)
+}, 60_000)

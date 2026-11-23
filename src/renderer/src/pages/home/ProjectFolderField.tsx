@@ -1,5 +1,4 @@
-import { useRef, useState } from 'react'
-import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import { useRef } from 'react'
 import { Cloud, Folder, FolderOpen, HardDrive } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ProjectFolderNotice } from '@/components/ProjectFolderNotice'
@@ -18,8 +17,6 @@ export const ProjectFolderField = ({
   disabled: boolean
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const [confirmOutputs, setConfirmOutputs] = useState(false)
-  const outputCheckbox = useRef<HTMLInputElement>(null)
   const chooseButton = useRef<HTMLButtonElement>(null)
   if (folder.mode === 'edit' && !folder.path) return null
   const busy = disabled || folder.isBusy
@@ -112,57 +109,6 @@ export const ProjectFolderField = ({
               {window.api.platform === 'darwin' ? t('Reveal in Finder') : t('Reveal in folder')}
             </Button>
           )}
-          {folder.mode === 'edit' && folder.outputLayout ? (
-            <div className="space-y-2 border-t border-border pt-3">
-              <h4 className={dialogFormLabelClassName}>{t('Session outputs')}</h4>
-              <p className={dialogFormHelpClassName}>
-                {t(
-                  'Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.'
-                )}
-              </p>
-              <p className="break-all font-mono text-xs text-muted-foreground">
-                {'artifacts/<projectId>/<sessionId>/'}
-                <br />
-                {'notebooks/<projectId>/<sessionId>/data/'}
-              </p>
-              {folder.outputLayout === 'session-v1' ? (
-                <p className="text-sm text-muted-foreground">{t('Session outputs enabled')}</p>
-              ) : (
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    ref={outputCheckbox}
-                    type="checkbox"
-                    checked={Boolean(folder.enableSessionOutputs)}
-                    disabled={busy}
-                    onChange={(event) => {
-                      if (event.target.checked) setConfirmOutputs(true)
-                      else folder.onEnableSessionOutputsChange?.(false)
-                    }}
-                  />
-                  {t('Enable session outputs when saving')}
-                </label>
-              )}
-              <ConfirmActionDialog
-                open={confirmOutputs && folder.outputLayout === 'legacy'}
-                title={t('Enable session outputs?')}
-                description={t(
-                  'This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.'
-                )}
-                cancelLabel={t('Cancel')}
-                confirmLabel={t('Enable session outputs')}
-                onCloseAutoFocus={(event) => {
-                  if (!outputCheckbox.current?.isConnected) return
-                  event.preventDefault()
-                  outputCheckbox.current.focus({ preventScroll: true })
-                }}
-                onCancel={() => setConfirmOutputs(false)}
-                onConfirm={() => {
-                  folder.onEnableSessionOutputsChange?.(true)
-                  setConfirmOutputs(false)
-                }}
-              />
-            </div>
-          ) : null}
         </>
       ) : null}
       {folder.validation?.ok

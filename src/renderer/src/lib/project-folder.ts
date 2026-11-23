@@ -15,7 +15,4 @@ export type ProjectFolderForm = {
   onUseAppStorage: () => void
   onChoose: () => void
   onReveal: () => void
-  outputLayout?: 'legacy' | 'session-v1'
-  enableSessionOutputs?: boolean
-  onEnableSessionOutputsChange?: (enabled: boolean) => void
 }

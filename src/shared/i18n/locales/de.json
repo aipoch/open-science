@@ -9120,14 +9120,6 @@
     "The project file could not be updated. The saved version is still available. Try again when the folder is accessible.": "Die Projektdatei konnte nicht aktualisiert werden. Die gespeicherte Version ist weiterhin verfügbar. Versuchen Sie es erneut, sobald der Ordner zugänglich ist.",
     "The project file has changed outside the app. Review the replacement before updating it.": "Die Projektdatei wurde außerhalb der App geändert. Prüfen Sie den Ersatz vor der Aktualisierung.",
     "The saved version is available, but its current copy has not been delivered to the project folder.": "Die gespeicherte Version ist verfügbar, aber ihre aktuelle Kopie wurde noch nicht im Projektordner gespeichert.",
-    "Update project file": "Projektdatei aktualisieren",
-    "Session outputs": "Sitzungsausgaben",
-    "Future published files and generated Notebook outputs use separate folders for each session. Existing files stay in place.": "Künftig veröffentlichte Dateien und erzeugte Notebook-Ausgaben verwenden eigene Ordner je Sitzung. Vorhandene Dateien bleiben an ihrem Ort.",
-    "Session outputs enabled": "Sitzungsausgaben aktiviert",
-    "Enable session outputs when saving": "Sitzungsausgaben beim Speichern aktivieren",
-    "Enable session outputs?": "Sitzungsausgaben aktivieren?",
-    "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "Die Projektdaten werden aktualisiert. Ältere Clients, die nur Version 1 unterstützen, können dieses Projekt nicht öffnen. Beenden oder stoppen Sie laufende Arbeiten vor dem Speichern. Vorhandene Dateien und gespeicherte Versionen bleiben an ihrem Ort; künftige Ausgaben aller Sitzungen verwenden Sitzungsordner. Verwaltete Sicherungen zum Rückgängigmachen bleiben auf diesem Computer. Nativer Code mit einem einfachen relativen Ausgabepfad verwendet weiterhin sein Arbeitsverzeichnis.",
-    "Enable session outputs": "Sitzungsausgaben aktivieren",
-    "Finish or stop running work before enabling session outputs.": "Beenden oder stoppen Sie laufende Arbeiten, bevor Sie Sitzungsausgaben aktivieren."
+    "Update project file": "Projektdatei aktualisieren"
   }
 }

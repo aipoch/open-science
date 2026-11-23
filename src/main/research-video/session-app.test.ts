@@ -23,8 +23,7 @@ it.each([false, true])(
         await mkdir(folder)
         await initializeProjectRecordStorage(data, folder, {
           format: 'open-science-project',
-          version: 2,
-          outputLayout: 'session-v1',
+          version: 1,
           projectId: 'p',
           name: 'Orbit',
           createdAt: 1

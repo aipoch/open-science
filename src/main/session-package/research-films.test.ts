@@ -285,8 +285,7 @@ it('plays and removes a Film imported into a custom folder without affecting oth
   await client.project.create({ data: { id: projectId, name, rootPath: folder } })
   await initializeProjectRecordStorage(f.root, folder, {
     format: 'open-science-project',
-    version: 2,
-    outputLayout: 'session-v1',
+    version: 1,
     projectId,
     name,
     createdAt: 1

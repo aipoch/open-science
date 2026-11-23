@@ -100,8 +100,7 @@ describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEO
     await mkdir(folder)
     await initializeProjectRecordStorage(root, folder, {
       format: 'open-science-project',
-      version: 2,
-      outputLayout: 'session-v1',
+      version: 1,
       projectId: 'portable',
       name: 'Portable',
       createdAt: 1

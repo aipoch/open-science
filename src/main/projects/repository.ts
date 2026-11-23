@@ -31,7 +31,6 @@ import { ProjectArtifactIndexUnavailableError } from './record-indexes'
 import { revalidateProjectNotebookOutputDirectories } from './session-output-layout'
 import {
   completeProjectRecordReopen,
-  enableProjectSessionOutputs,
   getProjectRecordRoute,
   getProjectRecordRoot,
   initializeProjectRecordStorage,
@@ -142,22 +141,6 @@ class ProjectRepository {
     private readonly recordOptions?: ProjectRecordOptions
   ) {}
 
-  private present(row: PrismaProject): Project {
-    const project = toProject(row)
-    if (!row.rootPath || !this.recordOptions) return project
-    try {
-      const route = getProjectRecordRoute(this.recordOptions.storageRoot(), row.id)
-      if (!route || route.detached) return project
-      const manifest = readProjectRecordManifest(row.rootPath)
-      if (manifest?.projectId === row.id)
-        project.outputLayout = manifest.version === 2 ? 'session-v1' : 'legacy'
-    } catch {
-      // A disconnected or unsupported Project stays visible. Folder admission reports the error
-      // before any execution/write; never offer an upgrade when the records cannot be verified.
-    }
-    return project
-  }
-
   projectRecordStorageRoot(): string | undefined {
     return this.recordOptions?.storageRoot()
   }
@@ -248,19 +231,17 @@ class ProjectRepository {
       const storageRoot = this.recordOptions.storageRoot()
       const route = getProjectRecordRoute(storageRoot, projectId)
       const manifest = readProjectRecordManifest(path)
-      if (route || manifest?.projectId === projectId) {
-        await (this.recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
-        if (!manifest || manifest.projectId !== projectId)
-          throw new ApplicationCommandError(
-            'project-folder-unavailable',
-            'Project research records are missing or belong to another Project.'
-          )
-        if (!route || route.folder !== path)
-          await registerProjectRecordStorage(storageRoot, path, projectId, {
-            reopening: route?.reopening
-          })
-        getProjectRecordRoot(storageRoot, projectId)
-      }
+      await (this.recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
+      if (manifest?.projectId !== projectId)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'Project research records are missing or belong to another Project.'
+        )
+      if (!route || route.folder !== path)
+        await registerProjectRecordStorage(storageRoot, path, projectId, {
+          reopening: route?.reopening
+        })
+      getProjectRecordRoot(storageRoot, projectId)
     }
     return path
   }
@@ -329,11 +310,9 @@ class ProjectRepository {
     // Quiescing can perform Session/database I/O, so never hold SQLite's writer lock across it.
     await this.missingFolderForLocation(request, await this.getClient())
     const path = await this.prepareFolder(request.path)
-    const recordRoute =
-      this.recordOptions &&
-      getProjectRecordRoute(this.recordOptions.storageRoot(), request.projectId)
-    if (recordRoute) {
-      await (this.recordOptions!.assertLocation ?? assertProjectRecordLocation)(path)
+    const recordOptions = this.recordOptions
+    if (recordOptions) {
+      await (recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
       if (readProjectRecordManifest(path)?.projectId !== request.projectId)
         throw new ApplicationCommandError(
           'project-folder-unavailable',
@@ -358,25 +337,20 @@ class ProjectRepository {
           )
         const row = await client.project.findUnique({ where: { id: request.projectId } })
         if (!row || row.deletedAt !== null) throw new Error('Project not found.')
-        if (recordRoute) {
-          await revalidateProjectNotebookOutputDirectories(
-            this.recordOptions!.storageRoot(),
-            request.projectId,
-            path
-          )
-          await this.recordOptions!.restoreIndexes?.(
+        if (recordOptions) {
+          const storageRoot = recordOptions.storageRoot()
+          const recordRoute = getProjectRecordRoute(storageRoot, request.projectId)
+          await revalidateProjectNotebookOutputDirectories(storageRoot, request.projectId, path)
+          await recordOptions.restoreIndexes?.(
             client as unknown as Prisma.TransactionClient,
             request.projectId,
             path
           )
-          await registerProjectRecordStorage(
-            this.recordOptions!.storageRoot(),
-            path,
-            request.projectId,
-            { reopening: recordRoute.reopening }
-          )
+          await registerProjectRecordStorage(storageRoot, path, request.projectId, {
+            reopening: recordRoute?.reopening
+          })
         }
-        return this.present(row)
+        return toProject(row)
       })
     )
   }
@@ -415,7 +389,7 @@ class ProjectRepository {
     const pending = await Promise.all(rows.map(({ id }) => this.pending(id)))
     return rows
       .filter(({ id }, index) => !deletingProjectIds.has(id) && !pending[index])
-      .map((row) => this.present(row))
+      .map(toProject)
   }
 
   // Returns a single project or null when it no longer exists.
@@ -424,7 +398,7 @@ class ProjectRepository {
     const client = await this.getClient()
     const row = await client.project.findUnique({ where: { id } })
 
-    return row && row.deletedAt === null ? this.present(row) : null
+    return row && row.deletedAt === null ? toProject(row) : null
   }
 
   async exists(id: string): Promise<boolean> {
@@ -479,8 +453,7 @@ class ProjectRepository {
           rootPath,
           stored ?? {
             format: 'open-science-project',
-            version: 2,
-            outputLayout: 'session-v1',
+            version: 1,
             projectId,
             name,
             createdAt: Date.now()
@@ -511,7 +484,7 @@ class ProjectRepository {
             projectId
           )
       } else row = await client.project.create({ data })
-      return this.present(row)
+      return toProject(row)
     }
     return rootPath ? this.admitFolder(rootPath, undefined, create) : create(await this.getClient())
   }
@@ -556,15 +529,6 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-    if (request.enableSessionOutputs) {
-      const project = await this.get(request.id)
-      if (!project || project.updatedAt !== request.expectedUpdatedAt)
-        throw new Error('Project changed elsewhere.')
-      if (!project.rootPath || !this.recordOptions || project.outputLayout === undefined)
-        throw new Error('Session outputs require existing Project research records.')
-      await this.assertProjectFolderHealthy(request.id)
-    }
-
     if (request.sessionDefaults !== undefined || request.agentTracingEnabled !== undefined) {
       const defaults =
         request.sessionDefaults ??
@@ -588,8 +552,7 @@ class ProjectRepository {
       request.agentContext === undefined &&
       request.optimizationPrompt === undefined &&
       request.sessionDefaults === undefined &&
-      request.agentTracingEnabled === undefined &&
-      request.enableSessionOutputs === undefined
+      request.agentTracingEnabled === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
       // column in SQL avoids both a fake activity bump and a read/write race that could restore an
@@ -604,7 +567,7 @@ class ProjectRepository {
       const row = await client.project.findUnique({ where: { id: request.id } })
       if (!row) throw new Error('Project not found.')
       if (row.deletedAt !== null) throw new Error('Project not found.')
-      return this.present(row)
+      return toProject(row)
     }
 
     if (request.pinned !== undefined) data.pinned = request.pinned
@@ -628,9 +591,7 @@ class ProjectRepository {
 
     const row = await client.project.findUnique({ where: { id: request.id } })
     if (!row || row.deletedAt !== null) throw new Error('Project not found.')
-    if (request.enableSessionOutputs)
-      await enableProjectSessionOutputs(this.recordOptions!.storageRoot(), request.id)
-    return this.present(row)
+    return toProject(row)
   }
 
   // Archive is deliberately separate from ordinary Project edits: a stale rename/update must not
@@ -705,7 +666,7 @@ class ProjectRepository {
 
     const row = await client.project.findUnique({ where: { id: request.id } })
     if (!row || row.deletedAt !== null) throw new Error('Project not found.')
-    return this.present(row)
+    return toProject(row)
   }
 
   // Retains Project and Session metadata/Usage for historical totals while removing active-only

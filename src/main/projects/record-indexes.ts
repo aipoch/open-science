@@ -1,7 +1,7 @@
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { ArtifactVersion, Prisma, PrismaClient } from '@prisma/client'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
@@ -214,11 +214,6 @@ const snapshot = async (
           ))
         )
       }
-    }
-    // v1 readers reject unknown columns even when null. Preserve that file contract until
-    // explicit layout enablement, including referenced lineages collected from other projects.
-    if (readProjectRecordManifest(dirname(root))?.version === 1) {
-      for (const row of tables.ArtifactLineage) delete row.outputDeliveryJson
     }
     const text = JSON.stringify(encode({ version: 1, projectId, tables })) + '\n'
     await writeDurableJsonFile(
