@@ -368,7 +368,29 @@ const sessionRowClassName = cn(
 )
 
 const sessionRowActionClassName =
-  'absolute right-1.5 top-1/2 z-10 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 data-[state=open]:opacity-100'
+
+// A generating film mark rests in the actions slot, so the actions fade in and accept pointer
+// hits only after the mark has slid clear of it, and drop pointer hits immediately on leave.
+// Reduced motion drops the transition altogether: an instant swap cannot overlap.
+const filmRowActionClassName = cn(
+  'pointer-events-none transition-[opacity,pointer-events] [transition-behavior:allow-discrete] [transition-duration:200ms,0ms]',
+  'group-hover:delay-100 group-hover:duration-200 group-hover:pointer-events-auto',
+  'group-has-[:focus-visible]:delay-100 group-has-[:focus-visible]:duration-200 group-has-[:focus-visible]:pointer-events-auto',
+  'focus-visible:duration-200 focus-visible:pointer-events-auto',
+  'data-[state=open]:duration-200 data-[state=open]:pointer-events-auto',
+  'motion-reduce:transition-none'
+)
+
+// `mr-7` keeps the mark's flow slot reserved so the title truncates the same in every state; the
+// resting position is a translate into the actions slot. The mark yields that slot whenever the
+// actions are shown (hover, keyboard focus, or open menu) and returns only once they have faded.
+const filmSlotSwapClassName = cn(
+  'translate-x-7 transition-transform duration-150 ease-out delay-200 motion-reduce:transition-none',
+  'group-hover:translate-x-0 group-hover:delay-0',
+  'group-has-[:focus-visible]:translate-x-0 group-has-[:focus-visible]:delay-0',
+  'group-has-[[data-state=open]]:translate-x-0 group-has-[[data-state=open]]:delay-0'
+)
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
 const sessionButtonId = (sessionId: string, mobile?: boolean): string =>
@@ -382,23 +404,32 @@ const SessionActionDropdown = ({
   session,
   mobileMode,
   showShortcut,
+  filmMarkSharesSlot,
   onOpenChange
 }: {
   session: ChatSession
   mobileMode: boolean
   showShortcut: boolean
+  filmMarkSharesSlot: boolean
   onOpenChange?: (open: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const { entries, execute, renderLabel } = useActionMenuTarget<SessionActionId>()
+  const suppressCloseFocusRef = useRef(false)
 
   return (
-    <DropdownMenu onOpenChange={onOpenChange}>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) suppressCloseFocusRef.current = false
+        onOpenChange?.(open)
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           className={cn(
             sessionRowActionClassName,
+            filmMarkSharesSlot && filmRowActionClassName,
             mobileMode && 'opacity-100',
             showShortcut && 'invisible'
           )}
@@ -415,6 +446,20 @@ const SessionActionDropdown = ({
         side="right"
         align="start"
         sideOffset={6}
+        onPointerDownOutside={() => {
+          // Clicking outside the menu must not bounce Chromium's `:focus-visible` back onto the
+          // row trigger, which would keep the action button visible and the film mark shifted.
+          suppressCloseFocusRef.current = true
+        }}
+        onEscapeKeyDown={() => {
+          suppressCloseFocusRef.current = false
+        }}
+        onCloseAutoFocus={(event) => {
+          if (suppressCloseFocusRef.current) {
+            suppressCloseFocusRef.current = false
+            event.preventDefault()
+          }
+        }}
       >
         <ActionMenuItems
           entries={entries}
@@ -625,6 +670,9 @@ const SessionRow = memo(function SessionRow({
   ])
   const showShortcut = showSessionShortcuts && shortcutNumber !== undefined
   const filmActivityLabel = filmInProgress ? t('Research film in progress') : undefined
+  // Only a row whose end is free shares the actions slot: mobile keeps the actions visible, and an
+  // imported row keeps its read-only lock there.
+  const filmMarkSharesSlot = Boolean(filmActivityLabel) && !mobileMode && !imported
   const openSessionButton = (
     <button
       type="button"
@@ -676,7 +724,14 @@ const SessionRow = memo(function SessionRow({
           role="img"
           aria-label={filmActivityLabel}
           title={filmActivityLabel}
-          className="relative z-[2] mr-7 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-session-running/10 text-session-running"
+          className={cn(
+            'relative z-[2] inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-session-running/10 text-session-running',
+            // Keep the flow slot reserved while the actions share it; drop `mr-7` when the
+            // shortcut pill takes its own flex slot at the row end so wider hints (`Ctrl+1`) never
+            // overlap the mark.
+            !(filmMarkSharesSlot && showShortcut) && 'mr-7',
+            filmMarkSharesSlot && !showShortcut && filmSlotSwapClassName
+          )}
         >
           <Video className="size-3.5" aria-hidden="true" />
         </span>
@@ -684,7 +739,12 @@ const SessionRow = memo(function SessionRow({
       {showShortcut ? (
         <kbd
           aria-hidden="true"
-          className="pointer-events-none absolute right-1.5 top-1/2 z-[3] -translate-y-1/2 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
+          className={cn(
+            'pointer-events-none z-[3] rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100',
+            filmMarkSharesSlot
+              ? 'relative -mr-1 shrink-0'
+              : 'absolute right-1.5 top-1/2 -translate-y-1/2'
+          )}
         >
           {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
         </kbd>
@@ -695,7 +755,7 @@ const SessionRow = memo(function SessionRow({
           aria-label={t('Read-only')}
           className={cn(
             'relative z-[2] inline-flex size-4 shrink-0 items-center justify-center text-text-200 transition-opacity motion-reduce:transition-none',
-            mobileMode ? 'mr-5' : 'group-hover:opacity-0 group-focus-within:opacity-0',
+            mobileMode ? 'mr-5' : 'group-hover:opacity-0 group-has-[:focus-visible]:opacity-0',
             ((!mobileMode && previewSuppressed) || showShortcut) && 'opacity-0'
           )}
         >
@@ -747,6 +807,7 @@ const SessionRow = memo(function SessionRow({
             session={session}
             mobileMode={mobileMode}
             showShortcut={showShortcut}
+            filmMarkSharesSlot={filmMarkSharesSlot}
             onOpenChange={(open) => actions.onSessionActionsOpenChange?.(session.id, open)}
           />
         </div>
