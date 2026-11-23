@@ -219,6 +219,7 @@
     "src/main/acp/side-chat-relay-owner.test.ts",
     "src/main/acp/side-chat-relay-owner.ts",
     "src/main/acp/task-agent-port.test.ts",
+    "src/main/acp/task-run-tracing.ts",
     "src/main/acp/task-agent-port.ts",
     "src/main/acp/turn-resource-snapshot-store.ts",
     "src/main/acp/turn-skill-owner.test.ts",

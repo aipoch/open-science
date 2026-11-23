@@ -5630,14 +5630,35 @@ it('recovers a lost submission response through the real SDK and CLI without sta
   try {
     await expect(
       lostResponse.startRun(
-        { project: 'project', prompt: 'Research' },
+        { project: 'project', prompt: 'Research', otelTraces: true },
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
     expect(
-      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+      await client.submitRun('request-receipt', {
+        project: 'project',
+        prompt: 'Research',
+        otelTraces: true
+      })
     ).toMatchObject({ status: 'pending' })
+    await expect(
+      client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+    ).rejects.toMatchObject({ code: 'submission_conflict' })
     expect(startRun).toHaveBeenCalledOnce()
+    expect(startRun).toHaveBeenCalledWith(
+      { project: 'project', prompt: 'Research', otelTraces: true },
+      'request-receipt'
+    )
+    const remote = await (await fetch(`${baseUrl}/api/bootstrap`)).json()
+    expect(remote.taskCapabilities).not.toContain('run-otel-traces')
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v1/run-submissions/remote`, {
+          method: 'PUT',
+          body: JSON.stringify({ project: 'project', prompt: 'Trace', otelTraces: true })
+        })
+      ).status
+    ).toBe(403)
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()
     const log = vi.fn()

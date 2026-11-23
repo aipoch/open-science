@@ -1,3 +1,4 @@
+import { requiresTaskRunTracing, requireTracingFramework } from './task-run-tracing'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
@@ -831,6 +832,7 @@ class AcpRuntimeCoordinator {
       request.specialistBindingPending === true &&
       request.specialistId === pendingReconciliation.specialistId
     ) {
+      if (requiresTaskRunTracing(request)) await owner.assertAttachedTracingReady(request.sessionId)
       await this.sessionResumeObserver?.(request, pendingReconciliation.response)
       if (this.pendingResumeReconciliations.get(request.sessionId) === pendingReconciliation) {
         this.pendingResumeReconciliations.delete(request.sessionId)
@@ -840,6 +842,7 @@ class AcpRuntimeCoordinator {
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
     const target = request.agentTarget
+    if (target && requiresTaskRunTracing(request)) requireTracingFramework(target.frameworkId)
     const ownerTarget = owner && this.runtimeTargets.get(owner)
     const reuseCodexSession = Boolean(
       owner &&
@@ -1299,6 +1302,10 @@ class AcpRuntimeCoordinator {
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(request)
+  }
+
+  async assertAttachedTracingReady(sessionId: string): Promise<void> {
+    await this.runtimeForSession(sessionId).assertAttachedTracingReady(sessionId)
   }
 
   captureNotebookTaskIntent(request: AcpPromptRequest): AcpPromptRequest {

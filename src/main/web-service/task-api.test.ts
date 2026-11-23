@@ -59,12 +59,13 @@ const taskSettings = {
 
 type TaskAgentMock = {
   [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
-    TaskAgentPort[Method]
+    NonNullable<TaskAgentPort[Method]>
   >
 } & Pick<TaskAgentPort, 'withSessionAvailable'>
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
   withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+  assertAttachedTracingReady: vi.fn(async () => undefined),
   listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
   createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
     sessionId: 'session-created'

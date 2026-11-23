@@ -39,6 +39,7 @@ import type {
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskAgentRouting,
   TaskAgentRuntime,
   TaskDoctorReport,
@@ -155,6 +156,14 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() =>
             this.ports.agent.withSessionAvailable(projectId, sessionId, operation)
           ),
+        ...(this.ports.agent.assertAttachedTracingReady
+          ? {
+              assertAttachedTracingReady: (sessionId: string) =>
+                this.withCurrentCaller(() =>
+                  this.ports.agent.assertAttachedTracingReady!(sessionId)
+                )
+            }
+          : {}),
         listAttachedSessionIds: () =>
           this.withCurrentCaller(() => this.ports.agent.listAttachedSessionIds()),
         createSession: (request) =>
@@ -553,7 +562,7 @@ class HeadlessTaskApi {
 
   submitRun(
     requestId: string,
-    request: StartTaskRunRequest
+    request: SubmitTaskRunRequest
   ): Promise<import('../../shared/task-api').TaskSubmission> {
     if (!this.submissions)
       throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
