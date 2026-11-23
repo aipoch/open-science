@@ -1,5 +1,46 @@
 import { expect, test } from '@playwright/test'
 
+test('offers Windows Task Manager for known installation blockers', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.goto('/update-dialog.html?short&platform=win32')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: { setStatus: (next: Record<string, unknown>) => void }
+      }
+    ).updateFixture
+    fixture.setStatus({
+      state: 'ready',
+      reason: 'installation-busy',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false,
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      }
+    })
+  })
+  const dialog = page.getByRole('dialog')
+  const processManager = dialog.getByRole('button', { name: 'Open Task Manager', exact: true })
+  await expect(processManager).toBeVisible()
+  await expect(dialog).toContainText('node.exe (PID 33996)')
+  await expect(dialog).toContainText('PID 34001')
+  await processManager.click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { updateFixture: { actions: { openProcessManager: number } } })
+            .updateFixture.actions.openProcessManager
+      )
+    )
+    .toBe(1)
+  await page.screenshot({ path: testInfo.outputPath('update-blocking-process-manager.png') })
+})
+
 test('recovers historical records only after confirmation in the update dialog', async ({
   page
 }, testInfo) => {

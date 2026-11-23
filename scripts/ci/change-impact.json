@@ -155,8 +155,15 @@
       "id": "update_occupancy_surface",
       "role": "overlay",
       "paths": [
-        "src/main/update/**",
+        "src/main/update/installation-occupancy.ts",
+        "src/main/update/installation-occupancy.test.ts",
+        "src/main/update/installation-file-occupancy.integration.test.ts",
+        "src/main/update/installation-protection.ts",
+        "src/main/update/installation-protection.test.ts",
+        "src/main/update/installation-reboot-recovery.ts",
+        "src/main/update/installation-reboot-recovery.test.ts",
         "packages/open-science/installation-startup.cjs",
+        "packages/open-science/installation-startup.d.cts",
         ".github/workflows/update-occupancy.yml"
       ],
       "capabilities": ["update_occupancy_source"]
@@ -334,6 +341,7 @@
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
         "src/main/session-diagnostics/projection.ts",
+        "src/main/system-process-manager.ts",
         "src/main/settings/agent-runtime-manager.ts",
         "src/main/settings/application-commands.ts",
         "src/main/settings/claude-cli-process.ts",

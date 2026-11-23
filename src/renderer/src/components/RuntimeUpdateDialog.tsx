@@ -33,8 +33,17 @@ export const RuntimeUpdateDialog = ({
   manual?: ManualUpdateController
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
-    useUpdateStore()
+  const {
+    status,
+    isDialogOpen,
+    apply,
+    cancel,
+    recheck,
+    recover,
+    openProcessManager,
+    download,
+    check
+  } = useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
   const [cancelPending, setCancelPending] = useState(false)
   const [dismissedCliToken, setDismissedCliToken] = useState<string>()
@@ -94,6 +103,10 @@ export const RuntimeUpdateDialog = ({
     status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
   )
   const blockingProcesses = status.recovery?.blockingProcesses ?? []
+  const canOpenProcessManager =
+    window.api?.platform === 'win32' &&
+    status.reason === 'installation-busy' &&
+    blockingProcesses.length > 0
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
@@ -393,6 +406,23 @@ export const RuntimeUpdateDialog = ({
                       ) : null}
                       {!status.error ? (
                         <ManualUpdateFailure manual={manual} status={status} />
+                      ) : null}
+                      {canOpenProcessManager ? (
+                        <div className="mt-3 flex justify-end">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() =>
+                              void request(async () => {
+                                await openProcessManager()
+                              })
+                            }
+                            disabled={busy}
+                          >
+                            {t('Open Task Manager')}
+                          </Button>
+                        </div>
                       ) : null}
                     </ErrorNotice>
                   ) : null}

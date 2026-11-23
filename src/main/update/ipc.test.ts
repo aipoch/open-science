@@ -94,7 +94,8 @@ describe('registerUpdateIpcHandlers', () => {
       'update:check',
       'update:download',
       'update:cancel',
-      'update:apply'
+      'update:apply',
+      'update:open-process-manager'
     ])
 
     expect(handlers.get('update:get-app-info')?.()).toEqual({

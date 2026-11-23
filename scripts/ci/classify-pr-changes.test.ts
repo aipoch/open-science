@@ -40,11 +40,22 @@ const windowsRuntimeSignal =
   /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
 it.each([
-  'src/main/update/new-installation-helper.ts',
+  'src/main/update/installation-occupancy.ts',
+  'src/main/update/installation-protection.test.ts',
   'packages/open-science/installation-startup.cjs',
   '.github/workflows/update-occupancy.yml'
 ])('selects the update occupancy gate for %s', (path) => {
   expect(classifyChanges([{ path, status: 'modified' }]).lanes).toContain('update_occupancy_source')
+})
+
+it.each([
+  'src/main/update/downloader.ts',
+  'src/main/update/runtime-strategy.ts',
+  'src/main/update/windows-update-handoff.ts'
+])('keeps unrelated update code out of the occupancy gate for %s', (path) => {
+  expect(classifyChanges([{ path, status: 'modified' }]).lanes).not.toContain(
+    'update_occupancy_source'
+  )
 })
 
 describe('declared test evidence without source ownership', () => {

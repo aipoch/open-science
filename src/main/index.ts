@@ -857,7 +857,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
-    'update:recover'
+    'update:recover',
+    'update:open-process-manager'
   ])
   const recoveryReadChannels = new Set([
     'sessions:list',

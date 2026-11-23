@@ -410,6 +410,9 @@ const updateCommands = Object.freeze({
   check: defineApplicationCommand<'update:check', readonly [], UpdateStatus>('update:check'),
   recheck: defineApplicationCommand<'update:recheck', readonly [], UpdateStatus>('update:recheck'),
   recover: defineApplicationCommand<'update:recover', readonly [], UpdateStatus>('update:recover'),
+  openProcessManager: defineApplicationCommand<'update:open-process-manager', readonly [], boolean>(
+    'update:open-process-manager'
+  ),
   download: defineApplicationCommand<
     'update:download',
     readonly [options?: UpdateDownloadOptions],
@@ -928,6 +931,12 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'update:recheck', () => dependencies.update.recheck()),
       'update:recover': ({ callerContext }) =>
         localCommand(callerContext, 'update:recover', () => dependencies.update.recover()),
+      'update:open-process-manager': ({ callerContext }) =>
+        localCommand(
+          callerContext,
+          'update:open-process-manager',
+          () => dependencies.update.openProcessManager?.() ?? Promise.resolve(false)
+        ),
       'update:download': ({ args, callerContext }) =>
         localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),

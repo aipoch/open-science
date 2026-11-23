@@ -60,6 +60,7 @@ const shutdownCommands = new Set([
   'specialist:marketplace-candidate-cancel',
   'specialist:package-cancel',
   'update:cancel',
+  'update:open-process-manager',
   'update:get-status',
   'update:get-installer',
   'update:reveal-installer'

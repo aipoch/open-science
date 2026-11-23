@@ -7888,6 +7888,7 @@
     "Processes using Open-Science files": "Open-Science 파일을 사용 중인 프로세스",
     "{{name}} (PID {{pid}})": "{{name}} (PID {{pid}})",
     "PID {{pid}}": "PID {{pid}}",
+    "Open Task Manager": "작업 관리자 열기",
     "Loading earlier messages…": "이전 메시지 불러오는 중…",
     "Retry loading earlier messages": "이전 메시지 불러오기 재시도",
     "Load full conversation": "전체 대화 불러오기",

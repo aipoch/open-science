@@ -32,6 +32,7 @@ export const registerUpdateIpcHandlers = (
   handle('update:download', (_event, options?: UpdateDownloadOptions) => owner.download(options))
   handle('update:cancel', () => owner.cancel())
   handle('update:apply', (_event, options?: UpdateApplyOptions) => owner.apply(options))
+  handle('update:open-process-manager', () => owner.openProcessManager?.() ?? false)
   return strategy
 }
 

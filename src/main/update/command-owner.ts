@@ -8,6 +8,7 @@ import type {
   UpdateStatus
 } from '../../shared/update'
 import type { UpdateStrategy } from './strategy'
+import { openSystemProcessManager } from '../system-process-manager'
 type UpdateCommandOwner = Readonly<{
   getAppInfo: () => AppInfo
   recheck: () => Promise<UpdateStatus>
@@ -19,6 +20,7 @@ type UpdateCommandOwner = Readonly<{
   download: (options?: UpdateDownloadOptions) => Promise<UpdateStatus>
   cancel: () => Promise<UpdateStatus>
   apply: (options?: UpdateApplyOptions) => Promise<UpdateStatus>
+  openProcessManager?: () => Promise<boolean>
 }>
 
 const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner => ({
@@ -35,7 +37,8 @@ const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner 
   check: () => strategy.check(),
   download: (options) => strategy.download(options),
   cancel: () => strategy.cancel(),
-  apply: (options) => strategy.apply(options)
+  apply: (options) => strategy.apply(options),
+  openProcessManager: () => openSystemProcessManager()
 })
 
 export { createUpdateCommandOwner }
