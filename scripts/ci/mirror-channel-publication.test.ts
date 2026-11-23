@@ -87,13 +87,22 @@ else {
     )
   const run = (version: string, mode = 'backfill', failKey = '', bootstrap = false): void => {
     const workflow = load(readFileSync('.github/workflows/mirror-to-website.yml', 'utf8')) as {
-      jobs: { mirror: { steps: Array<{ name: string; run?: string }> } }
+      jobs: { mirror: { steps: Array<{ name: string; if?: string; run?: string }> } }
     }
     const steps = workflow.jobs.mirror.steps
     const start = steps.findIndex((step) => step.name === 'Sync installers to versioned path')
     expect(start).toBeGreaterThanOrEqual(0)
+    // The fixture never sets dry_run; windows_delta_repair mode is the only repair intent.
+    const repair = mode === 'windows_delta_repair'
+    const condition = (expression: string | undefined): boolean => {
+      const body = expression?.replace(/^\$\{\{|\}\}$/g, '').trim()
+      if (!body) return true
+      if (body === '!inputs.dry_run && !inputs.windows_delta_repair') return !repair
+      if (body === '!inputs.dry_run && inputs.windows_delta_repair') return repair
+      throw new Error(`Unsupported workflow step condition in test: ${expression}`)
+    }
     for (const step of steps.slice(start)) {
-      if (!step.run) continue
+      if (!step.run || !condition(step.if)) continue
       execFileSync('/bin/bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.run], {
         cwd: root,
         // Do not inherit host AWS environment or credentials. PATH begins with the only AWS used.
