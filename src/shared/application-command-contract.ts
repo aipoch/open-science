@@ -1,3 +1,5 @@
+import { redactSensitiveText } from '@aipoch/diagnostics'
+
 export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-arguments',
   'invalid-command-result',
@@ -83,6 +85,30 @@ export type ApplicationCommandOutcome<Result> =
 
 const errorCodes = new Set<string>(APPLICATION_COMMAND_ERROR_CODES)
 
+const MAX_PUBLIC_REQUEST_ERROR_DETAIL_LENGTH = 300
+
+const publicRequestErrorDetail = (error: Error): string | undefined => {
+  if (error.name !== 'RequestError' || !('code' in error) || error.code !== -32603) return undefined
+
+  const data = 'data' in error ? error.data : undefined
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined
+
+  const details = 'details' in data ? data.details : undefined
+  if (typeof details !== 'string') return undefined
+
+  const redacted = redactSensitiveText(details).replace(/\s+/g, ' ').trim()
+  if (!redacted) return undefined
+  return redacted.length <= MAX_PUBLIC_REQUEST_ERROR_DETAIL_LENGTH
+    ? redacted
+    : `${redacted.slice(0, MAX_PUBLIC_REQUEST_ERROR_DETAIL_LENGTH)}…`
+}
+
+const publicErrorMessage = (error: Error): string => {
+  const detail = publicRequestErrorDetail(error)
+  if (!detail || error.message.includes(detail)) return error.message
+  return `${error.message}: ${detail}`
+}
+
 export const isApplicationCommandErrorCode = (
   value: unknown
 ): value is ApplicationCommandErrorCode => typeof value === 'string' && errorCodes.has(value)
@@ -118,7 +144,7 @@ export const toApplicationCommandErrorEnvelope = (
         ? { code: error.code, message: error.message }
         : {
             code: 'command-failed' as const,
-            message: error instanceof Error ? error.message : String(error)
+            message: error instanceof Error ? publicErrorMessage(error) : String(error)
           }
   )
 

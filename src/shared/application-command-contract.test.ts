@@ -39,6 +39,50 @@ describe('application command contract', () => {
     ).toEqual({ code: 'command-failed', message: 'Database unavailable.' })
   })
 
+  it('preserves a bounded, redacted ACP internal error detail in the public message', () => {
+    const error = Object.assign(new Error('Internal error'), {
+      name: 'RequestError',
+      code: -32603,
+      data: {
+        details: 'workspace routing discovery timed out; api_key=private-value'
+      }
+    })
+
+    expect(toApplicationCommandErrorEnvelope(error)).toEqual({
+      code: 'command-failed',
+      message: 'Internal error: workspace routing discovery timed out; api_key=[redacted]'
+    })
+  })
+
+  it.each([undefined, {}, { details: '' }, { details: { message: 'nested' } }])(
+    'keeps an ACP internal error opaque when details are absent or not a string: %j',
+    (data) => {
+      const error = Object.assign(new Error('Internal error'), {
+        name: 'RequestError',
+        code: -32603,
+        data
+      })
+
+      expect(toApplicationCommandErrorEnvelope(error)).toEqual({
+        code: 'command-failed',
+        message: 'Internal error'
+      })
+    }
+  )
+
+  it('does not expose details from non-ACP or non-internal errors', () => {
+    const error = Object.assign(new Error('Database unavailable.'), {
+      name: 'DatabaseError',
+      code: 'EIO',
+      data: { details: 'private database path' }
+    })
+
+    expect(toApplicationCommandErrorEnvelope(error)).toEqual({
+      code: 'command-failed',
+      message: 'Database unavailable.'
+    })
+  })
+
   it('unwraps results and reconstructs typed failures', () => {
     const result = { id: 'project-1' }
 
